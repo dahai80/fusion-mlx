@@ -988,6 +988,11 @@ def estimate_model_size(model_path: Path) -> int:
         for f in model_path.glob("**/*.safetensors"):
             total_size += f.stat().st_size
 
+    # MLX-native .npz weights (e.g. mlx-community whisper STT checkpoints).
+    if total_size == 0:
+        for f in model_path.glob("*.npz"):
+            total_size += f.stat().st_size
+
     if total_size == 0:
         raise ValueError(f"No model weights found in {model_path}")
 
@@ -1260,11 +1265,35 @@ def _is_embedding_model_dir(model_dir: Path) -> bool:
         return False
 
 
+_AUDIO_MODEL_TYPES = frozenset({"audio_stt", "audio_tts", "audio_sts"})
+
+
+def _has_any_weights(model_dir: Path) -> bool:
+    return bool(
+        list(model_dir.glob("model*.safetensors"))
+        or list(model_dir.glob("*.npz"))
+        or list(model_dir.glob("pytorch_model*.bin"))
+    )
+
+
 def _is_hf_cache_mlx_compatible(model_dir: Path, source_repo_id: str) -> bool:
     """Heuristic for HF cache entries that can be loaded without conversion."""
     if not _is_model_dir(model_dir):
         return False
+
+    # Audio models (STT/TTS/STS) are loaded by mlx_audio, which accepts MLX
+    # safetensors, MLX .npz, and HF-format safetensors/bin natively. The
+    # MLX-metadata / repo-name checks below are LLM-centric and wrongly reject
+    # upstream HF-format audio repos (e.g. openai/whisper-tiny, which has a full
+    # tokenizer + HF model.safetensors and transcribes correctly via mlx_audio).
     if not list(model_dir.glob("model*.safetensors")):
+        # MLX-native .npz weights (e.g. mlx-community whisper STT checkpoints)
+        # are loadable by mlx_audio.stt without conversion — treat as compatible.
+        if list(model_dir.glob("*.npz")):
+            logger.info(
+                f"Accepting HF cache model with MLX .npz weights: {source_repo_id}"
+            )
+            return True
         has_pytorch = bool(list(model_dir.glob("pytorch_model*.bin")))
         if has_pytorch and _is_embedding_model_dir(model_dir):
             logger.info(
@@ -1275,8 +1304,25 @@ def _is_hf_cache_mlx_compatible(model_dir: Path, source_repo_id: str) -> bool:
             f"Skipping HF cache model without model*.safetensors: {source_repo_id}"
         )
         return False
+
     if _safetensors_has_mlx_metadata(model_dir):
         return True
+
+    # Audio models with HF-format safetensors load fine in mlx_audio — do not
+    # gate them on MLX metadata or an mlx-* repo name.
+    try:
+        if detect_model_type(model_dir) in _AUDIO_MODEL_TYPES and _has_any_weights(
+            model_dir
+        ):
+            logger.info(
+                f"Accepting HF cache audio model with HF-format weights: {source_repo_id}"
+            )
+            return True
+    except Exception:
+        logger.debug(
+            f"detect_model_type failed for {source_repo_id}; falling through",
+            exc_info=True,
+        )
 
     repo_lower = source_repo_id.lower()
     if repo_lower.startswith("mlx-community/") or _MLX_NAME_RE.search(source_repo_id):

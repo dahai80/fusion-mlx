@@ -637,3 +637,148 @@ class TestDiscoverModelsIncludesSTS:
         assert model.model_type == "audio_sts"
         assert model.engine_type == "audio_sts"
         assert model.estimated_size == int(2048 * 1.05)
+
+
+# ---------------------------------------------------------------------------
+# TestDiscoverHfCacheNpzWeights
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverHfCacheNpzWeights:
+    """HF-cache STT checkpoints that ship MLX-native .npz weights (no
+    safetensors) must still be discovered. Regression for issue #649:
+    mlx-community/whisper-tiny.en-mlx-q4 ships only weights.npz and was
+    skipped by _is_hf_cache_mlx_compatible.
+    """
+
+    def _make_hf_cache_npz_model(
+        self, root: Path, repo_id: str, model_type: str, commit: str = "deadbeef"
+    ) -> Path:
+        cache_dir = root / f"models--{repo_id.replace('/', '--')}"
+        snapshot_dir = cache_dir / "snapshots" / commit
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        (snapshot_dir / "config.json").write_text(
+            json.dumps({"model_type": model_type})
+        )
+        (snapshot_dir / "weights.npz").write_bytes(b"0" * 1000)
+        (cache_dir / "refs").mkdir(exist_ok=True)
+        (cache_dir / "refs" / "main").write_text(commit)
+        return cache_dir
+
+    def test_hf_cache_whisper_npz_weights_discovered(self, tmp_path):
+        self._make_hf_cache_npz_model(
+            tmp_path, "mlx-community/whisper-tiny.en-mlx-q4", "whisper"
+        )
+
+        models = discover_models(tmp_path)
+        ids = [m for m in models if "whisper" in m.lower()]
+        assert ids, "whisper STT model with .npz weights must be discovered"
+        assert models[ids[0]].model_type == "audio_stt"
+
+    def test_hf_cache_npz_model_engine_type_audio_stt(self, tmp_path):
+        self._make_hf_cache_npz_model(
+            tmp_path, "mlx-community/whisper-small-mlx", "whisper"
+        )
+
+        models = discover_models(tmp_path)
+        whisper_id = [m for m in models if "whisper" in m.lower()][0]
+        assert models[whisper_id].engine_type == "audio_stt"
+
+    def test_is_hf_cache_mlx_compatible_accepts_npz(self, tmp_path):
+        from fusion_mlx.pool.model_discovery import _is_hf_cache_mlx_compatible
+
+        d = tmp_path / "weights-only"
+        d.mkdir()
+        (d / "config.json").write_text(json.dumps({"model_type": "whisper"}))
+        (d / "weights.npz").write_bytes(b"0" * 100)
+
+        assert _is_hf_cache_mlx_compatible(d, "mlx-community/whisper-tiny") is True
+
+    def test_is_hf_cache_mlx_compatible_rejects_no_weights(self, tmp_path):
+        from fusion_mlx.pool.model_discovery import _is_hf_cache_mlx_compatible
+
+        d = tmp_path / "config-only"
+        d.mkdir()
+        (d / "config.json").write_text(json.dumps({"model_type": "whisper"}))
+
+        assert _is_hf_cache_mlx_compatible(d, "some/repo") is False
+
+
+class TestDiscoverHfCacheAudioHfFormat:
+    """HF-cache audio models shipping HF-format safetensors (no MLX metadata,
+    repo not under mlx-community/) must still be discovered — mlx_audio loads
+    them natively. Regression for issue #649: openai/whisper-tiny ships a full
+    tokenizer + HF model.safetensors and transcribes correctly via mlx_audio,
+    but was skipped because _safetensors_has_mlx_metadata is False and the repo
+    name carries no "mlx" marker.
+    """
+
+    @staticmethod
+    def _write_hf_safetensors(path: Path, fmt: str = "pt") -> None:
+        import numpy as np
+        from safetensors.numpy import save_file
+
+        save_file(
+            {"w": np.zeros((1,), dtype=np.float32)}, str(path), metadata={"format": fmt}
+        )
+
+    def _make_hf_cache_audio_model(
+        self,
+        root: Path,
+        repo_id: str,
+        config: dict,
+        commit: str = "deadbeef",
+    ) -> Path:
+        cache_dir = root / f"models--{repo_id.replace('/', '--')}"
+        snapshot_dir = cache_dir / "snapshots" / commit
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        (snapshot_dir / "config.json").write_text(json.dumps(config))
+        self._write_hf_safetensors(snapshot_dir / "model.safetensors", fmt="pt")
+        (cache_dir / "refs").mkdir(exist_ok=True)
+        (cache_dir / "refs" / "main").write_text(commit)
+        return cache_dir
+
+    def test_hf_cache_openai_whisper_discovered(self, tmp_path):
+        self._make_hf_cache_audio_model(
+            tmp_path,
+            "openai/whisper-tiny",
+            {
+                "architectures": ["WhisperForConditionalGeneration"],
+                "model_type": "whisper",
+            },
+        )
+
+        models = discover_models(tmp_path)
+        ids = [m for m in models if "whisper" in m.lower()]
+        assert ids, "HF-format whisper STT must be discovered"
+        assert models[ids[0]].model_type == "audio_stt"
+        assert models[ids[0]].engine_type == "audio_stt"
+
+    def test_is_hf_cache_mlx_compatible_accepts_hf_format_audio(self, tmp_path):
+        from fusion_mlx.pool.model_discovery import _is_hf_cache_mlx_compatible
+
+        d = tmp_path / "hf-whisper"
+        d.mkdir()
+        (d / "config.json").write_text(
+            json.dumps(
+                {
+                    "architectures": ["WhisperForConditionalGeneration"],
+                    "model_type": "whisper",
+                }
+            )
+        )
+        self._write_hf_safetensors(d / "model.safetensors", fmt="pt")
+
+        assert _is_hf_cache_mlx_compatible(d, "openai/whisper-tiny") is True
+
+    def test_is_hf_cache_mlx_compatible_rejects_hf_format_llm(self, tmp_path):
+        from fusion_mlx.pool.model_discovery import _is_hf_cache_mlx_compatible
+
+        d = tmp_path / "hf-llm"
+        d.mkdir()
+        (d / "config.json").write_text(
+            json.dumps({"architectures": ["LlamaForCausalLM"], "model_type": "llama"})
+        )
+        self._write_hf_safetensors(d / "model.safetensors", fmt="pt")
+
+        assert _is_hf_cache_mlx_compatible(d, "someorg/llama-7b") is False
