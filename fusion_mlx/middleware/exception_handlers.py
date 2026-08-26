@@ -529,6 +529,53 @@ def scheduler_queue_full_handler(request: Request, exc):
     )
 
 
+def prefill_memory_exceeded_handler(request: Request, exc):
+    """Map PrefillMemoryExceededError to HTTP 413 Payload Too Large.
+
+    The pre-flight memory guard (memory_monitor.py) raises this when a prompt's
+    estimated prefill peak (weights + KV + SDPA) exceeds the hard limit. Without
+    a dedicated handler it falls through to the generic Exception → 500, which
+    is indistinguishable from an internal crash. Surfacing as 413 lets clients
+    tell "your prompt is too large" from a server fault and shrink the request.
+    API routes (/v1/...) get the OpenAI ``{"error":{...}}`` envelope; non-API
+    routes get a plain ``{"detail": ...}`` body.
+    """
+    estimated = getattr(exc, "estimated_bytes", None)
+    limit = getattr(exc, "limit_bytes", None)
+    req_id = getattr(exc, "request_id", None)
+    message = (
+        f"Prefill would exceed memory limit"
+        f" (estimated={estimated}, limit={limit}); reduce context length."
+        if estimated is not None and limit is not None
+        else "Prefill would exceed memory limit; reduce context length."
+    )
+    logger.warning(
+        "PrefillMemoryExceededError on %s %s — request_id=%s "
+        "estimated=%s limit=%s, returning 413.",
+        request.method,
+        request.url.path,
+        req_id,
+        estimated,
+        limit,
+    )
+    is_api = request.url.path.startswith("/v1/")
+    if is_api:
+        content = {
+            "error": {
+                "message": message,
+                "type": "invalid_request_error",
+                "code": "prefill_memory_exceeded",
+                "param": "messages",
+            }
+        }
+    else:
+        content = {"detail": message}
+    return JSONResponse(
+        status_code=413,
+        content=content,
+    )
+
+
 def _register_canonical_request_models() -> None:
     try:
         from ..api.anthropic_models import MessagesRequest
@@ -644,6 +691,18 @@ def install_exception_handlers(app: FastAPI) -> None:
     ):
         return scheduler_queue_full_handler(request, exc)
 
+    from ..exceptions import PrefillMemoryExceededError
+
+    @app.exception_handler(PrefillMemoryExceededError)
+    async def _prefill_memory_exceeded_handler(
+        request: Request,
+        exc: PrefillMemoryExceededError,
+    ):
+        response = prefill_memory_exceeded_handler(request, exc)
+        if _is_anthropic_path(request):
+            response = _wrap_for_anthropic(response)
+        return response
+
     @app.exception_handler(Exception)
     async def _generic_handler(request: Request, exc: Exception):
         anthropic = _is_anthropic_path(request)
@@ -671,6 +730,15 @@ def install_exception_handlers(app: FastAPI) -> None:
             return _wrap_for_anthropic(response) if anthropic else response
         from ..exceptions import ModelNotFoundError
 
+        if isinstance(exc, PrefillMemoryExceededError):
+            logger.warning(
+                "PrefillMemoryExceededError on %s %s (via generic handler) — "
+                "returning 413.",
+                request.method,
+                request.url.path,
+            )
+            response = prefill_memory_exceeded_handler(request, exc)
+            return _wrap_for_anthropic(response) if anthropic else response
         if isinstance(exc, ModelNotFoundError):
             logger.info(
                 "ModelNotFoundError on %s %s: %s",

@@ -18,11 +18,14 @@ from fusion_mlx import server
 def _reset_server_singleton() -> None:
     server._server_instance = None
     server.app = None
+    # CORS mount is idempotent-guarded by _cors_mounted; clear it so a
+    # fresh get_app() re-mounts against the new app instance.
+    server._cors_mounted = False
 
 
 def _cors_middleware_kwargs(app):
     for m in app.user_middleware:
-        if m.cls is CORSMiddleware:
+        if issubclass(m.cls, CORSMiddleware):
             return m.kwargs
     return None
 
@@ -60,9 +63,13 @@ class TestResolveCorsOrigins:
         monkeypatch.setenv("FUSION_MLX_CORS_ALLOW_ORIGINS", "https://env.com")
         assert server._resolve_cors_origins([]) == ["https://env.com"]
 
-    def test_whitespace_only_env_returns_none(self, monkeypatch):
+    def test_whitespace_only_env_returns_empty_failclosed(self, monkeypatch):
+        # Fail-closed (#758 3da8230): whitespace-only CSV is an operator
+        # templating bug → resolver returns [] (explicit empty) so NO CORS
+        # middleware mounts and preflight 405s. This is distinct from
+        # "unset" which returns None → wildcard ``*``.
         monkeypatch.setenv("FUSION_MLX_CORS_ALLOW_ORIGINS", "   ,  , ")
-        assert server._resolve_cors_origins(None) is None
+        assert server._resolve_cors_origins(None) == []
 
 
 class TestConfigureCorsFromEnv:

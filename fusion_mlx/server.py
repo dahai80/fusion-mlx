@@ -223,31 +223,154 @@ def _resolve_effective_api_key(
 
 
 _cors_origins: list[str] | None = None
+_cors_mounted: bool = False
+
+
+class _SpecAlignedCORSMiddleware(CORSMiddleware):
+    """L-02 spec-aligned preflight rejection envelope.
+
+    Overrides stock Starlette ``400 Disallowed CORS origin`` with
+    ``200 OK`` + no ``Access-Control-Allow-Origin`` + ``Vary: Origin``.
+    Browsers block either way (ACAO absent is the only browser-observable
+    signal), but the 200+missing-header shape is cleaner in devtools and
+    avoids reverse-proxy operators reading a 4xx as "upstream unhealthy".
+    Same 200-not-400 shape applies to disallowed-method preflights.
+
+    Wide-open ``*`` default stance (#52) is untouched — this only
+    changes the rejection branch when an explicit allowlist is set.
+    """
+
+    def preflight_response(self, request_headers):  # type: ignore[override]
+        from starlette.responses import PlainTextResponse
+
+        requested_origin = request_headers["origin"]
+        requested_method = request_headers["access-control-request-method"]
+        requested_headers = request_headers.get("access-control-request-headers")
+
+        headers = dict(self.preflight_headers)
+        headers["Vary"] = "Origin"
+        failures = []
+
+        if self.is_allowed_origin(origin=requested_origin):
+            if self.preflight_explicit_allow_origin:
+                headers["Access-Control-Allow-Origin"] = requested_origin
+        else:
+            failures.append("origin")
+            headers.pop("Access-Control-Allow-Origin", None)
+
+        if requested_method not in self.allow_methods:
+            failures.append("method")
+
+        if self.allow_all_headers and requested_headers is not None:
+            headers["Access-Control-Allow-Headers"] = requested_headers
+        elif requested_headers is not None:
+            for header in [h.lower() for h in requested_headers.split(",")]:
+                if header.strip() not in self.allow_headers:
+                    failures.append("headers")
+                    break
+
+        if failures:
+            logger.debug(
+                "CORS preflight rejected (spec-aligned 200): failures=%s origin=%s method=%s",
+                failures,
+                requested_origin,
+                requested_method,
+            )
+            return PlainTextResponse("OK", status_code=200, headers=headers)
+
+        return PlainTextResponse("OK", status_code=200, headers=headers)
 
 
 def _resolve_cors_origins(cors_origins) -> list[str] | None:
+    # Returns the resolved origin allowlist. Distinguishes three states:
+    #   None  → unset (caller falls back to wildcard ``*``)
+    #   []    → fail-closed: env was set to whitespace-only CSV (operator
+    #           templating bug, e.g. ``" , ,, "``); mount NO middleware so
+    #           preflight 405s — the operator-visible signal (#758 3da8230)
+    #   [...]  → explicit allowlist
     import os
 
     if cors_origins:
         origins = [o.strip() for o in cors_origins if o and o.strip()]
         if origins:
             return origins
-    env_raw = os.environ.get("FUSION_MLX_CORS_ALLOW_ORIGINS", "").strip()
-    if env_raw:
+        return []  # CLI passed whitespace-only → fail-closed
+    env_raw = os.environ.get("FUSION_MLX_CORS_ALLOW_ORIGINS", "")
+    if env_raw.strip():
         origins = [o.strip() for o in env_raw.split(",") if o.strip()]
         if origins:
             return origins
+        return []  # env whitespace-only CSV → fail-closed
     return None
 
 
-def configure_cors_from_env(cors_origins=None):
-    global _cors_origins
+def _resolve_cors_methods() -> list[str]:
+    # Narrowed default (POST, GET, OPTIONS) replaces the prior wide-open
+    # ``["*"]`` so disallowed-method preflights reject with a 200 + no echo
+    # (L-02). Override via FUSION_MLX_CORS_ALLOW_METHODS env CSV. ``*``
+    # in the env value expands to all methods.
+    import os
+
+    env_raw = os.environ.get("FUSION_MLX_CORS_ALLOW_METHODS", "").strip()
+    if env_raw:
+        methods = [m.strip().upper() for m in env_raw.split(",") if m.strip()]
+        if methods:
+            return methods
+    return ["POST", "GET", "OPTIONS"]
+
+
+def configure_cors_from_env(cors_origins=None, cli_origins=None):
+    # ``cli_origins`` is the legacy Rapid-MLX kwarg; accept it as an alias
+    # so callers/tests using the old contract still resolve correctly.
+    if cors_origins is None and cli_origins is not None:
+        cors_origins = cli_origins
+    global _cors_origins, _cors_mounted
     _cors_origins = _resolve_cors_origins(cors_origins)
     if _cors_origins:
         logger.info("CORS origins pinned to: %s", ", ".join(_cors_origins))
+    elif _cors_origins == []:
+        logger.warning(
+            "CORS origins set to whitespace-only CSV — fail-closed "
+            "(no CORS middleware, preflight will 405). Check "
+            "FUSION_MLX_CORS_ALLOW_ORIGINS for a templating bug."
+        )
     else:
         logger.debug("CORS origins defaulting to wildcard '*'")
+    _mount_cors_middleware()
     return _cors_origins
+
+
+def _mount_cors_middleware():
+    # Mount the spec-aligned CORS middleware onto the module-global app.
+    # Idempotent: skip if already mounted this process. Relocated here from
+    # ``Server._create_app`` so CORS config applied via configure_cors_from_env
+    # (the test-harness + cli path) takes effect without re-building the app.
+    global _cors_mounted
+    if _cors_mounted:
+        return
+    if app is None:
+        logger.debug("CORS mount deferred — module-global app not built yet")
+        return
+    # Fail-closed: empty-CSV origins → mount nothing (preflight 405s).
+    if _cors_origins == []:
+        _cors_mounted = True
+        return
+    cors_origins = _cors_origins if _cors_origins else ["*"]
+    cors_methods = _resolve_cors_methods()
+    app.add_middleware(
+        _SpecAlignedCORSMiddleware,
+        allow_origins=cors_origins,
+        allow_methods=cors_methods,
+        allow_headers=["*"],
+        allow_credentials=bool(_cors_origins),
+    )
+    _cors_mounted = True
+    logger.debug(
+        "CORS middleware mounted (spec-aligned): origins=%s methods=%s credentials=%s",
+        cors_origins,
+        cors_methods,
+        bool(_cors_origins),
+    )
 
 
 def register_audio_routes_if_enabled(*args, **kwargs):
@@ -738,17 +861,33 @@ class Server:
         # CORS — wildcard by default for friendly single-machine UX.
         # ``configure_cors_from_env`` (called before Server init in the
         # serve flow) may pin this to specific origins via --cors-origins
-        # or FUSION_MLX_CORS_ALLOW_ORIGINS; None falls back to ``*``.
-        # When origins are wildcard, do NOT set allow_credentials=True
-        # (browser spec forbids credentials + wildcard origins).
-        cors_origins = _cors_origins if _cors_origins else ["*"]
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=cors_origins,
-            allow_methods=["*"],
-            allow_headers=["*"],
-            allow_credentials=bool(_cors_origins),
-        )
+        # or FUSION_MLX_CORS_ALLOW_ORIGINS; None falls back to ``*``. When
+        # origins are wildcard, do NOT set allow_credentials=True (browser
+        # spec forbids credentials + wildcard origins). Uses the L-02
+        # spec-aligned subclass so preflight rejections are 200 + no ACAO
+        # + Vary: Origin (not stock 400). The module-global ``app`` is not
+        # bound yet here, so mount on the local instance directly.
+        global _cors_mounted
+        if not _cors_mounted:
+            if _cors_origins == []:
+                # Fail-closed: empty-CSV origins → mount nothing.
+                _cors_mounted = True
+            else:
+                cors_origins = _cors_origins if _cors_origins else ["*"]
+                cors_methods = _resolve_cors_methods()
+                app.add_middleware(
+                    _SpecAlignedCORSMiddleware,
+                    allow_origins=cors_origins,
+                    allow_methods=cors_methods,
+                    allow_headers=["*"],
+                    allow_credentials=bool(_cors_origins),
+                )
+                _cors_mounted = True
+                logger.debug(
+                    "CORS middleware mounted in _create_app (spec-aligned): origins=%s methods=%s",
+                    cors_origins,
+                    cors_methods,
+                )
 
         # Body-size and depth guards (ASGI-level, run before FastAPI routing)
         install_request_body_limit_middleware(app)
