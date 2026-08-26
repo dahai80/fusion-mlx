@@ -378,6 +378,123 @@ class ShardManager:
         )
         return out
 
+    def decode_step(
+        self,
+        shard_id: str,
+        hidden_states_b64: str | None,
+        input_ids: list[int] | None,
+        is_last_shard: bool,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        return_logits: bool = False,
+    ) -> dict:
+        # Cache-aware forward + optional sample (#630). Serves prefill
+        # (multi-token input_ids) and decode (single-token input) by input
+        # length, no prefill flag. KV is in-process per shard, never
+        # transported. is_last_shard=True: norm + lm_head on the LAST
+        # position + sample; is_last_shard=False: return the outgoing
+        # activation for the next shard. kv_offset reads cache[start].offset.
+        import mlx.core as mx
+        from mlx_lm.models.base import create_attention_mask
+        from mlx_lm.models.cache import KVCache
+
+        shard = self._get_shard(shard_id)
+
+        if hidden_states_b64 and input_ids:
+            raise ShardError(
+                "decode_step: provide exactly one of hidden_states / input_ids"
+            )
+        if not hidden_states_b64 and not input_ids:
+            raise ShardError("decode_step: needs hidden_states or input_ids")
+
+        cache = shard["kv_cache"]
+        # Single-token input_ids on an empty cache is a decode call with no
+        # prefill — wrong attention over nothing. Fail visibly. (The
+        # hidden_states path cannot hit this: an intermediate shard always
+        # receives multi-token activations on prefill and [1,hidden] on decode
+        # only AFTER shard 0 prefilled and grew this shard's cache via the
+        # decode loop — so the cache is never None when a [1,hidden] arrives.)
+        if cache is None and input_ids is not None and len(input_ids) == 1:
+            raise ShardError(
+                "decode_step single-token input but KV empty — prefill first"
+            )
+
+        model = self._models[shard["model_id"]]
+        inner = model.model
+        start, end = shard["layer_range"]
+        layers = inner.layers
+
+        if hidden_states_b64:
+            hidden = deserialize_activation(hidden_states_b64)
+            if hidden.ndim == 1:
+                hidden = hidden[None, None, :]  # [hidden] -> [1,1,hidden]
+            elif hidden.ndim == 2:
+                hidden = hidden[None, :, :]  # [seq,hidden] -> [1,seq,hidden]
+        else:
+            if len(input_ids) > _MAX_INPUT_IDS:
+                raise ShardError(
+                    f"input_ids length {len(input_ids)} exceeds cap {_MAX_INPUT_IDS}"
+                )
+            ids = mx.array(input_ids, dtype=mx.int32)
+            hidden = inner.embed_tokens(ids[None, :])  # (1, seq, hidden)
+
+        # Lazy-init the full-model-length cache list on first decode_step.
+        if cache is None:
+            cache = [KVCache() for _ in range(len(layers))]
+            shard["kv_cache"] = cache
+            logger.info(
+                "distributed: decode_step lazy-init KV cache shard %s " "(%d layers)",
+                shard_id,
+                len(layers),
+            )
+
+        # Build the mask from a cache INSIDE this shard's slice (mirrors
+        # LlamaModel.__call__'s create_attention_mask(h, cache[fa_idx])).
+        # cache[start] is the first cache this shard touches; using a cache
+        # outside [start,end) would read an empty offset=0 and build a wrong
+        # mask. Validated bit-exact vs generate_step in the pre-plan probe.
+        mask = create_attention_mask(hidden, cache[start])
+        for i in range(start, end):
+            hidden = layers[i](hidden, mask, cache=cache[i])
+        mx.eval(hidden)
+
+        kv_offset = int(cache[start].offset)
+
+        if is_last_shard:
+            # Sample from the LAST position only (prefill: position P-1;
+            # decode: the single position).
+            out = self._project_and_sample(
+                model,
+                hidden[:, -1:, :],
+                temperature,
+                top_p,
+                return_logits,
+            )
+            out["hidden_states"] = None
+            out["kv_offset"] = kv_offset
+            logger.info(
+                "distributed: decode_step %s (last) token=%s kv_offset=%d",
+                shard_id,
+                out["token_ids"],
+                kv_offset,
+            )
+            return out
+
+        out = {
+            "hidden_states": serialize_activation(hidden),
+            "shape": list(hidden.shape),
+            "dtype": str(hidden.dtype),
+            "token_ids": None,
+            "kv_offset": kv_offset,
+        }
+        logger.debug(
+            "distributed: decode_step %s -> shape=%s kv_offset=%d",
+            shard_id,
+            hidden.shape,
+            kv_offset,
+        )
+        return out
+
     def sync_weights(
         self, shard_id: str, weights_b64: str | None, manifest: dict | None
     ) -> dict:
