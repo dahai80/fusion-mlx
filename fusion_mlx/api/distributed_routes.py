@@ -115,6 +115,7 @@ class ShardInfo(BaseModel):
     layer_range: list[int]
     dtype: str | None = None
     num_layers: int
+    kv_offset: int = 0
 
 
 class ShardsListResponse(BaseModel):

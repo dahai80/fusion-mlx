@@ -208,6 +208,7 @@ class ShardManager:
             "layer_range": [start, end],
             "dtype": dtype,
             "num_layers": total,
+            "kv_cache": None,
         }
         self._by_key[key] = shard_id
         logger.info(
@@ -433,7 +434,15 @@ class ShardManager:
         return {"shard_id": shard_id, "dropped": True}
 
     def list_shards(self) -> list[dict]:
-        return list(self._shards.values())
+        out = []
+        for s in self._shards.values():
+            start = s["layer_range"][0]
+            cache = s.get("kv_cache")
+            offset = cache[start].offset if cache is not None else 0
+            row = dict(s)
+            row["kv_offset"] = offset
+            out.append(row)
+        return out
 
 
 # Process-singleton — the routes module grabs this.
