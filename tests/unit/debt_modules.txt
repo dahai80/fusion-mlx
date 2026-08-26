@@ -1698,6 +1698,31 @@ test_routes.py
 # test_routes_models.py RESCUED 2026-08-22 (2 pass + 1 xfail): model-list
 # endpoint contract test. 0 import errors, all live pass. Un-quarantine.
 test_routes_models_effective_parsers.py
+# KEEP_QUARANTINED test_rst_mid_sse_zombie_kv.py (eval 2026-08-26): 4f/4p.
+# REDESIGN-DRIFT, not harness drift. Test pins the F-012 zombie-KV fix
+# (shield executor await + _on_executor_done done-callback + wrap_future
+# + branch on _future.cancelled() + _cleanup_request in stream_generate
+# finally). ALL of that machinery was REMOVED and replaced by a simpler
+# design in engine_core.add_request (L632-720):
+#   - simple `await loop.run_in_executor(scheduler.add_request)` with
+#     `except BaseException: abort + _cleanup_request` (immediate, no
+#     drain ordering),
+#   - single _active_contexts: dict[str, RequestContext] (bundles
+#     collector/stream_state/finished_event) replacing the 4 old dicts
+#     _output_collectors/_stream_states/_stream_buffers/_finished_events
+#     (all 0 hits in prod now),
+#   - _reap_orphaned_collectors grace-period reaper (L806) for orphaned
+#     requests instead of the done-callback cancel-branch,
+#   - engines/batched.stream_generate finally (L952) calls only
+#     engine.abort_request, NOT _cleanup_request (test L304 asserts the
+#     latter). Plus BatchedEngine moved fusion_mlx.engine.batched ->
+#     fusion_mlx.engines.batched (test L238 stale import path).
+# Test 1 asserts abort fires AFTER executor completes (ordering) — prod
+# aborts immediately in except, ordering invariant intentionally dropped.
+# Test 4 asserts no abort for cancelled-before-run — prod simple path
+# raises CancelledError into except -> abort fires, so fails by design.
+# Recreating the shield/done-callback machinery = inventing prod logic
+# (Rule 2). Conflicts with prod's reaper-based cleanup (Rule 7). KEEP.
 test_rst_mid_sse_zombie_kv.py
 # KEEP_QUARANTINED 2026-08-22 (#598): _Cfg.scheduler attribute gone (config shape changed). Dead-symbol.
 test_runtime_cache_path.py
