@@ -1,0 +1,12 @@
+{
+  "model": "mlx-community--Qwen2.5-Coder-32B-Instruct-4bit",
+  "prompt_tokens_requested": 512,
+  "gen_tokens_requested": 128,
+  "prompt_tokens": 698,
+  "completion_tokens": 128,
+  "wall_seconds": 8.945,
+  "tokens_per_second": 14.31,
+  "ttft_seconds": 2.836,
+  "timestamp": "20260826-090744",
+  "base_url": "http://127.0.0.1:11434"
+}

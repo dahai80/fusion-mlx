@@ -3,10 +3,10 @@
   "prompt_tokens_requested": 512,
   "gen_tokens_requested": 128,
   "prompt_tokens": 702,
-  "completion_tokens": 135,
-  "wall_seconds": 9.169,
-  "tokens_per_second": 14.72,
-  "ttft_seconds": 1.286,
-  "timestamp": "20260808-141445",
+  "completion_tokens": 129,
+  "wall_seconds": 1.407,
+  "tokens_per_second": 91.72,
+  "ttft_seconds": 0.462,
+  "timestamp": "20260826-090744",
   "base_url": "http://127.0.0.1:11434"
 }

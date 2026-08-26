@@ -1,0 +1,12 @@
+{
+  "model": "Qwen3-0.6B-8bit",
+  "prompt_tokens_requested": 512,
+  "gen_tokens_requested": 128,
+  "prompt_tokens": 702,
+  "completion_tokens": 135,
+  "wall_seconds": 1.082,
+  "tokens_per_second": 124.76,
+  "ttft_seconds": 0.325,
+  "timestamp": "20260826-090744",
+  "base_url": "http://127.0.0.1:11434"
+}

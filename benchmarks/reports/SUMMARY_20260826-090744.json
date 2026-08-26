@@ -1,0 +1,140 @@
+{
+  "timestamp": "20260826-090744",
+  "prompt_tokens": 512,
+  "gen_tokens": 128,
+  "base_url": "http://127.0.0.1:11434",
+  "results": [
+    {
+      "model": "Qwen3-0.6B-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 702,
+      "completion_tokens": 129,
+      "wall_seconds": 1.407,
+      "tokens_per_second": 91.72,
+      "ttft_seconds": 0.462,
+      "timestamp": "20260826-090744",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "Qwen3-0.6B-8bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 702,
+      "completion_tokens": 135,
+      "wall_seconds": 1.082,
+      "tokens_per_second": 124.76,
+      "ttft_seconds": 0.325,
+      "timestamp": "20260826-090744",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "Qwen3.5-4B-bf16",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 701,
+      "completion_tokens": 128,
+      "wall_seconds": 3.416,
+      "tokens_per_second": 37.47,
+      "ttft_seconds": 1.791,
+      "timestamp": "20260826-090744",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "Qwen3.5-9B-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 701,
+      "completion_tokens": 128,
+      "wall_seconds": 2.669,
+      "tokens_per_second": 47.96,
+      "ttft_seconds": 1.918,
+      "timestamp": "20260826-090744",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "Qwen3.6-27B-mxfp8",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 701,
+      "completion_tokens": 128,
+      "wall_seconds": 15.375,
+      "tokens_per_second": 8.33,
+      "ttft_seconds": 4.124,
+      "timestamp": "20260826-090744",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "Meta-Llama-3.1-8B-Instruct-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 719,
+      "completion_tokens": 128,
+      "wall_seconds": 2.167,
+      "tokens_per_second": 59.07,
+      "ttft_seconds": 1.159,
+      "timestamp": "20260826-090744",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "mlx-community-Llama-3.2-1B-Instruct-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 720,
+      "completion_tokens": 128,
+      "wall_seconds": 0.629,
+      "tokens_per_second": 203.61,
+      "ttft_seconds": 0.35,
+      "timestamp": "20260826-090744",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "mlx-community--gemma-4-26b-a4b-it-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 703,
+      "completion_tokens": 128,
+      "wall_seconds": 2.932,
+      "tokens_per_second": 43.66,
+      "ttft_seconds": 2.423,
+      "timestamp": "20260826-090744",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "mlx-community--Qwen2.5-Coder-32B-Instruct-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 698,
+      "completion_tokens": 128,
+      "wall_seconds": 8.945,
+      "tokens_per_second": 14.31,
+      "ttft_seconds": 2.836,
+      "timestamp": "20260826-090744",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "Qwen3.8-27B-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 701,
+      "completion_tokens": 128,
+      "wall_seconds": 8.582,
+      "tokens_per_second": 14.91,
+      "ttft_seconds": 3.619,
+      "timestamp": "20260826-090744",
+      "base_url": "http://127.0.0.1:11434"
+    },
+    {
+      "model": "mlx-community--Qwen2.5-VL-7B-Instruct-4bit",
+      "prompt_tokens_requested": 512,
+      "gen_tokens_requested": 128,
+      "prompt_tokens": 698,
+      "completion_tokens": 128,
+      "wall_seconds": 2.345,
+      "tokens_per_second": 54.59,
+      "ttft_seconds": 1.301,
+      "timestamp": "20260826-090744",
+      "base_url": "http://127.0.0.1:11434"
+    }
+  ]
+}

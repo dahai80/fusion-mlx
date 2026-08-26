@@ -4,9 +4,9 @@
   "gen_tokens_requested": 128,
   "prompt_tokens": 719,
   "completion_tokens": 128,
-  "wall_seconds": 16.8,
-  "tokens_per_second": 7.62,
-  "ttft_seconds": 4.44,
-  "timestamp": "20260808-141511",
+  "wall_seconds": 2.167,
+  "tokens_per_second": 59.07,
+  "ttft_seconds": 1.159,
+  "timestamp": "20260826-090744",
   "base_url": "http://127.0.0.1:11434"
 }
