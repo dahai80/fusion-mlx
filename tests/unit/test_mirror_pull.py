@@ -41,11 +41,11 @@ def _sidecar_part_path(cache_root: Path, owner_repo: str, fname: str) -> Path:
     """Compute the per-file sidecar ``.part`` path that production now uses.
 
     Codex round-14 BLOCKING #1+#2 moved ``.part``/``.lock`` out of the
-    snapshot dir into ``repo_root/.rapid-mlx-mirror/<key>.{part,lock}``
+    snapshot dir into ``repo_root/.fusion-mlx-mirror/<key>.{part,lock}``
     where ``<key>`` is :func:`_mirror._sidecar_key_for`(fname).
     """
     repo_root = cache_root / f"models--{owner_repo.replace('/', '--')}"
-    return repo_root / ".rapid-mlx-mirror" / f"{_mirror._sidecar_key_for(fname)}.part"
+    return repo_root / ".fusion-mlx-mirror" / f"{_mirror._sidecar_key_for(fname)}.part"
 
 
 # ---------------------------------------------------------------------------
@@ -332,13 +332,13 @@ def test_per_file_fallback(
     assert ok, "download should succeed when every file is reachable from R2 or HF"
     # Snapshot directory should contain all three files, exactly once.
     # Codex round-12 BLOCKING: the cross-process flock sidecar
-    # (``.<file>.rapid-mlx-mirror.lock``) is intentionally retained on
+    # (``.<file>.fusion-mlx-mirror.lock``) is intentionally retained on
     # disk after release — filter it out of the comparison.
     snap = tmp_path / "models--mlx-community--Qwen3-0.6B-4bit" / "snapshots" / revision
     on_disk = sorted(
         p.name
         for p in snap.iterdir()
-        if p.is_file() and not p.name.endswith(".rapid-mlx-mirror.lock")
+        if p.is_file() and not p.name.endswith(".fusion-mlx-mirror.lock")
     )
     assert on_disk == sorted(f for f, _ in files)
     # refs/main pins the snapshot — required for is_repo_cached.
@@ -658,8 +658,8 @@ def test_resume_sends_range_header_for_partial_part_file(
     # Pre-stage the partial file at the sidecar temp path the
     # production code computes — round-14 BLOCKING #1+#2 moved the
     # ``.part`` out of ``snapshots/<sha>/`` into
-    # ``repo_root/.rapid-mlx-mirror/<key>.part`` to avoid collisions
-    # with legitimate repo assets named ``.<file>.rapid-mlx-mirror.part``.
+    # ``repo_root/.fusion-mlx-mirror/<key>.part`` to avoid collisions
+    # with legitimate repo assets named ``.<file>.fusion-mlx-mirror.part``.
     snap = tmp_path / "models--mlx-community--Qwen3-0.6B-4bit" / "snapshots" / revision
     snap.mkdir(parents=True, exist_ok=True)
     part = _sidecar_part_path(
@@ -1197,7 +1197,7 @@ def test_symlinked_parent_under_snapshot_is_rejected(
 # Codex round-4 BLOCKING #1 regression — the .part temp file name must
 # not collide with a real repo asset like ``model.safetensors.part``.
 # The mirror module namespaces temp files as
-# ``.<target.name>.rapid-mlx-mirror.part`` so a hypothetical sibling
+# ``.<target.name>.fusion-mlx-mirror.part`` so a hypothetical sibling
 # ``foo.part`` repo asset is safe.
 # ---------------------------------------------------------------------------
 
@@ -2276,10 +2276,10 @@ def test_refs_main_written_as_utf8(
 
 # ---------------------------------------------------------------------------
 # Codex round-14 BLOCKING #1+#2 — sidecar dir contract:
-#   * ``.part`` and ``.lock`` live in ``repo_root/.rapid-mlx-mirror/``,
+#   * ``.part`` and ``.lock`` live in ``repo_root/.fusion-mlx-mirror/``,
 #     NEVER under ``snapshots/<sha>/``.
 #   * Their names are derived from a flattened key, not from
-#     ``.<file>.rapid-mlx-mirror.{part,lock}`` (which could collide
+#     ``.<file>.fusion-mlx-mirror.{part,lock}`` (which could collide
 #     with a legitimate repo file).
 # ---------------------------------------------------------------------------
 
@@ -2324,7 +2324,7 @@ def test_sidecar_dir_holds_part_and_lock_not_snapshot(
     assert snap_contents == ["model.safetensors"]
 
     # Sidecar dir holds the lock file (kept on disk per round-12).
-    sidecar = tmp_path / "models--mlx-community--Qwen3-0.6B-4bit" / ".rapid-mlx-mirror"
+    sidecar = tmp_path / "models--mlx-community--Qwen3-0.6B-4bit" / ".fusion-mlx-mirror"
     assert sidecar.is_dir()
     sidecar_contents = sorted(p.name for p in sidecar.iterdir() if p.is_file())
     # Lock stays; ``.part`` was renamed to target on success.
@@ -2338,14 +2338,14 @@ def test_sidecar_key_collision_safe_with_hidden_repo_files(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """A repo can legitimately contain a file named like our OLD temp
-    file (``.foo.rapid-mlx-mirror.part``). Verify the sidecar key derived
+    file (``.foo.fusion-mlx-mirror.part``). Verify the sidecar key derived
     from that filename doesn't collide with anything in snap/, and the
     real repo file lands at the snapshot path with the right bytes
     while the sidecar artifacts live in a SEPARATE dir."""
     repo_id = "mlx-community/Hidden-Asset"
     revision = "babe" * 10
     # 12 bytes — matches the literal R2 payload below.
-    files = [(".foo.rapid-mlx-mirror.part", 12)]
+    files = [(".foo.fusion-mlx-mirror.part", 12)]
     catalog = _catalog_payload([("hidden-asset", repo_id, "mirrored")])
 
     repo_root = tmp_path / "models--mlx-community--Hidden-Asset"
@@ -2357,9 +2357,9 @@ def test_sidecar_key_collision_safe_with_hidden_repo_files(
         _FakeResponse(200, json.dumps(catalog).encode()),
     )
     payload = b"legit-asset"  # 11 bytes — fix expected size to match
-    files = [(".foo.rapid-mlx-mirror.part", len(payload))]
+    files = [(".foo.fusion-mlx-mirror.part", len(payload))]
     router.add(
-        "https://models.rapidmlx.com/mlx-community/Hidden-Asset/.foo.rapid-mlx-mirror.part",
+        "https://models.rapidmlx.com/mlx-community/Hidden-Asset/.foo.fusion-mlx-mirror.part",
         _FakeResponse(200, payload),
     )
 
@@ -2379,16 +2379,16 @@ def test_sidecar_key_collision_safe_with_hidden_repo_files(
     # The repo file lands at the real path — same name as the OLD
     # temp file pattern, but now safe because the temp file lives in
     # the sidecar dir.
-    assert (snap / ".foo.rapid-mlx-mirror.part").read_bytes() == payload
+    assert (snap / ".foo.fusion-mlx-mirror.part").read_bytes() == payload
     # And the sidecar dir is distinct from snap.
-    sidecar = repo_root / ".rapid-mlx-mirror"
+    sidecar = repo_root / ".fusion-mlx-mirror"
     assert sidecar.is_dir()
     # The lock file lives there (kept on disk).
     assert any(p.name.endswith(".lock") for p in sidecar.iterdir())
     # And ``snap_dir`` does NOT contain any sidecar artifacts that
     # would collide with the legitimate repo file's name.
     assert sorted(p.name for p in snap.iterdir() if p.is_file()) == [
-        ".foo.rapid-mlx-mirror.part"
+        ".foo.fusion-mlx-mirror.part"
     ]
 
 
@@ -3417,7 +3417,7 @@ def test_progress_resumed_r2_credits_existing_prefix(
     # Pre-seed a 400-byte ``.part`` so R2's request goes out with
     # ``Range: bytes=400-`` and the server returns 206 with the suffix.
     # The sidecar layout matches what ``_do_file`` computes.
-    sidecar = tmp_path / f"models--{repo_id.replace('/', '--')}" / ".rapid-mlx-mirror"
+    sidecar = tmp_path / f"models--{repo_id.replace('/', '--')}" / ".fusion-mlx-mirror"
     sidecar.mkdir(parents=True)
     part_key = _mirror._sidecar_key_for("model.safetensors")
     (sidecar / f"{part_key}.part").write_bytes(b"x" * 400)
@@ -3624,6 +3624,22 @@ def test_progress_tracker_flush_runs_even_when_worker_raises_unwhitelisted(
 
     monkeypatch.setattr(_mirror, "_download_one_from_r2", _boom)
     monkeypatch.setenv("FUSION_MLX_MODEL_MIRROR", "https://models.rapidmlx.com")
+
+    # Harness fix: the session-wide conftest shim (tests/conftest.py) rebinds
+    # ``huggingface_hub.utils.RepositoryNotFoundError`` to ``Exception`` so
+    # mock 404s trigger the 404 branch in other tests. ``_mirror`` binds that
+    # exact name into its dispatcher ``except`` net, so under the shim the net
+    # catches ``Exception`` — swallowing the very ``TypeError`` this test
+    # asserts must propagate. Prod binds the real narrow HF subclass; restore
+    # it onto the shimmed utils module for this test only. ``huggingface_hub.
+    # errors`` (un-shimmed) still exposes the real class in-session, and
+    # monkeypatch reverts the attr on teardown.
+    import sys as _sys
+
+    _hf_utils = _sys.modules["huggingface_hub.utils"]
+    from huggingface_hub.errors import RepositoryNotFoundError as _RealRNF
+
+    monkeypatch.setattr(_hf_utils, "RepositoryNotFoundError", _RealRNF)
 
     with (
         patch("urllib.request.urlopen", side_effect=router),

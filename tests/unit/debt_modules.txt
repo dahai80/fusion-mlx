@@ -833,6 +833,7 @@ test_community_bench.py
 # attr to test harness. This basename stays quarantined.
 test_context_window.py
 # KEEP_QUARANTINED: asserts F-090/F-091 default-deny CORS (env allowlist,
+# Default-deny stance itself CLOSED in #52; rejection-envelope shape (L-02) tracked in #641.
 # method narrowing to POST/GET/OPTIONS, max_age, credentials env, empty-CSV
 # fail-closed) ported from Rapid-MLX. fusion-mlx's released stance is the
 # OPPOSITE — wide-open allow_origins/methods/headers=["*"] by design for
@@ -840,7 +841,7 @@ test_context_window.py
 # would reverse a closed product decision, not pay debt. Test kwarg
 # (cli_origins->cors_origins) and contract are both divergent.
 test_cors_env_configurable.py
-# KEEP_QUARANTINED: round10q — L-02 _SpecAlignedCORSMiddleware not implemented. Test pins spec-aligned preflight rejection (200 + no ACAO + Vary: Origin + body "OK") replacing stock Starlette 400. server.py:696 uses stock CORSMiddleware, configure_cors_from_env(cors_origins=None) param renamed from cli_origins. Feature gap (CORS hardening), not harness drift. File issue for L-02 port.
+# KEEP_QUARANTINED: round10q — L-02 _SpecAlignedCORSMiddleware not implemented. Test pins spec-aligned preflight rejection (200 + no ACAO + Vary: Origin + body "OK") replacing stock Starlette 400. server.py:696 uses stock CORSMiddleware, configure_cors_from_env(cors_origins=None) param renamed from cli_origins. Feature gap (CORS hardening), not harness drift. Tracked in #641 (port vs retire).
 test_cors_lockdown_response_shape.py
 # test_d_anthro_validation.py RESCUED 2026-08-10 (#443): 31/31 pass.
 # Ported D-ANTHRO-VALIDATION F1/F4/F10/F11 to the Pydantic model layer
@@ -908,7 +909,7 @@ test_dflash_spec_decode.py
 # _resolve_disconnect_abort_recorder() is no-arg global in prod, test wants (engine).
 # Whole feature is dead code anyway (_disconnect_guard has 0 prod callers, no route
 # passes request_id_holder) so the metrics never tick. Implementing = real prod
-# feature dev, not test-debt rescue. Eval 2026-08-19.
+# feature dev, not test-debt rescue. Eval 2026-08-19. Tracked in #645 (wire vs remove).
 test_disconnect_counter_prod_shape.py
 # KEEP_QUARANTINED: imports ``_run_with_disconnect_guard`` from
 # fusion_mlx.server — a symbol that exists in NEITHER fusion-mlx nor
@@ -989,6 +990,7 @@ test_embeddings_extra_guard.py
 # invalid_request_error, code=no_embedding_model, msg with
 # --embedding-model + pip install 'rapid-mlx[embeddings]' brand drift).
 # Feature gap: no_embedding_model 503 envelope not ported. File issue first.
+# Tracked in #643 (port eager 503 guard vs retire — 404/400 lazy resolution likely intended).
 test_embeddings_route.py
 # test_embeddings_timeout_admission.py  # un-quarantined: H22 fixed, H6/C4 xfail(strict=True)
 # test_enable_thinking_prompt_accounting.py RESCUED 2026-08-19 (13 pass +
@@ -1298,7 +1300,22 @@ test_microbench_parsers.py
 # (already quarantined L892 — mocks _patch_mlx_lm_load_config symbol absent from
 # module, unrelated to minimax dispatch).
 # test_minimax_m3_sparse_attention_patch.py
-test_mirror_pull.py
+# RESCUED test_mirror_pull.py 2026-08-26 (debt rescue loop): 56p/7f → 63p/0f.
+#   ROOT CAUSE: (1) brand-rename drift — sidecar dir renamed
+#   `.rapid-mlx-mirror` → `.fusion-mlx-mirror` in prod (_mirror.py L1134) but
+#   18 test refs + collision-repo-asset names stayed stale; repointed all 18
+#   (helper, dir assertions, lock globs, collision names, comments). Host refs
+#   `models.rapidmlx.com` UNTOUCHED (still prod MIRROR_DEFAULT L56).
+#   (2) harness shim drift — conftest.py L198 rebinds
+#   `huggingface_hub.utils.RepositoryNotFoundError` to `Exception` (session-wide,
+#   so mock 404s trip the 404 branch). `_mirror` binds that name into its
+#   dispatcher `except` net (L1503); under the shim the net catches `Exception`
+#   and swallows the `TypeError` the progress-tracker test asserts must
+#   propagate. FIX: test-local monkeypatch restores the real narrow HF subclass
+#   (from un-shimmed `huggingface_hub.errors`) onto `sys.modules["huggingface_
+#   hub.utils"]` for that one test; reverts on teardown. Prod unaffected (binds
+#   real subclass). 63/63 pass.
+# test_mirror_pull.py
 # RESCUED test_mlx_compat 2026-08-24 (round17, #617 fix): un-quarantined.
 #   ROOT CAUSE: (1) stale-flag drift — test checked `_rapid_mlx_compat_installed`
 #   (9 refs) but shim sets `_fusion_mlx_compat_installed` → repointed all 9.
@@ -1683,6 +1700,31 @@ test_routes.py
 # test_routes_models.py RESCUED 2026-08-22 (2 pass + 1 xfail): model-list
 # endpoint contract test. 0 import errors, all live pass. Un-quarantine.
 test_routes_models_effective_parsers.py
+# KEEP_QUARANTINED test_rst_mid_sse_zombie_kv.py (eval 2026-08-26): 4f/4p.
+# REDESIGN-DRIFT, not harness drift. Test pins the F-012 zombie-KV fix
+# (shield executor await + _on_executor_done done-callback + wrap_future
+# + branch on _future.cancelled() + _cleanup_request in stream_generate
+# finally). ALL of that machinery was REMOVED and replaced by a simpler
+# design in engine_core.add_request (L632-720):
+#   - simple `await loop.run_in_executor(scheduler.add_request)` with
+#     `except BaseException: abort + _cleanup_request` (immediate, no
+#     drain ordering),
+#   - single _active_contexts: dict[str, RequestContext] (bundles
+#     collector/stream_state/finished_event) replacing the 4 old dicts
+#     _output_collectors/_stream_states/_stream_buffers/_finished_events
+#     (all 0 hits in prod now),
+#   - _reap_orphaned_collectors grace-period reaper (L806) for orphaned
+#     requests instead of the done-callback cancel-branch,
+#   - engines/batched.stream_generate finally (L952) calls only
+#     engine.abort_request, NOT _cleanup_request (test L304 asserts the
+#     latter). Plus BatchedEngine moved fusion_mlx.engine.batched ->
+#     fusion_mlx.engines.batched (test L238 stale import path).
+# Test 1 asserts abort fires AFTER executor completes (ordering) — prod
+# aborts immediately in except, ordering invariant intentionally dropped.
+# Test 4 asserts no abort for cancelled-before-run — prod simple path
+# raises CancelledError into except -> abort fires, so fails by design.
+# Recreating the shield/done-callback machinery = inventing prod logic
+# (Rule 2). Conflicts with prod's reaper-based cleanup (Rule 7). KEEP.
 test_rst_mid_sse_zombie_kv.py
 # KEEP_QUARANTINED 2026-08-22 (#598): _Cfg.scheduler attribute gone (config shape changed). Dead-symbol.
 test_runtime_cache_path.py
@@ -1757,6 +1799,7 @@ test_seed_reproducibility.py
 # install_exception_handlers L563 has no PrefillMemoryExceededError handler).
 # PrefillMemoryExceededError STILL raised (memory_monitor.py:944, engine_core
 # :36) → bubbles to generic Exception handler → 500, no structured 400 body.
+# Tracked in #642 (register handler → 413/507 envelope vs retire to generic 500).
 # ALSO _with_json_keepalive/_with_sse_keepalive absent (streaming error-body
 # emitters; same not-ported family as test_sse_keepalive.py ACTIVE). ALSO
 # get_engine_for_model/validate_context_window/verify_api_key removed from
@@ -1908,6 +1951,7 @@ test_thinking_budget.py
 # KEEP_QUARANTINED test_tool_choice_enforcement (eval round14 2026-08-24):
 #   COLLECTION ERR — imports _contains_structural_tool_wire_leak from
 #   routes_internal.chat. Guard fn NEVER ported (0 prod refs). REMOVED-FEATURE
+#   Tracked in #644 (restore scrubbing family vs retire — leak-source fix likely intended).
 #   (#445 normalization gap). Rule 2/3: don't invent guard to satisfy import.
 # KEEP_QUARANTINED test_tool_logits_schema_guards (eval round14 2026-08-24):
 #   26f/2p. Whole file pins defensive-tolerance contract — _extract_param_
