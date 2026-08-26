@@ -287,6 +287,48 @@ class ShardManager:
             "dtype": str(hidden.dtype),
         }
 
+    def _project_and_sample(
+        self,
+        model: object,
+        hidden: mx.array,
+        temperature: float | None,
+        top_p: float | None,
+        return_logits: bool,
+    ) -> dict:
+        import mlx.core as mx
+
+        inner = model.model
+        h = inner.norm(hidden)
+        tie = bool(getattr(model.args, "tie_word_embeddings", False))
+        if tie:
+            logits = inner.embed_tokens.as_linear(h)
+        else:
+            if not hasattr(model, "lm_head"):
+                raise ShardError(
+                    "model has no lm_head and tie_word_embeddings is False — "
+                    "cannot produce logits"
+                )
+            logits = model.lm_head(h)
+        mx.eval(logits)
+        temp = float(temperature) if temperature is not None else 0.0
+        tp = float(top_p) if top_p is not None else 0.0
+        from mlx_lm.sample_utils import make_sampler
+
+        sampler = make_sampler(temp=temp, top_p=tp)
+        sampled = sampler(logits)
+        mx.eval(sampled)
+        token_ids = [int(t) for t in sampled.reshape(-1).tolist()]
+        out: dict = {
+            "token_ids": token_ids,
+            "shape": list(sampled.shape),
+            "dtype": str(sampled.dtype),
+        }
+        if return_logits:
+            out["logits"] = serialize_activation(logits)
+            out["logits_shape"] = list(logits.shape)
+            out["logits_dtype"] = str(logits.dtype)
+        return out
+
     def decode(
         self,
         shard_id: str,
@@ -317,7 +359,6 @@ class ShardManager:
         output, so this is a single forward pass."""
         shard = self._get_shard(shard_id)
         model = self._models[shard["model_id"]]
-        inner = model.model
         if not hidden_states_b64:
             raise ShardError("decode needs hidden_states from the last shard")
         hidden = deserialize_activation(hidden_states_b64)
@@ -327,54 +368,12 @@ class ShardManager:
             hidden.shape,
             hidden.dtype,
         )
-
-        # pipeline_step returned the post-layer-loop hidden states WITHOUT the
-        # final norm (it only loops inner.layers[i], never inner.norm). Apply
-        # it here so lm_head sees normed activations, matching the un-split
-        # model forward (LlamaModel.__call__ ends with self.norm(h)).
-        h = inner.norm(hidden)
-
-        # Output projection: tied embeddings reuse embed_tokens.as_linear;
-        # otherwise the dedicated lm_head linear. mlx_lm Model.__init__ skips
-        # creating lm_head when tie_word_embeddings is True, so probe the arg
-        # rather than the attribute (QuantizedEmbedding also exposes as_linear).
-        tie = bool(getattr(model.args, "tie_word_embeddings", False))
-        if tie:
-            logits = inner.embed_tokens.as_linear(h)
-        else:
-            if not hasattr(model, "lm_head"):
-                raise ShardError(
-                    "model has no lm_head and tie_word_embeddings is False — "
-                    "cannot produce logits"
-                )
-            logits = model.lm_head(h)
-        mx.eval(logits)
-
-        # Sampling: temp 0/None = greedy argmax (deterministic, reproducible).
-        temp = float(temperature) if temperature is not None else 0.0
-        tp = float(top_p) if top_p is not None else 0.0
-        from mlx_lm.sample_utils import make_sampler
-
-        sampler = make_sampler(temp=temp, top_p=tp)
-        sampled = sampler(logits)  # (batch, seq) int32
-        mx.eval(sampled)
-        token_ids = [int(t) for t in sampled.reshape(-1).tolist()]
-
-        out: dict = {
-            "token_ids": token_ids,
-            "shape": list(sampled.shape),
-            "dtype": str(sampled.dtype),
-        }
-        if return_logits:
-            out["logits"] = serialize_activation(logits)
-            out["logits_shape"] = list(logits.shape)
-            out["logits_dtype"] = str(logits.dtype)
+        out = self._project_and_sample(model, hidden, temperature, top_p, return_logits)
         logger.info(
-            "distributed: decode %s produced %d token ids (tie=%s temp=%s)",
+            "distributed: decode %s produced %d token ids (temp=%s)",
             shard_id,
-            len(token_ids),
-            tie,
-            temp,
+            len(out["token_ids"]),
+            float(temperature) if temperature is not None else 0.0,
         )
         return out
 
