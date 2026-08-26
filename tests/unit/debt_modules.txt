@@ -1298,7 +1298,22 @@ test_microbench_parsers.py
 # (already quarantined L892 — mocks _patch_mlx_lm_load_config symbol absent from
 # module, unrelated to minimax dispatch).
 # test_minimax_m3_sparse_attention_patch.py
-test_mirror_pull.py
+# RESCUED test_mirror_pull.py 2026-08-26 (debt rescue loop): 56p/7f → 63p/0f.
+#   ROOT CAUSE: (1) brand-rename drift — sidecar dir renamed
+#   `.rapid-mlx-mirror` → `.fusion-mlx-mirror` in prod (_mirror.py L1134) but
+#   18 test refs + collision-repo-asset names stayed stale; repointed all 18
+#   (helper, dir assertions, lock globs, collision names, comments). Host refs
+#   `models.rapidmlx.com` UNTOUCHED (still prod MIRROR_DEFAULT L56).
+#   (2) harness shim drift — conftest.py L198 rebinds
+#   `huggingface_hub.utils.RepositoryNotFoundError` to `Exception` (session-wide,
+#   so mock 404s trip the 404 branch). `_mirror` binds that name into its
+#   dispatcher `except` net (L1503); under the shim the net catches `Exception`
+#   and swallows the `TypeError` the progress-tracker test asserts must
+#   propagate. FIX: test-local monkeypatch restores the real narrow HF subclass
+#   (from un-shimmed `huggingface_hub.errors`) onto `sys.modules["huggingface_
+#   hub.utils"]` for that one test; reverts on teardown. Prod unaffected (binds
+#   real subclass). 63/63 pass.
+# test_mirror_pull.py
 # RESCUED test_mlx_compat 2026-08-24 (round17, #617 fix): un-quarantined.
 #   ROOT CAUSE: (1) stale-flag drift — test checked `_rapid_mlx_compat_installed`
 #   (9 refs) but shim sets `_fusion_mlx_compat_installed` → repointed all 9.
