@@ -72,35 +72,57 @@ summary (or reading `SUMMARY_*.json`). The table below is updated when a
 fresh run lands — see the timestamp column.
 
 > Prompt 512 tok (expanded by tokenizer to ~700 tok), gen 128 tok,
-> temperature 0, top_p 1.0. Sorted by `tok/s` desc. `wall_seconds`
-> includes model load when the model was not already resident (cold
-> start). Run: `20260808-141511`, base_url `127.0.0.1:11434`, api-key
-> auth on. Raw: [`reports/SUMMARY_20260808-141511.json`](reports/SUMMARY_20260808-141511.json).
+> temperature 0, top_p 1.0. Sorted by `tok/s` desc. **Warm run** — the
+> server was already up and each model got a warmup request before the
+> timed body, so `wall_seconds` reflects steady-state serving (HTTP +
+> scheduler + tokenizer), not cold-start model load. Run:
+> `20260826-090744`, base_url `127.0.0.1:11434`, api-key auth on. Raw:
+> [`reports/SUMMARY_20260826-090744.json`](reports/SUMMARY_20260826-090744.json).
 
 | Model | tok/s | TTFT (s) | tokens | wall (s) |
 |-------|-------|----------|--------|----------|
-| Qwen3-0.6B-8bit | 168.1 | 0.435 | 137 | 0.81 |
-| Qwen3.5-4B-4bit | 80.7 | 0.751 | 128 | 1.59 |
-| Qwen3.5-9B-4bit | 52.8 | 1.223 | 128 | 2.43 |
-| gemma-4-26b-a4b-it-4bit | 41.8 | 2.694 | 128 | 3.06 |
-| Llama-3.2-1B-Instruct-4bit | 15.7 | 1.375 | 136 | 8.69 |
-| Meta-Llama-3.1-8B-Instruct-4bit | 7.6 | 4.440 | 128 | 16.80 |
-| Qwen3.6-27B-mxfp8 | 1.5 | 20.748 | 128 | 83.43 |
+| Llama-3.2-1B-Instruct-4bit | 203.6 | 0.350 | 128 | 0.63 |
+| Qwen3-0.6B-8bit | 124.8 | 0.325 | 135 | 1.08 |
+| Qwen3-0.6B-4bit | 91.7 | 0.462 | 129 | 1.41 |
+| Meta-Llama-3.1-8B-Instruct-4bit | 59.1 | 1.159 | 128 | 2.17 |
+| Qwen2.5-VL-7B-Instruct-4bit | 54.6 | 1.301 | 128 | 2.35 |
+| Qwen3.5-9B-4bit | 48.0 | 1.918 | 128 | 2.67 |
+| gemma-4-26b-a4b-it-4bit | 43.7 | 2.423 | 128 | 2.93 |
+| Qwen3.5-4B-bf16 | 37.5 | 1.791 | 128 | 3.42 |
+| Qwen3.8-27B-4bit | 14.9 | 3.619 | 128 | 8.58 |
+| Qwen2.5-Coder-32B-Instruct-4bit | 14.3 | 2.836 | 128 | 8.95 |
+| Qwen3.6-27B-mxfp8 | 8.3 | 4.124 | 128 | 15.38 |
 
-**Not run (model not downloaded locally)**: `deepseek-r1-7b-4bit`,
-`phi-4-4bit`, `minimax-m2.5-4bit` — aliases resolve but the MLX weights
-are not in `~/.fusion-mlx/models/`, so the server returned 404. Download
-via `hf-mirror.com` then re-run to fill these rows. Reported honestly,
-not skipped silently.
+**Coverage**: 11 text LLMs, all served successfully (0 errors). Models
+span 0.6B → 32B params across Qwen, Llama, Gemma families, covering
+4-bit / 8-bit / bf16 / mxfp8 / MoE (a4b) quant formats — the relevant
+range for Apple-Silicon MLX serving. Vision-language (Qwen2.5-VL-7B)
+included as a text-path datapoint; it speaks `/v1/chat/completions`
+text-only.
+
+**Not run (MLX weights not downloaded locally)**:
+`deepseek-r1-7b-4bit`, `phi-4-4bit`, `minimax-m2.5-4bit` — aliases
+resolve but the MLX weights are absent from `~/.fusion-mlx/models/`, so
+the server would 404. Download via `hf-mirror.com` then re-run to fill
+these rows. Reported honestly, not skipped silently.
 
 **Observations**:
-- Qwen3-0.6B-8bit warm (already loaded) hits 168 tok/s with 0.4s TTFT —
-  the steady-state small-model serving overhead is negligible.
-- Llama-3.2-1B and Meta-Llama-3.1-8B were cold-started (load included in
-  `wall_seconds`), hence the lower tok/s and higher TTFT; warm numbers
-  would be substantially higher.
-- Qwen3.6-27B-mxfp8: 1.5 tok/s, 20.7s TTFT — cold start on a 27B mxfp8
-  model loading into memory is the dominant cost; steady-state decode of
-  a 27B on this hardware is bounded by memory bandwidth.
-- gemma-4-26b (a4b, 26B active-4B MoE) at 41.8 tok/s decodes like a 4B
-  model, as expected for active-param MoE.
+- Llama-3.2-1B-4bit warm leads at 203.6 tok/s, 0.35s TTFT — steady-state
+  small-model serving overhead is negligible (HTTP+scheduler+tokenizer
+  add sub-second on a 1B model).
+- Qwen3.5-4B-bf16 (37.5) is slower than Qwen3.5-9B-4bit (48.0): the 4B
+  bf16 is 2× the byte width of the 9B 4-bit, so memory-bandwidth-bound
+  decode favors the quantized larger model on this hardware. Quant
+  format matters more than raw param count.
+- Meta-Llama-3.1-8B-4bit at 59.1 tok/s warm vs the prior cold-start
+  7.6 — the earlier run's wall included model load (16.8s). Warm
+  steady-state is ~8× the cold number; always warm up before the timed
+  body.
+- Qwen3.6-27B-mxfp8 (8.3 tok/s, 4.1s TTFT) and Qwen3.8-27B-4bit (14.9
+  tok/s): 27B decode is memory-bandwidth-bound; mxfp8's 8-bit path is
+  slower than the 4-bit path here (more bytes/token to move). TTFT on
+  both is dominated by prefill over the ~700-token prompt.
+- Qwen2.5-Coder-32B-4bit (14.3 tok/s) — the largest dense model in the
+  set; bandwidth-bound, tracks the 27B cluster as expected.
+- gemma-4-26b (a4b, 26B active-4B MoE) at 43.7 tok/s decodes like a ~4B
+  active model, as expected for active-param MoE.
