@@ -296,10 +296,12 @@ class ShardManager:
         top_p: float | None,
         return_logits: bool,
     ) -> dict:
-        import mlx.core as mx
-
         inner = model.model
+        # pipeline_step applies norm upstream; decode_step lands post-norm so
+        # the last shard must norm here before the lm_head projection.
         h = inner.norm(hidden)
+        # probe args (not hasattr) so QuantizedEmbedding exposes as_linear as
+        # the tied lm_head; a plain hasattr check would miss the quantized path.
         tie = bool(getattr(model.args, "tie_word_embeddings", False))
         if tie:
             logits = inner.embed_tokens.as_linear(h)
@@ -319,6 +321,8 @@ class ShardManager:
         sampled = sampler(logits)
         mx.eval(sampled)
         token_ids = [int(t) for t in sampled.reshape(-1).tolist()]
+        # return sampled shape/dtype (not logits) so callers see the emitted
+        # token's tensor shape even when return_logits is False.
         out: dict = {
             "token_ids": token_ids,
             "shape": list(sampled.shape),
@@ -443,7 +447,7 @@ class ShardManager:
             cache = [KVCache() for _ in range(len(layers))]
             shard["kv_cache"] = cache
             logger.info(
-                "distributed: decode_step lazy-init KV cache shard %s " "(%d layers)",
+                "distributed: decode_step lazy-init KV cache shard %s (%d layers)",
                 shard_id,
                 len(layers),
             )

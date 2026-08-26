@@ -332,7 +332,9 @@ class DecodeStepResponse(BaseModel):
     shape: list[int]
     dtype: str
     token_ids: list[int] | None = None
-    logits: list[list[float]] | None = None
+    logits: str | None = None
+    logits_shape: list[int] | None = None
+    logits_dtype: str | None = None
     kv_offset: int
 
 class ResetCacheRequest(BaseModel):
