@@ -74,20 +74,25 @@ def _get_engine_pool():
 def _resolve_model(model_id: str) -> str:
     """Resolve a model alias to its real model ID.
 
-    Delegates to the same resolve_model_id used by LLM/chat endpoints,
-    ensuring audio endpoints handle aliases consistently. Then applies
-    the #508 HuggingFace repo-id structural check to the resolved id so
-    malformed slash-bearing ids (``foo/bar/baz``, ``////``, ``.git``
-    suffix, over-length) 404 here instead of reaching the engine loader
-    and surfacing as an opaque 500.
+    Audio aliases (short names like ``kokoro`` -> ``mlx-community/Kokoro-82M-bf16``)
+    are consulted FIRST via the audio registry, so a colliding LLM alias in
+    ``model-config.json`` cannot shadow a TTS/STT alias to the wrong model
+    (regression guard for issue #660). Non-audio ids fall through to the same
+    ``resolve_model_id`` used by LLM/chat endpoints. Then the #508 HuggingFace
+    repo-id structural check 404s malformed slash-bearing ids
+    (``foo/bar/baz``, ``////``, ``.git`` suffix, over-length) here instead of
+    reaching the engine loader and surfacing as an opaque 500.
     """
+    from fusion_mlx.audio.registry import resolve_audio_alias
+    from fusion_mlx.routes_internal.audio import _validate_hf_repo_id_or_404
+
+    audio_entry = resolve_audio_alias(model_id)
+    if audio_entry is not None:
+        return _validate_hf_repo_id_or_404(audio_entry.hf_id, "audio")
+
     from fusion_mlx.server import resolve_model_id
 
     resolved = resolve_model_id(model_id) or model_id
-    # Reuse the shared structural validator from the audio route shim so
-    # the live route and the unit-tested resolvers stay in lockstep.
-    from fusion_mlx.routes_internal.audio import _validate_hf_repo_id_or_404
-
     return _validate_hf_repo_id_or_404(resolved, "audio")
 
 

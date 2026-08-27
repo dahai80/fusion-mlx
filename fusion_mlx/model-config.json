@@ -2,8 +2,7 @@
   "aliases": {
     "claude-4.6-sonnet": "Qwen3.6-27B-mxfp8",
     "ui-tars-7b-4bit": "UI-TARS-7B-DPO-4bit",
-    "flux-2": "flux2-klein-9b-4bit",
-    "kokoro": "Qwen3-TTS-12Hz-1.7B-Base-8bit"
+    "flux-2": "flux2-klein-9b-4bit"
   },
   "models": {
     "Qwen3.6-27B-mxfp8": {
