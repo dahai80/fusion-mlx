@@ -440,6 +440,26 @@ def test_wan2_unload_vae_frees_encoder(monkeypatch):
     assert "vae_encoder" not in backend._stage_flags
 
 
+def test_wan2_stop_clears_vae_encoder(monkeypatch):
+    backend = _make_wan2_backend_for_encode()
+    backend._loaded = True
+    backend._stage_vae_encoder = SimpleNamespace(encode=lambda x: x)
+    backend._stage_flags["vae_encoder"] = True
+    backend._embed_cache_lock = __import__("threading").Lock()
+    backend._embed_cache = {}
+
+    import mlx.core as mx
+
+    import fusion_mlx.engines.video_backends.wan2 as wan2_mod
+
+    monkeypatch.setattr(wan2_mod, "get_executor", lambda name: _InlineExecutor())
+    monkeypatch.setattr(mx, "synchronize", lambda: None)
+    monkeypatch.setattr(mx, "clear_cache", lambda: None)
+    asyncio.run(backend.stop())
+    assert backend._stage_vae_encoder is None
+    assert "vae_encoder" not in backend._stage_flags
+
+
 def test_video_engine_encode_delegates_to_backend():
     engine = VideoGenEngine.__new__(VideoGenEngine)
     captured = {"pixels": None}

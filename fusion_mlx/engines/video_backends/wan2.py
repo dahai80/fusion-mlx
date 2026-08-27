@@ -230,6 +230,7 @@ class Wan2Backend(VideoBackend):
         self._t5_config = None
         self._stage_dit_models = None
         self._stage_vae = None
+        self._stage_vae_encoder = None
         self._stage_config = None
         self._stage_quant = None
         self._stage_on_step = None
@@ -661,17 +662,14 @@ class Wan2Backend(VideoBackend):
         config = self._ensure_stage_config()
 
         ndim = pixels.ndim
-        if ndim == 5:
-            src = pixels[0]
-        elif ndim == 4:
-            src = pixels
-        else:
+        if ndim not in (4, 5):
             raise ValueError(
                 f"encode expects (T,H,W,3) or (1,T,H,W,3); got {tuple(pixels.shape)}"
             )
         vae_enc = self._stage_vae_encoder
 
         def _encode():
+            src = pixels[0] if ndim == 5 else pixels
             x = _pixels_thwc_to_ncthw(src)
             lat = encode_wan_vae(x, config, vae_enc)
             lat_5d = lat[None]
