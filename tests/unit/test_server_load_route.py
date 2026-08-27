@@ -91,7 +91,6 @@ def test_load_slash_id_real_server():
     import urllib.error
     import urllib.request
 
-    key = ""
     req = urllib.request.Request(
         "http://127.0.0.1:11434/v1/models/mlx-community/Llama-3.2-1B-Instruct-4bit/load",
         method="POST",
@@ -104,6 +103,6 @@ def test_load_slash_id_real_server():
             assert resp.status == 200
             assert body["status"] == "ok"
     except urllib.error.HTTPError as e:
-        assert (
-            "Model not found" in str(e.detail) or e.code == 200
+        assert "Model not found" in str(
+            e.detail
         ), f"route did not match: {e.code} {e.detail}"
