@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [0.8.41] - 2026-08-27
+
+Patch release — Hub↔MLX API contract alignment (#646) + client-disconnect metrics (#645).
 
 ### Changed
 - `POST /v1/models/{model_id}/load` and `/unload` now accept slash-bearing HF repo ids (e.g. `mlx-community/Llama-3.2`) via URL-encoding or raw slash; `/` in the id maps to the registered hyphen id (#646).
@@ -14,6 +16,8 @@
 
 ### Removed
 - Dead `_disconnect_guard` streaming wrapper, `_force_abort_request`, and always-no-op telemetry recorder stubs — 0 production callers; streaming routes handle disconnect inline (#645).
+
+## [Unreleased]
 
 ## [0.8.38] - 2026-08-25
 
