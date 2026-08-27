@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 import mlx.core as mx
@@ -349,6 +350,42 @@ def load_vae_decoder(model_path: Path, config=None):
     return vae
 
 
+def _has_encoder_keys(weights: dict) -> bool:
+    return any(k.startswith("encoder.") or k.startswith("conv1.") for k in weights)
+
+
+def _resolve_full_wan_vae(model_path: Path) -> Path | None:
+    # Some Wan2.1 T2V checkpoints ship a DECODER-ONLY vae.safetensors (111
+    # keys: decoder.*, conv2, mean, inv_std, std — no encoder.*). Loading
+    # that into WanVAE(encoder=True) with strict=False leaves ~59/197 encoder
+    # conv params at init, producing a degenerate latent (std ~0.19) that
+    # does not roundtrip through decode (corr ~-0.34). Fall back to a full
+    # VAE checkpoint (encoder+decoder) when the model-local file lacks
+    # encoder weights. See issue #670.
+    candidates = []
+    env_full = os.environ.get("FUSION_WAN_VAE_FULL")
+    if env_full:
+        candidates.append(Path(env_full))
+    candidates.append(
+        Path.home() / ".fusion-mlx/models/wan-vae/wan_2.1_vae.safetensors"
+    )
+    for cand in candidates:
+        if cand.exists():
+            try:
+                probe = _load_safetensors(cand)
+            except Exception:
+                continue
+            if _has_encoder_keys(probe):
+                logger.warning(
+                    "vae encoder: %s has no encoder.* keys; falling back to "
+                    "full VAE %s (issue #670)",
+                    model_path,
+                    cand,
+                )
+                return cand
+    return None
+
+
 def load_vae_encoder(model_path: Path, config=None):
     is_wan22 = config is not None and config.vae_z_dim != 16
     if config is not None and config.vae_z_dim == 16:
@@ -360,10 +397,22 @@ def load_vae_encoder(model_path: Path, config=None):
 
         vae = Wan22VAEEncoder(z_dim=config.vae_z_dim if config else 48)
 
-    weights = mx.load(str(model_path))
+    weights = _load_safetensors(model_path)
     if is_wan22:
         weights = sanitize_wan22_vae_weights(weights)
     else:
+        if not _has_encoder_keys(weights):
+            full = _resolve_full_wan_vae(model_path)
+            if full is None:
+                raise FileNotFoundError(
+                    f"vae encoder weights missing: {model_path} has no "
+                    f"encoder.* keys and no full VAE fallback found. Set "
+                    f"FUSION_WAN_VAE_FULL to a full Wan2.1 VAE safetensors "
+                    f"(encoder+decoder) or place one at "
+                    f"~/.fusion-mlx/models/wan-vae/wan_2.1_vae.safetensors "
+                    f"(issue #670)."
+                )
+            weights = _load_safetensors(full)
         weights = _transpose_conv2d_weights(weights)
     weights = {k: v.astype(mx.float32) for k, v in weights.items()}
     vae.load_weights(list(weights.items()), strict=False)
