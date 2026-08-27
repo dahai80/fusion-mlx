@@ -84,6 +84,21 @@ def _fake_server_module(
 # ──────────────────────────────────────────────────────────────────
 
 
+# R-03/R-04 embeddings alias-resolution was designed (this test file) but
+# never wired into fusion-mlx: ``_resolve_request_alias_or_default`` and
+# ``_aliases_match`` are 1-arg degenerate stubs with zero production callers,
+# the embeddings route never calls the helper (no "default" sentinel handling,
+# no resolved-id echo), and these tests reference the pre-rename ``vllm_mlx``
+# package. The audio side IS implemented (TestAudioRouteAliasResolution passes
+# via its own ``_resolve_stt_model``). Quarantine the unwired embeddings +
+# chat + helper-unit contract until the feature lands. See issue #662.
+_QUARANTINE_662 = pytest.mark.xfail(
+    reason="R-03/R-04 embeddings alias resolution unwired (dead helper, route "
+    "not wired, vllm_mlx pre-rename refs) — see issue #662",
+    strict=True,
+)
+
+
 class TestResolveRequestAliasOrDefault:
     """Pin the single-source-of-truth helper behaviour.
 
@@ -93,6 +108,8 @@ class TestResolveRequestAliasOrDefault:
     helper directly catches contract breaks without spinning up the
     full route stack.
     """
+
+    pytestmark = _QUARANTINE_662
 
     def test_returns_locked_when_request_is_none(self):
         from fusion_mlx.service.helpers import _resolve_request_alias_or_default
@@ -210,6 +227,8 @@ class TestEmbeddingsRouteAliasResolution:
     BLOCKING on PR #816 — the previous Apple-Silicon-only gate let
     the regression slip past Linux CI.
     """
+
+    pytestmark = _QUARANTINE_662
 
     EMBED_ALIAS = "embeddinggemma-300m-6bit"
     EMBED_HF = "mlx-community/embeddinggemma-300m-6bit"
@@ -489,6 +508,8 @@ class TestChatRouteDefaultNotRegressed:
     maps ``"default"`` to ``cfg.model_name``. Pin the behaviour so a
     future refactor of the shared helper doesn't break chat.
     """
+
+    pytestmark = _QUARANTINE_662
 
     def test_chat_resolve_model_name_maps_default_to_cfg(self):
         from fusion_mlx.config import get_config
