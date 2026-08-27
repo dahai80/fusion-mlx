@@ -48,7 +48,7 @@ from ..exceptions import (
 from ..middleware.auth import check_rate_limit, request_principal, verify_api_key
 from ..pool import EnginePool
 from ..request import SamplingParams
-from ..server_metrics import record_llm_metrics
+from ..server_metrics import record_llm_disconnect_cancel, record_llm_metrics
 from ..sessions import record_chat_session
 from ._guards import (
     check_chat_capability,
@@ -1381,6 +1381,7 @@ async def _stream_chat_generator(
 
     except asyncio.CancelledError:
         logger.info("Client disconnected during streaming: %s", request_id)
+        record_llm_disconnect_cancel()
         if engine:
             try:
                 _t = asyncio.create_task(engine.abort_request(request_id))
