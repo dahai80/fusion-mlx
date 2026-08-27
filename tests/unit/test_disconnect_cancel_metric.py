@@ -63,9 +63,7 @@ def test_record_llm_disconnect_cancel_swallows_errors(monkeypatch):
     def _boom():
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(
-        "fusion_mlx.server_metrics.get_server_metrics", lambda: _boom()
-    )
+    monkeypatch.setattr("fusion_mlx.server_metrics.get_server_metrics", lambda: _boom())
     # Must not raise even though get_server_metrics blows up.
     record_llm_disconnect_cancel()
 
@@ -132,4 +130,6 @@ def test_streaming_cancel_tick_is_wired_in_cancellederror_handler():
                 and sub.func.id == "record_llm_disconnect_cancel"
             ):
                 wired = True
-    assert wired, "record_llm_disconnect_cancel() must be called inside the streaming CancelledError handler"
+    assert (
+        wired
+    ), "record_llm_disconnect_cancel() must be called inside the streaming CancelledError handler"

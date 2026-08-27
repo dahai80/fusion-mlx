@@ -110,9 +110,7 @@ class ServerMetrics:
         with self._lock:
             self.cancelled_requests += 1
             at = self._alltime
-            at["total_cancelled_requests"] = (
-                at.get("total_cancelled_requests", 0) + 1
-            )
+            at["total_cancelled_requests"] = at.get("total_cancelled_requests", 0) + 1
             self._alltime_dirty = True
             now = time.monotonic()
             if now - self._alltime_last_save >= _ALLTIME_SAVE_INTERVAL:

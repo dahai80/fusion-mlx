@@ -238,7 +238,7 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         "FUSION_MLX_HARNESS_PROFILES_FILTER",
         # F-070 SSE keepalive interval (seconds, float). Mapped to
         # ``ServerConfig.sse_keepalive_seconds`` and consumed by
-        # ``_disconnect_guard`` to emit ``: keepalive\n\n`` SSE comments
+        # ``SSEKeepalive`` to emit ``: keepalive\n\n`` SSE comments
         # while the upstream generator is silent (prevents EventSource /
         # nginx / Cloudflare idle-timeouts on long prefills). 0 disables.
         # Pure connection-keepalive knob — never selects a model, parser,
