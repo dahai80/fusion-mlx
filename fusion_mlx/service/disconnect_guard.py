@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Disconnect detection and force-abort for streaming routes."""
+"""Non-stream request disconnect detection with cancel-metric tick."""
 
 from __future__ import annotations
 

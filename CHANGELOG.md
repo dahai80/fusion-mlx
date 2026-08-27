@@ -10,6 +10,10 @@
 ### Added
 - `source_path` accepted as an alias for `model` on `POST /v1/quantize` (#646).
 - `POST /v1/quantize/layered` and its job-status routes now mounted (were written but unreachable) (#646).
+- `fusion_mlx_requests_cancelled_total` Prometheus counter for client-disconnected requests, ticked from the live streaming and `/v1/responses` non-stream disconnect handlers (#645).
+
+### Removed
+- Dead `_disconnect_guard` streaming wrapper, `_force_abort_request`, and always-no-op telemetry recorder stubs — 0 production callers; streaming routes handle disconnect inline (#645).
 
 ## [0.8.38] - 2026-08-25
 
