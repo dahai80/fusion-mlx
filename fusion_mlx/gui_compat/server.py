@@ -66,6 +66,15 @@ async def _resolve_pool_model(model_name: str) -> dict | None:
         return None
     resolved = resolve_model_id(model_name)
     entry = srv.pool.get_entry(resolved)
+    if entry is None and "/" in resolved:
+        hyphen = resolved.replace("/", "-")
+        hyphen_entry = srv.pool.get_entry(hyphen)
+        if hyphen_entry is not None:
+            logger.debug(
+                "load fallback: slash->hyphen resolve %s -> %s", resolved, hyphen
+            )
+            resolved = hyphen
+            entry = hyphen_entry
     if entry is None:
         return None
     if getattr(entry, "engine", None) is not None:
@@ -101,6 +110,15 @@ async def _unload_pool_model(model_name: str) -> bool | None:
         return None
     resolved = resolve_model_id(model_name)
     entry = srv.pool.get_entry(resolved)
+    if entry is None and "/" in resolved:
+        hyphen = resolved.replace("/", "-")
+        hyphen_entry = srv.pool.get_entry(hyphen)
+        if hyphen_entry is not None:
+            logger.debug(
+                "unload fallback: slash->hyphen resolve %s -> %s", resolved, hyphen
+            )
+            resolved = hyphen
+            entry = hyphen_entry
     if entry is None:
         return None
     if getattr(entry, "engine", None) is None:
