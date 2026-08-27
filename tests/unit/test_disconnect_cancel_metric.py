@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 
 import pytest
@@ -81,3 +82,21 @@ def test_metrics_renders_cancelled_total():
     # Global singleton — assert the delta lands in the rendered value, not an
     # absolute number (other tests may have bumped the counter).
     assert f"fusion_mlx_requests_cancelled_total {before + 1}" in body
+
+
+@pytest.mark.asyncio
+async def test_wait_with_disconnect_ticks_counter_on_disconnect():
+    from fusion_mlx.service.disconnect_guard import _wait_with_disconnect
+
+    class _Disconnects:
+        async def is_disconnected(self) -> bool:
+            return True
+
+    async def _noop():
+        await asyncio.sleep(10)
+
+    sm = get_server_metrics()
+    before = sm.cancelled_requests
+    result = await _wait_with_disconnect(_noop(), _Disconnects(), timeout=5.0)
+    assert result is None
+    assert sm.cancelled_requests == before + 1

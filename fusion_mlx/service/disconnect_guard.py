@@ -347,6 +347,12 @@ async def _wait_with_disconnect(
                 f"[disconnect_guard] CLIENT DISCONNECTED (non-stream) "
                 f"elapsed={_time.monotonic() - _t0:.1f}s"
             )
+            try:
+                from ..server_metrics import record_llm_disconnect_cancel
+
+                record_llm_disconnect_cancel()
+            except Exception:
+                logger.debug("disconnect cancel metric tick failed", exc_info=True)
             task.cancel()
             try:
                 await task
