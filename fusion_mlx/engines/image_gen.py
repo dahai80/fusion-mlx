@@ -858,13 +858,21 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 f"decode expects unpacked latent (batch,c,h,w); got {tuple(latent.shape)}"
             )
 
+        # Materialize the latent on the caller's (event-loop) stream before
+        # dispatching to the worker. A latent built on the main thread (test
+        # fakes, or a caller that constructed it off the worker) is bound to
+        # this thread's GPU stream; the image worker has its own stream and
+        # cannot touch a lazy graph referencing the caller's stream
+        # (RuntimeError "no Stream(gpu, N) in current thread"). Same
+        # caller-eval-then-dispatch pattern as encode()'s numpy bridge.
+        mx.eval(latent)
+
         def _decode():
             result = flux.vae.decode_packed_latents(latent)
-            # Materialize on the worker's own stream before returning: a lazy
-            # array stays bound to this thread's GPU stream, and a caller on
-            # another thread (event loop / fusion-comfyui) touching it aborts
-            # with "There is no Stream(gpu, N) in current thread". Same
-            # cross-thread stream fix as encode()'s mx.eval(encoded).
+            # Materialize the output on the worker's own stream before
+            # returning: a lazy decode graph stays bound to this thread's
+            # GPU stream, and a caller on another thread (event loop /
+            # fusion-comfyui) touching it aborts with the same stream error.
             mx.eval(result)
             return result
 
@@ -882,6 +890,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 f"decode_tiled expects unpacked latent (batch,c,h,w); got {tuple(latent.shape)}"
             )
         tiling_config = getattr(flux, "tiling_config", None)
+
+        mx.eval(latent)
 
         def _decode():
             result = flux.vae.decode_packed_latents(latent, tiling_config=tiling_config)
