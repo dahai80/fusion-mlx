@@ -276,3 +276,31 @@ def test_video_backend_default_stage_methods_not_implemented():
         asyncio.run(b.decode(mx.zeros((1, 8, 4, 4))))
     with pytest.raises(NotImplementedError, match="issue #170 phase 2"):
         asyncio.run(b.denoise(mx.zeros((1, 8, 4, 4)), None, None, 3, 1.0, 0, 16))
+
+
+def test_video_encode_not_implemented_base():
+    # Backends without an encode override must raise the stage-API default,
+    # matching every other unimplemented VideoBackend stage method.
+    class _StubBackend(VideoBackend):
+        name = "stub"
+
+        @classmethod
+        def detect(cls, model_path):
+            return False
+
+        async def start(self, model_path, **kwargs):
+            pass
+
+        async def stop(self):
+            pass
+
+        async def generate(self, params):
+            return []
+
+        def constraints(self):
+            from fusion_mlx.engines.video_backends.base import VideoConstraints
+
+            return VideoConstraints()
+
+    with pytest.raises(NotImplementedError, match="stage API not implemented"):
+        asyncio.run(_StubBackend().encode(mx.zeros((1, 1, 8, 8, 3))))

@@ -216,6 +216,11 @@ class VideoBackend(ABC):
             f"{self.name} stage API not implemented (issue #170 phase 2)"
         )
 
+    async def encode(self, pixels: mx.array) -> mx.array:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
+
     async def unload_vae(self) -> None:
         raise NotImplementedError(
             f"{self.name} stage API not implemented (issue #170 phase 2)"
