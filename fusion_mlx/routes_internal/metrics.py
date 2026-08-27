@@ -9,6 +9,7 @@ from fastapi.responses import PlainTextResponse
 from .._version import __version__
 from ..api import response_format_metrics
 from ..middleware.auth import verify_management_access
+from ..server_metrics import get_server_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -278,10 +279,22 @@ def _render_response_cache_metrics() -> list[str]:
     return lines
 
 
+def _render_disconnect_metrics() -> list[str]:
+    sm = get_server_metrics().to_dict()
+    return _fmt_metric(
+        "fusion_mlx_requests_cancelled_total",
+        "counter",
+        "Client-disconnected requests (streaming + non-stream)",
+        sm["cancelled_requests"],
+        None,
+    )
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
     lines.extend(_render_engine_metrics())
+    lines.extend(_render_disconnect_metrics())
     lines.extend(_render_pool_metrics())
     lines.extend(_render_kv_cache_dtype_gauge())
     lines.extend(_render_response_format_metrics())

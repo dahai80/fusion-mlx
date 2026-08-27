@@ -67,3 +67,17 @@ def test_record_llm_disconnect_cancel_swallows_errors(monkeypatch):
     )
     # Must not raise even though get_server_metrics blows up.
     record_llm_disconnect_cancel()
+
+
+def test_metrics_renders_cancelled_total():
+    from fusion_mlx.routes_internal.metrics import render_prometheus_metrics
+
+    sm = get_server_metrics()
+    before = sm.cancelled_requests
+    sm.record_disconnect_cancel()
+    body = render_prometheus_metrics()
+    assert "# TYPE fusion_mlx_requests_cancelled_total counter" in body
+    assert "# HELP fusion_mlx_requests_cancelled_total" in body
+    # Global singleton — assert the delta lands in the rendered value, not an
+    # absolute number (other tests may have bumped the counter).
+    assert f"fusion_mlx_requests_cancelled_total {before + 1}" in body
