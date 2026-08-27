@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 import pytest
@@ -181,3 +182,40 @@ def test_invalid_quant_bits_rejected(client):
 def test_invalid_quant_mode_rejected(client):
     r = client.post("/v1/convert", json={"model": "test/repo", "quant_mode": "bogus"})
     assert r.status_code == 422
+
+
+def test_quantize_request_accepts_source_path_alias():
+    from fusion_mlx.api.convert_models import QuantizeRequest
+
+    req = QuantizeRequest(
+        source_path="mlx-community/Llama-3.2-1B-Instruct-4bit",
+        output_path=os.path.expanduser("~/.fusion-mlx/models/out"),
+        quant_bits=4,
+    )
+    assert req.model == "mlx-community/Llama-3.2-1B-Instruct-4bit"
+    assert req.quant_bits == 4
+
+
+def test_quantize_request_model_key_unchanged():
+    from fusion_mlx.api.convert_models import QuantizeRequest
+
+    req = QuantizeRequest(
+        model="some-model",
+        output_path=os.path.expanduser("~/.fusion-mlx/models/out"),
+        quant_bits=4,
+    )
+    assert req.model == "some-model"
+
+
+def test_quantize_request_source_path_respects_output_path_constraint():
+    import pytest
+    from pydantic import ValidationError
+
+    from fusion_mlx.api.convert_models import QuantizeRequest
+
+    with pytest.raises(ValidationError):
+        QuantizeRequest(
+            source_path="mlx-community/Foo-4bit",
+            output_path="/etc/passwd",  # outside allowed dirs
+            quant_bits=4,
+        )
