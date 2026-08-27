@@ -467,7 +467,7 @@ def get_gui_compat_router() -> APIRouter:
             "metadata": m.get_metadata(),
         }
 
-    @router.post("/v1/models/{model_name}/load")
+    @router.post("/v1/models/{model_name:path}/load")
     async def load_model(
         model_name: str,
         priority: int = 0,
@@ -511,7 +511,7 @@ def get_gui_compat_router() -> APIRouter:
             logger.error(f"Load error {model_name}: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
-    @router.post("/v1/models/{model_name}/unload")
+    @router.post("/v1/models/{model_name:path}/unload")
     async def unload_model(
         model_name: str,
         db: Session = Depends(get_db_session),
