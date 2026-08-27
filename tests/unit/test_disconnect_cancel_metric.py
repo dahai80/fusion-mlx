@@ -100,3 +100,36 @@ async def test_wait_with_disconnect_ticks_counter_on_disconnect():
     result = await _wait_with_disconnect(_noop(), _Disconnects(), timeout=5.0)
     assert result is None
     assert sm.cancelled_requests == before + 1
+
+
+def test_streaming_cancel_tick_is_wired_in_cancellederror_handler():
+    """AST-verify the streaming CancelledError handler calls the cancel-counter
+    tick. A real mid-stream TestClient cancel is fragile across Starlette/uvicorn
+    versions (the CancelledError path depends on live ASGI disconnect), so this
+    pins the wiring deterministically instead of asserting behavior through a
+    brittle harness. If the tick call is removed or moved out of the handler,
+    this test fails — which is exactly the regression that matters."""
+    import ast
+    from pathlib import Path
+
+    src = Path("fusion_mlx/api/openai_routes.py").read_text()
+    tree = ast.parse(src)
+    wired = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ExceptHandler):
+            continue
+        exc = node.type
+        if exc is None:
+            continue
+        # Match `asyncio.CancelledError` or bare `CancelledError`.
+        name = exc.id if isinstance(exc, ast.Name) else getattr(exc, "attr", None)
+        if name != "CancelledError":
+            continue
+        for sub in ast.walk(node):
+            if (
+                isinstance(sub, ast.Call)
+                and isinstance(sub.func, ast.Name)
+                and sub.func.id == "record_llm_disconnect_cancel"
+            ):
+                wired = True
+    assert wired, "record_llm_disconnect_cancel() must be called inside the streaming CancelledError handler"
