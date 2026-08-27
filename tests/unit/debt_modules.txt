@@ -561,26 +561,6 @@ test_benchmark.py
 # (protocol unit tests + auth-rejection tests expecting 401) unaffected. No global-state
 # leak (cleanup verified _api_key→"" post-suite; test_admin_auth.py co-run 86 pass 0 fail).
 # test_cache_routes.py  (RESCUED — commented out = un-quarantined = collected)
-# KEEP_QUARANTINED (eval round10f 2026-08-19): 31 tests, full unimplemented
-# C-01 disconnect-attribution + M-01 cancel-metric feature. Pins:
-# (1) Scheduler cancel counters num_requests_cancelled /
-#     num_requests_cancelled_via_disconnect in get_stats (sched_step.py get_stats
-#     has NEITHER key — only num_waiting/running/processed/prompt/completion/
-#     gpu_contention). (2) record_disconnect_abort ledger dedupe
-#     (_cancelled_request_ids / _disconnect_abort_ids lifetime ledgers, reset
-#     semantics) — 0 of this in scheduler/. (3) _resolve_disconnect_abort_recorder
-#     (engine) arg-form + force_abort bumps disconnect subcounter (prod is
-#     no-arg global; _force_abort_request swallows + returns bool, no record call).
-# (4) Route: rapid_mlx_requests_cancelled_total /
-#     rapid_mlx_requests_cancelled_via_disconnect_total Prometheus counters in
-#     /metrics (routes_internal/metrics.py has ZERO cancel refs — series never
-#     rendered, not even graceful-degrade zero). 4 route tests claim "render zero
-#     when keys missing" but assert series PRESENT at 0 — prod omits entirely.
-# Same C-01 cluster as test_disconnect_counter_prod_shape.py + 5 xfail in
-# test_disconnect_guard_aborts_scheduler.py. Real feature gap, NOT harness drift.
-# Would need: scheduler counters + ledger + recorder(engine) seam + route series.
-# Leave quarantined; candidate for C-01 feature port, not inline test-debt rescue.
-test_cancelled_requests_metric.py
 # KEEP_QUARANTINED (eval b20 2026-08-19, issue #531): R12-T2F-276 casual-chat
 # thinking auto-disable helper family not ported to fusion_mlx + test harness
 # stale vs prod convergence point. 40 cases across 6 contracts. Gaps:
@@ -910,37 +890,6 @@ test_dflash_spec_decode.py
 # Prod fusion_mlx/patches/mlx_vlm_diffusion.py:32 already try/except-guards
 # missing module (graceful return False). Test-only, no prod change.
 # test_diffusion_engine.py
-# KEEP_QUARANTINED: pins unimplemented C-01 disconnect-attribution METRICS +
-# deep-path resolver. 8/8 fail. Missing prod: helpers re-export of
-# _resolve_sync_scheduler_for_abort / _resolve_disconnect_abort_recorder(engine) /
-# _record_disconnect_abort_on_scheduler; _unresolved_engine_logged/_unresolved_engine_lock
-# dedupe ledger + WARNING fragments; Scheduler.record_disconnect_abort method;
-# get_stats keys num_requests_cancelled + num_requests_cancelled_via_disconnect;
-# lifetime ledgers _cancelled_request_ids/_disconnect_abort_ids; 2-hop resolver
-# engine._engine.engine.scheduler (current only checks engine.scheduler).
-# _resolve_disconnect_abort_recorder() is no-arg global in prod, test wants (engine).
-# Whole feature is dead code anyway (_disconnect_guard has 0 prod callers, no route
-# passes request_id_holder) so the metrics never tick. Implementing = real prod
-# feature dev, not test-debt rescue. Eval 2026-08-19. Tracked in #645 (wire vs remove).
-test_disconnect_counter_prod_shape.py
-# KEEP_QUARANTINED: imports ``_run_with_disconnect_guard`` from
-# fusion_mlx.server — a symbol that exists in NEITHER fusion-mlx nor
-# Rapid-MLX under that name (rapid-mlx has ``_disconnect_guard`` only).
-# Dead-symbol / deep drift; fusion-mlx handles client disconnect inline in
-# the streaming route (openai_routes.py:1140) with no guard-wrapper API.
-# Don't fabricate a _run_with_disconnect_guard to satisfy a test whose
-# target symbol never shipped.
-test_disconnect_guard.py
-# test_disconnect_guard_aborts_scheduler.py (RESCUED 2026-08-19: 7 pass + 5 xfail
-# strict. Fixes: (1) re-exported _force_abort_request from disconnect_guard via
-# service/helpers.py to match the _disconnect_guard/_wait_with_disconnect sibling
-# re-export convention (test imports it from helpers); (2) fixed stale import
-# path engine.batched -> engines.batched (CLI-extraction drift). 5 xfail pin
-# UNIMPLEMENTED C-01 multi-backend disconnect-abort: _resolve_sync_scheduler_for_abort
-# only checks engine.scheduler (no inner _engine.scheduler walk, no _is_mllm
-# _mllm_scheduler dual-path gating), and stream_generate does not publish into a
-# request_id_holder — _disconnect_guard force-abort is dead code in production
-# (no route passes request_id_holder). Aspirational, not harness drift.)
 # test_disk_space_check.py RESCUED 2026-08-19 (8 pass): re-pointed import
 # fusion_mlx.cli→fusion_mlx.cli_serve (CLI-extraction drift — _check_disk_space
 # lives at cli_serve.py:308, cli.py only imports _add_pflash_args/bench_command/
