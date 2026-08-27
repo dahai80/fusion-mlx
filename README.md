@@ -1139,6 +1139,14 @@ This applies to **every serve path**: single-model (`serve <model>`), audio (`se
 
 `--rate-limit N` caps requests per minute per client (default `0` = disabled). `--rate-limit 0` explicitly disables the limiter; a positive value enables it. #635 fixed `--rate-limit 0` leaving the limiter active at its 60 rpm default on the `serve <model>` and `serve --model-dir` paths.
 
+### Metrics
+
+The `/metrics` endpoint exposes Prometheus-format series (requires `verify_management_access` — see Access policy below). Request counters:
+
+- **`fusion_mlx_requests_total`** — total processed requests.
+- **`fusion_mlx_requests_cancelled_total`** — client-disconnected requests, ticked from the live streaming `CancelledError` handler and the `/v1/responses` non-stream disconnect-wait (#645).
+- **`fusion_mlx_prompt_tokens_total`** / **`fusion_mlx_completion_tokens_total`** — token throughput.
+
 ### Access policy
 
 - **Route guard (#343):** routed requests should carry `X-Fusion-Route: gateway` so the server knows they came through the gateway. Exempt paths: `/`, `/health`, `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`, `/favicon.ico`, and `OPTIONS` preflight. Enforce is the default since v0.7.0 (#349): un-routed traffic is rejected with `403`. Set `FUSION_ROUTE_WARN_ONLY=true` to restore warn-only behavior for standalone use. The header is routing provenance only - it does **not** authenticate a caller (any client can set it). For cross-host deployments where the gateway is on a different machine, set `FUSION_ROUTE_TOKEN` (#352) to upgrade `X-Fusion-Route` from spoofable provenance to a shared-secret credential: its value must equal the token, else `403 invalid_route_token`.
