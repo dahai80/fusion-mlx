@@ -85,6 +85,7 @@ class ServerMetrics:
     total_tokens_prompt: int = 0
     total_cached_tokens: int = 0
     active_requests: int = 0
+    cancelled_requests: int = 0
     # Per-model stats: model_name -> dict
     model_stats: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -104,6 +105,20 @@ class ServerMetrics:
     def update_active_requests(self, delta: int) -> None:
         with self._lock:
             self.active_requests += delta
+
+    def record_disconnect_cancel(self) -> None:
+        with self._lock:
+            self.cancelled_requests += 1
+            at = self._alltime
+            at["total_cancelled_requests"] = (
+                at.get("total_cancelled_requests", 0) + 1
+            )
+            self._alltime_dirty = True
+            now = time.monotonic()
+            if now - self._alltime_last_save >= _ALLTIME_SAVE_INTERVAL:
+                _save_alltime_to_disk(self._alltime)
+                self._alltime_dirty = False
+                self._alltime_last_save = now
 
     def record_request_complete(
         self,
@@ -190,6 +205,7 @@ class ServerMetrics:
             self.total_tokens_prompt = 0
             self.total_cached_tokens = 0
             self.active_requests = 0
+            self.cancelled_requests = 0
             self.model_stats.clear()
 
     def clear_alltime_metrics(self) -> None:
@@ -233,6 +249,7 @@ class ServerMetrics:
                 )
         return {
             "total_requests": at.get("total_requests", 0),
+            "total_cancelled_requests": at.get("total_cancelled_requests", 0),
             "total_prompt_tokens": total_prompt,
             "total_completion_tokens": total_gen,
             "total_tokens_served": total_gen,
@@ -272,6 +289,7 @@ class ServerMetrics:
             "total_cached_tokens": total_cached,
             "cache_efficiency": total_cached / max(1, total_prompt),
             "active_requests": self.active_requests,
+            "cancelled_requests": self.cancelled_requests,
             "model_stats": self.model_stats,
             "avg_prefill_tps": avg_prefill,
             "avg_generation_tps": avg_gen,
@@ -307,3 +325,10 @@ def record_llm_metrics(
         )
     except Exception as exc:
         logger.debug("Failed to record LLM metrics for %s: %s", model_id, exc)
+
+
+def record_llm_disconnect_cancel() -> None:
+    try:
+        get_server_metrics().record_disconnect_cancel()
+    except Exception as exc:
+        logger.debug("Failed to record disconnect cancel: %s", exc)
