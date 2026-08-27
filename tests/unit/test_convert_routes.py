@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 
 import pytest
@@ -41,7 +42,7 @@ def _wait(client, kind, job_id, timeout=5.0):
         r = client.get(f"/v1/{kind}/jobs/{job_id}")
         assert r.status_code == 200, r.text
         job = r.json()
-        if job["status"] in ("done", "failed"):
+        if job["status"] in ("completed", "failed"):
             return job
         time.sleep(0.02)
     raise AssertionError(f"job {job_id} did not finish within {timeout}s")
@@ -65,7 +66,7 @@ def test_convert_creates_job_and_completes(client, monkeypatch):
     assert "job_id" in body
 
     job = _wait(client, "convert", body["job_id"])
-    assert job["status"] == "done"
+    assert job["status"] == "completed"
     assert job["progress"] == 1.0
     assert job["output_path"]
     assert job["error"] is None
@@ -116,7 +117,7 @@ def test_quantize_with_bits_accepted(client, monkeypatch):
     r = client.post("/v1/quantize", json={"model": "test/repo", "quant_bits": 4})
     assert r.status_code == 200, r.text
     job = _wait(client, "quantize", r.json()["job_id"])
-    assert job["status"] == "done"
+    assert job["status"] == "completed"
     assert job["kind"] == "quantize"
     assert captured["quantize"] is True
 
@@ -126,7 +127,7 @@ def test_quantize_float_mode_accepted_without_bits(client, monkeypatch):
     r = client.post("/v1/quantize", json={"model": "test/repo", "quant_mode": "nvfp4"})
     assert r.status_code == 200, r.text
     job = _wait(client, "quantize", r.json()["job_id"])
-    assert job["status"] == "done"
+    assert job["status"] == "completed"
 
 
 def test_job_failure_recorded(client, monkeypatch):
@@ -181,3 +182,40 @@ def test_invalid_quant_bits_rejected(client):
 def test_invalid_quant_mode_rejected(client):
     r = client.post("/v1/convert", json={"model": "test/repo", "quant_mode": "bogus"})
     assert r.status_code == 422
+
+
+def test_quantize_request_accepts_source_path_alias():
+    from fusion_mlx.api.convert_models import QuantizeRequest
+
+    req = QuantizeRequest(
+        source_path="mlx-community/Llama-3.2-1B-Instruct-4bit",
+        output_path=os.path.expanduser("~/.fusion-mlx/models/out"),
+        quant_bits=4,
+    )
+    assert req.model == "mlx-community/Llama-3.2-1B-Instruct-4bit"
+    assert req.quant_bits == 4
+
+
+def test_quantize_request_model_key_unchanged():
+    from fusion_mlx.api.convert_models import QuantizeRequest
+
+    req = QuantizeRequest(
+        model="some-model",
+        output_path=os.path.expanduser("~/.fusion-mlx/models/out"),
+        quant_bits=4,
+    )
+    assert req.model == "some-model"
+
+
+def test_quantize_request_source_path_respects_output_path_constraint():
+    import pytest
+    from pydantic import ValidationError
+
+    from fusion_mlx.api.convert_models import QuantizeRequest
+
+    with pytest.raises(ValidationError):
+        QuantizeRequest(
+            source_path="mlx-community/Foo-4bit",
+            output_path="/etc/passwd",  # outside allowed dirs
+            quant_bits=4,
+        )

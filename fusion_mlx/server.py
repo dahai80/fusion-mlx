@@ -37,6 +37,7 @@ from .api.convert_routes import router as convert_router
 from .api.distributed_routes import router as distributed_router
 from .api.images import router as images_router
 from .api.images import set_images_context
+from .api.layered_quantize_routes import router as layered_quantize_router
 from .api.mcp_routes import router as mcp_router
 from .api.mcp_routes import set_mcp_manager_getter
 from .exceptions import (
@@ -920,6 +921,7 @@ class Server:
         app.include_router(openclaw_router)
         app.include_router(agent_router)
         app.include_router(convert_router)
+        app.include_router(layered_quantize_router)
         app.include_router(distributed_router)
         app.include_router(recommend_router)
         app.include_router(spec_router)
@@ -1023,7 +1025,7 @@ class Server:
         async def api_stats_alltime():
             return get_server_metrics().to_alltime_dict()
 
-        @app.post("/v1/models/{model_id}/load")
+        @app.post("/v1/models/{model_id:path}/load")
         async def load_model_public(
             model_id: str,
             is_admin: bool = Depends(require_admin),
@@ -1033,6 +1035,15 @@ class Server:
                 raise HTTPException(status_code=503, detail="Server not initialized")
             resolved = resolve_model_id(model_id)
             entry = self.pool.get_entry(resolved)
+            if entry is None and "/" in resolved:
+                hyphen = resolved.replace("/", "-")
+                hyphen_entry = self.pool.get_entry(hyphen)
+                if hyphen_entry is not None:
+                    logger.debug(
+                        "load: slash->hyphen resolve %s -> %s", resolved, hyphen
+                    )
+                    resolved = hyphen
+                    entry = hyphen_entry
             if entry is None:
                 raise HTTPException(
                     status_code=404, detail=f"Model not found: {model_id}"
@@ -1064,7 +1075,7 @@ class Server:
                 "message": f"Loaded {model_id}",
             }
 
-        @app.post("/v1/models/{model_id}/unload")
+        @app.post("/v1/models/{model_id:path}/unload")
         async def unload_model_public(
             model_id: str,
             is_admin: bool = Depends(require_admin),
@@ -1074,6 +1085,15 @@ class Server:
                 raise HTTPException(status_code=503, detail="Server not initialized")
             resolved = resolve_model_id(model_id)
             entry = self.pool.get_entry(resolved)
+            if entry is None and "/" in resolved:
+                hyphen = resolved.replace("/", "-")
+                hyphen_entry = self.pool.get_entry(hyphen)
+                if hyphen_entry is not None:
+                    logger.debug(
+                        "unload: slash->hyphen resolve %s -> %s", resolved, hyphen
+                    )
+                    resolved = hyphen
+                    entry = hyphen_entry
             if entry is None:
                 raise HTTPException(
                     status_code=404, detail=f"Model not found: {model_id}"

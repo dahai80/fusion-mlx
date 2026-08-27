@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,14 @@ class ConvertRequest(_ConvertBase):
 
 
 class QuantizeRequest(_ConvertBase):
-    pass
+    source_path: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_source_path(cls, data):
+        if isinstance(data, dict) and "model" not in data and data.get("source_path"):
+            data["model"] = data.pop("source_path")
+        return data
 
 
 class MergeAdapterRequest(BaseModel):

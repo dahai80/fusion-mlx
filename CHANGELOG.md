@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- `POST /v1/models/{model_id}/load` and `/unload` now accept slash-bearing HF repo ids (e.g. `mlx-community/Llama-3.2`) via URL-encoding or raw slash; `/` in the id maps to the registered hyphen id (#646).
+- Quantize job terminal status changed from `done` to `completed` (#646).
+- gui_compat pool fallbacks (`_resolve_pool_model`/`_unload_pool_model`) now apply the same slash→hyphen resolve as the main load/unload handler, so slash-bearing ids resolve against the pool when the gui router shadows the main route (#646).
+
+### Added
+- `source_path` accepted as an alias for `model` on `POST /v1/quantize` (#646).
+- `POST /v1/quantize/layered` and its job-status routes now mounted (were written but unreachable) (#646).
+
 ## [0.8.38] - 2026-08-25
 
 Patch release — HTTP auth infrastructure fix.
