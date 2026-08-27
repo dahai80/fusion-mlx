@@ -304,3 +304,152 @@ def test_video_encode_not_implemented_base():
 
     with pytest.raises(NotImplementedError, match="stage API not implemented"):
         asyncio.run(_StubBackend().encode(mx.zeros((1, 1, 8, 8, 3))))
+
+
+def test_encode_wan_vae_returns_4d_latent():
+    from fusion_mlx.video.wan2.stage import encode_wan_vae
+
+    fake_vae = SimpleNamespace(encode=lambda x: mx.zeros((16, 3, 8, 16)))
+    config = {"vae_z_dim": 16}
+    out = encode_wan_vae(mx.zeros((1, 3, 7, 512, 512)), config, fake_vae)
+    assert out.shape == (16, 3, 8, 16)
+
+
+def _make_wan2_backend_for_encode():
+    from fusion_mlx.engines.video_backends.wan2 import Wan2Backend
+
+    backend = Wan2Backend.__new__(Wan2Backend)
+    backend.name = "wan2"
+    backend._stage_vae_encoder = None
+    backend._stage_flags = {"text_encoder": False, "dit": False, "vae": False}
+    backend._stage_config = {"vae_z_dim": 16}
+    backend._model_dir = "/fake/wan2"
+    backend._stage_quant = None
+    return backend
+
+
+class _InlineExecutor:
+    # run_in_executor(ex, fn) runs fn on the calling (main) thread so mx.eval
+    # finds the MLX stream the test process owns. The real video worker thread
+    # has no stream without a loaded model — the executor path is exercised by
+    # the Tier 3 real-model roundtrip, not these unit tests. asyncio's
+    # run_in_executor needs a concurrent.futures.Future; submit returns one
+    # already-resolved with the inline result.
+    def submit(self, fn, *args, **kwargs):
+        import concurrent.futures
+
+        fut = concurrent.futures.Future()
+        try:
+            fut.set_result(fn(*args, **kwargs))
+        except Exception as exc:
+            fut.set_exception(exc)
+        return fut
+
+
+def _patch_video_executor(monkeypatch):
+    import fusion_mlx.engines.video_backends.wan2 as wan2_mod
+
+    monkeypatch.setattr(
+        wan2_mod, "get_executor", lambda name: _InlineExecutor(), raising=False
+    )
+
+
+def test_wan2_encode_lazy_loads_encoder(monkeypatch):
+    backend = _make_wan2_backend_for_encode()
+    fake_vae = SimpleNamespace(encode=lambda x: mx.zeros((16, 3, 8, 16)))
+    loaded = {"calls": 0}
+
+    async def fake_load(self):
+        loaded["calls"] += 1
+        self._stage_vae_encoder = fake_vae
+        self._stage_flags["vae_encoder"] = True
+
+    monkeypatch.setattr(
+        "fusion_mlx.engines.video_backends.wan2.Wan2Backend._load_vae_encoder_stage",
+        fake_load,
+    )
+    monkeypatch.setattr(
+        "fusion_mlx.engines.video_backends.wan2.Wan2Backend._ensure_stage_config",
+        lambda self: self._stage_config,
+    )
+    _patch_video_executor(monkeypatch)
+    out = asyncio.run(backend.encode(mx.zeros((1, 7, 512, 512, 3))))
+    assert loaded["calls"] == 1
+    assert backend._stage_vae_encoder is fake_vae
+    assert out.shape == (1, 16, 3, 8, 16)
+
+
+def test_wan2_encode_shape(monkeypatch):
+    backend = _make_wan2_backend_for_encode()
+    backend._stage_vae_encoder = SimpleNamespace(
+        encode=lambda x: mx.zeros((16, 3, 8, 16))
+    )
+    monkeypatch.setattr(
+        "fusion_mlx.engines.video_backends.wan2.Wan2Backend._ensure_stage_config",
+        lambda self: self._stage_config,
+    )
+    _patch_video_executor(monkeypatch)
+    out = asyncio.run(backend.encode(mx.zeros((1, 7, 512, 512, 3))))
+    assert out.ndim == 5
+    assert out.shape == (1, 16, 3, 8, 16)
+
+
+def test_wan2_encode_layout(monkeypatch):
+    backend = _make_wan2_backend_for_encode()
+    captured = {}
+
+    class _FakeVae:
+        def encode(self, x):
+            captured["x"] = x
+            return mx.zeros((16, 3, 8, 16))
+
+    backend._stage_vae_encoder = _FakeVae()
+    monkeypatch.setattr(
+        "fusion_mlx.engines.video_backends.wan2.Wan2Backend._ensure_stage_config",
+        lambda self: self._stage_config,
+    )
+    _patch_video_executor(monkeypatch)
+    asyncio.run(backend.encode(mx.zeros((1, 7, 512, 512, 3))))
+    assert captured["x"].shape == (1, 3, 7, 512, 512)
+
+
+def test_wan2_encode_ndim_guard(monkeypatch):
+    backend = _make_wan2_backend_for_encode()
+    backend._stage_vae_encoder = SimpleNamespace(encode=lambda x: x)
+    monkeypatch.setattr(
+        "fusion_mlx.engines.video_backends.wan2.Wan2Backend._ensure_stage_config",
+        lambda self: self._stage_config,
+    )
+    with pytest.raises(ValueError, match="encode expects"):
+        asyncio.run(backend.encode(mx.zeros((512, 512, 3))))
+
+
+def test_wan2_unload_vae_frees_encoder(monkeypatch):
+    backend = _make_wan2_backend_for_encode()
+    backend._stage_vae_encoder = SimpleNamespace(encode=lambda x: x)
+    backend._stage_flags["vae_encoder"] = True
+
+    async def fake_clear():
+        pass
+
+    monkeypatch.setattr(
+        "fusion_mlx.engines.video_backends.wan2._clear_mlx_cache", fake_clear
+    )
+    asyncio.run(backend.unload_vae())
+    assert backend._stage_vae_encoder is None
+    assert "vae_encoder" not in backend._stage_flags
+
+
+def test_video_engine_encode_delegates_to_backend():
+    engine = VideoGenEngine.__new__(VideoGenEngine)
+    captured = {"pixels": None}
+
+    class _FakeBackend:
+        async def encode(self, pixels):
+            captured["pixels"] = pixels
+            return mx.zeros((1, 16, 3, 8, 16))
+
+    engine._backend = _FakeBackend()
+    out = asyncio.run(engine.encode(mx.zeros((1, 7, 512, 512, 3))))
+    assert out.shape == (1, 16, 3, 8, 16)
+    assert captured["pixels"] is not None

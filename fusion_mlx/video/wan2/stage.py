@@ -502,3 +502,15 @@ def decode_wan_vae(latent, config, vae, tiling_config=None):
         video = np.clip(video * 255.0, 0, 255).astype(np.uint8)
         video = video.transpose(1, 2, 3, 0)
     return video
+
+
+def encode_wan_vae(x_ncthw, config, vae_encoder):
+    # VAE encode — inverse of decode_wan_vae. Input is NCTHW (1,3,T,H,W)
+    # float32 on the video executor thread. Returns raw 4D latent
+    # (z_dim, t_lat, h_lat, w_lat) from vae_encoder.encode. Caller
+    # (Wan2Backend.encode) wraps to 5D + materializes.
+    logger.info("stage VAE encode wan2 in_shape=%s", tuple(x_ncthw.shape))
+    mx.eval(x_ncthw)
+    lat = vae_encoder.encode(x_ncthw)
+    mx.eval(lat)
+    return lat

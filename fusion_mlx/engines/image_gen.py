@@ -887,6 +887,41 @@ class ImageGenEngine(BaseNonStreamingEngine):
         )
         return result
 
+    async def encode(self, pixels: mx.array) -> mx.array:
+        flux = self._require_flux()
+        if flux.vae is None:
+            raise RuntimeError("vae is unloaded; call load_vae().")
+        if pixels.ndim != 4:
+            raise ValueError(f"encode expects (1,H,W,3); got {tuple(pixels.shape)}")
+        if pixels.shape[1] % 16 != 0 or pixels.shape[2] % 16 != 0:
+            raise ValueError(
+                f"encode expects H,W divisible by 16 (vae_scale*patch); got {tuple(pixels.shape)}"
+            )
+
+        def _encode():
+            from mflux.models.common.vae.vae_util import VAEUtil
+            from mflux.models.flux2.latent_creator.flux2_latent_creator import (
+                Flux2LatentCreator,
+            )
+            from mflux.models.flux2.variants.edit.flux2_klein_edit_helpers import (
+                _Flux2KleinEditHelpers,
+            )
+
+            encoded = VAEUtil.encode(flux.vae, pixels)
+            encoded = _Flux2KleinEditHelpers.ensure_4d_latents(encoded)
+            encoded = _Flux2KleinEditHelpers.crop_to_even_spatial(encoded)
+            encoded = Flux2LatentCreator.patchify_latents(encoded)
+            encoded = _Flux2KleinEditHelpers.bn_normalize_vae_encoded_latents(
+                encoded, vae=flux.vae
+            )
+            mx.eval(encoded)
+            return encoded
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(get_executor("image"), _encode)
+        logger.info("stage:vae encode img out_shape=%s", tuple(result.shape))
+        return result
+
     async def unload_vae(self) -> None:
         flux = self._require_flux()
         flux.vae = None
