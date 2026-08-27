@@ -110,6 +110,8 @@ async def list_models(is_admin: bool = Depends(require_admin)):
                 else None
             ),
             "pinned": model_info.get("pinned", False),
+            "in_use": model_info.get("in_use", 0),
+            "ttl_seconds": model_info.get("ttl_seconds"),
             "is_default": (
                 server_state.get("default_model") == model_id if server_state else False
             ),

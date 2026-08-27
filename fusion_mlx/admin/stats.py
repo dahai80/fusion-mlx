@@ -664,6 +664,8 @@ def _build_active_models_data() -> dict:
                     else None
                 ),
                 "pinned": model_info.get("pinned", False),
+                "in_use": model_info.get("in_use", 0),
+                "ttl_seconds": effective_ttl,
                 "is_loading": model_info.get("is_loading", False),
                 "loading_elapsed_seconds": loading_elapsed_seconds,
                 "loading_estimated_seconds": loading_estimated_seconds,
