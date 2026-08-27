@@ -461,9 +461,9 @@ def decode_wan_vae(latent, config, vae, tiling_config=None):
     # round-trips through the event-loop main thread; MLX Metal streams are
     # thread-local, so a still-lazy array (or a slice built off-thread) raises
     # "There is no Stream(gpu, N) in current thread" at the decode-side
-    # mx.eval. Evaluating here on the decode thread makes it concrete and
-    # portable. The caller (wan2.py decode()) already slices on this thread,
-    # so the latent is local; this eval is the materialization guarantee.
+    # mx.eval. The caller (Wan2Backend.decode) eval's the array on the
+    # caller's thread BEFORE dispatching here, which materializes the data
+    # and detaches stream affinity so this eval is portable.
     mx.eval(latent)
     is_wan22_vae = config.vae_z_dim == 48
     if is_wan22_vae:
@@ -508,7 +508,9 @@ def encode_wan_vae(x_ncthw, config, vae_encoder):
     # VAE encode — inverse of decode_wan_vae. Input is NCTHW (1,3,T,H,W)
     # float32 on the video executor thread. Returns raw 4D latent
     # (z_dim, t_lat, h_lat, w_lat) from vae_encoder.encode. Caller
-    # (Wan2Backend.encode) wraps to 5D + materializes.
+    # (Wan2Backend.encode) wraps to 5D + materializes. The caller eval's the
+    # input on the caller's thread before dispatching so this eval is
+    # portable across thread-local MLX streams (see decode_wan_vae).
     logger.info("stage VAE encode wan2 in_shape=%s", tuple(x_ncthw.shape))
     mx.eval(x_ncthw)
     lat = vae_encoder.encode(x_ncthw)
