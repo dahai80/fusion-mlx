@@ -1,4 +1,5 @@
 from fusion_mlx.api.images import ImageGenerateRequest
+from fusion_mlx.audio.registry import resolve_audio_alias
 from fusion_mlx.config import DEFAULT_ALIASES
 from fusion_mlx.server import resolve_model_id
 
@@ -59,14 +60,17 @@ class TestImageAliasResolution:
     def test_flux2_alias_registered(self):
         assert DEFAULT_ALIASES.get("flux-2") == "flux2-klein-9b-4bit"
 
-    def test_kokoro_alias_registered(self):
-        assert DEFAULT_ALIASES.get("kokoro") == "Qwen3-TTS-12Hz-1.7B-Base-8bit"
+    def test_kokoro_not_in_llm_alias_table(self):
+        assert DEFAULT_ALIASES.get("kokoro") is None
 
     def test_resolve_flux2_alias(self):
         assert resolve_model_id("flux-2") == "flux2-klein-9b-4bit"
 
-    def test_resolve_kokoro_alias(self):
-        assert resolve_model_id("kokoro") == "Qwen3-TTS-12Hz-1.7B-Base-8bit"
+    def test_resolve_kokoro_via_audio_registry(self):
+        entry = resolve_audio_alias("kokoro")
+        assert entry is not None
+        assert entry.hf_id == "mlx-community/Kokoro-82M-bf16"
+        assert resolve_model_id("kokoro") == "kokoro"
 
     def test_existing_alias_unchanged(self):
         assert resolve_model_id("claude-4.6-sonnet") == "Qwen3.6-27B-mxfp8"
