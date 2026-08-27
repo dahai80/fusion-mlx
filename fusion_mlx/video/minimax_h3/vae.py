@@ -143,8 +143,10 @@ class CausalConv3d(nn.Module):
         st, sh, sw = self.stride
         t_out = (t - kt) // st + 1
 
-        # 权重 PyTorch [O,I,D,H,W] -> [O,kh,kw,kt*c_in] (di outer, ci inner)
-        w_2d = self.weight.transpose(0, 3, 4, 2, 1).reshape(
+        # 权重 [O,kt,kh,kw,c_in] -> [O,kh,kw,kt,c_in] -> reshape [O,kh,kw,kt*c_in]
+        # window 为 [B,H,W,kt,c_in]（见下方 transpose(0,2,3,1,4)），权重须同序：
+        # kt 外、c_in 内。原 transpose(0,3,4,2,1) 错排通道，致编码器 forward 全错。
+        w_2d = self.weight.transpose(0, 2, 3, 1, 4).reshape(
             self.weight.shape[0], kh, kw, kt * c_in
         )
         outputs = []

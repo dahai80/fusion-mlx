@@ -266,12 +266,37 @@ def generate_t2va_av(
 
 _H3_KEYFRAME_NOISE_AUG = 0.999
 
+# 条件帧 VAE encode seed（对照 diffusers keyframe_encode_seed=42，
+# modular_pipeline.py:278-284：固定 seed 使同一 keyframe 总编到同一锚）。
+_H3_KEYFRAME_ENCODE_SEED = 42
+
+
+def encode_vae_condition(vae, pixels, encode_seed=_H3_KEYFRAME_ENCODE_SEED):
+    # 条件帧 → VAE encode → 采样后归一化 latent（对照 diffusers
+    # encoders.py:102-136 encode_vae_condition）。
+    #   1. 像素 ImageNet 归一化：(x/255 - mean)/std（vae.NORM_*）。
+    #   2. VAE encode → DiagonalGaussianDistribution.sample()，用固定 seed
+    #      使同一 keyframe 总编到同一锚（不随请求 seed 漂移）。
+    #   3. 采样 latent round 到 fp16 再回 fp32（~11 bit，匹配 reference）。
+    # 旧实现直接喂 raw [0,1] 给 encode_base，漏掉 ImageNet 归一化 →
+    # moments 尺度偏 → 条件行幅度错 → DiT 注意力被污染 → 输出花屏/灰（#657）。
+    from .vae import DiagonalGaussianDistribution, _normalize_pixel
+
+    x = _normalize_pixel(pixels.astype(mx.float32))  # ImageNet 归一化
+    moments = vae.encode(x)
+    # 固定 seed 采样：同一 keyframe 总编到同一锚（对照 diffusers
+    # keyframe_encode_seed=42，独立于请求 seed 的 fresh generator）。
+    mx.random.seed(int(encode_seed))
+    z = DiagonalGaussianDistribution(moments).sample()
+    z = z.astype(mx.float16).astype(mx.float32)  # fp16 round-trip
+    return z
+
 
 def _load_image_to_latent(image_path, vae, target_h, target_w, vae_ratio, z_channels):
-    # 条件帧 → VAE encode → latent (1, z, 1, h, w)。
+    # 条件帧 → encode_vae_condition → latent (1, z, 1, h, w)。
     # 对照 diffusers before_denoise.py:949-954：image VisualVAE encode → moments →
     # DiagonalGaussianDistribution.sample() → latent z，patchify 前加噪。
-    # process_image=True：单图 (H,W,3) → (1,3,1,H,W)（5D）直接 encode。
+    # 单图 (H,W,3) → (1,3,1,H,W)（5D）→ encode_vae_condition（含 ImageNet 归一化）。
     import numpy as np
     from PIL import Image
 
@@ -288,7 +313,7 @@ def _load_image_to_latent(image_path, vae, target_h, target_w, vae_ratio, z_chan
     arr = np.array(img, dtype=np.float32) / 255.0  # (H,W,3) [0,1]
     arr = np.transpose(arr, (2, 0, 1))  # (3,H,W)
     x = mx.array(arr).reshape(1, 3, 1, target_h, target_w)  # (1,3,1,H,W)
-    z = vae.encode_base(x, process_image=True)  # (1, z, 1, h, w) latent
+    z = encode_vae_condition(vae, x)  # (1, z, 1, h, w) latent
     return z
 
 
