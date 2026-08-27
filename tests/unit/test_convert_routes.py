@@ -42,7 +42,7 @@ def _wait(client, kind, job_id, timeout=5.0):
         r = client.get(f"/v1/{kind}/jobs/{job_id}")
         assert r.status_code == 200, r.text
         job = r.json()
-        if job["status"] in ("done", "failed"):
+        if job["status"] in ("completed", "failed"):
             return job
         time.sleep(0.02)
     raise AssertionError(f"job {job_id} did not finish within {timeout}s")
@@ -66,7 +66,7 @@ def test_convert_creates_job_and_completes(client, monkeypatch):
     assert "job_id" in body
 
     job = _wait(client, "convert", body["job_id"])
-    assert job["status"] == "done"
+    assert job["status"] == "completed"
     assert job["progress"] == 1.0
     assert job["output_path"]
     assert job["error"] is None
@@ -117,7 +117,7 @@ def test_quantize_with_bits_accepted(client, monkeypatch):
     r = client.post("/v1/quantize", json={"model": "test/repo", "quant_bits": 4})
     assert r.status_code == 200, r.text
     job = _wait(client, "quantize", r.json()["job_id"])
-    assert job["status"] == "done"
+    assert job["status"] == "completed"
     assert job["kind"] == "quantize"
     assert captured["quantize"] is True
 
@@ -127,7 +127,7 @@ def test_quantize_float_mode_accepted_without_bits(client, monkeypatch):
     r = client.post("/v1/quantize", json={"model": "test/repo", "quant_mode": "nvfp4"})
     assert r.status_code == 200, r.text
     job = _wait(client, "quantize", r.json()["job_id"])
-    assert job["status"] == "done"
+    assert job["status"] == "completed"
 
 
 def test_job_failure_recorded(client, monkeypatch):

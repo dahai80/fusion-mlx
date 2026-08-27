@@ -95,7 +95,7 @@ def _run_job(job: dict[str, Any], req: ConvertRequest | QuantizeRequest) -> None
         # mlx-lm's convert() exposes no stable progress callback, so progress is
         # coarse: 0.1 (running) -> 1.0 (done|failed). Do not fake intermediate values.
         out = _run_convert(model, **kwargs)
-        _set(job, status="done", progress=1.0, output_path=out)
+        _set(job, status="completed", progress=1.0, output_path=out)
         logger.info("convert job %s done: output=%s", job["job_id"], out)
     except Exception as exc:
         _set(job, status="failed", progress=1.0, error=str(exc))

@@ -174,7 +174,7 @@ def _run_layered_quantize(job: dict[str, Any], req: LayeredQuantizeRequest) -> N
                 )
 
         out = _run_convert(model, **kwargs)
-        _set_layered(job, status="done", progress=1.0, output_path=out)
+        _set_layered(job, status="completed", progress=1.0, output_path=out)
         logger.info("layered-quantize job %s done: output=%s", job["job_id"], out)
     except Exception as exc:
         _set_layered(job, status="failed", progress=1.0, error=str(exc))
