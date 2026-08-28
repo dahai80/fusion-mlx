@@ -354,6 +354,84 @@ full-model-length; `kv_offset` reads `cache[start].offset` (the shard's first
 layer), NOT `cache[0]` — for a shard whose range starts >0, `cache[0]` is an
 unused empty cache.
 
+### `POST /distributed/kv_cache/export` (#650)
+
+Serialize a shard's live KV-cache tensors (the `mx.array` key/value states)
+to base64 `.npy` so a peer node can import them and resume decode from this
+prefix without recomputing (#650 — upstream prerequisite for fusion-multi-node
+P3-28 cross-node KV migration). Mirrors the b64-`.npy` transport already used
+by `pipeline_step` activations.
+
+Request:
+```json
+{
+  "shard_id": "shard-...",
+  "layer_range": null
+}
+```
+
+- `layer_range` — optional `[start, end)` subset, clamped to the shard's own
+  slice; `null` exports the whole shard slice.
+
+Response:
+```json
+{
+  "shard_id": "shard-...",
+  "layers": [
+    { "layer": 0, "keys": "<base64 .npy>", "values": "<base64 .npy>",
+      "shape": [1, 8, 12, 64], "dtype": "mlx.core.float32" }
+  ],
+  "seq_len": 12
+}
+```
+
+- `layers[i].keys` / `.values` — base64 `.npy` of the KV tensors for layer `i`,
+  trimmed to the cached length (shape `[B, n_kv_heads, seq_len, head_dim]`).
+- `seq_len` — the cache length (`cache[start].offset`), the number of cached
+  tokens the destination will resume from.
+
+**Errors.** `400` if the shard has no active KV cache (no `decode_step` prefill
+yet) or `seq_len == 0`; `400` if `layer_range` is malformed or outside the
+shard's slice; `404` for an unknown `shard_id`. Oversized payloads hit the
+`_MAX_ACTIVATION_BYTES` ceiling (256 MiB default, env
+`FUSION_DIST_MAX_ACTIVATION_BYTES`).
+
+### `POST /distributed/kv_cache/import` (#650)
+
+Restore previously-exported KV tensors into a loaded model's KV cache on the
+destination node, then continue `decode_step` as if the prefix had been
+computed locally. Lazy-inits the full-model-length cache list (same as
+`decode_step`) if none exists.
+
+Request:
+```json
+{
+  "shard_id": "shard-...",
+  "layers": [
+    { "layer": 0, "keys": "<base64 .npy>", "values": "<base64 .npy>",
+      "shape": [1, 8, 12, 64], "dtype": "mlx.core.float32" }
+  ],
+  "seq_len": 12
+}
+```
+
+Response:
+```json
+{ "shard_id": "shard-...", "imported_layers": 16, "seq_len": 12 }
+```
+
+- Writes each layer's keys/values via `cache[layer].state = (k, v)` (sets
+  `.offset = seq_len`).
+- **Errors.** `400` if any layer is outside the shard's slice, if a layer's
+  tensor length `!= seq_len`, or if the offset check fails after import;
+  `400` on empty `layers`; `404` for unknown `shard_id`.
+
+**Migration flow.** Node A: `load_shard` → `decode_step` (prefill) →
+`kv_cache/export`. Node B: `load_shard` → `kv_cache/import` → `decode_step`
+(single-token) → token matches A's local decode. The scheduler (downstream
+`fusion-multi-nodes`) wires `sync_kv_cache` to transport these tensors; this
+endpoint is the upstream primitive.
+
 ### `POST /distributed/sync_weights`
 
 Hot-update a shard's weights (LoRA swap, adapter, weight sync).

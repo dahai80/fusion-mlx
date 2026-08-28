@@ -518,6 +518,130 @@ class ShardManager:
         )
         return {"shard_id": shard_id, "kv_cleared": True, "prev_offset": prev}
 
+    def export_kv_cache(
+        self, shard_id: str, layer_range: list[int] | None = None
+    ) -> dict:
+        # Serialize a shard's live KV-cache tensors (the mx.array key/value
+        # states) to base64 .npy so a peer node can import them and resume
+        # decode from this prefix without recomputing (#650). Mirrors the
+        # b64-.npy transport already used by pipeline_step activations.
+        # layer_range clamps to [start,end) of the shard's own slice; None
+        # exports the whole shard slice. Fail visibly on an empty cache (no
+        # active generation to migrate).
+        shard = self._get_shard(shard_id)
+        start, end = shard["layer_range"]
+        cache = shard["kv_cache"]
+        if cache is None:
+            raise ShardError(
+                f"export_kv_cache: shard {shard_id} has no active KV cache — "
+                "prefill first"
+            )
+
+        if layer_range is not None:
+            if len(layer_range) != 2:
+                raise ShardError("layer_range must be [start, end) or null")
+            lo, hi = int(layer_range[0]), int(layer_range[1])
+            if lo < start or hi > end or hi <= lo:
+                raise ShardError(
+                    f"layer_range [{lo},{hi}) outside shard slice [{start},{end})"
+                )
+            layers_iter = range(lo, hi)
+        else:
+            lo, hi = start, end
+            layers_iter = range(start, end)
+
+        seq_len = int(cache[start].offset)
+        if seq_len == 0:
+            raise ShardError(
+                f"export_kv_cache: shard {shard_id} KV offset is 0 — no tokens cached"
+            )
+
+        layers_out = []
+        for i in layers_iter:
+            k, v = cache[i].state  # trimmed-to-offset (B,nh,seq,hd)
+            layers_out.append(
+                {
+                    "layer": i,
+                    "keys": serialize_activation(k),
+                    "values": serialize_activation(v),
+                    "shape": list(k.shape),
+                    "dtype": str(k.dtype),
+                }
+            )
+        logger.info(
+            "distributed: exported KV cache shard %s layers [%d,%d) seq_len=%d",
+            shard_id,
+            lo,
+            hi,
+            seq_len,
+        )
+        return {"shard_id": shard_id, "layers": layers_out, "seq_len": seq_len}
+
+    def import_kv_cache(self, shard_id: str, layers: list[dict], seq_len: int) -> dict:
+        # Restore KV-cache tensors previously exported by export_kv_cache onto
+        # a loaded model's KV cache (#650). Lazy-inits the full-model-length
+        # cache list (same as decode_step) if none exists. Each entry's
+        # keys/values are deserialized and written via cache[i].state = (k, v),
+        # which also sets offset = k.shape[2]. Fails visibly on offset mismatch
+        # (corrupt/inconsistent import) or a layer outside the shard's slice.
+        from mlx_lm.models.cache import KVCache
+
+        shard = self._get_shard(shard_id)
+        start, end = shard["layer_range"]
+        total = shard["num_layers"]
+
+        cache = shard["kv_cache"]
+        if cache is None:
+            cache = [KVCache() for _ in range(total)]
+            shard["kv_cache"] = cache
+            logger.info(
+                "distributed: import_kv_cache lazy-init KV cache shard %s "
+                "(%d layers)",
+                shard_id,
+                total,
+            )
+
+        if not layers:
+            raise ShardError("import_kv_cache: empty layers payload")
+
+        imported = 0
+        imported_layers: list[int] = []
+        for entry in layers:
+            li = int(entry["layer"])
+            if li < start or li >= end:
+                raise ShardError(
+                    f"import_kv_cache: layer {li} outside shard slice [{start},{end})"
+                )
+            k = deserialize_activation(entry["keys"])
+            v = deserialize_activation(entry["values"])
+            if k.shape[2] != seq_len or v.shape[2] != seq_len:
+                raise ShardError(
+                    f"import_kv_cache: layer {li} cache len {k.shape[2]} "
+                    f"!= seq_len {seq_len}"
+                )
+            cache[li].state = (k, v)  # setter sets keys/values + offset
+            imported += 1
+            imported_layers.append(li)
+
+        # Verify every imported layer landed at seq_len.
+        for li in imported_layers:
+            if int(cache[li].offset) != seq_len:
+                raise ShardError(
+                    f"import_kv_cache: layer {li} offset {cache[li].offset} "
+                    f"!= seq_len {seq_len} after import"
+                )
+        logger.info(
+            "distributed: imported KV cache shard %s %d layers seq_len=%d",
+            shard_id,
+            imported,
+            seq_len,
+        )
+        return {
+            "shard_id": shard_id,
+            "imported_layers": imported,
+            "seq_len": seq_len,
+        }
+
     def sync_weights(
         self, shard_id: str, weights_b64: str | None, manifest: dict | None
     ) -> dict:

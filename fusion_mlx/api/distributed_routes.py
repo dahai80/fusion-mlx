@@ -174,6 +174,39 @@ class DropShardResponse(BaseModel):
     dropped: bool
 
 
+class KVCacheLayer(BaseModel):
+    layer: int = Field(..., description="layer index within the model")
+    keys: str = Field(..., description="base64 .npy of the KV keys tensor")
+    values: str = Field(..., description="base64 .npy of the KV values tensor")
+    shape: list[int] = Field(..., description="keys tensor shape")
+    dtype: str = Field(..., description="keys tensor mlx dtype")
+
+
+class KVCacheExportRequest(BaseModel):
+    shard_id: str
+    layer_range: list[int] | None = Field(
+        None, description="optional [start, end) subset; null = whole shard slice"
+    )
+
+
+class KVCacheExportResponse(BaseModel):
+    shard_id: str
+    layers: list[KVCacheLayer]
+    seq_len: int = Field(..., description="number of cached tokens (cache offset)")
+
+
+class KVCacheImportRequest(BaseModel):
+    shard_id: str
+    layers: list[KVCacheLayer]
+    seq_len: int = Field(..., description="number of cached tokens to restore")
+
+
+class KVCacheImportResponse(BaseModel):
+    shard_id: str
+    imported_layers: int
+    seq_len: int
+
+
 def _shard_error_response(exc: ShardError):
     # 400 for caller errors (bad range / payload), 404 for unknown shard,
     # 502 for model-load failure. Kept here so the route handlers stay flat.
@@ -267,6 +300,32 @@ async def reset_cache(
     except ShardError as exc:
         _shard_error_response(exc)
     return ResetCacheResponse(**out)
+
+
+@router.post("/kv_cache/export", response_model=KVCacheExportResponse)
+async def export_kv_cache(
+    req: KVCacheExportRequest,
+    _auth: bool = Depends(verify_api_key),
+) -> KVCacheExportResponse:
+    try:
+        out = get_manager().export_kv_cache(req.shard_id, req.layer_range)
+    except ShardError as exc:
+        _shard_error_response(exc)
+    return KVCacheExportResponse(**out)
+
+
+@router.post("/kv_cache/import", response_model=KVCacheImportResponse)
+async def import_kv_cache(
+    req: KVCacheImportRequest,
+    _auth: bool = Depends(verify_api_key),
+) -> KVCacheImportResponse:
+    try:
+        out = get_manager().import_kv_cache(
+            req.shard_id, [l.model_dump() for l in req.layers], req.seq_len
+        )
+    except ShardError as exc:
+        _shard_error_response(exc)
+    return KVCacheImportResponse(**out)
 
 
 @router.post("/sync_weights", response_model=SyncWeightsResponse)
