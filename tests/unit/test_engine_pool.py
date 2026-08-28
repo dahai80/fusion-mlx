@@ -344,6 +344,83 @@ class TestEnginePoolStatus:
         assert model_a_status["pinned"] is True
         assert model_a_status["loaded"] is False
 
+    def test_get_status_exposes_in_use_and_ttl(self, small_mock_model_dir):
+        """#647: get_status surfaces lease refcount (in_use) + TTL config."""
+        pool = _make_pool(ceiling=10 * 1024**3)
+        pool.discover_models(str(small_mock_model_dir), pinned_models=["model-a"])
+
+        status = pool.get_status()
+
+        # Top-level TTL block present with the two contract keys.
+        assert "ttl" in status
+        assert set(status["ttl"].keys()) == {
+            "global_idle_timeout_seconds",
+            "suppress_ttl",
+        }
+        # No enforcer wired in this standalone pool -> global idle is None,
+        # and TTL suppression defaults off.
+        assert status["ttl"]["global_idle_timeout_seconds"] is None
+        assert status["ttl"]["suppress_ttl"] is False
+
+        # Per-model: in_use refcount + effective ttl_seconds present.
+        model_a_status = next(m for m in status["models"] if m["id"] == "model-a")
+        assert model_a_status["in_use"] == 0
+        # No settings manager wired -> per-model TTL falls back to None.
+        assert model_a_status["ttl_seconds"] is None
+
+    def test_get_status_ttl_resolves_per_model_then_global(self):
+        """#647: effective ttl_seconds uses per-model setting then global fallback."""
+        pool = _make_pool(ceiling=10 * 1024**3)
+
+        # Stub a settings manager returning a per-model ttl_seconds.
+        class _Settings:
+            def __init__(self, ttl):
+                self.ttl_seconds = ttl
+
+        class _Manager:
+            def __init__(self, mapping):
+                self._mapping = mapping
+
+            def get_settings(self, model_id):
+                return self._mapping.get(model_id)
+
+        pool._settings_manager = _Manager({"model-x": _Settings(120)})
+
+        # Build an entry manually so get_status has a model to report.
+        entry = EngineEntry(
+            model_id="model-x",
+            model_path="/fake/model-x",
+            engine_type="batched",
+            model_type="llm",
+            estimated_size=0,
+        )
+        pool._entries["model-x"] = entry
+
+        status = pool.get_status()
+        model_x = next(m for m in status["models"] if m["id"] == "model-x")
+        assert model_x["ttl_seconds"] == 120
+
+        # Global fallback: a model with no per-model TTL but an enforcer
+        # exposing a global idle timeout.
+        class _Enforcer:
+            def get_global_idle_timeout_seconds(self):
+                return 300
+
+        pool._process_memory_enforcer = _Enforcer()
+        entry2 = EngineEntry(
+            model_id="model-y",
+            model_path="/fake/model-y",
+            engine_type="batched",
+            model_type="llm",
+            estimated_size=0,
+        )
+        pool._entries["model-y"] = entry2
+
+        status = pool.get_status()
+        assert status["ttl"]["global_idle_timeout_seconds"] == 300
+        model_y = next(m for m in status["models"] if m["id"] == "model-y")
+        assert model_y["ttl_seconds"] == 300
+
     def test_get_model_ids(self, small_mock_model_dir):
         """Test get_model_ids returns all model IDs."""
         pool = _make_pool(ceiling=10 * 1024**3)
@@ -1423,7 +1500,7 @@ class TestEnginePoolPrefillEviction:
         pool.unload_engine_async.assert_not_awaited()
 
 
-class TestEnginePoolStatus:
+class TestGetStatusLoadingField:
     """Tests for get_status is_loading field."""
 
     def test_get_status_includes_is_loading(self, small_mock_model_dir):

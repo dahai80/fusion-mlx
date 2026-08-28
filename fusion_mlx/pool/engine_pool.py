@@ -2423,6 +2423,32 @@ class EnginePool:
 
         logger.info("Engine pool shutdown complete")
 
+    def _global_idle_timeout_seconds(self) -> int | None:
+        enforcer = getattr(self, "_process_memory_enforcer", None)
+        getter = getattr(enforcer, "get_global_idle_timeout_seconds", None)
+        if callable(getter):
+            try:
+                return getter()
+            except Exception as e:
+                logger.warning("get_global_idle_timeout_seconds failed: %s", e)
+        return None
+
+    def _resolve_effective_ttl(self, model_id: str) -> int | None:
+        if self._settings_manager is None:
+            return None
+        get_settings = getattr(self._settings_manager, "get_settings", None)
+        if not callable(get_settings):
+            return None
+        try:
+            settings = get_settings(model_id)
+        except Exception as e:
+            logger.warning("get_settings(%s) failed: %s", model_id, e)
+            return None
+        per_model = getattr(settings, "ttl_seconds", None)
+        if per_model is not None:
+            return per_model
+        return self._global_idle_timeout_seconds()
+
     def get_status(self) -> dict:
         """
         Get pool status for monitoring endpoints.
@@ -2439,6 +2465,10 @@ class EnginePool:
             ),
             "load_seconds_per_gb_estimate": self._load_seconds_per_gb_ema,
             "load_time_observations": self._load_time_observations,
+            "ttl": {
+                "global_idle_timeout_seconds": self._global_idle_timeout_seconds(),
+                "suppress_ttl": self._suppress_ttl,
+            },
             "models": [
                 {
                     "id": mid,
@@ -2449,6 +2479,8 @@ class EnginePool:
                     "estimated_size": e.estimated_size,
                     "actual_size": e.actual_size,
                     "pinned": e.is_pinned,
+                    "in_use": e.in_use,
+                    "ttl_seconds": self._resolve_effective_ttl(mid),
                     "engine_type": e.engine_type,
                     "model_type": e.model_type,
                     "config_model_type": e.config_model_type,

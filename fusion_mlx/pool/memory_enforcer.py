@@ -1074,17 +1074,18 @@ class ProcessMemoryEnforcer:
             return self._loaded_idle_poll_interval
         return self._unloaded_idle_poll_interval
 
+    def get_global_idle_timeout_seconds(self) -> int | None:
+        if self._global_settings is None:
+            return None
+        return getattr(self._global_settings.idle_timeout, "idle_timeout_seconds", None)
+
     async def _check_ttl(self) -> None:
         """Check and unload models that exceeded their TTL."""
         if self._settings_manager is None:
             return
         await self._engine_pool.check_ttl_expirations(
             self._settings_manager,
-            global_idle_timeout_seconds=(
-                self._global_settings.idle_timeout.idle_timeout_seconds
-                if self._global_settings
-                else None
-            ),
+            global_idle_timeout_seconds=self.get_global_idle_timeout_seconds(),
         )
 
     async def _check_and_enforce(self) -> None:
