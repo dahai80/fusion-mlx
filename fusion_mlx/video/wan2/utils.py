@@ -351,7 +351,12 @@ def load_vae_decoder(model_path: Path, config=None):
 
 
 def _has_encoder_keys(weights: dict) -> bool:
-    return any(k.startswith("encoder.") or k.startswith("conv1.") for k in weights)
+    # Encoder weights live under the encoder.* prefix (encoder.conv1 is the
+    # 3->96 input conv). A bare top-level conv1.* also exists in full VAEs
+    # but is a different module (32->32 1x1x1x1), not an encoder weight —
+    # matching it would let a decoder-only subset that kept that conv1
+    # false-positive as encoder-bearing and skip the #670 fallback.
+    return any(k.startswith("encoder.") for k in weights)
 
 
 def _resolve_full_wan_vae(model_path: Path) -> Path | None:
