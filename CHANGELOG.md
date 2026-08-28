@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.46] - 2026-08-28
+
+Patch release — MiniMax-H3 `last_frame_image` engine-forwarding fix (#687).
+
+### Fixed
+- **#687 — `VideoGenEngine.generate` dropped `last_frame_image`.** The engine-layer `VideoGenParams(...)` construction in `fusion_mlx/engines/video.py` forwarded `image=`, `audio=`, `reference_images=`, `quantize=` but omitted `last_frame_image=`, so engine-layer callers (ComfyUI fusion-comfyui plugin, SDK clients using `VideoGenEngine.generate`) could not drive H3 l2va/fl2va last-frame-anchored generation — `params.last_frame_image` stayed `None` and the backend always ran first-frame-only. The HTTP `/v1/videos` route was unaffected (it sets `gen_kwargs["last_frame_image"]` directly). Added `last_frame_image=kwargs.get("last_frame_image")` to the `VideoGenParams(...)` call, mirroring the existing `audio=` / `quantize=` forwarding. `None` default preserves backwards compatibility for all other backends.
+
+### Tests
+- **Engine-forwarding regression for `last_frame_image` (#687).** Added `TestEngineForwardsLastFrameImage` to `test_video_quantize_plumbing.py` (mirrors the `quantize` forwarding test): asserts the engine forwards the kwarg into `VideoGenParams`, defaults to `None` when unset, and forwards both first-frame `image=` and last-frame `last_frame_image=` together (fl2va joint). Backend-side coverage already existed (`test_minimax_h3_backend.py`, `test_videos_routes.py`); the gap was the engine layer, which would have caught #687.
+
 ## [0.8.45] - 2026-08-28
 
 Patch release — CORS env-var hardening (#675). Ports the four security-adjacent CORS features not landed in #641 and resolves the five tracking `xfail` tests in `test_cors_env_configurable.py`.
