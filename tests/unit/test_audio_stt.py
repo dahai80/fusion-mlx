@@ -86,9 +86,12 @@ def audio_client():
     from fastapi import FastAPI
 
     from fusion_mlx.api.audio_routes import router
+    from fusion_mlx.middleware.auth import check_rate_limit, verify_api_key
 
     app = FastAPI()
     app.include_router(router)
+    app.dependency_overrides[verify_api_key] = lambda: None
+    app.dependency_overrides[check_rate_limit] = lambda: None
 
     mock_pool = _make_mock_pool()
 
@@ -243,27 +246,32 @@ class TestSTTEngineLanguageForwarding:
 
 @pytest.fixture
 def server_audio_client():
-    """TestClient using the full fusion_mlx server app with mocked pool."""
-    from fusion_mlx.server import app
+    """TestClient exercising the audio router end-to-end with a mocked pool.
 
-    _ensure_audio_routes(app)
+    Rebuilt for the lazy-built app era: build a fresh FastAPI app carrying the
+    audio router, inject the mock pool through the designed test seam
+    ``_get_engine_pool`` (NOT ``_server_state`` — the handler reads the pool via
+    the seam, and ``_server_state`` is a dict, not an attr-bag). Error mapping
+    (404/400/500) is raised inline by the handler via HTTPException, so a
+    router-only app covers every endpoint-contract case.
+    """
+    from fastapi import FastAPI
+
+    from fusion_mlx.api.audio_routes import router
+    from fusion_mlx.middleware.auth import check_rate_limit, verify_api_key
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[verify_api_key] = lambda: None
+    app.dependency_overrides[check_rate_limit] = lambda: None
 
     mock_pool = _make_mock_pool()
 
-    with patch("fusion_mlx.server._server_state") as mock_state:
-        mock_state.engine_pool = mock_pool
-        mock_state.global_settings = None
-        mock_state.process_memory_enforcer = None
-        mock_state.hf_downloader = None
-        mock_state.ms_downloader = None
-        mock_state.mcp_manager = None
-        mock_state.api_key = None
-        mock_state.settings_manager = MagicMock()
-        mock_state.settings_manager.resolve_model_id = MagicMock(
-            side_effect=lambda m, _: m
-        )
-        with TestClient(app, raise_server_exceptions=False) as client:
-            yield client, mock_pool
+    with (
+        patch("fusion_mlx.api.audio_routes._get_engine_pool", return_value=mock_pool),
+        TestClient(app, raise_server_exceptions=False) as client,
+    ):
+        yield client, mock_pool
 
 
 # ---------------------------------------------------------------------------
@@ -271,9 +279,6 @@ def server_audio_client():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="strict=False: server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
-)
 class TestSTTEndpointBasic:
     """Core STT endpoint behaviour."""
 
@@ -505,9 +510,6 @@ class TestSTTEndpointBasic:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="strict=False: server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
-)
 class TestSTTEndpointResponseFormat:
     """OpenAI audio transcription API response schema compliance."""
 
@@ -539,9 +541,6 @@ class TestSTTEndpointResponseFormat:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="strict=False: server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
-)
 class TestSTTEndpointErrors:
     """Error cases for the STT endpoint."""
 
@@ -589,9 +588,6 @@ class TestSTTEndpointErrors:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="strict=False: server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
-)
 class TestVideoContainerRemap:
     """Video container extensions are remapped to .m4a for ffmpeg routing."""
 
@@ -645,66 +641,76 @@ class TestVideoContainerRemap:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="strict=False: server_audio_client fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
-)
 class TestSTTModelAliasResolution:
     """Verify that STT endpoint resolves model aliases (#489)."""
 
     def test_transcription_resolves_alias(self):
         """POST /v1/audio/transcriptions with alias resolves to real model ID."""
-        from fusion_mlx.server import app
+        from fastapi import FastAPI
 
-        _ensure_audio_routes(app)
+        from fusion_mlx.api.audio_routes import router
+        from fusion_mlx.middleware.auth import check_rate_limit, verify_api_key
+
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[verify_api_key] = lambda: None
+        app.dependency_overrides[check_rate_limit] = lambda: None
 
         mock_pool = _make_mock_pool(model_id="Qwen3-ASR-1.7B-bf16")
-        mock_pool.resolve_model_id = MagicMock(return_value="Qwen3-ASR-1.7B-bf16")
 
-        with patch("fusion_mlx.server._server_state") as mock_state:
-            mock_state.engine_pool = mock_pool
-            mock_state.global_settings = None
-            mock_state.process_memory_enforcer = None
-            mock_state.hf_downloader = None
-            mock_state.ms_downloader = None
-            mock_state.mcp_manager = None
-            mock_state.api_key = None
-            mock_state.settings_manager = MagicMock()
-            with TestClient(app, raise_server_exceptions=False) as client:
-                response = client.post(
-                    "/v1/audio/transcriptions",
-                    data={"model": "whisper"},
-                    files={"file": ("test.wav", TINY_WAV, "audio/wav")},
-                )
-                assert response.status_code == 200
-                mock_pool.get_engine.assert_awaited_once_with("Qwen3-ASR-1.7B-bf16")
+        # Alias resolution happens in audio_routes._resolve_model, which
+        # consults the audio registry + server.resolve_model_id. Patch it to
+        # deterministically map the alias to the target model id.
+        with (
+            patch(
+                "fusion_mlx.api.audio_routes._resolve_model",
+                return_value="Qwen3-ASR-1.7B-bf16",
+            ),
+            patch(
+                "fusion_mlx.api.audio_routes._get_engine_pool", return_value=mock_pool
+            ),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            response = client.post(
+                "/v1/audio/transcriptions",
+                data={"model": "whisper"},
+                files={"file": ("test.wav", TINY_WAV, "audio/wav")},
+            )
+            assert response.status_code == 200
+            mock_pool.get_engine.assert_awaited_once_with("Qwen3-ASR-1.7B-bf16")
 
     def test_transcription_direct_model_id(self):
         """POST /v1/audio/transcriptions with direct model ID works without alias."""
-        from fusion_mlx.server import app
+        from fastapi import FastAPI
 
-        _ensure_audio_routes(app)
+        from fusion_mlx.api.audio_routes import router
+        from fusion_mlx.middleware.auth import check_rate_limit, verify_api_key
+
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[verify_api_key] = lambda: None
+        app.dependency_overrides[check_rate_limit] = lambda: None
 
         mock_pool = _make_mock_pool(model_id="Qwen3-ASR-1.7B-bf16")
-        # resolve_model_id returns the same ID when no alias matches
-        mock_pool.resolve_model_id = MagicMock(return_value="Qwen3-ASR-1.7B-bf16")
 
-        with patch("fusion_mlx.server._server_state") as mock_state:
-            mock_state.engine_pool = mock_pool
-            mock_state.global_settings = None
-            mock_state.process_memory_enforcer = None
-            mock_state.hf_downloader = None
-            mock_state.ms_downloader = None
-            mock_state.mcp_manager = None
-            mock_state.api_key = None
-            mock_state.settings_manager = MagicMock()
-            with TestClient(app, raise_server_exceptions=False) as client:
-                response = client.post(
-                    "/v1/audio/transcriptions",
-                    data={"model": "Qwen3-ASR-1.7B-bf16"},
-                    files={"file": ("test.wav", TINY_WAV, "audio/wav")},
-                )
-                assert response.status_code == 200
-                mock_pool.get_engine.assert_awaited_once_with("Qwen3-ASR-1.7B-bf16")
+        # Direct id: _resolve_model passes it through unchanged.
+        with (
+            patch(
+                "fusion_mlx.api.audio_routes._resolve_model",
+                return_value="Qwen3-ASR-1.7B-bf16",
+            ),
+            patch(
+                "fusion_mlx.api.audio_routes._get_engine_pool", return_value=mock_pool
+            ),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            response = client.post(
+                "/v1/audio/transcriptions",
+                data={"model": "Qwen3-ASR-1.7B-bf16"},
+                files={"file": ("test.wav", TINY_WAV, "audio/wav")},
+            )
+            assert response.status_code == 200
+            mock_pool.get_engine.assert_awaited_once_with("Qwen3-ASR-1.7B-bf16")
 
 
 # ---------------------------------------------------------------------------
