@@ -275,25 +275,13 @@ def test_help_lists_telemetry_subcommand():
     """Bare ``fusion-mlx --help`` must surface the telemetry subcommand
     so users discover it. Regression target: someone refactors the
     subparsers and accidentally drops the registration."""
-    r = subprocess.run(
-        [sys.executable, "-m", "fusion_mlx.cli", "--help"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
+    r = _run_cli("--help")
     assert r.returncode == 0, r.stderr
     assert "telemetry" in r.stdout
 
 
 def test_telemetry_help_lists_all_five_actions():
-    r = subprocess.run(
-        [sys.executable, "-m", "fusion_mlx.cli", "telemetry", "--help"],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-    )
+    r = _run_cli("telemetry", "--help")
     assert r.returncode == 0, r.stderr
     for action in ("status", "enable", "disable", "preview", "reset"):
         assert action in r.stdout, f"missing action {action!r} in --help"
