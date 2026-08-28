@@ -155,6 +155,9 @@ class VideoGenEngine(BaseNonStreamingEngine):
     async def decode(self, latent: mx.array) -> mx.array:
         return await self._backend.decode(latent)
 
+    async def encode(self, pixels: mx.array) -> mx.array:
+        return await self._backend.encode(pixels)
+
     async def decode_tiled(self, latent: mx.array, tile_size: int = 256) -> mx.array:
         return await self._backend.decode_tiled(latent, tile_size)
 

@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import Any
 
 import mlx.core as mx
+import numpy as np
 
 from ..cache.radix_diffusion_cache import DiffusionRadixCache
 from ..engine_core import get_executor
@@ -857,8 +858,23 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 f"decode expects unpacked latent (batch,c,h,w); got {tuple(latent.shape)}"
             )
 
+        # Materialize the latent on the caller's (event-loop) stream before
+        # dispatching to the worker. A latent built on the main thread (test
+        # fakes, or a caller that constructed it off the worker) is bound to
+        # this thread's GPU stream; the image worker has its own stream and
+        # cannot touch a lazy graph referencing the caller's stream
+        # (RuntimeError "no Stream(gpu, N) in current thread"). Same
+        # caller-eval-then-dispatch pattern as encode()'s numpy bridge.
+        mx.eval(latent)
+
         def _decode():
-            return flux.vae.decode_packed_latents(latent)
+            result = flux.vae.decode_packed_latents(latent)
+            # Materialize the output on the worker's own stream before
+            # returning: a lazy decode graph stays bound to this thread's
+            # GPU stream, and a caller on another thread (event loop /
+            # fusion-comfyui) touching it aborts with the same stream error.
+            mx.eval(result)
+            return result
 
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(get_executor("image"), _decode)
@@ -875,8 +891,12 @@ class ImageGenEngine(BaseNonStreamingEngine):
             )
         tiling_config = getattr(flux, "tiling_config", None)
 
+        mx.eval(latent)
+
         def _decode():
-            return flux.vae.decode_packed_latents(latent, tiling_config=tiling_config)
+            result = flux.vae.decode_packed_latents(latent, tiling_config=tiling_config)
+            mx.eval(result)
+            return result
 
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(get_executor("image"), _decode)
@@ -885,6 +905,55 @@ class ImageGenEngine(BaseNonStreamingEngine):
             tile_size,
             tuple(result.shape),
         )
+        return result
+
+    async def encode(self, pixels: mx.array) -> mx.array:
+        flux = self._require_flux()
+        if flux.vae is None:
+            raise RuntimeError("vae is unloaded; call load_vae().")
+        if pixels.ndim != 4:
+            raise ValueError(f"encode expects (1,H,W,3); got {tuple(pixels.shape)}")
+        if pixels.shape[1] % 16 != 0 or pixels.shape[2] % 16 != 0:
+            raise ValueError(
+                f"encode expects H,W divisible by 16 (vae_scale*patch); got {tuple(pixels.shape)}"
+            )
+
+        # pixels is built on the event-loop main thread; the image worker has
+        # its own GPU stream and cannot mx.eval a lazy graph referencing the
+        # main thread's stream (RuntimeError "no Stream(gpu, N) in current
+        # thread"). Bridge through numpy on the caller thread (owns the source
+        # stream) and rebuild an mx.array inside the worker. Same pattern as
+        # Wan2Backend.encode; decode() avoids this because its latent input is
+        # worker-owned (encode/denoise output already eval'd on the worker).
+        pixels_np = np.array(pixels)
+
+        def _encode():
+            from mflux.models.common.vae.vae_util import VAEUtil
+            from mflux.models.flux2.latent_creator.flux2_latent_creator import (
+                Flux2LatentCreator,
+            )
+            from mflux.models.flux2.variants.edit.flux2_klein_edit_helpers import (
+                _Flux2KleinEditHelpers,
+            )
+
+            # Public contract is NHWC (1,H,W,3) [0,1] (spec line 42); mflux's
+            # Flux2VAE.encode / conv_in expects NCHW (1,3,H,W) (image_util.py
+            # to_array transposes (0,3,1,2)). Convert here so the surface
+            # stays NHWC for callers while the encoder gets NCHW.
+            img_nchw = mx.array(pixels_np).transpose(0, 3, 1, 2)
+            encoded = VAEUtil.encode(flux.vae, img_nchw)
+            encoded = _Flux2KleinEditHelpers.ensure_4d_latents(encoded)
+            encoded = _Flux2KleinEditHelpers.crop_to_even_spatial(encoded)
+            encoded = Flux2LatentCreator.patchify_latents(encoded)
+            encoded = _Flux2KleinEditHelpers.bn_normalize_vae_encoded_latents(
+                encoded, vae=flux.vae
+            )
+            mx.eval(encoded)
+            return encoded
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(get_executor("image"), _encode)
+        logger.info("stage:vae encode img out_shape=%s", tuple(result.shape))
         return result
 
     async def unload_vae(self) -> None:

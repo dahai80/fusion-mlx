@@ -36,6 +36,16 @@ def _active_mem() -> int:
         return -1
 
 
+def _pixels_thwc_to_ncthw(src):
+    # encode() public contract: pixels float32 [0,1] (spec line 41). WanVAE
+    # operates in [-1,1] (decode reverses (x+1)/2), matching generate.py:79
+    # `arr/255*2-1`. Map [0,1]→[-1,1] here so the latent is valid and
+    # encode→decode round-trips. Symmetric with decode() output layout.
+    x = mx.array(src).astype(mx.float32)
+    x = x * 2.0 - 1.0
+    return x.transpose(3, 0, 1, 2)[None]
+
+
 async def _clear_mlx_cache() -> None:
     # Run mx.synchronize()/mx.clear_cache() on the video executor thread, NOT
     # the event-loop main thread. MLX Metal streams are thread-local: a
@@ -130,6 +140,7 @@ class Wan2Backend(VideoBackend):
         self._stage_quant = None
         self._stage_dit_models = None
         self._stage_vae = None
+        self._stage_vae_encoder = None
         self._stage_on_step = None
 
     @classmethod
@@ -222,6 +233,7 @@ class Wan2Backend(VideoBackend):
         self._t5_config = None
         self._stage_dit_models = None
         self._stage_vae = None
+        self._stage_vae_encoder = None
         self._stage_config = None
         self._stage_quant = None
         self._stage_on_step = None
@@ -588,6 +600,12 @@ class Wan2Backend(VideoBackend):
         # stream, which raises "There is no Stream(gpu, N) in current thread"
         # at decode-side mx.eval. Pass the full latent and slice on the executor
         # thread inside _decode (decode_wan_vae then mx.eval's it locally).
+        # Eval the incoming latent HERE on the caller's thread first: an
+        # external caller (e.g. fusion-comfyui) builds it on the asyncio loop
+        # thread, where the array's stream exists. Materializing here detaches
+        # stream affinity so the worker-thread eval inside decode_wan_vae is
+        # portable across thread-local MLX streams.
+        mx.eval(latent)
         vae = self._stage_vae
         ndim = latent.ndim
 
@@ -638,10 +656,73 @@ class Wan2Backend(VideoBackend):
 
     async def unload_vae(self) -> None:
         self._stage_vae = None
+        self._stage_vae_encoder = None
         self._stage_flags["vae"] = False
+        self._stage_flags.pop("vae_encoder", None)
         gc.collect()
         await _clear_mlx_cache()
-        logger.info("stage:vae unload wan2")
+        logger.info("stage:vae unload wan2 (decoder+encoder)")
+
+    async def encode(self, pixels: mx.array) -> mx.array:
+        from fusion_mlx.video.wan2.stage import encode_wan_vae
+
+        if self._stage_vae_encoder is None:
+            await self._load_vae_encoder_stage()
+        config = self._ensure_stage_config()
+
+        ndim = pixels.ndim
+        if ndim not in (4, 5):
+            raise ValueError(
+                f"encode expects (T,H,W,3) or (1,T,H,W,3); got {tuple(pixels.shape)}"
+            )
+        vae_enc = self._stage_vae_encoder
+        # pixels is built on the event-loop main thread; the video worker
+        # thread has its own GPU stream and cannot mx.eval a lazy graph
+        # referencing the main thread's stream (RuntimeError "no Stream(gpu,
+        # N) in current thread"). decode() solves this by mx.eval'ing its
+        # latent input on the caller's thread first (see decode() above);
+        # encode is the first stage, so its pixels input is caller/main-
+        # thread-owned and has no upstream eval. Bridge through numpy on the
+        # main thread (owns the source stream) and rebuild an mx.array inside
+        # the worker (worker-owned stream).
+        src_np = np.array(pixels[0] if ndim == 5 else pixels)
+
+        def _encode():
+            x = _pixels_thwc_to_ncthw(src_np)
+            lat = encode_wan_vae(x, config, vae_enc)
+            # Real WanVAE.encode returns 5D (b,z,t,h,w) already; the unit
+            # test's fake encoder returns 4D. Add the batch dim only when the
+            # encoder left it off, so the 5D contract (1,z,t,h,w) holds for
+            # both. Unconditional lat[None] produced 6D on the real model.
+            lat_5d = lat if lat.ndim == 5 else lat[None]
+            mx.eval(lat_5d)
+            return lat_5d
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(get_executor("video"), _encode)
+        logger.info("stage:vae encode wan2 out_shape=%s", tuple(result.shape))
+        return result
+
+    async def _load_vae_encoder_stage(self) -> None:
+        from pathlib import Path
+
+        from fusion_mlx.video.wan2.stage import resolve_vae_path
+        from fusion_mlx.video.wan2.utils import load_vae_encoder
+
+        config = self._ensure_stage_config()
+        vae_path = resolve_vae_path(Path(self._model_dir))
+
+        def _load():
+            return load_vae_encoder(vae_path, config)
+
+        loop = asyncio.get_running_loop()
+        self._stage_vae_encoder = await asyncio.wait_for(
+            loop.run_in_executor(get_executor("video"), _load),
+            timeout=_T5_PRELOAD_TIMEOUT,
+        )
+        self._stage_flags["vae_encoder"] = True
+        gc.collect()
+        logger.info("stage:vae_encoder load wan2 active_mem=%s", _active_mem())
 
     def set_progress_callback(self, cb):
         # Wired by FusionEngineWrapper.set_progress_callback before load_dit().
