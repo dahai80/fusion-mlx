@@ -109,7 +109,7 @@ def _detect_device_info() -> DeviceInfo:
             has_nax = _h()
             if has_nax and gen == DeviceGeneration.UNKNOWN:
                 gen = DeviceGeneration.M3
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError, OSError):
             pass
 
     return DeviceInfo(
@@ -226,7 +226,7 @@ def _is_mfa_ext_available() -> bool:
         from mlx_mfa._ext import mfa_attention_forward  # noqa: F401
 
         return True
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError, OSError):
         return False
 
 
