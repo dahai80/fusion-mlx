@@ -2084,7 +2084,11 @@ class PagedSSDCacheManager:
                 if self._hot_cache_budget.remaining_bytes < meta.file_size:
                     break
             file_path = self._get_file_path(bh)
-            if not file_path.exists():
+            if file_path is None or not file_path.exists():
+                # _get_file_path returns None in pure-memory mode
+                # (_cache_dir is None); without this guard the .exists()
+                # call crashes with AttributeError and 500s every chat
+                # request that hits preload_matched_blocks (issue #681).
                 continue
             result = self._load_safetensors_raw(str(file_path))
             if result is None:
