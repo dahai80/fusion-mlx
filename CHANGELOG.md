@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.45] - 2026-08-28
+
+Patch release — CORS env-var hardening (#675). Ports the four security-adjacent CORS features not landed in #641 and resolves the five tracking `xfail` tests in `test_cors_env_configurable.py`.
+
+### Added
+- **`FUSION_MLX_CORS_MAX_AGE` (#675).** Preflight `Access-Control-Max-Age` is now env-configurable (seconds). Malformed/empty values log a WARNING and fall back to a 3600 s default (replaces Starlette's silent 600 s), so preflight results cache longer and OPTIONS traffic drops.
+- **`FUSION_MLX_CORS_ALLOW_HEADERS` (#675).** Response `Access-Control-Allow-Headers` is now env-configurable. Env unset → path-appropriate default (see F-091 below). Env present + non-empty → parsed list. Env present + empty → WARNING + fallback.
+- **`FUSION_MLX_CORS_ALLOW_CREDENTIALS` opt-in (#675).** Credentials are now opt-in via env (`true`/`1`/`yes`/`on`). Default `False`.
+
+### Changed
+- **Credentials default reversed to `False` (#675, reverses #641).** `#641` set `allow_credentials=bool(_cors_origins)`, so any explicit origin auto-enabled `Access-Control-Allow-Credentials: true`. The documented default is now `False`; operators who need cookies must set `FUSION_MLX_CORS_ALLOW_CREDENTIALS=true`. Wildcard `["*"]` origins force `False` per the fetch spec. **Migration:** set `FUSION_MLX_CORS_ALLOW_CREDENTIALS=true` if you relied on the old auto-enable.
+- **F-091 header narrowing on the env-driven path (#675).** When origins come from `FUSION_MLX_CORS_ALLOW_ORIGINS` (env), the default `Access-Control-Allow-Headers` narrows from wide-open `["*"]` to `content-type, authorization, x-rapid-mlx-internal`. The legacy `--cors-origins` CLI path keeps `["*"]` (back-compat). **Migration:** env-path operators sending custom headers (`OpenAI-Organization`, `X-Requested-With`, …) must allowlist them via `FUSION_MLX_CORS_ALLOW_HEADERS`.
+- **Empty `FUSION_MLX_CORS_ALLOW_METHODS` now warns (#675).** An env value that parses to an empty list (e.g. `" , ,, "`) now logs a WARNING naming the env var and falls back to `POST,GET,OPTIONS` instead of silently broadening.
+
+### Tests
+- **CORS env-config suite fully green (#675).** The five `xfail(strict=False)` tests tracking unported Rapid-MLX features (`test_malformed_max_age_falls_back_to_default`, `test_empty_methods_env_warns_and_falls_back`, `test_empty_headers_env_warns_and_falls_back`, `test_credentials_default_false_with_explicit_origin`, `test_env_origins_path_applies_f091_narrowing`) now pass against real env-parse logic. `test_wildcard_logs_warning_and_works` updated to the #675 wildcard+credentials-False contract. `test_cors_env_configurable.py` now 18 pass / 0 fail / 0 xfail.
+
 ## [0.8.44] - 2026-08-28
 
 Patch release — TTS `streaming_interval` small-value validation fix + audio server-fixture rebuild rescuing ~75 quarantined xfails.

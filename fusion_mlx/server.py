@@ -317,14 +317,93 @@ def _resolve_cors_methods() -> list[str]:
         methods = [m.strip().upper() for m in env_raw.split(",") if m.strip()]
         if methods:
             return methods
+        # env present but parsed to empty list (e.g. " , ,, ") — operator
+        # templating bug. Warn and fall back rather than silently broadening
+        # back to the default (#675).
+        logger.warning(
+            "FUSION_MLX_CORS_ALLOW_METHODS parsed to an empty list — "
+            "falling back to default POST,GET,OPTIONS. Check the env "
+            "value for a templating bug."
+        )
     return ["POST", "GET", "OPTIONS"]
+
+
+# F-091 narrowed default header allowlist for the env-driven CORS path.
+# The legacy ``--cors-origins`` CLI path keeps ``["*"]`` (back-compat).
+_DEFAULT_CORS_HEADERS_ENV = ["content-type", "authorization", "x-rapid-mlx-internal"]
+
+
+def _resolve_cors_headers(env_path: bool) -> list[str]:
+    # ``FUSION_MLX_CORS_ALLOW_HEADERS`` env CSV overrides the default.
+    # Env unset:
+    #   - env-driven path (#675 F-091) → narrowed default header allowlist
+    #   - legacy CLI path → wide-open ``["*"]`` (back-compat contract)
+    # Env present + non-empty → parsed list. Env present + empty → warn +
+    # fall back to the path-appropriate default (#675).
+    import os
+
+    default = _DEFAULT_CORS_HEADERS_ENV if env_path else ["*"]
+    env_raw = os.environ.get("FUSION_MLX_CORS_ALLOW_HEADERS", "").strip()
+    if env_raw:
+        headers = [h.strip().lower() for h in env_raw.split(",") if h.strip()]
+        if headers:
+            return headers
+        logger.warning(
+            "FUSION_MLX_CORS_ALLOW_HEADERS parsed to an empty list — "
+            "falling back to default. Check the env value for a "
+            "templating bug."
+        )
+    return default
+
+
+def _resolve_cors_max_age() -> int:
+    # ``FUSION_MLX_CORS_MAX_AGE`` env (seconds). Bad/empty → warn + default
+    # 3600. Default 3600 replaces Starlette's silent 600 so preflight results
+    # cache longer and reduce OPTIONS traffic (#675).
+    import os
+
+    env_raw = os.environ.get("FUSION_MLX_CORS_MAX_AGE", "").strip()
+    if env_raw:
+        try:
+            value = int(env_raw)
+            if value < 0:
+                raise ValueError("negative max-age")
+            return value
+        except ValueError:
+            logger.warning(
+                "FUSION_MLX_CORS_MAX_AGE=%r is not a non-negative integer — "
+                "falling back to default 3600.",
+                env_raw,
+            )
+    return 3600
+
+
+def _resolve_cors_credentials(origins: list[str] | None) -> bool:
+    # ``FUSION_MLX_CORS_ALLOW_CREDENTIALS`` env opts credentials in. Default
+    # False (#675: reverses #641's ``bool(_cors_origins)`` which auto-enabled
+    # credentials on any explicit origin). Wildcard ``["*"]`` origins force
+    # False per the fetch spec (``ACAO: *`` + credentials is illegal).
+    import os
+
+    if origins == ["*"]:
+        return False
+    env_raw = os.environ.get("FUSION_MLX_CORS_ALLOW_CREDENTIALS", "").strip().lower()
+    if env_raw in ("true", "1", "yes", "on"):
+        return True
+    if env_raw in ("false", "0", "no", "off"):
+        return False
+    return False
 
 
 def configure_cors_from_env(cors_origins=None, cli_origins=None):
     # ``cli_origins`` is the legacy Rapid-MLX kwarg; accept it as an alias
     # so callers/tests using the old contract still resolve correctly.
+    # ``cli_origins`` non-None marks the legacy CLI path which keeps the
+    # wide-open ``["*"]`` header default; the env-driven path (cors_origins
+    # None and cli_origins None) gets the F-091 narrowed header default.
     if cors_origins is None and cli_origins is not None:
         cors_origins = cli_origins
+    env_path = cli_origins is None and cors_origins is None
     global _cors_origins, _cors_mounted
     _cors_origins = _resolve_cors_origins(cors_origins)
     if _cors_origins:
@@ -337,15 +416,17 @@ def configure_cors_from_env(cors_origins=None, cli_origins=None):
         )
     else:
         logger.debug("CORS origins defaulting to wildcard '*'")
-    _mount_cors_middleware()
+    _mount_cors_middleware(env_path=env_path)
     return _cors_origins
 
 
-def _mount_cors_middleware():
+def _mount_cors_middleware(env_path: bool = False):
     # Mount the spec-aligned CORS middleware onto the module-global app.
     # Idempotent: skip if already mounted this process. Relocated here from
     # ``Server._create_app`` so CORS config applied via configure_cors_from_env
     # (the test-harness + cli path) takes effect without re-building the app.
+    # ``env_path`` selects the F-091 narrowed header default (env origins)
+    # vs the legacy wide-open ``["*"]`` default (CLI origins).
     global _cors_mounted
     if _cors_mounted:
         return
@@ -358,19 +439,26 @@ def _mount_cors_middleware():
         return
     cors_origins = _cors_origins if _cors_origins else ["*"]
     cors_methods = _resolve_cors_methods()
+    cors_headers = _resolve_cors_headers(env_path=env_path)
+    cors_credentials = _resolve_cors_credentials(_cors_origins)
+    cors_max_age = _resolve_cors_max_age()
     app.add_middleware(
         _SpecAlignedCORSMiddleware,
         allow_origins=cors_origins,
         allow_methods=cors_methods,
-        allow_headers=["*"],
-        allow_credentials=bool(_cors_origins),
+        allow_headers=cors_headers,
+        allow_credentials=cors_credentials,
+        max_age=cors_max_age,
     )
     _cors_mounted = True
     logger.debug(
-        "CORS middleware mounted (spec-aligned): origins=%s methods=%s credentials=%s",
+        "CORS middleware mounted (spec-aligned): origins=%s methods=%s "
+        "headers=%s credentials=%s max_age=%s",
         cors_origins,
         cors_methods,
-        bool(_cors_origins),
+        cors_headers,
+        cors_credentials,
+        cors_max_age,
     )
 
 
