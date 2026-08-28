@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.47] - 2026-08-28
+
+Patch release — distributed KV-cache export/import endpoints (#650). Upstream primitive for fusion-multi-node P3-28 cross-node KV migration: serialize a shard's live KV tensors to base64 `.npy`, restore them on a peer node, resume decode from the prefix without recomputing.
+
+### Added
+- **`POST /distributed/kv_cache/export` (#650).** Serializes a shard's live KV-cache key/value tensors (`cache[i].state` → base64 `.npy`) for the shard's `[start, end)` layer slice, returning one entry per layer plus `seq_len` (the cache offset = number of cached tokens). Optional `layer_range` `[start, end)` subset is clamped to the shard's own slice. Reuses the `serialize_activation` b64-`.npy` transport already used by `pipeline_step` activations (bit-exact per mlx dtype, including `bfloat16`). Fails visibly (`400`) if the shard has no active KV cache (no `decode_step` prefill yet) or `seq_len == 0`, on malformed/out-of-slice `layer_range`, and `404` for unknown `shard_id`; oversized payloads hit the `_MAX_ACTIVATION_BYTES` ceiling (256 MiB default, env `FUSION_DIST_MAX_ACTIVATION_BYTES`).
+- **`POST /distributed/kv_cache/import` (#650).** Restores previously-exported KV tensors into a loaded model's KV cache via `cache[layer].state = (k, v)` (sets `.offset = seq_len`), then `decode_step` continues as if the prefix had been computed locally. Lazy-inits the full-model-length cache list (`[KVCache() for _ in range(num_layers)]`, same pattern as `decode_step`) if none exists. Fails visibly (`400`) if any layer is outside the shard's slice, if a layer's tensor length `!= seq_len`, if the post-import offset check fails, on empty `layers`, and `404` for unknown `shard_id`.
+
+### Tests
+- **KV-cache export/import unit + real-model round-trip (#650).** `tests/unit/test_distributed_kv_cache.py`: 14 mock-based validation/route/round-trip tests (no model load — fake `KVCache` stand-ins with a `.state` property mirroring the real class) covering empty-cache/unknown-shard/bad-`layer_range` rejection, serialized-layer + `seq_len` return, `layer_range` subset, import slice/`seq_len`/empty validation, lazy-init + tensor restore, export→import tensor-equal round-trip, and the two routes (400/404 + 200 round-trip via `TestClient`). Plus one gated real-model acceptance test (`@pytest.mark.real_model` + `FUSION_MLX_REAL_MODEL_TESTS`): prefill → token1; baseline decode token2 (no reset); reset → export fails visibly; re-prefill → export; reset → import; decode same token → MUST equal the baseline token (KV state restored bit-exactly). All pass.
+
 ## [0.8.46] - 2026-08-28
 
 Patch release — MiniMax-H3 `last_frame_image` engine-forwarding fix (#687).
