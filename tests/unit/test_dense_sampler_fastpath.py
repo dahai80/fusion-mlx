@@ -1,24 +1,31 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for the dense-LLM batched-sampler fast path.
+"""Unit tests for the dense-LLM batched-sampler fast-path installer.
 
-Mirrors ``test_mllm_batch_generator``'s shape on the dense path. The MLLM
-fast path lives inside our ``MLLMBatchGenerator._step``; the dense path
-lives inside mlx-lm's ``GenerationBatch._step`` which we cannot edit, so
-we monkey-patch the bound ``_step`` to swap ``samplers`` to all-None +
-``fallback_sampler`` to the shared sampler when the running batch is
-homogeneous.
+QUARANTINED in ``tests/unit/debt_modules.txt``. The original dense-sampler
+fast-path feature (``_install_dense_sampler_fastpath`` + the per-Scheduler
+bounded-LRU ``_sampler_cache``) was removed during the Rapid-MLX migration
+and replaced by the simpler module-level singleton ``get_or_create_fused_sampler``
+(covered by ``test_sampler_fast_path.py``). ``conftest`` injects a no-op
+shim so the import below resolves; the installer it exercises does not
+exist in prod.
 
-The tests stub a minimal ``GenerationBatch``-shaped object so we don't
-have to load a model. They lock in the four behaviors that matter:
+What remains here are the **install-safety / defensive-behavior** tests.
+They assert that a no-op installer is safe — no spurious swap, restore-on-
+exception, plain-closure wrapping, missing-``_generation_batch`` tolerance.
+These pass legitimately against the shim (a no-op installer is genuinely
+safe) and document the contract a future re-port of the homogeneous-batch
+swap would need to honor. See issue #674 for the product decision and
+the rationale for keeping the file quarantined rather than deleting it
+wholesale or un-quarantining the shim-driven tests.
 
-1. Homogeneous batch (all samplers identity-equal) → swaps to fast path
-   (``self.samplers`` is observed as all-None inside the wrapped call;
-   ``self.fallback_sampler`` is the shared sampler).
-2. Heterogeneous batch → leaves ``self.samplers`` untouched.
-3. B=1 → no swap (degenerate case; identity-equality with empty rest is
+The tests stub a minimal ``GenerationBatch``-shaped object so they don't
+have to load a model. Behaviors locked in:
+
+1. Heterogeneous batch → leaves ``self.samplers`` untouched.
+2. B=1 → no swap (degenerate case; identity-equality with empty rest is
    true but the patch must NOT engage since the fast-path savings only
    exist for B ≥ 2).
-4. Swap is reversed after the call returns — even on exception — so the
+3. Swap is reversed after the call returns — even on exception — so the
    per-request samplers are restored for the NEXT step.
 """
 
@@ -58,25 +65,6 @@ class _FakeBatchGen:
 
 def _install(gen_batch):
     _install_dense_sampler_fastpath(_FakeBatchGen(gen_batch))
-
-
-def test_homogeneous_batch_swaps_to_fast_path():
-    """All samplers are the same callable → ``self.samplers`` is all-None
-    inside the wrapped step and ``self.fallback_sampler`` is the shared one."""
-    shared = lambda x: x  # noqa: E731 — stand-in for make_sampler closure
-    original_fallback = lambda x: x  # noqa: E731
-    gb = _FakeGenBatch(
-        samplers=[shared, shared, shared, shared], fallback=original_fallback
-    )
-    _install(gb)
-
-    gb._step()
-
-    assert gb.observed_samplers == [None, None, None, None]
-    assert gb.observed_fallback is shared
-    # Restoration: outside the call, the per-request samplers are back.
-    assert gb.samplers == [shared, shared, shared, shared]
-    assert gb.fallback_sampler is original_fallback
 
 
 def test_heterogeneous_batch_keeps_per_request_samplers():
@@ -186,91 +174,6 @@ def test_install_no_op_when_generation_batch_missing():
         _generation_batch = _NoStepBatch()
 
     _install_dense_sampler_fastpath(_BareBatchGen2())
-
-
-def test_sampler_cache_interns_by_param_tuple():
-    """``Scheduler._get_request_sampler`` must return the SAME callable
-    for identical params — that's what lets the fast-path detector
-    short-circuit via ``is`` comparison."""
-    from collections import OrderedDict
-
-    from fusion_mlx.scheduler import Scheduler
-
-    # We need a Scheduler instance to exercise _get_request_sampler, but
-    # we don't want the heavy __init__ (loads model). Construct via
-    # __new__ + manual init of just the attributes the method reads.
-    sched = Scheduler.__new__(Scheduler)
-    sched._sampler_cache = OrderedDict()
-    sched._sampler_cache_max = 32
-
-    class _SP:
-        temperature = 0.7
-        top_p = 0.95
-        min_p = 0.0
-        top_k = 20
-
-    class _SP_same:
-        temperature = 0.7
-        top_p = 0.95
-        min_p = 0.0
-        top_k = 20
-
-    class _SP_diff:
-        temperature = 1.0
-        top_p = 0.95
-        min_p = 0.0
-        top_k = 20
-
-    a = sched._get_request_sampler(_SP())
-    b = sched._get_request_sampler(_SP_same())
-    c = sched._get_request_sampler(_SP_diff())
-
-    assert a is b, "identical params must reuse cached sampler — required for fast path"
-    assert a is not c, "different temperature must produce a distinct sampler"
-    assert len(sched._sampler_cache) == 2
-
-
-def test_sampler_cache_is_bounded_lru(monkeypatch):
-    """The cache key is request-controlled (clients pick temp/top_p), so
-    the cache MUST be bounded. Without a cap, an adversarial client
-    streaming unique floats grows ``_sampler_cache`` without bound for
-    the process lifetime."""
-    from collections import OrderedDict
-
-    from fusion_mlx.scheduler import Scheduler
-
-    # Codex round-3 NIT #3: pin the escape-hatch env var so the cache
-    # key's 5th element is deterministic regardless of test invocation
-    # environment.
-    monkeypatch.delenv("FUSION_MLX_DISABLE_FUSED_SAMPLER", raising=False)
-
-    sched = Scheduler.__new__(Scheduler)
-    sched._sampler_cache = OrderedDict()
-    sched._sampler_cache_max = 4  # small cap for test legibility
-
-    class _SP:
-        def __init__(self, temp):
-            self.temperature = temp
-            self.top_p = 0.95
-            self.min_p = 0.0
-            self.top_k = 20
-
-    # Fill past the cap.
-    samplers = [sched._get_request_sampler(_SP(0.1 * i)) for i in range(6)]
-    assert len(sched._sampler_cache) == 4, "cap must hold even under churn"
-
-    # Oldest entries (temp=0.0, 0.1) are evicted. The 5th tuple element
-    # is the ``FUSION_MLX_DISABLE_FUSED_SAMPLER`` flag — False here because
-    # we explicitly deleted the env var above.
-    keys = list(sched._sampler_cache.keys())
-    assert (0.0, 0.95, 0.0, 20, False) not in keys
-    assert (0.1, 0.95, 0.0, 20, False) not in keys
-    # Newest entry is at the LRU tail.
-    assert keys[-1] == (0.5, 0.95, 0.0, 20, False)
-
-    # Hot-key LRU bookkeeping: hitting an existing key bumps it to MRU.
-    sched._get_request_sampler(_SP(0.2))  # was middle of the LRU
-    assert list(sched._sampler_cache.keys())[-1] == (0.2, 0.95, 0.0, 20, False)
 
 
 def test_method_type_wrapper_sees_correct_self():
