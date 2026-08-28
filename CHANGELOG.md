@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.43] - 2026-08-28
+
+Patch release — pure-memory-mode 500 fix + test-suite flake stabilization.
+
+### Fixed
+- **#681 — `AttributeError` 500 in `preload_matched_blocks` under `hot_cache_only` (pure-memory) mode.** In `hot_cache_only` mode `_cache_dir` is `None` but `save_block` still populates `_index` before the pure-memory early-return; `preload_matched_blocks` then walked the index, called `_get_file_path` (returns `None`), and an unguarded `.exists()` raised `AttributeError` → HTTP 500 on every chat request reaching preload with cold blocks. Guarded `file_path is None` before `.exists()` (#682).
+- **Intermittent full-suite flakes.** `test_hard_limit_above_ceiling` compared `hard_limit` and `ceiling` from two separate live memory queries that drifted under load; rewritten to derive all values from a single `_get_ceiling_breakdown()` snapshot and assert the exact invariant. `test_telemetry_cli` help-listing tests used a raw `subprocess.run(timeout=15)` that exceeded 15s under full-suite CPU contention; routed through the file's `_run_cli` helper (30s timeout) (#683).
+
 ## [0.8.42] - 2026-08-28
 
 Patch release — VAE-encode public surface, STT/VAE fail-visible guards, launchd TTS timeout, pool status fields, CORS test re-alignment.
