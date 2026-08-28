@@ -262,11 +262,16 @@ def test_wildcard_logs_warning_and_works(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """``FUSION_MLX_CORS_ALLOW_ORIGINS=*`` is a valid explicit allowlist
-    entry (#641): any origin is echoed back. Unlike the pre-#641 Rapid-MLX
+    entry (#641): any origin is allowed. Unlike the pre-#641 Rapid-MLX
     draft, fusion-mlx does NOT warn on an explicit ``*`` — it is the
     documented single-machine default and a deliberate operator choice,
-    not a copy-paste hazard. The fetch-spec invariant (wildcard MUST NOT
-    combine with credentials) is still pinned below."""
+    not a copy-paste hazard.
+
+    #675: credentials default False (reverses #641's
+    ``bool(_cors_origins)``), and wildcard origins force credentials False
+    per the fetch spec. So an explicit ``*`` allowlist no longer echoes
+    the request origin — it returns ``ACAO: *`` with no credentials
+    header. The request still succeeds cross-origin."""
     monkeypatch.setenv("FUSION_MLX_CORS_ALLOW_ORIGINS", "*")
     with caplog.at_level("WARNING", logger="vllm_mlx.server"):
         origins = _server_mod().configure_cors_from_env(cli_origins=None)
@@ -283,12 +288,10 @@ def test_wildcard_logs_warning_and_works(
         headers={"Origin": "https://evil.com"},
     )
     assert r.status_code == 200
-    # #641: an explicit ``["*"]`` allowlist sets allow_credentials=True
-    # (bool of a non-empty list). Per the fetch spec, wildcard + credentials
-    # is illegal, so Starlette echoes the request origin instead of ``*``.
-    # The request still succeeds cross-origin — the intent of "works".
-    assert r.headers.get("access-control-allow-origin") == "https://evil.com"
-    assert r.headers.get("access-control-allow-credentials") == "true"
+    # #675: wildcard + credentials=False is fetch-spec legal → Starlette
+    # echoes ``*`` (not the request origin). No credentials header.
+    assert r.headers.get("access-control-allow-origin") == "*"
+    assert "access-control-allow-credentials" not in {k.lower() for k in r.headers}
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -322,12 +325,6 @@ def test_cli_origins_override_env(
 # ──────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    reason="#675: FUSION_MLX_CORS_MAX_AGE env parse not ported in #641; "
-    "Starlette default max_age=600 applies. Unported Rapid-MLX feature "
-    "(strict=False: tracks unported Rapid-MLX feature, not a regression).",
-    strict=False,
-)
 def test_malformed_max_age_falls_back_to_default(
     fresh_app: FastAPI,
     monkeypatch: pytest.MonkeyPatch,
@@ -394,12 +391,6 @@ def test_empty_csv_origin_value_fails_closed_with_warning(
 # ──────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    reason="#675: empty FUSION_MLX_CORS_ALLOW_METHODS does not warn in #641; "
-    "_resolve_cors_methods silently falls back. Unported Rapid-MLX feature "
-    "(strict=False: tracks unported Rapid-MLX feature, not a regression).",
-    strict=False,
-)
 def test_empty_methods_env_warns_and_falls_back(
     fresh_app: FastAPI,
     monkeypatch: pytest.MonkeyPatch,
@@ -422,12 +413,6 @@ def test_empty_methods_env_warns_and_falls_back(
     ), f"Expected an empty-methods warning; got {[r.message for r in caplog.records]!r}"
 
 
-@pytest.mark.xfail(
-    reason="#675: FUSION_MLX_CORS_ALLOW_HEADERS not ported in #641; "
-    "allow_headers=['*'] is hardcoded at mount. Unported Rapid-MLX feature "
-    "(strict=False: tracks unported Rapid-MLX feature, not a regression).",
-    strict=False,
-)
 def test_empty_headers_env_warns_and_falls_back(
     fresh_app: FastAPI,
     monkeypatch: pytest.MonkeyPatch,
@@ -455,13 +440,6 @@ def test_empty_headers_env_warns_and_falls_back(
 # ──────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.xfail(
-    reason="#675: #641 sets allow_credentials=bool(_cors_origins), so an "
-    "explicit origin auto-enables credentials. Fetch spec permits this for "
-    "non-wildcard origins; draft default was opt-in False. Product decision "
-    "(strict=False: intentional product decision, not a regression).",
-    strict=False,
-)
 def test_credentials_default_false_with_explicit_origin(
     fresh_app: FastAPI, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -542,13 +520,6 @@ def test_cli_origins_path_keeps_legacy_wide_open_headers(
     )
 
 
-@pytest.mark.xfail(
-    reason="#675: #641 mounts allow_headers=['*'] unconditionally (wide-open "
-    "headers per #52); F-091 header narrowing NOT ported, only method "
-    "narrowing was. openai-organization is echoed. Product decision "
-    "(strict=False: intentional product decision, not a regression).",
-    strict=False,
-)
 def test_env_origins_path_applies_f091_narrowing(
     fresh_app: FastAPI, monkeypatch: pytest.MonkeyPatch
 ) -> None:

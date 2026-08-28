@@ -1120,6 +1120,23 @@ fusion-mlx is the link endpoint in a 3-tier chain: App -> Gateway -> MLX. By def
 | `FUSION_ROUTE_TOKEN` | _(unset)_ | #352. Optional shared secret for cross-host gateway→MLX auth. When set, `X-Fusion-Route`'s value must equal this token (constant-time compare); missing/mismatched → `403 invalid_route_token`. When unset, `X-Fusion-Route` keeps its provenance-only presence check (#343). The token is enforced even under `FUSION_ROUTE_WARN_ONLY=true` (stricter wins). |
 | `FUSION_MLX_ALLOWED_READ_DIRS` | _(unset)_ | #633. Colon-separated list of extra directories appended to the path-traversal read allow-list (`~/.fusion-mlx/models`, `~/.fusion-mlx/cache`, `/tmp`, `/var/tmp`). Lets scene-continuity condition images (i2va first-frame, l2va last-frame) from custom output dirs (e.g. fusion-comfyui) pass `is_safe_local_path` without writing to `/tmp`. |
 
+### CORS (#641 / #675)
+
+CORS is opt-in via environment variables. With no `FUSION_MLX_CORS_*` env set, the server mounts a wildcard `*` origin policy (friendly single-machine default: a local browser frontend can call the API with no extra config) with credentials disabled and `POST,GET,OPTIONS` methods. Lock down for multi-tenant / browser-facing deployments with the variables below.
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `FUSION_MLX_CORS_ALLOW_ORIGINS` | _(unset → `*`)_ | CSV origin allowlist, e.g. `https://chat.openai.com,https://claude.ai`. A whitespace-only value (e.g. `" , ,, "`) is treated as an operator templating bug and **fails closed**: no CORS middleware is mounted and preflight returns `405` (with a WARNING log). Explicit `*` is a valid single-machine choice. |
+| `FUSION_MLX_CORS_ALLOW_METHODS` | `POST,GET,OPTIONS` | CSV method allowlist for preflight. `*` expands to all methods. A whitespace-only value warns and falls back to the default (rather than silently broadening). |
+| `FUSION_MLX_CORS_ALLOW_HEADERS` | env-path: `content-type,authorization,x-rapid-mlx-internal`; CLI-path: `*` | CSV request-header allowlist. On the **env-driven** origins path the default is narrowed (F-091); on the legacy `--cors-origins` CLI path the default stays wide-open `*` for back-compat. A whitespace-only value warns and falls back to the path-appropriate default. Allowlist custom headers (`OpenAI-Organization`, `X-Requested-With`, …) here. |
+| `FUSION_MLX_CORS_MAX_AGE` | `3600` | Preflight result cache lifetime in seconds. A non-integer or negative value warns and falls back to `3600`. Replaces Starlette's silent 600 s default. |
+| `FUSION_MLX_CORS_ALLOW_CREDENTIALS` | `false` | Opt-in credentials. `true`/`1`/`yes`/`on` enables `Access-Control-Allow-Credentials: true` so cookie / `Authorization`-bearing fetches succeed. Wildcard `*` origins force `false` per the fetch spec. |
+
+**#675 migration notes (reverses #641 behavior):**
+
+- **Credentials are now opt-in (default `false`).** `#641` auto-enabled credentials on any explicit origin (`allow_credentials=bool(origins)`). If you relied on cookies with an explicit origin allowlist, set `FUSION_MLX_CORS_ALLOW_CREDENTIALS=true`.
+- **Env-path headers are narrowed.** If you serve origins via `FUSION_MLX_CORS_ALLOW_ORIGINS` and your browser client sends custom headers, allowlist them with `FUSION_MLX_CORS_ALLOW_HEADERS`. The `--cors-origins` CLI flag path is unchanged (still `*`).
+
 ### API key precedence (#632 / #636)
 
 The effective API key is resolved once at startup with a fixed priority, and synced to every read path (the `verify_api_key` middleware, the admin auth, and the config singleton) so they agree:
