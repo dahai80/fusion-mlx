@@ -797,21 +797,20 @@ test_community_bench.py
 # correct — pure stale-ref fix.
 # test_context_overflow_400.py RESCUED 2026-08-09 (1 pass, 4 xfail): already
 # green, was stale-debt (the 4 xfailed are intentional expected-fails).
-# KEEP_QUARANTINED: test_context_window.py (13 tests) evaluated 2026-08-19.
-# Pins unported context-window-POLICY feature: validate_context_window(),
+# DELETED 2026-08-28: test_context_window.py (13 tests) was truly-dead.
+# Pins removed context-window-POLICY feature: validate_context_window(),
 # SamplingDefaults(max_context_window, max_context_window_policy),
 # engine_pool.get_entry().model_context_length native discovery,
 # per-model-override-escapes-policy. Prod server.get_max_context_window
-# (server.py:388) ONLY reads srv.config.max_context_window — no model-id
+# (server.py:537) ONLY reads srv.config.max_context_window — no model-id
 # resolution, no policy clamp, no native discovery, no SamplingDefaults class,
 # no validate_context_window fn (0 prod refs). max_context_window_policy exists
-# ONLY in admin UI (dashboard.js/settings.html/i18n), backend never consumes it.
-# Real feature gap, Rule 2/3 (don't invent). CANDIDATE ISSUE: admin UI exposes
-# policy field that backend ignores. SPLIT OUT: 2 count_chat_tokens tests
-# extracted to test_batched_engine_count_chat_tokens.py RESCUED (2 pass) —
-# engines.batched.BatchedEngine.count_chat_tokens live, added _preserve_thinking
-# attr to test harness. This basename stays quarantined.
-test_context_window.py
+# ONLY in admin UI (dashboard.js/_settings.html/i18n), backend never consumes it.
+# Surviving context-window coverage: test_routes.py (6 endpoint tests),
+# test_server.py/test_embedding.py (get_max_context_window). No unique coverage
+# lost. Feature gap (admin UI exposes policy field backend ignores) filed as
+# issue. SPLIT OUT earlier: 2 count_chat_tokens tests extracted to
+# test_batched_engine_count_chat_tokens.py RESCUED (2 pass).
 # KEEP_QUARANTINED: asserts F-090/F-091 default-deny CORS (env allowlist,
 # Default-deny stance itself CLOSED in #52; rejection-envelope shape (L-02) tracked in #641.
 # method narrowing to POST/GET/OPTIONS, max_age, credentials env, empty-CSV
