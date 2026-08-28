@@ -472,6 +472,12 @@ async def create_transcription(
             detail=f"Model '{resolved_model}' not found. Available: {avail}",
         ) from exc
     except Exception as exc:
+        logger.exception(
+            "audio transcription engine load failed for %s: %s(%s)",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     if not isinstance(engine, STTEngine):
@@ -518,6 +524,12 @@ async def create_transcription(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception(
+            "audio transcription failed for %s: %s(%s)",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -700,6 +712,12 @@ async def process_audio(
             detail=f"Model '{resolved_model}' not found. Available: {avail}",
         ) from exc
     except Exception as exc:
+        logger.exception(
+            "audio sts engine load failed for %s: %s(%s)",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     if not isinstance(engine, STSEngine):
@@ -725,6 +743,12 @@ async def process_audio(
     except HTTPException:
         raise
     except Exception as exc:
+        logger.exception(
+            "audio sts process failed for %s: %s(%s)",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
         if tmp_path and os.path.exists(tmp_path):
