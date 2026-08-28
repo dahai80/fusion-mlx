@@ -70,6 +70,12 @@ class VideoGenEngine(BaseNonStreamingEngine):
             seed=seed,
             negative_prompt=kwargs.get("negative_prompt"),
             image=kwargs.get("image"),
+            # MiniMax-H3 l2va/fl2va (issue #687)：last_frame_image=末帧 keyframe
+            # conditioning。Backend reads params.last_frame_image (minimax_h3.py)
+            # and forwards to generate_video。HTTP route sets gen_kwargs directly
+            # so it worked；engine-layer callers (ComfyUI/SDK) had it silently
+            # dropped here → 一直 first-frame-only。补齐转发，None 保持向后兼容。
+            last_frame_image=kwargs.get("last_frame_image"),
             image_strength=kwargs.get("image_strength", 1.0),
             num_inference_steps=kwargs.get("num_inference_steps"),
             cfg_scale=kwargs.get("cfg_scale"),

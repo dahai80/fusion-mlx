@@ -84,6 +84,89 @@ class TestEngineForwardsQuantize:
         assert captured["quantize"] == "none"
 
 
+class TestEngineForwardsLastFrameImage:
+    # Issue #687: VideoGenEngine.generate must read last_frame_image from
+    # **kwargs and set it on VideoGenParams so the H3 backend's l2va/fl2va
+    # last-frame keyframe path fires. Without this, engine-layer callers
+    # (ComfyUI/SDK) had last_frame_image silently dropped → always first-frame.
+    def _make_engine(self, monkeypatch, captured):
+        from fusion_mlx.engines import video as video_mod
+
+        class FakeBackend:
+            name = "fake"
+            _loaded = True
+
+            async def start(self, model_path, **kwargs):
+                pass
+
+            async def stop(self):
+                pass
+
+            async def generate(self, params):
+                captured["last_frame_image"] = params.last_frame_image
+                captured["image"] = params.image
+                return [b"FAKEMP4"]
+
+            def constraints(self):
+                from fusion_mlx.engines.video_backends.base import VideoConstraints
+
+                return VideoConstraints()
+
+            def get_stats(self):
+                return {}
+
+            def last_denoise_stats(self):
+                return {}
+
+        monkeypatch.setattr(video_mod, "resolve_backend", lambda *a, **k: FakeBackend())
+        return video_mod.VideoGenEngine("fake-model")
+
+    async def test_generate_forwards_last_frame_image_kwarg_to_params(
+        self, monkeypatch
+    ):
+        captured = {}
+        engine = self._make_engine(monkeypatch, captured)
+
+        await engine.generate(
+            prompt="p",
+            num_frames=17,
+            width=512,
+            height=512,
+            last_frame_image="/tmp/last.png",
+        )
+        assert captured["last_frame_image"] == "/tmp/last.png"
+
+    async def test_generate_defaults_last_frame_image_none_when_unset(
+        self, monkeypatch
+    ):
+        captured = {}
+        engine = self._make_engine(monkeypatch, captured)
+
+        await engine.generate(
+            prompt="p",
+            num_frames=17,
+            width=512,
+            height=512,
+        )
+        assert captured["last_frame_image"] is None
+
+    async def test_generate_forwards_both_first_and_last_frame(self, monkeypatch):
+        # fl2va joint: image (first-frame) + last_frame_image (last-frame)。
+        captured = {}
+        engine = self._make_engine(monkeypatch, captured)
+
+        await engine.generate(
+            prompt="p",
+            num_frames=17,
+            width=512,
+            height=512,
+            image="/tmp/first.png",
+            last_frame_image="/tmp/last.png",
+        )
+        assert captured["image"] == "/tmp/first.png"
+        assert captured["last_frame_image"] == "/tmp/last.png"
+
+
 class TestH3BackendPassesQuantize:
     def _make_backend(self, monkeypatch, captured, tmp_path):
         # Stub generate_video (records kwargs) + is_safe_local_path (allow the
