@@ -628,6 +628,11 @@ do_install_launchd() {
         <string>${HOME}/.fusion-mlx/models</string>
         <key>PRELOAD_MODELS</key>
         <string>${PRELOAD_MODELS:-}</string>
+        # TTS synthesize ceiling (秒). mlx-audio generate() 在 GPU 与 LLM/FLUX.2
+        # 争用时阻塞共享 Metal device, 默认 180s 上限不够 (短文本也能跑满), 返回 503.
+        # launchd daemon 拉高到 600s 让 TTS 在争用下也能跑完. 可被 env 覆盖.
+        <key>FUSION_TTS_TIMEOUT</key>
+        <string>${FUSION_TTS_TIMEOUT:-600}</string>
     </dict>
 </dict>
 </plist>
