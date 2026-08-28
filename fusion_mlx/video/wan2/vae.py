@@ -566,6 +566,33 @@ class Encoder3d(nn.Module):
         return x
 
 
+def _validate_wan2_encode_frames(t: int) -> None:
+    # WanVAE.encode chunks the time axis as 1, then 2,2,2... (iter_ = 1+2N).
+    # Each downsample3d stage (stride 2, kt=3) defers a frame and flushes on
+    # the final chunk. When iter_ is EVEN, the final-chunk flush produces
+    # t_out = (t-kt)//st + 1 = 0, so CausalConv3d._conv3d builds an empty
+    # list and mx.stack([]) raises an opaque "[stack] No arrays provided"
+    # ValueError deep in the conv (issue #669). A single frame (T=1) is also
+    # degenerate: the first downsample3d cannot satisfy kt=3.
+    # Valid counts are 1+4N with N>=1 -> {5,9,13,17,21,...}, all odd iter_.
+    # These are exactly the real generation frame counts (1+4N).
+    import logging
+
+    log = logging.getLogger(__name__)
+    if t < 5 or (t - 1) % 4 != 0:
+        log.error(
+            "wan2 vae encode rejected frame count t=%d: needs 1+4N with N>=1 "
+            "(5,9,13,17,...); even-iter flush hits empty-stack in downsample3d "
+            "(issue #669)",
+            t,
+        )
+        raise ValueError(
+            f"WanVAE.encode needs T in 1+4N with N>=1 (5,9,13,17,...); got T={t}. "
+            f"Even-iter or degenerate frame counts hit an empty-stack ValueError "
+            f"in downsample3d (issue #669)."
+        )
+
+
 class WanVAE(nn.Module):
     def __init__(self, z_dim: int = 16, encoder: bool = False):
         super().__init__()
@@ -588,10 +615,11 @@ class WanVAE(nn.Module):
         # temporal context and produces a latent uncorrelated to upstream
         # (issue #458). A chunk may return None when a downsample3d stage
         # defers a single frame to the next chunk.
+        t = x.shape[2]
+        _validate_wan2_encode_frames(t)
         num_slots = self._count_encoder_cache_slots()
         feat_cache = [None] * num_slots
 
-        t = x.shape[2]
         t = 1 + ((t - 1) // 2) * 2  # round down to 1+2N like upstream
         iter_ = 1 + (t - 1) // 2
 
