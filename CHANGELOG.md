@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.42] - 2026-08-28
+
+Patch release — VAE-encode public surface, STT/VAE fail-visible guards, launchd TTS timeout, pool status fields, CORS test re-alignment.
+
+### Added
+- **VAE-encode surface on `ImageGenEngine` + `public_api` (#653, fixes #670).** `engine.encode(image)` exposes VAE image→latents with batch-norm normalization and packed-channel reshape; round-trip verified against a real Flux2 VAE (#671).
+- **`in_use` + TTL fields in pool status (#647).** `GET /v1/models` status now reports per-model `in_use` and idle TTL so clients can decide reuse/eviction (#666).
+
+### Fixed
+- **#668 — STT/STS transcription exceptions swallowed before 500.** Audio routes logged only after the handler returned, so a transcription/STS failure produced a bare 500 with no server-side trace. Exceptions now logged before the 500 (#679).
+- **#669 — WanVAE.encode accepted unsupported frame counts.** `WanVAE.encode` silently produced corrupt latents for frame counts it cannot handle; it now rejects them up front (fail visible) (#680).
+- **#672 — CORS test contract drift.** `test_cors_env_configurable.py` re-aligned to the #641 three-state CORS contract (rescued from quarantine, 13 pass / 5 xfail tracking unported Rapid-MLX features) (#678).
+- **#673 — admin UI dead `max_context_window_policy` field.** Dropped the stale policy field from the admin global-settings shape (#678).
+- **launchd TTS timeout (#677).** The generated plist now sets `FUSION_TTS_TIMEOUT=600` so long-form TTS generation is not killed by the default 30s launchd wait.
+
+### Tests
+- **VLM visual-grounding contract lock (#654, #667).** Regression test pins the VLM image-grounding output shape.
+
 ## [0.8.41] - 2026-08-27
 
 Patch release — Hub↔MLX API contract alignment (#646) + client-disconnect metrics (#645).
