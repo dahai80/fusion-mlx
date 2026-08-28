@@ -811,14 +811,15 @@ test_community_bench.py
 # lost. Feature gap (admin UI exposes policy field backend ignores) filed as
 # issue. SPLIT OUT earlier: 2 count_chat_tokens tests extracted to
 # test_batched_engine_count_chat_tokens.py RESCUED (2 pass).
-# KEEP_QUARANTINED: asserts F-090/F-091 default-deny CORS (env allowlist,
-# Default-deny stance itself CLOSED in #52; rejection-envelope shape (L-02) tracked in #641.
-# method narrowing to POST/GET/OPTIONS, max_age, credentials env, empty-CSV
-# fail-closed) ported from Rapid-MLX. fusion-mlx's released stance is the
-# OPPOSITE — wide-open allow_origins/methods/headers=["*"] by design for
-# single-machine UX, closed as by-design in issue #52. Re-implementing this
-# would reverse a closed product decision, not pay debt. Test kwarg
-# (cli_origins->cors_origins) and contract are both divergent.
+# RESCUED 2026-08-28 (#672): 13 pass, 5 xfail. Re-aligned to the #641
+# three-state CORS contract (_resolve_cors_origins None/[]/list). Drifted
+# assertions fixed: default-unset returns None (not ["*"]); explicit "*" sets
+# allow_credentials=True so Starlette echoes origin (fetch spec); empty-CSV
+# warning wording ("fail-closed", not "empty list"); legacy configure_cors()
+# symbol removed → configure_cors_from_env(cli_origins=...). 5 tests xfail
+# (#675) tracking unported Rapid-MLX features deliberately NOT ported in #641
+# (wide-open #52 stance kept): FUSION_MLX_CORS_MAX_AGE env, empty
+# methods/headers warnings, credentials default-false, F-091 header narrowing.
 test_cors_env_configurable.py
 # RESCUED 2026-08-26 (#641): 6/6 pass. L-02 spec-aligned preflight rejection
 # ported. _SpecAlignedCORSMiddleware(CORSMiddleware) subclass added
