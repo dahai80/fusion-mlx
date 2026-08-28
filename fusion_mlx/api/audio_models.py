@@ -42,7 +42,7 @@ class AudioSpeechRequest(BaseModel):
     repetition_penalty: float | None = Field(None, ge=0.0)
     max_tokens: int | None = Field(None, ge=1)
     stream: bool | None = False
-    streaming_interval: float | None = Field(None, ge=0.1, le=10.0)
+    streaming_interval: float | None = Field(None, gt=0.0, le=10.0)
 
 
 class AudioProcessRequest(BaseModel):

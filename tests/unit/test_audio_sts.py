@@ -85,27 +85,31 @@ def _ensure_audio_routes(app):
 
 @pytest.fixture
 def server_sts_client():
-    """TestClient using the full fusion_mlx server app with mocked STS pool."""
-    from fusion_mlx.server import app
+    """TestClient exercising the audio router end-to-end with a mocked pool.
 
-    _ensure_audio_routes(app)
+    Built the same way as audio_sts_client (FastAPI + include_router) so the
+    STS handler's inline error mapping (404/400/500) covers endpoint-contract
+    tests without needing the full server app or _server_state. The handler
+    reads the pool via the _get_engine_pool() seam (patched here), not via
+    _server_state — which is a dict in prod, not a MagicMock-with-attrs.
+    """
+    from fastapi import FastAPI
+
+    from fusion_mlx.api.audio_routes import router
+    from fusion_mlx.middleware.auth import check_rate_limit, verify_api_key
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[verify_api_key] = lambda: None
+    app.dependency_overrides[check_rate_limit] = lambda: None
 
     mock_pool = _make_mock_pool()
 
-    with patch("fusion_mlx.server._server_state") as mock_state:
-        mock_state.engine_pool = mock_pool
-        mock_state.global_settings = None
-        mock_state.process_memory_enforcer = None
-        mock_state.hf_downloader = None
-        mock_state.ms_downloader = None
-        mock_state.mcp_manager = None
-        mock_state.api_key = None
-        mock_state.settings_manager = MagicMock()
-        mock_state.settings_manager.resolve_model_id = MagicMock(
-            side_effect=lambda m, _: m
-        )
-        with TestClient(app, raise_server_exceptions=False) as client:
-            yield client, mock_pool
+    with (
+        patch("fusion_mlx.api.audio_routes._get_engine_pool", return_value=mock_pool),
+        TestClient(app, raise_server_exceptions=False) as client,
+    ):
+        yield client, mock_pool
 
 
 @pytest.fixture
@@ -114,9 +118,12 @@ def audio_sts_client():
     from fastapi import FastAPI
 
     from fusion_mlx.api.audio_routes import router
+    from fusion_mlx.middleware.auth import check_rate_limit, verify_api_key
 
     app = FastAPI()
     app.include_router(router)
+    app.dependency_overrides[verify_api_key] = lambda: None
+    app.dependency_overrides[check_rate_limit] = lambda: None
 
     mock_pool = _make_mock_pool()
 
@@ -130,9 +137,6 @@ def audio_sts_client():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="strict=False: server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
-)
 class TestSTSEndpointBasic:
     """Core STS endpoint behaviour."""
 
@@ -217,9 +221,6 @@ class TestSTSEndpointBasic:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="strict=False: server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
-)
 class TestSTSEndpointErrors:
     """Error cases for the STS endpoint."""
 
@@ -276,65 +277,74 @@ class TestSTSEndpointErrors:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="strict=False: server fixture pins REMOVED _server_state MagicMock-with-attrs arch (.engine_pool/.global_settings/.settings_manager as attrs) — prod _server_state is now a dict. Also `from fusion_mlx.server import app` returns None (app moved/lazy-built). Gap B server-fixture rebuild — REDESIGN, needs prod/test rewrite not harness import fix"
-)
 class TestSTSModelAliasResolution:
     """Verify that STS endpoint resolves model aliases (#489)."""
 
     def test_process_resolves_alias(self):
         """POST /v1/audio/process with alias resolves to real model ID."""
-        from fusion_mlx.server import app
+        from fastapi import FastAPI
 
-        _ensure_audio_routes(app)
+        from fusion_mlx.api.audio_routes import router
+        from fusion_mlx.middleware.auth import check_rate_limit, verify_api_key
+
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[verify_api_key] = lambda: None
+        app.dependency_overrides[check_rate_limit] = lambda: None
 
         mock_pool = _make_mock_pool(model_id="MossFormer2-SE")
-        mock_pool.resolve_model_id = MagicMock(return_value="MossFormer2-SE")
 
-        with patch("fusion_mlx.server._server_state") as mock_state:
-            mock_state.engine_pool = mock_pool
-            mock_state.global_settings = None
-            mock_state.process_memory_enforcer = None
-            mock_state.hf_downloader = None
-            mock_state.ms_downloader = None
-            mock_state.mcp_manager = None
-            mock_state.api_key = None
-            mock_state.settings_manager = MagicMock()
-            with TestClient(app, raise_server_exceptions=False) as client:
-                response = client.post(
-                    "/v1/audio/process",
-                    data={"model": "denoise"},
-                    files={"file": ("test.wav", TINY_WAV, "audio/wav")},
-                )
-                assert response.status_code == 200
-                mock_pool.get_engine.assert_awaited_once_with("MossFormer2-SE")
+        with (
+            patch(
+                "fusion_mlx.api.audio_routes._resolve_model",
+                return_value="MossFormer2-SE",
+            ),
+            patch(
+                "fusion_mlx.api.audio_routes._get_engine_pool",
+                return_value=mock_pool,
+            ),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            response = client.post(
+                "/v1/audio/process",
+                data={"model": "denoise"},
+                files={"file": ("test.wav", TINY_WAV, "audio/wav")},
+            )
+            assert response.status_code == 200
+            mock_pool.get_engine.assert_awaited_once_with("MossFormer2-SE")
 
     def test_process_direct_model_id(self):
         """POST /v1/audio/process with direct model ID works without alias."""
-        from fusion_mlx.server import app
+        from fastapi import FastAPI
 
-        _ensure_audio_routes(app)
+        from fusion_mlx.api.audio_routes import router
+        from fusion_mlx.middleware.auth import check_rate_limit, verify_api_key
+
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[verify_api_key] = lambda: None
+        app.dependency_overrides[check_rate_limit] = lambda: None
 
         mock_pool = _make_mock_pool(model_id="MossFormer2-SE")
-        mock_pool.resolve_model_id = MagicMock(return_value="MossFormer2-SE")
 
-        with patch("fusion_mlx.server._server_state") as mock_state:
-            mock_state.engine_pool = mock_pool
-            mock_state.global_settings = None
-            mock_state.process_memory_enforcer = None
-            mock_state.hf_downloader = None
-            mock_state.ms_downloader = None
-            mock_state.mcp_manager = None
-            mock_state.api_key = None
-            mock_state.settings_manager = MagicMock()
-            with TestClient(app, raise_server_exceptions=False) as client:
-                response = client.post(
-                    "/v1/audio/process",
-                    data={"model": "MossFormer2-SE"},
-                    files={"file": ("test.wav", TINY_WAV, "audio/wav")},
-                )
-                assert response.status_code == 200
-                mock_pool.get_engine.assert_awaited_once_with("MossFormer2-SE")
+        with (
+            patch(
+                "fusion_mlx.api.audio_routes._resolve_model",
+                return_value="MossFormer2-SE",
+            ),
+            patch(
+                "fusion_mlx.api.audio_routes._get_engine_pool",
+                return_value=mock_pool,
+            ),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            response = client.post(
+                "/v1/audio/process",
+                data={"model": "MossFormer2-SE"},
+                files={"file": ("test.wav", TINY_WAV, "audio/wav")},
+            )
+            assert response.status_code == 200
+            mock_pool.get_engine.assert_awaited_once_with("MossFormer2-SE")
 
 
 # ---------------------------------------------------------------------------

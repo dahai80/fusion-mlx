@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.44] - 2026-08-28
+
+Patch release — TTS `streaming_interval` small-value validation fix + audio server-fixture rebuild rescuing ~75 quarantined xfails.
+
+### Fixed
+- **`streaming_interval` rejected too eagerly by Pydantic.** `AudioSpeechRequest.streaming_interval` was constrained `ge=0.1`, which rejected any value below 0.1 with a 422 before the handler ran — defeating the handler's own `MIN_NATIVE_TTS_STREAMING_INTERVAL_SECONDS = 0.01` 400 guard. Relaxed the field to `gt=0.0` (only 0/negative rejected) so the handler owns small-value validation and returns a clean 400 with a diagnostic `detail` mentioning `streaming_interval`. Values `>= 0.01` now pass through to native TTS streaming as intended.
+
+### Tests
+- **Audio server-fixture rebuild (Gap B).** `server_audio_client` / `server_tts_client` / `server_sts_client` fixtures rewritten to mount the audio router on a fresh `FastAPI()` app and inject the mock pool via the designed `_get_engine_pool` test seam (previously patched the lazy-built `_server_state` dict, which is not an attr-bag in prod). Inline alias-resolution test bodies patched `_resolve_model` directly. All FastAPI app constructions in the audio suite now override `verify_api_key` + `check_rate_limit` dependencies to `lambda: None`, eliminating a cross-module 429 rate-limit flake (the module-level `RateLimiter` singleton accumulates across ~100 audio tests in one process). 2 TTS `language` tests marked `xfail(strict=False)` — `language` is not in the OpenAI `/v1/audio/speech` spec; TTS omits it by design (mlx-audio `lang_code` is a separate feature). Audio suite now 112 pass / 0 fail / 6 skip / 7 xfail when run together.
+
 ## [0.8.43] - 2026-08-28
 
 Patch release — pure-memory-mode 500 fix + test-suite flake stabilization.
