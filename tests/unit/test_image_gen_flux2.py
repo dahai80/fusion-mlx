@@ -127,6 +127,7 @@ def test_image_encode_divisibility_guard():
 
 
 def test_image_encode_packed_output(monkeypatch):
+    pytest.importorskip("mflux")
     eng, flux = _make_engine_with_mock_vae_for_encode()
 
     def fake_vaeutil_encode(vae, image, tiling_config=None):
@@ -143,6 +144,7 @@ def test_image_encode_packed_output(monkeypatch):
 
 
 def test_image_encode_bn_normalized(monkeypatch):
+    pytest.importorskip("mflux")
     eng, flux = _make_engine_with_mock_vae_for_encode()
     flux.vae.bn.running_mean = mx.ones((128,)) * 5.0
     flux.vae.bn.running_var = mx.ones((128,)) * 4.0
