@@ -855,7 +855,7 @@ test_cors_env_configurable.py
 # test_d_anthro_validation.py
 # KEEP_QUARANTINED: round10p — vendored DeepSeek-V4 architecture not ported. _register_vendored_archs (utils/tokenizer.py:294) references ..models.deepseek_v4 but module absent → fail-silent. Needs full model vendoring (HCA attn + sinkhorn + MoE) per upstream mlx-lm#1192. Feature gap, not harness drift. File issue for port.
 test_deepseek_v4_vendored.py
-# KEEP_QUARANTINED: round10q — dense-sampler fast-path + Scheduler sampler-cache interning NOT ported. _install_dense_sampler_fastpath absent (conftest:737 injects no-op lambda stub → 7 "no-op-expected" tests pass, 1 "swap-expected" test fails). Scheduler._get_request_sampler + _sampler_cache + _sampler_cache_max absent (2 cache tests hard-fail AttributeError). Perf feature gap (homogeneous-batch fast path + bounded-LRU sampler interning). File issue for port.
+# KEEP_QUARANTINED: round10q — dense-sampler fast-path + Scheduler sampler-cache interning NOT ported. _install_dense_sampler_fastpath absent (conftest:737 injects no-op lambda stub → 7 "no-op-expected" tests pass, 1 "swap-expected" test fails). Scheduler._get_request_sampler + _sampler_cache + _sampler_cache_max absent (2 cache tests hard-fail AttributeError). Replaced by get_or_create_fused_sampler module-level singleton (sampler_fast_path.py:304) — deliberately simpler, no bounded-LRU. Perf feature gap (homogeneous-batch fast path + bounded-LRU sampler interning). Issue #674 filed 2026-08-28 — product decision (accept loss / re-port swap / revert to LRU). NOT autonomous rescue.
 test_dense_sampler_fastpath.py
 # KEEP_QUARANTINED round10q-b7 (2026-08-19): dflash spec-decode cluster
 # (5 suites, 5f/36f/20f/15f/49f). Real feature/migration gap, NOT harness
