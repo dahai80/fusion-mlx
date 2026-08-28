@@ -2549,7 +2549,52 @@ class TestPreloadMatchedBlocks:
         assert manager2._stats["preload_calls"] == 1
         assert manager2._stats["preload_time_ms"] > 0
 
-        manager2.close()
+    def test_preload_pure_memory_mode_no_crash(self, tmp_path, mx):
+        # Regression for issue #681: in hot_cache_only (pure-memory) mode
+        # _cache_dir is None but save_block still populates _index (line
+        # 954, before the hot_cache_only early-return). preload then walks
+        # the index, calls _get_file_path (returns None), and an unguarded
+        # .exists() raised AttributeError -> HTTP 500 on every chat request.
+        manager = PagedSSDCacheManager(
+            hot_cache_only=True,
+            max_size_bytes=1024**3,
+            hot_cache_max_bytes=512 * 1024**2,
+        )
+        assert manager._cache_dir is None
+        hashes = []
+        for i in range(4):
+            block_hash = f"preload_pure_mem_{i:04d}".encode()
+            cache_data = [
+                (
+                    mx.zeros((1, 4, 64, 64)),
+                    mx.zeros((1, 4, 64, 64)),
+                )
+                for _ in range(2)
+            ]
+            manager.save_block(
+                block_hash=block_hash,
+                cache_data=cache_data,
+                token_count=64,
+                model_name="test-model",
+                layer_cache_types=["KVCache", "KVCache"],
+            )
+            hashes.append(block_hash)
+
+        # save_block in hot_cache_only mode also fills hot_cache directly,
+        # so evict them to make the blocks "cold" and reach the file_path
+        # branch in preload_matched_blocks.
+        manager._hot_cache.clear()
+        manager._hot_cache_total_bytes = 0
+        for h in hashes:
+            assert manager._index.contains(h)
+            assert manager._hot_cache_get(h) is None
+
+        # Must not raise AttributeError; nothing to load from disk (no
+        # disk store), so returns 0.
+        loaded = manager.preload_matched_blocks(hashes)
+        assert loaded == 0
+
+        manager.close()
 
     def test_preloaded_blocks_load_correctly(self, tmp_path, mx):
         """After preload, load_block returns correct data from hot cache."""
