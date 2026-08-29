@@ -10,7 +10,9 @@ from fusion_mlx.engines.image_gen import (
 class TestQwenImageVariantMap:
     def test_qwen_image_in_variant_map(self):
         assert "qwen_image" in VARIANT_MAP
-        module_path, cls_name, config_label, default_guidance = VARIANT_MAP["qwen_image"]
+        module_path, cls_name, config_label, default_guidance = VARIANT_MAP[
+            "qwen_image"
+        ]
         assert module_path == "mflux.models.qwen.variants.txt2img.qwen_image"
         assert cls_name == "QwenImage"
         assert config_label == "qwen_image"
@@ -18,7 +20,9 @@ class TestQwenImageVariantMap:
 
     def test_qwen_image_edit_in_variant_map(self):
         assert "qwen_image_edit" in VARIANT_MAP
-        module_path, cls_name, config_label, default_guidance = VARIANT_MAP["qwen_image_edit"]
+        module_path, cls_name, config_label, default_guidance = VARIANT_MAP[
+            "qwen_image_edit"
+        ]
         assert module_path == "mflux.models.qwen.variants.edit.qwen_image_edit"
         assert cls_name == "QwenImageEdit"
         assert config_label == "qwen_image_edit"
