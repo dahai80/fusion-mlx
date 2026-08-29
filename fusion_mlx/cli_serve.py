@@ -885,6 +885,19 @@ def _serve_from_model_dir(args):
     server._api_key = server._resolve_api_key(args.api_key)
     create_app = server.create_app
 
+    # Issue #692: --rate-limit 0 must disable the limiter on the model-dir
+    # path too. The module-level RateLimiter defaults to enabled=True @ 60rpm
+    # (middleware/auth.py). #637 patched only _serve_audio_mode and
+    # _stage_server_config; this path built the app directly without calling
+    # configure_rate_limiter, so the module default leaked and throttled
+    # bursty workloads despite the documented-disable flag. Configure
+    # unconditionally and gate on the flag (0 = disabled), matching the
+    # other two paths — before create_app, since the limiter is read during
+    # app construction the same way server._api_key is (#636 ordering).
+    from .middleware.auth import configure_rate_limiter
+
+    configure_rate_limiter(args.rate_limit, enabled=args.rate_limit > 0)
+
     host = getattr(args, "host", "0.0.0.0") or "0.0.0.0"
     # Honor an explicit --port 0 (OS-assigned ephemeral port, valid for
     # uvicorn). `or 11434` would collapse 0 -> 11434 since 0 is falsy, so only

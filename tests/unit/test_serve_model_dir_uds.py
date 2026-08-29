@@ -31,6 +31,7 @@ def _make_args(**overrides):
         log_level="INFO",
         listen_fd=None,
         api_key=None,
+        rate_limit=0,
     )
     ns.__dict__.update(overrides)
     return ns
@@ -245,3 +246,50 @@ def test_model_dir_cli_key_beats_env(stub_model_dir_deps, monkeypatch):
 
     assert called["run_uvicorn"] is True
     assert server_mod._api_key == "CLI_KEY_636"
+
+
+def test_model_dir_rate_limit_zero_disables_limiter(stub_model_dir_deps, monkeypatch):
+    """Issue #692: ``serve --model-dir <dir> --rate-limit 0`` MUST disable
+    the module-level RateLimiter on the model-dir path too. #637 patched
+    only ``_serve_audio_mode`` and ``_stage_server_config``; the model-dir
+    path (``_serve_from_model_dir``, the default serve entry when no
+    single-model alias) skipped ``configure_rate_limiter``, so the module
+    default ``RateLimiter(60, enabled=True)`` stayed active and throttled
+    bursty workloads despite the documented-disable flag."""
+    from fusion_mlx.middleware.auth import rate_limiter
+
+    monkeypatch_fixture, sentinel_app = stub_model_dir_deps
+    # Force the module default into the throttling state the bug leaves it
+    # in, so the test proves the call flips it — not that it was already off.
+    monkeypatch_fixture.setattr(rate_limiter, "enabled", True)
+    monkeypatch_fixture.setattr(rate_limiter, "requests_per_minute", 60)
+    called = _patch_dispatch(monkeypatch_fixture)
+
+    cli_serve_mod._serve_from_model_dir(_make_args(rate_limit=0))
+
+    assert called["run_uvicorn"] is True
+    assert rate_limiter.enabled is False, (
+        "--rate-limit 0 must disable the limiter on the model-dir path "
+        "too (#692): module default RateLimiter(60, enabled=True) leaked "
+        "because _serve_from_model_dir never called configure_rate_limiter"
+    )
+
+
+def test_model_dir_rate_limit_positive_keeps_limiter_enabled(
+    stub_model_dir_deps, monkeypatch
+):
+    """A positive ``--rate-limit N`` on the model-dir path must configure
+    the limiter at N rpm and keep it enabled — pins the non-zero contract
+    and that the call passes the flag value through, not a hard-coded 0."""
+    from fusion_mlx.middleware.auth import rate_limiter
+
+    monkeypatch_fixture, sentinel_app = stub_model_dir_deps
+    monkeypatch_fixture.setattr(rate_limiter, "enabled", False)
+    monkeypatch_fixture.setattr(rate_limiter, "requests_per_minute", 60)
+    called = _patch_dispatch(monkeypatch_fixture)
+
+    cli_serve_mod._serve_from_model_dir(_make_args(rate_limit=120))
+
+    assert called["run_uvicorn"] is True
+    assert rate_limiter.enabled is True
+    assert rate_limiter.requests_per_minute == 120
