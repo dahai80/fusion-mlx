@@ -4,13 +4,15 @@
 # expose the issue #170 pipeline stage API (load_text_encoder / encode_text /
 # load_dit / denoise / load_vae / decode / decode_tiled / unload_*).
 #
-# Scope: text-to-video only. I2V / VACE / camera conditioning stay on the
-# monolithic generate_video() path (Phase-1); the stage API serves the Phase-2
-# FusionTextEncoder -> FusionKSampler -> FusionVAEDecode sequential-offload
-# flow, which is T2V by construction (FusionKSampler creates an empty latent
-# and denoises it). Sharing the same load_* helpers (load_t5_encoder,
-# load_wan_model, load_vae_decoder) as generate.py keeps one weight-loading
-# code path (Rule 7).
+# Scope: T2V plus I2V / VACE / camera conditioning (#652). The stage API
+# serves the Phase-2 FusionTextEncoder -> FusionKSampler -> FusionVAEDecode
+# sequential-offload flow. T2V stays the pure-noise path; I2V/VACE/camera
+# conditioning is encoded up front by Wan2Backend.encode_control into a
+# ControlState, then threaded into run_denoise which mirrors generate.py's
+# per-step conditioning bit-exactly (channel-concat y, VACE control_hidden,
+# camera y_camera, TI2V mask-blend init + per-step re-apply). Sharing the
+# same load_* helpers (load_t5_encoder, load_wan_model, load_vae_decoder) as
+# generate.py keeps one weight-loading code path (Rule 7).
 
 import gc
 import logging
@@ -35,6 +37,28 @@ try:
     )
 except Exception:  # pragma: no cover - xfuser strategy optional
     from contextlib import nullcontext as _fa_step
+
+
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass
+class ControlState:
+    # Conditioning produced by Wan2Backend.encode_control (#652) and threaded
+    # into run_denoise so the staged path reproduces generate.py bit-exactly.
+    # All fields default to None/False so a T2V call (control=None) stays the
+    # pure-noise path — run_denoise treats a None control as an all-default
+    # ControlState.
+    control_hidden_states: Any = None  # VACE [list of (z,...,t,h,w)] or None
+    control_scales: Any = None  # VACE per-layer scales; DiT self-defaults
+    y_camera: Any = None  # Fun-Camera [list of (C_cam,F,H,W)] or None
+    y_i2v: Any = None  # I2V-14B channel-concat y tensor or None
+    z_img: Any = None  # TI2V-5B encoded first-frame latent [z,1,h,w]
+    i2v_mask: Any = None  # TI2V-5B blend mask [z,t,h,w]
+    i2v_mask_tokens: Any = None  # TI2V-5B per-frame t-token weights [1,t_lat]
+    is_i2v_mask_blend: bool = False
+    is_i2v_channel_concat: bool = False
 
 
 _SCHEDULERS = {
@@ -215,12 +239,38 @@ def run_denoise(
     seed,
     no_compile,
     on_step=None,
+    control_hidden_states=None,
+    control_scales=None,
+    y_camera=None,
+    y_i2v=None,
+    z_img=None,
+    i2v_mask=None,
+    i2v_mask_tokens=None,
+    is_i2v_mask_blend=False,
+    is_i2v_channel_concat=False,
 ):
-    # T2V denoise loop extracted from generate_video() lines 854-1096.
-    # models is [single] or [low, high] for dual. Returns the 4D denoised
-    # latent (z_dim, t_latent, h_latent, w_latent) — NOT batched; the stage
-    # denoise() wrapper adds the batch dim to satisfy the 5D contract.
+    # T2V + I2V/VACE/camera denoise loop. T2V body extracted from
+    # generate_video() lines 854-1096; conditioning threading mirrors
+    # generate.py lines 1047-1184 (#652). models is [single] or [low, high]
+    # for dual. Returns the 4D denoised latent (z_dim, t_latent, h_latent,
+    # w_latent) — NOT batched; the stage denoise() wrapper adds the batch dim
+    # to satisfy the 5D contract. Conditioning arrives as flat kwargs (so
+    # callers/tests can assert each); folded into a ControlState here — the
+    # per-step body reads control.X. All-None -> T2V pure-noise path,
+    # bit-identical to the pre-#652 behavior.
     import random
+
+    control = ControlState(
+        control_hidden_states=control_hidden_states,
+        control_scales=control_scales,
+        y_camera=y_camera,
+        y_i2v=y_i2v,
+        z_img=z_img,
+        i2v_mask=i2v_mask,
+        i2v_mask_tokens=i2v_mask_tokens,
+        is_i2v_mask_blend=is_i2v_mask_blend,
+        is_i2v_channel_concat=is_i2v_channel_concat,
+    )
 
     is_dual = config.dual_model
     cfg_disabled = (
@@ -303,12 +353,20 @@ def run_denoise(
         rope_cos_sin = single_model.prepare_rope(rope_grid_sizes)
         mx.eval(rope_cos_sin)
 
-    # Scheduler + initial noise (918-938). T2V: pure noise.
+    # Scheduler + initial noise (918-938). T2V: pure noise; TI2V-5B mask-blend
+    # blends the encoded first-frame latent with noise (generate.py 1047-1054).
     sched_cls = _SCHEDULERS.get(scheduler, FlowUniPCScheduler)
     sched = sched_cls(num_train_timesteps=config.num_train_timesteps)
     sched.set_timesteps(steps, shift=shift)
     noise = mx.random.normal(target_shape)
-    latents = noise
+    if (
+        control.is_i2v_mask_blend
+        and control.i2v_mask is not None
+        and control.z_img is not None
+    ):
+        latents = (1.0 - control.i2v_mask) * control.z_img + control.i2v_mask * noise
+    else:
+        latents = noise
     boundary = (config.boundary * config.num_train_timesteps) if is_dual else None
 
     if not no_compile:
@@ -348,7 +406,20 @@ def run_denoise(
         _call = getattr(model, "_compiled", model)
 
         if cfg_disabled:
-            t_batch = mx.array([timestep_val])
+            # TI2V-5B mask-blend: per-step t-token weights (generate.py 1097-1104).
+            if control.is_i2v_mask_blend and control.i2v_mask_tokens is not None:
+                t_tokens = control.i2v_mask_tokens * timestep_val
+                pad_len = seq_len - t_tokens.shape[1]
+                if pad_len > 0:
+                    t_tokens = mx.concatenate(
+                        [t_tokens, mx.full((1, pad_len), timestep_val)], axis=1
+                    )
+                t_batch = t_tokens
+            else:
+                t_batch = mx.array([timestep_val])
+
+            y_arg = [control.y_i2v] if control.is_i2v_channel_concat else None
+
             ctx = (
                 context_cond_high
                 if (is_dual and timestep_val >= boundary)
@@ -361,11 +432,11 @@ def run_denoise(
                     context=ctx,
                     seq_len=seq_len,
                     cross_kv_caches=kv,
-                    y=None,
+                    y=y_arg,
                     rope_cos_sin=rcs,
-                    control_hidden_states=None,
-                    control_scales=None,
-                    y_camera=None,
+                    control_hidden_states=control.control_hidden_states,
+                    control_scales=control.control_scales,
+                    y_camera=control.y_camera,
                 )
             noise_pred = preds[0]
             del preds
@@ -385,6 +456,22 @@ def run_denoise(
                     else guide_scale[0]
                 )
             t_batch = mx.array([timestep_val, timestep_val])
+            # TI2V-5B mask-blend CFG: duplicate t-token weights for B=2 (1145-1152).
+            if control.is_i2v_mask_blend and control.i2v_mask_tokens is not None:
+                t_tokens = control.i2v_mask_tokens * timestep_val
+                pad_len = seq_len - t_tokens.shape[1]
+                if pad_len > 0:
+                    t_tokens = mx.concatenate(
+                        [t_tokens, mx.full((1, pad_len), timestep_val)], axis=1
+                    )
+                t_batch = mx.concatenate([t_tokens, t_tokens], axis=0)
+
+            y_arg = (
+                [control.y_i2v, control.y_i2v]
+                if control.is_i2v_channel_concat
+                else None
+            )
+
             ctx = (
                 context_cfg_high
                 if (is_dual and timestep_val >= boundary)
@@ -397,17 +484,28 @@ def run_denoise(
                     context=ctx,
                     seq_len=seq_len,
                     cross_kv_caches=kv,
-                    y=None,
+                    y=y_arg,
                     rope_cos_sin=rcs,
-                    control_hidden_states=None,
-                    control_scales=None,
-                    y_camera=None,
+                    control_hidden_states=control.control_hidden_states,
+                    control_scales=control.control_scales,
+                    y_camera=control.y_camera,
                 )
             noise_pred_cond, noise_pred_uncond = preds[0], preds[1]
             noise_pred = noise_pred_uncond + gs * (noise_pred_cond - noise_pred_uncond)
             del noise_pred_cond, noise_pred_uncond, preds
 
         latents = sched.step(noise_pred[None], timestep_val, latents[None]).squeeze(0)
+
+        # TI2V-5B: re-apply mask to keep first frame frozen (generate.py 1183).
+        if (
+            control.is_i2v_mask_blend
+            and control.i2v_mask is not None
+            and control.z_img is not None
+        ):
+            latents = (
+                1.0 - control.i2v_mask
+            ) * control.z_img + control.i2v_mask * latents
+
         del noise_pred
         mx.eval(latents)
 

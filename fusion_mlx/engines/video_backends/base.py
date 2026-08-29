@@ -191,6 +191,7 @@ class VideoBackend(ABC):
         cfg: float,
         seed: int,
         num_frames: int,
+        control=None,
     ) -> mx.array:
         raise NotImplementedError(
             f"{self.name} stage API not implemented (issue #170 phase 2)"
@@ -199,6 +200,21 @@ class VideoBackend(ABC):
     async def unload_dit(self) -> None:
         raise NotImplementedError(
             f"{self.name} stage API not implemented (issue #170 phase 2)"
+        )
+
+    async def load_vae_encoder(self) -> None:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #652 conditioning)"
+        )
+
+    async def encode_control(self, **kwargs) -> Any:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #652 conditioning)"
+        )
+
+    async def unload_vae_encoder(self) -> None:
+        raise NotImplementedError(
+            f"{self.name} stage API not implemented (issue #652 conditioning)"
         )
 
     async def load_vae(self) -> None:

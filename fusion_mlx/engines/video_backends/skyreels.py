@@ -208,7 +208,9 @@ class SkyReelsBackend(VideoBackend):
         cfg: float,
         seed: int,
         num_frames: int,
+        control=None,
     ) -> mx.array:
+        # control (#652 conditioning) is Wan2-only; skyreels ignores it.
         pipeline = await self._ensure_pipeline()
         if pipeline.dit is None:
             raise RuntimeError("dit is unloaded; call load_dit().")

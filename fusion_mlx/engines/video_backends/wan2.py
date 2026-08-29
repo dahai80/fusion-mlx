@@ -472,12 +472,21 @@ class Wan2Backend(VideoBackend):
         cfg: float,
         seed: int,
         num_frames: int,
+        control=None,
     ) -> mx.array:
-        from fusion_mlx.video.wan2.stage import compute_target_shape, run_denoise
+        from fusion_mlx.video.wan2.stage import (
+            ControlState,
+            compute_target_shape,
+            run_denoise,
+        )
 
         if self._stage_dit_models is None:
             raise RuntimeError("dit is unloaded; call load_dit().")
         config = self._ensure_stage_config()
+        # control is a ControlState built by encode_control(), or None for the
+        # pure T2V path (bit-identical to pre-#652: all conditioning None).
+        if control is None:
+            control = ControlState()
 
         # cfg: the stage contract passes a single float. neg_embed is None when
         # the caller disabled CFG (no negative FusionTextEncoder node). Derive
@@ -528,6 +537,15 @@ class Wan2Backend(VideoBackend):
                 seed,
                 no_compile,
                 on_step=on_step,
+                control_hidden_states=control.control_hidden_states,
+                control_scales=control.control_scales,
+                y_camera=control.y_camera,
+                y_i2v=control.y_i2v,
+                z_img=control.z_img,
+                i2v_mask=control.i2v_mask,
+                i2v_mask_tokens=control.i2v_mask_tokens,
+                is_i2v_mask_blend=control.is_i2v_mask_blend,
+                is_i2v_channel_concat=control.is_i2v_channel_concat,
             )
             # 5D contract: add batch dim -> (1, z_dim, t_latent, h_lat, w_lat).
             # Build the projection AND evaluate it on THIS executor thread so
@@ -723,6 +741,253 @@ class Wan2Backend(VideoBackend):
         self._stage_flags["vae_encoder"] = True
         gc.collect()
         logger.info("stage:vae_encoder load wan2 active_mem=%s", _active_mem())
+
+    async def load_vae_encoder(self) -> None:
+        await self._load_vae_encoder_stage()
+
+    async def unload_vae_encoder(self) -> None:
+        self._stage_vae_encoder = None
+        self._stage_flags.pop("vae_encoder", None)
+        gc.collect()
+        await _clear_mlx_cache()
+        logger.info("stage:vae_encoder unload wan2 active_mem=%s", _active_mem())
+
+    async def encode_control(
+        self,
+        image: str | None = None,
+        width: int = 512,
+        height: int = 512,
+        num_frames: int = 81,
+        control_video: str | None = None,
+        control_mask: str | None = None,
+        reference_images: list | None = None,
+        camera_conditions: Any = None,
+    ):
+        # #652 staged conditioning surface. Dispatches on model_type /
+        # add_control_adapter, mirroring generate.py bit-exactly but routing
+        # VAE encodes through stage.encode_wan_vae (so the per-stage MLX stream
+        # is owned by the worker thread, same pattern as encode()/denoise()).
+        # Returns a ControlState for denoise(control=...), or None for the pure
+        # T2V path (no image, no camera) -> denoise stays bit-identical to T2V.
+        from fusion_mlx.video.wan2.generate import (
+            _load_ref_image,
+            _load_video_frames,
+            _prepare_vace_control_latents,
+        )
+        from fusion_mlx.video.wan2.i2v_utils import (
+            build_i2v_mask,
+            preprocess_image,
+        )
+        from fusion_mlx.video.wan2.stage import (
+            ControlState,
+            compute_target_shape,
+            encode_wan_vae,
+        )
+
+        config = self._ensure_stage_config()
+        model_type = getattr(config, "model_type", "t2v")
+        has_camera = bool(getattr(config, "add_control_adapter", False))
+        is_vace = model_type == "vace"
+
+        # Camera-only path: reshapes camera_conditions, needs NO VAE encoder
+        # (matches generate.py y_camera build at 916-939).
+        if has_camera and camera_conditions is not None:
+            if isinstance(camera_conditions, str):
+                cam_frames = _load_video_frames(
+                    camera_conditions, width, height, num_frames
+                )
+                mx.eval(cam_frames)
+                camera_conditions = cam_frames
+            if camera_conditions.ndim == 4:
+                y_camera = [camera_conditions[None]]
+            else:
+                y_camera = [camera_conditions]
+            logger.info(
+                "stage:encode_control camera y_camera shape=%s",
+                tuple(camera_conditions.shape),
+            )
+            return ControlState(y_camera=y_camera)
+
+        # Pure T2V: no image, no camera -> no conditioning.
+        if image is None and not has_camera:
+            return None
+
+        # All remaining paths (VACE, i2v channel-concat, ti2v mask-blend) need
+        # the VAE encoder. Explicit load required — no auto-load, matching the
+        # existing "dit is unloaded" / "vae is unloaded" gate pattern. The
+        # caller pairs load_vae_encoder()/encode_control()/unload_vae_encoder()
+        # as a stage so peak memory is the encoder alone, not encoder+DiT.
+        if self._stage_vae_encoder is None:
+            raise RuntimeError("vae_encoder is unloaded; call load_vae_encoder().")
+        vae_enc = self._stage_vae_encoder
+
+        target_shape, _seq_len, _h, _w = compute_target_shape(
+            config, num_frames, height, width
+        )
+        z_dim = config.vae_z_dim
+        vae_stride = config.vae_stride
+        t_latent = (num_frames - 1) // vae_stride[0] + 1
+        h_latent = height // vae_stride[1]
+        w_latent = width // vae_stride[2]
+
+        def _vace() -> ControlState:
+            # Mirror generate.py 816-914: control_video path OR reference-only
+            # (synthesized gray filler + all-white mask). Reference-only fires
+            # when control_video is None but reference_images present.
+            if control_video is None and reference_images:
+                video_frames = mx.zeros(
+                    (3, num_frames, height, width), dtype=mx.float32
+                )
+                mask_frames = mx.ones((num_frames, height, width), dtype=mx.float32)
+                mx.eval(video_frames, mask_frames)
+                ref_imgs = [_load_ref_image(p, width, height) for p in reference_images]
+                mx.eval(*ref_imgs)
+            elif control_video is not None:
+                video_frames = _load_video_frames(
+                    control_video, width, height, num_frames
+                )
+                mx.eval(video_frames)
+                if control_mask is not None:
+                    mask_frames = _load_video_frames(
+                        control_mask, width, height, num_frames
+                    )
+                else:
+                    mask_frames = mx.ones((num_frames, height, width), dtype=mx.float32)
+                mx.eval(mask_frames)
+                ref_imgs = (
+                    [_load_ref_image(p, width, height) for p in reference_images]
+                    if reference_images
+                    else None
+                )
+                if ref_imgs is not None:
+                    mx.eval(*ref_imgs)
+            else:
+                logger.warning(
+                    "VACE encode_control: no control_video and no "
+                    "reference_images -> empty control_hidden_states"
+                )
+                return ControlState(control_hidden_states=[None])
+            control_hidden_states = [
+                _prepare_vace_control_latents(
+                    vae_encoder=vae_enc,
+                    control_video=video_frames,
+                    control_mask=mask_frames,
+                    reference_images=ref_imgs,
+                    vae_stride=config.vae_stride,
+                    h_latent=h_latent,
+                    w_latent=w_latent,
+                    t_latent=t_latent,
+                    z_dim=z_dim,
+                )
+            ]
+            logger.info(
+                "stage:encode_control vace control_hidden_states=%d",
+                len(control_hidden_states),
+            )
+            return ControlState(control_hidden_states=control_hidden_states)
+
+        def _i2v_channel_concat() -> ControlState:
+            # Mirror generate.py 681-751. Use _load_ref_image (bit-identical
+            # resize+center-crop to the inline PIL block) so the staged path
+            # shares one image-load helper. Build video [3,F,H,W] (first frame
+            # = image, rest zeros), encode -> z_video [z_dim,T_lat,H_lat,W_lat].
+            img_chw = _load_ref_image(image, width, height)  # [3,H,W]
+            video = mx.concatenate(
+                [
+                    img_chw[:, None, :, :],
+                    mx.zeros((3, num_frames - 1, height, width)),
+                ],
+                axis=1,
+            )  # [3,F,H,W]
+            z_video = encode_wan_vae(
+                video[None], config, vae_enc
+            )  # [z_dim,T_l,H_l,W_l]
+            mx.eval(z_video)
+            if z_video.ndim == 5:
+                z_video = z_video[0]
+            # T_lat comes from the encoded video, not num_frames, so the mask
+            # and y_i2v share the same temporal dim even when the VAE temporal
+            # stride differs from the assumed vae_stride[0] (e.g. test fakes).
+            t_lat = z_video.shape[1]
+            h_lat = z_video.shape[2]
+            w_lat = z_video.shape[3]
+
+            # Mask: 1 first frame, 0 rest -> [4, T_lat, H_lat, W_lat].
+            msk = mx.ones((1, num_frames, h_lat, w_lat))
+            msk = mx.concatenate(
+                [msk[:, :1], mx.zeros((1, num_frames - 1, h_lat, w_lat))],
+                axis=1,
+            )
+            msk = mx.concatenate([mx.repeat(msk[:, :1], 4, axis=1), msk[:, 1:]], axis=1)
+            msk = msk.reshape(1, msk.shape[1] // 4, 4, h_lat, w_lat)
+            msk = msk.transpose(0, 2, 1, 3, 4)[0]  # [4, T_lat, H_lat, W_lat]
+            # Truncate/pad mask temporal dim to t_lat to match z_video exactly
+            # (num_frames may not divide evenly into 4-frame groups for all
+            # model configs; generate.py assumes the VAE produces exactly
+            # num_frames//4 frames, which holds for the real Wan VAE).
+            if msk.shape[1] != t_lat:
+                msk = msk[:, :t_lat]
+
+            extra_channels = config.in_dim - config.vae_z_dim
+            if extra_channels == config.vae_z_dim + 4:
+                y_i2v = mx.concatenate([msk, z_video], axis=0)
+            else:
+                y_i2v = z_video
+                logger.info(
+                    "stage:encode_control i2v channel-concat in_dim=%d extra=%d "
+                    "-> video-only y (%d ch, no mask)",
+                    config.in_dim,
+                    extra_channels,
+                    y_i2v.shape[0],
+                )
+            mx.eval(y_i2v)
+            logger.info(
+                "stage:encode_control i2v channel-concat y shape=%s", tuple(y_i2v.shape)
+            )
+            return ControlState(y_i2v=y_i2v, is_i2v_channel_concat=True)
+
+        def _i2v_mask_blend() -> ControlState:
+            # Mirror generate.py 752-810. preprocess_image -> [1,3,1,H,W]
+            # channels-first; Wan2.2 (vae_z_dim==48) transpose channels-last
+            # before encode, channels-first after. z_img[0] -> [z_dim,1,H_l,W_l].
+            img_tensor = preprocess_image(image, width, height)  # [1,3,1,H,W]
+            is_wan22_vae = config.vae_z_dim == 48
+            if is_wan22_vae:
+                img_tensor = img_tensor.transpose(0, 2, 3, 4, 1)  # [1,1,H,W,3]
+            mx.eval(img_tensor)
+            z_img = encode_wan_vae(img_tensor, config, vae_enc)
+            if is_wan22_vae:
+                z_img = z_img.transpose(0, 4, 1, 2, 3)  # [1,z_dim,1,H,W]
+            mx.eval(z_img)
+            z_img = z_img[0]  # [z_dim, 1, H_lat, W_lat]
+            i2v_mask, i2v_mask_tokens = build_i2v_mask(target_shape, config.patch_size)
+            logger.info(
+                "stage:encode_control i2v mask-blend z_img=%s mask=%s",
+                tuple(z_img.shape),
+                tuple(i2v_mask.shape),
+            )
+            return ControlState(
+                z_img=z_img,
+                i2v_mask=i2v_mask,
+                i2v_mask_tokens=i2v_mask_tokens,
+                is_i2v_mask_blend=True,
+            )
+
+        is_i2v_channel_concat = model_type == "i2v" and image is not None
+        is_i2v_mask_blend = model_type != "i2v" and image is not None
+
+        def _run():
+            if is_vace:
+                return _vace()
+            if is_i2v_channel_concat:
+                return _i2v_channel_concat()
+            if is_i2v_mask_blend:
+                return _i2v_mask_blend()
+            return ControlState()
+
+        loop = asyncio.get_running_loop()
+        control = await loop.run_in_executor(get_executor("video"), _run)
+        return control
 
     def set_progress_callback(self, cb):
         # Wired by FusionEngineWrapper.set_progress_callback before load_dit().

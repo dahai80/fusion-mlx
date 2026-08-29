@@ -783,8 +783,18 @@ between stages (`gc.collect()` + `mx.metal.clear_cache()` + active-memory log):
 | Stage | Load | Run | Unload |
 |---|---|---|---|
 | Text encoder | `load_text_encoder()` | `encode_text(prompt) -> {"embed","text_ids"}` | `unload_text_encoder()` |
-| DiT | `load_dit()` | `denoise(latent, pos_embed, neg_embed, steps, cfg, seed[, num_frames])` | `unload_dit()` |
+| DiT | `load_dit()` | `denoise(latent, pos_embed, neg_embed, steps, cfg, seed[, num_frames][, control])` | `unload_dit()` |
 | VAE | `load_vae()` | `decode(latent)` / `decode_tiled(latent, tile_size=256)` | `unload_vae()` |
+| VAE encoder (#652) | `load_vae_encoder()` | `encode_control(image=, width=, height=, num_frames=, control_video=, control_mask=, reference_images=, camera_conditions=) -> ControlState \| None` | `unload_vae_encoder()` |
+
+> **Wan2 conditioning (#652):** `encode_control()` encodes I2V / VACE / camera
+> conditioning up front into a `ControlState` that the staged `denoise(control=...)`
+> threads into `run_denoise` bit-exactly mirroring the monolith `generate_video`.
+> Dispatches on `model_type`: VACE → `control_hidden_states`; I2V-14B → channel-concat
+> `y_i2v`; TI2V-5B → `z_img` + `i2v_mask` (mask-blend); Fun-Camera → `y_camera`.
+> Pure T2V (`image=None`, no camera) returns `None` — the pure-noise path is untouched.
+> VACE / i2v paths require `load_vae_encoder()` first (raise otherwise); camera skips
+> the gate. The `vae_encoder` flag is inject-on-load / pop-on-unload, not pre-declared.
 
 Latents flow as unpacked `(batch, c, h, w)` `mx.array` across all stages
 (matches mflux `prepare_latents` output and `decode_packed_latents` input;
@@ -803,7 +813,8 @@ engine (the load methods raise `RuntimeError` with that guidance).
 
 Video backends inherit `NotImplementedError` defaults for the stage API (issue
 #170 phase 2); `LegacyLTXBackend` and `Wan2Backend` wire real per-step denoise,
-`LTX2Backend` / `SkyReelsBackend` accept-but-log.
+`LTX2Backend` / `SkyReelsBackend` accept-but-log. `Wan2Backend` additionally
+implements the full I2V / VACE / camera conditioning stage surface (#652).
 
 ### Step callback (#171)
 

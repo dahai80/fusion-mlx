@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.8.48] - 2026-08-29
+
+Patch release — staged I2V / VACE / camera conditioning API on `Wan2Backend` (#652). Extends the issue #410 sequential-offload stage API beyond pure T2V so the fusion-comfyui Phase-2 "Transparent Staged Default" covers every Wan2 video path, not just text-to-video. The staged `denoise`/`decode` previously handled only pure-noise T2V; I2V-14B channel-concat, TI2V-5B mask-blend, VACE control latents, and Fun-Camera paths went through the monolith `generate_video(params)`. Now they are stage-encodable.
+
+### Added
+- **`Wan2Backend.encode_control(...)` (#652).** Encodes I2V/VACE/camera conditioning up front into a `ControlState` dataclass (`fusion_mlx/video/wan2/stage.py:ControlState`) that the staged `denoise` threads into `run_denoise` bit-exactly mirroring `generate.py`'s per-step conditioning. Dispatches on `model_type`: `vace` → `_prepare_vace_control_latents` → `control_hidden_states`; `i2v` (14B) → VAE-encode first frame + mask → channel-concat `y_i2v` (20ch when `in_dim - vae_z_dim == vae_z_dim + 4`, else 16ch); `ti2v` (5B) → `preprocess_image` + VAE encode → `z_img` + `build_i2v_mask`; camera → reshape `camera_conditions` → `y_camera`. Pure T2V (`image=None`, no camera) returns `None` — the pure-noise path is untouched. Camera skips the VAE-encoder gate; VACE / i2v-channel-concat / i2v-mask-blend require an explicit `load_vae_encoder()` first and raise `RuntimeError("vae_encoder is unloaded; call load_vae_encoder().")` otherwise, matching the existing `dit is unloaded` / `vae is unloaded` stage-gate contract.
+- **`Wan2Backend.load_vae_encoder()` / `unload_vae_encoder()` (#652).** Stage entry/exit for the VAE encoder used by `encode_control`. Lazy-loads via the shared `_load_vae_encoder_stage` helper (single weight-loading path, Rule 7). The `vae_encoder` stage flag follows the existing inject-on-load / pop-on-unload convention — it is NOT pre-declared in `_stage_flags`'s base dict.
+- **`run_denoise` flat conditioning kwargs (#652).** Conditioning is lifted into `run_denoise` as flat kwargs (`control_hidden_states`, `control_scales`, `y_camera`, `y_i2v`, `z_img`, `i2v_mask`, `i2v_mask_tokens`, `is_i2v_mask_blend`, `is_i2v_channel_concat`); it builds the `ControlState` internally. `denoise(control=None)` stays the T2V pure-noise path.
+
+### Tests
+- **Staged I2V/VACE/camera unit suite (#652).** `tests/unit/test_wan2_stage_api.py`: 32 tests covering the 3 new methods + `denoise(control=...)` threading. Dispatch tests for all paths (T2V→`None`, VACE→`control_hidden_states`, i2v-14B→`y_i2v`, ti2v-5B→`i2v_mask`+`z_img`, camera→`y_camera`), the no-VAE-encoder gate (`RuntimeError`), and `run_denoise` kwarg threading (VACE `control_hidden_states`, ti2v `is_i2v_mask_blend`/`i2v_mask`/`z_img`). All fake/mock — no model load. Real-model bit-exact acceptance (staged == monolith, same seed, per variant) gated behind `FUSION_MLX_REAL_MODEL_TESTS` per the #630 convention (4 variants on disk: I2V-14B-480P, TI2V-5B-q8, VACE-14B, Fun-Camera-1.3B).
+
+### Conventions
+- `vae_encoder` stage flag is inject-on-load / pop-on-unload (NOT pre-declared), matching the main-branch `unload_vae` `pop` convention. `stop()` and `__init__` base `_stage_flags` dict stays 3 keys (`text_encoder`/`dit`/`vae`).
+
 ## [0.8.47] - 2026-08-28
 
 Patch release — distributed KV-cache export/import endpoints (#650). Upstream primitive for fusion-multi-node P3-28 cross-node KV migration: serialize a shard's live KV tensors to base64 `.npy`, restore them on a peer node, resume decode from the prefix without recomputing.
