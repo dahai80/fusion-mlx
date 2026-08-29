@@ -207,12 +207,24 @@ def test_video_engine_stage_methods_delegate(monkeypatch):
         async def load_dit(self):
             captured["load_dit"] = True
 
-        async def denoise(self, latent, pos, neg, steps, cfg, seed, num_frames):
-            captured["denoise"] = (steps, num_frames)
+        async def denoise(
+            self, latent, pos, neg, steps, cfg, seed, num_frames, control=None
+        ):
+            captured["denoise"] = (steps, num_frames, control)
             return latent
 
         async def unload_dit(self):
             captured["unload_dit"] = True
+
+        async def load_vae_encoder(self):
+            captured["load_vae_encoder"] = True
+
+        async def encode_control(self, **kwargs):
+            captured["encode_control"] = kwargs
+            return "CTRL"
+
+        async def unload_vae_encoder(self):
+            captured["unload_vae_encoder"] = True
 
         async def load_vae(self):
             captured["load_vae"] = True
@@ -235,15 +247,21 @@ def test_video_engine_stage_methods_delegate(monkeypatch):
     assert asyncio.run(eng.encode_text("p")) == {"embed": "E"}
     asyncio.run(eng.unload_text_encoder())
     asyncio.run(eng.load_dit())
-    asyncio.run(eng.denoise("L", "P", None, 3, 4.0, 0, 16))
+    asyncio.run(eng.denoise("L", "P", None, 3, 4.0, 0, 16, control="C"))
     asyncio.run(eng.unload_dit())
+    asyncio.run(eng.load_vae_encoder())
+    assert asyncio.run(eng.encode_control(image="i.png")) == "CTRL"
+    asyncio.run(eng.unload_vae_encoder())
     asyncio.run(eng.load_vae())
     asyncio.run(eng.decode("L"))
     asyncio.run(eng.decode_tiled("L", tile_size=128))
     asyncio.run(eng.unload_vae())
     assert captured["load_text_encoder"]
     assert captured["encode_text"] == "p"
-    assert captured["denoise"] == (3, 16)
+    assert captured["denoise"] == (3, 16, "C")
+    assert captured["load_vae_encoder"]
+    assert captured["encode_control"] == {"image": "i.png"}
+    assert captured["unload_vae_encoder"]
     assert captured["tile_size"] == 128
 
 
@@ -276,6 +294,13 @@ def test_video_backend_default_stage_methods_not_implemented():
         asyncio.run(b.decode(mx.zeros((1, 8, 4, 4))))
     with pytest.raises(NotImplementedError, match="issue #170 phase 2"):
         asyncio.run(b.denoise(mx.zeros((1, 8, 4, 4)), None, None, 3, 1.0, 0, 16))
+    # #652 conditioning stubs default-raise on backends that don't override them.
+    with pytest.raises(NotImplementedError, match="issue #652 conditioning"):
+        asyncio.run(b.load_vae_encoder())
+    with pytest.raises(NotImplementedError, match="issue #652 conditioning"):
+        asyncio.run(b.encode_control(image="x.png"))
+    with pytest.raises(NotImplementedError, match="issue #652 conditioning"):
+        asyncio.run(b.unload_vae_encoder())
 
 
 def test_video_encode_not_implemented_base():
