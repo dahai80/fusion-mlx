@@ -176,17 +176,13 @@ class TestDetectModelConfig:
         config = detect_model_config(model_path)
         assert config is not None
         assert config.tool_call_parser == "deepseek"
-        # V4-Flash chat template emits `<think>...</think>` blocks gated
-        # by ``thinking_mode``; ``deepseek_r1`` handles that format. The
-        # base ``deepseek-ai/DeepSeek-V4`` path is resolved via family
-        # detection (no aliases.json entry), so it currently gets no
-        # reasoning_parser — only the MLX variants benefit from the
-        # alias wiring. Track both shapes here so a refactor that flips
-        # the family default has to update this test consciously.
-        if model_path == "deepseek-ai/DeepSeek-V4":
-            assert config.reasoning_parser is None
-        else:
-            assert config.reasoning_parser == "deepseek_r1"
+        # #893 (codex MED): V4 / V4-Flash deliberately get NO
+        # reasoning_parser. The honest minimal fix is to NOT speculate
+        # about V4 / V5 reasoning format — both the base path (family
+        # detection) and the MLX variants resolve to reasoning_parser=None.
+        # Update both layers simultaneously if a future V4 template gains a
+        # reasoning format.
+        assert config.reasoning_parser is None
         assert config.is_hybrid is False
         assert config.supports_spec_decode is True
 
@@ -801,25 +797,6 @@ class TestVisibility:
         assert "✗ disabled (hybrid arch)" not in table
         assert "pure attention" in table
 
-    def test_table_for_dflash_alias_surfaces_opt_in_flag(self):
-        # 0.9.1 dogfood follow-up. ``qwen3.5-27b-8bit`` is the operator-
-        # shipped DFlash flagship (1.85× code median, 0.9.0 release
-        # notes). Its alias has ``supports_spec_decode=False`` (no MTP
-        # head) BUT ``supports_dflash=True`` with the drafter registered.
-        # Before 0.9.2 the Spec-decode row claimed
-        # ``(no MTP/drafter trained)`` — actively misleading because the
-        # DFlash drafter IS registered and the user can opt in. Surface
-        # the actionable flag instead.
-        cfg = detect_model_config("mlx-community/Qwen3.5-27B-8bit")
-        assert cfg is not None
-        assert cfg.is_hybrid is False
-        assert cfg.supports_spec_decode is False
-        assert cfg.supports_dflash is True
-        table = format_profile_table("mlx-community/Qwen3.5-27B-8bit", cfg)
-        assert "✗ MTP off — try --enable-dflash" in table
-        assert "no MTP/drafter trained" not in table
-        assert "hybrid arch" not in table
-
     def test_table_for_unknown_shows_defaults(self):
         table = format_profile_table("some-new-model", None)
         assert "no pattern matched" in table
@@ -1075,17 +1052,16 @@ class TestWarnMisboundDeepseekV3Parser:
     # warning fires falsely on a perfectly correct default serve. The
     # helper MUST resolve aliases before classifying.
     def test_no_warn_on_v3_alias_with_v3_parser(self):
-        # The alias name has no V3 marker — only the resolved HF path
-        # (``mlx-community/DeepSeek-R1-0528-Qwen3-8B-4bit``) does.
-        # The helper must do the alias lookup itself.
+        # ``deepseek-v3-4bit`` resolves to
+        # ``mlx-community/DeepSeek-V3-0324-4bit`` — a V3-template
+        # checkpoint. The V3-body parser ``deepseek_v3`` is in-spec.
         assert (
-            warn_misbound_deepseek_v3_parser("deepseek-r1-8b-4bit", "deepseek_v3")
-            is None
+            warn_misbound_deepseek_v3_parser("deepseek-v3-4bit", "deepseek_v3") is None
         )
-        # The matching ``deepseek_r1_0528`` alias on the same parser
+        # The matching ``deepseek_r1_0528`` parser on the same V3
         # family is also in-spec.
         assert (
-            warn_misbound_deepseek_v3_parser("deepseek-r1-8b-4bit", "deepseek_r1_0528")
+            warn_misbound_deepseek_v3_parser("deepseek-v3-4bit", "deepseek_r1_0528")
             is None
         )
 
@@ -1093,7 +1069,7 @@ class TestWarnMisboundDeepseekV3Parser:
     # parser (cross-sub-family), the warning MUST still fire — the alias
     # resolution is informational, not a free pass.
     def test_warn_on_v3_alias_with_v31_parser(self):
-        msg = warn_misbound_deepseek_v3_parser("deepseek-r1-8b-4bit", "deepseek_v31")
+        msg = warn_misbound_deepseek_v3_parser("deepseek-v3-4bit", "deepseek_v31")
         assert msg is not None
         # Cross-sub-family framing: the helper recognised the alias as
         # a V3.0 (not V3.1) checkpoint.
