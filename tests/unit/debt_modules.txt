@@ -417,7 +417,6 @@ test_audio_routes_bundle.py
 #   Errors + TestSTSModelAliasResolution. 1 contract xfail:
 #   test_start_rejects_generic_family (prod msg reworded 'Unsupported STS
 #   family' vs test 'Unsupported STS model family').
-test_audio_sts.py
 # RESCUED test_audio_stt 2026-08-24 (eval round16): PARTIAL 7p/1s/28xf.
 #   FIX (harness): repoint import fusion_mlx.engine.stt (singular, MISSING) →
 #   fusion_mlx.engines.stt (plural, STTEngine BaseNonStreamingEngine w/
@@ -430,7 +429,6 @@ test_audio_sts.py
 #   TestVideoContainerRemap + TestSTTModelAliasResolution. 1 contract xfail:
 #   test_transcribe_preserves_iso_language_for_code_backends (prod normalizes
 #   it->italian, test wants ISO passthrough for cohere-style backends).
-test_audio_stt.py
 # RESCUED test_audio_tts 2026-08-24 (eval round16): PARTIAL 18p/1s/38xf.
 #   FIX (harness): repoint import fusion_mlx.engine.tts (singular, MISSING) →
 #   fusion_mlx.engines.tts (plural, TTSEngine BaseNonStreamingEngine). Unblocked
@@ -445,7 +443,6 @@ test_audio_stt.py
 #   test_language_routes_to_lang_code (prod uses `language` key not `lang_code`),
 #   test_language_keeps_trailing_position (prod omits `language` from positional
 #   synth_params list). Voice-routing param-name rework — REDESIGN.
-test_audio_tts.py
 # KEEP_QUARANTINED test_audio_upload_size_limit.py (eval round13 2026-08-24): REMOVED/UNSHIPPED.
 # install_audio_body_limit_middleware + MAX_AUDIO_UPLOAD_SIZE only in old rapid-mlx migration
 # commit 31ce9b68, never in fusion_mlx. routes_internal/audio.py (176L) has no body-limit/
@@ -820,7 +817,6 @@ test_community_bench.py
 # (#675) tracking unported Rapid-MLX features deliberately NOT ported in #641
 # (wide-open #52 stance kept): FUSION_MLX_CORS_MAX_AGE env, empty
 # methods/headers warnings, credentials default-false, F-091 header narrowing.
-test_cors_env_configurable.py
 # RESCUED 2026-08-26 (#641): 6/6 pass. L-02 spec-aligned preflight rejection
 # ported. _SpecAlignedCORSMiddleware(CORSMiddleware) subclass added
 # (server.py) overrides preflight_response → 200 OK + no ACAO + Vary: Origin
@@ -1561,7 +1557,6 @@ test_prefix_divergence_probe.py
 # parses OpenAI choices[].delta, BaseEngine.stream_chat yields FLAT
 # GenerationOutput). #578 (#513/#520) shipped but did NOT un-quarantine
 # this file — stream-feature work still pending. 0 regression.
-test_r12_m3_responses_stream_leading_items_order.py
 # RESCUED b19 r12_reasoning_sanitizer: 80/80 green. Fixes — (1) AssistantMessage
 # + ChatCompletionChunkDelta field validators on openai_models (route-serialized
 # classes, NOT models.py parallels) sanitize content/reasoning at type boundary;
@@ -1667,7 +1662,6 @@ test_responses_sse_event_order.py
 test_routes.py
 # test_routes_models.py RESCUED 2026-08-22 (2 pass + 1 xfail): model-list
 # endpoint contract test. 0 import errors, all live pass. Un-quarantine.
-test_routes_models_effective_parsers.py
 # KEEP_QUARANTINED test_rst_mid_sse_zombie_kv.py (eval 2026-08-26): 4f/4p.
 # REDESIGN-DRIFT, not harness drift. Test pins the F-012 zombie-KV fix
 # (shield executor await + _on_executor_done done-callback + wrap_future
@@ -2081,7 +2075,6 @@ test_turboquant_ssd.py
 # harness assertions rapid-mlx->fusion-mlx + raullenchai/rapid-mlx/rapid-mlx
 # ->dahai80/homebrew-fusion-mlx/fusion-mlx. Prod crash FIXED.
 # test_upgrade_cli.py
-test_v4_multi_session.py
 # KEEP_QUARANTINED: missing feature, not harness drift. Test loads
 # scripts/validate_release_subject.py (importlib spec_from_file_location) expecting
 # diagnose(subject)->list[str] + main(["--subject",...])->exit-code API for linting
