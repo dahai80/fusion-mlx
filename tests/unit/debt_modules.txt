@@ -1336,7 +1336,6 @@ test_mlx_vlm_diffusion_patch.py
 # (drafter paths, V4-Flash reasoning_parser, alias resolution helper change).
 # File issue first per CLAUDE.md flow. 200 passing tests valuable but
 # quarantine is all-or-nothing via collect_ignore.
-test_model_auto_config.py
 # test_model_loading.py  (RESCUED 2026-08-24 round15: 13 pass + 14 xfail. PROD FIX: _checkpoint_has_mtp_weights shard-scan fallback used `for k in f` (iterating safetensors handle) which raises TypeError on current safetensors API → silent except masked it → shard scan always returned False. Fixed to `for k in f.keys()`. Test test_returns_true_when_later_shard_has_mtp now passes (pinned real prod bug). 14 xfail REMOVED-FEATURE: paroquant dispatch (maybe_load_custom_quantization is 1-line `return None` stub, 5 tests), llama4 attention pre-load patch + _patch_mlx_lm_load_config (2 parametrized), load_text_model (1), VlmMtp ordered attach/sanitize/runtime seam wiring (6 — _patch_mlx_lm_load_config + set_mtp_attach_enabled separate-seam wiring removed/redesigned).)
 # test_model_profiles_ssot.py (RESCUED 2026-08-19 round10q: 21/21 pass. Data fix
 # in aliases.json SSOT — 4 alias entries missing explicit profile bool fields:
