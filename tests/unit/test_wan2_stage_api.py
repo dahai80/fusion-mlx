@@ -15,7 +15,9 @@ from fusion_mlx.engines.video_backends.wan2 import Wan2Backend
 def _make_fake_stage(monkeypatch):
     # Fake config object exposing the attributes the stage methods read:
     # text_len, vae_stride, patch_size, vae_z_dim, dual_model, sample_shift,
-    # frame_num, in_dim.
+    # frame_num, in_dim, model_type, add_control_adapter, vace_in_dim,
+    # in_dim_control_adapter, num_train_timesteps, boundary (#652 control
+    # dispatch keys off model_type / add_control_adapter).
     config = SimpleNamespace(
         text_len=512,
         vae_stride=(4, 16, 16),
@@ -27,6 +29,12 @@ def _make_fake_stage(monkeypatch):
         in_dim=16,
         sample_neg_prompt="",
         max_area=0,
+        model_type="t2v",
+        add_control_adapter=False,
+        vace_in_dim=0,
+        in_dim_control_adapter=24,
+        num_train_timesteps=1000,
+        boundary=0.875,
     )
     quant = None
 
@@ -61,13 +69,17 @@ def _make_fake_stage(monkeypatch):
     monkeypatch.setattr(utils_mod, "load_vae_decoder", lambda path, cfg=None: fake_vae)
 
     # run_denoise returns a 4D latent (z_dim, t_lat, h_lat, w_lat); the stage
-    # denoise() wrapper adds the batch dim -> 5D.
+    # denoise() wrapper adds the batch dim -> 5D. Capture the kwargs so control
+    # tests assert conditioning was threaded (#652).
     denoise_result = mx.zeros((16, 5, 32, 32), dtype=mx.float32)
-    monkeypatch.setattr(
-        stage_mod,
-        "run_denoise",
-        lambda *a, **k: denoise_result,
-    )
+    denoise_calls = []
+
+    def _fake_run_denoise(*a, **k):
+        denoise_calls.append(k)
+        return denoise_result
+
+    monkeypatch.setattr(stage_mod, "run_denoise", _fake_run_denoise)
+    monkeypatch.setattr(stage_mod, "_denoise_calls_ref", denoise_calls, raising=False)
     # compute_target_shape returns (target_shape, seq_len, height, width).
     monkeypatch.setattr(
         stage_mod,
@@ -81,6 +93,48 @@ def _make_fake_stage(monkeypatch):
         stage_mod,
         "decode_wan_vae",
         lambda latent, cfg, vae, tiling_config=None: frames_u8,
+    )
+
+    # encode_wan_vae returns a 4D latent (z_dim, t_lat, h_lat, w_lat).
+    encode_result = mx.zeros((16, 1, 32, 32), dtype=mx.float32)
+    monkeypatch.setattr(
+        stage_mod,
+        "encode_wan_vae",
+        lambda x, cfg, vae_enc: encode_result,
+    )
+
+    # VAE encoder load fake (#652 load_vae_encoder / encode_control).
+    fake_vae_encoder = SimpleNamespace()
+    monkeypatch.setattr(
+        utils_mod, "load_vae_encoder", lambda path, cfg=None: fake_vae_encoder
+    )
+
+    # Control helpers faked to return fixed tensors so encode_control dispatch
+    # can be asserted without real VAE/image IO (#652).
+    import fusion_mlx.video.wan2.generate as gen_mod
+    import fusion_mlx.video.wan2.i2v_utils as i2v_mod
+
+    vace_control = mx.zeros((96, 5, 32, 32), dtype=mx.float32)
+    monkeypatch.setattr(
+        gen_mod,
+        "_prepare_vace_control_latents",
+        lambda **k: vace_control,
+    )
+    monkeypatch.setattr(
+        i2v_mod, "preprocess_image", lambda p, w, h: mx.zeros((1, 3, 1, h, w))
+    )
+    i2v_mask = mx.zeros((16, 5, 32, 32), dtype=mx.float32)
+    i2v_mask_tokens = mx.zeros((1, 5), dtype=mx.float32)
+    monkeypatch.setattr(
+        i2v_mod,
+        "build_i2v_mask",
+        lambda z_shape, patch_size: (i2v_mask, i2v_mask_tokens),
+    )
+    monkeypatch.setattr(gen_mod, "_load_ref_image", lambda p, w, h: mx.zeros((3, h, w)))
+    monkeypatch.setattr(
+        gen_mod,
+        "_load_video_frames",
+        lambda p, w, h, nf: mx.zeros((3, nf, h, w)),
     )
 
     # get_model_path resolves a model name to a directory; fake a real path.
@@ -99,7 +153,7 @@ def _make_fake_stage(monkeypatch):
 
     monkeypatch.setattr(mx, "eval", _safe_eval)
 
-    return config, context, denoise_result, frames_u8
+    return config, context, denoise_result, frames_u8, denoise_calls
 
 
 class TestWan2StageLoadUnload:
@@ -351,3 +405,219 @@ class TestWan2StageDetect:
 
     def test_detect_non_wan_path(self):
         assert Wan2Backend.detect("llama-3-8b") is False
+
+
+# ----------------------------------------------------------------------
+# #652: staged I2V / VACE / camera control API.
+# load_vae_encoder / encode_control / unload_vae_encoder stage between T5
+# and DiT; encode_control dispatches on model_type returning a ControlState;
+# denoise(control=...) threads the conditioning into run_denoise.
+# ----------------------------------------------------------------------
+
+
+class TestWan2VAEEncoderStage:
+    async def test_load_vae_encoder_sets_flag(self, monkeypatch):
+        _make_fake_stage(monkeypatch)
+        backend = Wan2Backend("wan2.1-i2v-14b-480p")
+        await backend.start("wan2.1-i2v-14b-480p")
+        await backend.load_vae_encoder()
+        assert backend._stage_flags["vae_encoder"] is True
+        assert backend._stage_vae_encoder is not None
+
+    async def test_unload_vae_encoder_clears_flag_and_nones(self, monkeypatch):
+        _make_fake_stage(monkeypatch)
+        backend = Wan2Backend("wan2.1-i2v-14b-480p")
+        await backend.start("wan2.1-i2v-14b-480p")
+        await backend.load_vae_encoder()
+        await backend.unload_vae_encoder()
+        assert "vae_encoder" not in backend._stage_flags
+        assert backend._stage_vae_encoder is None
+
+    async def test_unload_vae_drops_encoder_too(self, monkeypatch):
+        _make_fake_stage(monkeypatch)
+        backend = Wan2Backend("wan2.1-i2v-14b-480p")
+        await backend.start("wan2.1-i2v-14b-480p")
+        await backend.load_vae_encoder()
+        await backend.unload_vae()
+        assert backend._stage_vae_encoder is None
+        assert "vae_encoder" not in backend._stage_flags
+
+
+class TestWan2EncodeControlDispatch:
+    async def test_encode_control_t2v_returns_none(self, monkeypatch):
+        _make_fake_stage(monkeypatch)
+        backend = Wan2Backend("wan2.1-t2v-1.3B")
+        await backend.start("wan2.1-t2v-1.3B")
+        control = await backend.encode_control(
+            image=None,
+            width=512,
+            height=512,
+            num_frames=81,
+        )
+        assert control is None
+
+    async def test_encode_control_vace_populates_control_hidden(self, monkeypatch):
+        cfg, *_ = _make_fake_stage(monkeypatch)
+        cfg.model_type = "vace"
+        cfg.vace_in_dim = 96
+        backend = Wan2Backend("wan2.1-vace-14b")
+        await backend.start("wan2.1-vace-14b")
+        await backend.load_vae_encoder()
+        control = await backend.encode_control(
+            image="/fake/img.png",
+            width=512,
+            height=512,
+            num_frames=81,
+            control_video="/fake/control.mp4",
+            control_mask="/fake/mask.mp4",
+        )
+        assert control is not None
+        assert control.control_hidden_states is not None
+        assert control.is_i2v_mask_blend is False
+
+    async def test_encode_control_i2v_channel_concat_populates_y(self, monkeypatch):
+        cfg, *_ = _make_fake_stage(monkeypatch)
+        cfg.model_type = "i2v"
+        cfg.in_dim = 36  # extra = 20 == vae_z_dim(16)+4 -> y=[mask,video]
+        backend = Wan2Backend("wan2.1-i2v-14b-480p")
+        await backend.start("wan2.1-i2v-14b-480p")
+        await backend.load_vae_encoder()
+        control = await backend.encode_control(
+            image="/fake/img.png",
+            width=512,
+            height=512,
+            num_frames=81,
+        )
+        assert control is not None
+        assert control.y_i2v is not None
+        assert control.is_i2v_mask_blend is False
+
+    async def test_encode_control_i2v_mask_blend_populates_mask(self, monkeypatch):
+        cfg, *_ = _make_fake_stage(monkeypatch)
+        cfg.model_type = "ti2v"
+        cfg.vae_z_dim = 16
+        backend = Wan2Backend("wan2.2-ti2v-5b")
+        await backend.start("wan2.2-ti2v-5b")
+        await backend.load_vae_encoder()
+        control = await backend.encode_control(
+            image="/fake/img.png",
+            width=512,
+            height=512,
+            num_frames=81,
+        )
+        assert control is not None
+        assert control.is_i2v_mask_blend is True
+        assert control.i2v_mask is not None
+        assert control.z_img is not None
+
+    async def test_encode_control_camera_populates_y_camera(self, monkeypatch):
+        cfg, *_ = _make_fake_stage(monkeypatch)
+        cfg.model_type = "i2v"
+        cfg.add_control_adapter = True
+        backend = Wan2Backend("wan2.1-fun-camera-1.3b")
+        await backend.start("wan2.1-fun-camera-1.3b")
+        cam = mx.zeros((24, 81, 512, 512), dtype=mx.float32)
+        control = await backend.encode_control(
+            image="/fake/img.png",
+            width=512,
+            height=512,
+            num_frames=81,
+            camera_conditions=cam,
+        )
+        assert control is not None
+        assert control.y_camera is not None
+
+    async def test_encode_control_raises_without_vae_encoder(self, monkeypatch):
+        _make_fake_stage(monkeypatch)
+        backend = Wan2Backend("wan2.1-i2v-14b-480p")
+        await backend.start("wan2.1-i2v-14b-480p")
+        with pytest.raises(RuntimeError, match="vae_encoder is unloaded"):
+            await backend.encode_control(
+                image="/fake/img.png",
+                width=512,
+                height=512,
+                num_frames=81,
+            )
+
+
+class TestWan2DenoiseWithControl:
+    async def test_denoise_none_control_stays_t2v(self, monkeypatch):
+        _make_fake_stage(monkeypatch)
+        backend = Wan2Backend("wan2.1-t2v-1.3B")
+        await backend.start("wan2.1-t2v-1.3B")
+        await backend.load_dit()
+        latent = mx.zeros((1, 16, 5, 32, 32), dtype=mx.float32)
+        pos_embed = mx.zeros((1, 512, 4096), dtype=mx.float32)
+        result = await backend.denoise(
+            latent=latent,
+            pos_embed=pos_embed,
+            neg_embed=None,
+            steps=5,
+            cfg=5.0,
+            seed=42,
+            num_frames=81,
+            control=None,
+        )
+        assert result.ndim == 5
+
+    async def test_denoise_threads_vace_control_into_run_denoise(self, monkeypatch):
+        cfg, _, _, _, calls = _make_fake_stage(monkeypatch)
+        cfg.model_type = "vace"
+        cfg.vace_in_dim = 96
+        backend = Wan2Backend("wan2.1-vace-14b")
+        await backend.start("wan2.1-vace-14b")
+        await backend.load_vae_encoder()
+        control = await backend.encode_control(
+            image="/fake/img.png",
+            width=512,
+            height=512,
+            num_frames=81,
+            control_video="/fake/control.mp4",
+        )
+        await backend.load_dit()
+        latent = mx.zeros((1, 16, 5, 32, 32), dtype=mx.float32)
+        pos_embed = mx.zeros((1, 512, 4096), dtype=mx.float32)
+        await backend.denoise(
+            latent=latent,
+            pos_embed=pos_embed,
+            neg_embed=None,
+            steps=5,
+            cfg=5.0,
+            seed=42,
+            num_frames=81,
+            control=control,
+        )
+        assert calls, "run_denoise was not called"
+        kw = calls[-1]
+        assert kw.get("control_hidden_states") is not None
+
+    async def test_denoise_threads_i2v_mask_blend_control(self, monkeypatch):
+        cfg, _, _, _, calls = _make_fake_stage(monkeypatch)
+        cfg.model_type = "ti2v"
+        cfg.vae_z_dim = 16
+        backend = Wan2Backend("wan2.2-ti2v-5b")
+        await backend.start("wan2.2-ti2v-5b")
+        await backend.load_vae_encoder()
+        control = await backend.encode_control(
+            image="/fake/img.png",
+            width=512,
+            height=512,
+            num_frames=81,
+        )
+        await backend.load_dit()
+        latent = mx.zeros((1, 16, 5, 32, 32), dtype=mx.float32)
+        pos_embed = mx.zeros((1, 512, 4096), dtype=mx.float32)
+        await backend.denoise(
+            latent=latent,
+            pos_embed=pos_embed,
+            neg_embed=None,
+            steps=5,
+            cfg=5.0,
+            seed=42,
+            num_frames=81,
+            control=control,
+        )
+        kw = calls[-1]
+        assert kw.get("is_i2v_mask_blend") is True
+        assert kw.get("i2v_mask") is not None
+        assert kw.get("z_img") is not None
