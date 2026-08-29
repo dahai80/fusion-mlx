@@ -155,6 +155,23 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
         "stable_cascade",
         4.0,
     ),
+    # Qwen-Image (Qwen/Qwen-Image-2512) DiT MMDiT via mflux. txt2img uses
+    # ModelConfig.qwen_image(); supports negative_prompt + img2img. HF repo
+    # ids: Qwen/Qwen-Image, Qwen/Qwen-Image-2512, mlx-community/*-4bit.
+    "qwen_image": (
+        "mflux.models.qwen.variants.txt2img.qwen_image",
+        "QwenImage",
+        "qwen_image",
+        4.0,
+    ),
+    # Qwen-Image-Edit (multimodal edit with reference images) via mflux.
+    # ModelConfig.qwen_image_edit(); generate_image requires image_paths.
+    "qwen_image_edit": (
+        "mflux.models.qwen.variants.edit.qwen_image_edit",
+        "QwenImageEdit",
+        "qwen_image_edit",
+        4.0,
+    ),
 }
 
 # Per-call executor timeout for image generation / model load (#481). The
@@ -239,6 +256,14 @@ def _infer_variant(model_path: str) -> str:
         return "kontext"
     if "redux" in name:
         return "redux"
+    # Qwen-Image (DiT MMDiT) via mflux. Check "qwen-image-edit" BEFORE
+    # "qwen-image" since both contain the "qwen-image" substring. "edit"
+    # must route to the edit variant (image_paths required); plain
+    # qwen-image / qwen-image-2512 / Qwen-Image-2512-4bit -> txt2img.
+    if "qwen-image-edit" in name or "qwen_image_edit" in name:
+        return "qwen_image_edit"
+    if "qwen-image" in name or "qwen_image" in name:
+        return "qwen_image"
     # FLUX.1 base txt2img: distinguish from FLUX.2 klein.
     # "schnell" is unique to FLUX.1; "dev" without klein/flux2 is FLUX.1-dev.
     if "schnell" in name:
