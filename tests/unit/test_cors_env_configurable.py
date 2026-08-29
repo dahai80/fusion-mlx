@@ -21,7 +21,6 @@ require the engine stack to be loaded).
 
 from __future__ import annotations
 
-import importlib
 from collections.abc import Iterator
 
 import pytest
@@ -41,9 +40,6 @@ def fresh_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[FastAPI]:
     """
     import fusion_mlx.server as server_mod
 
-    # Reload to drop any state from previous tests in the same worker.
-    importlib.reload(server_mod)
-
     app = FastAPI()
 
     @app.post("/v1/chat/completions")
@@ -54,7 +50,17 @@ def fresh_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[FastAPI]:
     async def _health() -> dict[str, str]:
         return {"status": "ok"}
 
+    # Point the module-global app at this test's fresh app, and reset the
+    # two CORS globals so _mount_cors_middleware re-mounts on this app.
+    # monkeypatch reverts all three after the test → clean per-test state.
+    # NB: do NOT importlib.reload(server_mod) here. reload re-executes
+    # fusion_mlx.server and creates a NEW Server class object, so
+    # public_api.Server (bound once at import) is no longer identity-equal
+    # to the reloaded copy — breaks test_public_api_reexports_match_internal
+    # when run in the same suite (#641 class-identity poison).
     monkeypatch.setattr(server_mod, "app", app)
+    monkeypatch.setattr(server_mod, "_cors_mounted", False)
+    monkeypatch.setattr(server_mod, "_cors_origins", None)
 
     for var in (
         "FUSION_MLX_CORS_ALLOW_ORIGINS",
