@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.49] - 2026-08-29
+
+Patch release — test-debt rescue: 7 quarantined test files re-joined the active suite (+160 collected tests), plus a cors fixture fix that resolves a latent full-suite failure. No prod code changed.
+
+### Fixed
+- **CORS fixture class-identity poison (#641).** `tests/unit/test_cors_env_configurable.py`'s `fresh_app` fixture used `importlib.reload(server_mod)` to reset CORS module state. `reload` re-executes `fusion_mlx.server` and creates a NEW `Server` class object, so `public_api.Server` (bound once at import) was no longer identity-equal to the reloaded copy — broke `test_public_api_reexports_match_internal` (`assert public_api.Server is Server`) only when run in the full suite. Dormant while `test_cors_env_configurable` was quarantined; the rescue activated the polluter. Replaced reload with `monkeypatch.setattr` of `app` + `_cors_mounted=False` + `_cors_origins=None` (auto-reverts after each test → clean per-test state, no class-identity poison). Removed now-unused `import importlib`.
+
+### Tests
+- **7 quarantined files rescued** (removed from `tests/unit/debt_modules.txt`): `test_audio_sts`, `test_audio_stt`, `test_audio_tts` (3 audio, Gap B fixtures, no cross-module 429), `test_cors_env_configurable`, `test_r12_m3_responses_stream_leading_items_order`, `test_routes_models_effective_parsers`, `test_v4_multi_session`. All verified genuine — import real prod symbols, not conftest no-op shims (Rule 9). `test_dense_sampler_fastpath` deliberately kept quarantined (passes against the conftest shim, not prod; honors #674 / PR #686). Active suite: 12932 → 13092 collected (+160); full suite 12246 passed / 0 failed.
+
 ## [0.8.48] - 2026-08-29
 
 Patch release — staged I2V / VACE / camera conditioning API on `Wan2Backend` (#652). Extends the issue #410 sequential-offload stage API beyond pure T2V so the fusion-comfyui Phase-2 "Transparent Staged Default" covers every Wan2 video path, not just text-to-video. The staged `denoise`/`decode` previously handled only pure-noise T2V; I2V-14B channel-concat, TI2V-5B mask-blend, VACE control latents, and Fun-Camera paths went through the monolith `generate_video(params)`. Now they are stage-encodable.
