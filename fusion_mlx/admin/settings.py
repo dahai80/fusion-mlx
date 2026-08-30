@@ -71,7 +71,14 @@ def _read_settings_json() -> dict:
 def _write_settings_json(data: dict) -> None:
     path = _get_settings_json_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    # 审计0830 P0-6: settings.json 含明文 api_key, 0o600 收敛权限防本地越权读。
+    raw = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, raw)
+    finally:
+        os.close(fd)
+    os.chmod(path, 0o600)
 
 
 def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
