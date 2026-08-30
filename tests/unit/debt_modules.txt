@@ -2187,6 +2187,21 @@ test_thinking_budget.py
 # tool_wire_leak guard, audit_tool_parser_coverage.py script. Rule 2/3:
 # don't invent validators/guards/scripts to satisfy tests.
 test_tool_calling.py
+# KEEP_QUARANTINED test_tool_choice_enforcement.py (re-eval round-current
+# 2026-08-30): collection ImportError — NOT harness drift, REMOVED-CONTRACT.
+# 6 of 7 imported symbols gone from fusion_mlx.routes_internal.chat:
+#   _contains_structural_tool_wire_leak / _contains_tool_wire_literal /
+#   _recover_partial_tool_args / _scrub_tool_wire_literals /
+#   _scrub_visible_tool_wire_leaks / _synthesize_forced_tool_call — ALL
+#   REMOVED (0 refs in fusion_mlx). Tool-wire-leak scrubbing RETIRED (#644,
+#   arch replaced by postprocessor filter). Only _forced_tool_call_prefix
+#   survives (chat.py:44). _TOOL_USE_*_SUFFIX still in helpers.py:556,561.
+# Same feature-port / REMOVED-CONTRACT category as the sibling test_tool_calling
+# verdict (CANDIDATE ISSUE block above lines 2205-2208: tool-call param
+# JSON-schema enforcement + _contains_structural_tool_wire_leak guard,
+# Rule 2/3: don't invent validators/guards/scripts to satisfy tests).
+# File STAYS quarantined: every deleted symbol it imports is RETIRED prod
+# surface; un-quarantine = collection ImportError = false coverage (Rule 9).
 test_tool_choice_enforcement.py
 test_tool_logits_schema_guards.py
 test_tool_parser_coverage.py
