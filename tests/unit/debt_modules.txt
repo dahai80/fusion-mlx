@@ -404,8 +404,29 @@ test_anthropic_think_leak_r12_m1b.py
 # not mounted / removed). The 5 passing tests exercise live probe helpers
 # but intermixed with dead-contract source-path reads. KEEP quarantined.
 test_audio_probe_consistency.py
+# KEEP_QUARANTINED test_audio_r11_b_bundle.py (eval 2026-08-30): 22F/0P,
+# 3 findings (R11-B-F2/F3/F4) — ALL 3 prod fixes STILL LIVE (F2 format→
+# response_format model_validator models.py:1190; F3 _resolve_default_
+# voice_literal routes_internal/audio.py:150; F4 audio capability in
+# routes_internal/models.py:84). Failure = HARNESS REDESIGN-DRIFT, not
+# removed feature: tests patch STALE `audio_route._tts_engine = None`
+# singleton seam; live /v1/audio/speech reads `_get_engine_pool()` →
+# `_pool` injected via set_audio_context (api/audio_routes.py:64), so
+# un-injected pool → 503 "Server not initialized". F4 class touches
+# REMOVED `srv._embedding_model_locked`/`srv._tool_call_parser` server-
+# scope attrs. RESCUABLE via Gap B `_get_engine_pool`/set_audio_context
+# pool-seam fixture (mirror test_audio_tts.py), but 646L/22 tests across
+# 3 findings = full harness rewrite — deferred to focused follow-up.
 test_audio_r11_b_bundle.py
+# KEEP_QUARANTINED test_audio_r7_c_bundle.py (eval 2026-08-30): 8F/5P.
+# Same root as r11_b: 503 "Server not initialized" from stale _tts_engine
+# singleton seam (live route uses _get_engine_pool pool injection).
+# RESCUABLE via pool seam, deferred with r11_b cluster.
 test_audio_r7_c_bundle.py
+# KEEP_QUARANTINED test_audio_r8_a_bundle.py (eval 2026-08-30): 31F/13P.
+# Same root as r11_b: 503 "Server not initialized" from stale _tts_engine
+# singleton seam (93×503, 2×ImportError). 13 passing tests cover live
+# probe helpers. RESCUABLE via pool seam, deferred with r11_b cluster.
 test_audio_r8_a_bundle.py
 # KEEP_QUARANTINED test_audio_route_registration_gate.py (eval round11
 # 2026-08-24, verdict CORRECTED 2026-08-30): 4P/22F. NOT _server_state
@@ -934,8 +955,26 @@ test_dense_sampler_fastpath.py
 # - test_dflash_multimodal_fallback: depends on dflash engine/router above.
 # Rule 9: repoint would mask regression (test passing for wrong reason).
 test_dflash_engine.py
+# KEEP_QUARANTINED test_dflash_multimodal_fallback.py (eval 2026-08-30):
+# 16F/6P. Imports REMOVED `DFlashEngine` class — dflash redesigned to
+# `MlxVlmDFlashDriver` (fusion_mlx/speculative/dflash, no DFlashEngine
+# symbol). Tests pin dead per-block adapter API (16×AttributeError
+# "type object 'DFlashEngine' has no attribute"). Rule 7/12: shipped
+# rewrite, rollback forbidden. Live driver coverage =
+# test_dflash_adapter_signature.py (rescued).
 test_dflash_multimodal_fallback.py
+# KEEP_QUARANTINED test_dflash_prefill_memory_guard.py (eval 2026-08-30):
+# 17F/0P. Imports REMOVED `from fusion_mlx.engine.dflash import
+# DFlashEngine, _DFlashPrefillGuard` — module path gone (dflash now
+# speculative.dflash, no DFlashEngine, no _DFlashPrefillGuard class).
+# 20×TypeError "_DFlashPrefillGuard() takes no arguments" = dead ctor
+# sig. memory_monitor has live `raise_if_prefill_exceeds` (not the
+# dead guard attrs tested). REMOVED-CONTRACT. Rule 7/12.
 test_dflash_prefill_memory_guard.py
+# KEEP_QUARANTINED test_dflash_spec_decode.py (eval 2026-08-30): 51c,
+# 100×ModuleNotFoundError `fusion_mlx.spec_decode` — module RENAMED to
+# `fusion_mlx.speculative`. Dead import path. REMOVED-CONTRACT (module
+# rename). Re-pointing import = inventing removed module layout. Rule 7.
 test_dflash_spec_decode.py
 # RESCUED round10q-b7 (2026-08-19): TestMlxVlmImportContract 3 contract tests
 # (L2219/2225/2232) pin mlx-vlm 0.6.3 surface; installed 0.5.0 lacks
@@ -1415,7 +1454,15 @@ test_mlx_vlm_diffusion_patch.py
 # Additive 2 bool fields, no field removed. 82 entries load + resolve clean.)
 # test_model_profiles_ssot.py
 test_mtp_inject_and_install.py
+# KEEP_QUARANTINED test_mtp_spec_decode.py (eval 2026-08-30): 38c,
+# 38×ModuleNotFoundError `fusion_mlx.spec_decode` — module RENAMED to
+# `fusion_mlx.speculative` (same root as dflash_spec_decode). Dead import
+# path. REMOVED-CONTRACT (module rename). Rule 7.
 test_mtp_spec_decode.py
+# KEEP_QUARANTINED test_mtp_stream_contract.py (eval 2026-08-30): 7c,
+# 10×ModuleNotFoundError `fusion_mlx.spec_decode` (same rename root) +
+# cross-test `tests.test_mtp_spec_decode` attribute (collection-order
+# coupling to quarantined sibling). REMOVED-CONTRACT. Rule 7.
 test_mtp_stream_contract.py
 # test_mxfp4_moe_guardrail.py  (RESCUED 2026-08-19 — commented out = un-quarantined = collected; 42 pass. Brand-rename drift: 2 Prometheus render tests asserted stale rapid_mlx_* prefix but prod render_prometheus_lines() emits fusion_mlx_* (fusion_mlx/mxfp4_moe_guardrail.py:205-210); docstring ref vllm_mlx/_mxfp4_moe_guardrail.py → fusion_mlx/mxfp4_moe_guardrail.py. REAL data fix: aliases.json gpt-oss-20b-mxfp4-q8 is_moe false→true (20B/3.6B-active OpenAI MoE, was false → mlx#3402 guardrail returned before warning → alerts inert). Issue #544.)
 # RESCUED 2026-08-19 b24 — commented out = un-quarantined = collected; 6/6 pass.
@@ -1601,7 +1648,20 @@ test_platform.py
 test_prefill_oom_graceful.py
 # KEEP_QUARANTINED 2026-08-22 (#598): BatchedEngine._compute_prefix_boundary (PR #435 wiring) removed. Import engine.batched->engines.batched fixed (collects now) but feature gone. 4/4 fail.
 test_prefix_boundary_path_parity.py
+# KEEP_QUARANTINED test_prefix_cache_persistence.py (eval 2026-08-30):
+# 71c/16F. Tests pin REMOVED SSD-persistence metrics ("save_drift_drops",
+# 16×KeyError + 16×TypeError + 16×AssertionError). The SSD save/drift
+# metric surface was dropped in the prefix-cache redesign; BlockAware-
+# PrefixCache (fusion_mlx/cache/prefix_cache.py) has no save-drift path.
+# REMOVED-FEATURE. Rule 7/12: re-adding metrics = inventing. Live cache
+# stats covered by get_stats/get_stats_dict.
 test_prefix_cache_persistence.py
+# KEEP_QUARANTINED test_prefix_cache_rotating_tip_strip.py (eval
+# 2026-08-30): 9c/2F. `BlockAwarePrefixCache` LIVE in fusion_mlx.cache
+# with window-padding methods (_detect_window_padding_from_blocks,
+# _apply_window_padding), but test wants REMOVED `_rotating_tip_lineage`
+# attr (2×AttributeError). Rotating-tip lineage redesigned to window-
+# padding detection. REMOVED-CONTRACT (renamed attr). Rule 7.
 test_prefix_cache_rotating_tip_strip.py
 # KEEP_QUARANTINED 2026-08-22 (#598): Scheduler._common_prefix_len + _log_prefix_divergence removed (logic moved to sched_admission.py module funcs). Dead-symbol.
 test_prefix_divergence_probe.py
