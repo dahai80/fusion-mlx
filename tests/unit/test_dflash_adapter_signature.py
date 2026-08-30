@@ -39,8 +39,6 @@ Coverage:
 from __future__ import annotations
 
 import inspect
-import sys
-import types
 from typing import Any
 
 import pytest
@@ -82,7 +80,7 @@ def test_mlx_vlm_draft_block_signature_matches_0_6_3() -> None:
     ], (
         "mlx-vlm 0.6.3 DFlashDraftModel.draft_block parameter list "
         f"changed: got {params}. Update MlxVlmDFlashDriver in "
-        "vllm_mlx/spec_decode/dflash/drafter.py to match — see #343."
+        "fusion_mlx/speculative/dflash/drafter.py to match — see #343."
     )
     # token_dtype has a default; the other slots are positional-required.
     assert sig.parameters["token_dtype"].default is mx.int32
@@ -160,7 +158,7 @@ def stub_mlx_vlm(monkeypatch: pytest.MonkeyPatch):
     Patches:
       * ``mlx_vlm.load`` — returns (model, processor) tuples
       * ``mlx_vlm.stream_generate`` — records call args, yields fake chunks
-      * ``vllm_mlx.speculative.dflash.load_runtime`` — returns a fake runtime
+      * ``fusion_mlx.speculative.dflash.load_runtime`` — returns a fake runtime
 
     Returns a dict with ``calls`` (list of dict, one per stream_generate
     invocation) and ``runtime`` (the fake DFlashRuntime instance), so
@@ -193,18 +191,13 @@ def stub_mlx_vlm(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(mlx_vlm, "load", fake_load, raising=True)
     monkeypatch.setattr(mlx_vlm, "stream_generate", fake_stream_generate, raising=True)
 
-    # Patch load_runtime in the speculative bridge module.
-    import fusion_mlx.speculative.dflash as bridge
+    # Patch load_runtime on the runtime module the driver binds via
+    # ``from .runtime import load_runtime`` (drafter.py:130, call-time
+    # relative import). The bridge re-export is a separate function
+    # object; patching it does not intercept the driver's import.
+    import fusion_mlx.speculative.dflash.runtime as rt_mod
 
-    monkeypatch.setattr(bridge, "load_runtime", lambda repo: runtime, raising=True)
-    # Also patch the symbol re-export so ``from ... import load_runtime``
-    # inside the driver picks up the fake one.
-    monkeypatch.setattr(
-        sys.modules["vllm_mlx.speculative.dflash"],
-        "load_runtime",
-        lambda repo: runtime,
-        raising=True,
-    )
+    monkeypatch.setattr(rt_mod, "load_runtime", lambda repo: runtime, raising=True)
 
     return {"calls": calls, "runtime": runtime, "drafter": drafter}
 
@@ -216,7 +209,7 @@ def test_driver_generate_invokes_stream_generate_with_drafter(stub_mlx_vlm) -> N
     the drafter (resulting in a silent fall-back to plain AR decode —
     the exact failure mode that masked the broken 0.9 bench).
     """
-    from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
+    from fusion_mlx.speculative.dflash.drafter import MlxVlmDFlashDriver
 
     driver = MlxVlmDFlashDriver(
         target_repo="mlx-community/Qwen3.5-9B-4bit",
@@ -241,7 +234,7 @@ def test_driver_generate_invokes_stream_generate_with_drafter(stub_mlx_vlm) -> N
 
 def test_driver_forwards_block_size_override(stub_mlx_vlm) -> None:
     """When ``block_size`` is set on the driver, forward it to mlx-vlm."""
-    from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
+    from fusion_mlx.speculative.dflash.drafter import MlxVlmDFlashDriver
 
     driver = MlxVlmDFlashDriver(
         target_repo="mlx-community/Qwen3.5-9B-4bit",
@@ -263,7 +256,8 @@ def test_driver_accept_stats_reads_drafter_lists(monkeypatch, stub_mlx_vlm) -> N
     accidentally clear the lists post-iteration.
     """
     import mlx_vlm
-    from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
+
+    from fusion_mlx.speculative.dflash.drafter import MlxVlmDFlashDriver
 
     driver = MlxVlmDFlashDriver(
         target_repo="mlx-community/Qwen3.5-9B-4bit",
@@ -277,8 +271,6 @@ def test_driver_accept_stats_reads_drafter_lists(monkeypatch, stub_mlx_vlm) -> N
     drafter = stub_mlx_vlm["drafter"]
 
     def populating_stream_generate(model, processor, prompt, **kwargs):
-        from tests.test_dflash_adapter_signature import _FakeChunk
-
         drafter.accept_lens.append(3)
         drafter.draft_lens.append(7)
         yield _FakeChunk("a", token=1, generation_tokens=1)
@@ -309,7 +301,7 @@ def test_driver_accept_stats_reads_drafter_lists(monkeypatch, stub_mlx_vlm) -> N
 
 def test_driver_accept_stats_handles_empty_runs(stub_mlx_vlm) -> None:
     """Zero-attempt runs must not divide by zero."""
-    from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
+    from fusion_mlx.speculative.dflash.drafter import MlxVlmDFlashDriver
 
     driver = MlxVlmDFlashDriver(
         target_repo="mlx-community/Qwen3.5-9B-4bit",
@@ -325,7 +317,7 @@ def test_driver_accept_stats_handles_empty_runs(stub_mlx_vlm) -> None:
 
 def test_driver_load_is_idempotent(stub_mlx_vlm) -> None:
     """A second ``load()`` must not re-invoke the loaders."""
-    from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
+    from fusion_mlx.speculative.dflash.drafter import MlxVlmDFlashDriver
 
     # Patch load to count invocations.
     load_calls = {"n": 0}
@@ -353,7 +345,7 @@ def test_driver_load_is_idempotent(stub_mlx_vlm) -> None:
 
 def test_driver_generate_without_load_raises() -> None:
     """``generate`` before ``load`` should error clearly, not crash inside mlx-vlm."""
-    from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
+    from fusion_mlx.speculative.dflash.drafter import MlxVlmDFlashDriver
 
     driver = MlxVlmDFlashDriver(
         target_repo="mlx-community/Qwen3.5-9B-4bit",
@@ -365,7 +357,7 @@ def test_driver_generate_without_load_raises() -> None:
 
 def test_driver_rejects_empty_repos() -> None:
     """Empty target / drafter args should fail at construction, not load."""
-    from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
+    from fusion_mlx.speculative.dflash.drafter import MlxVlmDFlashDriver
 
     with pytest.raises(ValueError, match="target_repo"):
         MlxVlmDFlashDriver(target_repo="", drafter_repo="z-lab/Qwen3.5-9B-DFlash")
@@ -381,7 +373,7 @@ def test_driver_adopt_accepts_preloaded_objects(stub_mlx_vlm) -> None:
     would either have to load twice (28+ GB for Qwen3.5-27B-8bit) or
     poke at the driver's private attrs.
     """
-    from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
+    from fusion_mlx.speculative.dflash.drafter import MlxVlmDFlashDriver
 
     runtime = stub_mlx_vlm["runtime"]
     driver = MlxVlmDFlashDriver(
@@ -405,7 +397,7 @@ def test_driver_adopt_accepts_preloaded_objects(stub_mlx_vlm) -> None:
 
 def test_driver_adopt_rejects_double_call(stub_mlx_vlm) -> None:
     """Calling ``adopt()`` after ``load()`` (or twice) raises."""
-    from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
+    from fusion_mlx.speculative.dflash.drafter import MlxVlmDFlashDriver
 
     runtime = stub_mlx_vlm["runtime"]
     driver = MlxVlmDFlashDriver(
@@ -419,7 +411,7 @@ def test_driver_adopt_rejects_double_call(stub_mlx_vlm) -> None:
 
 def test_driver_adopt_rejects_none(stub_mlx_vlm) -> None:
     """``adopt(target=None)`` etc. fail fast — easier than debugging a NoneType error mid-decode."""
-    from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
+    from fusion_mlx.speculative.dflash.drafter import MlxVlmDFlashDriver
 
     driver = MlxVlmDFlashDriver(
         target_repo="mlx-community/Qwen3.5-9B-4bit",
@@ -436,7 +428,7 @@ def test_driver_adopt_rejects_none(stub_mlx_vlm) -> None:
 
 def test_driver_rejects_nonpositive_block_size() -> None:
     """``block_size <= 0`` is a programming error; surface it early."""
-    from fusion_mlx.spec_decode.dflash.drafter import MlxVlmDFlashDriver
+    from fusion_mlx.speculative.dflash.drafter import MlxVlmDFlashDriver
 
     with pytest.raises(ValueError, match="block_size"):
         MlxVlmDFlashDriver(
@@ -458,14 +450,19 @@ def test_driver_rejects_nonpositive_block_size() -> None:
 
 
 def test_drafter_module_exports() -> None:
-    """``vllm_mlx.spec_decode.dflash.drafter.__all__`` is the stable surface."""
-    import fusion_mlx.spec_decode.dflash.drafter as mod
+    """The drafter module's public surface stays stable across refactors.
 
-    assert set(mod.__all__) == {
+    Prod has no ``__all__``; pin the three symbols the driver bench
+    depends on via ``hasattr`` so a rename trips a clear assertion.
+    """
+    import fusion_mlx.speculative.dflash.drafter as mod
+
+    for sym in (
         "BlockDiffusionDrafter",
         "StubBlockDiffusionDrafter",
         "MlxVlmDFlashDriver",
-    }
+    ):
+        assert hasattr(mod, sym), f"drafter module lost public symbol {sym!r}"
 
 
 def test_old_class_name_removed() -> None:
@@ -474,15 +471,10 @@ def test_old_class_name_removed() -> None:
     Removed in #343 — keep this test green to catch accidental
     resurrection of the dead per-block adapter API.
     """
-    import fusion_mlx.spec_decode.dflash.drafter as mod
+    import fusion_mlx.speculative.dflash.drafter as mod
 
     assert not hasattr(mod, "MlxVlmBlockDiffusionDrafter"), (
         "MlxVlmBlockDiffusionDrafter was the broken pre-#343 per-block "
         "adapter (signature mismatch with mlx-vlm 0.6.3). Use "
         "MlxVlmDFlashDriver instead."
     )
-
-
-# Silence the unused-import linter — ``types`` is reserved for the
-# fixture's monkeypatching infrastructure.
-_ = types
