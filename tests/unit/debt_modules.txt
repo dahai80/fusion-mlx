@@ -1924,6 +1924,21 @@ test_stress_test_stream_usage.py
 # with_system_in_middle: prod mutates FIRST system msg in-place (prepend
 # instruction) vs test pins prepend-new+preserve-all. REDESIGN-DRIFT.
 test_stt_corrupted_file.py
+# KEEP_QUARANTINED: REMOVED-FEATURE (not harness drift). 18F/0P. Test pins
+# SRT/VTT/text/verbose_json `response_format` formatting branches (asserts
+# text/plain, text/srt Content-Types + SRT/VTT subtitle rendering) that were
+# DROPPED from prod. Prod `create_transcription` (audio_routes.py:431) takes
+# `response_format: str = Form("json")` but its docstring (audio_routes.py:442)
+# states "response_format ... accepted for OpenAI API compatibility but are
+# not yet implemented — silently ignored"; it unconditionally returns
+# AudioTranscriptionResponse (JSON) at audio_routes.py:546. No SRT/VTT/text
+# formatter exists anywhere in fusion_mlx/ (grep confirmed: only
+# gui_compat/templates/admin.html has a verbose_json <option> tag, not a
+# formatter). Test also pins stale refs: patches `vllm_mlx.audio.stt.STTEngine`
+# (line 108/111/115 — OLD package name, pre-migration), mounts
+# `routes_internal.audio.router` (internal route, NOT public
+# /v1/audio/transcriptions), sets `audio_route._stt_engine`. All three stale.
+# Re-adding formatters = inventing removed prod logic (Rule 2/9). KEEP.
 test_stt_response_format.py
 # KEEP_QUARANTINED: architecture/policy gap, not harness drift. Test pins a
 # Rapid-MLX contract (failure msg says `rapid-mlx bench --submit`) requiring a
