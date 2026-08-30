@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.8.54] - 2026-08-30
+
+Patch release — H3 VideoVAE qk_norm parity fix.
+
+### Fixed
+- **H3 VideoVAE attention qk_norm** (#716, closes #715). The MLX port of MiniMax-H3 `VideoVAE` skipped the official `qk_norm` (weightless RMSNorm on query/key before RoPE) declared in `config.json` (`qk_norm_type="rms_norm"`, `qk_norm_affine=false`). This was a silent numerical divergence from the trained model — attention logit scale shifted. Fix adds config-driven `vit_qk_norm_type` / `vit_qk_norm_affine` wired through `TransformerBlock` → `ViT3DDecoder` → `Attention`, applied to q and k before RoPE. `affine=false` means no learnable weights — state dict unchanged. 3 TDD tests added (`tests/unit/test_h3_vae_qk_norm.py`).
+
 ## [0.8.53] - 2026-08-30
 
 Patch release — tool-call logits schema extraction crash fix (F-140) + test-debt rescue.
