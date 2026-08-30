@@ -36,10 +36,22 @@ def _extract_param_schemas(tools: list[dict] | None) -> dict[str, dict]:
 
     schemas: dict[str, dict] = {}
     for tool in tools:
+        if not isinstance(tool, dict):
+            logger.warning("skip non-dict tool entry: %r", tool)
+            continue
         func = tool.get("function", tool)
+        if not isinstance(func, dict):
+            logger.warning("skip tool with non-dict function: %r", tool)
+            continue
         tool_name = func.get("name", "")
         params = func.get("parameters", {})
+        if not isinstance(params, dict):
+            logger.warning("skip tool %r with non-dict parameters", tool_name)
+            continue
         properties = params.get("properties", {})
+        if not isinstance(properties, dict):
+            logger.warning("skip tool %r with non-dict properties", tool_name)
+            continue
         for param_name, param_schema in properties.items():
             key = f"{tool_name}.{param_name}"
             schemas[key] = param_schema
@@ -416,6 +428,10 @@ def validate_param_value(value: str, schema: dict) -> tuple[bool, str | None]:
     Returns:
         (is_valid, error_message) tuple.
     """
+    if not isinstance(schema, dict):
+        logger.warning("non-dict schema %r — no constraint, pass through", schema)
+        return True, None
+
     param_type = schema.get("type", "")
 
     # Try to parse as JSON first

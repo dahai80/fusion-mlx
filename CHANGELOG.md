@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Tool-call logits schema extraction crash on malformed tool shapes (F-140).** `_extract_param_schemas` and `validate_param_value` (`api/tool_logits.py`) ran bare `.get()`/`.items()` on tool definitions, so a malformed shape (`parameters: null`/list/scalar, non-dict `properties`, tool or `function` field not a dict) raised `AttributeError` — surfacing as HTTP 500 instead of a clean per-tool skip. Added `isinstance(_, dict)` guards: a malformed tool is skipped (sibling tools still extracted), and a non-dict param schema is treated as no-constraint (value passes). Mirrors the F-031 narrow case plus the full ≥7 known crash family.
+
+### Tests
+- Rescued `tests/unit/test_tool_logits_schema_guards.py` from quarantine (was 26f/2p → 28p). Pins the F-140 helper contract: malformed shapes return an empty schema map (never raise), mixed-shape lists keep well-formed siblings, non-dict schema passes validation.
+
 ## [0.8.52] - 2026-08-30
 
 Patch release — streaming `/v1/responses` cross-path parity fix (#707).
