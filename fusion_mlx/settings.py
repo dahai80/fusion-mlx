@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -120,7 +121,16 @@ class Settings:
             "global_settings": self.global_settings,
             "integrations": self.integrations.to_dict(),
         }
-        path.write_text(json.dumps(data, indent=2))
+        # 审计0830 P0-6: settings.json 含明文 api_key, 原 write_text 无权限约束,
+        # 默认 umask 022 -> 0644 任意本地进程可读。os.open 0o600 原子建新文件
+        # (无 write_text+chmod TOCTOU 窗口); 已存在文件 mode 不变, 补 chmod 0o600 收敛。
+        raw = json.dumps(data, indent=2).encode("utf-8")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, raw)
+        finally:
+            os.close(fd)
+        os.chmod(path, 0o600)
 
     def save(self, path: Path) -> None:
         """Serialize settings to JSON (sync, for CLI/init context)."""
@@ -134,6 +144,12 @@ class Settings:
     def _load_sync(cls, path: Path) -> Settings:
         if not path.exists():
             return cls()
+        # 审计0830 P0-6: 读时收敛既有 0644 文件权限 (历史 write_text 遗留),
+        # 防此前已落盘的明文 api_key 在下次 save 前仍可被本地越权读。
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
         try:
             data = json.loads(path.read_text())
             # Support both flat api_key and nested auth.api_key formats
