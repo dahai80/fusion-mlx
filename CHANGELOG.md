@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.51] - 2026-08-30
+
+Patch release — `--rate-limit 0` disable fix on the model-dir serve path (#692) + Qwen-Image / Qwen-Image-Edit variant registration (#689).
+
+### Added
+- **Qwen-Image DiT image variants (#689).** Registered `qwen_image` and `qwen_image_edit` in `ImageGenEngine.VARIANT_MAP`, backed by the vendored `mflux.models.qwen` MMDiT (txt2img `QwenImage` + multimodal-edit `QwenImageEdit`). `_infer_variant` routes HF repo ids (`Qwen/Qwen-Image`, `Qwen/Qwen-Image-2512`, `mlx-community/Qwen-Image-2512-4bit`) to the txt2img variant and `*-edit*` ids to the edit variant (which requires `image_paths`). The edit check runs before the image check because both contain the `qwen-image` substring.
+
+### Fixed
+- **`--rate-limit 0` leaked the default limiter on the `serve --model-dir` path (#692).** The module-level `RateLimiter` (`middleware/auth.py`) defaults to `enabled=True` at 60 rpm. `#637` wired `configure_rate_limiter(args.rate_limit, enabled=args.rate_limit > 0)` into `_serve_audio_mode` and `_stage_server_config`, but the third serve path — `_serve_from_model_dir` — built the app directly and never called `configure_rate_limiter`, so the module default leaked and throttled bursty workloads despite the documented-disable flag. The model-dir path now calls `configure_rate_limiter(args.rate_limit, enabled=args.rate_limit > 0)` after the `server._api_key` staging and before `create_app`, matching the `#636` ordering (the limiter is read during app construction the same way the API key is). Regression-pinned in `test_serve_model_dir_uds.py`.
+
 ## [0.8.50] - 2026-08-29
 
 Patch release — test-debt rescue: `test_model_auto_config.py` re-joined the active suite (+205 collected tests). No prod code changed.
