@@ -43,6 +43,9 @@ class H3VAEConfig(BaseModelConfig):
     vit_rope_theta: float = 100.0
     vit_norm_type: str = "rms_norm"
     vit_ffn_use_gated: bool = True
+    # 官方 source/config.json: qk_norm_type="rms_norm", qk_norm_affine=false
+    vit_qk_norm_type: str = "rms_norm"
+    vit_qk_norm_affine: bool = False
     # 分块推理默认（源自 minimax_h3_video_vae.py 包装层）
     vae_clip_length: int = 17
     vae_token_drop: int = 3
