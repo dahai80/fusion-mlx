@@ -328,14 +328,17 @@ test_anthropic_think_leak_r12_m1b.py
 # (a)+(b) harness drift; (c) feature/dep gap — file issue per CLAUDE.md
 # upstream flow. Bundle suites ALSO have srv._embedding_model_locked
 # AttributeError (server refactor removed attr).
-# KEEP_QUARANTINED test_audio_api.py (eval round11 2026-08-24): all setup
-# errors "NoneType not callable". Fixtures patch fusion_mlx.server._server_state
-# as MagicMock + set ATTRS (.engine_pool, .settings_manager). Prod _server_state
-# is _ServerState(dict) — app uses _server_state.get("settings_manager") not
-# .settings_manager attr. REDESIGN-DRIFT (object→dict). Same cluster as
-# test_audio_probe_consistency/route_registration_gate/routes_bundle. Re-wiring
-# all fixtures to dict-style = rewrite (Rule 2).
-test_audio_api.py
+# test_audio_api.py RESCUED 2026-08-30 (8 pass): rewrote against the current
+# /v1/models contract. Original pinned obsolete OpenAI-strict shape (owned_by
+# field + _server_state pool mock). Live route (routes_internal.models:148) is
+# config + registry driven, emits id/object/modality/tool_call_parser/
+# reasoning_parser/loaded/state/capabilities — NO owned_by. Audio modality
+# resolved by audio alias registry (whisper-large-v3 -> stt, kokoro -> tts),
+# so served + pool audio models surface modality="audio". Migrated to the
+# _mounted(model_name, pool) + set_models_context seam from
+# test_v1_models_loaded_state_577.py (NOT _server_state). 8 tests: served
+# STT/TTS/LLM modality, pool STT/TTS loaded+registered, audio+LLM coexist,
+# top-level list/object, owned_by-absent pin.
 # test_audio_extras_lockin.py RESCUED 2026-08-18 (1 pass + 2 skip + 2 xfail,
 # isolation): fixed stale PYPROJECT_PATH (.parent.parent → .parent.parent.parent; tests
 # moved into tests/unit/). 2 aspirational pin tests (espeakng-loader,
@@ -392,20 +395,53 @@ test_audio_api.py
 # _resolve_model reorder; 33/33 pass. Gap B (server-fixture rebuild for the
 # other 9 audio suites) still pending — those stay quarantined below.
 # test_audio_path_shaped_model.py
-# KEEP_QUARANTINED test_audio_probe_consistency.py (eval round11 2026-08-24):
-# 5P/8F + collection errors. Same _server_state dict-vs-MagicMock redesign
-# drift as test_audio_api. REDESIGN-DRIFT cluster.
+# KEEP_QUARANTINED test_audio_probe_consistency.py (eval round11 2026-08-24,
+# verdict CORRECTED 2026-08-30): 5P/8F. NOT _server_state drift (prior label
+# was stale; test_audio_api was rescued away from _server_state, see note
+# above). DEAD CONTRACT: 3 tests read REMOVED source-file paths
+# tests/vllm_mlx/routes/audio.py + tests/vllm_mlx/audio/probe.py (dead
+# vllm_mlx package, source-path-read drift); 5 route tests get 404 (route
+# not mounted / removed). The 5 passing tests exercise live probe helpers
+# but intermixed with dead-contract source-path reads. KEEP quarantined.
 test_audio_probe_consistency.py
 test_audio_r11_b_bundle.py
 test_audio_r7_c_bundle.py
 test_audio_r8_a_bundle.py
 # KEEP_QUARANTINED test_audio_route_registration_gate.py (eval round11
-# 2026-08-24): 4P/22F + collection errors. Same _server_state dict-vs-MagicMock
-# redesign drift. REDESIGN-DRIFT cluster.
+# 2026-08-24, verdict CORRECTED 2026-08-30): 4P/22F. NOT _server_state
+# redesign drift (file never references _server_state). DEAD CONTRACT: entire
+# file pins the REMOVED task #292 audio-gate predicate. Prod now:
+# audio_routes_should_register() -> bool: return True (NO args, always True;
+# predicate logic deleted); register_audio_routes(app): app.include_router
+# (NO return, NO idempotency bool); register_audio_routes_if_enabled(*args,
+# **kwargs): pass (NO-OP, server.py:465); server._enable_audio_lane /
+# _model_name / _model_alias globals DO NOT EXIST; routes_internal.models
+# helpers _audio_routes_mounted / _audio_lane_snapshot DO NOT EXIST.
+# Audio routes are now ALWAYS mounted unconditionally (gate logic removed).
+# Level 6 tests reference DEAD vllm_mlx paths (stale package name).
+# Rescuing = false coverage of a removed contract (Rule 9). Prod NOT modified
+# (migration rule). KEEP quarantined.
 test_audio_route_registration_gate.py
-# KEEP_QUARANTINED test_audio_routes_bundle.py (eval round11 2026-08-24):
-# 10P/12F + collection errors. Same _server_state dict-vs-MagicMock redesign
-# drift. REDESIGN-DRIFT cluster.
+# KEEP_QUARANTINED test_audio_routes_bundle.py (eval round11 2026-08-24,
+# verdict CORRECTED 2026-08-30): 10P/12F. NOT _server_state redesign drift
+# (file never references _server_state; _mount_audio_app/_mount_models_app
+# build bare FastAPI + include_router, valid seams). The 10 passing tests
+# exercise LIVE prod helpers (fusion_mlx.audio.probe._reset_probe_cache /
+# deep_probe_audio_lane / audio_lane_status; STTEngine.transcribe **kwargs
+# accepts task). The 12 failures are ALL DEAD CONTRACT:
+#  - 5 route tests pin REMOVED lazy-load path: prod transcriptions route
+#    (audio_routes.py:426) is pool-based get_engine(), NOT module-level
+#    _stt_engine/_tts_engine attrs (both absent); expects REMOVED
+#    backend_unavailable_error envelope (0 grep matches), REMOVED misaki
+#    gate + parakeet fallback (0 grep matches).
+#  - 4 translations tests pin REMOVED /v1/audio/translations route (prod
+#    has only transcriptions/speech/process).
+#  - 2 models tests pin REMOVED audio_lanes field in /v1/models response.
+#  - 1 test pins REMOVED AudioBodyLimitMiddleware (attribute absent on
+#    routes_internal.audio module).
+# Pool injection (patch _get_engine_pool) does NOT rescue the 5 route tests
+# — they assert the removed envelope/gate too. Rescuing = false coverage
+# (Rule 9). KEEP quarantined.
 test_audio_routes_bundle.py
 # RESCUED test_audio_sts 2026-08-24 (eval round16): PARTIAL 13p/4s/14xf.
 #   FIX (harness): repoint import fusion_mlx.engine.sts (singular, MISSING) →
