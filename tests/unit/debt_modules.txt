@@ -1781,6 +1781,30 @@ test_request_cancellation.py
 # KEEP_QUARANTINED 2026-08-22 (#598): _resolve_request_alias_or_default/_aliases_match signature changed (1 arg, was 2). Deep drift.
 test_request_time_alias_resolution.py
 # test_responses_591_followups.py
+# KEEP_QUARANTINED test_responses_budget_exhaust_streaming.py (eval 2026-08-30):
+# 9 fail / 5 pass. Pins streaming /v1/responses budget-exhaust (max_output_tokens)
+# cross-path parity with non-stream build_responses_response. 9 failures span 5
+# behaviors, only some are genuine prod gaps; others are unwired feature / harness:
+# (1) reasoning-item status stays "completed" under finish=length — GENUINE prod
+#     gap: _stream_responses HARDCODES "completed" at responses.py:926, while
+#     non-stream adapter conditionally flips to "incomplete" (adapter:324-328,
+#     finish_reason=="length" AND NOT downstream_output_seen). Git blame: incomplete
+#     flip never shipped in stream (c98892e5, 2026-08-20). 2 tests.
+# (2) usage.output_tokens_details.reasoning_tokens NOT emitted in stream — stream
+#     usage build (responses.py:988-992) reads only prompt/completion_tokens, never
+#     completion_tokens_details.reasoning_tokens (non-stream adapter:638-645 does).
+#     Parity gap. 1 test.
+# (3) rescue-text synthesis (message must startswith REASONING_CUTOFF_SENTINEL) —
+#     UNWIRED FEATURE: _apply_reasoning_cutoff_notice (helpers.py:436) is defined +
+#     re-exported (service/__init__) but NEVER CALLED in prod (only pure-unit tested
+#     in test_reasoning_content_null_rescue.py). Cannot rescue without inventing
+#     wiring (Rules 2/3 — no speculative feature). 1 test.
+# (4) cross-path output[] shape + tool_call append + flat-dict tool 400 — harness
+#     fixture / multi-behavior parity, not a single bounded prod gap. 5 tests.
+# File cannot go green: rescue-synthesis (#3) is unwired. Stays quarantined at file
+# granularity. GENUINE prod gap (#1 incomplete-flip + #2 reasoning_tokens) filed as
+# separate issue (issue->PR->land flow) — NOT fixed to satisfy this quarantined test
+# (Rule 9: false coverage if un-quarantined with 6 still-failing). No prod change here.
 test_responses_budget_exhaust_streaming.py
 # KEEP_QUARANTINED test_responses_bundle.py (eval round13 2026-08-24): REDESIGN-DRIFT. Fixture
 # architecture (_make_client + _install_lightweight_engine_modules) installs vllm_mlx.engine/
