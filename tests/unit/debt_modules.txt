@@ -902,8 +902,14 @@ test_dense_sampler_fastpath.py
 #   detect_output_parser(cfg) vs prod 3-arg (model_name, model_config, tokenizer);
 #   also imports external dflash_mlx.runtime + dflash_mlx.server.prefix_cache_flow
 #   PrefixCacheFlow (unported upstream pkg).
-# - test_dflash_adapter_signature: pins vllm_mlx.speculative.dflash driver API
-#   (sys.modules stub KeyError — module not ported).
+# test_dflash_adapter_signature.py RESCUED 2026-08-30 (15/15 pass): all
+# vllm_mlx/spec_decode rename refs repointed to fusion_mlx.speculative.dflash;
+# fixture's dead load_runtime patch (targeted bridge re-export, but driver
+# binds `from .runtime import load_runtime` at call time) fixed to patch the
+# runtime module directly; __all__ export test rewritten to hasattr (prod has
+# no __all__); dropped unused sys/types imports + dead `tests.test_dflash...`
+# import path. mlx-vlm 0.6.3 signature pin importorskip-gated (0.5.0 installed
+# skips cleanly).
 # - test_dflash_prefill_memory_guard: _DFlashPrefillGuard() takes no args vs test
 #   ctor args — guard API migrated.
 # - test_dflash_spec_decode: subprocess `python -m vllm_mlx.cli serve --help`
@@ -911,7 +917,6 @@ test_dense_sampler_fastpath.py
 #   dflash counters.
 # - test_dflash_multimodal_fallback: depends on dflash engine/router above.
 # Rule 9: repoint would mask regression (test passing for wrong reason).
-test_dflash_adapter_signature.py
 test_dflash_engine.py
 test_dflash_multimodal_fallback.py
 test_dflash_prefill_memory_guard.py
