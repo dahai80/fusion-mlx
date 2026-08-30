@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.52] - 2026-08-30
+
+Patch release — streaming `/v1/responses` cross-path parity fix (#707).
+
+### Fixed
+- **Streaming `/v1/responses` reasoning-item status under `max_output_tokens` (#707).** `_stream_responses` (`routes_internal/responses.py`) hardcoded per-item `"status": "completed"` on the terminal reasoning-item done event, diverging from the non-stream adapter (`build_responses_response`), which flips to `"incomplete"` when `finish_reason == "length"` AND no downstream output shipped (message body stripped or tool_calls present). The stream now mirrors the adapter: reasoning is `"incomplete"` only on a reasoning-only budget cutoff, else `"completed"`.
+- **`reasoning_tokens` dropped from stream usage (#707 secondary).** The flat `GenerationOutput` production path never read `completion_tokens_details`, so streaming `usage.output_tokens_details.reasoning_tokens` was silently dropped even when the engine reported it. Now threaded from all three chunk-parse branches (flat / dict / choices-attr) into the terminal `ResponsesUsage`.
+- **`response.in_progress` event payload shape.** The streaming `in_progress` event omitted `object`/`model`/`created_at`; now mirrors the `created` event fields.
+- **`response.output_text.done` event.** Never emitted on the stream path. Now fires after the last text delta and before any `output_item.done` per the OpenAI Responses SSE contract, gated on a message having shipped.
+
+### Tests
+- Added `tests/unit/test_responses_stream_reasoning_status.py` — pins the cross-path parity (reasoning-only-length → `incomplete`, message-then-length → `completed`, reasoning-only-stop → `completed`, usage `reasoning_tokens` echoed). `test_responses_sse_event_order.py`'s two pre-existing failures (`test_response_in_progress_payload_shape`, `test_full_spec_event_order`) now green.
+
 ## [0.8.51] - 2026-08-30
 
 Patch release — `--rate-limit 0` disable fix on the model-dir serve path (#692) + Qwen-Image / Qwen-Image-Edit variant registration (#689).
