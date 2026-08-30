@@ -459,7 +459,16 @@ class FeedForward(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, heads, dim_head, embed_dim, bias=True, eps=1e-5):
+    def __init__(
+        self,
+        heads,
+        dim_head,
+        embed_dim,
+        bias=True,
+        eps=1e-5,
+        qk_norm_type="rms_norm",
+        qk_norm_affine=False,
+    ):
         super().__init__()
         self.dim_head = dim_head
         self.heads = heads
@@ -467,6 +476,22 @@ class Attention(nn.Module):
         self.embed_dim = embed_dim
         self.to_qkv = nn.Linear(embed_dim, self.inner_dim * 3, bias=bias)
         self.to_out = nn.Linear(self.inner_dim, embed_dim, bias=bias)
+        # 官方 source/config.json: qk_norm_type="rms_norm", qk_norm_affine=false
+        # 对 q,k 在 RoPE 之前做无权重 RMSNorm（仅缩放，无可学习参数）。
+        self.qk_norm_type = qk_norm_type
+        self.qk_norm_affine = qk_norm_affine
+        self.qk_norm_eps = eps
+        if qk_norm_affine:
+            self.qk_norm_weight = mx.ones((dim_head,))
+
+    def _qk_norm(self, x):
+        if self.qk_norm_type != "rms_norm":
+            return x
+        rms = mx.sqrt((x * x).mean(axis=-1, keepdims=True) + self.qk_norm_eps)
+        out = x / rms
+        if self.qk_norm_affine:
+            return out * self.qk_norm_weight
+        return out
 
     def __call__(self, hidden_states, rotary_pos_emb=None):
         b, n, _ = hidden_states.shape
@@ -477,6 +502,9 @@ class Attention(nn.Module):
         q = q.reshape(b, n, self.heads, self.dim_head)
         k = k.reshape(b, n, self.heads, self.dim_head)
         v = v.reshape(b, n, self.heads, self.dim_head)
+        # qk_norm（rms_norm, 无 affine）在 RoPE 之前，对齐官方 attention.py
+        q = self._qk_norm(q)
+        k = self._qk_norm(k)
         if rotary_pos_emb is not None:
             # cos/sin: [b, n, 1, dim]，在 [b, n, heads, dim] 上广播
             q = apply_rotary_pos_emb(q, rotary_pos_emb)
@@ -503,6 +531,8 @@ class TransformerBlock(nn.Module):
         bias=True,
         eps=1e-5,
         use_scale=True,
+        qk_norm_type="rms_norm",
+        qk_norm_affine=False,
     ):
         super().__init__()
         dim = embed_dim if embed_dim is not None else dim_head * heads
@@ -513,7 +543,15 @@ class TransformerBlock(nn.Module):
         else:
             self.norm1 = nn.RMSNorm(dim, eps=eps)
             self.norm2 = nn.RMSNorm(dim, eps=eps)
-        self.attn = Attention(heads, dim_head, dim, bias=bias, eps=eps)
+        self.attn = Attention(
+            heads,
+            dim_head,
+            dim,
+            bias=bias,
+            eps=eps,
+            qk_norm_type=qk_norm_type,
+            qk_norm_affine=qk_norm_affine,
+        )
         if use_scale:
             self.scale1 = mx.zeros((dim,))
             self.scale2 = mx.zeros((dim,))
@@ -594,6 +632,8 @@ class ViT3DDecoder(nn.Module):
         bias=True,
         eps=1e-5,
         num_register_tokens=4,
+        qk_norm_type="rms_norm",
+        qk_norm_affine=False,
     ):
         super().__init__()
         self.patch_size = patch_size
@@ -622,6 +662,8 @@ class ViT3DDecoder(nn.Module):
                 ffn_use_gated=ffn_use_gated,
                 bias=bias,
                 eps=eps,
+                qk_norm_type=qk_norm_type,
+                qk_norm_affine=qk_norm_affine,
             )
             for _ in range(num_layers)
         ]
@@ -742,6 +784,8 @@ class MiniMaxH3VideoVAE(nn.Module):
             ffn_use_gated=cfg.vit_ffn_use_gated,
             rope_theta=cfg.vit_rope_theta,
             rope_dim_ratio=cfg.vit_rope_dim_ratio,
+            qk_norm_type=cfg.vit_qk_norm_type,
+            qk_norm_affine=cfg.vit_qk_norm_affine,
         )
 
     def encode(self, x):
