@@ -1122,13 +1122,33 @@ test_engine_preflight.py
 # only; all tests then AttributeError on missing method. Feature port
 # (reasoning-channel token routing), not harness drift (Rule 2/3). File issue.
 test_engine_router_non_stream.py
-# KEEP_QUARANTINED 2026-08-19 round10q-b4: 5 fail / 8 errors — REAL arch
-# divergence. 8 setup errors: fusion_mlx.engine_core has NO Scheduler
-# attr (step-thread scheduler not ported — test patches
-# engine_core.Scheduler executor/lazy/add_request/run_on_step_thread/
-# save_cache/load_cache routing-to-worker). 5 fail = same scheduler
-# contract. Feature port (engine_core.Scheduler step-thread executor),
-# not harness drift. File issue first.
+# KEEP_QUARANTINED test_engine_step_thread.py (re-eval round-current
+# 2026-08-30): 5 fail / 8 setup errors — REMOVED-CONTRACT, NOT harness
+# drift. Whole file targets architecture that was replaced:
+#   - ec.Scheduler is NO LONGER a module-level attr (imported inside
+#     EngineCore.__init__ at engine_core.py:241) -> 8 fixture errors
+#     (patch.object(ec,"Scheduler") raises AttributeError).
+#   - _run_on_step_thread: REMOVED (0 refs in fusion_mlx). TestStepThread
+#     8 tests all depend on it. Prod now routes via direct
+#     loop.run_in_executor(self._mlx_executor, ...) (no wrapper method).
+#   - _mlx_executor is now eager (built in __init__ L233), NOT lazy via
+#     start() -> test_executor_is_lazy asserts REMOVED behavior.
+#   - save_cache_to_disk / load_cache_from_disk on EngineCore: REMOVED
+#     (0 refs) -> 2 routing tests target deleted methods.
+#   - BatchedEngine moved fusion_mlx/engine/batched.py ->
+#     fusion_mlx/engines/batched.py.
+#   - generate_warmup / generate_with_schema / _run_guided_generation /
+#     HAS_GUIDED on BatchedEngine: ALL REMOVED (generate_warmup now lives
+#     only in api/guided.py surface). TestBatchedEngineWarmup (2) +
+#     TestGuidedGenerationStepThread (3) target deleted methods.
+# The #170 invariant the file guarded (KV-cache arrays tagged with the
+# mlx-step worker's stream; add_request MUST route through that worker)
+# is STILL in prod (engine_core.py:695-702 run_in_executor on
+# _mlx_executor) but has NO active regression coverage — test_engine_core.py
+# covers returns-id/custom-id/collector/cleanup/default-params, NOT thread
+# routing. Coverage gap filed as issue (see git log / issues). File STAYS
+# quarantined: every symbol it asserts is deleted; un-quarantine would be
+# 100% false-coverage (Rule 9).
 test_engine_step_thread.py
 # test_envelope_field_extraction.py RESCUED 2026-08-10 (27 pass): already
 # fully green, was stale-debt (envelope field extraction prod code is
