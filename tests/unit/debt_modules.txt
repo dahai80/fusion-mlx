@@ -2238,6 +2238,7 @@ test_tool_choice_enforcement.py
 #   invent audit script + matrix data file to satisfy 1 test. Already
 #   flagged in CANDIDATE ISSUE block above (L2205-2208). Prod
 #   ToolParserManager registry (~39 parsers) exists; coverage audit does not.
+test_tool_parser_coverage.py
 # KEEP_QUARANTINED test_tool_result_content_array.py (re-eval 2026-08-30):
 #   14p/3f, REDESIGN-DRIFT (partial). 3 fails pin REMOVED extract_multimodal_
 #   content API contract: preserve_native_format kwarg, 3-tuple return
@@ -2247,6 +2248,7 @@ test_tool_choice_enforcement.py
 #   14 passing = chat_template defense (_normalize_text_only_content_arrays)
 #   duplicates existing test_chat_template coverage. Rule 7: pick one
 #   contract (prod's); Rule 9: un-quarantine = 3 reds = false coverage.
+test_tool_result_content_array.py
 # KEEP_QUARANTINED test_tools_auto_disable_thinking.py (re-eval 2026-08-30):
 #   13f/17p, same root cause as verdict at L2198 (maybe_auto_disable_thinking_
 #   for_tools sig REDESIGN — added enable_thinking param, returns None
@@ -2254,6 +2256,7 @@ test_tool_choice_enforcement.py
 #   missing _tokenizer attr (prod uses _tokenizer widely: batched.py:678,
 #   helpers.py:1164, parsers.py:52 — mock fixture gap, NOT prod bug).
 #   Duplicate bare entry of L2198-verdicted file; stays quarantined.
+test_tools_auto_disable_thinking.py
 # RESCUED b30 2026-08-20 (PR #556). 500L. 5 fails -> 0 fail (17 pass + 1
 # skip xgrammar-not-installed env gate). Two patterns:
 # (1) TEST-TYPO: __version__ assert used "+fusion_mlx-stub" (underscore)
