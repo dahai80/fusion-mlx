@@ -395,11 +395,14 @@ test_anthropic_think_leak_r12_m1b.py
 # _resolve_model reorder; 33/33 pass. Gap B (server-fixture rebuild for the
 # other 9 audio suites) still pending — those stay quarantined below.
 # test_audio_path_shaped_model.py
-# KEEP_QUARANTINED test_audio_probe_consistency.py (eval round11 2026-08-24):
-# 5P/8F + collection errors. NOTE 2026-08-30: the prior "same _server_state
-# drift as test_audio_api" label is STALE — test_audio_api was RESCUED by
-# rewriting away from _server_state (see rescue note above). This file's
-# real failure mode NOT yet re-verified; re-evaluate before rescuing.
+# KEEP_QUARANTINED test_audio_probe_consistency.py (eval round11 2026-08-24,
+# verdict CORRECTED 2026-08-30): 5P/8F. NOT _server_state drift (prior label
+# was stale; test_audio_api was rescued away from _server_state, see note
+# above). DEAD CONTRACT: 3 tests read REMOVED source-file paths
+# tests/vllm_mlx/routes/audio.py + tests/vllm_mlx/audio/probe.py (dead
+# vllm_mlx package, source-path-read drift); 5 route tests get 404 (route
+# not mounted / removed). The 5 passing tests exercise live probe helpers
+# but intermixed with dead-contract source-path reads. KEEP quarantined.
 test_audio_probe_consistency.py
 test_audio_r11_b_bundle.py
 test_audio_r7_c_bundle.py
