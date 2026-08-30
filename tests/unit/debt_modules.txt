@@ -561,6 +561,22 @@ test_batching.py
 # default_model_pairs/parse_model_pair/parse_args API. Recreating script =
 # inventing prod logic (Rule 2). REMOVED-FEATURE.
 test_bench_vs_ollama.py
+# KEEP_QUARANTINED test_benchmark.py (eval 2026-08-30): 44P/17F. REMOVED
+# metric-contract cluster across 6 classes. TestComputeMetrics pins a
+# _compute_single_metrics override API (prefill_duration_s /
+# generation_duration_s kwargs) prod dropped — current signature takes
+# only prompt_tokens/completion_tokens/start_time/first_token_time/
+# end_time/peak_memory/cached_tokens and derives durations from timestamps.
+# test_zero_duration_safety asserts gen_tps==0.0 when gen_duration==0 but
+# prod uses max(gen_duration, 1e-9) floor (returns 1e9, intentional div0
+# guard). TestRunSingleTest/TestBenchmarkEngineSelection pin engine_core
+# wiring + scheduler_core selection prod restructured (engine_core NoneType
+# AttributeError). TestUploadToBenchSite/TestExperimentalFeatureDetection
+# pin removed upload-skip feature flags. Re-adding override kwargs / 0-floor
+# / engine_core shape = inventing removed prod logic (Rule 2/9). Prod NOT
+# modified (migration rule). NOTE: the "RESCUED round10q-b9 14/14" verdict
+# below is mis-attributed (describes test_body_receive_timeout.py, not this
+# file) — left in place; do not treat as a test_benchmark rescue.
 test_benchmark.py
 # RESCUED round10q-b9 (2026-08-19): 14/14 pass. Three drifts fixed:
 # (1) import repoint fusion_mlx.config.server_config -> fusion_mlx.config
@@ -951,6 +967,16 @@ test_dflash_spec_decode.py
 # machinery via parent __init__. Aspirational: needs lazy-import refactor
 # of package __init__. CANDIDATE ISSUE.
 # test_doctor_no_model_load.py
+# KEEP_QUARANTINED test_download_gate.py (eval 2026-08-30): 0P/57F.
+# REMOVED-FEATURE. Prod _download_gate.py is now a 13-line stub
+# ("auto-pull confirmation skipped in this build"): confirm_or_abort /
+# estimate_repo_size_bytes / is_repo_cached are all no-ops (pass/None/
+# False). Test mocks gate._model_info_with_timeout (HF API size probe) —
+# symbol REMOVED, patch.object raises AttributeError pre-body. Tests pin
+# the real size-based confirm gate + repo-cache check + env-threshold logic
+# this build intentionally dropped. Re-adding _model_info_with_timeout or
+# the gate logic = inventing removed prod code (Rule 2/9). Prod NOT
+# modified. Stub is deliberate build config, not drift. KEEP.
 test_download_gate.py
 # KEEP_QUARANTINED (eval round10f-eval2 2026-08-19): embeddings cluster — 3
 # suites pin embedding-extra-guard feature NOT fully ported. fusion_mlx/
