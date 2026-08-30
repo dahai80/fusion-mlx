@@ -588,6 +588,7 @@ async def _stream_responses(
         # ``response.output_text.delta`` (#591 item 2 leak guard).
         prompt_tokens = 0
         completion_tokens = 0
+        reasoning_tokens = 0
         finish_reason = "stop"
         tool_calls_collected = []
         text_parts = []
@@ -625,7 +626,13 @@ async def _stream_responses(
             "response.in_progress",
             {
                 "type": "response.in_progress",
-                "response": {"id": response_id, "status": "in_progress"},
+                "response": {
+                    "id": response_id,
+                    "object": "response",
+                    "created_at": created_at,
+                    "model": openai_request.model,
+                    "status": "in_progress",
+                },
             },
         )
 
@@ -702,6 +709,12 @@ async def _stream_responses(
                         prompt_tokens = pt
                     if ct:
                         completion_tokens = ct
+                    _flat_details = getattr(chunk, "completion_tokens_details", None)
+                    if _flat_details is not None:
+                        reasoning_tokens = (
+                            getattr(_flat_details, "reasoning_tokens", reasoning_tokens)
+                            or reasoning_tokens
+                        )
                     # Routing by channel: reasoning -> reasoning delta;
                     # tool_call -> structured calls only (NO text leak);
                     # content/None -> text delta.
@@ -731,6 +744,11 @@ async def _stream_responses(
                         completion_tokens = usage.get(
                             "completion_tokens", completion_tokens
                         )
+                        _details = usage.get("completion_tokens_details")
+                        if _details:
+                            reasoning_tokens = _details.get(
+                                "reasoning_tokens", reasoning_tokens
+                            )
                 elif hasattr(chunk, "choices") and chunk.choices:
                     c = chunk.choices[0]
                     delta = c.delta if hasattr(c, "delta") else {}
@@ -745,6 +763,14 @@ async def _stream_responses(
                         completion_tokens = getattr(
                             chunk.usage, "completion_tokens", completion_tokens
                         )
+                        _details = getattr(
+                            chunk.usage, "completion_tokens_details", None
+                        )
+                        if _details is not None:
+                            reasoning_tokens = (
+                                getattr(_details, "reasoning_tokens", reasoning_tokens)
+                                or reasoning_tokens
+                            )
 
                 if delta_reasoning:
                     evt = _ensure_reasoning_item()
@@ -891,6 +917,21 @@ async def _stream_responses(
                     },
                 )
 
+            # output_text.done fires once the text stream is fully
+            # assembled (after the last delta, before any
+            # output_item.done) per the OpenAI Responses SSE contract.
+            if msg_emitted:
+                final_text = "".join(text_parts)
+                yield _sse(
+                    "response.output_text.done",
+                    {
+                        "type": "response.output_text.done",
+                        "output_index": msg_idx,
+                        "content_index": 0,
+                        "text": final_text,
+                    },
+                )
+
         except Exception as e:
             logger.error("responses stream error: %s", e, exc_info=True)
             yield _sse(
@@ -920,10 +961,18 @@ async def _stream_responses(
         # shapes (reasoning summary, message content, tool calls).
         if reasoning_emitted:
             summary_text = "".join(reasoning_parts)
+            downstream_output_seen = bool(
+                "".join(text_parts).strip() or tool_calls_collected
+            )
+            reasoning_item_status = (
+                "incomplete"
+                if (finish_reason == "length" and not downstream_output_seen)
+                else "completed"
+            )
             reasoning_item = {
                 "type": "reasoning",
                 "id": reasoning_id,
-                "status": "completed",
+                "status": reasoning_item_status,
                 "summary": (
                     [{"type": "summary_text", "text": summary_text}]
                     if summary_text
@@ -989,6 +1038,7 @@ async def _stream_responses(
             input_tokens=prompt_tokens,
             output_tokens=completion_tokens,
             total_tokens=prompt_tokens + completion_tokens,
+            output_tokens_details={"reasoning_tokens": reasoning_tokens},
         )
 
         yield _sse(
