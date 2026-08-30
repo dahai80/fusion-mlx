@@ -328,14 +328,17 @@ test_anthropic_think_leak_r12_m1b.py
 # (a)+(b) harness drift; (c) feature/dep gap — file issue per CLAUDE.md
 # upstream flow. Bundle suites ALSO have srv._embedding_model_locked
 # AttributeError (server refactor removed attr).
-# KEEP_QUARANTINED test_audio_api.py (eval round11 2026-08-24): all setup
-# errors "NoneType not callable". Fixtures patch fusion_mlx.server._server_state
-# as MagicMock + set ATTRS (.engine_pool, .settings_manager). Prod _server_state
-# is _ServerState(dict) — app uses _server_state.get("settings_manager") not
-# .settings_manager attr. REDESIGN-DRIFT (object→dict). Same cluster as
-# test_audio_probe_consistency/route_registration_gate/routes_bundle. Re-wiring
-# all fixtures to dict-style = rewrite (Rule 2).
-test_audio_api.py
+# test_audio_api.py RESCUED 2026-08-30 (8 pass): rewrote against the current
+# /v1/models contract. Original pinned obsolete OpenAI-strict shape (owned_by
+# field + _server_state pool mock). Live route (routes_internal.models:148) is
+# config + registry driven, emits id/object/modality/tool_call_parser/
+# reasoning_parser/loaded/state/capabilities — NO owned_by. Audio modality
+# resolved by audio alias registry (whisper-large-v3 -> stt, kokoro -> tts),
+# so served + pool audio models surface modality="audio". Migrated to the
+# _mounted(model_name, pool) + set_models_context seam from
+# test_v1_models_loaded_state_577.py (NOT _server_state). 8 tests: served
+# STT/TTS/LLM modality, pool STT/TTS loaded+registered, audio+LLM coexist,
+# top-level list/object, owned_by-absent pin.
 # test_audio_extras_lockin.py RESCUED 2026-08-18 (1 pass + 2 skip + 2 xfail,
 # isolation): fixed stale PYPROJECT_PATH (.parent.parent → .parent.parent.parent; tests
 # moved into tests/unit/). 2 aspirational pin tests (espeakng-loader,

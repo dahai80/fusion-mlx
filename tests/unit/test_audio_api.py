@@ -2,205 +2,170 @@
 """Tests for GET /v1/models listing audio models (INV-02).
 
 Verifies that audio_stt and audio_tts models appear in the /v1/models
-response with correct fields, and that they coexist with other engine types.
+response with the current entry contract (id / object / modality /
+capabilities / loaded / state), and that they coexist with text (LLM)
+models in the same response.
 
-All tests use FastAPI TestClient with a mocked EnginePool — no mlx-audio
-or real model loading required.
+Rescue 2026-08-30: the original file pinned an obsolete OpenAI-strict
+shape (``owned_by`` field + a pool-mocked ``_server_state``). The live
+``routes_internal.models.list_models`` route is config + registry driven
+and emits ``id`` / ``object`` / ``modality`` / ``tool_call_parser`` /
+``reasoning_parser`` / ``loaded`` / ``state`` / ``capabilities`` — no
+``owned_by``. Audio modality is resolved by the audio alias registry
+(``resolve_audio_alias``: whisper-* -> stt, kokoro -> tts), so audio
+models surface with ``modality="audio"`` and an audio capability tag
+(``audio.transcription`` / ``audio.speech``). Rewritten against the
+``_mounted(model_name, pool)`` seam from
+``test_v1_models_loaded_state_577.py`` (set_models_context + cfg attrs,
+NOT ``_server_state``).
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from __future__ import annotations
+
+from contextlib import contextmanager
+from unittest.mock import MagicMock
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+STT_ID = "whisper-large-v3"
+TTS_ID = "kokoro"
+LLM_ID = "mlx-community/Qwen3-0.6B-bf16"
 
 
-def _make_engine_entry(
-    model_id: str,
-    model_type: str,
-    engine_type: str,
-    engine=None,
-    is_pinned: bool = False,
-    is_loading: bool = False,
-) -> MagicMock:
-    """Build a minimal mock EngineEntry."""
+@contextmanager
+def _mounted(*, model_name=None, pool=None):
+    from fusion_mlx.config import get_config
+    from fusion_mlx.routes_internal import models as models_route
+
+    app = FastAPI()
+    app.include_router(models_route.router)
+
+    cfg = get_config()
+    saved = {
+        k: getattr(cfg, k, None)
+        for k in (
+            "model_name",
+            "model_alias",
+            "model_registry",
+            "embedding_model_locked",
+            "api_key",
+        )
+    }
+    saved_pool = models_route._pool
+    cfg.model_name = model_name
+    cfg.model_alias = None
+    cfg.model_registry = None
+    cfg.embedding_model_locked = None
+    cfg.api_key = None
+    models_route.set_models_context(pool)
+    try:
+        yield TestClient(app)
+    finally:
+        for k, v in saved.items():
+            setattr(cfg, k, v)
+        models_route.set_models_context(saved_pool)
+
+
+def _make_pool_entry(model_id, *, model_type, loaded=True):
     entry = MagicMock()
     entry.model_id = model_id
+    entry.engine = MagicMock() if loaded else None
     entry.model_type = model_type
-    entry.engine_type = engine_type
-    entry.engine = engine
-    entry.is_pinned = is_pinned
-    entry.is_loading = is_loading
-    entry.estimated_size = 1024 * 1024 * 500  # 500 MB
-    entry.last_access = 0.0
     return entry
 
 
-def _make_pool(entries: list) -> MagicMock:
-    """Build a mock EnginePool with the given entries."""
+def _make_pool(entries):
     pool = MagicMock()
-    pool.preload_pinned_models = AsyncMock()
-    pool.check_ttl_expirations = AsyncMock()
-    pool.shutdown = AsyncMock()
-    pool.get_model_ids.return_value = [e.model_id for e in entries]
+    pool.list_models.return_value = [e.model_id for e in entries]
     pool.get_entry.side_effect = lambda mid: next(
         (e for e in entries if e.model_id == mid), None
     )
-    pool.get_status.return_value = {
-        "final_ceiling": 32 * 1024**3,
-        "current_model_memory": 0,
-        "model_count": len(entries),
-        "loaded_count": sum(1 for e in entries if e.engine is not None),
-        "models": [
-            {
-                "id": e.model_id,
-                "model_type": e.model_type,
-                "engine_type": e.engine_type,
-                "loaded": e.engine is not None,
-                "pinned": e.is_pinned,
-                "is_loading": e.is_loading,
-                "estimated_size": e.estimated_size,
-                "last_access": e.last_access,
-            }
-            for e in entries
-        ],
-    }
     return pool
 
 
-# ---------------------------------------------------------------------------
-# TestModelsListAudio
-# ---------------------------------------------------------------------------
+def _by_id(body, model_id):
+    for entry in body["data"]:
+        if entry["id"] == model_id:
+            return entry
+    raise AssertionError(f"id {model_id!r} not in /v1/models: {body}")
 
 
-class TestModelsListAudio:
-    """GET /v1/models must include audio models with correct fields."""
-
-    @pytest.fixture
-    def stt_entry(self):
-        return _make_engine_entry(
-            "whisper-large-v3", "audio_stt", "stt", engine=MagicMock()
-        )
-
-    @pytest.fixture
-    def tts_entry(self):
-        return _make_engine_entry("qwen3-tts", "audio_tts", "tts", engine=None)
-
-    @pytest.fixture
-    def llm_entry(self):
-        return _make_engine_entry("llama-3b", "llm", "batched", engine=None)
-
-    @pytest.fixture
-    def client_with_stt(self, stt_entry):
-        """TestClient with a pool containing only an STT model."""
-        from fusion_mlx.server import app
-
-        mock_pool = _make_pool([stt_entry])
-        with patch("fusion_mlx.server._server_state") as mock_state:
-            mock_state.engine_pool = mock_pool
-            mock_state.global_settings = None
-            mock_state.process_memory_enforcer = None
-            mock_state.hf_downloader = None
-            mock_state.ms_downloader = None
-            mock_state.mcp_manager = None
-            mock_state.api_key = None
-            mock_state.settings_manager = MagicMock()
-            mock_state.settings_manager.get_settings.return_value = MagicMock(
-                model_alias=None
-            )
-            with TestClient(app, raise_server_exceptions=False) as client:
-                yield client, mock_pool
-
-    @pytest.fixture
-    def client_with_mixed(self, stt_entry, tts_entry, llm_entry):
-        """TestClient with a pool containing STT + TTS + LLM models."""
-        from fusion_mlx.server import app
-
-        mock_pool = _make_pool([stt_entry, tts_entry, llm_entry])
-        with patch("fusion_mlx.server._server_state") as mock_state:
-            mock_state.engine_pool = mock_pool
-            mock_state.global_settings = None
-            mock_state.process_memory_enforcer = None
-            mock_state.hf_downloader = None
-            mock_state.ms_downloader = None
-            mock_state.mcp_manager = None
-            mock_state.api_key = None
-            mock_state.settings_manager = MagicMock()
-            mock_state.settings_manager.get_settings.return_value = MagicMock(
-                model_alias=None
-            )
-            with TestClient(app, raise_server_exceptions=False) as client:
-                yield client, mock_pool
-
-    def test_models_list_returns_200(self, client_with_stt):
-        client, _ = client_with_stt
-        response = client.get("/v1/models")
-        assert response.status_code == 200
-
-    def test_models_list_includes_stt_model(self, client_with_stt):
-        """audio_stt model appears in /v1/models response."""
-        client, _ = client_with_stt
-        response = client.get("/v1/models")
-        assert response.status_code == 200
-
-        body = response.json()
-        assert "data" in body
-        model_ids = [m["id"] for m in body["data"]]
-        assert "whisper-large-v3" in model_ids
-
-    def test_stt_model_has_required_openai_fields(self, client_with_stt):
-        """Each model entry has id, object, owned_by per OpenAI spec."""
-        client, _ = client_with_stt
-        response = client.get("/v1/models")
-        body = response.json()
-
-        stt_model = next(
-            (m for m in body["data"] if m["id"] == "whisper-large-v3"), None
-        )
-        assert stt_model is not None, "whisper-large-v3 not found in /v1/models"
-        assert "id" in stt_model
-        assert "object" in stt_model
-        assert "owned_by" in stt_model
-
-    def test_stt_model_object_field_value(self, client_with_stt):
-        """Model object field is 'model'."""
-        client, _ = client_with_stt
-        response = client.get("/v1/models")
-        body = response.json()
-
-        stt_model = next(
-            (m for m in body["data"] if m["id"] == "whisper-large-v3"), None
-        )
-        assert stt_model is not None
-        assert stt_model["object"] == "model"
-
-    def test_models_list_includes_tts_model(self, client_with_mixed):
-        """audio_tts model appears in /v1/models response."""
-        client, _ = client_with_mixed
-        response = client.get("/v1/models")
-        assert response.status_code == 200
-
-        body = response.json()
-        model_ids = [m["id"] for m in body["data"]]
-        assert "qwen3-tts" in model_ids
-
-    def test_audio_models_coexist_with_llm(self, client_with_mixed):
-        """Audio models and LLM appear together in the same /v1/models response."""
-        client, _ = client_with_mixed
-        response = client.get("/v1/models")
-        body = response.json()
-        model_ids = {m["id"] for m in body["data"]}
-
-        assert "whisper-large-v3" in model_ids
-        assert "qwen3-tts" in model_ids
-        assert "llama-3b" in model_ids
-
-    def test_models_list_response_top_level_fields(self, client_with_stt):
-        """Response top-level has 'object' and 'data' fields."""
-        client, _ = client_with_stt
+def test_served_stt_model_listed_as_audio():
+    with _mounted(model_name=STT_ID, pool=None) as client:
         body = client.get("/v1/models").json()
-        assert body.get("object") == "list"
-        assert isinstance(body.get("data"), list)
+    entry = _by_id(body, STT_ID)
+    assert entry["object"] == "model"
+    assert entry["modality"] == "audio"
+
+
+def test_served_tts_model_listed_as_audio():
+    with _mounted(model_name=TTS_ID, pool=None) as client:
+        body = client.get("/v1/models").json()
+    entry = _by_id(body, TTS_ID)
+    assert entry["object"] == "model"
+    assert entry["modality"] == "audio"
+
+
+def test_served_llm_model_listed_as_text():
+    with _mounted(model_name=LLM_ID, pool=None) as client:
+        body = client.get("/v1/models").json()
+    entry = _by_id(body, LLM_ID)
+    assert entry["modality"] == "text"
+
+
+def test_pool_stt_model_surfaces_audio_modality():
+    stt = _make_pool_entry(STT_ID, model_type="audio_stt", loaded=True)
+    pool = _make_pool([stt])
+    with _mounted(model_name=LLM_ID, pool=pool) as client:
+        body = client.get("/v1/models").json()
+    entry = _by_id(body, STT_ID)
+    assert entry["modality"] == "audio"
+    assert entry["loaded"] is True
+    assert entry["state"] == "loaded"
+
+
+def test_pool_tts_model_surfaces_audio_modality():
+    tts = _make_pool_entry(TTS_ID, model_type="audio_tts", loaded=False)
+    pool = _make_pool([tts])
+    with _mounted(model_name=LLM_ID, pool=pool) as client:
+        body = client.get("/v1/models").json()
+    entry = _by_id(body, TTS_ID)
+    assert entry["modality"] == "audio"
+    assert entry["loaded"] is False
+    assert entry["state"] == "registered"
+
+
+def test_audio_models_coexist_with_llm():
+    stt = _make_pool_entry(STT_ID, model_type="audio_stt", loaded=True)
+    tts = _make_pool_entry(TTS_ID, model_type="audio_tts", loaded=True)
+    pool = _make_pool([stt, tts])
+    with _mounted(model_name=LLM_ID, pool=pool) as client:
+        body = client.get("/v1/models").json()
+    ids = {e["id"] for e in body["data"]}
+    assert STT_ID in ids
+    assert TTS_ID in ids
+    assert LLM_ID in ids
+
+
+def test_models_list_response_top_level_fields():
+    with _mounted(model_name=STT_ID, pool=None) as client:
+        body = client.get("/v1/models").json()
+    assert body.get("object") == "list"
+    assert isinstance(body.get("data"), list)
+    assert len(body["data"]) >= 1
+
+
+def test_entry_has_no_owned_by_field():
+    with _mounted(model_name=STT_ID, pool=None) as client:
+        body = client.get("/v1/models").json()
+    entry = _by_id(body, STT_ID)
+    assert "owned_by" not in entry, (
+        "owned_by was dropped from the /v1/models contract; the route emits "
+        "modality/tool_call_parser/reasoning_parser/loaded/state/capabilities"
+    )
+
+
+if __name__ == "__main__":  # pragma: no cover — convenience only
+    pytest.main([__file__, "-v"])
