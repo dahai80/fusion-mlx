@@ -784,7 +784,10 @@ test_cli_config_fidelity.py
 # lost mlx_embeddings_available + EMBEDDINGS_EXTRA_INSTALL_HINT (embedding-
 # extra-guard feature REMOVED). REMOVED-FEATURE.
 test_cli_embeddings_extra.py
-test_cli_models.py
+# test_cli_models.py RESCUED 2026-08-30 (8/8 pass): dead-contract Rapid-MLX
+# capability-table tests removed (Rule 9, redundant w/ test_models_command_layout);
+# 5 cache-helper tests rescued via cli_commands import seam + sys.modules stub
+# swap for HF_HUB_CACHE (pytest meta-path finder ignores monkeypatched attr).
 # test_codex_profile.py RESCUED 2026-08-10 (6/6 pass): the agent-profile
 # subsystem was ported from Rapid-MLX in issue #442 — base.py (AgentProfile
 # dataclasses + render_config), __init__.py (YAML loader, ~/.fusion-mlx/agents),
