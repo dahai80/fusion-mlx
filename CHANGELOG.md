@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.8.53] - 2026-08-30
+
+Patch release — tool-call logits schema extraction crash fix (F-140) + test-debt rescue.
+
 ### Fixed
 - **Tool-call logits schema extraction crash on malformed tool shapes (F-140).** `_extract_param_schemas` and `validate_param_value` (`api/tool_logits.py`) ran bare `.get()`/`.items()` on tool definitions, so a malformed shape (`parameters: null`/list/scalar, non-dict `properties`, tool or `function` field not a dict) raised `AttributeError` — surfacing as HTTP 500 instead of a clean per-tool skip. Added `isinstance(_, dict)` guards: a malformed tool is skipped (sibling tools still extracted), and a non-dict param schema is treated as no-constraint (value passes). Mirrors the F-031 narrow case plus the full ≥7 known crash family.
 
