@@ -1490,8 +1490,24 @@ test_mtp_stream_contract.py
 # test_openai_tool_choice_validation.py  (RESCUED 2026-08-18 — commented out = un-quarantined = collected; 32 pass. PROD FIX H-16 OpenAI-surface parity: openai_models.ChatCompletionRequest had NO tool_choice validator → malformed tool_choice ({"type":"banana"}, "any", {"foo":"bar"}) silent-degraded to free-form generation on /v1/chat/completions; H-16 was only closed on Anthropic surface (anthropic_models._validate_tool_choice_type). Added _validate_tool_choice_shape field_validator(mode=before) to openai_models.ChatCompletionRequest: string allowed-set {none,auto,required,function}, object requires type in {auto,none,function,required}, missing-type rejected, extra keys preserved, function-without-name passes schema (route owns that check). Harness re-point: test import api.models.ChatCompletionRequest (dead class, no route) → openai_models.ChatCompletionRequest (live route class). Regression-checked: 298 tool_choice-touching tests pass, 3 pre-existing mlx_vlm-surface fails unrelated.)
 test_openwebui.py
 # test_packaging_data_files.py  (RESCUED 2026-08-19 — commented out = un-quarantined = collected; 10/10 pass. PROD FIX wheel silent-drop: pyproject.toml [tool.setuptools.package-data] had ONLY fusion_mlx=[aliases.json] + fusion_mlx.admin + fusion_mlx.gui_compat. 4 runtime data files silently dropped from built wheel — fusion_mlx/audio/aliases.json (read audio/registry.py:resolve_audio_alias), model-config.json (read config.py:346), oq_calibration_data.json (read oq/streaming.py:907), agents/profiles/*.yaml (read agents/__init__.py:32 PROFILES_DIR). Source-tree tests passed (files on disk) but pip install → FileNotFoundError at runtime. Added 5 package-data entries: fusion_mlx=[aliases.json,model-config.json,oq_calibration_data.json], fusion_mlx.audio=[aliases.json], fusion_mlx.agents=[profiles/*.yaml]. Harness re-point: REQUIRED_DATA_FILES vllm_mlx→fusion_mlx + 3 new file entries; _package_data_entries() single-key .get("vllm_mlx")→package-aware .get(package); test_required_data_file_declared_in_pyproject_package_data uses _package param; docstrings vllm_mlx/rapid-mlx→fusion_mlx. r10-B audio bug now generalized to whole-package regression guard.)
+# KEEP_QUARANTINED test_paged_cache_benefits (eval 2026-08-30): 4F/0P, NOT
+#   rescuable. Stale imports `fusion_mlx.paged_cache`/`fusion_mlx.prefix_cache`
+#   (MOVED to fusion_mlx.cache.{paged,prefix}_cache, re-exported from
+#   fusion_mlx.cache). But re-pointing imports does NOT rescue: the file has
+#   ZERO assert statements (4 `def test_` funcs that only print tables + return)
+#   = false coverage (Rule 9). Also calls REMOVED APIs: `paged_manager.stats`
+#   (PagedCacheManager has no `stats` attr), `paged_manager.stats.shared_blocks`,
+#   `cache.get_cache(...)` (BlockAwarePrefixCache has no get_cache). Would crash
+#   with AttributeError AND validate nothing. Dead demo script. KEEP.
 test_paged_cache_benefits.py
+# NOT-A-TEST: 0 collected. Standalone __main__ script (no `def test_`, no pytest
+# import), runs via `python tests/...py`, loads real mlx_lm weights. Quarantine
+# is a no-op (collect_ignore on a non-collectable file). KEEP flagged for
+# future cleanup (move to scripts/ or delete); not a debt-rescue candidate.
 test_paged_cache_real_inference.py
+# NOT-A-TEST: 0 collected. Same as test_paged_cache_real_inference above —
+# standalone __main__ script, real mlx_lm.load() demo, no test functions.
+# Quarantine is a no-op. KEEP flagged for future cleanup.
 test_paged_cache_real_model.py
 # KEEP_QUARANTINED test_paired_compat (eval round15 2026-08-24): 7p/3f. 3
 #   fails pin cross-lane text divergence — test_reasoning_extracted_consistently
@@ -1845,6 +1861,19 @@ test_seed_reproducibility.py
 # server-scope+message-contract wiring. Rollback would undo shipped SSEKeepalive
 # + server.py REDESIGN. Whole-file KEEP Rule 7/12. Tracked in #642.
 test_server_load_model_order.py
+# KEEP_QUARANTINED: REMOVED server-scope + keepalive + message-contract cluster
+# (same #642 family as test_server_load_model_order above). 7F/0P. Test refs
+# 6 symbols MISSING from fusion_mlx.server now: prefill_memory_exceeded_handler
+# (MOVED to middleware/exception_handlers.py:532), _with_json_keepalive,
+# _with_sse_keepalive (REMOVED — SSEKeepalive shipped rewrite), get_engine_for_model,
+# verify_api_key, validate_context_window (REMOVED from server scope, server.py
+# REDESIGN). Test also pins removed message strings "Memory Guard to aggressive"
+# + "custom memory guard ceiling" (grep fusion_mlx/ = 0 hits; only "KV+SDPA"
+# survives) and body["error"]["fusion_code"] contract. Re-pointing only the
+# handler import cannot rescue TestPostCommitPrefillMemorySurface (needs removed
+# keepalive generators) or TestResponsesEndpointReaches400 (needs removed
+# srv.get_engine_for_model + srv.verify_api_key). Rollback would undo shipped
+# SSEKeepalive + server.py REDESIGN. Whole-file KEEP Rule 7/12. Tracked in #642.
 test_server_prefill_memory_handler.py
 # RESCUED 2026-08-19: 4/4 pass. PROD FIX — SchedulerQueueFullError (raised by
 # scheduler/sched_admission.py admission control) had NO exception handler
