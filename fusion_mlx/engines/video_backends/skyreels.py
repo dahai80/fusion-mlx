@@ -209,6 +209,8 @@ class SkyReelsBackend(VideoBackend):
         seed: int,
         num_frames: int,
         control=None,
+        inpaint_mask=None,
+        init_latent=None,
     ) -> mx.array:
         # control (#652 conditioning) is Wan2-only; skyreels ignores it.
         pipeline = await self._ensure_pipeline()
@@ -241,7 +243,8 @@ class SkyReelsBackend(VideoBackend):
 
             def _denoise():
                 result = pipeline._denoise_sample(
-                    latent, context, seq_lens=seq_lens, grid_sizes=grid_sizes
+                    latent, context, seq_lens=seq_lens, grid_sizes=grid_sizes,
+                    inpaint_mask=inpaint_mask, init_latent=init_latent,
                 )
                 mx.eval(result)
                 return result
