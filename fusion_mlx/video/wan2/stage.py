@@ -29,6 +29,8 @@ from .scheduler import (
 )
 from .utils import encode_text
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -248,6 +250,8 @@ def run_denoise(
     i2v_mask_tokens=None,
     is_i2v_mask_blend=False,
     is_i2v_channel_concat=False,
+    inpaint_mask=None,
+    init_latent=None,
 ):
     # T2V + I2V/VACE/camera denoise loop. T2V body extracted from
     # generate_video() lines 854-1096; conditioning threading mirrors
@@ -495,6 +499,12 @@ def run_denoise(
             del noise_pred_cond, noise_pred_uncond, preds
 
         latents = sched.step(noise_pred[None], timestep_val, latents[None]).squeeze(0)
+
+        # #653 Surface C: frozen-region re-composite. Orthogonal to the
+        # TI2V mask blend below — runs even when is_i2v_mask_blend is False.
+        # mask=1 -> reactive (keep denoised); mask=0 -> frozen (restore init).
+        if inpaint_mask is not None and init_latent is not None:
+            latents = apply_inpaint_mask(latents, init_latent, inpaint_mask)
 
         # TI2V-5B: re-apply mask to keep first frame frozen (generate.py 1183).
         if (

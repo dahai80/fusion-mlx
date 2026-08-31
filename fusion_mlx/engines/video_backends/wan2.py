@@ -473,6 +473,8 @@ class Wan2Backend(VideoBackend):
         seed: int,
         num_frames: int,
         control=None,
+        inpaint_mask=None,
+        init_latent=None,
     ) -> mx.array:
         from fusion_mlx.video.wan2.stage import (
             ControlState,
@@ -546,6 +548,8 @@ class Wan2Backend(VideoBackend):
                 i2v_mask_tokens=control.i2v_mask_tokens,
                 is_i2v_mask_blend=control.is_i2v_mask_blend,
                 is_i2v_channel_concat=control.is_i2v_channel_concat,
+                inpaint_mask=inpaint_mask,
+                init_latent=init_latent,
             )
             # 5D contract: add batch dim -> (1, z_dim, t_latent, h_lat, w_lat).
             # Build the projection AND evaluate it on THIS executor thread so
