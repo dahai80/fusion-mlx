@@ -21,7 +21,10 @@ WAN2_DIR = Path(
 CONTROLNET_DIR = Path(
     os.environ.get(
         "FUSION_653_CONTROLNET_DIR",
-        str(Path.home() / ".fusion-mlx/models/models--TheDenk--wan2.1-t2v-14b-controlnet-canny-v1"),
+        str(
+            Path.home()
+            / ".fusion-mlx/models/models--TheDenk--wan2.1-t2v-14b-controlnet-canny-v1"
+        ),
     )
 )
 # SkyReels V2: Wan2.2-TI2V-5B q8 (alias wan22-ti2v-5b). Surface D (SkyReels inpaint).
@@ -35,7 +38,9 @@ SKYREELS_DIR = Path(
 pytestmark = pytest.mark.real_model
 
 
-def _skip_unless_real_model(model_dir: Path, label: str, need_files=(), require_t2v: bool = False):
+def _skip_unless_real_model(
+    model_dir: Path, label: str, need_files=(), require_t2v: bool = False
+):
     if not os.environ.get("FUSION_MLX_REAL_MODEL_TESTS"):
         pytest.skip(f"set FUSION_MLX_REAL_MODEL_TESTS=1 to run #653 real-model {label}")
     if not model_dir.exists():
@@ -66,11 +71,12 @@ def _skip_unless_real_model(model_dir: Path, label: str, need_files=(), require_
                         f"vae_z_dim={z_dim}); pure-T2V surface needs in_dim==vae_z_dim "
                         f"(no MLX-format t2v-14B installed; see test_wan2_stage_t2v_smoke.py)"
                     )
-            except (ValueError, OSError):
-                pass
+            except (ValueError, OSError) as e:
+                pytest.skip(f"{label} config.json unreadable: {e}")
 
 
 # ---- Surface A: SkyReels VAE encode roundtrip (new this task) ----
+
 
 def _structured_pixels(t: int, h: int = 256, w: int = 256) -> mx.array:
     ys = mx.arange(h, dtype=mx.float32) / h
@@ -120,11 +126,14 @@ def test_skyreels_vae_encode_decode_roundtrip():
     arr = np.array(out)
     assert not np.any(np.isnan(arr)), "skyreels decode produced NaN"
     corr = _pixel_corr(np.array(pixels), arr)
-    print(f"\n#653 Surface A skyreels roundtrip pixel_corr={corr:.4f} shape={arr.shape}")
+    print(
+        f"\n#653 Surface A skyreels roundtrip pixel_corr={corr:.4f} shape={arr.shape}"
+    )
     assert corr >= 0.9, f"skyreels VAE roundtrip corr {corr:.4f} < 0.9 (scrambled)"
 
 
 # ---- Surface B: Wan2 ControlNet e2e (steers output vs pure-T2V) ----
+
 
 def _empty_latent_14b(num_frames: int = 17, height: int = 480, width: int = 832):
     t_latent = (num_frames - 1) // 4 + 1
@@ -142,7 +151,12 @@ def test_wan2_controlnet_steers_output_vs_pure_t2v():
     # ControlNet library's own tests; this test proves the WIRING carries the adapter
     # all the way through the public engine surface. 1 step, fixed seed, small frame
     # count to keep it a smoke (not a quality test).
-    _skip_unless_real_model(WAN2_DIR, "wan2-controlnet", need_files=("t5_encoder.safetensors",), require_t2v=True)
+    _skip_unless_real_model(
+        WAN2_DIR,
+        "wan2-controlnet",
+        need_files=("t5_encoder.safetensors",),
+        require_t2v=True,
+    )
     _skip_unless_real_model(CONTROLNET_DIR, "controlnet-adapter")
     # Need a control image: synthesize a canny-ish edge frame to a temp png. The
     # adapter's encode_control reads the path. Use a deterministic gradient + threshold.
@@ -159,53 +173,63 @@ def test_wan2_controlnet_steers_output_vs_pure_t2v():
     edge = ((xs % 64 < 4) | (ys % 64 < 4)).astype(np.uint8) * 255
     Image.fromarray(np.stack([edge, edge, edge], axis=-1)).save(ctrl_path)
 
-    async def _run(use_cn: bool):
-        eng = VideoGenEngine(str(WAN2_DIR))
-        await eng.start()
-        await eng.load_text_encoder()
-        emb = await eng.encode_text("a city street, neon, night")
-        await eng.unload_text_encoder()
-        await eng.load_dit()
-        await eng.load_vae_encoder()
-        ctrl = None
-        if use_cn:
-            ctrl = await eng.encode_control(
-                controlnet_image=str(ctrl_path),
-                control_type="canny",
-                controlnet_strength=1.0,
-            )
-            assert ctrl is not None, "encode_control returned None for controlnet_image"
-        else:
-            ctrl = await eng.encode_control()  # pure-T2V -> None
-            assert ctrl is None
-        latent = await eng.denoise(
-            latent=_empty_latent_14b(),
-            pos_embed=emb["embed"],
-            neg_embed=None,
-            steps=1,
-            cfg=1.0,
-            seed=42,
-            num_frames=17,
-            control=ctrl,
-        )
-        await eng.unload_vae_encoder()
-        await eng.unload_dit()
-        await eng.stop()
-        return np.array(latent)
+    try:
 
-    pure = asyncio.run(_run(False))
-    with_cn = asyncio.run(_run(True))
-    # Cleanup temp
-    import shutil
-    shutil.rmtree(tmp, ignore_errors=True)
-    assert not np.any(np.isnan(pure)), "pure-T2V latent has NaN"
-    assert not np.any(np.isnan(with_cn)), "controlnet latent has NaN"
-    diff = float(np.abs(with_cn - pure).mean())
-    print(f"\n#653 Surface B controlnet vs pure-T2V mean|diff|={diff:.6f} shape={pure.shape}")
-    assert diff > 0.0, "ControlNet produced bit-identical latent to pure-T2V (wiring broken)"
+        async def _run(use_cn: bool):
+            eng = VideoGenEngine(str(WAN2_DIR))
+            await eng.start()
+            await eng.load_text_encoder()
+            emb = await eng.encode_text("a city street, neon, night")
+            await eng.unload_text_encoder()
+            await eng.load_dit()
+            await eng.load_vae_encoder()
+            ctrl = None
+            if use_cn:
+                ctrl = await eng.encode_control(
+                    controlnet_image=str(ctrl_path),
+                    control_type="canny",
+                    controlnet_strength=1.0,
+                )
+                assert (
+                    ctrl is not None
+                ), "encode_control returned None for controlnet_image"
+            else:
+                ctrl = await eng.encode_control()  # pure-T2V -> None
+                assert ctrl is None
+            latent = await eng.denoise(
+                latent=_empty_latent_14b(),
+                pos_embed=emb["embed"],
+                neg_embed=None,
+                steps=1,
+                cfg=1.0,
+                seed=42,
+                num_frames=17,
+                control=ctrl,
+            )
+            await eng.unload_vae_encoder()
+            await eng.unload_dit()
+            await eng.stop()
+            return np.array(latent)
+
+        pure = asyncio.run(_run(False))
+        with_cn = asyncio.run(_run(True))
+        assert not np.any(np.isnan(pure)), "pure-T2V latent has NaN"
+        assert not np.any(np.isnan(with_cn)), "controlnet latent has NaN"
+        diff = float(np.abs(with_cn - pure).mean())
+        print(
+            f"\n#653 Surface B controlnet vs pure-T2V mean|diff|={diff:.6f} shape={pure.shape}"
+        )
+        assert (
+            diff > 0.0
+        ), "ControlNet produced bit-identical latent to pure-T2V (wiring broken)"
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ---- Surface C: Wan2 inpaint e2e (frozen region preserved) ----
+
 
 def test_wan2_inpaint_preserves_frozen_region():
     # Surface C: denoise(..., inpaint_mask=, init_latent=) re-composites
@@ -214,13 +238,26 @@ def test_wan2_inpaint_preserves_frozen_region():
     # cannot have touched it. Where mask=1 (reactive), it MUST differ from init (the
     # denoiser did work). 1 step is enough: one re-composite proves the wiring; more
     # steps would test the scheduler, not the surface.
-    _skip_unless_real_model(WAN2_DIR, "wan2-inpaint", need_files=("t5_encoder.safetensors",), require_t2v=True)
+    _skip_unless_real_model(
+        WAN2_DIR,
+        "wan2-inpaint",
+        need_files=("t5_encoder.safetensors",),
+        require_t2v=True,
+    )
     latent = _empty_latent_14b()
     # init_latent = a DISTINCT structured latent (not zeros). mask=0 on the first
-    # temporal slab (freeze frame 0), mask=1 on the rest (reactive).
-    init = mx.array(np.linspace(0.5, 1.5, latent.size, dtype=np.float32).reshape(latent.shape))
-    mask = mx.ones_like(latent)
-    mask[:, :, 0, :, :] = 0.0  # freeze t_latent=0 slab
+    # temporal slab (freeze frame 0), mask=1 on the rest (reactive). init/mask
+    # are 4D (z_dim, t_latent, h_latent, w_latent) to match the internal
+    # apply_inpaint_mask shape — run_denoise squeezes latents to 4D after
+    # sched.step().squeeze(0), and apply_inpaint_mask enforces
+    # latents.shape == init_latent.shape. The public `latent` passed to
+    # eng.denoise stays 5D (1, z, t, h, w) per the public contract. See Test D.
+    lat_4d = latent[0]
+    init = mx.array(
+        np.linspace(0.5, 1.5, lat_4d.size, dtype=np.float32).reshape(lat_4d.shape)
+    )
+    mask = mx.ones_like(lat_4d)
+    mask[:, 0, :, :] = 0.0  # freeze t_latent=0 slab (4D: z, t, h, w)
     mx.eval(init, mask)
 
     async def _run():
@@ -248,23 +285,27 @@ def test_wan2_inpaint_preserves_frozen_region():
 
     out, init_arr, mask_arr = asyncio.run(_run())
     assert not np.any(np.isnan(out)), "inpaint latent has NaN"
-    frozen = out[mask_arr == 0]
+    # out is 5D (1, z, t, h, w); mask/init are 4D (z, t, h, w). Squeeze the
+    # batch dim so out4d[mask==0] aligns with the 4D mask.
+    out4d = out[0]
+    frozen = out4d[mask_arr == 0]
     frozen_init = init_arr[mask_arr == 0]
-    reactive = out[mask_arr == 1]
+    reactive = out4d[mask_arr == 1]
     reactive_init = init_arr[mask_arr == 1]
     print(
         f"\n#653 Surface C wan2 inpaint: frozen_equal={np.array_equal(frozen, frozen_init)} "
         f"reactive_diff_mean={float(np.abs(reactive - reactive_init).mean()):.6f}"
     )
-    assert np.array_equal(frozen, frozen_init), (
-        "frozen region (mask=0) was modified by denoise — apply_inpaint_mask not re-compositing"
-    )
-    assert float(np.abs(reactive - reactive_init).mean()) > 0.0, (
-        "reactive region (mask=1) is bit-identical to init — denoiser did no work"
-    )
+    assert np.array_equal(
+        frozen, frozen_init
+    ), "frozen region (mask=0) was modified by denoise — apply_inpaint_mask not re-compositing"
+    assert (
+        float(np.abs(reactive - reactive_init).mean()) > 0.0
+    ), "reactive region (mask=1) is bit-identical to init — denoiser did no work"
 
 
 # ---- Surface C: SkyReels inpaint e2e (frozen region preserved) ----
+
 
 def test_skyreels_inpaint_preserves_frozen_region():
     # Surface C on SkyReels: same guard as the Wan2 test, SkyReels denoise loop.
@@ -291,7 +332,9 @@ def test_skyreels_inpaint_preserves_frozen_region():
     # run_denoise (stage.py:533 squeezes the batch dim after sched.step), so
     # init_latent and inpaint_mask must be 4D to match latents.shape exactly.
     lat_4d = mx.zeros((z_dim, t_latent, h_latent, w_latent))
-    init = mx.array(np.linspace(0.5, 1.5, lat_4d.size, dtype=np.float32).reshape(lat_4d.shape))
+    init = mx.array(
+        np.linspace(0.5, 1.5, lat_4d.size, dtype=np.float32).reshape(lat_4d.shape)
+    )
     mask = mx.ones_like(lat_4d)
     mask[:, 0, :, :] = 0.0  # freeze t_latent=0 slab (4D: z, t, h, w)
     mx.eval(init, mask)
@@ -324,7 +367,7 @@ def test_skyreels_inpaint_preserves_frozen_region():
     # out is 5D (1, z, t, h, w); mask/init are 4D (z, t, h, w) matching the
     # internal apply_inpaint_mask shape. Squeeze the batch dim for the boolean
     # index so out4d[mask==0] aligns with the 4D mask.
-    out4d = out.reshape(init_arr.shape)
+    out4d = out[0]
     frozen = out4d[mask_arr == 0]
     frozen_init = init_arr[mask_arr == 0]
     reactive = out4d[mask_arr == 1]
@@ -333,9 +376,9 @@ def test_skyreels_inpaint_preserves_frozen_region():
         f"\n#653 Surface C skyreels inpaint: frozen_equal={np.array_equal(frozen, frozen_init)} "
         f"reactive_diff_mean={float(np.abs(reactive - reactive_init).mean()):.6f}"
     )
-    assert np.array_equal(frozen, frozen_init), (
-        "skyreels frozen region (mask=0) modified — apply_inpaint_mask not wired in SkyReels loop"
-    )
-    assert float(np.abs(reactive - reactive_init).mean()) > 0.0, (
-        "skyreels reactive region (mask=1) bit-identical to init — denoiser did no work"
-    )
+    assert np.array_equal(
+        frozen, frozen_init
+    ), "skyreels frozen region (mask=0) modified — apply_inpaint_mask not wired in SkyReels loop"
+    assert (
+        float(np.abs(reactive - reactive_init).mean()) > 0.0
+    ), "skyreels reactive region (mask=1) bit-identical to init — denoiser did no work"
