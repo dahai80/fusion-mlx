@@ -124,9 +124,13 @@ class LTX2_5Backend(VideoBackend):
             return
         from pathlib import Path
 
+        from fusion_mlx.video.ltx2_5.utils import resolve_component
         from fusion_mlx.video.ltx2_5.video_vae import load_video_encoder
 
-        enc_path = Path(self._model_path) / "vae" / "encoder"
+        # load_video_encoder expects a safetensors FILE (calls _split_vae_weights
+        # → mx.load), not the vae/encoder dir. resolve_component returns the conv
+        # variant file, matching generate.py:185.
+        enc_path = resolve_component(Path(self._model_path), "video_vae_conv")
 
         def _load():
             return load_video_encoder(enc_path)
