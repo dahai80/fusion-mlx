@@ -36,7 +36,12 @@ def patch_downsample_mask(mask, vae_stride, patch_size, t_latent, h_latent, w_la
     if h_px // s_h != h_latent or w_px // s_w != w_latent:
         logger.warning(
             "patch_downsample_mask: px %dx%d / stride %dx%d != latent %dx%d",
-            h_px, w_px, s_h, s_w, h_latent, w_latent,
+            h_px,
+            w_px,
+            s_h,
+            s_w,
+            h_latent,
+            w_latent,
         )
     arr = arr[:, :, : h_latent * s_h, : w_latent * s_w]
     arr = arr.reshape(1, 1, h_latent, s_h, w_latent, s_w).mean(axis=(3, 5))

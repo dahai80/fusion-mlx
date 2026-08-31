@@ -244,8 +244,12 @@ class SkyReelsBackend(VideoBackend):
 
             def _denoise():
                 result = pipeline._denoise_sample(
-                    latent, context, seq_lens=seq_lens, grid_sizes=grid_sizes,
-                    inpaint_mask=inpaint_mask, init_latent=init_latent,
+                    latent,
+                    context,
+                    seq_lens=seq_lens,
+                    grid_sizes=grid_sizes,
+                    inpaint_mask=inpaint_mask,
+                    init_latent=init_latent,
                 )
                 mx.eval(result)
                 return result

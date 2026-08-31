@@ -32,8 +32,12 @@ def test_apply_inpaint_mask_shape_mismatch_raises():
 def test_patch_downsample_mask_2x2_to_1x1():
     mask = mx.array([[1.0, 1.0], [0.0, 0.0]])
     out = patch_downsample_mask(
-        mask, vae_stride=(4, 2, 2), patch_size=(1, 2, 2),
-        t_latent=1, h_latent=1, w_latent=1,
+        mask,
+        vae_stride=(4, 2, 2),
+        patch_size=(1, 2, 2),
+        t_latent=1,
+        h_latent=1,
+        w_latent=1,
     )
     assert out.shape == (1, 1, 1, 1)
     assert abs(float(out[0, 0, 0, 0]) - 0.5) < 1e-6
@@ -42,8 +46,12 @@ def test_patch_downsample_mask_2x2_to_1x1():
 def test_patch_downsample_mask_broadcasts_temporal():
     mask = mx.ones((4, 4))
     out = patch_downsample_mask(
-        mask, vae_stride=(4, 2, 2), patch_size=(1, 2, 2),
-        t_latent=3, h_latent=2, w_latent=2,
+        mask,
+        vae_stride=(4, 2, 2),
+        patch_size=(1, 2, 2),
+        t_latent=3,
+        h_latent=2,
+        w_latent=2,
     )
     assert out.shape == (1, 3, 2, 2)
     assert mx.allclose(out, mx.ones((1, 3, 2, 2))).item()

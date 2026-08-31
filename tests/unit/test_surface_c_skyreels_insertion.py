@@ -19,6 +19,7 @@ def test_denoise_sample_recomposites_after_scheduler_step():
 
 def test_skyreels_backend_denoise_threads_inpaint_kwargs():
     from fusion_mlx.engines.video_backends.skyreels import SkyReelsBackend
+
     sig = inspect.signature(SkyReelsBackend.denoise)
     assert "inpaint_mask" in sig.parameters
     assert "init_latent" in sig.parameters

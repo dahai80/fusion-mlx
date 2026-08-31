@@ -23,7 +23,11 @@ class _FakeBackend:
         init_latent=None,
     ):
         self.calls.append(
-            {"control": control, "inpaint_mask": inpaint_mask, "init_latent": init_latent}
+            {
+                "control": control,
+                "inpaint_mask": inpaint_mask,
+                "init_latent": init_latent,
+            }
         )
         return latent
 
@@ -36,8 +40,15 @@ async def test_denoise_threads_inpaint_mask_and_init_latent():
     mask = mx.array([1.0])
     init = mx.array([2.0])
     out = await engine.denoise(
-        mx.zeros((1,)), mx.zeros((1,)), None, 1, 1.0, 0, 1,
-        inpaint_mask=mask, init_latent=init,
+        mx.zeros((1,)),
+        mx.zeros((1,)),
+        None,
+        1,
+        1.0,
+        0,
+        1,
+        inpaint_mask=mask,
+        init_latent=init,
     )
     assert mx.array_equal(out, mx.zeros((1,))).item()
     assert engine._backend.calls[0]["inpaint_mask"] is mask

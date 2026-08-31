@@ -22,14 +22,14 @@ from pathlib import Path
 import mlx.core as mx
 import numpy as np
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 from .scheduler import (
     FlowDPMPP2MScheduler,
     FlowMatchEulerScheduler,
     FlowUniPCScheduler,
 )
 from .utils import encode_text
-
-from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
 
 logger = logging.getLogger(__name__)
 
@@ -424,17 +424,26 @@ def run_denoise(
         # swap to B-first NCHW. Residuals -> list of [1, L_tokens, out_proj_dim].
         cn_residuals = None
         cn_stride = 4
-        if control.controlnet_adapter is not None and control.controlnet_latent is not None:
+        if (
+            control.controlnet_adapter is not None
+            and control.controlnet_latent is not None
+        ):
             hs = latents[:, 0:1, :, :].swapaxes(0, 1)  # (1, z_dim, h, w)
             t_mx = mx.array([float(timestep_val)])
             try:
                 cn_residuals = control.controlnet_adapter.compute_residuals(
-                    hs, t_mx, context, control.controlnet_latent,
-                    seq_lens=[seq_len], grid_sizes=[(f_grid, h_grid, w_grid)],
+                    hs,
+                    t_mx,
+                    context,
+                    control.controlnet_latent,
+                    seq_lens=[seq_len],
+                    grid_sizes=[(f_grid, h_grid, w_grid)],
                 )
                 cn_stride = getattr(control.controlnet_adapter, "stride", 4)
             except Exception as exc:
-                logger.warning("ControlNet residual compute failed: %s", exc, exc_info=True)
+                logger.warning(
+                    "ControlNet residual compute failed: %s", exc, exc_info=True
+                )
                 cn_residuals = None
 
         if cfg_disabled:

@@ -24,10 +24,11 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 from ...adapters import create_adapter
 from .. import _device
 from ..m5_optimizer import M5Optimizer
-from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
 from ..scheduler.fm_solvers_unipc import (
     FlowUniPCMultistepScheduler,
     flow_match_sample,

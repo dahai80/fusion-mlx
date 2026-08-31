@@ -19,6 +19,7 @@ def test_run_denoise_recomposites_after_sched_step():
 
 def test_wan2_backend_denoise_threads_inpaint_kwargs():
     from fusion_mlx.engines.video_backends.wan2 import Wan2Backend
+
     sig = inspect.signature(Wan2Backend.denoise)
     assert "inpaint_mask" in sig.parameters
     assert "init_latent" in sig.parameters
