@@ -322,8 +322,18 @@ def _build_sampling_params(
     Request-level params take precedence; profile fills in unset defaults.
     """
     po = profile_overrides or {}
+    # Fallback when neither the request nor a profile sets max_tokens
+    # (e.g. OpenAI-compatible clients that omit it, or AI SDK v6 which
+    # silently drops the renamed maxTokens param). Use the operator-
+    # configured ServerConfig.default_max_tokens, NOT a hard-coded 2048 —
+    # 2048 truncates long structured completions (~3900 chars) before the
+    # JSON closes, surfacing as finish=length + client-side parse failure.
+    from ..config import get_config
+
     return SamplingParams(
-        max_tokens=req.max_tokens or po.get("max_tokens") or 2048,
+        max_tokens=req.max_tokens
+        or po.get("max_tokens")
+        or get_config().default_max_tokens,
         temperature=(
             req.temperature
             if req.temperature is not None
