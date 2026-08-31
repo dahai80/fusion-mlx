@@ -378,17 +378,25 @@ class SkyReelsBackend(VideoBackend):
         if pipeline.vae is None:
             raise RuntimeError("vae is unloaded; call load_vae().")
 
+        # Spec Section 4: wrong-ndim pixels must raise ValueError with the
+        # received shape (mirror wan2.py). Fail visibly (Rule 12), NOT a
+        # silent clamp into a cryptic downstream shape error.
+        ndim = pixels.ndim
+        if ndim not in (4, 5):
+            raise ValueError(
+                f"encode expects (T,H,W,3) or (1,T,H,W,3); got {tuple(pixels.shape)}"
+            )
+
         # #630 thread-portability: pixels built on the main thread own its GPU
         # stream; the worker thread cannot mx.eval a lazy graph referencing the
         # main thread's stream. Bridge through numpy on the caller thread, rebuild
         # mx.array inside the worker (mirrors Wan2.encode wan2.py:706-720).
-        src_np = np.asarray(pixels)
+        src_np = np.array(pixels[0] if ndim == 5 else pixels)
 
         def _encode():
-            if src_np.ndim == 4:
-                x = mx.array(src_np)[None]  # (3,T,H,W) -> (1,3,T,H,W)
-            else:
-                x = mx.array(src_np)
+            x = mx.array(src_np)
+            if x.ndim == 4:
+                x = x[None]  # (3,T,H,W) -> (1,3,T,H,W)
             lat = pipeline.vae.encode(x)
             mx.eval(lat)
             return lat

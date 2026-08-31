@@ -818,42 +818,35 @@ class Wan2Backend(VideoBackend):
         # #653 Surface B: ControlNet conditioning (Wan2). Build the adapter +
         # preprocessed control latent, pack into ControlState. Runs BEFORE the
         # pure-T2V early-return so a controlnet_image alone (no VAE image) is
-        # honored. On failure / no latent, control falls through to the normal
-        # VACE/i2v/T2V paths (graceful degradation, no crash).
+        # honored. Per spec Section 4 / Rule 7: a ControlNet mismatch MUST
+        # surface (propagate), NOT silently degrade to T2V — a caller asking
+        # for ControlNet conditioning that silently gets pure T2V is the worst
+        # kind of silent failure (Rule 12). No try/except here.
         if controlnet_image is not None:
-            try:
-                from fusion_mlx.video.adapters.controlnet import ControlNet
+            from fusion_mlx.video.adapters.controlnet import ControlNet
 
-                cn_adapter = ControlNet(
-                    scale=controlnet_strength,
-                    image=controlnet_image,
-                    config={"control_type": control_type},
+            cn_adapter = ControlNet(
+                scale=controlnet_strength,
+                image=controlnet_image,
+                config={"control_type": control_type},
+            )
+            cn_adapter.load()
+            control_latent = cn_adapter.encode_control(controlnet_image, control_type)
+            if control_latent is None:
+                raise RuntimeError(
+                    f"stage:encode_control controlnet produced no latent for "
+                    f"{controlnet_image}; refusing to silently degrade to T2V"
                 )
-                cn_adapter.load()
-                control_latent = cn_adapter.encode_control(
-                    controlnet_image, control_type
-                )
-                if control_latent is not None:
-                    logger.info(
-                        "stage:encode_control controlnet type=%s strength=%.2f shape=%s",
-                        control_type,
-                        controlnet_strength,
-                        tuple(control_latent.shape),
-                    )
-                    return ControlState(
-                        controlnet_adapter=cn_adapter,
-                        controlnet_latent=control_latent,
-                    )
-                logger.warning(
-                    "stage:encode_control controlnet produced no latent for %s",
-                    controlnet_image,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "stage:encode_control controlnet failed, degrading to T2V: %s",
-                    exc,
-                    exc_info=True,
-                )
+            logger.info(
+                "stage:encode_control controlnet type=%s strength=%.2f shape=%s",
+                control_type,
+                controlnet_strength,
+                tuple(control_latent.shape),
+            )
+            return ControlState(
+                controlnet_adapter=cn_adapter,
+                controlnet_latent=control_latent,
+            )
 
         # Pure T2V: no image, no camera -> no conditioning.
         if image is None and not has_camera:

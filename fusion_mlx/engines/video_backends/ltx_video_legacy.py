@@ -35,6 +35,7 @@ class LegacyLTXBackend(VideoBackend):
         self._loaded = False
         self._transformer = None
         self._vae = None
+        self._stage_vae_encoder = None  # #653 Surface A: shadow ref; unload_vae_encoder clears this NOT _vae (generate() still needs _vae)
         self._t5 = None
         self._tokenizer = None
         self._scheduler = None
@@ -83,6 +84,7 @@ class LegacyLTXBackend(VideoBackend):
         self._loaded = False
         self._transformer = None
         self._vae = None
+        self._stage_vae_encoder = None
         self._t5 = None
         self._tokenizer = None
         self._scheduler = None
@@ -133,23 +135,25 @@ class LegacyLTXBackend(VideoBackend):
         )
 
     async def load_vae_encoder(self) -> None:
-        if self._vae is not None:
+        if self._stage_vae_encoder is not None:
             return
-        loop = asyncio.get_running_loop()
-        await asyncio.wait_for(
-            loop.run_in_executor(
-                get_executor("io"), self._load_pipeline, self._model_path
-            ),
-            timeout=180.0,
-        )
+        if self._vae is None:
+            loop = asyncio.get_running_loop()
+            await asyncio.wait_for(
+                loop.run_in_executor(
+                    get_executor("io"), self._load_pipeline, self._model_path
+                ),
+                timeout=180.0,
+            )
+        self._stage_vae_encoder = self._vae
         self._stage_flags = getattr(self, "_stage_flags", {})
         self._stage_flags["vae_encoder"] = True
         logger.info("legacy-ltx: vae_encoder load vae=%s", type(self._vae).__name__)
 
     async def encode(self, pixels: mx.array) -> mx.array:
-        if self._vae is None:
+        if self._stage_vae_encoder is None:
             await self.load_vae_encoder()
-        vae = self._vae
+        vae = self._stage_vae_encoder
         ndim = pixels.ndim
         if ndim not in (4, 5):
             raise ValueError(
@@ -172,9 +176,13 @@ class LegacyLTXBackend(VideoBackend):
         return result
 
     async def unload_vae_encoder(self) -> None:
+        # #653 Surface A: clear the stage-encoder shadow ONLY, NOT self._vae.
+        # The shared pipeline VAE is still used by generate(); nuking it here
+        # would break a subsequent monolith generate() call (ltx has no separate
+        # encoder instance — _stage_vae_encoder aliases _vae). Idempotent on None.
         self._stage_flags = getattr(self, "_stage_flags", {})
         self._stage_flags.pop("vae_encoder", None)
-        self._vae = None
+        self._stage_vae_encoder = None
         gc.collect()
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
