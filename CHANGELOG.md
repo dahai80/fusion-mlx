@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.8.56] - 2026-08-31
+
+Patch release — audio speech route contract wiring (F2/F3/F4) + r11_b debt rescue.
+
+### Fixed
+- **Audio speech `format` fold + `response_format` validation (#724).** `AudioSpeechRequest` lived on an orphaned `api/models.py` copy with dead `model="kokoro"` / `voice="af_heart"` defaults that the live route never imported. The route now uses the live `audio_models.AudioSpeechRequest`, which validates `response_format` against `_ALLOWED_AUDIO_FORMATS` and folds the legacy `format` alias. Empty/whitespace `input` raises an OpenAI envelope 400 with `param="input"` (not a bare-string `detail`).
+- **`voice="default"` never resolved (#725).** `_resolve_default_voice_literal` was defined but never called. Wired into `create_speech` so literal `voice="default"` resolves to the registry `default_voice` for the resolved model, assigned back onto `request.voice` so BOTH streaming and non-streaming paths see the resolved value. No voice allowlist (non-`"default"` passes through) — settled F3 contract.
+- **Audio aliases advertised `[]` capabilities (#726).** `/v1/models` listing now shows `[_AUDIO_TYPE_TO_CAPABILITY[type]]` for audio aliases (was `[]`); single-id cards keep `["text"]`; added `/v1/models/{model_id}` retrieve route.
+- **Mixed-case TTS alias 404 (#727).** Added case-insensitive TTS alias fallback (`_TTS_MODEL_ALIASES_LOWER`) so mixed-case HF repo names (`Kokoro-82M-bf16` / `KOKORO-82M-8BIT`) resolve instead of 404.
+
+### Test Debt
+- `test_audio_r11_b_bundle.py` permanently un-quarantined (32P/0F). Pool-seam rebuild (mirror `test_audio_tts.py`) replaced the stale `audio_route._tts_engine=None` singleton with live `_get_engine_pool()` injection. Pins 7 live contracts (F2-F7).
+- `test_audio_r7_c_bundle.py` (#728), `test_audio_r8_a_bundle.py` (#729) stay quarantined with doc verdicts — 33F/31F all `REMOVED-ARCH/CONTRACT` (Rule 9: false coverage). 5 rescuable contracts migrated to `r11_b` as F5/F6/F7.
+- `test_api_models.py` regression fixed — import `AudioSpeechRequest` from `audio_models`; re-pinned defaults to the live contract.
+
 ## [0.8.55] - 2026-08-31
 
 Patch release — API-key override visibility (#705) + settings.json hardening.
