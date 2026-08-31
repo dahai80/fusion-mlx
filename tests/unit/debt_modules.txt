@@ -404,29 +404,46 @@ test_anthropic_think_leak_r12_m1b.py
 # not mounted / removed). The 5 passing tests exercise live probe helpers
 # but intermixed with dead-contract source-path reads. KEEP quarantined.
 test_audio_probe_consistency.py
-# KEEP_QUARANTINED test_audio_r11_b_bundle.py (eval 2026-08-30): 22F/0P,
-# 3 findings (R11-B-F2/F3/F4) — ALL 3 prod fixes STILL LIVE (F2 format→
-# response_format model_validator models.py:1190; F3 _resolve_default_
-# voice_literal routes_internal/audio.py:150; F4 audio capability in
-# routes_internal/models.py:84). Failure = HARNESS REDESIGN-DRIFT, not
-# removed feature: tests patch STALE `audio_route._tts_engine = None`
-# singleton seam; live /v1/audio/speech reads `_get_engine_pool()` →
-# `_pool` injected via set_audio_context (api/audio_routes.py:64), so
-# un-injected pool → 503 "Server not initialized". F4 class touches
-# REMOVED `srv._embedding_model_locked`/`srv._tool_call_parser` server-
-# scope attrs. RESCUABLE via Gap B `_get_engine_pool`/set_audio_context
-# pool-seam fixture (mirror test_audio_tts.py), but 646L/22 tests across
-# 3 findings = full harness rewrite — deferred to focused follow-up.
-test_audio_r11_b_bundle.py
-# KEEP_QUARANTINED test_audio_r7_c_bundle.py (eval 2026-08-30): 8F/5P.
-# Same root as r11_b: 503 "Server not initialized" from stale _tts_engine
-# singleton seam (live route uses _get_engine_pool pool injection).
-# RESCUABLE via pool seam, deferred with r11_b cluster.
+# RESCUED test_audio_r11_b_bundle.py (eval 2026-08-31, perma-un-quarantined):
+# 32P/0F. Pool-seam rebuild (mirror test_audio_tts.py) fixed the stale
+# `audio_route._tts_engine = None` singleton -> live `_get_engine_pool()`
+# injection. Pins 7 live contracts: R11-B-F2 (format->response_format fold),
+# F3 (_resolve_default_voice_literal), F4 (audio capability + /v1/models/
+# {id} retrieve route), F5 (empty/whitespace input 400 envelope with
+# param="input"), F6 (mlx-audio pin excludes 0.4.4), F7 (case-insensitive
+# TTS alias _TTS_MODEL_ALIASES_LOWER). F5/F6/F7 rescued here from r7_c/r8_a
+# (those bundles stay quarantined — REMOVED voice-allowlist / content-type /
+# default-sentinel contracts dominate).
+# KEEP_QUARANTINED test_audio_r7_c_bundle.py (eval 2026-08-31 re-verified):
+# 33F/24P, but 33 failures ALL REMOVED-ARCH/CONTRACT (Rule 9 false-coverage
+# if un-quarantined). Patch STALE `rapid_mlx.routes.audio` logger +
+# `_tts_engine`/`_stt_engine` module singletons (live route uses
+# `_get_engine_pool()` -> engine pool, NOT singletons; 503 "Server not
+# initialized"). 2 STT tests pin removed `_stt_engine` singleton seam.
+# `TestTTSAliasResolver::test_tts_default_alias_resolves` pins REMOVED
+# voice allowlist (wants None/""/"default"->kokoro; live F3 passes "default"
+# through to _resolve_default_voice_literal, NOT a None->kokoro remap —
+# Rule 7 conflict, settled F3 wins). 1 RESCUABLE prod gap (empty-input 400
+# envelope param="input") + 1 (whitespace non-blank) + 1 (mlx-audio version
+# pin) were REAL live-route contracts -> migrated to test_audio_r11_b_bundle
+# as F5/F6 (issue #728). 24 passing tests cover live alias/stt helpers but
+# intermix with dead-contract source-path reads. KEEP quarantined.
 test_audio_r7_c_bundle.py
-# KEEP_QUARANTINED test_audio_r8_a_bundle.py (eval 2026-08-30): 31F/13P.
-# Same root as r11_b: 503 "Server not initialized" from stale _tts_engine
-# singleton seam (93×503, 2×ImportError). 13 passing tests cover live
-# probe helpers. RESCUABLE via pool seam, deferred with r11_b cluster.
+# KEEP_QUARANTINED test_audio_r8_a_bundle.py (eval 2026-08-31 re-verified):
+# 31F/13P, but 31 failures ALL REMOVED-CONTRACT (Rule 9 false-coverage).
+# `TestTTSContentType` (4+1+1) + `TestTTSContentTypeTable` (2) pin content-
+# type encoding that NEVER shipped (live route ALWAYS audio/wav RIFF bytes;
+# `_CONTENT_TYPE_TABLE`/IANA canonical helper DOES NOT EXIST). `TestVoice-
+# Validation` (7) pins REMOVED voice allowlist (invalid_voice->400 param=
+# voice) — DIRECTLY CONFLICTS with settled F3 (no voice allowlist; only
+# "default" literal remapped). `TestAllowedVoicesHelper` (5) + `TestVibe-
+# voiceDefaultSentinelResolves` (8) pin REMOVED `_allowed_voices_for`/
+# vibevoice default-sentinel helpers. 2 RESCUABLE prod gaps (case-
+# insensitive alias for mixed-case HF repos Kokoro-82M-bf16 / KOKORO-82M-
+# 8BIT; full-alias resolution) were REAL live contracts -> migrated to
+# test_audio_r11_b_bundle as F7 (issue #729). 13 passing tests cover live
+# alias/probe/boot-guard helpers but intermix with dead-contract reads.
+# KEEP quarantined.
 test_audio_r8_a_bundle.py
 # KEEP_QUARANTINED test_audio_route_registration_gate.py (eval round11
 # 2026-08-24, verdict CORRECTED 2026-08-30): 4P/22F. NOT _server_state

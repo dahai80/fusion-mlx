@@ -97,11 +97,33 @@ def _resolve_modality(model_id: str) -> str:
     return "text"
 
 
+def _capabilities_for(model_id: str, profile) -> list[str]:
+    # R11-B-F4 (#726): unified capability resolver wired into the live
+    # /v1/models listing + retrieve route. Audio aliases (tts/stt) have
+    # NO profile — resolve_audio_alias owns their capability tag
+    # (``audio.speech`` / ``audio.transcription``), so they no longer
+    # ship with an empty ``capabilities=[]`` that drop-in OpenAI clients
+    # cannot route. Text models keep ``profile.capabilities``; models
+    # with neither profile nor audio entry fall back to ``[]`` (NOT
+    # ``["text"]``) — pinned by test_capabilities_field's
+    # unregistered-text-path contract.
+    audio_entry = resolve_audio_alias(model_id)
+    if audio_entry is not None:
+        return [_AUDIO_TYPE_TO_CAPABILITY.get(audio_entry.type, "audio")]
+    if profile is not None and profile.capabilities:
+        return sorted(profile.capabilities)
+    return []
+
+
 def _build_model_info(model_id: str) -> SimpleNamespace:
-    # R11-B-F4 (#505): single-id model card builder used by the pure
-    # regression net. Audio aliases (tts/stt) short-circuit to an
-    # audio-only capability set — no ``text`` leak. Text models keep
-    # ``capabilities=["text"]`` and resolve modality via _resolve_modality.
+    # R11-B-F4 (#505/#726): single-id model card builder. Audio aliases
+    # (tts/stt) short-circuit to an audio-only capability set — no
+    # ``text`` leak. Text models keep ``capabilities=["text"]`` and
+    # resolve modality via _resolve_modality. Wired into the live
+    # /v1/models/{model_id} retrieve route (separate contract from the
+    # listing's _capabilities_for — the single-id card always carries a
+    # non-empty capability set, so unregistered text ids report
+    # ``["text"]`` here, NOT the listing's ``[]``).
     audio_entry = resolve_audio_alias(model_id)
     if audio_entry is not None:
         cap = _AUDIO_TYPE_TO_CAPABILITY.get(audio_entry.type, "audio")
@@ -154,7 +176,7 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
             tool, reasoning = effective_parsers_for(entry.model_name, None, None)
             modality = _resolve_modality(entry.model_name)
             profile = resolve_profile(entry.model_name)
-            caps = sorted(profile.capabilities) if profile else []
+            caps = _capabilities_for(entry.model_name, profile)
             data.append(
                 _entry_payload(entry.model_name, tool, reasoning, modality, caps)
             )
@@ -166,7 +188,7 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
             cfg.model_name, profile_tool, profile_reasoning
         )
         modality = _resolve_modality(cfg.model_name)
-        caps = sorted(profile.capabilities) if profile else []
+        caps = _capabilities_for(cfg.model_name, profile)
         data.append(_entry_payload(cfg.model_name, tool, reasoning, modality, caps))
         if cfg.model_alias:
             tool, reasoning = effective_parsers_for(
@@ -216,7 +238,7 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
                 tool, reasoning = effective_parsers_for(model_id, None, None)
                 modality = _resolve_modality(model_id)
                 profile = resolve_profile(model_id)
-                caps = sorted(profile.capabilities) if profile else []
+                caps = _capabilities_for(model_id, profile)
                 data.append(
                     _entry_payload(
                         model_id,
@@ -235,3 +257,33 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
             )
     logger.info("routes_internal.models: /v1/models listed %d entries", len(data))
     return {"object": "list", "data": data}
+
+
+@router.get("/v1/models/{model_id}")
+async def retrieve_model(model_id: str, _auth: bool = Depends(verify_api_key)):
+    # R11-B-F4 (#726): single-id retrieve route. Audio aliases advertise
+    # their audio capability + modality; text models report ``["text"]``.
+    # Mirrors the listing's per-entry shape so clients bootstrapping state
+    # via the single-id endpoint see the same envelope (not a stale text
+    # card for an audio alias).
+    info = _build_model_info(model_id)
+    profile = resolve_profile(model_id)
+    tool, reasoning = effective_parsers_for(
+        model_id,
+        getattr(profile, "tool_call_parser", None),
+        getattr(profile, "reasoning_parser", None),
+    )
+    payload = _entry_payload(
+        model_id,
+        tool,
+        reasoning,
+        info.modality,
+        info.capabilities,
+    )
+    logger.info(
+        "routes_internal.models: /v1/models/%s modality=%s caps=%s",
+        model_id,
+        info.modality,
+        info.capabilities,
+    )
+    return payload

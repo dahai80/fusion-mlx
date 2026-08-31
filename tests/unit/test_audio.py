@@ -181,7 +181,7 @@ class TestAPIModels:
 
     def test_speech_request(self):
         """Test AudioSpeechRequest model."""
-        from fusion_mlx.api.models import AudioSpeechRequest
+        from fusion_mlx.api.audio_models import AudioSpeechRequest
 
         req = AudioSpeechRequest(
             model="kokoro",

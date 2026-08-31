@@ -78,7 +78,7 @@ class TestFormatAliasModelLayer:
         binds ``response_format="mp3"``. Pre-fix this fell through and
         Pydantic populated the field default ``"wav"`` — the silent-
         downgrade shape R11-B-F2 exists to prevent."""
-        from fusion_mlx.api.models import AudioSpeechRequest
+        from fusion_mlx.api.audio_models import AudioSpeechRequest
 
         r = AudioSpeechRequest(
             model="kokoro", input="Hi", voice="af_heart", format="mp3"
@@ -89,7 +89,7 @@ class TestFormatAliasModelLayer:
         """Both keys present → the spec-correct ``response_format`` wins.
         Never a silent override of explicit caller intent. The legacy
         alias is back-compat, NOT a silent overwrite."""
-        from fusion_mlx.api.models import AudioSpeechRequest
+        from fusion_mlx.api.audio_models import AudioSpeechRequest
 
         r = AudioSpeechRequest(
             model="kokoro",
@@ -104,7 +104,7 @@ class TestFormatAliasModelLayer:
         """``format`` absent → ``response_format`` falls back to the
         Pydantic default. Pin this so the F-2 hook can't accidentally
         clobber the default-resolution path."""
-        from fusion_mlx.api.models import AudioSpeechRequest
+        from fusion_mlx.api.audio_models import AudioSpeechRequest
 
         r = AudioSpeechRequest(model="kokoro", input="Hi", voice="af_heart")
         assert r.response_format == "wav"
@@ -116,7 +116,7 @@ class TestFormatAliasModelLayer:
         SOURCE of the value, not the allowed-set contract."""
         from pydantic import ValidationError
 
-        from fusion_mlx.api.models import AudioSpeechRequest
+        from fusion_mlx.api.audio_models import AudioSpeechRequest
 
         with pytest.raises(ValidationError) as exc_info:
             AudioSpeechRequest(
@@ -146,7 +146,7 @@ class TestFormatAliasModelLayer:
         envelope a wrong-typed ``response_format`` would."""
         from pydantic import ValidationError
 
-        from fusion_mlx.api.models import AudioSpeechRequest
+        from fusion_mlx.api.audio_models import AudioSpeechRequest
 
         with pytest.raises(ValidationError) as exc_info:
             AudioSpeechRequest(
@@ -161,7 +161,7 @@ class TestFormatAliasModelLayer:
         """``{"format": null}`` is the JSON shape an SDK might emit when
         it explicitly clears the field; treat it as unset so the
         Pydantic default still wins."""
-        from fusion_mlx.api.models import AudioSpeechRequest
+        from fusion_mlx.api.audio_models import AudioSpeechRequest
 
         r = AudioSpeechRequest(
             model="kokoro", input="Hi", voice="af_heart", format=None
