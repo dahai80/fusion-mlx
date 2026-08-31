@@ -2249,7 +2249,19 @@ Closes #653. Lands three engine surfaces on the video backends for fusion-comfyu
 - `tests/unit/test_653_real_model.py`: 4 gated real-model e2e (SkyReels VAE roundtrip, Wan2 ControlNet steer, Wan2 + SkyReels inpaint frozen-region). Gated `FUSION_MLX_REAL_MODEL_TESTS`; SKIP without models.
 
 ## Follow-up issues (Task 11)
-<paste the 10 issue URLs from Task 11 Step 2 here — Surface B+C denoise-port for the 10 denoise-less backends + Surface A for ltx2/opensora/uniworld>
+Filed on `dahai80/fusion-mlx` 2026-09-01, all `--label enhancement`, cross-referencing #653.
+Surface B+C denoise-port (7 backends that got Surface A in this PR):
+- #731 cogvideox — Port ControlNet (Surface B) + inpaint-mask (Surface C)
+- #732 cosmos — Port ControlNet (Surface B) + inpaint-mask (Surface C)
+- #733 hunyuanvideo — Port ControlNet (Surface B) + inpaint-mask (Surface C)
+- #734 ltx_video_legacy — Port ControlNet (Surface B) + inpaint-mask (Surface C)
+- #735 ltx2_5 — Port ControlNet (Surface B) + inpaint-mask (Surface C)
+- #736 minimax_h3 — Port ControlNet (Surface B) + inpaint-mask (Surface C)
+- #737 svd — Port ControlNet (Surface B) + inpaint-mask (Surface C)
+Surface A+B+C (3 backends that deferred all three):
+- #738 ltx2 — Port VAE encode (Surface A) + ControlNet (B) + inpaint (C)
+- #739 opensora — Port VAE encode (Surface A) + ControlNet (B) + inpaint (C)
+- #740 uniworld — Port VAE encode (Surface A) + ControlNet (B) + inpaint (C)
 
 ## Rulings (R1–R4, load-bearing)
 - R1: Wan2 DiT `wan_2.py` had no `controlnet_residuals` kwargs; added + block-loop inject.
