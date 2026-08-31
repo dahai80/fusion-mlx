@@ -340,6 +340,8 @@ class WanModel(nn.Module):
         control_hidden_states: list | None = None,
         control_scales: list[float] | None = None,
         y_camera: list | None = None,
+        controlnet_residuals: list | None = None,
+        controlnet_stride: int = 4,
     ) -> list:
         # Detect identical inputs (CFG B=2) to avoid duplicate patchify work.
         # Check BEFORE I2V concat since concat creates new array objects.
@@ -593,6 +595,19 @@ class WanModel(nn.Module):
                         axis=1,
                     )
                 x = x + hint * scale
+
+            # #653 Surface B (R1): strided ControlNet residual injection.
+            # Mirror SkyReels DiT (pipelines/__init__.py:716-724). cn_residuals
+            # is [1, L_tokens, out_proj_dim]; repeat to x's batch dim for CFG.
+            if (
+                controlnet_residuals is not None
+                and i % controlnet_stride == 0
+                and i // controlnet_stride < len(controlnet_residuals)
+            ):
+                resid = controlnet_residuals[i // controlnet_stride]
+                if resid.shape[0] == 1 and x.shape[0] > 1:
+                    resid = mx.repeat(resid, x.shape[0], axis=0)
+                x = x + resid
 
         # Output head
         x = self.head(x, e)

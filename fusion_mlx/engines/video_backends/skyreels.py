@@ -14,6 +14,7 @@ import random
 from typing import Any
 
 import mlx.core as mx
+import numpy as np
 
 from ..._tempfile_safe import managed_tempfile_path
 from ...engine_core import get_executor, get_video_gen_timeout
@@ -209,6 +210,8 @@ class SkyReelsBackend(VideoBackend):
         seed: int,
         num_frames: int,
         control=None,
+        inpaint_mask=None,
+        init_latent=None,
     ) -> mx.array:
         # control (#652 conditioning) is Wan2-only; skyreels ignores it.
         pipeline = await self._ensure_pipeline()
@@ -241,7 +244,12 @@ class SkyReelsBackend(VideoBackend):
 
             def _denoise():
                 result = pipeline._denoise_sample(
-                    latent, context, seq_lens=seq_lens, grid_sizes=grid_sizes
+                    latent,
+                    context,
+                    seq_lens=seq_lens,
+                    grid_sizes=grid_sizes,
+                    inpaint_mask=inpaint_mask,
+                    init_latent=init_latent,
                 )
                 mx.eval(result)
                 return result
@@ -329,6 +337,83 @@ class SkyReelsBackend(VideoBackend):
         mx.synchronize()
         mx.clear_cache()
         logger.info("stage:vae unload")
+
+    async def encode_control(
+        self,
+        controlnet_image: str | None = None,
+        control_type: str = "canny",
+        controlnet_strength: float = 1.0,
+        **_: Any,
+    ) -> Any:
+        # #653 Surface B (SkyReels): engine-layer config plumbing. The pipeline
+        # _denoise_sample already reads pipeline.config.controlnet_image /
+        # control_type / controlnet_strength (pipelines/__init__.py:605-609) and
+        # does adapter load + compute_residuals + DiT injection (716-724). This
+        # override only assigns the config fields; NO ControlState (SkyReels has
+        # none — Rule 7 single-path, pipeline-owned injection).
+        pipeline = await self._ensure_pipeline()
+        pipeline.config.controlnet_image = controlnet_image
+        pipeline.config.control_type = control_type
+        pipeline.config.controlnet_strength = controlnet_strength
+        logger.info(
+            "stage:encode_control skyreels image=%s type=%s strength=%.2f",
+            controlnet_image,
+            control_type,
+            controlnet_strength,
+        )
+        return {"controlnet_image": controlnet_image} if controlnet_image else None
+
+    async def load_vae_encoder(self) -> None:
+        # #653 Surface A: SkyReels VAE encoder. The pipeline owns the VAE
+        # instance (pipeline.vae); load_vae already validates it exists. No
+        # separate encoder model — SkyReelsVAE carries encoder+decoder.
+        pipeline = await self._ensure_pipeline()
+        if pipeline.vae is None:
+            raise RuntimeError("vae is unloaded; call load_vae().")
+        self._stage_flags["vae"] = True
+        logger.info("stage:vae_encoder load skyreels active_mem=%s", _active_mem())
+
+    async def encode(self, pixels: mx.array) -> mx.array:
+        pipeline = await self._ensure_pipeline()
+        if pipeline.vae is None:
+            raise RuntimeError("vae is unloaded; call load_vae().")
+
+        # Spec Section 4: wrong-ndim pixels must raise ValueError with the
+        # received shape (mirror wan2.py). Fail visibly (Rule 12), NOT a
+        # silent clamp into a cryptic downstream shape error.
+        ndim = pixels.ndim
+        if ndim not in (4, 5):
+            raise ValueError(
+                f"encode expects (T,H,W,3) or (1,T,H,W,3); got {tuple(pixels.shape)}"
+            )
+
+        # #630 thread-portability: pixels built on the main thread own its GPU
+        # stream; the worker thread cannot mx.eval a lazy graph referencing the
+        # main thread's stream. Bridge through numpy on the caller thread, rebuild
+        # mx.array inside the worker (mirrors Wan2.encode wan2.py:706-720).
+        src_np = np.array(pixels[0] if ndim == 5 else pixels)
+
+        def _encode():
+            x = mx.array(src_np)
+            if x.ndim == 4:
+                x = x[None]  # (3,T,H,W) -> (1,3,T,H,W)
+            lat = pipeline.vae.encode(x)
+            mx.eval(lat)
+            return lat
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(get_executor("video"), _encode)
+        logger.info("stage:vae encode skyreels out_shape=%s", tuple(result.shape))
+        return result
+
+    async def unload_vae_encoder(self) -> None:
+        # Encoder shares the VAE instance; full unload happens via unload_vae().
+        # Just clear the stage flag so load_vae_encoder() must be called again.
+        self._stage_flags["vae"] = False
+        gc.collect()
+        mx.synchronize()
+        mx.clear_cache()
+        logger.info("stage:vae_encoder unload skyreels active_mem=%s", _active_mem())
 
     async def _get_or_create_pipeline(self, pipeline_class: type) -> Any:
         """AtomCode fix #130: 获取或创建缓存 pipeline 实例.

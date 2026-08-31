@@ -115,3 +115,56 @@ def test_build_sampling_params_anthropic_request_takes_precedence():
     assert sampling.temperature == 1.0
     assert sampling.top_p == 0.99
     assert sampling.max_tokens == 512
+
+
+def _make_default_req():
+    from unittest.mock import MagicMock
+
+    req = MagicMock()
+    req.max_tokens = None
+    req.temperature = None
+    req.top_p = None
+    req.top_k = 0
+    req.min_p = 0.0
+    req.presence_penalty = None
+    req.frequency_penalty = None
+    req.stop = None
+    req.stop_token_ids = None
+    req.logprobs = False
+    req.top_logprobs = None
+    return req
+
+
+def test_build_sampling_params_openai_default_uses_config_not_hardcoded_2048():
+    # OpenAI-compatible clients that omit max_tokens (e.g. AI SDK v6 which
+    # silently drops the renamed maxTokens param) must fall back to the
+    # operator-configured ServerConfig.default_max_tokens, NOT the legacy
+    # hard-coded 2048. 2048 truncates long structured completions (~3900 chars)
+    # before the JSON closes -> client gets finish=length + parse failure.
+    from fusion_mlx.api.openai_routes import _build_sampling_params
+    from fusion_mlx.config import get_config, reset_config
+
+    reset_config()
+    cfg = get_config()
+    cfg.default_max_tokens = 16384
+    try:
+        sampling = _build_sampling_params(_make_default_req(), profile_overrides={})
+        assert (
+            sampling.max_tokens == 16384
+        ), f"default max_tokens must follow ServerConfig.default_max_tokens, got {sampling.max_tokens}"
+        assert sampling.max_tokens != 2048, "regression: fell back to hard-coded 2048"
+    finally:
+        reset_config()
+
+
+def test_build_sampling_params_openai_default_no_config_uses_4096_dataclass_default():
+    # With no explicit operator override, ServerConfig.default_max_tokens is
+    # 4096 (its dataclass default). The fallback must be that, never 2048.
+    from fusion_mlx.api.openai_routes import _build_sampling_params
+    from fusion_mlx.config import reset_config
+
+    reset_config()
+    sampling = _build_sampling_params(_make_default_req(), profile_overrides={})
+    assert (
+        sampling.max_tokens == 4096
+    ), f"bare ServerConfig default should be 4096, got {sampling.max_tokens}"

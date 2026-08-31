@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.8.57] - 2026-08-31
+
+### Added
+- **#653 — VAE-encode / ControlNet / inpaint-mask engine surfaces.**
+  - Surface A: `encode(pixels) -> 5D latent` wired on 9 video backends (Wan2,
+    SkyReels, ltx_video_legacy, svd, cosmos, hunyuanvideo, cogvideox, minimax_h3,
+    ltx2_5). Numpy-bridge + worker-thread `mx.eval` (#630 stream invariant).
+    `ltx2` / `opensora` / `uniworld` deferred to follow-up issues.
+  - Surface B: `encode_control(controlnet_image=, control_type=, controlnet_strength=)`
+    builds a `ControlNet` adapter + control latent on `ControlState`; `denoise(control=...)`
+    injects per-step residuals into the DiT block loop (Wan2 + SkyReels).
+  - Surface C: `denoise(..., inpaint_mask=, init_latent=)` re-composites frozen regions
+    after each denoise step (`mask*latents + (1-mask)*init`). Wan2 + SkyReels default path.
+  - `VideoGenEngine.denoise` + `VideoBackend.denoise` thread `inpaint_mask`/`init_latent`
+    (backward-compatible defaults `None`).
+  - Real-model e2e tests gated behind `FUSION_MLX_REAL_MODEL_TESTS`
+    (`tests/unit/test_653_real_model.py`): SkyReels VAE roundtrip, Wan2 ControlNet steer,
+    Wan2 + SkyReels inpaint frozen-region preservation.
+  - 10 follow-up issues filed for Surface B+C denoise-loop ports on the other backends.
+
+### Changed
+- `WanModel.__call__` gains `controlnet_residuals`/`controlnet_stride` kwargs (R1).
+- `run_denoise` (Wan2 stage.py) gains `inpaint_mask`/`init_latent` + re-composite after `sched.step`.
+
 ## [0.8.56] - 2026-08-31
 
 Patch release — audio speech route contract wiring (F2/F3/F4) + r11_b debt rescue.

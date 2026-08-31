@@ -208,7 +208,17 @@ def test_video_engine_stage_methods_delegate(monkeypatch):
             captured["load_dit"] = True
 
         async def denoise(
-            self, latent, pos, neg, steps, cfg, seed, num_frames, control=None
+            self,
+            latent,
+            pos,
+            neg,
+            steps,
+            cfg,
+            seed,
+            num_frames,
+            control=None,
+            inpaint_mask=None,
+            init_latent=None,
         ):
             captured["denoise"] = (steps, num_frames, control)
             return latent
@@ -335,7 +345,7 @@ def test_encode_wan_vae_returns_4d_latent():
     from fusion_mlx.video.wan2.stage import encode_wan_vae
 
     fake_vae = SimpleNamespace(encode=lambda x: mx.zeros((16, 3, 8, 16)))
-    config = {"vae_z_dim": 16}
+    config = SimpleNamespace(vae_z_dim=16)
     out = encode_wan_vae(mx.zeros((1, 3, 7, 512, 512)), config, fake_vae)
     assert out.shape == (16, 3, 8, 16)
 
@@ -347,7 +357,7 @@ def _make_wan2_backend_for_encode():
     backend.name = "wan2"
     backend._stage_vae_encoder = None
     backend._stage_flags = {"text_encoder": False, "dit": False, "vae": False}
-    backend._stage_config = {"vae_z_dim": 16}
+    backend._stage_config = SimpleNamespace(vae_z_dim=16)
     backend._model_dir = "/fake/wan2"
     backend._stage_quant = None
     return backend

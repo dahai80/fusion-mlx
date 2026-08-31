@@ -404,7 +404,14 @@ def load_vae_encoder(model_path: Path, config=None):
 
     weights = _load_safetensors(model_path)
     if is_wan22:
-        weights = sanitize_wan22_vae_weights(weights)
+        # #653 Surface A: the encoder needs the encoder.* + conv1.* weights that
+        # sanitize_wan22_vae_weights strips by default (include_encoder=False,
+        # which is correct for the decoder-only path). Without include_encoder
+        # the Wan22VAEEncoder loads 0 encoder weights (strict=False swallows
+        # the missing keys silently) and encode() runs on random-init conv
+        # weights -> the latent is structured but meaningless, so the
+        # encode->decode roundtrip decodes to a flat mid-gray blob (corr ~0).
+        weights = sanitize_wan22_vae_weights(weights, include_encoder=True)
     else:
         if not _has_encoder_keys(weights):
             full = _resolve_full_wan_vae(model_path)

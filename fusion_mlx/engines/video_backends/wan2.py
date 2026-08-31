@@ -473,6 +473,8 @@ class Wan2Backend(VideoBackend):
         seed: int,
         num_frames: int,
         control=None,
+        inpaint_mask=None,
+        init_latent=None,
     ) -> mx.array:
         from fusion_mlx.video.wan2.stage import (
             ControlState,
@@ -546,6 +548,8 @@ class Wan2Backend(VideoBackend):
                 i2v_mask_tokens=control.i2v_mask_tokens,
                 is_i2v_mask_blend=control.is_i2v_mask_blend,
                 is_i2v_channel_concat=control.is_i2v_channel_concat,
+                inpaint_mask=inpaint_mask,
+                init_latent=init_latent,
             )
             # 5D contract: add batch dim -> (1, z_dim, t_latent, h_lat, w_lat).
             # Build the projection AND evaluate it on THIS executor thread so
@@ -762,6 +766,9 @@ class Wan2Backend(VideoBackend):
         control_mask: str | None = None,
         reference_images: list | None = None,
         camera_conditions: Any = None,
+        controlnet_image: str | None = None,
+        control_type: str = "canny",
+        controlnet_strength: float = 1.0,
     ):
         # #652 staged conditioning surface. Dispatches on model_type /
         # add_control_adapter, mirroring generate.py bit-exactly but routing
@@ -807,6 +814,39 @@ class Wan2Backend(VideoBackend):
                 tuple(camera_conditions.shape),
             )
             return ControlState(y_camera=y_camera)
+
+        # #653 Surface B: ControlNet conditioning (Wan2). Build the adapter +
+        # preprocessed control latent, pack into ControlState. Runs BEFORE the
+        # pure-T2V early-return so a controlnet_image alone (no VAE image) is
+        # honored. Per spec Section 4 / Rule 7: a ControlNet mismatch MUST
+        # surface (propagate), NOT silently degrade to T2V — a caller asking
+        # for ControlNet conditioning that silently gets pure T2V is the worst
+        # kind of silent failure (Rule 12). No try/except here.
+        if controlnet_image is not None:
+            from fusion_mlx.video.adapters.controlnet import ControlNet
+
+            cn_adapter = ControlNet(
+                scale=controlnet_strength,
+                image=controlnet_image,
+                config={"control_type": control_type},
+            )
+            cn_adapter.load()
+            control_latent = cn_adapter.encode_control(controlnet_image, control_type)
+            if control_latent is None:
+                raise RuntimeError(
+                    f"stage:encode_control controlnet produced no latent for "
+                    f"{controlnet_image}; refusing to silently degrade to T2V"
+                )
+            logger.info(
+                "stage:encode_control controlnet type=%s strength=%.2f shape=%s",
+                control_type,
+                controlnet_strength,
+                tuple(control_latent.shape),
+            )
+            return ControlState(
+                controlnet_adapter=cn_adapter,
+                controlnet_latent=control_latent,
+            )
 
         # Pure T2V: no image, no camera -> no conditioning.
         if image is None and not has_camera:

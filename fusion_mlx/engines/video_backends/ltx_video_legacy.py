@@ -35,6 +35,7 @@ class LegacyLTXBackend(VideoBackend):
         self._loaded = False
         self._transformer = None
         self._vae = None
+        self._stage_vae_encoder = None  # #653 Surface A: shadow ref; unload_vae_encoder clears this NOT _vae (generate() still needs _vae)
         self._t5 = None
         self._tokenizer = None
         self._scheduler = None
@@ -48,6 +49,7 @@ class LegacyLTXBackend(VideoBackend):
         if self._loaded:
             return
         logger.info("Starting legacy LTX-Video backend (pure-MLX): %s", model_path)
+        self._model_path = model_path
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
             loop.run_in_executor(get_executor("io"), self._load_pipeline, model_path),
@@ -82,6 +84,7 @@ class LegacyLTXBackend(VideoBackend):
         self._loaded = False
         self._transformer = None
         self._vae = None
+        self._stage_vae_encoder = None
         self._t5 = None
         self._tokenizer = None
         self._scheduler = None
@@ -130,6 +133,65 @@ class LegacyLTXBackend(VideoBackend):
         return await asyncio.wait_for(
             loop.run_in_executor(get_executor("video"), _generate), timeout=600.0
         )
+
+    async def load_vae_encoder(self) -> None:
+        if self._stage_vae_encoder is not None:
+            return
+        if self._vae is None:
+            loop = asyncio.get_running_loop()
+            await asyncio.wait_for(
+                loop.run_in_executor(
+                    get_executor("io"), self._load_pipeline, self._model_path
+                ),
+                timeout=180.0,
+            )
+        self._stage_vae_encoder = self._vae
+        self._stage_flags = getattr(self, "_stage_flags", {})
+        self._stage_flags["vae_encoder"] = True
+        logger.info("legacy-ltx: vae_encoder load vae=%s", type(self._vae).__name__)
+
+    async def encode(self, pixels: mx.array) -> mx.array:
+        if self._stage_vae_encoder is None:
+            await self.load_vae_encoder()
+        vae = self._stage_vae_encoder
+        ndim = pixels.ndim
+        if ndim not in (4, 5):
+            raise ValueError(
+                f"encode expects (T,H,W,3) or (1,T,H,W,3); got {tuple(pixels.shape)}"
+            )
+        src_np = np.array(pixels[0] if ndim == 5 else pixels)
+
+        def _encode():
+            x = mx.array(src_np)
+            if x.ndim == 4:
+                x = x[None]
+            lat = vae.encode(x)
+            lat = lat if lat.ndim == 5 else lat[None]
+            mx.eval(lat)
+            return lat
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(get_executor("video"), _encode)
+        logger.info("legacy-ltx: vae encode out_shape=%s", tuple(result.shape))
+        return result
+
+    async def unload_vae_encoder(self) -> None:
+        # #653 Surface A: clear the stage-encoder shadow ONLY, NOT self._vae.
+        # The shared pipeline VAE is still used by generate(); nuking it here
+        # would break a subsequent monolith generate() call (ltx has no separate
+        # encoder instance — _stage_vae_encoder aliases _vae). Idempotent on None.
+        self._stage_flags = getattr(self, "_stage_flags", {})
+        self._stage_flags.pop("vae_encoder", None)
+        self._stage_vae_encoder = None
+        gc.collect()
+        loop = asyncio.get_running_loop()
+        await asyncio.wait_for(
+            loop.run_in_executor(
+                get_executor("io"), lambda: (mx.synchronize(), mx.clear_cache())
+            ),
+            timeout=5.0,
+        )
+        logger.info("legacy-ltx: vae_encoder unload")
 
     def constraints(self) -> VideoConstraints:
         return VideoConstraints(

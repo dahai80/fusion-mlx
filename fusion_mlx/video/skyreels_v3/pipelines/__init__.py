@@ -24,6 +24,8 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 from ...adapters import create_adapter
 from .. import _device
 from ..m5_optimizer import M5Optimizer
@@ -541,6 +543,8 @@ class SkyReelsBasePipeline:
         *,
         seq_lens: list,
         grid_sizes: list,
+        inpaint_mask=None,
+        init_latent=None,
     ) -> mx.array:
         """完整去噪采样循环."""
         # issue #177 Phase-2: 投机去噪并行路径 (默认关). 仅 DiT 有 forward_partial 时启用.
@@ -741,6 +745,13 @@ class SkyReelsBasePipeline:
                 float(t),
                 latents,
             ).prev_sample
+
+            # #653 Surface C: frozen-region re-composite (default path only, R4).
+            # Orthogonal to flicker smoothing below. mask=1 -> reactive,
+            # mask=0 -> frozen (restore init). async/speculative paths NOT
+            # patched (#177/#180) — follow-up issue.
+            if inpaint_mask is not None and init_latent is not None:
+                latents = apply_inpaint_mask(latents, init_latent, inpaint_mask)
 
             # 时序闪烁修复: 帧间 EMA 平滑 (防相邻帧跳变)
             latents = flicker_fix.smooth_temporal(latents)
