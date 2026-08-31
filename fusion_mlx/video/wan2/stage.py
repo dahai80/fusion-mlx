@@ -61,6 +61,11 @@ class ControlState:
     i2v_mask_tokens: Any = None  # TI2V-5B per-frame t-token weights [1,t_lat]
     is_i2v_mask_blend: bool = False
     is_i2v_channel_concat: bool = False
+    # #653 Surface B: ControlNet adapter + preprocessed control latent.
+    # Residuals are computed per-step inside run_denoise and injected into
+    # the DiT block loop (R1). Orthogonal to VACE (control_hidden_states).
+    controlnet_adapter: Any = None
+    controlnet_latent: Any = None
 
 
 _SCHEDULERS = {
@@ -252,6 +257,8 @@ def run_denoise(
     is_i2v_channel_concat=False,
     inpaint_mask=None,
     init_latent=None,
+    controlnet_adapter=None,
+    controlnet_latent=None,
 ):
     # T2V + I2V/VACE/camera denoise loop. T2V body extracted from
     # generate_video() lines 854-1096; conditioning threading mirrors
@@ -274,6 +281,8 @@ def run_denoise(
         i2v_mask_tokens=i2v_mask_tokens,
         is_i2v_mask_blend=is_i2v_mask_blend,
         is_i2v_channel_concat=is_i2v_channel_concat,
+        controlnet_adapter=controlnet_adapter,
+        controlnet_latent=controlnet_latent,
     )
 
     is_dual = config.dual_model
@@ -409,6 +418,25 @@ def run_denoise(
 
         _call = getattr(model, "_compiled", model)
 
+        # #653 Surface B (R2): per-step ControlNet residuals. compute_residuals
+        # expects [B, C_vae, H, W] NCHW B-first; Wan2 latents are 4D C-first
+        # (z_dim, t_latent, h_latent, w_latent). Take the first frame and
+        # swap to B-first NCHW. Residuals -> list of [1, L_tokens, out_proj_dim].
+        cn_residuals = None
+        cn_stride = 4
+        if control.controlnet_adapter is not None and control.controlnet_latent is not None:
+            hs = latents[:, 0:1, :, :].swapaxes(0, 1)  # (1, z_dim, h, w)
+            t_mx = mx.array([float(timestep_val)])
+            try:
+                cn_residuals = control.controlnet_adapter.compute_residuals(
+                    hs, t_mx, context, control.controlnet_latent,
+                    seq_lens=[seq_len], grid_sizes=[(f_grid, h_grid, w_grid)],
+                )
+                cn_stride = getattr(control.controlnet_adapter, "stride", 4)
+            except Exception as exc:
+                logger.warning("ControlNet residual compute failed: %s", exc, exc_info=True)
+                cn_residuals = None
+
         if cfg_disabled:
             # TI2V-5B mask-blend: per-step t-token weights (generate.py 1097-1104).
             if control.is_i2v_mask_blend and control.i2v_mask_tokens is not None:
@@ -441,6 +469,8 @@ def run_denoise(
                     control_hidden_states=control.control_hidden_states,
                     control_scales=control.control_scales,
                     y_camera=control.y_camera,
+                    controlnet_residuals=cn_residuals,
+                    controlnet_stride=cn_stride,
                 )
             noise_pred = preds[0]
             del preds
@@ -493,6 +523,8 @@ def run_denoise(
                     control_hidden_states=control.control_hidden_states,
                     control_scales=control.control_scales,
                     y_camera=control.y_camera,
+                    controlnet_residuals=cn_residuals,
+                    controlnet_stride=cn_stride,
                 )
             noise_pred_cond, noise_pred_uncond = preds[0], preds[1]
             noise_pred = noise_pred_uncond + gs * (noise_pred_cond - noise_pred_uncond)
