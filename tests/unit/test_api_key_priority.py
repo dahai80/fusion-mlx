@@ -112,6 +112,112 @@ def test_cli_wins_over_both_env_and_settings(monkeypatch):
     assert source == "cli"
 
 
+def test_warns_when_cli_key_differs_from_settings_key(monkeypatch, caplog):
+    # Issue #705: an operator inherits FUSION_MLX_API_KEY (or passes
+    # --api-key) that DIFFERS from settings.json auth.api_key. The env/CLI
+    # key silently wins, so clients sending the settings.json key get 401
+    # with no clue WHY. Fail visibly: log a WARNING naming the mismatched
+    # source so the operator sees the override at startup. No secret values
+    # are logged — only the source that won and that it differs.
+    import logging
+
+    from fusion_mlx.server import _resolve_effective_api_key
+
+    _reset_server_key_globals(monkeypatch)
+    with caplog.at_level(logging.WARNING, logger="fusion_mlx.server"):
+        effective, source = _resolve_effective_api_key(
+            argv_key="fg-admin-key",
+            settings_key="dahai168",
+        )
+    assert effective == "fg-admin-key"
+    assert source == "cli"
+    warned = [
+        r
+        for r in caplog.records
+        if "api_key" in r.message.lower() and r.levelno == logging.WARNING
+    ]
+    assert warned, "expected a WARNING when CLI/env key differs from settings.json key"
+    # Must NOT leak either secret value.
+    for rec in warned:
+        assert "fg-admin-key" not in rec.message
+        assert "dahai168" not in rec.message
+    # Must name the winning source so the operator can act.
+    assert any("cli" in r.message.lower() for r in warned)
+
+
+def test_warns_when_env_key_differs_from_settings_key(monkeypatch, caplog):
+    import logging
+
+    from fusion_mlx.server import _resolve_effective_api_key
+
+    _reset_server_key_globals(monkeypatch)
+    monkeypatch.setenv("FUSION_MLX_API_KEY", "env-secret")
+    with caplog.at_level(logging.WARNING, logger="fusion_mlx.server"):
+        effective, source = _resolve_effective_api_key(
+            argv_key=None,
+            settings_key="dahai168",
+        )
+    assert effective == "env-secret"
+    assert source == "env"
+    warned = [
+        r
+        for r in caplog.records
+        if "api_key" in r.message.lower() and r.levelno == logging.WARNING
+    ]
+    assert warned
+    for rec in warned:
+        assert "env-secret" not in rec.message
+        assert "dahai168" not in rec.message
+    assert any("env" in r.message.lower() for r in warned)
+
+
+def test_no_warn_when_resolved_key_matches_settings_key(monkeypatch, caplog):
+    # No warning when CLI/env key equals settings.json key (start.sh path:
+    # resolve_api_key reads settings.json -> --api-key same value).
+    import logging
+
+    from fusion_mlx.server import _resolve_effective_api_key
+
+    _reset_server_key_globals(monkeypatch)
+    with caplog.at_level(logging.WARNING, logger="fusion_mlx.server"):
+        effective, source = _resolve_effective_api_key(
+            argv_key="dahai168",
+            settings_key="dahai168",
+        )
+    assert effective == "dahai168"
+    assert source == "cli"
+    warned = [
+        r
+        for r in caplog.records
+        if "api_key" in r.message.lower() and r.levelno == logging.WARNING
+    ]
+    assert not warned, "no WARNING expected when keys agree"
+
+
+def test_no_warn_when_settings_only(monkeypatch, caplog):
+    # No warning for the settings-only boot path (issue #705's documented
+    # scenario): no CLI, no env, settings.json carries the key.
+    import logging
+
+    from fusion_mlx.server import _resolve_effective_api_key
+
+    _reset_server_key_globals(monkeypatch)
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
+    with caplog.at_level(logging.WARNING, logger="fusion_mlx.server"):
+        effective, source = _resolve_effective_api_key(
+            argv_key=None,
+            settings_key="dahai168",
+        )
+    assert effective == "dahai168"
+    assert source == "settings"
+    warned = [
+        r
+        for r in caplog.records
+        if "api_key" in r.message.lower() and r.levelno == logging.WARNING
+    ]
+    assert not warned
+
+
 @pytest.mark.real_model
 def test_live_server_enforces_cli_key_not_settings_key(tmp_path):
     # End-to-end: boot a real server with --api-key <CLI> where

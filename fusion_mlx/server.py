@@ -214,9 +214,21 @@ def _resolve_effective_api_key(
     import os
 
     if argv_key:
+        if settings_key and settings_key != argv_key:
+            logger.warning(
+                "api_key from cli overrides settings.json auth.api_key "
+                "(they differ); clients sending the settings.json key "
+                "will get 401"
+            )
         return argv_key, "cli"
     env_key = os.environ.get("FUSION_MLX_API_KEY")
     if env_key:
+        if settings_key and settings_key != env_key:
+            logger.warning(
+                "api_key from env (FUSION_MLX_API_KEY) overrides "
+                "settings.json auth.api_key (they differ); clients "
+                "sending the settings.json key will get 401"
+            )
         return env_key, "env"
     if settings_key:
         return settings_key, "settings"
