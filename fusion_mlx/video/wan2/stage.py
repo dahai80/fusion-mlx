@@ -653,6 +653,23 @@ def encode_wan_vae(x_ncthw, config, vae_encoder):
     # portable across thread-local MLX streams (see decode_wan_vae).
     logger.info("stage VAE encode wan2 in_shape=%s", tuple(x_ncthw.shape))
     mx.eval(x_ncthw)
-    lat = vae_encoder.encode(x_ncthw)
-    mx.eval(lat)
+    is_wan22_vae = config.vae_z_dim == 48
+    if is_wan22_vae:
+        # #653 Surface A: vae22 encoder/decoder operate in NTHWC (B,T,H,W,C)
+        # while the public encode/decode contract is NCTHW (B,C,T,H,W).
+        # decode_wan_vae transposes the latent NCTHW->NTHWC before calling the
+        # vae22 decoder (stage.py:608-617); encode must do the same inverse
+        # for the encoder. Without this, vae22._patchify reads the channel
+        # axis as T and the T axis as Hfull, producing a garbled reshape
+        # (size mismatch) — the encoder never receives a valid frame layout.
+        x_nthwc = x_ncthw.transpose(0, 2, 3, 4, 1)
+        lat_nthwc = vae_encoder.encode(x_nthwc)
+        mx.eval(lat_nthwc)
+        # vae22 encoder returns 5D NTHWC (1, t_lat, h_lat, w_lat, z_dim);
+        # collapse to 4D CTWH (z_dim, t_lat, h_lat, w_lat) to match the
+        # decoder's latent layout (decode_wan_vae transposes the reverse way).
+        lat = lat_nthwc[0].transpose(3, 0, 1, 2)
+    else:
+        lat = vae_encoder.encode(x_ncthw)
+        mx.eval(lat)
     return lat
