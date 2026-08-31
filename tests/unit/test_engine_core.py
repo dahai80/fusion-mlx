@@ -322,6 +322,34 @@ class TestEngineCoreAddRequest:
                 await engine.stop()
                 engine.close()
 
+    @pytest.mark.asyncio
+    async def test_add_request_routes_to_mlx_executor_thread(
+        self, mock_model, mock_tokenizer
+    ):
+        import threading
+
+        seen_thread = {}
+
+        def _capture_thread(_request):
+            seen_thread["name"] = threading.current_thread().name
+
+        with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
+            mock_registry.return_value.acquire.return_value = True
+            engine = EngineCore(model=mock_model, tokenizer=mock_tokenizer)
+            try:
+                await engine.start()
+                engine.scheduler.add_request = MagicMock(side_effect=_capture_thread)
+                await engine.add_request(prompt="Hello")
+                assert "name" in seen_thread, "scheduler.add_request never ran"
+                thread_name = seen_thread["name"]
+                assert thread_name.startswith(
+                    "mlx-engine-"
+                ), f"add_request ran on {thread_name!r}, not the mlx executor thread"
+                assert thread_name != threading.current_thread().name
+            finally:
+                await engine.stop()
+                engine.close()
+
 
 class TestEngineCoreAbortRequest:
     @pytest.mark.asyncio
