@@ -41,7 +41,14 @@ def _make_fake_pipeline(monkeypatch):
 
     denoise_result = None
 
-    def fake_denoise_sample(latent, context, seq_lens=None, grid_sizes=None):
+    def fake_denoise_sample(
+        latent,
+        context,
+        seq_lens=None,
+        grid_sizes=None,
+        inpaint_mask=None,
+        init_latent=None,
+    ):
         nonlocal denoise_result
         denoise_result = mx.zeros_like(latent)
         return denoise_result
