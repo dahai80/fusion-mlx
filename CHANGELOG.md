@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.8.55] - 2026-08-31
+
+Patch release — API-key override visibility (#705) + settings.json hardening.
+
+### Fixed
+- **Silent cli/env api_key override of `settings.json` (#705, #721).** `Server.__init__` resolved the effective api_key priority (cli `--api-key` > `FUSION_MLX_API_KEY` env > `settings.json auth.api_key`) silently — a cli/env key that differed from the configured settings.json key produced no warning, so clients sending the settings.json key got 401 with no startup signal of the cause. `_resolve_effective_api_key` now emits a `WARNING` when the resolved source is cli or env AND a settings.json key is set AND they differ, naming only the winning source (never the key value). 4 tests added in `tests/unit/test_api_key_priority.py`.
+- **`settings.json` file mode tightened to `0o600` (#720).** The plaintext api_key in `settings.json` was written with the default umask mode (often `0o644`, world/group-readable). Save now applies `0o600` (owner read/write only), and load re-applies `0o600` to an existing file if the current mode is broader.
+
 ## [0.8.54] - 2026-08-30
 
 Patch release — H3 VideoVAE qk_norm parity fix.
