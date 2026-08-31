@@ -783,9 +783,9 @@ between stages (`gc.collect()` + `mx.metal.clear_cache()` + active-memory log):
 | Stage | Load | Run | Unload |
 |---|---|---|---|
 | Text encoder | `load_text_encoder()` | `encode_text(prompt) -> {"embed","text_ids"}` | `unload_text_encoder()` |
-| DiT | `load_dit()` | `denoise(latent, pos_embed, neg_embed, steps, cfg, seed[, num_frames][, control])` | `unload_dit()` |
+| DiT | `load_dit()` | `denoise(latent, pos_embed, neg_embed, steps, cfg, seed[, num_frames][, control][, inpaint_mask=, init_latent=])` | `unload_dit()` |
 | VAE | `load_vae()` | `decode(latent)` / `decode_tiled(latent, tile_size=256)` | `unload_vae()` |
-| VAE encoder (#652) | `load_vae_encoder()` | `encode_control(image=, width=, height=, num_frames=, control_video=, control_mask=, reference_images=, camera_conditions=) -> ControlState \| None` | `unload_vae_encoder()` |
+| VAE encoder (#652/#653) | `load_vae_encoder()` | `encode(pixels) -> latent` (Surface A, #653) / `encode_control(image=, width=, height=, num_frames=, control_video=, control_mask=, reference_images=, camera_conditions=, controlnet_image=, control_type=, controlnet_strength=) -> ControlState \| None` (Surface B, #653) | `unload_vae_encoder()` |
 
 > **Wan2 conditioning (#652):** `encode_control()` encodes I2V / VACE / camera
 > conditioning up front into a `ControlState` that the staged `denoise(control=...)`
@@ -795,6 +795,21 @@ between stages (`gc.collect()` + `mx.metal.clear_cache()` + active-memory log):
 > Pure T2V (`image=None`, no camera) returns `None` — the pure-noise path is untouched.
 > VACE / i2v paths require `load_vae_encoder()` first (raise otherwise); camera skips
 > the gate. The `vae_encoder` flag is inject-on-load / pop-on-unload, not pre-declared.
+
+> **#653 surfaces (Wan2 + SkyReels):**
+> - **Surface A (VAE encode):** `encode(pixels) -> 5D latent` is now wired on 9 backends
+>   (Wan2, SkyReels, ltx_video_legacy, svd, cosmos, hunyuanvideo, cogvideox, minimax_h3,
+>   ltx2_5). `ltx2` / `opensora` / `uniworld` defer to follow-up issues. Numpy-bridges on
+>   the caller thread, rebuilds `mx.array` + `mx.eval` on the worker thread (#630 stream
+>   invariant).
+> - **Surface B (ControlNet):** `encode_control(controlnet_image=<path>, control_type="canny",
+>   controlnet_strength=1.0)` builds a `ControlNet` adapter + preprocessed control latent,
+>   returned on `ControlState.controlnet_adapter`/`.controlnet_latent`. `denoise(control=...)`
+>   injects per-step residuals into the DiT block loop (Wan2 `wan_2.py`; SkyReels
+>   `pipelines/__init__.py`).
+> - **Surface C (inpaint mask):** `denoise(..., inpaint_mask=<5D mask>, init_latent=<5D latent>)`
+>   re-composites `mask*latents + (1-mask)*init` after each denoise step — `mask=1` reactive,
+>   `mask=0` frozen (restored to `init_latent` bit-exactly). Orthogonal to the TI2V mask blend.
 
 Latents flow as unpacked `(batch, c, h, w)` `mx.array` across all stages
 (matches mflux `prepare_latents` output and `decode_packed_latents` input;
@@ -812,9 +827,12 @@ Latents flow as unpacked `(batch, c, h, w)` `mx.array` across all stages
 engine (the load methods raise `RuntimeError` with that guidance).
 
 Video backends inherit `NotImplementedError` defaults for the stage API (issue
-#170 phase 2); `LegacyLTXBackend` and `Wan2Backend` wire real per-step denoise,
-`LTX2Backend` / `SkyReelsBackend` accept-but-log. `Wan2Backend` additionally
-implements the full I2V / VACE / camera conditioning stage surface (#652).
+#170 phase 2); Surface A (`encode`) is now wired on 9 backends (#653), Surface B
+(ControlNet) + Surface C (inpaint) on Wan2 + SkyReels (#653). The 10 other
+denoise-less backends defer Surface B+C to per-family follow-up issues (#653
+follow-ups) — their generate paths are monolithic (no separable `run_denoise`).
+`Wan2Backend` additionally implements the full I2V / VACE / camera conditioning
+stage surface (#652).
 
 ### Step callback (#171)
 
