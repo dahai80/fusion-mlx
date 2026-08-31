@@ -333,6 +333,31 @@ class SkyReelsBackend(VideoBackend):
         mx.clear_cache()
         logger.info("stage:vae unload")
 
+    async def encode_control(
+        self,
+        controlnet_image: str | None = None,
+        control_type: str = "canny",
+        controlnet_strength: float = 1.0,
+        **_: Any,
+    ) -> Any:
+        # #653 Surface B (SkyReels): engine-layer config plumbing. The pipeline
+        # _denoise_sample already reads pipeline.config.controlnet_image /
+        # control_type / controlnet_strength (pipelines/__init__.py:605-609) and
+        # does adapter load + compute_residuals + DiT injection (716-724). This
+        # override only assigns the config fields; NO ControlState (SkyReels has
+        # none — Rule 7 single-path, pipeline-owned injection).
+        pipeline = await self._ensure_pipeline()
+        pipeline.config.controlnet_image = controlnet_image
+        pipeline.config.control_type = control_type
+        pipeline.config.controlnet_strength = controlnet_strength
+        logger.info(
+            "stage:encode_control skyreels image=%s type=%s strength=%.2f",
+            controlnet_image,
+            control_type,
+            controlnet_strength,
+        )
+        return {"controlnet_image": controlnet_image} if controlnet_image else None
+
     async def _get_or_create_pipeline(self, pipeline_class: type) -> Any:
         """AtomCode fix #130: 获取或创建缓存 pipeline 实例.
 
