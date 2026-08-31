@@ -148,9 +148,12 @@ class VideoGenEngine(BaseNonStreamingEngine):
         seed: int,
         num_frames: int,
         control=None,
+        inpaint_mask=None,
+        init_latent=None,
     ) -> mx.array:
         return await self._backend.denoise(
-            latent, pos_embed, neg_embed, steps, cfg, seed, num_frames, control
+            latent, pos_embed, neg_embed, steps, cfg, seed, num_frames, control,
+            inpaint_mask=inpaint_mask, init_latent=init_latent,
         )
 
     async def unload_dit(self) -> None:

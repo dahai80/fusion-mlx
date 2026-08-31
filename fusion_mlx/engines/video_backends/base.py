@@ -192,6 +192,8 @@ class VideoBackend(ABC):
         seed: int,
         num_frames: int,
         control=None,
+        inpaint_mask=None,
+        init_latent=None,
     ) -> mx.array:
         raise NotImplementedError(
             f"{self.name} stage API not implemented (issue #170 phase 2)"
