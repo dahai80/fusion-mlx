@@ -561,7 +561,19 @@ async def create_speech(request: AudioSpeechRequest):
     from fusion_mlx.exceptions import ModelNotFoundError
 
     if not request.input or not request.input.strip():
-        raise HTTPException(status_code=400, detail="'input' field must not be empty")
+        # R11-B-F2 (#724): OpenAI envelope with ``param="input"`` so SDK
+        # error branches can pattern-match (not a bare-string ``detail``).
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "invalid_request_error",
+                    "param": "input",
+                    "message": "'input' field must be non-empty (not blank)",
+                }
+            },
+        )
     streaming_interval = DEFAULT_NATIVE_TTS_STREAMING_INTERVAL_SECONDS
     if request.stream:
         if request.response_format not in (None, "wav"):
@@ -601,6 +613,21 @@ async def create_speech(request: AudioSpeechRequest):
         )
 
     ref_audio_path = _write_ref_audio_tempfile(audio_bytes)
+
+    # R11-B-F3 (#725): resolve the literal ``voice="default"`` to the
+    # registry's ``default_voice`` for the resolved model (short alias OR
+    # HF id, both via resolve_audio_alias's reverse index). Non-"default"
+    # voices pass through unchanged; unknown models pass "default" through
+    # so the engine's family detector still owns the decision. Assign back
+    # onto the request so BOTH the streaming path (reads request.voice in
+    # _stream_speech_response) and the non-streaming path below see the
+    # resolved value.
+    if request.voice == "default":
+        from fusion_mlx.routes_internal.audio import (
+            _resolve_default_voice_literal,
+        )
+
+        request.voice = _resolve_default_voice_literal(request.model, request.voice)
 
     if request.stream:
         stream = _stream_speech_response(

@@ -12,10 +12,10 @@ import time
 import pytest
 from pydantic import ValidationError
 
+from fusion_mlx.api.audio_models import AudioSpeechRequest
 from fusion_mlx.api.models import (
     AssistantMessage,
     AudioSeparationRequest,
-    AudioSpeechRequest,
     AudioTranscriptionRequest,
     AudioTranscriptionResponse,
     AudioUrl,
@@ -684,9 +684,9 @@ class TestAudioModels:
         assert resp.duration == 2.5
 
     def test_speech_request_defaults(self):
-        req = AudioSpeechRequest(input="Hello world")
+        req = AudioSpeechRequest(model="kokoro", input="Hello world")
         assert req.model == "kokoro"
-        assert req.voice == "af_heart"
+        assert req.voice is None
         assert req.speed == 1.0
         assert req.response_format == "wav"
 
@@ -698,6 +698,8 @@ class TestAudioModels:
             speed=1.5,
         )
         assert req.speed == 1.5
+        assert req.voice == "custom_voice"
+        assert req.model == "chatterbox"
 
     def test_separation_request_defaults(self):
         req = AudioSeparationRequest()

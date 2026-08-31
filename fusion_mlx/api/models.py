@@ -1172,53 +1172,6 @@ class AudioTranscriptionResponse(BaseModel):
     segments: list[dict] | None = None
 
 
-_ALLOWED_AUDIO_FORMATS = ("wav", "pcm", "flac", "ogg", "opus", "mp3")
-
-
-class AudioSpeechRequest(BaseModel):
-    """Request for text-to-speech."""
-
-    model: str = "kokoro"
-    input: str
-    voice: str = "af_heart"
-    speed: float = 1.0
-    response_format: str = "wav"
-
-    @model_validator(mode="before")
-    @classmethod
-    def _fold_format_alias(cls, values):
-        # R11-B-F2 (#505): legacy ``format`` field folds into
-        # ``response_format``. Explicit ``response_format`` wins;
-        # ``format=None`` is treated as unset so the Pydantic default
-        # still applies. Non-string values fall through to the
-        # response_format type validator which surfaces the 400 on the
-        # canonical field name (loc=response_format, not format).
-        if not isinstance(values, dict):
-            return values
-        fmt = values.get("format")
-        rf_present = (
-            "response_format" in values and values["response_format"] is not None
-        )
-        if fmt is not None and not rf_present:
-            values["response_format"] = fmt
-        values.pop("format", None)
-        return values
-
-    @field_validator("response_format", mode="before")
-    @classmethod
-    def _validate_audio_response_format(cls, v):
-        if v is None:
-            return v
-        if not isinstance(v, str):
-            raise ValueError("response_format must be a string")
-        if v not in _ALLOWED_AUDIO_FORMATS:
-            raise ValueError(
-                f"response_format must be one of "
-                f"{', '.join(_ALLOWED_AUDIO_FORMATS)} (got {v!r})"
-            )
-        return v
-
-
 class AudioSeparationRequest(BaseModel):
     """Request for audio source separation."""
 

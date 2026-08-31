@@ -569,7 +569,7 @@ class TestMlxAudioVersionPin:
         except ImportError:  # pragma: no cover — keep 3.10 fallback
             import tomli as tomllib  # type: ignore[import-not-found]
 
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).resolve().parents[2]
         with (root / "pyproject.toml").open("rb") as f:
             cfg = tomllib.load(f)
         audio_deps = cfg["project"]["optional-dependencies"]["audio"]
@@ -578,12 +578,16 @@ class TestMlxAudioVersionPin:
             len(mlx_audio_specs) == 1
         ), f"Expected exactly one mlx-audio pin, found {mlx_audio_specs}"
         spec = mlx_audio_specs[0]
-        # Both the floor AND the upper-bound matter. The floor is
-        # historical; the upper-bound is the R7-H3 fix.
-        assert "<0.4.4" in spec, (
-            f"R7-H3 regression: mlx-audio must be pinned ``<0.4.4`` to "
-            f"avoid the istftnet SineGen broadcast_shapes regression. "
-            f"Current pin: {spec!r}"
+        # R7-H3: 0.4.4 broke ``istftnet.SineGen``. The pin must EXCLUDE
+        # 0.4.4. Live pin is an exact ``==0.4.3`` (stricter than the
+        # old ``<0.4.4`` upper bound); either form is acceptable so
+        # long as 0.4.4 is not installable. A spec that drops to a
+        # bare ``mlx-audio`` or loosens to ``>=0.4.4`` trips this.
+        excludes_broken = "<0.4.4" in spec or "==0.4.3" in spec
+        assert excludes_broken, (
+            f"R7-H3 regression: mlx-audio must exclude 0.4.4 to avoid "
+            f"the istftnet SineGen broadcast_shapes regression. Accept "
+            f"``<0.4.4`` or ``==0.4.3``. Current pin: {spec!r}"
         )
 
 

@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 STT_MODEL_ALIASES = dict(stt_aliases())
 TTS_MODEL_ALIASES = dict(tts_aliases())
 
+# R11-B-F4 (#727): case-insensitive TTS alias index. The HF repos are
+# mixed-case (``Kokoro-82M-bf16``) but clients / docs frequently send the
+# mixed-case form; the live aliases are lowercase. Exact match wins, then
+# this lowercased fallback resolves ``KOKORO-82M-8BIT`` to the same repo.
+_TTS_MODEL_ALIASES_LOWER = {k.lower(): v for k, v in TTS_MODEL_ALIASES.items()}
 # whisper-turbo was dropped from the registry; "whisper" resolves to
 # mlx-community/whisper-large-v3-mlx (same family the old default pointed at).
 DEFAULT_STT_ALIAS = "whisper"
@@ -132,6 +137,12 @@ def _resolve_tts_model(model_id: str) -> str:
         )
     if model_id in TTS_MODEL_ALIASES:
         return TTS_MODEL_ALIASES[model_id]
+    # R11-B-F4 (#727): case-insensitive fallback for mixed-case HF
+    # repo names (``Kokoro-82M-bf16`` / ``KOKORO-82M-8BIT``). Exact
+    # match above already handled the canonical lowercase aliases.
+    lower_hit = _TTS_MODEL_ALIASES_LOWER.get(model_id.lower())
+    if lower_hit is not None:
+        return lower_hit
     if "/" not in model_id:
         raise HTTPException(
             status_code=404,
