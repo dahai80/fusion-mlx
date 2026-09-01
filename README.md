@@ -507,6 +507,53 @@ The macOS app offers a mode toggle between:
 | Agent Graph | `/v1/agents/graphs`, `/v1/agents/run` | ✅ CRUD + export + run (in-memory) |
 | Base Info | `/v1/base` | ✅ MLX runtime capability detection |
 | Convert / Quantize | `/v1/convert`, `/v1/quantize` (+ `.../jobs/{id}`) | ✅ Async HF->MLX conversion + weight quantization |
+| Watermark | `/v1/watermark/embed`, `/v1/watermark/verify` | ✅ Weight-tensor LSB watermark (#656) |
+
+## Weight-Tensor Watermark (#656)
+
+Secret-seeded LSB spread-spectrum watermark embedded into model weight tensors.
+Tamper-resistant: a redistributor who ships only the weights still carries the
+watermark. Hub-aligned signature `sha256(f"{secret}:{model}::{json.dumps(payload, sort_keys=True)}")[:32]`
+is shared with Fusion-Model-Hub, which validates provenance without importing MLX.
+
+**Prerequisite:** set a non-default secret env var. The route returns `503`
+on a default/empty secret:
+
+```bash
+export FMH_WATERMARK_SECRET="<high-entropy-secret>"
+```
+
+**Embed** — writes a watermarked copy to `output_path` (must be under
+`~/.fusion-mlx/models/`). Admin + hub-source gated. Synchronous (returns
+`output_path`, `signature`, `carrier_count` in the body):
+
+```bash
+curl http://localhost:8897/v1/watermark/embed \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-key>" \
+  -d '{
+    "model": "org/model",
+    "payload": {"owner": "dahai80", "purpose": "provenance"},
+    "secret": "<FMH_WATERMARK_SECRET or omit to use env>",
+    "output_path": "~/.fusion-mlx/models/wm-out"
+  }'
+```
+
+**Verify** — extracts and verifies the embedded payload. Returns `200` with
+`verified: false` (not an error) when the payload is absent/corrupted:
+
+```bash
+curl http://localhost:8897/v1/watermark/verify \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <admin-key>" \
+  -d '{
+    "model": "~/.fusion-mlx/models/wm-out",
+    "secret": "<FMH_WATERMARK_SECRET or omit to use env>"
+  }'
+```
+
+Quantized (int4/int8) weight tensors are config-driven skipped during
+embed/verify — only floating-point tensors carry the watermark.
 
 ## OCR — Dedicated Document Recognition
 
