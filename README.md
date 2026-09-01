@@ -494,7 +494,7 @@ The macOS app offers a mode toggle between:
 | OpenAI Legacy | `/v1/completions` | ✅ Supported |
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ Fully compatible |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ Supported |
-| Images | `/v1/images/generate` | ✅ Supported (Flux 2, SD3-Medium, SDXL, Stable Cascade) |
+| Images | `/v1/images/generate`, `/v1/images/super-resolution` | ✅ Generate (Flux 2, SD3-Medium, SDXL, Stable Cascade); Super-resolution (RealESRGAN x4plus, pure MLX, #752) |
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
 | Reasoning | `/v1/reasoning` | ✅ Explicit thinking step API (DeepSeek-R1, QwQ, etc.) |
