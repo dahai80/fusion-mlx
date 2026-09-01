@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [0.8.59] - 2026-09-01
+
+### Fixed
+- **#656 — watermark embed/verify patch (follow-up to v0.8.58).** Broad
+  final review found four load-bearing defects that made the v0.8.58
+  watermark feature non-functional on real models (all masked by 1D-only
+  unit tests + CI-gated real-model tests):
+  - **CRITICAL — signature used resolved filesystem path, not logical
+    model id.** `compute_signature` was seeded from the resolved
+    `model_path`, so embed→redistribute→verify-under-a-different-path
+    produced a different signature and verification failed. Fix: sign
+    over `request.model` (the caller's logical id), stable across
+    relocation. Regression test
+    `test_embed_verify_signature_stable_across_relocation`.
+  - **2D+ weight tensors raised IndexError.** `embed_bits`/`extract_bits`
+    used `np.flatnonzero` (flat indices) but indexed `weights[idx]`
+    (axis-0), which only works for 1D arrays. Real 2D/4D weights crashed.
+    Fix: flatten via `np.ascontiguousarray(weights).ravel()`, operate on
+    the flat buffer, `out.reshape(orig_shape)` on embed.
+  - **Carrier positions differed between embed and verify.**
+    `generator.choice(eligible, size=k)` selects different positions for
+    different sample sizes, so embed (k=payload_bits) and verify
+    (k=array_size) read/wrote different slots → verify always failed.
+    Fix: `_carrier_order` = a full deterministic
+    `generator.permutation(eligible)` independent of count; embed/extract
+    slice the same `[:k]` prefix.
+  - **Verify returned 500 instead of `verified: false` on tampered
+    weights.** Zeroed/quantized-below-epsilon carriers left zero eligible
+    slots → `extract_bits` raised `ValueError` → 500. A tamper-evident
+    verify must return `verified: false` on corruption. Fix: catch the
+    `ValueError` in `_run_verify` and return `verified: false` with a
+    corruption reason (fail-visible, Rule 12).
+
 ## [0.8.58] - 2026-09-01
 
 ### Added

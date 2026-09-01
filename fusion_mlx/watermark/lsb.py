@@ -60,12 +60,22 @@ def _eligible_mask(weights, epsilon):
     return np.abs(weights) > epsilon
 
 
+def _carrier_order(generator, eligible_indices):
+    # Deterministic full permutation of eligible carriers, independent of how
+    # many bits are read/written. embed(k bits) and extract(m bits) share the
+    # same first-min(k,m) positions, so a payload written at positions [0,k)
+    # is recoverable by reading positions [0,m>=k).
+    return generator.permutation(eligible_indices)
+
+
 def embed_bits(weights, bit_array, generator, bits_per_weight=1, epsilon=1e-6):
     if bits_per_weight < 1 or bits_per_weight > 3:
         raise ValueError(
             f"embed_bits: bits_per_weight must be 1-3, got {bits_per_weight}"
         )
-    eligible = _eligible_mask(weights, epsilon)
+    orig_shape = weights.shape
+    flat = np.ascontiguousarray(weights).ravel()
+    eligible = _eligible_mask(flat, epsilon)
     n_eligible = int(eligible.sum())
     capacity = n_eligible * bits_per_weight
     if bit_array.size > capacity:
@@ -74,8 +84,8 @@ def embed_bits(weights, bit_array, generator, bits_per_weight=1, epsilon=1e-6):
             f"(eligible={n_eligible}, bits_per_weight={bits_per_weight})"
         )
     eligible_indices = np.flatnonzero(eligible)
-    carrier_idx = generator.choice(eligible_indices, size=bit_array.size, replace=False)
-    out = weights.copy()
+    carrier_idx = _carrier_order(generator, eligible_indices)[: bit_array.size]
+    out = flat.copy()
     uint_dt = _uint_view_dtype(out)
     mask = int("1" * bits_per_weight, 2)
     for i, idx in enumerate(carrier_idx):
@@ -91,22 +101,23 @@ def embed_bits(weights, bit_array, generator, bits_per_weight=1, epsilon=1e-6):
         n_eligible,
         bits_per_weight,
     )
-    return out, bit_array.size
+    return out.reshape(orig_shape), bit_array.size
 
 
 def extract_bits(weights, n_bits, generator, bits_per_weight=1, epsilon=1e-6):
-    eligible = _eligible_mask(weights, epsilon)
+    flat = np.ascontiguousarray(weights).ravel()
+    eligible = _eligible_mask(flat, epsilon)
     n_eligible = int(eligible.sum())
     capacity = n_eligible * bits_per_weight
     if n_bits > capacity:
         raise ValueError(f"extract_bits: n_bits {n_bits} exceeds capacity {capacity}")
     eligible_indices = np.flatnonzero(eligible)
-    carrier_idx = generator.choice(eligible_indices, size=n_bits, replace=False)
-    uint_dt = _uint_view_dtype(weights)
+    carrier_idx = _carrier_order(generator, eligible_indices)[:n_bits]
+    uint_dt = _uint_view_dtype(flat)
     mask = int("1" * bits_per_weight, 2)
     bits = np.empty(n_bits, dtype=np.uint8)
     for i, idx in enumerate(carrier_idx):
-        w_int = int(weights[idx].view(uint_dt))
+        w_int = int(flat[idx].view(uint_dt))
         bits[i] = w_int & mask
     logger.debug("extract_bits: read %d bits from %d carriers", n_bits, n_eligible)
     return bits, n_bits
