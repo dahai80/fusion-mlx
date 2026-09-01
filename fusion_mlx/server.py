@@ -40,6 +40,7 @@ from .api.images import set_images_context
 from .api.layered_quantize_routes import router as layered_quantize_router
 from .api.mcp_routes import router as mcp_router
 from .api.mcp_routes import set_mcp_manager_getter
+from .api.watermark_routes import router as watermark_router
 from .exceptions import (
     InsufficientMemoryError,
     ModelBusyError,
@@ -1021,6 +1022,7 @@ class Server:
         app.include_router(openclaw_router)
         app.include_router(agent_router)
         app.include_router(convert_router)
+        app.include_router(watermark_router)
         app.include_router(layered_quantize_router)
         app.include_router(distributed_router)
         app.include_router(recommend_router)

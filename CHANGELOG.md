@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.8.58] - 2026-09-01
+
+### Added
+- **#656 — weight-tensor watermark embed/verify endpoints.**
+  - `POST /v1/watermark/embed` — embed a secret-seeded LSB spread-spectrum
+    watermark into model weight tensors; returns a Hub-aligned signature
+    (`sha256(secret:model::payload)[:32]`). Admin + hub-source gated.
+    Reuses the convert/merge single-worker executor.
+  - `POST /v1/watermark/verify` — extract + verify the embedded payload
+    from tensors. Returns `verified`, `payload`, `signature`, `mismatch_rate`.
+  - `FMH_WATERMARK_SECRET` env var (shared with Fusion-Model-Hub); route
+    503s on default/empty secret.
+  - `fusion_mlx.watermark.lsb` pure-numpy core (embed_bits/extract_bits/
+    payload_to_bits/bits_to_payload/compute_signature).
+
+### Changed
+- Quantized (int) weight tensors are config-driven skipped during
+  watermark embed/verify.
+
 ## [0.8.57] - 2026-08-31
 
 ### Added
