@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [0.8.63] - 2026-09-01
+
+### Added
+- **#731-#737 — Surface B+C ports to 6 video backends.** Replicated the
+  #653 pipeline surfaces to cogvideox (reference, #731), cosmos (#732),
+  hunyuanvideo (#733), ltx_video_legacy (#734), ltx2_5 (#735),
+  minimax_h3 (#736), and svd (#737).
+  - **Surface C (inpaint-mask re-composite):** `apply_inpaint_mask(latents,
+    init_latent, inpaint_mask)` inserted after each `scheduler.step` +
+    `mx.eval` in every backend's denoise loop. DiT-agnostic, latent-space
+    only; all-None default is bit-identical T2V passthrough. Ship on all
+    7 backends.
+  - **Surface B (ControlNet residual threading):** `controlnet_image`
+    threaded through `VideoGenParams` + each backend `generate()` into
+    `generate_video`/`denoise`. Backends without a per-backend ControlNet
+    model (all 7 here — the shared adapter is Wan2-arch only) raise
+    `RuntimeError` fail-visible when `controlnet_image` is set, refusing
+    silent T2V degrade. No dead residual-injection plumbing.
+  - `encode_control()` override on all 7 backends: raises if
+    `controlnet_image` set, else logs pure-T2V and returns None.
+  - `VideoGenParams` gains `inpaint_mask` and `init_latent` fields.
+  - 12 new inspection-based contract tests (Surface B `encode_control` +
+    Surface C `apply_inpaint_mask` insertion point per backend). 47 surface
+    tests pass, 895 backend regression tests pass.
+
 ## [0.8.62] - 2026-09-01
 
 ### Added
