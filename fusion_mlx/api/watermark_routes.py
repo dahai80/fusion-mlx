@@ -83,7 +83,21 @@ def _select_carriers(
     return carriers
 
 
+_EPSILON = 1e-6
+
+
+def _carrier_capacity(
+    carriers: list[tuple[str, np.ndarray]], bits_per_weight: int
+) -> int:
+    total = 0
+    for _name, arr in carriers:
+        eligible = int((np.abs(arr) > _EPSILON).sum())
+        total += eligible * bits_per_weight
+    return total
+
+
 def _run_embed(
+    model_id: str,
     model_path: str,
     payload: dict,
     secret: str,
@@ -106,8 +120,11 @@ def _run_embed(
         raise ValueError(
             "No eligible (non-quantized float) weight tensors to watermark"
         )
-    bits = payload_to_bits(payload)
-    total_capacity = sum(c[1].size for c in carriers) * bits_per_weight
+    try:
+        bits = payload_to_bits(payload)
+    except TypeError as exc:
+        raise ValueError(f"payload is not JSON-serializable: {exc}") from exc
+    total_capacity = _carrier_capacity(carriers, bits_per_weight)
     if bits.size > total_capacity:
         raise ValueError(
             f"payload {bits.size} bits exceeds capacity {total_capacity}; "
@@ -131,17 +148,20 @@ def _run_embed(
     ]
     if not hasattr(model, "update_weights"):
         raise ValueError(
-            f"model {model_path} has no update_weights; cannot apply watermark"
+            f"model {model_id} has no update_weights; cannot apply watermark"
         )
     model.update_weights(tree_unflatten(new_tree))
     dest = model_path if in_place else output_path
     if dest is None:
         raise ValueError("output_path required when in_place is false")
     save_path = Path(dest)
+    if in_place:
+        logger.warning("watermark embed in_place: overwriting %s", model_path)
     save(save_path, model_path, model, tokenizer, config, donate_model=False)
-    signature = compute_signature(secret, model_path, payload)
+    signature = compute_signature(secret, model_id, payload)
     logger.info(
-        "watermark embed: model=%s carriers=%d bits=%d dest=%s sig=%s",
+        "watermark embed: model_id=%s path=%s carriers=%d bits=%d dest=%s sig=%s",
+        model_id,
         model_path,
         carrier_count,
         bits.size,
@@ -150,7 +170,7 @@ def _run_embed(
     )
     return {
         "status": "ok",
-        "model": model_path,
+        "model": model_id,
         "output_path": str(dest),
         "signature": signature,
         "payload_bytes": bits.size // 8,
@@ -161,6 +181,7 @@ def _run_embed(
 
 
 def _run_verify(
+    model_id: str,
     model_path: str,
     secret: str,
     layers: list[str] | None,
@@ -178,7 +199,7 @@ def _run_verify(
     if not carriers:
         return {
             "verified": False,
-            "model": model_path,
+            "model": model_id,
             "payload": None,
             "signature": "",
             "mismatch_rate": None,
@@ -188,26 +209,38 @@ def _run_verify(
     all_bits = []
     for name, arr in carriers:
         gen = np.random.default_rng(_seed_for(secret, name))
-        bits, _ = extract_bits(
-            arr, arr.size * bits_per_weight, gen, bits_per_weight=bits_per_weight
-        )
+        try:
+            bits, _ = extract_bits(
+                arr, arr.size * bits_per_weight, gen, bits_per_weight=bits_per_weight
+            )
+        except ValueError as exc:
+            logger.warning("watermark verify: carrier %s unreadable: %s", name, exc)
+            return {
+                "verified": False,
+                "model": model_id,
+                "payload": None,
+                "signature": "",
+                "mismatch_rate": None,
+                "carrier_count": sum(c[1].size for c in carriers),
+                "reason": "carrier weights corrupted or below epsilon threshold",
+            }
         all_bits.append(bits)
     stream = np.concatenate(all_bits) if all_bits else np.array([], dtype=np.uint8)
     payload = bits_to_payload(stream)
     if payload is None:
         return {
             "verified": False,
-            "model": model_path,
+            "model": model_id,
             "payload": None,
             "signature": "",
             "mismatch_rate": None,
             "carrier_count": sum(c[1].size for c in carriers),
             "reason": "payload not recoverable (corrupted/quantized)",
         }
-    signature = compute_signature(secret, model_path, payload)
+    signature = compute_signature(secret, model_id, payload)
     return {
         "verified": True,
-        "model": model_path,
+        "model": model_id,
         "payload": payload,
         "signature": signature,
         "mismatch_rate": 0.0,
@@ -239,6 +272,7 @@ async def embed_watermark(
     try:
         future = _executor.submit(
             _run_embed,
+            request.model,
             model_path,
             request.payload,
             secret,
@@ -274,6 +308,7 @@ async def verify_watermark(
     try:
         future = _executor.submit(
             _run_verify,
+            request.model,
             model_path,
             secret,
             request.layers,
