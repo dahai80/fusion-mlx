@@ -37,6 +37,8 @@ from .api.convert_routes import router as convert_router
 from .api.distributed_routes import router as distributed_router
 from .api.images import router as images_router
 from .api.images import set_images_context
+from .api.images_sr import router as images_sr_router
+from .api.images_sr import set_images_sr_context
 from .api.layered_quantize_routes import router as layered_quantize_router
 from .api.mcp_routes import router as mcp_router
 from .api.mcp_routes import set_mcp_manager_getter
@@ -1017,6 +1019,7 @@ class Server:
         app.include_router(anthropic_router)
         app.include_router(audio_router)
         app.include_router(images_router)
+        app.include_router(images_sr_router)
         app.include_router(videos_router)
         app.include_router(mcp_router)
         app.include_router(openclaw_router)
@@ -1479,6 +1482,7 @@ class Server:
         set_anthropic_context(self.pool)
         set_responses_context(self.pool)
         set_images_context(self.pool)
+        set_images_sr_context(self.pool)
         set_videos_context(self.pool)
         set_audio_context(self.pool)
         set_openclaw_agent_pool(self.pool)

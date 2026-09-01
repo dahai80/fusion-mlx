@@ -30,6 +30,9 @@ from .engines import (
     VideoGenEngine,
 )
 from .engines.vlm import VLMBatchedEngine
+from .image.sr.config import RealESRGANConfig
+from .image.sr.generate import super_resolve
+from .image.sr.rrdb import RRDBNet
 from .model_registry import get_registry, list_available_models
 from .pool.engine_pool import EnginePool
 from .server import Server, create_app
@@ -61,4 +64,7 @@ __all__ = [
     "LipsyncPipelineMLX",
     "MuseTalkPipeline",
     "PuLIDPipeline",
+    "RealESRGANConfig",
+    "RRDBNet",
+    "super_resolve",
 ]
