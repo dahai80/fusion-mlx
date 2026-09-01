@@ -14,7 +14,7 @@ _PREFIXES = ("params_ema.", "params.")
 def _strip_prefix(key: str) -> str:
     for p in _PREFIXES:
         if key.startswith(p):
-            return key[len(p):]
+            return key[len(p) :]
     return key
 
 
@@ -44,7 +44,9 @@ def load_sr_model(model_path: str, config: RealESRGANConfig | None = None) -> RR
             if list(mv.shape) != list(v.shape):
                 logger.warning(
                     "sr weights: shape mismatch %s %s vs %s",
-                    k, list(mv.shape), list(v.shape),
+                    k,
+                    list(mv.shape),
+                    list(v.shape),
                 )
                 continue
             loaded.append((k, mv))
@@ -57,11 +59,16 @@ def load_sr_model(model_path: str, config: RealESRGANConfig | None = None) -> RR
     if missing or unmatched:
         logger.warning(
             "sr weights: matched=%d missing=%d unmatched=%d (%s)",
-            matched, missing, unmatched, model_path,
+            matched,
+            missing,
+            unmatched,
+            model_path,
         )
     else:
         logger.info(
             "sr weights: loaded %d/%d keys (strict) from %s",
-            matched, len(flat), model_path,
+            matched,
+            len(flat),
+            model_path,
         )
     return net

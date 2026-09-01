@@ -11,7 +11,7 @@ _PREFIXES = ("params_ema.", "params.")
 def _strip_prefix(key: str) -> str:
     for p in _PREFIXES:
         if key.startswith(p):
-            return key[len(p):]
+            return key[len(p) :]
     return key
 
 

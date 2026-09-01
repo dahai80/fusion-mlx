@@ -5,9 +5,9 @@ import numpy as np
 def test_super_resolve_small_image_no_tiling(tmp_path):
     # Image smaller than tile_size -> single forward, no split.
     from fusion_mlx.image.sr.generate import super_resolve
+
     imgs = np.random.rand(1, 16, 20, 3).astype(np.float32)
-    out = super_resolve(imgs, model_path=None, scale=4, tile_size=512,
-                        tile_overlap=64)
+    out = super_resolve(imgs, model_path=None, scale=4, tile_size=512, tile_overlap=64)
     assert out.shape == (1, 64, 80, 3), out.shape
     assert out.dtype == np.float32
 
@@ -39,6 +39,7 @@ def test_super_resolve_preserves_range(tmp_path):
     from fusion_mlx.image.sr.config import RealESRGANConfig
     from fusion_mlx.image.sr.generate import _set_net_for_test, super_resolve
     from fusion_mlx.image.sr.rrdb import RRDBNet
+
     cfg = RealESRGANConfig(num_block=1, scale=2)
     _set_net_for_test(RRDBNet(cfg), scale=2)
     imgs = np.zeros((1, 12, 12, 3), dtype=np.float32)

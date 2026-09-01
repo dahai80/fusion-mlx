@@ -93,5 +93,8 @@ def test_load_sr_model_missing_file_returns_init_net():
     from fusion_mlx.image.sr.rrdb import RRDBNet
     from fusion_mlx.image.sr.weights import load_sr_model
 
-    net = load_sr_model("/nonexistent/path/none.safetensors", config=RealESRGANConfig(num_block=1, scale=2))
+    net = load_sr_model(
+        "/nonexistent/path/none.safetensors",
+        config=RealESRGANConfig(num_block=1, scale=2),
+    )
     assert isinstance(net, RRDBNet)

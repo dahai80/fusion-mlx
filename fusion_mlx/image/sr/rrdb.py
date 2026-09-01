@@ -67,8 +67,10 @@ class RRDBNet(nn.Module):
         self.scale = config.scale
         nf = config.num_feat
         self.conv_first = Conv2d(config.num_in_ch, nf)
-        self.body = [RRDB(nf, config.num_grow_ch, config.res_scale)
-                     for _ in range(config.num_block)]
+        self.body = [
+            RRDB(nf, config.num_grow_ch, config.res_scale)
+            for _ in range(config.num_block)
+        ]
         self.conv_body = Conv2d(nf, nf)
         if config.scale == 4:
             self.conv_up1 = Conv2d(nf, nf)

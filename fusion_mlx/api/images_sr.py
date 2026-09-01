@@ -34,6 +34,7 @@ class SRResponse(BaseModel):
 
 def _to_numpy_hwc(png_bytes: bytes):
     from PIL import Image
+
     pil = Image.open(io.BytesIO(png_bytes)).convert("RGB")
     arr = np.array(pil).astype(np.float32) / 255.0
     return arr[None, ...]
@@ -70,13 +71,17 @@ async def super_resolution(
         raise HTTPException(422, "could not decode image") from exc
     try:
         sr = super_resolve(
-            inp, model_path=model_path, scale=scale,
-            tile_size=tile_size, tile_overlap=64,
+            inp,
+            model_path=model_path,
+            scale=scale,
+            tile_size=tile_size,
+            tile_overlap=64,
         )
     except Exception as exc:
         logger.exception("sr inference failed")
         raise HTTPException(500, "super-resolution failed") from exc
     from PIL import Image
+
     out_hwc = sr[0]
     pil = Image.fromarray((np.clip(out_hwc, 0, 1) * 255).astype(np.uint8))
     buf = io.BytesIO()
@@ -84,11 +89,18 @@ async def super_resolution(
     elapsed = time.time() - t0
     logger.info(
         "sr endpoint: in=%dx%d out=%dx%d scale=%d elapsed=%.2fs",
-        inp.shape[2], inp.shape[1], out_hwc.shape[1],
-        out_hwc.shape[0], scale, elapsed,
+        inp.shape[2],
+        inp.shape[1],
+        out_hwc.shape[1],
+        out_hwc.shape[0],
+        scale,
+        elapsed,
     )
     return SRResponse(
         image_b64=base64.b64encode(buf.getvalue()).decode(),
-        width=out_hwc.shape[1], height=out_hwc.shape[0],
-        in_width=inp.shape[2], in_height=inp.shape[1], elapsed=elapsed,
+        width=out_hwc.shape[1],
+        height=out_hwc.shape[0],
+        in_width=inp.shape[2],
+        in_height=inp.shape[1],
+        elapsed=elapsed,
     )

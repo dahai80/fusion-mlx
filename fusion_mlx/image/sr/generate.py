@@ -26,7 +26,8 @@ def _get_net(model_path, scale, config):
     if key not in _NET_CACHE:
         cfg = config or RealESRGANConfig(scale=scale)
         path = model_path or os.path.expanduser(
-            "~/.fusion-mlx/models/realesrgan/RealESRGAN_x4plus.safetensors")
+            "~/.fusion-mlx/models/realesrgan/RealESRGAN_x4plus.safetensors"
+        )
         _NET_CACHE[key] = load_sr_model(path, cfg)
         logger.info("sr: loaded net scale=%d from %s", scale, path)
     return _NET_CACHE[key]
@@ -61,7 +62,7 @@ def _feather_weights(th, tw, y_ov, x_ov, i, n_i, j, n_j, scale, dtype):
         ov = y_ov[i] * scale
         if ov > 0:
             ramp = np.linspace(1.0, 0.0, ov, dtype=dtype)[:, None, None]
-            wg[th - ov:] *= ramp
+            wg[th - ov :] *= ramp
     if j > 0:
         ov = x_ov[j - 1] * scale
         if ov > 0:
@@ -71,7 +72,7 @@ def _feather_weights(th, tw, y_ov, x_ov, i, n_i, j, n_j, scale, dtype):
         ov = x_ov[j] * scale
         if ov > 0:
             ramp = np.linspace(1.0, 0.0, ov, dtype=dtype)[None, :, None]
-            wg[:, tw - ov:] *= ramp
+            wg[:, tw - ov :] *= ramp
     return wg
 
 
@@ -101,23 +102,24 @@ def _resolve_one(frame_hwc, net, scale, tile_size, tile_overlap):
             mx.eval(tile_full)
             oy0 = (iy - iy_p) * scale
             ox0 = (jx - jx_p) * scale
-            tile_out = tile_full[oy0:oy0 + ly * scale,
-                                 ox0:ox0 + lx * scale, :]
+            tile_out = tile_full[oy0 : oy0 + ly * scale, ox0 : ox0 + lx * scale, :]
             mx.eval(tile_out)
             th, tw = tile_out.shape[0], tile_out.shape[1]
-            wg = _feather_weights(th, tw, y_ov, x_ov, i, len(y_idx), j,
-                                  len(x_idx), scale, np.float32)
+            wg = _feather_weights(
+                th, tw, y_ov, x_ov, i, len(y_idx), j, len(x_idx), scale, np.float32
+            )
             wg_mx = mx.array(wg)
-            acc[oy:oy + th, ox:ox + tw] = (
-                acc[oy:oy + th, ox:ox + tw] + tile_out * wg_mx)
-            wsum[oy:oy + th, ox:ox + tw] = (
-                wsum[oy:oy + th, ox:ox + tw] + wg_mx)
+            acc[oy : oy + th, ox : ox + tw] = (
+                acc[oy : oy + th, ox : ox + tw] + tile_out * wg_mx
+            )
+            wsum[oy : oy + th, ox : ox + tw] = wsum[oy : oy + th, ox : ox + tw] + wg_mx
     out = acc / mx.maximum(wsum, mx.array(1e-8, dtype=mx.float32))
     return out
 
 
-def super_resolve(images, model_path=None, scale=4, tile_size=512,
-                  tile_overlap=64, config=None):
+def super_resolve(
+    images, model_path=None, scale=4, tile_size=512, tile_overlap=64, config=None
+):
     net = _get_net(model_path, scale, config)
     n, h, w, _ = images.shape
     out = np.empty((n, h * scale, w * scale, 3), dtype=np.float32)
@@ -126,6 +128,13 @@ def super_resolve(images, model_path=None, scale=4, tile_size=512,
         sr = _resolve_one(frame, net, scale, tile_size, tile_overlap)
         mx.eval(sr)
         out[i] = np.array(sr)
-        logger.info("sr: frame %d/%d in=%dx%d out=%dx%d", i + 1, n, w, h,
-                    out.shape[2], out.shape[1])
+        logger.info(
+            "sr: frame %d/%d in=%dx%d out=%dx%d",
+            i + 1,
+            n,
+            w,
+            h,
+            out.shape[2],
+            out.shape[1],
+        )
     return out

@@ -9,8 +9,9 @@ from fastapi.testclient import TestClient
 from fusion_mlx.api import images_sr
 
 
-def _stub_resolve(images, model_path=None, scale=4, tile_size=512,
-                  tile_overlap=64, config=None):
+def _stub_resolve(
+    images, model_path=None, scale=4, tile_size=512, tile_overlap=64, config=None
+):
     n, h, w, c = images.shape
     rep = scale
     out = np.repeat(np.repeat(images, rep, axis=1), rep, axis=2)
@@ -28,6 +29,7 @@ def client(monkeypatch):
 
 def _png_bytes(arr_hwc):
     from PIL import Image
+
     pil = Image.fromarray((np.clip(arr_hwc, 0, 1) * 255).astype(np.uint8)[:, :, :3])
     buf = io.BytesIO()
     pil.save(buf, format="PNG")
@@ -47,5 +49,6 @@ def test_sr_endpoint_roundtrip(client):
     assert body["width"] == 160 and body["height"] == 128
     dec = base64.b64decode(body["image_b64"])
     from PIL import Image
+
     out = np.array(Image.open(io.BytesIO(dec)))
     assert out.shape[0] == 128 and out.shape[1] == 160

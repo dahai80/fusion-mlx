@@ -9,6 +9,7 @@ def test_public_api_reexports_sr():
         RRDBNet,
         super_resolve,
     )
+
     assert callable(super_resolve)
     assert callable(RealESRGANConfig)
     assert isinstance(RRDBNet, type)
@@ -25,6 +26,7 @@ def _walk_routes(app):
 
 def test_sr_route_registered():
     from fusion_mlx.server import create_app
+
     app = create_app()
     paths = {getattr(r, "path", None) for r in _walk_routes(app)}
     assert "/v1/images/super-resolution" in paths

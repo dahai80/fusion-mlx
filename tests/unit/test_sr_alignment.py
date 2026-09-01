@@ -6,6 +6,14 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
+# torch is a test-only reference dependency (inline RRDBNet ported back from
+# rrdb.py to compare NCHW native conv vs MLX NHWC). It is NOT a runtime dep of
+# fusion-mlx, so CI (no torch installed) must skip this module at collection
+# rather than crash the whole suite with ModuleNotFoundError. importorskip at
+# module scope raises Skipped on import failure → clean skip, no collection
+# error.
+torch = pytest.importorskip("torch")
+
 MODEL_DIR = os.path.expanduser("~/.fusion-mlx/models/realesrgan")
 PTH = os.path.join(MODEL_DIR, "RealESRGAN_x4plus.pth")
 SF = os.path.join(MODEL_DIR, "RealESRGAN_x4plus.safetensors")
@@ -17,9 +25,8 @@ SF = os.path.join(MODEL_DIR, "RealESRGAN_x4plus.safetensors")
 # only layout differs. basicsr is not installable (packaging KeyError), so the
 # reference is defined inline.
 # ---------------------------------------------------------------------------
-import torch
-import torch.nn as nn
-import torch.nn.functional as F  # noqa: N812
+import torch.nn as nn  # noqa: E402
+import torch.nn.functional as F  # noqa: N812, E402
 
 
 class TorchResidualDenseBlock_5C(nn.Module):
@@ -56,8 +63,16 @@ class TorchRRDB(nn.Module):
 
 
 class TorchRRDBNet(nn.Module):
-    def __init__(self, num_in_ch=3, num_out_ch=3, scale=4, num_feat=64,
-                 num_block=23, num_grow_ch=32, res_scale=1.0):
+    def __init__(
+        self,
+        num_in_ch=3,
+        num_out_ch=3,
+        scale=4,
+        num_feat=64,
+        num_block=23,
+        num_grow_ch=32,
+        res_scale=1.0,
+    ):
         super().__init__()
         self.scale = scale
         self.conv_first = nn.Conv2d(num_in_ch, num_feat, 3, 1, 1)
@@ -81,12 +96,12 @@ class TorchRRDBNet(nn.Module):
         feat = self.conv_body(feat)
         feat = body_feat + feat
         if self.scale == 4:
-            feat = F.interpolate(feat, scale_factor=2, mode='nearest')
+            feat = F.interpolate(feat, scale_factor=2, mode="nearest")
             feat = F.leaky_relu(self.conv_up1(feat), 0.2)
-            feat = F.interpolate(feat, scale_factor=2, mode='nearest')
+            feat = F.interpolate(feat, scale_factor=2, mode="nearest")
             feat = F.leaky_relu(self.conv_up2(feat), 0.2)
         elif self.scale == 2:
-            feat = F.interpolate(feat, scale_factor=2, mode='nearest')
+            feat = F.interpolate(feat, scale_factor=2, mode="nearest")
             feat = F.leaky_relu(self.conv_up1(feat), 0.2)
         out = self.conv_last(F.leaky_relu(self.conv_hr(feat), 0.2))
         return out
@@ -100,13 +115,17 @@ def _load_real_state_dict(pth_path):
         return raw["params_ema"]
     if "params" in raw and isinstance(raw["params"], dict):
         return raw["params"]
-    return {k[len("params_ema."):] if k.startswith("params_ema.") else k: v
-            for k, v in raw.items()}
+    return {
+        k[len("params_ema.") :] if k.startswith("params_ema.") else k: v
+        for k, v in raw.items()
+    }
 
 
 def _strip_params_ema(sd):
-    return {k[len("params_ema."):] if k.startswith("params_ema.") else k: v
-            for k, v in sd.items()}
+    return {
+        k[len("params_ema.") :] if k.startswith("params_ema.") else k: v
+        for k, v in sd.items()
+    }
 
 
 @pytest.mark.integration
@@ -125,10 +144,13 @@ def test_sr_alignment_vs_torch():
     # (slope 0.2), the 5-conv dense block with channel concat, and the 0.2
     # RDB residual + RRDB residual — every op the port relies on.
     if not os.path.exists(PTH):
-        pytest.skip("RealESRGAN_x4plus.pth not downloaded "
-                    "(network/mirror unreachable from this host)")
+        pytest.skip(
+            "RealESRGAN_x4plus.pth not downloaded "
+            "(network/mirror unreachable from this host)"
+        )
     if not os.path.exists(SF):
         from fusion_mlx.image.sr.convert import convert_pth_to_safetensors
+
         convert_pth_to_safetensors(PTH, SF)
     sd = _load_real_state_dict(PTH)
     tnet = TorchRRDBNet()
@@ -146,11 +168,13 @@ def test_sr_alignment_vs_torch():
     from fusion_mlx.image.sr.config import RealESRGANConfig
     from fusion_mlx.image.sr.generate import _set_net_for_test, super_resolve
     from fusion_mlx.image.sr.weights import load_sr_model
+
     cfg = RealESRGANConfig()
     net = load_sr_model(SF, cfg)
     _set_net_for_test(net, scale=4)
     # MLX: same depth via the net's modules (NHWC). conv_first + body[0].
     import mlx.core as mx
+
     xm = mx.array(inp)
     cf_m = net.conv_first(xm)
     feat_m = net.body[0](cf_m)
@@ -172,14 +196,14 @@ def test_sr_alignment_vs_torch():
     sig = float(max(np.max(np.abs(t_hwc)), np.max(np.abs(m_np))))
     rel = float(np.max(np.abs(t_hwc - m_np)) / sig) if sig > 0 else 0.0
     mse = float(np.mean((t_hwc - m_np) ** 2))
-    psnr = float("inf") if mse == 0 else 10 * np.log10((sig ** 2) / mse)
-    logger.info("sr block0 alignment: PSNR(sig)=%.2f rel_err=%.2e range=%+.3f",
-                psnr, rel, sig)
+    psnr = float("inf") if mse == 0 else 10 * np.log10((sig**2) / mse)
+    logger.info(
+        "sr block0 alignment: PSNR(sig)=%.2f rel_err=%.2e range=%+.3f", psnr, rel, sig
+    )
     assert rel < 5e-2, f"block0 relative error {rel:.2e} >= 5e-2"
     # Full-pipeline sanity: shape, scale, finite (does not assert numeric
     # match at unbounded depth — see module docstring).
-    m_full = super_resolve(inp, model_path=SF, scale=4, tile_size=512,
-                           tile_overlap=64)
+    m_full = super_resolve(inp, model_path=SF, scale=4, tile_size=512, tile_overlap=64)
     assert m_full.shape == (1, 256, 256, 3), m_full.shape
     assert np.isfinite(m_full).all(), "super_resolve produced non-finite output"
 
@@ -189,19 +213,29 @@ def test_sr_keyset_match_offline():
 
     from fusion_mlx.image.sr.config import RealESRGANConfig
     from fusion_mlx.image.sr.rrdb import RRDBNet
+
     cfg = RealESRGANConfig()
     tnet = TorchRRDBNet(
-        num_in_ch=cfg.num_in_ch, num_out_ch=cfg.num_out_ch, scale=cfg.scale,
-        num_feat=cfg.num_feat, num_block=cfg.num_block,
-        num_grow_ch=cfg.num_grow_ch, res_scale=cfg.res_scale,
+        num_in_ch=cfg.num_in_ch,
+        num_out_ch=cfg.num_out_ch,
+        scale=cfg.scale,
+        num_feat=cfg.num_feat,
+        num_block=cfg.num_block,
+        num_grow_ch=cfg.num_grow_ch,
+        res_scale=cfg.res_scale,
     )
     tkeys = set(tnet.state_dict().keys())
     mnet = RRDBNet(cfg)
     mkeys = {k for k, _ in tree_flatten(mnet.parameters())}
     missing = tkeys - mkeys
     extra = mkeys - tkeys
-    logger.info("sr keyset: torch=%d mlx=%d missing=%d extra=%d",
-                len(tkeys), len(mkeys), len(missing), len(extra))
+    logger.info(
+        "sr keyset: torch=%d mlx=%d missing=%d extra=%d",
+        len(tkeys),
+        len(mkeys),
+        len(missing),
+        len(extra),
+    )
     assert not missing, f"torch keys missing from MLX: {sorted(missing)[:10]}"
     assert not extra, f"MLX keys missing from torch: {sorted(extra)[:10]}"
     assert len(tkeys) == 702, f"expected 702 keys for x4plus, got {len(tkeys)}"
@@ -212,11 +246,16 @@ def test_sr_convert_and_run_aligned_offline(tmp_path):
     from fusion_mlx.image.sr.convert import convert_pth_to_safetensors
     from fusion_mlx.image.sr.generate import _set_net_for_test, super_resolve
     from fusion_mlx.image.sr.weights import load_sr_model
+
     cfg = RealESRGANConfig()
     tnet = TorchRRDBNet(
-        num_in_ch=cfg.num_in_ch, num_out_ch=cfg.num_out_ch, scale=cfg.scale,
-        num_feat=cfg.num_feat, num_block=cfg.num_block,
-        num_grow_ch=cfg.num_grow_ch, res_scale=cfg.res_scale,
+        num_in_ch=cfg.num_in_ch,
+        num_out_ch=cfg.num_out_ch,
+        scale=cfg.scale,
+        num_feat=cfg.num_feat,
+        num_block=cfg.num_block,
+        num_grow_ch=cfg.num_grow_ch,
+        res_scale=cfg.res_scale,
     )
     tnet.eval()
     raw_sd = {f"params_ema.{k}": v for k, v in tnet.state_dict().items()}
@@ -234,8 +273,9 @@ def test_sr_convert_and_run_aligned_offline(tmp_path):
     t_out_hwc = np.transpose(t_out, (0, 2, 3, 1))
     net = load_sr_model(sf_path, cfg)
     _set_net_for_test(net, scale=4)
-    m_out = super_resolve(inp, model_path=sf_path, scale=4, tile_size=512,
-                          tile_overlap=64)
+    m_out = super_resolve(
+        inp, model_path=sf_path, scale=4, tile_size=512, tile_overlap=64
+    )
     assert t_out_hwc.shape == m_out.shape, (t_out_hwc.shape, m_out.shape)
     # Random-init RRDB output is unbounded (~1e5 over 23 blocks), so the
     # PSNR data_range must be the actual signal span, not 1.0. The real-model
@@ -245,8 +285,7 @@ def test_sr_convert_and_run_aligned_offline(tmp_path):
     # signal, not against 1.0.
     sig_range = float(t_out_hwc.max() - t_out_hwc.min())
     mse = np.mean((t_out_hwc - m_out) ** 2)
-    psnr = float("inf") if mse == 0 else 10 * np.log10((sig_range ** 2) / mse)
+    psnr = float("inf") if mse == 0 else 10 * np.log10((sig_range**2) / mse)
     rel = float(np.max(np.abs(t_out_hwc - m_out)) / np.max(np.abs(t_out_hwc)))
-    logger.info("sr offline alignment (random-init): PSNR=%.2f rel_err=%.5f",
-                psnr, rel)
+    logger.info("sr offline alignment (random-init): PSNR=%.2f rel_err=%.5f", psnr, rel)
     assert psnr > 35, f"PSNR {psnr:.2f} <= 35 (random-init alignment)"
