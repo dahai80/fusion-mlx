@@ -545,6 +545,7 @@ def generate_video(
     image=None,
     last_frame_image=None,
     keyframe_anchors=None,
+    reference_images=None,
 ):
     # H3 t2va/fl2va 顶层编排。
     #
@@ -575,6 +576,25 @@ def generate_video(
     quantize = (quantize or "none").lower()
     do_te_q = quantize in ("te4", "dit8_te4")
     do_dit_q = quantize in ("dit8", "dit8_te4")
+
+    # ref2va (reference-image-to-video) 生成分支未实现：需要单独的
+    # transformer_ref（~67GB）与逆向出的 refiner 前向，issue #688 step 2-3。
+    # 显式拒绝而非静默丢弃 reference_images（fail-visible, Rule 12）。
+    # 必须在任何模型加载之前拒绝，避免无谓加载 67GB 权重。
+    if reference_images is not None:
+        logger.error(
+            "h3 generate_video: ref2va reference_images dropped: %s (issue #688 "
+            "step 2-3 not implemented: separate transformer_ref + refiner forward)",
+            reference_images,
+        )
+        raise NotImplementedError(
+            "MiniMax-H3 ref2va reference-image generation is not implemented "
+            "(issue #688 step 2-3): the ref2va partition requires a separate "
+            "transformer_ref checkpoint (~67GB) and a reverse-engineered refiner "
+            "forward with no local reference implementation. The forwarding "
+            "plumbing (step 1) landed so the drop is explicit, but r2v video "
+            "cannot be produced until steps 2-3 land."
+        )
 
     logger.info(
         "h3 generate_video: prompt='%s' frames=%d %dx%d fps=%d seed=%s steps=%d quantize=%s audio=%s",

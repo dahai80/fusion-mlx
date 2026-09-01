@@ -119,3 +119,37 @@ class TestGenerateAcceptsConditioning:
             assert "i2va" not in str(raised)
             assert "l2va" not in str(raised)
             assert "reference_audio" not in str(raised)
+
+    async def test_generate_rejects_reference_images_fast(self):
+        # ref2va reference_images 未实现（issue #688 step 2-3）：须在模型加载前
+        # fail-fast 抛 NotImplementedError，不静默丢弃也不加载 67GB 权重。
+        b = self._backend()
+        p = VideoGenParams(
+            prompt="test",
+            num_frames=97,
+            width=768,
+            height=768,
+            n=1,
+            reference_images=["/ref/a.png", "/ref/b.png"],
+        )
+        with pytest.raises(NotImplementedError, match="ref2va reference-image"):
+            await b.generate(p)
+        # 模型未被加载（fail-fast 早于 start()）。
+        assert b._loaded is True  # _backend() 预置 True；guard 不应触发 start()
+
+
+class TestGenerateVideoRef2vaGuard:
+    def test_generate_video_rejects_reference_images(self):
+        # generate_video 直接 SDK 调用路径的 defense-in-depth guard。
+        # 不加载模型，仅断言 ref2va 分支显式拒绝。
+        from fusion_mlx.video.minimax_h3.generate import generate_video
+
+        with pytest.raises(NotImplementedError, match="issue #688"):
+            generate_video(
+                model_path="/nonexistent/h3-ref2va",
+                prompt="test",
+                num_frames=97,
+                width=768,
+                height=768,
+                reference_images=["/ref/a.png"],
+            )

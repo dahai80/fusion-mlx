@@ -138,6 +138,22 @@ class MiniMaxH3Backend(VideoBackend):
                 "MiniMax-H3 ref2va audio not implemented (issue #589): "
                 "reference_audio is not supported."
             )
+        # ref2va reference-image generation unimplemented (issue #688 step 2-3):
+        # needs separate transformer_ref (~67GB) + reverse-engineered refiner
+        # forward. Fail fast before model load; generate_video re-checks as
+        # defense-in-depth for direct SDK callers.
+        if params.reference_images is not None:
+            logger.error(
+                "minimax_h3: ref2va reference_images rejected (issue #688 "
+                "step 2-3 not implemented): %s",
+                params.reference_images,
+            )
+            raise NotImplementedError(
+                "MiniMax-H3 ref2va reference-image generation is not implemented "
+                "(issue #688 step 2-3): requires a separate transformer_ref "
+                "checkpoint (~67GB) and a reverse-engineered refiner forward. "
+                "reference_images is forwarded but cannot be consumed yet."
+            )
         if params.resolution not in _H3_RESOLUTIONS:
             raise ValueError(
                 f"resolution must be one of {_H3_RESOLUTIONS}, got {params.resolution!r}"
@@ -186,6 +202,7 @@ class MiniMaxH3Backend(VideoBackend):
                                 audio=params.audio,
                                 image=cond_image,
                                 last_frame_image=cond_last,
+                                reference_images=params.reference_images,
                             ),
                         ),
                         timeout=timeout,
