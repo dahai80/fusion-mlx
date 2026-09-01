@@ -9,6 +9,8 @@ import time
 import mlx.core as mx
 import numpy as np
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 from .dit import HUNYUAN_VIDEO_CONFIG, HunyuanVideoDiT
 from .scheduler import HunyuanVideoScheduler
 from .text_encoder import HunyuanDualTextEncoder
@@ -87,6 +89,11 @@ def generate_video(
     num_inference_steps=50,
     on_step=None,
     output_path=None,
+    controlnet_image=None,
+    controlnet_adapter=None,
+    controlnet_latent=None,
+    inpaint_mask=None,
+    init_latent=None,
 ):
     logger.info(
         "hunyuan generate: prompt='%s' frames=%d %dx%d fps=%d seed=%s i2v=%s steps=%d",
@@ -194,6 +201,17 @@ def generate_video(
         not use_single_forward,
     )
     step_t0 = time.time()
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "hunyuanvideo: ControlNet (Surface B) not available for this backend"
+            " — no per-backend ControlNet model (see issue #733 follow-up)."
+            " Refusing to silently degrade to T2V (#733)."
+        )
+    logger.info(
+        "hunyuanvideo denoise: inpaint=%s controlnet=%s",
+        inpaint_mask is not None,
+        controlnet_image is not None,
+    )
     for i, t in enumerate(scheduler.timesteps):
         if use_single_forward:
             timestep = mx.array([float(t)], dtype=mx.float32)
@@ -234,6 +252,9 @@ def generate_video(
         latents = scheduler.step(noise_pred, t, latents)
         del noise_pred
         mx.eval(latents)
+        if inpaint_mask is not None and init_latent is not None:
+            latents = apply_inpaint_mask(latents, init_latent, inpaint_mask)
+            mx.eval(latents)
         mx.clear_cache()
         if on_step is not None:
             on_step(i + 1, total_steps)

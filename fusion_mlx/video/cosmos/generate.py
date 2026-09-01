@@ -8,6 +8,8 @@ import time
 import mlx.core as mx
 import numpy as np
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 from .dit import COSMOS_2B_CONFIG, COSMOS_7B_CONFIG, CosmosDiT
 from .scheduler import CosmosFlowScheduler, CosmosPredict2Scheduler
 from .text_encoder import CosmosT5Encoder
@@ -54,6 +56,11 @@ def generate_video(
     is_predict2=False,
     on_step=None,
     output_path=None,
+    controlnet_image=None,
+    controlnet_adapter=None,
+    controlnet_latent=None,
+    inpaint_mask=None,
+    init_latent=None,
 ):
     logger.info(
         "cosmos generate: prompt='%s' frames=%d %dx%d fps=%d seed=%s i2v=%s steps=%d",
@@ -168,6 +175,17 @@ def generate_video(
         cfg,
         not use_single_forward,
     )
+    logger.info(
+        "cosmos denoise: inpaint=%s controlnet=%s",
+        inpaint_mask is not None,
+        controlnet_image is not None,
+    )
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "cosmos: ControlNet (Surface B) not available for this backend — "
+            "no per-backend ControlNet model (see issue #732 follow-up). "
+            "Refusing to silently degrade to T2V (#732)."
+        )
     step_t0 = time.time()
     for i, t in enumerate(scheduler.timesteps):
         if use_single_forward:
@@ -210,6 +228,9 @@ def generate_video(
             del noise_pred_2, noise_pred_uncond, noise_pred_cond
         latents = scheduler.step(noise_pred, t, latents)
         mx.eval(latents)
+        if inpaint_mask is not None and init_latent is not None:
+            latents = apply_inpaint_mask(latents, init_latent, inpaint_mask)
+            mx.eval(latents)
         mx.clear_cache()
         if on_step is not None:
             on_step(i + 1, total_steps)

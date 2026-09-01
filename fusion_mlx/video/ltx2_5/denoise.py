@@ -9,6 +9,8 @@ import logging
 
 import mlx.core as mx
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 from .transformer import Modality
 
 logger = logging.getLogger(__name__)
@@ -21,15 +23,33 @@ def denoise_distilled_t2v(
     transformer,
     sigmas: list,
     verbose: bool = True,
+    controlnet_image=None,
+    inpaint_mask=None,
+    init_latent=None,
 ) -> mx.array:
     # 两阶段 distilled T2V 去噪。latents (b,c,f,h,w), sigmas 降序 -> 0。
     # 每步: 展平 latent -> Modality(context=text_embeddings) -> transformer ->
     # velocity -> x0 = latent - sigma*velocity -> 重新加噪到 sigma_next。
+    # #735 Surface B: ControlNet not fabricatable for ltx2_5 (shared adapter is
+    # Wan2-arch, no per-backend model). Fail visible — refuse silent T2V degrade.
+    # #735 Surface C: DiT-agnostic latent-space inpaint re-composite after each
+    # step's x0 prediction, so frozen regions stay frozen across re-noise steps.
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "ltx2_5: ControlNet (Surface B) not available for this backend — "
+            "no per-backend ControlNet model (see issue #735 follow-up). "
+            "Refusing to silently degrade to T2V (#735)."
+        )
     dtype = latents.dtype
     latents = latents.astype(mx.float32)
     num_steps = len(sigmas) - 1
     if verbose:
         logger.info("Denoising T2V: %d steps", num_steps)
+    logger.info(
+        "ltx2_5 denoise: inpaint=%s controlnet=%s",
+        inpaint_mask is not None,
+        controlnet_image is not None,
+    )
 
     for i in range(num_steps):
         sigma, sigma_next = sigmas[i], sigmas[i + 1]
@@ -70,6 +90,9 @@ def denoise_distilled_t2v(
             latents = denoised
 
         mx.eval(latents)
+        if inpaint_mask is not None and init_latent is not None:
+            latents = apply_inpaint_mask(latents, init_latent, inpaint_mask)
+            mx.eval(latents)
         if verbose:
             logger.info("step %d/%d", i + 1, num_steps)
 

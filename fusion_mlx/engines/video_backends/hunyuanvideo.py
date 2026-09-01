@@ -4,6 +4,7 @@
 import asyncio
 import gc
 import logging
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -113,6 +114,9 @@ class HunyuanVideoBackend(VideoBackend):
                                 num_inference_steps=params.num_inference_steps or 50,
                                 on_step=None,
                                 output_path=op,
+                                controlnet_image=params.controlnet_image,
+                                inpaint_mask=params.inpaint_mask,
+                                init_latent=params.init_latent,
                             ),
                         ),
                         timeout=timeout,
@@ -191,3 +195,13 @@ class HunyuanVideoBackend(VideoBackend):
         mx.synchronize()
         mx.clear_cache()
         logger.info("hunyuan: vae_encoder unload")
+
+    async def encode_control(self, **kwargs) -> Any:
+        if kwargs.get("controlnet_image") is not None:
+            raise RuntimeError(
+                "hunyuanvideo: ControlNet (Surface B) not available for this backend"
+                " — no per-backend ControlNet model (see issue #733 follow-up)."
+                " Refusing to silently degrade to T2V (#733)."
+            )
+        logger.info("hunyuanvideo: encode_control pure-T2V (no controlnet/vace)")
+        return None

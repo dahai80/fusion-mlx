@@ -82,6 +82,12 @@ class LTX2_5Backend(VideoBackend):
         )
 
     async def generate(self, params: VideoGenParams) -> list[bytes]:
+        if params.controlnet_image is not None:
+            raise RuntimeError(
+                "ltx2_5: ControlNet (Surface B) not available for this backend — "
+                "no per-backend ControlNet model (see issue #735 follow-up). "
+                "Refusing to silently degrade to T2V (#735)."
+            )
         if params.on_step is not None:
             logger.debug(
                 "ltx2_5: on_step progress callback accepted but per-step "
@@ -90,6 +96,8 @@ class LTX2_5Backend(VideoBackend):
         base_seed = (
             params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )
+        inpaint_mask = params.inpaint_mask
+        init_latent = params.init_latent
 
         def _generate():
             results: list[bytes] = []
@@ -109,6 +117,9 @@ class LTX2_5Backend(VideoBackend):
                     image=params.image,
                     image_strength=params.image_strength,
                     two_stage=self._two_stage,
+                    controlnet_image=params.controlnet_image,
+                    inpaint_mask=inpaint_mask,
+                    init_latent=init_latent,
                 )
                 results.append(mp4_bytes)
             return results
@@ -177,6 +188,17 @@ class LTX2_5Backend(VideoBackend):
         mx.clear_cache()
         logger.info("ltx2_5: vae_encoder unload")
 
+    async def encode_control(self, **kwargs: Any) -> Any:
+        controlnet_image = kwargs.get("controlnet_image")
+        if controlnet_image is not None:
+            raise RuntimeError(
+                "ltx2_5: ControlNet (Surface B) not available for this backend — "
+                "no per-backend ControlNet model (see issue #735 follow-up). "
+                "Refusing to silently degrade to T2V (#735)."
+            )
+        logger.info("ltx2_5: encode_control pure-T2V (no controlnet)")
+        return None
+
     def constraints(self) -> VideoConstraints:
         return VideoConstraints(
             supports_i2v=True,
@@ -204,6 +226,9 @@ def _generate_one(
     image: str | None = None,
     image_strength: float = 1.0,
     two_stage: bool = True,
+    controlnet_image: str | None = None,
+    inpaint_mask=None,
+    init_latent=None,
 ) -> bytes:
     from fusion_mlx.video.ltx2_5.config import LTX2_5Variant
     from fusion_mlx.video.ltx2_5.generate import generate_video
@@ -219,6 +244,9 @@ def _generate_one(
         output_path=None,
         verbose=False,
         two_stage=two_stage,
+        controlnet_image=controlnet_image,
+        inpaint_mask=inpaint_mask,
+        init_latent=init_latent,
     )
     if num_inference_steps is not None:
         gen_kwargs["num_inference_steps"] = num_inference_steps
