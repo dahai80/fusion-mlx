@@ -548,12 +548,18 @@ def _encode_prompt(text_encoder, tokenizer, prompt, max_length=256):
 
 
 def _load_ref2va_frames(reference_paths):
-    # 加载参考视频/图像为 (T, C, H, W) uint8 numpy 帧，供 Qwen3VLVideoProcessor。
+    # 加载参考视频/图像为 Qwen3VLVideoProcessor 期望的 list[(T, C, H, W) uint8]。
     # reference_paths: list[str]（每个是一条参考视频路径，mp4/帧图）。
-    # 简化：逐条读取——mp4 用 imageio 抽帧，图直接 PIL。返回 list[np.ndarray]。
+    # imageio 抽帧得 (T,H,W,C)；转 (T,C,H,W) 供 processor._process_one。
+    # 单图视为 1 帧 (1,C,H,W)。返回 list[np.ndarray]，每条一个 (T,C,H,W)。
     import numpy as np
 
-    frames_list = []
+    if not isinstance(reference_paths, (list, tuple)) or not reference_paths:
+        raise ValueError(
+            "h3 ref2va: reference_paths must be a non-empty list of paths "
+            "(issue #688 step 2-3)"
+        )
+    videos = []
     for i, rp in enumerate(reference_paths):
         rp = os.fspath(rp)
         if rp.lower().endswith((".mp4", ".mov", ".avi", ".mkv")):
@@ -564,22 +570,26 @@ def _load_ref2va_frames(reference_paths):
             except Exception as e:
                 logger.error("h3 ref2va: read video %s failed: %s", rp, e)
                 raise
-            # (T,H,W,C) → list of (H,W,C) → processor 内部 _to_numpy_image 转 (C,H,W)
-            for f in frames:
-                frames_list.append(f)
+            if frames.ndim != 4 or frames.shape[-1] not in (1, 3, 4):
+                raise ValueError(
+                    "h3 ref2va: unexpected video shape %s for %s (issue #688 step 2-3)"
+                    % (frames.shape, rp)
+                )
+            video = np.transpose(frames, (0, 3, 1, 2))  # (T,H,W,C) -> (T,C,H,W)
         else:
             from PIL import Image
 
             img = Image.open(rp).convert("RGB")
-            frames_list.append(np.array(img))
+            video = np.transpose(np.array(img), (2, 0, 1))[None, ...]  # (1,C,H,W)
         logger.info(
-            "h3 ref2va: loaded reference %d/%d %s frames=%d",
+            "h3 ref2va: loaded reference %d/%d %s shape=%s",
             i + 1,
             len(reference_paths),
             rp,
-            len(frames_list),
+            video.shape,
         )
-    return frames_list
+        videos.append(video)
+    return videos
 
 
 def _encode_prompt_ref2va(
@@ -613,8 +623,8 @@ def _encode_prompt_ref2va(
         logger.warning("h3 ref2va: processor chat_template failed, raw vision text")
     logger.info("h3 ref2va encode: prompt text len=%d", len(text))
 
-    batch = processor(text=[text], videos=[frames_list], return_tensors=None)
-    input_ids = mx.array([batch["input_ids"]], dtype=mx.int32)
+    batch = processor(text=[text], videos=frames_list, return_tensors=None)
+    input_ids = mx.array(batch["input_ids"], dtype=mx.int32)
     pixel_values_videos = batch.get("pixel_values_videos")
     if pixel_values_videos is None:
         # 部分版本 key 名为 pixel_values（视频统一走 vision_tower）。
