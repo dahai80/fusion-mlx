@@ -691,27 +691,30 @@ class SkyReelsBasePipeline:
             )
 
             # ControlNet: 计算每步残差 (control image + t + context -> per-block residuals)
+            # #741 Rule 12/7: 残差计算失败必须上抛, 不得静默降级为 T2V。与 #653
+            # Wan2 encode_control (C1) 同一裁决: 请求 ControlNet 却静默得到 T2V
+            # 是最坏的静默失败。注意 adapter-LOAD 段 (~line 615) 仍静默降级为
+            # None — 详见 #741 follow-up; 本步级段显式 fail-visible。
             cn_residuals = None
             if cn_adapter is not None:
-                try:
-                    cn_adapter.modify_denoise_step(
-                        self.dit,
-                        latents,
-                        t_mx,
-                        context,
-                        control_image=cn_control_image,
-                        control_type=cn_control_type,
-                        seq_lens=seq_lens,
-                        grid_sizes=grid_sizes,
+                cn_adapter.modify_denoise_step(
+                    self.dit,
+                    latents,
+                    t_mx,
+                    context,
+                    control_image=cn_control_image,
+                    control_type=cn_control_type,
+                    seq_lens=seq_lens,
+                    grid_sizes=grid_sizes,
+                )
+                cn_residuals = cn_adapter.get_residuals()
+                if cn_residuals is None:
+                    raise RuntimeError(
+                        f"ControlNet: step {step_idx} produced no residual; "
+                        f"refusing to silently degrade to T2V (issue #741)"
                     )
-                    cn_residuals = cn_adapter.get_residuals()
-                    if cn_residuals is not None and run_cfg:
-                        cn_residuals = [mx.concatenate([r] * 2) for r in cn_residuals]
-                except Exception as exc:
-                    logger.warning(
-                        "ControlNet: step %d residual failed: %s", step_idx, exc
-                    )
-                    cn_residuals = None
+                if run_cfg:
+                    cn_residuals = [mx.concatenate([r] * 2) for r in cn_residuals]
 
             # 模型前向
             cn_stride = (

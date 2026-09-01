@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.8.61] - 2026-09-01
+
+### Fixed
+- **#741 — SkyReels ControlNet per-step residual failure now fails visibly.**
+  The per-step ControlNet residual computation in
+  `SkyReelsBasePipeline._denoise_sample` was wrapped in a bare
+  `except Exception` that swallowed any failure, set `cn_residuals = None`,
+  and ran the DiT forward with no conditioning — silently degrading a
+  ControlNet request to T2V. This violated Rule 12 (fail visibly) and the
+  same spec §4 invariant enforced for Wan2 `encode_control` in #653 (C1).
+  The try/except is removed: `modify_denoise_step`/`get_residuals`
+  exceptions now propagate and abort the run, and a `None` residual raises
+  `RuntimeError` refusing silent T2V degradation. A caller asking for
+  ControlNet conditioning no longer silently gets an unconditioned video.
+
 ## [0.8.60] - 2026-09-01
 
 ### Changed
