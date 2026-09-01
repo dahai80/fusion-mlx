@@ -35,12 +35,12 @@ from .api.audio_routes import router as audio_router
 from .api.audio_routes import set_audio_context
 from .api.convert_routes import router as convert_router
 from .api.distributed_routes import router as distributed_router
-from .api.watermark_routes import router as watermark_router
 from .api.images import router as images_router
 from .api.images import set_images_context
 from .api.layered_quantize_routes import router as layered_quantize_router
 from .api.mcp_routes import router as mcp_router
 from .api.mcp_routes import set_mcp_manager_getter
+from .api.watermark_routes import router as watermark_router
 from .exceptions import (
     InsufficientMemoryError,
     ModelBusyError,
