@@ -3,6 +3,8 @@ import math
 
 import mlx.core as mx
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 from .conditioning import LatentState, apply_denoise_mask
 from .guidance import apg_delta
 from .ltx2_model import LTXModel
@@ -30,7 +32,25 @@ def denoise_distilled(
     audio_positions: mx.array | None = None,
     audio_embeddings: mx.array | None = None,
     audio_frozen: bool = False,
+    controlnet_image=None,
+    inpaint_mask=None,
+    init_latent=None,
 ) -> tuple[mx.array, mx.array | None]:
+    # #738 Surface B: ControlNet not fabricatable for ltx2 (shared adapter is
+    # Wan2-arch, no per-backend model). Fail visible — refuse silent T2V degrade.
+    # #738 Surface C: DiT-agnostic latent-space inpaint re-composite after each
+    # step's x0 prediction on the VIDEO latents only (audio untouched).
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "ltx2: ControlNet (Surface B) not available for this backend — "
+            "no per-backend ControlNet model (see issue #738 follow-up). "
+            "Refusing to silently degrade to T2V (#738)."
+        )
+    logger.info(
+        "ltx2 denoise_distilled: inpaint=%s controlnet=%s",
+        inpaint_mask is not None,
+        controlnet_image is not None,
+    )
     dtype = latents.dtype
     enable_audio = audio_latents is not None
 
@@ -149,6 +169,9 @@ def denoise_distilled(
         if enable_audio:
             mx.eval(audio_latents)
 
+        if inpaint_mask is not None and init_latent is not None:
+            latents = apply_inpaint_mask(latents, init_latent, inpaint_mask)
+            mx.eval(latents)
         if verbose:
             logger.info("step %d/%d", i + 1, num_steps)
 
@@ -178,7 +201,22 @@ def denoise_dev(
     apg_norm_threshold: float = 0.0,
     stg_scale: float = 0.0,
     stg_blocks: list | None = None,
+    controlnet_image=None,
+    inpaint_mask=None,
+    init_latent=None,
 ) -> mx.array:
+    # #738 Surface B/C — fail-visible gate + DiT-agnostic video-latent inpaint.
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "ltx2: ControlNet (Surface B) not available for this backend — "
+            "no per-backend ControlNet model (see issue #738 follow-up). "
+            "Refusing to silently degrade to T2V (#738)."
+        )
+    logger.info(
+        "ltx2 denoise_dev: inpaint=%s controlnet=%s",
+        inpaint_mask is not None,
+        controlnet_image is not None,
+    )
     from .rope import precompute_freqs_cis
 
     dtype = latents.dtype
@@ -315,6 +353,9 @@ def denoise_dev(
             latents = denoised
 
         mx.eval(latents)
+        if inpaint_mask is not None and init_latent is not None:
+            latents = apply_inpaint_mask(latents, init_latent, inpaint_mask)
+            mx.eval(latents)
         if verbose:
             logger.info("step %d/%d", i + 1, num_steps)
 
@@ -345,7 +386,22 @@ def denoise_dev_av(
     stg_audio_blocks: list | None = None,
     modality_scale: float = 1.0,
     audio_frozen: bool = False,
+    controlnet_image=None,
+    inpaint_mask=None,
+    init_latent=None,
 ) -> tuple[mx.array, mx.array]:
+    # #738 Surface B/C — fail-visible gate + video-latent inpaint (audio untouched).
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "ltx2: ControlNet (Surface B) not available for this backend — "
+            "no per-backend ControlNet model (see issue #738 follow-up). "
+            "Refusing to silently degrade to T2V (#738)."
+        )
+    logger.info(
+        "ltx2 denoise_dev_av: inpaint=%s controlnet=%s",
+        inpaint_mask is not None,
+        controlnet_image is not None,
+    )
     from .rope import precompute_freqs_cis
 
     dtype = video_latents.dtype
@@ -608,6 +664,9 @@ def denoise_dev_av(
                 audio_latents = audio_denoised_f32
 
         mx.eval(video_latents, audio_latents)
+        if inpaint_mask is not None and init_latent is not None:
+            video_latents = apply_inpaint_mask(video_latents, init_latent, inpaint_mask)
+            mx.eval(video_latents)
         if verbose:
             logger.info("step %d/%d", i + 1, num_steps)
 
@@ -639,7 +698,22 @@ def denoise_res2s_av(
     bongmath: bool = True,
     bongmath_max_iter: int = 100,
     audio_frozen: bool = False,
+    controlnet_image=None,
+    inpaint_mask=None,
+    init_latent=None,
 ) -> tuple[mx.array, mx.array]:
+    # #738 Surface B/C — fail-visible gate + video-latent inpaint (audio untouched).
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "ltx2: ControlNet (Surface B) not available for this backend — "
+            "no per-backend ControlNet model (see issue #738 follow-up). "
+            "Refusing to silently degrade to T2V (#738)."
+        )
+    logger.info(
+        "ltx2 denoise_res2s_av: inpaint=%s controlnet=%s",
+        inpaint_mask is not None,
+        controlnet_image is not None,
+    )
     from .rope import precompute_freqs_cis
     from .samplers import (
         get_new_noise,
@@ -961,6 +1035,9 @@ def denoise_res2s_av(
             audio_latents = x_next_audio.astype(mx.float32)
 
         mx.eval(video_latents, audio_latents)
+        if inpaint_mask is not None and init_latent is not None:
+            video_latents = apply_inpaint_mask(video_latents, init_latent, inpaint_mask)
+            mx.eval(video_latents)
         if verbose:
             logger.info("step %d/%d", step_idx + 1, n_full_steps)
 
@@ -972,5 +1049,8 @@ def denoise_res2s_av(
         if not audio_frozen:
             audio_latents = denoised_audio
         mx.eval(video_latents, audio_latents)
+        if inpaint_mask is not None and init_latent is not None:
+            video_latents = apply_inpaint_mask(video_latents, init_latent, inpaint_mask)
+            mx.eval(video_latents)
 
     return video_latents, audio_latents

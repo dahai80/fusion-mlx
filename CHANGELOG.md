@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+## [0.8.64] - 2026-09-01
+
+### Added
+- **#738/#739/#740 — Surface A+B+C ports to ltx2, opensora, uniworld backends.**
+  Completes the VAE-encode (Surface A), ControlNet (Surface B), and inpaint
+  (Surface C) surfaces for the remaining video backends behind the #653
+  surface framework, following the cogvideox reference implementation
+  (#731) and the 6-backend replication (#732-#737).
+  - **#738 ltx2:** Surface A VAE-encode, Surface B ControlNet conditioning
+    in `ltx2/denoise.py`, Surface C inpaint insertion in `ltx2/generate.py`.
+  - **#739 opensora:** Surface A VAE-encode, Surface B ControlNet
+    conditioning, Surface C inpaint insertion in `opensora/generate.py`.
+  - **#740 uniworld:** ruled not-applicable (no per-backend VAE-encode /
+    ControlNet / inpaint model surface); `uniworld/backend.py` gains a
+    fail-visible `encode_control` refusal matching the #736 convention.
+  - Inspection-based contract tests for each backend's surface branch
+    (Surface B/C), plus `test_surface_uniworld_not_applicable.py`.
+
+- **#688 step 2-3 — MiniMax-H3 ref2va reference-video-to-video generation.**
+  Completes the ref2va partition: step 1 (forwarding plumbing) landed in
+  v0.8.60; this lands the actual generation path.
+  - **Architecture (corrected):** issue #688 was factually wrong — there is
+    no separate `transformer_ref/` or `num_refiner_layers:2` difference.
+    Ref2VA/transformer is the same MiniMaxH3DiTModel arch as FL2VA, just
+    different weights. The real mechanism: reference videos route through
+    the Qwen3-VL `vision_tower` → vision tokens scattered into `input_ids`
+    at `<|video_pad|>` positions (`masked_scatter`) → deepstack visual
+    embeds injected at the first N LM layers → 3D mrope `position_ids` →
+    the LM's layer-49 hidden states become vision-conditioned
+    `text_embeds` → the DiT denoises pure-T2V-style (`build_t2va_packed`,
+    no latent condition rows).
+  - **`MiniMaxH3MultimodalTextEncoder`** (`text_encoder.py`): wraps the
+    full qwen3_vl VLM (keeps `vision_tower`), reuses mlx-vlm
+    `Model.get_input_embeddings` (vision_tower + masked_scatter + deepstack
+    + mrope), truncates the layer loop at layer 49, injects deepstack
+    visual embeds, returns raw hidden states (no final norm).
+  - **`_load_ref2va_frames`** + **`_encode_prompt_ref2va`** (`generate.py`):
+    load reference video frames (mp4 via imageio, image via PIL), build
+    Qwen3-VL chat-template content with `<|video_pad|>` placeholders, run
+    `Qwen3VLProcessor` to expand + tokenize, then call the multimodal
+    encoder for vision-conditioned `text_embeds`.
+  - **`generate_video` ref2va branch**: when `reference_images` is set,
+    loads the multimodal TE + `Qwen3VLProcessor` (staged — releases TE
+    before DiT+VAE load to fit 137G physical RAM), encodes prompt with
+    reference videos, then runs `generate_t2va_video`. Mutual-exclusion
+    guards refuse ref2va combined with fl2va keyframes or joint audio
+    (incompatible `text_embeds` conditioning).
+  - **Backend** (`minimax_h3.py`): removed the `NotImplementedError`
+    rejection of `reference_images`; now does path-safety then forwards to
+    `generate_video`.
+  - **Inspection-based contract tests** (`test_minimax_h3_i2v_guard.py`):
+    assert ref2va branch present, old gate removed, empty-list
+    fail-visible, multimodal encoder signature, mutual-exclusion, path
+    safety.
+  - No upstream block: mlx-vlm 0.5.0 has full `qwen3_vl`
+    (VisionModel/LanguageModel/Model/processing_qwen3_vl) — reused, not
+    blind-ported.
+
 ## [0.8.63] - 2026-09-01
 
 ### Added

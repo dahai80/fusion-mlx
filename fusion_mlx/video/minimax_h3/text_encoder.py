@@ -95,6 +95,85 @@ def _mask_from_attention(attention_mask, input_ids):
     return mask
 
 
+class MiniMaxH3MultimodalTextEncoder(nn.Module):
+    # ref2va 多模态文本编码器：保留 Qwen3-VL vision_tower，参考视频经
+    # vision_tower → video_pad masked_scatter → deepstack 注入 → 3D mrope
+    # position_ids，读取第 50 层（0-indexed=49）hidden states，不接 final norm。
+    # 与 MiniMaxH3TextEncoder（纯文本，丢弃 vision_tower）互补。
+
+    def __init__(self, vlm, layer: int = H3_TEXT_ENCODER_LAYER):
+        super().__init__()
+        self.vlm = vlm
+        self.layer = int(layer)
+        language_model = getattr(vlm, "language_model", vlm)
+        self.language_model = language_model
+        text_cfg = getattr(language_model, "args", None)
+        hidden_size = getattr(text_cfg, "hidden_size", None)
+        num_layers = getattr(text_cfg, "num_hidden_layers", None)
+        if num_layers is not None and self.layer >= num_layers:
+            raise ValueError(
+                f"H3 multimodal text encoder layer {self.layer} (50th) >= "
+                f"num_hidden_layers {num_layers}"
+            )
+        self.hidden_size = hidden_size
+        logger.info(
+            "minimax_h3 ref2va text_encoder: layer=%d hidden_size=%s vision_tower=%s",
+            self.layer,
+            hidden_size,
+            type(getattr(vlm, "vision_tower", None)).__name__,
+        )
+
+    def __call__(
+        self,
+        input_ids,
+        pixel_values_videos=None,
+        video_grid_thw=None,
+        attention_mask=None,
+    ):
+        # 1. 视觉路径：复用 mlx-vlm Model.get_input_embeddings，内部完成
+        #    vision_tower 前向 + video_pad masked_scatter + deepstack 特征 +
+        #    get_rope_index 计算 3D mrope position_ids。
+        features = self.vlm.get_input_embeddings(
+            input_ids,
+            pixel_values=None,
+            pixel_values_videos=pixel_values_videos,
+            video_grid_thw=video_grid_thw,
+            mask=attention_mask,
+        )
+        inputs_embeds = features.inputs_embeds
+        deepstack_visual_embeds = features.deepstack_visual_embeds
+        visual_pos_masks = features.visual_pos_masks
+        # get_input_embeddings 已把 3D position_ids 缓存到 language_model._position_ids。
+        position_ids = self.language_model._position_ids
+
+        # 2. 截断层循环：复刻 Qwen3VLModel.__call__，在第 self.layer 层停止，
+        #    注入 deepstack visual embeds，不接 final norm（H3 读 raw hidden）。
+        model = self.language_model.model
+        h = inputs_embeds
+        from mlx_lm.models.base import create_attention_mask
+
+        cache = [None] * len(model.layers)
+        mask = create_attention_mask(h, cache[0])
+        for layer_idx, (layer, c) in enumerate(zip(model.layers, cache)):
+            h = layer(h, mask, c, position_ids)
+            if deepstack_visual_embeds is not None and layer_idx in range(
+                len(deepstack_visual_embeds)
+            ):
+                h = self.language_model.model._deepstack_process(
+                    h, visual_pos_masks, deepstack_visual_embeds[layer_idx]
+                )
+            if layer_idx == self.layer:
+                out = h
+                logger.info(
+                    "minimax_h3 ref2va text_encoder: out shape=%s dtype=%s",
+                    out.shape,
+                    out.dtype,
+                )
+                return out
+        # layer 越界已在 __init__ 拦截，理论不可达。
+        return h
+
+
 def load_text_encoder(
     model_path, layer: int = H3_TEXT_ENCODER_LAYER, trust_remote_code: bool = True
 ):
@@ -120,5 +199,33 @@ def load_text_encoder(
     encoder = MiniMaxH3TextEncoder(lm, layer=layer)
     logger.info(
         "minimax_h3 text_encoder: loaded, wrapping language_model=%s", type(lm).__name__
+    )
+    return encoder
+
+
+def load_multimodal_text_encoder(
+    model_path, layer: int = H3_TEXT_ENCODER_LAYER, trust_remote_code: bool = True
+):
+    # ref2va 多模态文本编码器：加载完整 qwen3_vl VLM（保留 vision_tower），
+    # 包装成 MiniMaxH3MultimodalTextEncoder。与 load_text_encoder 不同——后者
+    # 丢弃 vision_tower 走纯文本路径；ref2va 参考视频必须经 vision_tower。
+    from mlx_vlm.utils import load_config, load_model
+
+    model_path = Path(model_path)
+    cfg = load_config(model_path)
+    text_model_type = cfg.get("text_config", {}).get(
+        "model_type", cfg.get("model_type")
+    )
+    logger.info(
+        "minimax_h3 ref2va text_encoder: loading qwen3_vl (with vision_tower) "
+        "from %s (text_model_type=%s)",
+        model_path,
+        text_model_type,
+    )
+    vlm = load_model(model_path, lazy=True, trust_remote_code=trust_remote_code)
+    encoder = MiniMaxH3MultimodalTextEncoder(vlm, layer=layer)
+    logger.info(
+        "minimax_h3 ref2va text_encoder: loaded, vlm=%s",
+        type(vlm).__name__,
     )
     return encoder

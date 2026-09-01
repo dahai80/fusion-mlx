@@ -547,6 +547,114 @@ def _encode_prompt(text_encoder, tokenizer, prompt, max_length=256):
     return text_embeds
 
 
+def _load_ref2va_frames(reference_paths):
+    # 加载参考视频/图像为 Qwen3VLVideoProcessor 期望的 list[(T, C, H, W) uint8]。
+    # reference_paths: list[str]（每个是一条参考视频路径，mp4/帧图）。
+    # imageio 抽帧得 (T,H,W,C)；转 (T,C,H,W) 供 processor._process_one。
+    # 单图视为 1 帧 (1,C,H,W)。返回 list[np.ndarray]，每条一个 (T,C,H,W)。
+    import numpy as np
+
+    if not isinstance(reference_paths, (list, tuple)) or not reference_paths:
+        raise ValueError(
+            "h3 ref2va: reference_paths must be a non-empty list of paths "
+            "(issue #688 step 2-3)"
+        )
+    videos = []
+    for i, rp in enumerate(reference_paths):
+        rp = os.fspath(rp)
+        if rp.lower().endswith((".mp4", ".mov", ".avi", ".mkv")):
+            try:
+                import imageio.v3 as iio
+
+                frames = iio.imread(rp, index=None)  # (T, H, W, C) uint8
+            except Exception as e:
+                logger.error("h3 ref2va: read video %s failed: %s", rp, e)
+                raise
+            if frames.ndim != 4 or frames.shape[-1] not in (1, 3, 4):
+                raise ValueError(
+                    "h3 ref2va: unexpected video shape %s for %s (issue #688 step 2-3)"
+                    % (frames.shape, rp)
+                )
+            video = np.transpose(frames, (0, 3, 1, 2))  # (T,H,W,C) -> (T,C,H,W)
+        else:
+            from PIL import Image
+
+            img = Image.open(rp).convert("RGB")
+            video = np.transpose(np.array(img), (2, 0, 1))[None, ...]  # (1,C,H,W)
+        logger.info(
+            "h3 ref2va: loaded reference %d/%d %s shape=%s",
+            i + 1,
+            len(reference_paths),
+            rp,
+            video.shape,
+        )
+        videos.append(video)
+    return videos
+
+
+def _encode_prompt_ref2va(
+    text_encoder, processor, prompt, reference_paths, max_length=2048
+):
+    # ref2va 多模态编码：参考视频经 Qwen3-VL chat template 包成
+    # <|vision_start|><|video_pad|><|vision_end|>，processor 展开占位符 →
+    # input_ids + pixel_values_videos + video_grid_thw，多模态 TE 前向到第 50 层。
+    # 返回 (1, seq, 5120) vision-conditioned text_embeds。
+    frames_list = _load_ref2va_frames(reference_paths)
+    # chat template：每条参考视频包 vision token。mlx-vlm processor 的 chat
+    # template 已在 from_pretrained 加载；这里手搓多模态 user content 以确保
+    # <|video_pad|> 占位符存在（processor 展开它）。
+    video_token = "<|video_pad|>"
+    content_parts = []
+    for i in range(len(reference_paths)):
+        content_parts.append({"type": "video", "video": video_token})
+    content_parts.append({"type": "text", "text": prompt})
+    messages = [{"role": "user", "content": content_parts}]
+    try:
+        text = processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+    except Exception:
+        # 回退：拼裸 vision token + prompt（部分 processor chat template 形态不同）。
+        vision_blocks = "".join(
+            f"<|vision_start|>{video_token}<|vision_end|> Video {i + 1}: "
+            for i in range(len(reference_paths))
+        )
+        text = vision_blocks + prompt
+        logger.warning("h3 ref2va: processor chat_template failed, raw vision text")
+    logger.info("h3 ref2va encode: prompt text len=%d", len(text))
+
+    batch = processor(text=[text], videos=frames_list, return_tensors=None)
+    input_ids = mx.array(batch["input_ids"], dtype=mx.int32)
+    pixel_values_videos = batch.get("pixel_values_videos")
+    if pixel_values_videos is None:
+        # 部分版本 key 名为 pixel_values（视频统一走 vision_tower）。
+        pixel_values_videos = batch.get("pixel_values")
+    if pixel_values_videos is None:
+        raise RuntimeError(
+            "h3 ref2va: processor returned no pixel_values/pixel_values_videos — "
+            "reference video preprocessing failed (issue #688 step 2-3)"
+        )
+    pixel_values_videos = mx.array(pixel_values_videos)
+    video_grid_thw = batch.get("video_grid_thw")
+    if video_grid_thw is None:
+        raise RuntimeError(
+            "h3 ref2va: processor returned no video_grid_thw (issue #688 step 2-3)"
+        )
+    video_grid_thw = mx.array(video_grid_thw)
+    text_embeds = text_encoder(
+        input_ids,
+        pixel_values_videos=pixel_values_videos,
+        video_grid_thw=video_grid_thw,
+    )
+    logger.info(
+        "h3 ref2va encode: ids=%s grid_thw=%s embeds=%s",
+        input_ids.shape,
+        video_grid_thw.shape,
+        text_embeds.shape,
+    )
+    return text_embeds
+
+
 def generate_video(
     *,
     model_path,
@@ -603,27 +711,23 @@ def generate_video(
     do_te_q = quantize in ("te4", "dit8_te4")
     do_dit_q = quantize in ("dit8", "dit8_te4")
 
-    # ref2va (reference-image-to-video) 生成分支未实现：需要单独的
-    # transformer_ref（~67GB）与逆向出的 refiner 前向，issue #688 step 2-3。
-    # 显式拒绝而非静默丢弃 reference_images（fail-visible, Rule 12）。
-    # 必须在任何模型加载之前拒绝，避免无谓加载 67GB 权重。
-    if reference_images is not None:
-        logger.error(
-            "h3 generate_video: ref2va reference_images dropped: %s (issue #688 "
-            "step 2-3 not implemented: separate transformer_ref + refiner forward)",
+    # ref2va (reference-video-to-video) 分支：参考视频经 Qwen3-VL vision_tower
+    # 编码成 vision-conditioned text_embeds，DiT 走纯 T2V 去噪（build_t2va_packed）。
+    # issue #688 step 2-3：原 NotImplementedError gate 已替换为实现。
+    is_ref2va = reference_images is not None
+    if is_ref2va:
+        logger.info(
+            "h3 generate_video: ref2va branch (issue #688 step 2-3) references=%s",
             reference_images,
         )
-        raise NotImplementedError(
-            "MiniMax-H3 ref2va reference-image generation is not implemented "
-            "(issue #688 step 2-3): the ref2va partition requires a separate "
-            "transformer_ref checkpoint (~67GB) and a reverse-engineered refiner "
-            "forward with no local reference implementation. The forwarding "
-            "plumbing (step 1) landed so the drop is explicit, but r2v video "
-            "cannot be produced until steps 2-3 land."
-        )
+        if not isinstance(reference_images, (list, tuple)) or not reference_images:
+            raise ValueError(
+                "h3 ref2va: reference_images must be a non-empty list of paths "
+                "(issue #688 step 2-3)"
+            )
 
     logger.info(
-        "h3 generate_video: prompt='%s' frames=%d %dx%d fps=%d seed=%s steps=%d quantize=%s audio=%s",
+        "h3 generate_video: prompt='%s' frames=%d %dx%d fps=%d seed=%s steps=%d quantize=%s audio=%s ref2va=%s",
         prompt[:60],
         num_frames,
         width,
@@ -633,6 +737,7 @@ def generate_video(
         num_inference_steps,
         quantize,
         audio,
+        is_ref2va,
     )
     logger.info(
         "minimax_h3 denoise: inpaint=%s controlnet=%s",
@@ -655,36 +760,64 @@ def generate_video(
     if seed is not None:
         mx.random.seed(int(seed))
 
-    # 阶段化加载：FL2VA 总权重 144GB（TE 67G + DiT 66G + VAE 11G）超过 M5 Max 137G
-    # 物理内存，同时加载会 swap thrash 致 Metal 前向极慢。先加载 TE 编码 prompt，
-    # 物化 text_embeds 后释放 TE，再加载 DiT+VAE 去噪。text_embeds 仅几 MB。
+    # 阶段化加载：FL2VA/Ref2VA 总权重 ~144GB（TE 67G + DiT 66G + VAE 11G）超过
+    # M5 Max 137G 物理内存，同时加载会 swap thrash 致 Metal 前向极慢。先加载 TE
+    # 编码 prompt，物化 text_embeds 后释放 TE，再加载 DiT+VAE 去噪。text_embeds 仅几 MB。
     import gc
 
     te_path = _resolve_subdir(model_path, "text_encoder")
-    text_encoder = load_text_encoder(te_path)
-    if do_te_q:
-        from .quantize import quantize_text_encoder
+    if is_ref2va:
+        # ref2va 需要完整 qwen3_vl VLM（保留 vision_tower）+ Qwen3VLProcessor。
+        from .text_encoder import load_multimodal_text_encoder
 
-        # TE encode 一次即释放，4-bit 对 text_embeds 影响最小。
-        # 量化须在 encode 前（此时权重已物化），encode 后随 TE 一并释放。
-        # MiniMaxH3TextEncoder.language_model = mlx-vlm Qwen3VLModel，量化其 Linear。
-        lm = getattr(text_encoder, "language_model", text_encoder)
-        quantize_text_encoder(lm)
+        text_encoder = load_multimodal_text_encoder(te_path)
+        if do_te_q:
+            # vision_tower 量化不在本 PR 范围；ref2va 仅量化 language_model。
+            from .quantize import quantize_text_encoder
 
-    # tokenizer：优先 transformers AutoTokenizer（qwen3_vl chat template）。
-    try:
-        from transformers import AutoTokenizer
+            lm = getattr(text_encoder, "language_model", text_encoder)
+            quantize_text_encoder(lm)
+        # processor：Qwen3VLProcessor.from_pretrained（含 video_processor）。
+        try:
+            from mlx_vlm.models.qwen3_vl.processing_qwen3_vl import (
+                Qwen3VLProcessor,
+            )
 
-        tokenizer = AutoTokenizer.from_pretrained(te_path, local_files_only=True)
-    except Exception as e:
-        logger.error("h3: tokenizer load failed from %s: %s", te_path, e)
-        raise
+            processor = Qwen3VLProcessor.from_pretrained(te_path)
+        except Exception as e:
+            logger.error("h3 ref2va: processor load failed from %s: %s", te_path, e)
+            raise
+        text_embeds = _encode_prompt_ref2va(
+            text_encoder, processor, prompt, reference_images
+        )
+    else:
+        text_encoder = load_text_encoder(te_path)
+        if do_te_q:
+            from .quantize import quantize_text_encoder
 
-    text_embeds = _encode_prompt(text_encoder, tokenizer, prompt)
-    # 物化 text_embeds 后释放 TE（~67G）与 tokenizer。
+            # TE encode 一次即释放，4-bit 对 text_embeds 影响最小。
+            # 量化须在 encode 前（此时权重已物化），encode 后随 TE 一并释放。
+            # MiniMaxH3TextEncoder.language_model = mlx-vlm Qwen3VLModel，量化其 Linear。
+            lm = getattr(text_encoder, "language_model", text_encoder)
+            quantize_text_encoder(lm)
+
+        # tokenizer：优先 transformers AutoTokenizer（qwen3_vl chat template）。
+        try:
+            from transformers import AutoTokenizer
+
+            tokenizer = AutoTokenizer.from_pretrained(te_path, local_files_only=True)
+        except Exception as e:
+            logger.error("h3: tokenizer load failed from %s: %s", te_path, e)
+            raise
+
+        text_embeds = _encode_prompt(text_encoder, tokenizer, prompt)
+    # 物化 text_embeds 后释放 TE（~67G）与 tokenizer/processor。
     mx.eval(text_embeds)
     del text_encoder
-    del tokenizer
+    if not is_ref2va:
+        del tokenizer
+    else:
+        del processor
     gc.collect()
     _clear_metal_cache()
     logger.info("h3: text_encoder released, loading DiT+VAE")
@@ -708,6 +841,21 @@ def generate_video(
         raise ValueError(
             "fl2va (image-conditioned) 与 joint audio 当前互斥；"
             "音频连续性非本 PR 范围。请二选一。"
+        )
+
+    # ref2va 互斥：参考视频已编码进 text_embeds（vision-conditioned），DiT 走纯
+    # T2V 去噪。fl2va 关键帧（image/last_frame_image）与 joint audio 均假设纯文本
+    # text_embeds，混用会语义错乱。ref2va 必须只走 generate_t2va_video。
+    if is_ref2va and (image is not None or last_frame_image is not None):
+        raise ValueError(
+            "h3 ref2va: reference_images (ref2va) cannot combine with "
+            "image/last_frame_image (fl2va keyframe) — different text_embeds "
+            "conditioning (issue #688 step 2-3)."
+        )
+    if is_ref2va and audio:
+        raise ValueError(
+            "h3 ref2va: reference_images (ref2va) cannot combine with joint "
+            "audio — t2va_av assumes pure-text text_embeds (issue #688 step 2-3)."
         )
 
     if image is not None or last_frame_image is not None:

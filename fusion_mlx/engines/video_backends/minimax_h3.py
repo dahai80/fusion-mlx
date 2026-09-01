@@ -139,22 +139,16 @@ class MiniMaxH3Backend(VideoBackend):
                 "MiniMax-H3 ref2va audio not implemented (issue #589): "
                 "reference_audio is not supported."
             )
-        # ref2va reference-image generation unimplemented (issue #688 step 2-3):
-        # needs separate transformer_ref (~67GB) + reverse-engineered refiner
-        # forward. Fail fast before model load; generate_video re-checks as
-        # defense-in-depth for direct SDK callers.
+        # ref2va reference-image generation (issue #688 step 2-3): implemented.
+        # reference_images forwarded to generate_video, which auto-detects ref2va
+        # (vision-conditioned text_embeds via Qwen3-VL vision_tower → pure T2V
+        # DiT denoise). generate_video has defense-in-depth guards for direct
+        # SDK callers (mutual-exclusion, empty-list). Path-safety below.
         if params.reference_images is not None:
-            logger.error(
-                "minimax_h3: ref2va reference_images rejected (issue #688 "
-                "step 2-3 not implemented): %s",
-                params.reference_images,
-            )
-            raise NotImplementedError(
-                "MiniMax-H3 ref2va reference-image generation is not implemented "
-                "(issue #688 step 2-3): requires a separate transformer_ref "
-                "checkpoint (~67GB) and a reverse-engineered refiner forward. "
-                "reference_images is forwarded but cannot be consumed yet."
-            )
+            for rp in params.reference_images:
+                if isinstance(rp, str) and (rp.startswith(("/", "~")) or ".." in rp):
+                    if not is_safe_local_path(rp):
+                        raise ValueError(f"reference image outside allowed dirs: {rp}")
         if params.resolution not in _H3_RESOLUTIONS:
             raise ValueError(
                 f"resolution must be one of {_H3_RESOLUTIONS}, got {params.resolution!r}"

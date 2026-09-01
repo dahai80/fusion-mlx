@@ -120,9 +120,11 @@ class TestGenerateAcceptsConditioning:
             assert "l2va" not in str(raised)
             assert "reference_audio" not in str(raised)
 
-    async def test_generate_rejects_reference_images_fast(self):
-        # ref2va reference_images 未实现（issue #688 step 2-3）：须在模型加载前
-        # fail-fast 抛 NotImplementedError，不静默丢弃也不加载 67GB 权重。
+    async def test_generate_forwards_reference_images_no_rejection(self):
+        # ref2va reference_images 已实现（issue #688 step 2-3）：backend 不再
+        # 抛 NotImplementedError 拒绝，而是做路径安全校验后转发给 generate_video。
+        # 路径在允许目录内（/ref/... 不触发拒绝）→ 进入 model load（nonexistent 失败，
+        # 非 guard ValueError/NotImplementedError）。
         b = self._backend()
         p = VideoGenParams(
             prompt="test",
@@ -132,24 +134,57 @@ class TestGenerateAcceptsConditioning:
             n=1,
             reference_images=["/ref/a.png", "/ref/b.png"],
         )
-        with pytest.raises(NotImplementedError, match="ref2va reference-image"):
+        raised = None
+        try:
             await b.generate(p)
-        # 模型未被加载（fail-fast 早于 start()）。
-        assert b._loaded is True  # _backend() 预置 True；guard 不应触发 start()
+        except NotImplementedError as e:
+            raised = e
+        except Exception as e:
+            raised = e
+        # 不应抛 ref2va NotImplementedError（已实现）。
+        if isinstance(raised, NotImplementedError):
+            assert "ref2va reference-image" not in str(raised)
+
+    async def test_generate_rejects_unsafe_reference_image_path(self):
+        # reference_images 绝对路径须在允许目录内（路径安全校验，#688 step 2-3）。
+        b = self._backend()
+        p = VideoGenParams(
+            prompt="test",
+            num_frames=97,
+            width=768,
+            height=768,
+            n=1,
+            reference_images=["/etc/passwd"],
+        )
+        with pytest.raises(ValueError, match="(?i)outside allowed|reference image"):
+            await b.generate(p)
 
 
-class TestGenerateVideoRef2vaGuard:
-    def test_generate_video_rejects_reference_images(self):
-        # generate_video 直接 SDK 调用路径的 defense-in-depth guard。
-        # 不加载模型，仅断言 ref2va 分支显式拒绝。
+class TestGenerateVideoRef2vaBranch:
+    def test_generate_video_has_ref2va_branch(self):
+        # generate_video 直接 SDK 路径：ref2va 分支已实现（不再 NotImplementedError）。
+        # 断言源码含 ref2va 分支标记，且不再含 reference_images 的 NotImplementedError。
+        import inspect
+
         from fusion_mlx.video.minimax_h3.generate import generate_video
 
-        with pytest.raises(NotImplementedError, match="issue #688"):
+        src = inspect.getsource(generate_video)
+        assert "is_ref2va" in src
+        assert "load_multimodal_text_encoder" in src
+        assert "_encode_prompt_ref2va" in src
+        # 旧 gate 已移除（issue #688 step 2-3 已实现）。
+        assert "ref2va reference-image generation is not implemented" not in src
+
+    def test_generate_video_rejects_empty_reference_images(self):
+        # defense-in-depth：空 reference_images 列表显式拒绝（fail-visible）。
+        from fusion_mlx.video.minimax_h3.generate import generate_video
+
+        with pytest.raises(ValueError, match="(?i)non-empty"):
             generate_video(
                 model_path="/nonexistent/h3-ref2va",
                 prompt="test",
                 num_frames=97,
                 width=768,
                 height=768,
-                reference_images=["/ref/a.png"],
+                reference_images=[],
             )
