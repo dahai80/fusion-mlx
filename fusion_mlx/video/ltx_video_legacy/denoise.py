@@ -11,6 +11,8 @@ from collections.abc import Callable
 import mlx.core as mx
 import numpy as np
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +37,8 @@ def denoise(
     on_step_sync: Callable[[int, int], None] | None = None,
     conditioning_latent=None,
     noise_mask=None,
+    inpaint_mask=None,
+    init_latent=None,
 ):
     do_cfg = float(guidance_scale) > 1.0
     if do_cfg:
@@ -61,6 +65,7 @@ def denoise(
         float(guidance_scale),
         pixel_coords.shape[2],
     )
+    logger.info("ltx-legacy denoise: inpaint=%s", inpaint_mask is not None)
 
     mx.eval(prompt_embeds, negative_embeds, latents)
     pe_np = _to_np(prompt_embeds)
@@ -124,6 +129,9 @@ def denoise(
             latents = conditioning_latent * (1.0 - noise_mask) + latents * noise_mask
 
         mx.eval(latents)
+        if inpaint_mask is not None and init_latent is not None:
+            latents = apply_inpaint_mask(latents, init_latent, inpaint_mask)
+            mx.eval(latents)
         latents_np = _to_np(latents)
         nan_count = int(np.isnan(latents_np).sum())
         if nan_count > 0:

@@ -3,6 +3,7 @@ import asyncio
 import gc
 import logging
 from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -100,6 +101,13 @@ class CogVideoBackend(VideoBackend):
             no_compile=no_compile,
             on_step_sync=on_step_sync,
             session_id=session_id,
+            # #731 Surface B+C: thread controlnet_image (fail-visible in
+            # generate_video — no backend model) and inpaint surfaces.
+            controlnet_image=kwargs.get("controlnet_image"),
+            controlnet_adapter=kwargs.get("controlnet_adapter"),
+            controlnet_latent=kwargs.get("controlnet_latent"),
+            inpaint_mask=kwargs.get("inpaint_mask"),
+            init_latent=kwargs.get("init_latent"),
         )
 
     async def load_vae_encoder(self) -> None:
@@ -156,3 +164,20 @@ class CogVideoBackend(VideoBackend):
         mx.synchronize()
         mx.clear_cache()
         logger.info("cogvideox: vae_encoder unload")
+
+    async def encode_control(self, **kwargs) -> Any:
+        # #731 Surface B: ControlNet conditioning is not available for cogvideox
+        # — the shared ControlNet adapter is Wan2-arch (text_dim=4096,
+        # patch_size=[1,2,2], token-residual block injection) and no per-backend
+        # ControlNet model exists for cogvideox. Fail visibly (Rule 12): a
+        # caller asking for ControlNet must NOT silently degrade to T2V.
+        if kwargs.get("controlnet_image") is not None:
+            raise RuntimeError(
+                "cogvideox: ControlNet (Surface B) not available for this "
+                "backend — no per-backend ControlNet model (see issue #731 "
+                "follow-up). Refusing to silently degrade to T2V (#731)."
+            )
+        # No conditioning surfaces implemented for cogvideox beyond VAE encode
+        # (Surface A, already on load_vae_encoder/encode). Pure T2V -> None.
+        logger.info("cogvideox: encode_control pure-T2V (no controlnet/vace)")
+        return None

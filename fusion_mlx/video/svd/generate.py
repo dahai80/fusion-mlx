@@ -8,6 +8,8 @@ import os
 import mlx.core as mx
 import numpy as np
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 from .scheduler import SVDEulerScheduler
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,14 @@ def generate_video(
     output_path=None,
     dtype=mx.float16,
     on_step_sync=None,
+    # #737 Surface B+C: ControlNet residual threading (B) and inpaint-mask
+    # re-composite (C). All default None -> pure I2V path, bit-identical to
+    # pre-#737 behavior. controlnet_image fails visibly (no backend model).
+    controlnet_image=None,
+    controlnet_adapter=None,
+    controlnet_latent=None,
+    inpaint_mask=None,
+    init_latent=None,
 ):
     from .clip_vision import SVDCLIPVisionEncoder
     from .unet import SVDTemporalUNet
@@ -113,7 +123,24 @@ def generate_video(
     latents = noise * scheduler.init_noise_sigma
     do_cfg = float(cfg_scale) > 1.0
 
-    logger.info("svd: denoise start steps=%d cfg=%s", num_inference_steps, do_cfg)
+    # #737 Surface B: ControlNet residual injection is gated behind a real
+    # per-backend ControlNet adapter. svd has no ControlNet model (the shared
+    # ControlNet adapter is Wan2-arch). controlnet_image on this backend must
+    # fail visibly (Rule 12) rather than silently degrade to I2V.
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "svd: ControlNet (Surface B) not available for this backend — "
+            "no per-backend ControlNet model (see issue #737 follow-up). "
+            "Refusing to silently degrade to T2V (#737)."
+        )
+
+    logger.info(
+        "svd: denoise start steps=%d cfg=%s inpaint=%s controlnet=%s",
+        num_inference_steps,
+        do_cfg,
+        inpaint_mask is not None,
+        controlnet_image is not None,
+    )
 
     for i, t in enumerate(timesteps.tolist()):
         t_val = float(t)
@@ -137,6 +164,12 @@ def generate_video(
 
         latents = scheduler.step(noise_pred, t_val, latents)
         mx.eval(latents)
+
+        # #737 Surface C: frozen-region re-composite after each step.
+        # DiT-agnostic, latent-space only; None -> passthrough.
+        if inpaint_mask is not None and init_latent is not None:
+            latents = apply_inpaint_mask(latents, init_latent, inpaint_mask)
+            mx.eval(latents)
 
         logger.info("svd: step=%d/%d t=%.4f", i + 1, num_inference_steps, t_val)
         if on_step_sync is not None:

@@ -15,6 +15,8 @@ import os
 
 import mlx.core as mx
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 from .audio_vae.audio_latents import (
     denormalize_audio_latents,
     normalize_audio_latents,
@@ -346,6 +348,11 @@ def generate_fl2va_video(
     vae_ratio_t=4,
     compute_dtype=mx.bfloat16,
     keyframe_anchors=("first",),
+    # #736 Surface C: inpaint-mask re-composite after each scheduler.step.
+    # mask=1 -> reactive (keep denoised); mask=0 -> frozen (restore init).
+    # None -> T2V passthrough, bit-identical to pre-#736 behavior.
+    inpaint_mask=None,
+    init_latent=None,
 ):
     # fl2va 去噪（i2va/l2va 场景连续性）。
     # 对照 diffusers before_denoise.py:268 build_packed_sequence + L940-1009 条件编码 +
@@ -409,6 +416,12 @@ def generate_fl2va_video(
 
     patch_size = (1, 2, 2)
 
+    logger.info(
+        "minimax_h3 fl2va denoise: inpaint=%s steps=%d",
+        inpaint_mask is not None,
+        len(timesteps),
+    )
+
     for i, t in enumerate(timesteps):
         t_video = float(t)
         packed = build_fl2va_packed(
@@ -439,6 +452,11 @@ def generate_fl2va_video(
         )
         gen_latents = scheduler.step(model_output, t, gen_latents)
         mx.eval(gen_latents)
+        # #736 Surface C: frozen-region re-composite after each step.
+        # DiT-agnostic, latent-space only; None -> passthrough.
+        if inpaint_mask is not None and init_latent is not None:
+            gen_latents = apply_inpaint_mask(gen_latents, init_latent, inpaint_mask)
+            mx.eval(gen_latents)
         if i % 10 == 0 or i == len(timesteps) - 1:
             logger.info(
                 "h3 fl2va generate: step %d/%d t=%.4f", i, len(timesteps), t_video
@@ -546,6 +564,14 @@ def generate_video(
     last_frame_image=None,
     keyframe_anchors=None,
     reference_images=None,
+    # #736 Surface B+C: ControlNet residual threading (B) and inpaint-mask
+    # re-composite (C). All default None -> T2V pure-noise path, bit-identical
+    # to pre-#736 behavior. controlnet_image fails visibly (no backend model).
+    controlnet_image=None,
+    controlnet_adapter=None,
+    controlnet_latent=None,
+    inpaint_mask=None,
+    init_latent=None,
 ):
     # H3 t2va/fl2va 顶层编排。
     #
@@ -608,6 +634,22 @@ def generate_video(
         quantize,
         audio,
     )
+    logger.info(
+        "minimax_h3 denoise: inpaint=%s controlnet=%s",
+        inpaint_mask is not None,
+        controlnet_image is not None,
+    )
+
+    # #736 Surface B: ControlNet residual injection is NOT fabricatable for
+    # minimax_h3 — the shared ControlNet adapter is Wan2-arch and no per-backend
+    # ControlNet model exists. controlnet_image must fail visibly (Rule 12)
+    # rather than silently degrade to T2V.
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "minimax_h3: ControlNet (Surface B) not available for this backend — "
+            "no per-backend ControlNet model (see issue #736 follow-up). "
+            "Refusing to silently degrade to T2V (#736)."
+        )
 
     cfg = H3Config()
     if seed is not None:
@@ -710,6 +752,8 @@ def generate_video(
             vae_ratio=H3VAEConfig().vae_ratio,
             vae_ratio_t=H3VAEConfig().vae_ratio_t,
             keyframe_anchors=tuple(anchors),
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
         )
         _write_mp4(frames, output_path, fps)
     elif audio:

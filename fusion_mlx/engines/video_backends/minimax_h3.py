@@ -5,6 +5,7 @@
 import asyncio
 import gc
 import logging
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -203,6 +204,9 @@ class MiniMaxH3Backend(VideoBackend):
                                 image=cond_image,
                                 last_frame_image=cond_last,
                                 reference_images=params.reference_images,
+                                controlnet_image=params.controlnet_image,
+                                inpaint_mask=params.inpaint_mask,
+                                init_latent=params.init_latent,
                             ),
                         ),
                         timeout=timeout,
@@ -274,3 +278,18 @@ class MiniMaxH3Backend(VideoBackend):
         mx.synchronize()
         mx.clear_cache()
         logger.info("minimax_h3: vae_encoder unload")
+
+    async def encode_control(self, **kwargs) -> Any:
+        # #736 Surface B: ControlNet conditioning is not available for minimax_h3
+        # — the shared ControlNet adapter is Wan2-arch (text_dim=4096,
+        # patch_size=[1,2,2], token-residual block injection) and no per-backend
+        # ControlNet model exists for minimax_h3. Fail visibly (Rule 12): a
+        # caller asking for ControlNet must NOT silently degrade to T2V.
+        if kwargs.get("controlnet_image") is not None:
+            raise RuntimeError(
+                "minimax_h3: ControlNet (Surface B) not available for this "
+                "backend — no per-backend ControlNet model (see issue #736 "
+                "follow-up). Refusing to silently degrade to T2V (#736)."
+            )
+        logger.info("minimax_h3: encode_control pure-T2V (no controlnet)")
+        return None

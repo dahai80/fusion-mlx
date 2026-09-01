@@ -4,6 +4,7 @@
 import asyncio
 import gc
 import logging
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -128,6 +129,9 @@ class CosmosBackend(VideoBackend):
                                 is_predict2=self._is_predict2,
                                 on_step=None,
                                 output_path=op,
+                                controlnet_image=params.controlnet_image,
+                                inpaint_mask=params.inpaint_mask,
+                                init_latent=params.init_latent,
                             ),
                         ),
                         timeout=timeout,
@@ -204,3 +208,21 @@ class CosmosBackend(VideoBackend):
         mx.synchronize()
         mx.clear_cache()
         logger.info("cosmos: vae_encoder unload")
+
+    async def encode_control(self, **kwargs) -> Any:
+        # #732 Surface B: ControlNet conditioning is not available for cosmos —
+        # the shared ControlNet adapter is Wan2-arch (text_dim=4096,
+        # patch_size=[1,2,2], token-residual block injection) and no
+        # per-backend ControlNet model exists for cosmos. Fail visibly
+        # (Rule 12): a caller asking for ControlNet must NOT silently degrade
+        # to T2V.
+        if kwargs.get("controlnet_image") is not None:
+            raise RuntimeError(
+                "cosmos: ControlNet (Surface B) not available for this backend — "
+                "no per-backend ControlNet model (see issue #732 follow-up). "
+                "Refusing to silently degrade to T2V (#732)."
+            )
+        # No conditioning surfaces implemented for cosmos beyond VAE encode
+        # (Surface A, already on load_vae_encoder/encode). Pure T2V -> None.
+        logger.info("cosmos: encode_control pure-T2V (no controlnet/vace)")
+        return None

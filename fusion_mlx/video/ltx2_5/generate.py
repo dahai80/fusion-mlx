@@ -59,6 +59,9 @@ def generate_video(
     tiling: str = "auto",
     output_path: str | None = None,
     verbose: bool = True,
+    controlnet_image: str | None = None,
+    inpaint_mask=None,
+    init_latent=None,
 ) -> bytes:
     # LTX-2.5 两阶段 distilled T2V 生成。I2V/audio/duration-head 不在本轮路径，
     # 留空 fail visible (Rule 12)。
@@ -213,6 +216,9 @@ def generate_video(
         transformer,
         DISTILLED_STAGE_1_SIGMAS,
         verbose=verbose,
+        controlnet_image=controlnet_image,
+        inpaint_mask=inpaint_mask,
+        init_latent=init_latent,
     )
     mx.eval(latents)
     mx.clear_cache()
@@ -248,6 +254,9 @@ def generate_video(
         transformer,
         DISTILLED_STAGE_2_SIGMAS,
         verbose=verbose,
+        controlnet_image=controlnet_image,
+        inpaint_mask=inpaint_mask,
+        init_latent=init_latent,
     )
     mx.eval(latents)
     del transformer

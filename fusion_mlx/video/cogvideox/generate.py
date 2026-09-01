@@ -5,6 +5,7 @@ import logging
 import random
 import time
 from collections.abc import Callable
+from typing import Any
 
 import mlx.core as mx
 import numpy as np
@@ -25,6 +26,8 @@ try:
 except Exception:
     from contextlib import nullcontext as _fa_step
 
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
+
 
 class Colors:
     CYAN = "\033[96m"
@@ -36,6 +39,97 @@ class Colors:
     BOLD = "\033[1m"
     DIM = "\033[2m"
     RESET = "\033[0m"
+
+
+def run_denoise(
+    model,
+    latents,
+    context,
+    context_null,
+    cfg_disabled: bool,
+    guide_scale: float,
+    steps: int,
+    timestep_list,
+    sched,
+    rope_cos,
+    rope_sin,
+    on_step_sync: Callable[[int, int], None] | None = None,
+    # #731 Surface B: ControlNet adapter + preprocessed control latent.
+    # Threaded for contract parity with Wan2 run_denoise (#653); cogvideox has
+    # no per-backend ControlNet model so generate_video gates this to None and
+    # fails visibly when controlnet_image is set (no silent T2V degrade).
+    controlnet_adapter: Any = None,
+    controlnet_latent: Any = None,
+    # #731 Surface C: inpaint-mask re-composite after each sched.step.
+    # mask=1 -> reactive (keep denoised); mask=0 -> frozen (restore init).
+    # None -> T2V passthrough, bit-identical to pre-#731 behavior.
+    inpaint_mask: Any = None,
+    init_latent: Any = None,
+):
+    # Separable per-step denoise loop extracted from generate_video (#731),
+    # mirroring the Wan2 stage.py:run_denoise precedent (#653). Returns the
+    # denoised latent (4D C-first). All-None control -> pure-noise path.
+    logger.info(
+        "cogvideox run_denoise: steps=%d cfg_disabled=%s inpaint=%s controlnet=%s",
+        steps,
+        cfg_disabled,
+        inpaint_mask is not None,
+        controlnet_adapter is not None,
+    )
+
+    for i in range(steps):
+        t_val = timestep_list[i]
+        t_batch = mx.array([t_val] if cfg_disabled else [t_val, t_val])
+
+        if cfg_disabled:
+            _call = getattr(model, "_compiled", model)
+            with _fa_step(i):
+                pred = _call(
+                    latents[None],
+                    encoder_hidden_states=context[None],
+                    timestep=t_batch[:1],
+                    rope_cos=rope_cos,
+                    rope_sin=rope_sin,
+                )
+            noise_pred = pred[0]
+        else:
+            _call = getattr(model, "_compiled", model)
+            with _fa_step(i):
+                pred_cond = _call(
+                    latents[None],
+                    encoder_hidden_states=context[None],
+                    timestep=t_batch[:1],
+                    rope_cos=rope_cos,
+                    rope_sin=rope_sin,
+                )
+                pred_uncond = _call(
+                    latents[None],
+                    encoder_hidden_states=context_null[None],
+                    timestep=t_batch[:1],
+                    rope_cos=rope_cos,
+                    rope_sin=rope_sin,
+                )
+            noise_pred_cond = pred_cond[0]
+            noise_pred_uncond = pred_uncond[0]
+            noise_pred = noise_pred_uncond + guide_scale * (
+                noise_pred_cond - noise_pred_uncond
+            )
+            del noise_pred_cond, noise_pred_uncond
+
+        latents = sched.step(noise_pred[None], t_val, latents[None]).squeeze(0)
+        del noise_pred
+        mx.eval(latents)
+
+        # #731 Surface C: frozen-region re-composite after each step.
+        # DiT-agnostic, latent-space only; None -> passthrough.
+        if inpaint_mask is not None and init_latent is not None:
+            latents = apply_inpaint_mask(latents, init_latent, inpaint_mask)
+            mx.eval(latents)
+
+        if on_step_sync is not None:
+            on_step_sync(i + 1, steps)
+
+    return latents
 
 
 def generate_video(
@@ -54,6 +148,14 @@ def generate_video(
     no_compile: bool = True,
     on_step_sync: Callable[[int, int], None] | None = None,
     session_id: str | None = None,
+    # #731 Surface B+C: ControlNet residual threading (B) and inpaint-mask
+    # re-composite (C). All default None -> T2V pure-noise path, bit-identical
+    # to pre-#731 behavior. controlnet_image fails visibly (no backend model).
+    controlnet_image: str | None = None,
+    controlnet_adapter: Any = None,
+    controlnet_latent: Any = None,
+    inpaint_mask: Any = None,
+    init_latent: Any = None,
 ):
     model_dir = get_model_path(model_dir)
     config, quantization = load_config(model_dir)
@@ -183,56 +285,39 @@ def generate_video(
     if not no_compile:
         model._compiled = mx.compile(model)
 
-    # Denoise
+    # Surface B (#731): ControlNet residual injection is gated behind a real
+    # per-backend ControlNet adapter. cogvideox has no ControlNet model yet
+    # (the shared ControlNet adapter is Wan2-arch). controlnet_image on this
+    # backend must fail visibly (Rule 12) rather than silently degrade to T2V.
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "cogvideox: ControlNet (Surface B) not available for this backend — "
+            "no per-backend ControlNet model (see issue #731 follow-up). "
+            "Refusing to silently degrade to T2V (#731)."
+        )
+
+    # Denoise (#731): extracted to run_denoise so Surface C (inpaint re-composite)
+    # and Surface B (controlnet threading) land in a separable, testable loop.
     print(f"\n{Colors.GREEN}Denoising ({steps} steps)...{Colors.RESET}")
     t3 = time.time()
-    timestep_list = sched.timesteps.tolist()
-
-    for i in range(steps):
-        t_val = timestep_list[i]
-        t_batch = mx.array([t_val] if cfg_disabled else [t_val, t_val])
-
-        if cfg_disabled:
-            _call = getattr(model, "_compiled", model)
-            with _fa_step(i):
-                pred = _call(
-                    latents[None],
-                    encoder_hidden_states=context[None],
-                    timestep=t_batch[:1],
-                    rope_cos=rope_cos,
-                    rope_sin=rope_sin,
-                )
-            noise_pred = pred[0]
-        else:
-            _call = getattr(model, "_compiled", model)
-            with _fa_step(i):
-                pred_cond = _call(
-                    latents[None],
-                    encoder_hidden_states=context[None],
-                    timestep=t_batch[:1],
-                    rope_cos=rope_cos,
-                    rope_sin=rope_sin,
-                )
-                pred_uncond = _call(
-                    latents[None],
-                    encoder_hidden_states=context_null[None],
-                    timestep=t_batch[:1],
-                    rope_cos=rope_cos,
-                    rope_sin=rope_sin,
-                )
-            noise_pred_cond = pred_cond[0]
-            noise_pred_uncond = pred_uncond[0]
-            noise_pred = noise_pred_uncond + guide_scale * (
-                noise_pred_cond - noise_pred_uncond
-            )
-            del noise_pred_cond, noise_pred_uncond
-
-        latents = sched.step(noise_pred[None], t_val, latents[None]).squeeze(0)
-        del noise_pred
-        mx.eval(latents)
-        if on_step_sync is not None:
-            on_step_sync(i + 1, steps)
-
+    latents = run_denoise(
+        model=model,
+        latents=latents,
+        context=context,
+        context_null=context_null if not cfg_disabled else None,
+        cfg_disabled=cfg_disabled,
+        guide_scale=guide_scale,
+        steps=steps,
+        timestep_list=sched.timesteps.tolist(),
+        sched=sched,
+        rope_cos=rope_cos,
+        rope_sin=rope_sin,
+        on_step_sync=on_step_sync,
+        inpaint_mask=inpaint_mask,
+        init_latent=init_latent,
+        controlnet_adapter=controlnet_adapter,
+        controlnet_latent=controlnet_latent,
+    )
     print(f"{Colors.DIM}  Denoising: {time.time() - t3:.1f}s{Colors.RESET}")
 
     # Session tail

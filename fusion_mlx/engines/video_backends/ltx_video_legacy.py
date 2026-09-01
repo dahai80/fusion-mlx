@@ -98,6 +98,14 @@ class LegacyLTXBackend(VideoBackend):
         )
 
     async def generate(self, params: VideoGenParams) -> list[bytes]:
+        if not self._loaded:
+            await self.start(self._model_path)
+        if params.controlnet_image is not None:
+            raise RuntimeError(
+                "ltx_video_legacy: ControlNet (Surface B) not available for this"
+                " backend — no per-backend ControlNet model (see issue #734"
+                " follow-up). Refusing to silently degrade to T2V (#734)."
+            )
         base_seed = (
             params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )
@@ -124,6 +132,9 @@ class LegacyLTXBackend(VideoBackend):
                     on_step_sync=sync_cb,
                     image=getattr(params, "image", None),
                     image_strength=getattr(params, "image_strength", None),
+                    inpaint_mask=params.inpaint_mask,
+                    init_latent=params.init_latent,
+                    controlnet_image=getattr(params, "controlnet_image", None),
                 )
                 results.append(mp4_bytes)
             return results
@@ -192,6 +203,16 @@ class LegacyLTXBackend(VideoBackend):
             timeout=5.0,
         )
         logger.info("legacy-ltx: vae_encoder unload")
+
+    async def encode_control(self, **kwargs: Any) -> Any:
+        if kwargs.get("controlnet_image") is not None:
+            raise RuntimeError(
+                "ltx_video_legacy: ControlNet (Surface B) not available for this"
+                " backend — no per-backend ControlNet model (see issue #734"
+                " follow-up). Refusing to silently degrade to T2V (#734)."
+            )
+        logger.info("ltx_video_legacy: encode_control pure-T2V (no controlnet)")
+        return None
 
     def constraints(self) -> VideoConstraints:
         return VideoConstraints(
@@ -309,9 +330,18 @@ def _generate_one(
     on_step_sync: Callable[[int, int], None] | None = None,
     image: str | None = None,
     image_strength: float | None = None,
+    inpaint_mask=None,
+    init_latent=None,
+    controlnet_image: str | None = None,
 ) -> bytes:
     from ...video.ltx_video_legacy.denoise import denoise
 
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "ltx_video_legacy: ControlNet (Surface B) not available for this"
+            " backend — no per-backend ControlNet model (see issue #734"
+            " follow-up). Refusing to silently degrade to T2V (#734)."
+        )
     steps = int(num_inference_steps) if num_inference_steps else _DEFAULT_STEPS
     cfg = float(cfg_scale) if cfg_scale is not None else _DEFAULT_CFG
     scale_factors = _vae_scale_factors(vae)
@@ -421,6 +451,8 @@ def _generate_one(
         on_step_sync=on_step_sync,
         conditioning_latent=conditioning_latent,
         noise_mask=noise_mask,
+        inpaint_mask=inpaint_mask,
+        init_latent=init_latent,
     )
 
     # unpatchify (1, n, c) -> (1, c, lf, lh, lw) then VAE decode.

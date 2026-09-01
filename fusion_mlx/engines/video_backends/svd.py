@@ -101,6 +101,11 @@ class SVDBackend(VideoBackend):
                     cfg_scale=params.cfg_scale,
                     negative_prompt=params.negative_prompt,
                     on_step_sync=sync_cb,
+                    # #737 Surface B+C: thread controlnet_image (fail-visible in
+                    # generate_video — no backend model) and inpaint surfaces.
+                    controlnet_image=params.controlnet_image,
+                    inpaint_mask=params.inpaint_mask,
+                    init_latent=params.init_latent,
                 )
                 results.append(mp4_bytes)
             return results
@@ -162,6 +167,24 @@ class SVDBackend(VideoBackend):
         mx.clear_cache()
         logger.info("svd: vae_encoder unload")
 
+    async def encode_control(self, **kwargs: Any) -> Any:
+        # #737 Surface B: ControlNet conditioning is not available for svd —
+        # the shared ControlNet adapter is Wan2-arch (text_dim=4096,
+        # patch_size=[1,2,2], token-residual block injection) and no
+        # per-backend ControlNet model exists for svd. Fail visibly
+        # (Rule 12): a caller asking for ControlNet must NOT silently degrade
+        # to T2V.
+        if kwargs.get("controlnet_image") is not None:
+            raise RuntimeError(
+                "svd: ControlNet (Surface B) not available for this backend — "
+                "no per-backend ControlNet model (see issue #737 follow-up). "
+                "Refusing to silently degrade to T2V (#737)."
+            )
+        # No conditioning surfaces implemented for svd beyond VAE encode
+        # (Surface A, already on load_vae_encoder/encode). Pure T2V -> None.
+        logger.info("svd: encode_control pure-T2V (no controlnet)")
+        return None
+
     def constraints(self) -> VideoConstraints:
         return VideoConstraints(
             supports_i2v=True,
@@ -188,6 +211,9 @@ def _generate_one(
     cfg_scale: float | None = None,
     negative_prompt: str | None = None,
     on_step_sync=None,
+    controlnet_image: str | None = None,
+    inpaint_mask=None,
+    init_latent=None,
 ) -> bytes:
     from fusion_mlx.video.svd.generate import generate_video
 
@@ -222,6 +248,9 @@ def _generate_one(
             output_path=handle.path,
             dtype=dtype,
             on_step_sync=on_step_sync,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
         )
         with open(handle.path, "rb") as f:
             return f.read()
