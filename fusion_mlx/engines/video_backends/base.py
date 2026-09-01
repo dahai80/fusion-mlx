@@ -65,6 +65,12 @@ class VideoGenParams:
     controlnet_image: str | None = None
     controlnet_strength: float = 1.0
     control_type: str = "canny"
+    # #653 Surface C: inpaint-mask re-composite. mask (latent-space) marks
+    # reactive (keep denoised) vs frozen (restore init) regions per step.
+    # None on both -> pure T2V passthrough. Backends without a per-backend
+    # ControlNet model (R1) still ship Surface C (DiT-agnostic).
+    inpaint_mask: Any = None
+    init_latent: Any = None
     # AnimateDiff: temporal motion module scale (0=off, >0=on).
     animatediff_scale: float = 0.0
     # VACE: Video-Conditioned Auxiliary Control Encoding.
