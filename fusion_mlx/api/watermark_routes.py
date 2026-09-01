@@ -115,7 +115,6 @@ def _run_embed(
         )
     bit_cursor = 0
     watermarked: list[tuple[str, np.ndarray]] = []
-    carrier_count = 0
     for name, arr in carriers:
         gen = np.random.default_rng(_seed_for(secret, name))
         chunk = bits[bit_cursor : bit_cursor + arr.size * bits_per_weight]
@@ -124,14 +123,17 @@ def _run_embed(
             continue
         out, used = embed_bits(arr, chunk, gen, bits_per_weight=bits_per_weight)
         bit_cursor += used
-        carrier_count += used
         watermarked.append((name, out))
+    carrier_count = len(carriers)
     name_map = dict(watermarked)
     new_tree = [
         (n, mx.array(name_map.get(n, w)).astype(orig_dtypes[n])) for n, w in tree
     ]
-    if hasattr(model, "update_weights"):
-        model.update_weights(tree_unflatten(new_tree))
+    if not hasattr(model, "update_weights"):
+        raise ValueError(
+            f"model {model_path} has no update_weights; cannot apply watermark"
+        )
+    model.update_weights(tree_unflatten(new_tree))
     dest = model_path if in_place else output_path
     if dest is None:
         raise ValueError("output_path required when in_place is false")

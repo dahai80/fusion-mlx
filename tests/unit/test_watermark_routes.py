@@ -1,10 +1,19 @@
+import hashlib
+import json
+import os
+from unittest.mock import patch
+
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from fusion_mlx.api.watermark_models import (
     WatermarkEmbedRequest,
     WatermarkVerifyRequest,
 )
+from fusion_mlx.api.watermark_routes import router
+from fusion_mlx.watermark.lsb import compute_signature
 
 
 def test_embed_request_minimal():
@@ -31,8 +40,6 @@ def test_embed_request_output_path_required_when_not_in_place():
     # in_place=False (default) without output_path is allowed at model level;
     # the route enforces output_path presence. Here we just validate the
     # path-prefix constraint when a path IS given.
-    import os
-
     home = os.path.expanduser("~/.fusion-mlx/models")
     req = WatermarkEmbedRequest(
         model="m", payload={}, secret="s", output_path=home + "/wm-out"
@@ -44,16 +51,6 @@ def test_verify_request_minimal():
     req = WatermarkVerifyRequest(model="m", secret="s")
     assert req.bits_per_weight == 1
     assert req.layers is None
-
-
-import hashlib
-from unittest.mock import patch
-
-import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
-from fusion_mlx.api.watermark_routes import router
 
 
 def _app():
@@ -106,10 +103,7 @@ def test_verify_rejects_default_secret(client):
 
 
 def test_signature_format_route_aligned():
-    from fusion_mlx.watermark.lsb import compute_signature
-
     sig = compute_signature("nondefault", "org/repo", {"owner": "x"})
-    import json
 
     expected = hashlib.sha256(
         f"nondefault:org/repo::{json.dumps({'owner': 'x'}, sort_keys=True)}".encode()
