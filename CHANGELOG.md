@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.8.62] - 2026-09-01
+
+### Added
+- **#746 — FineTuneConfig passthrough of `weight_decay`, `max_grad_norm`, and
+  `lora_target_modules` to mlx-lm 0.31.3.** Three SFT hyperparameters
+  previously accepted by the API but silently dropped before reaching the
+  training loop are now wired through end to end:
+  - `weight_decay` is forwarded to the optimizer constructor for AdamW, SGD,
+    Muon, and Adafactor (which accept it natively). `mlx.optimizers.Adam` has
+    no `weight_decay` arg, so a non-zero `weight_decay` with the `adam`
+    optimizer now fails visibly in `validate()` (Rule 12) rather than being
+    silently ignored.
+  - `max_grad_norm` applies global L2 gradient-norm clipping. mlx-lm 0.31.3's
+    trainer calls `optimizer.update(model, grad)` inside the compiled step
+    with no clip hook, so a thin `_GradClipOptimizer` wrapper overrides
+    `update` to clip the gradient tree before delegating. Its `state`
+    property proxies to the wrapped optimizer so the trainer's compiled
+    `state` list captures the real optimizer state.
+  - `lora_target_modules` restricts LoRA adapters to modules whose
+    class-name basename is in the set (e.g. `["q_proj", "v_proj"]`). Resolved
+    post-load into `config["keys"]` (full module paths), since mlx-lm 0.31.3
+    gates adapters by `keys` and has no `--lora-target-modules` CLI flag.
+    `None` preserves prior behavior (all linears in the top `lora_layers`).
+  Defaults keep prior behavior; full fine-tuning rejects
+  `lora_target_modules` (no adapters) and `max_grad_norm <= 0`.
+
 ## [0.8.61] - 2026-09-01
 
 ### Fixed

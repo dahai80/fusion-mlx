@@ -77,6 +77,20 @@ class FineTuneConfig:
     seed: int = 0
     lr_schedule: dict | None = None
     mask_prompt: bool = False
+    # #746: passthrough SFT hyperparameters that mlx-lm 0.31.3 supports but
+    # FineTuneConfig previously dropped. Defaults preserve prior behavior
+    # (no weight decay, no clipping, all linears in the top-N layers).
+    # weight_decay: forwarded to the optimizer ctor (AdamW/SGD/Muon/Adafactor
+    #   accept it natively; Adam does NOT — see _build_optimizer).
+    # max_grad_norm: global L2 gradient-norm clip applied in the training
+    #   step before optimizer.update (mlx-lm trainer has no clip hook, so
+    #   we wrap the optimizer's update).
+    # lora_target_modules: restrict LoRA to modules whose class-name basename
+    #   is in this set (e.g. ["q_proj","v_proj"]). None = all linears in the
+    #   top lora_layers (prior behavior).
+    weight_decay: float = 0.0
+    max_grad_norm: float | None = None
+    lora_target_modules: list[str] | None = None
 
     def to_mlx_args(self, adapter_path: str, data_path: str, model_path: str):
         lora_params = {
@@ -84,6 +98,15 @@ class FineTuneConfig:
             "dropout": self.lora_dropout,
             "scale": self.lora_alpha,
         }
+        # #746: per-module LoRA targeting. linear_to_lora_layers gates which
+        # modules get adapters by `config["keys"]` (a set of full module
+        # paths). We resolve the keys from lora_target_modules here is NOT
+        # possible — keys depend on the loaded model's module tree, which
+        # to_mlx_args doesn't see. _execute_training builds keys post-load
+        # and injects into lora_params; to_mlx_args only carries the raw
+        # target-module names so the saved adapter_config.json records intent.
+        if self.lora_target_modules:
+            lora_params["target_modules"] = list(self.lora_target_modules)
         args_dict = {
             "model": model_path,
             "train": True,
@@ -114,10 +137,10 @@ class FineTuneConfig:
             "adapter_file": str(Path(adapter_path) / "adapters.safetensors"),
             "optimizer_config": {
                 "adam": {},
-                "adamw": {},
-                "muon": {},
-                "sgd": {},
-                "adafactor": {},
+                "adamw": {"weight_decay": self.weight_decay},
+                "muon": {"weight_decay": self.weight_decay},
+                "sgd": {"weight_decay": self.weight_decay},
+                "adafactor": {"weight_decay": self.weight_decay},
             },
         }
         import types
@@ -146,6 +169,27 @@ class FineTuneConfig:
             raise ValueError(f"quant_bits must be 4 or 8, got {self.quant_bits}")
         if self.fine_tune_type not in self._VALID_FINE_TUNE_TYPES:
             raise ValueError(f"Unknown fine_tune_type: {self.fine_tune_type}")
+        # #746: weight_decay is forwarded to AdamW/SGD/Muon/Adafactor only.
+        # mlx.optimizers.Adam has NO weight_decay arg; a non-zero value with
+        # the plain Adam optimizer is a config error — fail visibly (Rule 12)
+        # rather than silently dropping the knob.
+        if self.weight_decay != 0.0 and self.optimizer.lower() == "adam":
+            raise ValueError(
+                "weight_decay is not supported by the 'adam' optimizer "
+                "(mlx.optimizers.Adam has no weight_decay arg); use 'adamw' "
+                "or set weight_decay=0.0 (issue #746)"
+            )
+        # #746: max_grad_norm is global L2 clip — must be positive when set.
+        if self.max_grad_norm is not None and self.max_grad_norm <= 0:
+            raise ValueError(
+                f"max_grad_norm must be a positive float, got {self.max_grad_norm}"
+            )
+        # #746: lora_target_modules only applies to lora/dora/qlora (not full).
+        if self.lora_target_modules and self.fine_tune_type == "full":
+            raise ValueError(
+                "lora_target_modules has no effect with fine_tune_type='full' "
+                "(full fine-tuning unfreezes layers, no LoRA adapters)"
+            )
 
 
 @dataclass
@@ -196,6 +240,46 @@ class FineTuneJob:
             "adapter_name": self.adapter_name,
             "error": self.error,
         }
+
+
+class _GradClipOptimizer:
+    """Wrap an mlx optimizer to apply global L2 gradient-norm clipping.
+
+    #746: mlx-lm 0.31.3 trainer calls ``optimizer.update(model, grad)`` inside
+    the compiled step with no clip hook, and TrainingCallback exposes no grad
+    access. Wrapping update is the only seam: clip the global L2 norm of the
+    gradient tree, then delegate to the real optimizer. ``state`` proxies to
+    the inner optimizer so the trainer's compiled ``state`` list captures the
+    real optimizer state (not this wrapper's __dict__).
+    """
+
+    def __init__(self, optimizer, max_grad_norm: float):
+        self._optimizer = optimizer
+        self.max_grad_norm = float(max_grad_norm)
+
+    @property
+    def state(self):
+        return self._optimizer.state
+
+    def update(self, model, gradients: dict):
+        from mlx.utils import tree_flatten
+
+        grads = [g for g in tree_flatten(gradients) if g is not None]
+        if not grads:
+            return self._optimizer.update(model, gradients)
+        total_norm = mx.sqrt(
+            mx.sum(mx.stack([mx.sum(g.astype(mx.float32) ** 2) for g in grads]))
+        )
+        scale = mx.minimum(1.0, self.max_grad_norm / (total_norm + 1e-6))
+        from mlx.utils import tree_map
+
+        clipped = tree_map(lambda g: g * scale if g is not None else g, gradients)
+        return self._optimizer.update(model, clipped)
+
+    def __getattr__(self, name):
+        # Delegate any other attribute (learning_rate, apply_gradients, init,
+        # ...) to the wrapped optimizer so the trainer sees a faithful proxy.
+        return getattr(self._optimizer, name)
 
 
 class _ProgressCallback:
@@ -520,6 +604,27 @@ class FineTuneService:
                 "dropout": cfg.lora_dropout,
                 "scale": cfg.lora_alpha,
             }
+            # #746: per-module LoRA targeting. linear_to_lora_layers gates
+            # adapters by config["keys"] (a set of full module paths within
+            # the top lora_layers blocks). When lora_target_modules is set,
+            # collect the full module paths whose class-name basename is in
+            # the target set (e.g. "layers.0.attention.q_proj" → basename
+            # "q_proj"). None/empty = all linears (prior behavior).
+            if cfg.lora_target_modules:
+                targets = {t.strip() for t in cfg.lora_target_modules if t.strip()}
+                keys = set()
+                for layer in model.layers[-max(cfg.lora_layers, 0) :]:
+                    for path, mod in layer.named_modules():
+                        basename = path.rsplit(".", 1)[-1]
+                        if basename in targets:
+                            keys.add(path)
+                lora_params["keys"] = keys
+                logger.info(
+                    "LoRA targeting %d modules matching %s across top %d layers",
+                    len(keys),
+                    sorted(targets),
+                    cfg.lora_layers,
+                )
             linear_to_lora_layers(
                 model,
                 cfg.lora_layers,
@@ -558,7 +663,26 @@ class FineTuneService:
             "adafactor": optim.Adafactor,
         }
         opt_class = opt_map.get(cfg.optimizer.lower(), optim.AdamW)
-        optimizer = opt_class(learning_rate=lr)
+        # #746: forward weight_decay to the optimizer ctor for the optimizers
+        # that accept it (AdamW/SGD/Muon/Adafactor). Adam has no weight_decay
+        # arg — cfg.validate() already rejected that combination, so we only
+        # pass it for the others. Default weight_decay=0.0 keeps prior behavior.
+        opt_name = cfg.optimizer.lower()
+        if opt_name == "adam":
+            optimizer = opt_class(learning_rate=lr)
+        else:
+            optimizer = opt_class(learning_rate=lr, weight_decay=cfg.weight_decay)
+        # #746: global gradient-norm clipping. mlx-lm 0.31.3 trainer calls
+        # optimizer.update(model, grad) inside the compiled step with no clip
+        # hook. We wrap update to clip the global L2 norm of the grad tree
+        # before delegating to the real optimizer. The wrapper is applied
+        # AFTER construction so optimizer.state is the real one.
+        if cfg.max_grad_norm is not None:
+            optimizer = _GradClipOptimizer(optimizer, max_grad_norm=cfg.max_grad_norm)
+            logger.info(
+                "Gradient clipping enabled: max_grad_norm=%.4f",
+                cfg.max_grad_norm,
+            )
 
         # Progress callback
         loop = self._loop or asyncio.get_event_loop()
