@@ -3,8 +3,11 @@
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import mlx.core as mx
+
+from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
 
 from .config import OpenSoraConfig
 from .scheduler import (
@@ -117,9 +120,25 @@ def generate_video(
     shift_alpha: float = 1.0,
     text_encoder: object | None = None,
     vae: object | None = None,
+    controlnet_image: Any = None,
+    inpaint_mask: Any = None,
+    init_latent: Any = None,
 ) -> mx.array:
     logger.info(
         f"Open-Sora V2 generate: {num_frames}f {height}x{width} {num_steps}steps"
+    )
+    # #739 Surface B: ControlNet not fabricatable (shared MMDiT adapter, no
+    # per-backend control model). Fail visible — refuse silent T2V degrade.
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "opensora: ControlNet (Surface B) not available for this backend — "
+            "no per-backend ControlNet model (see issue #739 follow-up). "
+            "Refusing to silently degrade to T2V (#739)."
+        )
+    logger.info(
+        "opensora generate: inpaint=%s controlnet=%s",
+        inpaint_mask is not None,
+        controlnet_image is not None,
     )
 
     config_path = Path(model_dir) / "config.json"
@@ -211,6 +230,12 @@ def generate_video(
 
         x_packed = x_packed + dt * model_out
         mx.eval(x_packed)
+        # #739 Surface C: frozen-region re-composite after each step
+        # (DiT-agnostic packed-latent space). init_latent/mask must match
+        # the packed x_packed shape (1, seq, packed_ch).
+        if inpaint_mask is not None and init_latent is not None:
+            x_packed = apply_inpaint_mask(x_packed, init_latent, inpaint_mask)
+            mx.eval(x_packed)
 
         if step_idx % 5 == 0 or step_idx == len(schedule) - 1:
             logger.info(f"Step {step_idx + 1}/{num_steps}: t={t_cur:.4f}")

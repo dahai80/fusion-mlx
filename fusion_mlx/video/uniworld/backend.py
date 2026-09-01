@@ -213,6 +213,22 @@ class UniWorldBackend(VideoBackend):
     async def generate(self, params: VideoGenParams) -> list[bytes] | list[Any]:
         if not self._loaded:
             raise RuntimeError("UniWorld backend not started")
+        # #740 Surface B/C not applicable: UniWorld is image-only (num_frames=1,
+        # Flux2Klein owns its own VAE). No video-latent denoise loop exists, so
+        # neither ControlNet residual injection nor inpaint re-composite can
+        # apply. Refuse the request rather than silently dropping the args.
+        if params.controlnet_image is not None:
+            raise RuntimeError(
+                "uniworld: ControlNet (Surface B) not applicable — this is an "
+                "image-only backend (Flux2Klein), no video denoise loop "
+                "(see issue #740). Refusing to silently degrade (#740)."
+            )
+        if params.inpaint_mask is not None:
+            raise RuntimeError(
+                "uniworld: inpaint (Surface C) not applicable — this is an "
+                "image-only backend (Flux2Klein), no video latent loop to "
+                "re-composite (see issue #740). Refusing to silently drop (#740)."
+            )
 
         loop = asyncio.get_running_loop()
         t0 = time.monotonic()

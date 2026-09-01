@@ -165,6 +165,9 @@ def generate_video(
     audio_start_time: float = 0.0,
     spatial_upscaler: str | None = None,
     session_id: str | None = None,
+    controlnet_image=None,
+    inpaint_mask=None,
+    init_latent=None,
 ):
     start_time = time.time()
 
@@ -593,6 +596,9 @@ def generate_video(
             audio_positions=audio_positions,
             audio_embeddings=audio_embeddings,
             audio_frozen=is_a2v,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
         )
 
         logger.info("Upsampling latents %dx...", upscaler_scale)
@@ -677,6 +683,9 @@ def generate_video(
             audio_positions=audio_positions,
             audio_embeddings=audio_embeddings,
             audio_frozen=is_a2v,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
         )
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
@@ -841,6 +850,9 @@ def generate_video(
             stg_audio_blocks=stg_blocks,
             modality_scale=modality_scale,
             audio_frozen=is_a2v,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
         )
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
@@ -1033,6 +1045,9 @@ def generate_video(
             stg_audio_blocks=stg_blocks,
             modality_scale=modality_scale,
             audio_frozen=is_a2v,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
         )
 
         mx.eval(audio_latents)
@@ -1131,6 +1146,9 @@ def generate_video(
             audio_positions=audio_positions,
             audio_embeddings=audio_embeddings_pos,
             audio_frozen=is_a2v,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
         )
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
@@ -1347,6 +1365,9 @@ def generate_video(
             modality_scale=modality_scale,
             noise_seed=seed,
             audio_frozen=is_a2v,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
         )
 
         mx.eval(audio_latents)
@@ -1452,6 +1473,9 @@ def generate_video(
             video_state=state2,
             noise_seed=seed + 1,
             audio_frozen=is_a2v,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
         )
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse

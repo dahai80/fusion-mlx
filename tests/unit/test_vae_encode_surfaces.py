@@ -12,6 +12,9 @@ from fusion_mlx.engines.video_backends import (
     hunyuanvideo as hunyuanvideo_mod,
 )
 from fusion_mlx.engines.video_backends import (
+    ltx2 as ltx2_mod,
+)
+from fusion_mlx.engines.video_backends import (
     ltx2_5 as ltx2_5_mod,
 )
 from fusion_mlx.engines.video_backends import (
@@ -19,6 +22,9 @@ from fusion_mlx.engines.video_backends import (
 )
 from fusion_mlx.engines.video_backends import (
     minimax_h3 as minimax_h3_mod,
+)
+from fusion_mlx.engines.video_backends import (
+    opensora as opensora_mod,
 )
 from fusion_mlx.engines.video_backends import (
     svd as svd_mod,
@@ -30,8 +36,10 @@ _BACKENDS = [
     ("CogVideoBackend", cogvideox_mod.CogVideoBackend, "cogvideox"),
     ("HunyuanVideoBackend", hunyuanvideo_mod.HunyuanVideoBackend, "hunyuanvideo"),
     ("LegacyLTXBackend", ltx_video_legacy_mod.LegacyLTXBackend, "ltx_video_legacy"),
+    ("LTX2Backend", ltx2_mod.LTX2Backend, "ltx2"),
     ("LTX2_5Backend", ltx2_5_mod.LTX2_5Backend, "ltx2_5"),
     ("MiniMaxH3Backend", minimax_h3_mod.MiniMaxH3Backend, "minimax_h3"),
+    ("OpenSoraBackend", opensora_mod.OpenSoraBackend, "opensora"),
     ("SVDBackend", svd_mod.SVDBackend, "svd"),
 ]
 
