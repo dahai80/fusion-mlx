@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.8.60] - 2026-09-01
+
+### Changed
+- **#688 — MiniMax-H3 ref2va forwarding plumbing (step 1 of 3).**
+  `generate_video` and `MiniMaxH3Backend.generate` now accept a
+  `reference_images` parameter and forward it through the engine layer,
+  making the previously-silent drop of reference images explicit. ref2va
+  (reference-image-to-video) generation is **not yet implemented**: it
+  requires a separate `transformer_ref` checkpoint (~67GB) and a
+  reverse-engineered refiner forward (issue #688 steps 2-3, multi-session).
+  Both `generate_video` (direct SDK path) and the backend route (before
+  model load, fail-fast) raise `NotImplementedError` with an `issue #688`
+  pointer when `reference_images` is provided, so the drop is fail-visible
+  rather than silent. No behavior change for t2va/fl2va paths.
+
 ## [0.8.59] - 2026-09-01
 
 ### Fixed
