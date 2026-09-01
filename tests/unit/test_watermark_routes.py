@@ -17,9 +17,7 @@ from fusion_mlx.watermark.lsb import compute_signature
 
 
 def test_embed_request_minimal():
-    req = WatermarkEmbedRequest(
-        model="org/repo", payload={"a": 1}, secret="nondefault"
-    )
+    req = WatermarkEmbedRequest(model="org/repo", payload={"a": 1}, secret="nondefault")
     assert req.bits_per_weight == 1
     assert req.in_place is False
     assert req.layers is None
@@ -27,13 +25,9 @@ def test_embed_request_minimal():
 
 def test_embed_request_bits_per_weight_range():
     with pytest.raises(ValidationError):
-        WatermarkEmbedRequest(
-            model="m", payload={}, secret="s", bits_per_weight=4
-        )
+        WatermarkEmbedRequest(model="m", payload={}, secret="s", bits_per_weight=4)
     with pytest.raises(ValidationError):
-        WatermarkEmbedRequest(
-            model="m", payload={}, secret="s", bits_per_weight=0
-        )
+        WatermarkEmbedRequest(model="m", payload={}, secret="s", bits_per_weight=0)
 
 
 def test_embed_request_output_path_required_when_not_in_place():

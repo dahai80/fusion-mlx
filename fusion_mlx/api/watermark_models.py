@@ -34,7 +34,9 @@ class WatermarkEmbedRequest(BaseModel):
     layers: list[str] | None = Field(
         None, description="Glob patterns restricting which weight tensors to watermark"
     )
-    bits_per_weight: int = Field(1, ge=1, le=3, description="LSB bits per carrier weight")
+    bits_per_weight: int = Field(
+        1, ge=1, le=3, description="LSB bits per carrier weight"
+    )
     in_place: bool = Field(False, description="Mutate safetensors in place (else copy)")
     output_path: str | None = Field(
         None, description="Copy destination (required when in_place is false)"
@@ -49,7 +51,5 @@ class WatermarkEmbedRequest(BaseModel):
 class WatermarkVerifyRequest(BaseModel):
     model: str = Field(..., description="Model to verify (path/alias/repo)")
     secret: str = Field(..., description="Same secret used at embed")
-    layers: list[str] | None = Field(
-        None, description="Same restriction used at embed"
-    )
+    layers: list[str] | None = Field(None, description="Same restriction used at embed")
     bits_per_weight: int = Field(1, ge=1, le=3, description="Same value used at embed")

@@ -74,9 +74,7 @@ def embed_bits(weights, bit_array, generator, bits_per_weight=1, epsilon=1e-6):
             f"(eligible={n_eligible}, bits_per_weight={bits_per_weight})"
         )
     eligible_indices = np.flatnonzero(eligible)
-    carrier_idx = generator.choice(
-        eligible_indices, size=bit_array.size, replace=False
-    )
+    carrier_idx = generator.choice(eligible_indices, size=bit_array.size, replace=False)
     out = weights.copy()
     uint_dt = _uint_view_dtype(out)
     mask = int("1" * bits_per_weight, 2)
@@ -101,9 +99,7 @@ def extract_bits(weights, n_bits, generator, bits_per_weight=1, epsilon=1e-6):
     n_eligible = int(eligible.sum())
     capacity = n_eligible * bits_per_weight
     if n_bits > capacity:
-        raise ValueError(
-            f"extract_bits: n_bits {n_bits} exceeds capacity {capacity}"
-        )
+        raise ValueError(f"extract_bits: n_bits {n_bits} exceeds capacity {capacity}")
     eligible_indices = np.flatnonzero(eligible)
     carrier_idx = generator.choice(eligible_indices, size=n_bits, replace=False)
     uint_dt = _uint_view_dtype(weights)

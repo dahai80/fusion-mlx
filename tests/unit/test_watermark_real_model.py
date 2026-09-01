@@ -32,8 +32,8 @@ def test_embed_verify_real_model_roundtrip(tmp_path):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.admin.auth import require_admin
-    from fusion_mlx.middleware.auth import require_model_hub_source
     from fusion_mlx.api.watermark_routes import router
+    from fusion_mlx.middleware.auth import require_model_hub_source
 
     app = FastAPI()
     app.include_router(router)
