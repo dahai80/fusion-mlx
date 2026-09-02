@@ -139,7 +139,20 @@ def generate_video(
         else resolve_component(root, "transformer", variant=var_str)
     )
     logger.info("Loading transformer: %s", tx_path.name)
-    transformer = LTX2_5Model.from_pretrained(tx_path, variant=var_str)
+    # flat diffusers 布局 (#762) 把 connector 单列为独立文件，需与 transformer
+    # 合并加载到同一模型树；Comfy 布局 connector 嵌在 transformer 文件内。
+    from .utils import is_flat_layout
+
+    conn_path = None
+    if is_flat_layout(root):
+        conn_path = resolve_component(root, "connector", variant=var_str)
+        if not conn_path.exists():
+            raise FileNotFoundError(
+                f"LTX-2.5 flat layout requires connector.safetensors at {conn_path}"
+            )
+    transformer = LTX2_5Model.from_pretrained(
+        tx_path, variant=var_str, connector_weights=conn_path
+    )
     mx.eval(transformer.parameters())
     logger.info("Transformer loaded")
 
@@ -182,11 +195,13 @@ def generate_video(
     )
 
     # ---- 6. VAE decoder (conv 变体; load_video_decoder 拒绝 det 变体) ----
-    vae_path = (
-        Path(video_vae_weights)
-        if video_vae_weights
-        else resolve_component(root, "video_vae_conv", variant=var_str)
-    )
+    # flat diffusers (#762) enc/dec 各一文件 -> 取 decoder; Comfy 单文件含两者。
+    if video_vae_weights:
+        vae_path = Path(video_vae_weights)
+    elif is_flat_layout(root):
+        vae_path = resolve_component(root, "video_vae_conv_decoder", variant=var_str)
+    else:
+        vae_path = resolve_component(root, "video_vae_conv", variant=var_str)
     logger.info("Loading VAE decoder (conv): %s", vae_path.name)
     vae_decoder = load_video_decoder(vae_path)
     mx.eval(vae_decoder.parameters())

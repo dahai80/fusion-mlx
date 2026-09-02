@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [0.8.68] - 2026-09-02
+
+### Added
+- **#762/#763 — flat-diffusers LTX-2.5 backend-format load.** Quantized
+  community forks (`dgrauet/ltx-2.5-mlx-q8` and similar) ship a *flat
+  diffusers* layout distinct from the canonical Comfy single-file layout:
+  root-level single-shard `.safetensors` (no Comfy subdirs, not sharded),
+  a `split_model.json` with `recipe=ltx-2.5`, a separate `connector`
+  file, split `vae_encoder_conv`/`vae_decoder_conv` files, and prefixed
+  upscaler files. The LTX-2.5 loader now detects this layout
+  (`is_flat_layout`) and routes every component through flat-aware
+  paths: connector merged into the transformer model tree, VAE
+  encoder/decoder split by *file name* (the flat files carry no
+  `encoder.`/`decoder.` sub-prefix), per-channel-statistics keys
+  normalized from underscore/bare to the canonical hyphen form, and
+  upsampler root prefixes stripped. A second conv-weight layout was
+  discovered and handled: the flat checkpoint stores conv weights
+  already in MLX layout `(Cout,kd,kh,kw,Cin)` (shape[1]==3), so feeding
+  them through the ltx2 sanitize's PyTorch→MLX transpose would
+  double-transpose. `_pre_convert_mlx_conv_to_pytorch` reverses the
+  transpose first so sanitize produces the correct layout; the
+  upsamplers skip the transpose entirely. Verified end-to-end on the
+  67GB real q8 checkpoint: all components load and `generate_video`
+  produces a valid mp4.
+
 ## [0.8.67] - 2026-09-02
 
 ### Fixed

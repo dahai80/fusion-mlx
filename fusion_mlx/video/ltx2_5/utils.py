@@ -67,6 +67,44 @@ _LTX2_5_FILES = {
     "temporal_upscaler": "latent_upscale_models/ltx-2.5-latent-temporal-upscaler-x2-bf16-1.0.safetensors",
 }
 
+# Flat diffusers 布局根级权重文件名（issue #762，dgrauet/ltx-2.5-mlx-q8 等
+# 量化分支）：transformer + connector 分立两文件，VAE enc/dec 分立，上采样器
+# 单独命名，与 Comfy 子目录布局一一对应。connertor 键独立组件。
+_LTX2_5_FLAT_FILES = {
+    "transformer_distilled": "transformer-distilled.safetensors",
+    "transformer_dev": "transformer-dev.safetensors",
+    "connector": "connector.safetensors",
+    "video_vae_conv_encoder": "vae_encoder_conv.safetensors",
+    "video_vae_conv_decoder": "vae_decoder_conv.safetensors",
+    "text_encoder": "text_encoder.safetensors",
+    "duration_head": "duration_head.safetensors",
+    "spatial_upscaler": "spatial_upscaler_x2_v1_0.safetensors",
+    "temporal_upscaler": "temporal_upscaler_x2_v1_0.safetensors",
+}
+
+
+def is_flat_layout(root: Path) -> bool:
+    # 检测根目录是否为 flat diffusers 布局：split_model.json recipe=ltx-2.5 +
+    # 根级 transformer-*.safetensors（与 model_discovery._is_flat_ltx2_5_layout
+    # 同构，避免 backend 模块反向依赖 pool）。
+    split_model = root / "split_model.json"
+    if not split_model.exists():
+        return False
+    try:
+        import json
+
+        with open(split_model) as f:
+            if json.load(f).get("recipe") != "ltx-2.5":
+                return False
+    except (OSError, json.JSONDecodeError):
+        return False
+    return any(
+        p.name.startswith("transformer-")
+        and p.name.endswith(".safetensors")
+        and (p.is_file() or p.is_symlink())
+        for p in root.iterdir()
+    )
+
 
 def get_model_path(model_repo: str = _LTX2_5_REPO) -> Path:
     # 解析 LTX-2.5 仓根目录：本地路径优先，否则 HF snapshot 下载。
@@ -103,12 +141,14 @@ def resolve_component(
     *,
     variant: str = "distilled",
 ) -> Path:
-    # 在已解析的仓根目录下定位单个组件文件。
+    # 在已解析的仓根目录下定位单个组件文件。flat diffusers 布局（#762）用
+    # 根级单文件名 + 独立 connector 组件；Comfy 布局用子目录映射。
     if key == "transformer":
         key = "transformer_distilled" if variant == "distilled" else "transformer_dev"
-    if key not in _LTX2_5_FILES:
+    files = _LTX2_5_FLAT_FILES if is_flat_layout(root) else _LTX2_5_FILES
+    if key not in files:
         raise ValueError(f"unknown LTX-2.5 component key: {key!r}")
-    rel = _LTX2_5_FILES[key]
+    rel = files[key]
     candidate = root / rel
     if not candidate.exists():
         logger.warning("ltx2_5 component %s not found at %s", key, candidate)

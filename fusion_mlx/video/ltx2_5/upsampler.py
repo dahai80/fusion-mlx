@@ -20,9 +20,6 @@ from ..ltx2.upsampler import (
     LatentUpsampler,
     ResBlock3D,
 )
-from ..ltx2.upsampler import (
-    load_upsampler as load_spatial_upsampler,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -122,29 +119,83 @@ class LatentTemporalUpsampler(nn.Module):
         return x
 
 
+# #762 flat diffusers (dgrauet) 根级文件名前缀；剥去后与 canon 模型树同名。
+_FLAT_UPSAMPLER_PREFIXES = (
+    "spatial_upscaler_x2_v1_0.",
+    "temporal_upscaler_x2_v1_0.",
+)
+
+
+def _strip_flat_upsampler_prefix(key: str) -> str:
+    for p in _FLAT_UPSAMPLER_PREFIXES:
+        if key.startswith(p):
+            return key[len(p) :]
+    return key
+
+
+def _is_mlx_conv_layout(value: mx.array) -> bool:
+    # dgrauet 权重已是 MLX 卷积布局 (Cout, kd, kh, kw, Cin) / (Cout, kh, kw, Cin)：
+    # shape[1]==kernel_size(3)。canon Comfy 存 PyTorch 布局 (Cout, Cin, kd,kh,kw)：
+    # shape[1]==Cin(大)。MLX 布局则跳过转置，否则 PyTorch->MLX 转置。
+    return value.ndim in (4, 5) and value.shape[1] == 3
+
+
+def _sanitize_upsampler_weights(
+    raw_weights: dict[str, mx.array],
+) -> dict[str, mx.array]:
+    sanitized: dict[str, mx.array] = {}
+    for key, value in raw_weights.items():
+        if key == "__metadata__":
+            continue
+        new_key = _strip_flat_upsampler_prefix(key)
+        if new_key.startswith("upsampler.0."):
+            new_key = new_key.replace("upsampler.0.", "upsampler.conv.")
+        if "weight" in new_key and value.ndim == 5 and not _is_mlx_conv_layout(value):
+            value = mx.transpose(value, (0, 2, 3, 4, 1))
+        elif (
+            ("weight" in new_key or "kernel" in new_key)
+            and value.ndim == 4
+            and not _is_mlx_conv_layout(value)
+        ):
+            value = mx.transpose(value, (0, 2, 3, 1))
+        sanitized[new_key] = value
+    return sanitized
+
+
 def load_temporal_upsampler(
     weights_path: str | Path,
 ) -> tuple[LatentTemporalUpsampler, float]:
     # 加载时间上采样器：检测 mid_channels + temporal_scale。
+    # 两类布局: canon Comfy (PyTorch 卷积布局, 无前缀) + flat diffusers (#762,
+    # MLX 卷积布局, 根级文件名前缀)。统一 sanitize 处理前缀+转置。
     weights_path = Path(weights_path)
     if not weights_path.exists():
         raise FileNotFoundError(f"temporal upsampler weights not found: {weights_path}")
 
     logger.info("Loading temporal upsampler from %s", weights_path)
     raw_weights = mx.load(str(weights_path))
+    flat = any(
+        any(k.startswith(p) for k in raw_weights) for p in _FLAT_UPSAMPLER_PREFIXES
+    )
 
-    sample_key = "res_blocks.0.conv1.weight"
-    if sample_key in raw_weights:
-        mid_channels = raw_weights[sample_key].shape[0]
-    else:
-        mid_channels = 1024
+    sample_key = (
+        "temporal_upscaler_x2_v1_0.res_blocks.0.conv1.weight"
+        if flat
+        else "res_blocks.0.conv1.weight"
+    )
+    mid_channels = (
+        raw_weights[sample_key].shape[0] if sample_key in raw_weights else 512
+    )
 
-    # 实测 checkpoint 用 'upsampler.0.weight'（Conv3d 单层），模型树是
-    # upsampler.conv（TemporalUpsampler2x.conv）。检测 + 重映射（mirror ltx2
-    # spatial load_upsampler 的 upsampler.0.->upsampler.conv. 重映射）。
     conv_key = "upsampler.conv.weight"
-    if conv_key not in raw_weights and "upsampler.0.weight" in raw_weights:
-        conv_key = "upsampler.0.weight"
+    if conv_key not in raw_weights:
+        flat_conv = (
+            "temporal_upscaler_x2_v1_0.upsampler.0.weight"
+            if flat
+            else "upsampler.0.weight"
+        )
+        if flat_conv in raw_weights:
+            conv_key = flat_conv
     if conv_key in raw_weights:
         out_channels = raw_weights[conv_key].shape[0]
         temporal_scale = float(out_channels // mid_channels)
@@ -152,9 +203,10 @@ def load_temporal_upsampler(
         temporal_scale = 2.0
 
     logger.info(
-        "Detected temporal upsampler: mid_channels=%d scale=%sx",
+        "Detected temporal upsampler: mid_channels=%d scale=%sx (flat=%s)",
         mid_channels,
         temporal_scale,
+        flat,
     )
 
     upsampler = LatentTemporalUpsampler(
@@ -164,25 +216,73 @@ def load_temporal_upsampler(
         temporal_scale=temporal_scale,
     )
 
-    sanitized = {}
-    for key, value in raw_weights.items():
-        new_key = key
-        if new_key.startswith("upsampler.0."):
-            new_key = new_key.replace("upsampler.0.", "upsampler.conv.")
-        if "weight" in new_key and value.ndim == 5:
-            value = mx.transpose(value, (0, 2, 3, 4, 1))
-        if ("weight" in new_key or "kernel" in new_key) and value.ndim == 4:
-            value = mx.transpose(value, (0, 2, 3, 1))
-        sanitized[new_key] = value
-
+    sanitized = _sanitize_upsampler_weights(raw_weights)
     upsampler.load_weights(list(sanitized.items()), strict=False)
     logger.info("Loaded %d temporal upsampler weights", len(sanitized))
 
     return upsampler, temporal_scale
 
 
-# 复用 ltx2 的 spatial 加载器，便于 backend 单点引用。
 def load_spatial_upsampler_2_5(
     weights_path: str | Path,
 ) -> tuple[LatentUpsampler, float]:
-    return load_spatial_upsampler(str(weights_path))
+    # #762: 自包含 spatial 加载器 (不再透传 ltx2.load_upsampler)。flat diffusers
+    # 权重带根级前缀 + 已是 MLX 卷积布局, ltx2 透传会漏剥前缀 + 双重转置。
+    weights_path = Path(weights_path)
+    if not weights_path.exists():
+        raise FileNotFoundError(f"spatial upsampler weights not found: {weights_path}")
+
+    logger.info("Loading spatial upsampler from %s", weights_path)
+    raw_weights = mx.load(str(weights_path))
+    flat = any(
+        any(k.startswith(p) for k in raw_weights) for p in _FLAT_UPSAMPLER_PREFIXES
+    )
+
+    sample_key = (
+        "spatial_upscaler_x2_v1_0.res_blocks.0.conv1.weight"
+        if flat
+        else "res_blocks.0.conv1.weight"
+    )
+    mid_channels = (
+        raw_weights[sample_key].shape[0] if sample_key in raw_weights else 1024
+    )
+
+    conv_key = "upsampler.conv.weight"
+    if conv_key not in raw_weights:
+        flat_conv = (
+            "spatial_upscaler_x2_v1_0.upsampler.0.weight"
+            if flat
+            else "upsampler.0.weight"
+        )
+        if flat_conv in raw_weights:
+            conv_key = flat_conv
+    if conv_key in raw_weights:
+        out_channels = raw_weights[conv_key].shape[0]
+        ratio = out_channels // mid_channels
+        rational_resampler = ratio == 9
+        spatial_scale = 1.5 if rational_resampler else 2.0
+    else:
+        rational_resampler = False
+        spatial_scale = 2.0
+
+    logger.info(
+        "Detected spatial upsampler: mid_channels=%d scale=%sx rational=%s (flat=%s)",
+        mid_channels,
+        spatial_scale,
+        rational_resampler,
+        flat,
+    )
+
+    upsampler = LatentUpsampler(
+        in_channels=128,
+        mid_channels=mid_channels,
+        num_blocks_per_stage=4,
+        spatial_scale=spatial_scale,
+        rational_resampler=rational_resampler,
+    )
+
+    sanitized = _sanitize_upsampler_weights(raw_weights)
+    upsampler.load_weights(list(sanitized.items()), strict=False)
+    logger.info("Loaded %d spatial upsampler weights", len(sanitized))
+
+    return upsampler, spatial_scale

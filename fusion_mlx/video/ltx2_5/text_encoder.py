@@ -16,6 +16,7 @@
 # Gemma4 config.json 不在 checkpoint 内, 从 google/gemma-4-12b-it (hf-mirror) 获取。
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import math
@@ -192,33 +193,117 @@ class Gemma4LanguageModel(nn.Module):
         cls,
         weights_path: str | Path,
         config: TextConfig,
-    ) -> Gemma4LanguageModel:
+        *,
+        raw_weights: dict | None = None,
+    ) -> tuple[Gemma4LanguageModel, dict]:
+        # 返回 (language_model, projection_weights)。
+        # 两类布局:
+        #   1. canon Comfy: 顶层键 model.* + text_embedding_projection.* +
+        #      内嵌 tokenizer_json / hf_asset__*。sanitize 剥 model. 前缀, fuzzy
+        #      load (bf16, 非量化)。
+        #   2. flat diffusers (#762, dgrauet q8): 顶层键 text_encoder.model.* +
+        #      text_encoder.text_embedding_projection.*, 量化 (.scales/.biases)。
+        #      需剥 text_encoder. 文件前缀但保留 model. 前缀 (量化键须精确匹配
+        #      model.* 参数树), nn.quantize 后 load model.* 键。
         weights_path = Path(weights_path)
-        raw = mx.load(str(weights_path))
+        raw = raw_weights if raw_weights is not None else mx.load(str(weights_path))
         lm = cls(config=config)
-        lang_weights = lm.sanitize(raw)
-        # 仅保留 Gemma4 语言模型键, 丢弃 projection/tokenizer/assets。
-        lang_weights = {
-            k: v
-            for k, v in lang_weights.items()
-            if not k.startswith("text_embedding_projection")
-            and not k.startswith("vision_model")
-            and not k.startswith("audio_projector")
-            and not k.startswith("multi_modal_projector")
-            and not k.startswith("hf_asset")
-            and k != "tokenizer_json"
+
+        flat_prefix = "text_encoder."
+        is_flat = any(k.startswith(flat_prefix) for k in raw)
+        if is_flat:
+            stripped = {
+                k[len(flat_prefix) :]: v
+                for k, v in raw.items()
+                if k.startswith(flat_prefix)
+            }
+        else:
+            stripped = raw
+
+        proj_weights = {
+            k[len(_PROJ_PREFIX) :]: v
+            for k, v in stripped.items()
+            if k.startswith(_PROJ_PREFIX)
         }
-        lm.load_weights(list(lang_weights.items()), strict=False)
-        logger.info(
-            "Gemma4LanguageModel.from_checkpoint: loaded %d keys from %s",
-            len(lang_weights),
-            weights_path.name,
-        )
-        return lm
+
+        is_quantized = any(k.endswith(".scales") for k in stripped)
+        if is_quantized:
+            # 保留 model. 前缀: QuantizedLinear .scales/.biases 键须精确匹配参数树
+            # (Gemma4TextModel 持有 self.model -> 参数树为 model.layers.*)。
+            lang_weights = {
+                k: v for k, v in stripped.items() if k.startswith(_GEMMA4_PREFIX)
+            }
+            lang_weights = {
+                k: (
+                    v.astype(mx.bfloat16)
+                    if hasattr(v, "dtype") and v.dtype == mx.float32
+                    else v
+                )
+                for k, v in lang_weights.items()
+            }
+            lang_keys = set(lang_weights.keys())
+
+            def _quant_predicate(path, module):
+                return isinstance(module, nn.Linear) and f"{path}.scales" in lang_keys
+
+            group_size, bits = _read_te_quant_config(weights_path.parent)
+            nn.quantize(
+                lm,
+                group_size=group_size,
+                bits=bits,
+                class_predicate=_quant_predicate,
+            )
+            lm.load_weights(list(lang_weights.items()), strict=False)
+            logger.info(
+                "Gemma4LanguageModel.from_checkpoint: flat q8 loaded %d keys "
+                "(quantized group=%d bits=%d) from %s",
+                len(lang_weights),
+                group_size,
+                bits,
+                weights_path.name,
+            )
+        else:
+            lang_weights = lm.sanitize(stripped)
+            lang_weights = {
+                k: v
+                for k, v in lang_weights.items()
+                if not k.startswith("text_embedding_projection")
+                and not k.startswith("vision_model")
+                and not k.startswith("audio_projector")
+                and not k.startswith("multi_modal_projector")
+                and not k.startswith("hf_asset")
+                and k != "tokenizer_json"
+            }
+            lm.load_weights(list(lang_weights.items()), strict=False)
+            logger.info(
+                "Gemma4LanguageModel.from_checkpoint: loaded %d keys from %s",
+                len(lang_weights),
+                weights_path.name,
+            )
+        return lm, proj_weights
 
 
 # 为避免在类型注解处 import mlx_vlm, 用字符串前向引用。
 TextConfig = object
+
+
+def _read_te_quant_config(model_dir: Path) -> tuple[int, int]:
+    # #762: flat diffusers text-encoder 量化参数。split_model.json 缺失时回退
+    # q8 默认 (group_size=64, bits=8), 与 dgrauet/ltx-2.5-mlx-q8 一致。
+    split_model = model_dir / "split_model.json"
+    group_size = 64
+    bits = 8
+    if split_model.exists():
+        try:
+            with open(split_model) as f:
+                cfg = json.load(f)
+            if cfg.get("quantization_group_size"):
+                group_size = int(cfg["quantization_group_size"])
+            if cfg.get("quantization_bits"):
+                bits = int(cfg["quantization_bits"])
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("ltx2_5 te quant config read failed: %s", exc)
+    return group_size, bits
 
 
 def _extract_embedded_tokenizer(weights: dict, cache_dir: Path) -> Path:
@@ -297,16 +382,38 @@ def _build_default_text_config() -> TextConfig:
 
 def _load_text_config(config_path: str | Path | None) -> TextConfig:
     # 优先本地 config.json (text_config), 否则用 12b 默认配置。
-    if config_path and Path(config_path).exists():
-        from mlx_vlm.models.gemma4.config import TextConfig
+    # #762: flat diffusers (dgrauet) text_encoder_config.json 的 text_config 缺
+    # sliding_window_pattern，TextConfig 默认值=5 会错建 v_proj 层 (应=6，
+    # Gemma4-12b 每 6 层省 v_proj: 5/11/17/23/29/35/41/47)。必须用默认 config
+    # 兜底缺字段，强制 pattern=6，避免 8 个 v_proj 找不到权重。
+    from mlx_vlm.models.gemma4.config import TextConfig
 
-        with open(config_path) as f:
-            cfg = json.load(f)
-        text_cfg = cfg.get("text_config", cfg)
-        logger.info("LTX-2.5 text config loaded from %s", config_path)
-        return TextConfig.from_dict(text_cfg)
-    logger.info("LTX-2.5 text config: using built-in Gemma4-12b defaults")
-    return _build_default_text_config()
+    default_cfg = _build_default_text_config()
+    if not (config_path and Path(config_path).exists()):
+        logger.info("LTX-2.5 text config: using built-in Gemma4-12b defaults")
+        return default_cfg
+
+    with open(config_path) as f:
+        cfg = json.load(f)
+    text_cfg = cfg.get("text_config", cfg)
+    # 仅取 TextConfig dataclass 字段，丢弃 bos_token_id/eos_token_id 等无关键。
+    field_names = {fd.name for fd in dataclasses.fields(TextConfig)}
+    merged = {
+        fd.name: getattr(default_cfg, fd.name) for fd in dataclasses.fields(default_cfg)
+    }
+    for k, v in text_cfg.items():
+        if k in field_names:
+            merged[k] = v
+    # sliding_window_pattern 可由 layer_types 数量推导；若文件未显式给出则强制
+    # 默认值 6 (12b 验证过)，覆盖 TextConfig 默认 5。
+    if "sliding_window_pattern" not in text_cfg:
+        merged["sliding_window_pattern"] = 6
+    logger.info(
+        "LTX-2.5 text config loaded from %s (merged, pattern=%s)",
+        config_path,
+        merged.get("sliding_window_pattern"),
+    )
+    return TextConfig(**merged)
 
 
 class LTX2_5TextEncoder(nn.Module):
@@ -424,13 +531,28 @@ def load_text_encoder(
     config_path: str | Path | None = None,
     tokenizer_cache_dir: str | Path | None = None,
 ) -> LTX2_5TextEncoder:
-    # 从单文件 checkpoint 加载 Gemma4-12b + aggregate projection + 内嵌 tokenizer。
+    # 从单文件 checkpoint 加载 Gemma4-12b + aggregate projection + tokenizer。
+    # 两类布局:
+    #   canon Comfy: 内嵌 tokenizer_json + hf_asset__tokenizer_config.json。
+    #   flat diffusers (#762, dgrauet): tokenizer.json/tokenizer_config.json 在
+    #   仓根 (非内嵌), 须 standalone fallback。
     # fail visible (Rule 12): 权重/config 缺失直接 raise, 不静默零初始化。
     weights_path = Path(weights_path)
     if not weights_path.exists():
         raise FileNotFoundError(
             f"LTX-2.5 text encoder weights not found: {weights_path}"
         )
+
+    # #762: flat 布局 config 在仓根 text_encoder_config.json; 未显式传 config_path
+    # 时自动探测 weights 同级目录。
+    if config_path is None:
+        for cand in (
+            weights_path.parent / "text_encoder_config.json",
+            weights_path.parent / "config.json",
+        ):
+            if cand.exists():
+                config_path = cand
+                break
 
     text_config = _load_text_config(config_path)
 
@@ -442,9 +564,10 @@ def load_text_encoder(
     )
 
     raw = mx.load(str(weights_path))
-    _lang_weights, proj_weights, _assets = _split_weights(raw)
 
-    language_model = Gemma4LanguageModel.from_checkpoint(weights_path, text_config)
+    language_model, proj_weights = Gemma4LanguageModel.from_checkpoint(
+        weights_path, text_config, raw_weights=raw
+    )
 
     feature_extractor = GemmaFeaturesExtractorV2(
         flat_dim=AGGREGATE_FLAT_DIM,
@@ -475,7 +598,7 @@ def load_text_encoder(
             "feature extractor will use UNINITIALIZED weights (fail visible at encode)"
         )
 
-    # 内嵌 tokenizer 写入临时目录供 AutoTokenizer 加载。
+    # tokenizer: 内嵌 (canon) 或仓根 standalone (flat #762)。
     tokenizer = None
     cache_dir = (
         Path(tokenizer_cache_dir)
@@ -484,18 +607,38 @@ def load_text_encoder(
     )
     cache_dir.mkdir(parents=True, exist_ok=True)
     try:
-        tok_path = _extract_embedded_tokenizer(raw, cache_dir)
-        from transformers import AutoTokenizer
+        if TOKENIZER_ASSET in raw:
+            tok_path = _extract_embedded_tokenizer(raw, cache_dir)
+            from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained(
-            str(cache_dir), trust_remote_code=True
-        )
+            tokenizer = AutoTokenizer.from_pretrained(
+                str(cache_dir), trust_remote_code=True
+            )
+            logger.info(
+                "LTX2_5TextEncoder: loaded embedded tokenizer from %s", tok_path
+            )
+        else:
+            # flat #762: standalone tokenizer.json + tokenizer_config.json 在仓根。
+            tok_root = weights_path.parent
+            if (tok_root / "tokenizer.json").exists():
+                from transformers import AutoTokenizer
+
+                tokenizer = AutoTokenizer.from_pretrained(
+                    str(tok_root), trust_remote_code=True
+                )
+                logger.info(
+                    "LTX2_5TextEncoder: loaded standalone tokenizer from %s",
+                    tok_root,
+                )
+            else:
+                raise FileNotFoundError(
+                    "no embedded tokenizer_json and no standalone tokenizer.json "
+                    f"at {tok_root}"
+                )
         tokenizer.padding_side = "left"
-        logger.info("LTX2_5TextEncoder: loaded embedded tokenizer from %s", tok_path)
     except Exception as exc:
         logger.warning(
-            "LTX2_5TextEncoder: embedded tokenizer load failed (%s); "
-            "encode() will raise",
+            "LTX2_5TextEncoder: tokenizer load failed (%s); encode() will raise",
             exc,
         )
 
