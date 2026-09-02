@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.8.67] - 2026-09-02
+
+### Fixed
+- **#761 — Wan2.1-14B i2v checkpoint crashed with a cryptic addmm shape
+  mismatch when run as pure text-to-video.** The `Wan2.1-14B` directory is an
+  image-to-video checkpoint (`model_type=i2v`, `in_dim=36` after
+  `correct_in_dim`), but the no-image path set `is_i2v=False` and ran a pure
+  t2v forward on 16-channel noise latents against an i2v `patch_embedding`
+  expecting 36 channels, producing `ValueError: [addmm] Last dimension of
+  first input with shape (768,64) must match second to last dimension of
+  second input with shape (144,5120)` (64=16*4 t2v vs 144=36*4 i2v).
+  `generate_video` now fails visibly before any model load with a
+  remediation message (`ValueError`) when an i2v checkpoint is requested
+  without any conditioning input (`image` / `camera_conditions` /
+  `control_video` / `reference_images`). The video route surfaces this as
+  HTTP 400 with the message instead of swallowing it into a generic 500,
+  so the client sees the actionable error. Any conditioning input still
+  exercises the i2v channel-concat path. Rule 12 — fail visibly.
+
 ## [0.8.66] - 2026-09-02
 
 ### Fixed
