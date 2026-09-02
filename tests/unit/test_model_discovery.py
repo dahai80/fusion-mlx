@@ -321,3 +321,151 @@ class TestModelDirectoryAccessError:
     def test_no_error_on_existing(self, tmp_path):
         error = model_directory_access_error(tmp_path)
         assert error is None
+
+
+class TestComfySingleFileLayout:
+    # Issue #758: Comfy single-file image/video repos ship component dirs
+    # (diffusion_models/ + vae/ for LTX-2.5, transformer/ + vae/ for FLUX.2)
+    # with no top-level configuration.json/model_index.json/config.json, so
+    # the task-manifest checks miss them.
+
+    def test_ltx2_5_comfy_layout_detected_as_video(self, tmp_path):
+        from fusion_mlx.pool.model_discovery import (
+            _is_comfy_ltx2_5_layout,
+            _is_video_model,
+            detect_model_type,
+        )
+
+        root = tmp_path / "ltx-2.5"
+        root.mkdir()
+        (root / "diffusion_models").mkdir()
+        (root / "vae").mkdir()
+        (
+            root
+            / "diffusion_models"
+            / "ltx-2.5-22b-distilled-transformer-bf16.safetensors"
+        ).write_bytes(b"x")
+        (root / "vae" / "ltx-2.5-video-vae-bf16.safetensors").write_bytes(b"x")
+        assert _is_comfy_ltx2_5_layout(root)
+        assert _is_video_model(root)
+        assert detect_model_type(root) == "video"
+
+    def test_flux2_comfy_layout_detected_as_image(self, tmp_path):
+        from fusion_mlx.pool.model_discovery import (
+            _is_comfy_flux2_layout,
+            _is_image_model,
+            detect_model_type,
+        )
+
+        root = tmp_path / "flux2-dev-mlx-8bit"
+        root.mkdir()
+        (root / "transformer").mkdir()
+        (root / "vae").mkdir()
+        (root / "transformer" / "0.safetensors").write_bytes(b"x")
+        (root / "transformer" / "model.safetensors.index.json").write_text("{}")
+        (root / "vae" / "0.safetensors").write_bytes(b"x")
+        assert _is_comfy_flux2_layout(root)
+        assert _is_image_model(root)
+        assert detect_model_type(root) == "image"
+
+    def test_comfy_layout_rejects_missing_components(self, tmp_path):
+        from fusion_mlx.pool.model_discovery import (
+            _is_comfy_flux2_layout,
+            _is_comfy_ltx2_5_layout,
+        )
+
+        # transformer/ + vae/ but no safetensors shards -> not a comfy layout.
+        root = tmp_path / "empty"
+        root.mkdir()
+        (root / "transformer").mkdir()
+        (root / "vae").mkdir()
+        assert not _is_comfy_flux2_layout(root)
+        assert not _is_comfy_ltx2_5_layout(root)
+
+    def test_comfy_layout_rejects_unrelated_dir(self, tmp_path):
+        from fusion_mlx.pool.model_discovery import (
+            _is_comfy_flux2_layout,
+            _is_comfy_ltx2_5_layout,
+        )
+
+        # An LLM dir with config.json but no component dirs.
+        root = tmp_path / "llm"
+        root.mkdir()
+        (root / "config.json").write_text('{"model_type": "llama"}')
+        assert not _is_comfy_flux2_layout(root)
+        assert not _is_comfy_ltx2_5_layout(root)
+
+    def test_hf_cache_accepts_comfy_image_layout(self, tmp_path):
+        from fusion_mlx.pool.model_discovery import _is_hf_cache_mlx_compatible
+
+        root = tmp_path / "flux2"
+        root.mkdir()
+        (root / "transformer").mkdir()
+        (root / "vae").mkdir()
+        (root / "transformer" / "0.safetensors").write_bytes(b"x")
+        (root / "transformer" / "model.safetensors.index.json").write_text("{}")
+        (root / "vae" / "0.safetensors").write_bytes(b"x")
+        assert _is_hf_cache_mlx_compatible(root, "AITRADER/FLUX2-dev-mlx-8bit")
+
+    def test_hf_cache_accepts_comfy_video_layout(self, tmp_path):
+        from fusion_mlx.pool.model_discovery import _is_hf_cache_mlx_compatible
+
+        root = tmp_path / "ltx"
+        root.mkdir()
+        (root / "diffusion_models").mkdir()
+        (root / "vae").mkdir()
+        (
+            root
+            / "diffusion_models"
+            / "ltx-2.5-22b-distilled-transformer-bf16.safetensors"
+        ).write_bytes(b"x")
+        (root / "vae" / "ltx-2.5-video-vae-bf16.safetensors").write_bytes(b"x")
+        assert _is_hf_cache_mlx_compatible(root, "Lightricks/LTX-2.5")
+
+    def test_flat_ltx2_5_layout_detected_as_video(self, tmp_path):
+        # Issue #758: quantized LTX-2.5 fork (dgrauet/ltx-2.5-mlx-q8) ships
+        # root transformer-*.safetensors + split_model.json (recipe=ltx-2.5)
+        # + embedded_config.json, no Comfy subdirs.
+        from fusion_mlx.pool.model_discovery import (
+            _is_comfy_ltx2_5_layout,
+            _is_flat_ltx2_5_layout,
+            _is_hf_cache_mlx_compatible,
+            _is_video_model,
+            detect_model_type,
+        )
+
+        root = tmp_path / "ltx-2.5-mlx-q8"
+        root.mkdir()
+        (root / "transformer-distilled.safetensors").write_bytes(b"x")
+        (root / "transformer-dev.safetensors").write_bytes(b"x")
+        (root / "audio_vae.safetensors").write_bytes(b"x")
+        (root / "embedded_config.json").write_text(
+            '{"transformer": {"_class_name": "AVTransformer3DModel"}}'
+        )
+        (root / "split_model.json").write_text(
+            '{"recipe": "ltx-2.5", "quantized": true}'
+        )
+        assert _is_flat_ltx2_5_layout(root)
+        assert not _is_comfy_ltx2_5_layout(root)
+        assert _is_video_model(root)
+        assert detect_model_type(root) == "video"
+        assert _is_hf_cache_mlx_compatible(root, "dgrauet/ltx-2.5-mlx-q8")
+
+    def test_flat_ltx2_5_layout_rejects_wrong_recipe(self, tmp_path):
+        # split_model.json with a different recipe must not match.
+        from fusion_mlx.pool.model_discovery import _is_flat_ltx2_5_layout
+
+        root = tmp_path / "other"
+        root.mkdir()
+        (root / "transformer-distilled.safetensors").write_bytes(b"x")
+        (root / "split_model.json").write_text('{"recipe": "ltx-2"}')
+        assert not _is_flat_ltx2_5_layout(root)
+
+    def test_flat_ltx2_5_layout_rejects_missing_transformer(self, tmp_path):
+        # split_model.json recipe=ltx-2.5 but no root transformer-*.safetensors.
+        from fusion_mlx.pool.model_discovery import _is_flat_ltx2_5_layout
+
+        root = tmp_path / "no-weights"
+        root.mkdir()
+        (root / "split_model.json").write_text('{"recipe": "ltx-2.5"}')
+        assert not _is_flat_ltx2_5_layout(root)
