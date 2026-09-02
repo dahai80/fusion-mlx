@@ -89,6 +89,16 @@ def apply_post_load_transforms(model: Any, model_settings: Any | None = None) ->
     # a no-op (apply_index_cache itself rejects <2); None/absent no-op.
     if model_settings is None:
         return model
+    # Fusion takeover: settings-driven lower-layer takeover (quant tagging,
+    # paged kv). Runs before index_cache dispatch; independent of
+    # index_cache_freq. Default OFF (fusion_takeover_enabled absent/False)
+    # is a no-op passthrough.
+    try:
+        from ..fusion_takeover import apply_fusion_takeover
+
+        model = apply_fusion_takeover(model, model_settings)
+    except Exception as e:
+        logger.warning("fusion takeover dispatch failed: %s", e)
     freq = getattr(model_settings, "index_cache_freq", None)
     if freq is None:
         return model

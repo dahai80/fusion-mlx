@@ -96,6 +96,13 @@ class ModelSettings:
 
     lora_path: str | None = None
 
+    fusion_takeover_enabled: bool = False
+    fusion_quant: str | None = None
+    fusion_paged_kv_enabled: bool = False
+    fusion_paged_kv_block_size: int = 16
+    fusion_paged_kv_num_blocks: int = 256
+    fusion_target_model_types: tuple[str, ...] = ()
+
     display_name: str | None = None
     description: str | None = None
     active_profile_name: str | None = None
