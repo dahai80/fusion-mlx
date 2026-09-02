@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## [0.8.70] - 2026-09-02
+
+### Added
+- **#754 — server-side HA: drain, instance identity, health richness,
+  persistent session state.** Four bounded primitives let a fusion-mlx
+  replica participate in graceful failover behind a gateway (or a CLI
+  doing health-driven failover) without a shared coordination store —
+  each instance runs independently.
+  - `POST /v1/drain` / `DELETE /v1/drain` (admin-gated,
+    `verify_api_key_or_x_api_key`) toggle a runtime `draining` flag.
+    While draining, `/healthz` and `/health/ready` return `503` so a
+    gateway routes new requests away, but in-flight work is **not**
+    aborted (models stay loaded). Both routes are idempotent and do not
+    unload models.
+  - `get_instance_id()` (new `fusion_mlx/instance.py`) honors
+    `FUSION_INSTANCE_ID` (operator-set) and falls back to a stable
+    `<hostname>:<pid>` derivation. Surfaced on `/health`, `/healthz`,
+    and the drain responses so a gateway can distinguish replicas.
+  - `/health` now returns `version`, `instance_id`, `draining` (bool),
+    and a single `status` field (`healthy` / `preloading` / `draining`).
+  - `SessionTracker` JSON snapshot persistence: set
+    `FUSION_SESSION_STATE_DIR` and per-session token-usage stats
+    snapshot to `sessions.json` (debounced ~5 s, atomic `os.replace`)
+    and rehydrate on startup, so a failover/restart does not lose
+    cumulative context. Off by default (in-memory-only behavior
+    preserved).
+  - `/healthz` (route handler + ASGI fast-path) carries `instance_id`
+    + `version` on every branch; the fast-path/route parity contract
+    in `test_probe_fastpath.py` is preserved. 16 contract tests in
+    `tests/unit/test_server_ha.py`.
+
 ## [0.8.69] - 2026-09-02
 
 ### Added

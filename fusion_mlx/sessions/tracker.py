@@ -13,7 +13,9 @@ where callers are distinguished by subnet bucket id.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -22,6 +24,9 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 _MAX_SESSIONS = 4096
+_STATE_ENV = "FUSION_SESSION_STATE_DIR"
+_STATE_FILENAME = "sessions.json"
+_SNAPSHOT_INTERVAL_S = 5.0
 
 # Principal used when a caller does not supply one. Keeps the tracker usable
 # by callers that pre-date the principal-scoping change (e.g. direct helper
@@ -56,12 +61,28 @@ class SessionStats:
 
 
 class SessionTracker:
-    """Thread-safe per-session token usage aggregator with LRU eviction."""
+    """Thread-safe per-session token usage aggregator with LRU eviction.
 
-    def __init__(self, max_sessions: int = _MAX_SESSIONS) -> None:
+    #754: optional JSON snapshot persistence. When a state dir is configured
+    (FUSION_SESSION_STATE_DIR), session stats are periodically snapshotted
+    to disk and rehydrated on startup so a failover/restart does not lose
+    cumulative token-usage context. Persistence is off by default (single-
+    process dev keeps the original in-memory-only behavior).
+    """
+
+    def __init__(
+        self,
+        max_sessions: int = _MAX_SESSIONS,
+        state_dir: str | None = None,
+    ) -> None:
         self._max_sessions = max_sessions
         self._lock = threading.Lock()
         self._sessions: OrderedDict[tuple[str, str], SessionStats] = OrderedDict()
+        self._state_dir = state_dir
+        self._last_snapshot = 0.0
+        if state_dir:
+            os.makedirs(state_dir, exist_ok=True)
+            self._rehydrate()
 
     @staticmethod
     def _key(principal: str | None, session_id: str) -> tuple[str, str]:
@@ -95,7 +116,9 @@ class SessionTracker:
             stats.request_count += 1
             stats.last_active = time.monotonic()
             self._sessions.move_to_end(key)
-            return stats
+            result = SessionStats(**stats.__dict__)
+        self._maybe_snapshot()
+        return result
 
     def get(
         self, session_id: str, *, principal: str | None = None
@@ -129,7 +152,63 @@ class SessionTracker:
                 int(max_context_tokens) if max_context_tokens is not None else None
             )
             self._sessions.move_to_end(key)
-            return True
+        self._maybe_snapshot()
+        return True
+
+    def _rehydrate(self) -> None:
+        path = os.path.join(self._state_dir, _STATE_FILENAME)
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                rows = json.load(fh)
+            loaded = 0
+            for row in rows:
+                key = (
+                    row.get("principal", DEFAULT_PRINCIPAL),
+                    row.get("session_id", ""),
+                )
+                if not key[1]:
+                    continue
+                stats = SessionStats(
+                    principal=key[0],
+                    session_id=key[1],
+                    prompt_tokens=int(row.get("prompt_tokens", 0)),
+                    completion_tokens=int(row.get("completion_tokens", 0)),
+                    cached_tokens=int(row.get("cached_tokens", 0)),
+                    total_tokens=int(row.get("total_tokens", 0)),
+                    request_count=int(row.get("request_count", 0)),
+                    max_context_tokens=row.get("max_context_tokens"),
+                    last_active=float(row.get("last_active", time.monotonic())),
+                )
+                self._sessions[key] = stats
+                loaded += 1
+            logger.info(
+                "session tracker rehydrated %d session(s) from %s", loaded, path
+            )
+        except Exception:
+            logger.warning(
+                "session tracker rehydrate failed for %s", path, exc_info=True
+            )
+
+    def _maybe_snapshot(self) -> None:
+        if not self._state_dir:
+            return
+        now = time.monotonic()
+        if now - self._last_snapshot < _SNAPSHOT_INTERVAL_S:
+            return
+        self._last_snapshot = now
+        path = os.path.join(self._state_dir, _STATE_FILENAME)
+        tmp = path + ".tmp"
+        try:
+            with self._lock:
+                rows = [s.to_dict() for s in self._sessions.values()]
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(rows, fh)
+            os.replace(tmp, path)
+            logger.debug("session tracker snapshot wrote %d session(s)", len(rows))
+        except Exception:
+            logger.warning("session tracker snapshot failed", exc_info=True)
 
     def list_sessions(self) -> list[SessionStats]:
         with self._lock:
@@ -157,7 +236,8 @@ def get_session_tracker() -> SessionTracker:
     if _tracker is None:
         with _tracker_lock:
             if _tracker is None:
-                _tracker = SessionTracker()
+                state_dir = os.environ.get(_STATE_ENV, "").strip() or None
+                _tracker = SessionTracker(state_dir=state_dir)
     return _tracker
 
 

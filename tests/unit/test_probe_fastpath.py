@@ -93,6 +93,10 @@ class TestHealthzShape:
             r = client.get("/healthz")
             assert r.status_code == 200
             body = r.json()
+            # #754: instance_id + version are dynamic; assert them separately
+            # so the pinned core-shape parity stays deterministic.
+            assert body.pop("instance_id", None)
+            assert isinstance(body.pop("version", None), str)
             assert body == {
                 "status": "healthy",
                 "ready": True,
@@ -125,6 +129,9 @@ class TestHealthzShape:
             r = client.get("/healthz")
             assert r.status_code == 200
             body = r.json()
+            # #754: dynamic instance_id + version asserted separately.
+            assert body.pop("instance_id", None)
+            assert isinstance(body.pop("version", None), str)
             assert body == {
                 "status": "healthy",
                 "ready": False,
@@ -504,6 +511,9 @@ class TestFastPathServesRequest:
             assert captured[0]["status"] == 200
             assert captured[1]["type"] == "http.response.body"
             body = json.loads(captured[1]["body"])
+            # #754: dynamic instance_id + version asserted separately.
+            assert body.pop("instance_id", None)
+            assert isinstance(body.pop("version", None), str)
             assert body == {
                 "status": "healthy",
                 "ready": True,

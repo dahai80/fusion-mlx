@@ -25,20 +25,29 @@ async def root():
 
 @probe_router.get("/health")
 async def health():
+    from .._version import __version__
+    from ..config import get_config
+    from ..instance import get_instance_id
     from ..server import _server_state
 
     pool = _server_state.get("engine_pool")
+    cfg = get_config()
     preloading = _server_state.get("preloading", False)
+    draining = getattr(cfg, "draining", False)
     model_loaded = pool is not None and pool.loaded_model_count > 0
     loaded_models = []
     if pool:
         loaded_models = pool.get_loaded_model_ids()
-    ready = pool is not None and not preloading
+    ready = pool is not None and not preloading and not draining
+    status = "draining" if draining else ("preloading" if preloading else "healthy")
     return {
-        "status": "preloading" if preloading else "healthy",
+        "status": status,
         "ready": ready,
         "model_loaded": model_loaded,
         "loaded_models": loaded_models,
+        "version": __version__,
+        "instance_id": get_instance_id(),
+        "draining": draining,
     }
 
 
@@ -57,7 +66,9 @@ async def health_ready():
 
 @probe_router.get("/healthz")
 async def healthz():
+    from .._version import __version__
     from ..config import get_config
+    from ..instance import get_instance_id
     from ..server import _server_state
 
     pool = _server_state.get("engine_pool")
@@ -65,6 +76,11 @@ async def healthz():
     draining = getattr(cfg, "draining", False)
     preloading = _server_state.get("preloading", False)
     model_name = getattr(cfg, "model_name", "")
+    instance_id = get_instance_id()
+    # #754: instance_id + version on every branch so the fast-path and this
+    # fall-through handler stay byte-shape-locked (parity enforced by
+    # test_probe_fastpath), and a gateway probing /healthz can distinguish
+    # which replica is draining.
     if draining:
         return JSONResponse(
             status_code=503,
@@ -73,6 +89,8 @@ async def healthz():
                 "ready": False,
                 "model_loaded": pool is not None and pool.loaded_model_count > 0,
                 "model_name": model_name,
+                "instance_id": instance_id,
+                "version": __version__,
             },
         )
     if preloading:
@@ -83,6 +101,8 @@ async def healthz():
                 "ready": False,
                 "model_loaded": pool is not None and pool.loaded_model_count > 0,
                 "model_name": model_name,
+                "instance_id": instance_id,
+                "version": __version__,
             },
         )
     return {
@@ -90,6 +110,8 @@ async def healthz():
         "ready": pool is not None,
         "model_loaded": pool is not None and pool.loaded_model_count > 0,
         "model_name": model_name,
+        "instance_id": instance_id,
+        "version": __version__,
     }
 
 
@@ -341,3 +363,33 @@ async def clear_cache():
 async def delete_cache():
     # Alias for POST /v1/cache/clear (OpenAI-style DELETE).
     return await clear_cache()
+
+
+@admin_router.post("/v1/drain")
+async def drain_start():
+    # #754: mark this instance as draining. /healthz returns 503 draining so
+    # a gateway/CLI doing health-driven failover routes new requests away
+    # while in-flight requests finish. Idempotent: re-entering drain is a
+    # no-op. Does NOT unload models (let in-flight work complete).
+    from ..config import get_config
+    from ..instance import get_instance_id
+
+    cfg = get_config()
+    if not cfg.draining:
+        cfg.draining = True
+        logger.info("drain started on instance %s", get_instance_id())
+    return {"status": "draining", "instance_id": get_instance_id()}
+
+
+@admin_router.delete("/v1/drain")
+async def drain_stop():
+    # #754: clear the drain flag, returning the instance to serving. Use
+    # after maintenance/failover completes. Idempotent.
+    from ..config import get_config
+    from ..instance import get_instance_id
+
+    cfg = get_config()
+    if cfg.draining:
+        cfg.draining = False
+        logger.info("drain cleared on instance %s", get_instance_id())
+    return {"status": "healthy", "instance_id": get_instance_id()}
