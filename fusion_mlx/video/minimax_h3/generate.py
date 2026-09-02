@@ -572,8 +572,7 @@ def _load_ref2va_frames(reference_paths):
                 raise
             if frames.ndim != 4 or frames.shape[-1] not in (1, 3, 4):
                 raise ValueError(
-                    "h3 ref2va: unexpected video shape %s for %s (issue #688 step 2-3)"
-                    % (frames.shape, rp)
+                    f"h3 ref2va: unexpected video shape {frames.shape} for {rp} (issue #688 step 2-3)"
                 )
             video = np.transpose(frames, (0, 3, 1, 2))  # (T,H,W,C) -> (T,C,H,W)
         else:
