@@ -1198,6 +1198,7 @@ fusion-mlx is the link endpoint in a 3-tier chain: App -> Gateway -> MLX. By def
 | `FUSION_MLX_ALLOWED_READ_DIRS` | _(unset)_ | #633. Colon-separated list of extra directories appended to the path-traversal read allow-list (`~/.fusion-mlx/models`, `~/.fusion-mlx/cache`, `/tmp`, `/var/tmp`). Lets scene-continuity condition images (i2va first-frame, l2va last-frame) from custom output dirs (e.g. fusion-comfyui) pass `is_safe_local_path` without writing to `/tmp`. |
 | `FUSION_INSTANCE_ID` | _(unset → `<hostname>:<pid>`)_ | #754. Stable instance identity so a gateway/CLI doing health-driven failover can distinguish replicas. Operator-set (e.g. `mlx-node-1`); when unset a stable `<hostname>:<pid>` fallback is derived once per process. Surfaced on `/health`, `/healthz`, and the `/v1/drain` responses. |
 | `FUSION_SESSION_STATE_DIR` | _(unset → in-memory only)_ | #754. Directory for `SessionTracker` JSON snapshot persistence. When set, per-session token-usage stats are periodically snapshotted to `<dir>/sessions.json` (atomic tmp-write + `os.replace`) and rehydrated on startup so a failover/restart does not lose cumulative context. Off by default: single-process dev keeps the original in-memory-only behavior. |
+| `FUSION_CODE_SANDBOX` | `false` | #743. Opt-in gate for the code-sandbox reward endpoint (`POST /admin/api/fine-tune/reward/code`). When `on`/`1`/`true`, model-generated code + dataset tests are executed under a macOS `sandbox-exec` deny-by-default profile to score GRPO completions by unittest pass rate. When unset (default), untrusted code execution is OFF and the endpoint returns `503` fail-visible. Mirrors the trainer-side `FUSION_CODE_SANDBOX_TRUSTED` posture — never on by default. |
 
 ### Server-side HA — drain, instance identity, health richness (#754)
 
@@ -1209,6 +1210,42 @@ For deployments running multiple fusion-mlx replicas behind a gateway (or a CLI 
 - **Persistent session state.** Set `FUSION_SESSION_STATE_DIR` to a directory and the in-memory per-session token tracker snapshots to `sessions.json` (debounced ~5 s, atomic replace) and rehydrates on restart, so a failover does not lose cumulative per-session usage context. Off by default.
 
 **Run mode:** multi-instance coordination is *each instance independent* — there is no leader election or shared request queue. The real HA primitive here is the drain flag (graceful failover) + persistent session state (context survival) + health richness (gateway routing). Client-side failover (retry the next replica on a 503/connection error) is handled by fusion-cli (#48); gateway routing rules live in fusion-gateway.
+
+### Code-sandbox reward endpoint (#743)
+
+For GRPO fine-tuning on coding tasks, the reward signal must come from **running** the model's generated code against a dataset test suite — but executing untrusted model output on the operator's machine is unsafe. This endpoint centralizes the isolation in fusion-mlx so the trainer stays a pure HTTP delegation layer.
+
+`POST /admin/api/fine-tune/reward/code` (admin-gated, `require_admin`) accepts:
+
+```json
+{
+  "code": "def add(a, b):\n    return a + b\n",
+  "tests": "import unittest\n\nclass TestSolution(unittest.TestCase):\n    def test_add(self):\n        self.assertEqual(add(1, 2), 3)\n",
+  "timeout": 30
+}
+```
+
+and returns the pass-rate reward plus diagnostic capture:
+
+```json
+{
+  "reward": 1.0,
+  "passed": 1,
+  "total": 1,
+  "timed_out": false,
+  "stdout": "...",
+  "stderr": "...",
+  "error": ""
+}
+```
+
+- **Isolation.** The combined `{code}\n{tests}` module is run under `python -m unittest -v solution` inside a macOS `sandbox-exec` deny-by-default profile: network denied (no exfil/C2), home tree read-only (no `~/.ssh`, no dotfile tampering), only the per-run work dir writable, and **process-fork denied** so a poisoned completion (`import os; os.system(...)`, `subprocess.run`, `os.fork`) cannot spawn a sibling process. The interpreter itself runs; further forks are refused.
+- **Reward.** `reward = passed / total` parsed from the unittest verbose output. `Ran N tests` gives the total; `... ok` markers give the passed count (robust to the word "FAIL" in an assertion body). A collection error (no summary line) yields `total=0` → `reward=0.0`.
+- **Timeout.** `timeout` (seconds, default `30`, must be positive) is the only wall-clock backstop against infinite loops — `unittest` itself has no time cap. A timeout returns `timed_out: true`, `reward: 0.0`, `error: "timed out after Ns"`.
+- **Fail-visible gate.** The endpoint is OFF by default. Set `FUSION_CODE_SANDBOX=on` to enable; unset it returns `503` (not a silent `200 reward 0.0`, which would read as "code ran, scored 0"). On a non-macOS host or a macOS host without `sandbox-exec`, the runner refuses to execute unsandboxed and returns a `503` with a `sandbox-exec not found` message. Missing/invalid body → `400`; runner exception → `500`.
+- **Why here, not the trainer.** Keeping the isolation primitive in fusion-mlx means one hardened surface for all training clients (the trainer, the CLI, future tooling) instead of N per-trainer sandboxes drifting apart. The trainer sends `{code, tests}` over HTTP and gets a reward number back — it never touches untrusted code directly.
+
+**Run mode:** single-process, one sandboxed python child per request (process-fork is denied, so the child cannot fan out). No persistent sandbox pool; each request gets a fresh temp work dir that is removed after the run. macOS-only — the deny-by-default profile is `sandbox-exec` (no Linux/containerd equivalent is shipped).
 
 ### CORS (#641 / #675)
 
