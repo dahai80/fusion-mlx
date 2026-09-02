@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [0.8.71] - 2026-09-02
+
+### Added
+- **#743 — code-sandbox reward endpoint for GRPO coding tasks.** New
+  `POST /admin/api/fine-tune/reward/code` (admin-gated, `require_admin`)
+  runs model-generated `code` + dataset `tests` under a macOS
+  `sandbox-exec` deny-by-default profile and returns the unittest
+  pass-rate reward, centralizing untrusted-code isolation in fusion-mlx
+  so the trainer stays a pure HTTP delegation layer.
+  - Accepts `{code, tests, timeout?}`, returns
+    `{reward, passed, total, timed_out, stdout, stderr, error}`.
+    `reward = passed / total`.
+  - **Isolation profile** (`sandbox-exec`): network denied, home tree
+    read-only, only the per-run work dir writable, **process-fork
+    denied** so `os.system` / `subprocess.run` / `os.fork` cannot spawn
+    a sibling — the interpreter runs; further forks are refused.
+  - **Fail-visible gate.** `FUSION_CODE_SANDBOX=on` (default OFF).
+    Unset → `503` (not a silent `200 reward 0.0`). No `sandbox-exec`
+    (non-macOS / absent) → `503` with a clear message; the runner never
+    executes untrusted code unsandboxed. Missing/invalid body → `400`;
+    runner exception → `500`. `timeout` (default `30`, must be positive)
+    is the wall-clock backstop — `unittest` itself has no time cap.
+  - New module `fusion_mlx/training/code_sandbox.py`
+    (`run_code_reward`, `CodeRewardResult`, `_parse_unittest_results`).
+    21 contract tests in `tests/unit/test_code_sandbox.py` (20 pass +
+    1 skip on non-macOS): isolation (fork/home-write denied, work-dir
+    allowed, timeout), env-gate, unittest-output parsing, and the HTTP
+    route wrapper.
+
 ## [0.8.70] - 2026-09-02
 
 ### Added

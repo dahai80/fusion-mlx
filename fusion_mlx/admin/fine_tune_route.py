@@ -503,6 +503,69 @@ async def score_reward_endpoint(
 
 
 # =============================================================================
+# Code-Sandbox Reward Endpoint (#743)
+# =============================================================================
+
+
+@_router.post("/api/fine-tune/reward/code")
+async def code_reward_endpoint(
+    request: Request,
+    is_admin: bool = Depends(require_admin),
+):
+    # Run model-generated ``code`` against dataset ``tests`` inside a macOS
+    # ``sandbox-exec`` deny-by-default profile and return the unittest pass
+    # rate as the GRPO reward. Keeps the trainer a pure HTTP delegation
+    # layer: the untrusted-exec isolation lives HERE (fusion-mlx), not in
+    # the trainer process.
+    #
+    # Gated behind ``FUSION_CODE_SANDBOX=on`` (default OFF) so the
+    # untrusted-exec path is opt-in, never on by default — mirrors the
+    # trainer-side ``FUSION_CODE_SANDBOX_TRUSTED`` posture.
+    body = await request.json()
+
+    code = body.get("code", "")
+    tests = body.get("tests", "")
+    timeout = body.get("timeout")
+
+    if not isinstance(code, str) or not code.strip():
+        raise HTTPException(status_code=400, detail="code (non-empty string) required")
+    if not isinstance(tests, str) or not tests.strip():
+        raise HTTPException(status_code=400, detail="tests (non-empty string) required")
+    if timeout is not None:
+        if not isinstance(timeout, (int, float)) or timeout <= 0:
+            raise HTTPException(
+                status_code=400, detail="timeout must be a positive number"
+            )
+        timeout = float(timeout)
+
+    from fusion_mlx.training.code_sandbox import run_code_reward
+
+    logger.info(
+        "reward/code endpoint: code_len=%d tests_len=%d timeout=%s",
+        len(code),
+        len(tests),
+        timeout,
+    )
+    try:
+        result = await asyncio.to_thread(
+            run_code_reward, code, tests, **({"timeout": timeout} if timeout else {})
+        )
+    except ValueError as e:
+        logger.warning("reward/code rejected: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("reward/code sandbox failed")
+        raise HTTPException(status_code=500, detail=f"Code reward failed: {e}")
+
+    # 503 fail-visible when the sandbox is disabled (gate OFF) — distinct
+    # from a 200 with reward 0.0, which would read as "code ran, scored 0".
+    if result.error and "disabled" in result.error:
+        raise HTTPException(status_code=503, detail=result.error)
+
+    return result.to_dict()
+
+
+# =============================================================================
 # GRPO Training Endpoints (#363 Phase 2)
 # =============================================================================
 
