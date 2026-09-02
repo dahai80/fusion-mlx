@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.8.66] - 2026-09-02
+
+### Fixed
+- **#758 — HF-cache-backed image/video models not discovered by the model
+  pool.** Discovery classified image/video via `_is_task_model`, which
+  requires a top-level `configuration.json` (task field) or `model_index.json`
+  (diffusers `_class_name`). HF-cache snapshots ship neither, so
+  `_is_model_dir` / `_is_hf_cache_mlx_compatible` returned `False` and these
+  models were never discovered (404 / LLM misclassification "Model type ...
+  not supported"). Three HF-cache layouts verified on disk, all now
+  discovered:
+  - **FLUX.2-dev** (`AITRADER/FLUX2-dev-mlx-8bit`) — mflux sharded
+    `transformer/` + `vae/` dirs, image via `_is_comfy_flux2_layout`.
+  - **Canonical LTX-2.5** (`Lightricks/LTX-2.5`) — Comfy `diffusion_models/`
+    + `vae/` dirs, video via `_is_comfy_ltx2_5_layout`.
+  - **Flat LTX-2.5** (`dgrauet/ltx-2.5-mlx-q8`, the issue's actual repro) —
+    root-level `transformer-*.safetensors` + `split_model.json`
+    (`recipe=ltx-2.5`) + `embedded_config.json`, no Comfy subdirs. New
+    `_is_flat_ltx2_5_layout`, gated on the `split_model.json` recipe +
+    root-level transformer weights, tolerant of broken symlinks via
+    `_iter_root_safetensors_entries`. Wired into `_is_video_model` and the
+    `_is_hf_cache_mlx_compatible` early-accept OR.
+- The flat-diffusers repo ships diffusers-format weight keys (`transformer.*`
+  prefix) the `ltx2_5` backend `sanitize()` does not yet map, so it is
+  discovered as video but not yet loadable. Backend-format load support
+  tracked in follow-up **#762** (analogous to #759 for FLUX.2-dev).
+  Discovery is correct regardless — an LLM misclassification is strictly
+  worse than a clear backend-format error.
+
+### Tests
+- `tests/unit/test_model_discovery.py`: +3 regression tests for the flat
+  LTX-2.5 layout (accept, reject wrong recipe, reject missing weights).
+  Discovery suite 43 passed, 0 failed.
+
 ## [0.8.65] - 2026-09-02
 
 ### Fixed
