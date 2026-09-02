@@ -237,19 +237,37 @@ class GRPOService:
     def _execute_grpo(self, job: GRPOJob):
         # Run GRPO training in a background thread (blocking). Load model,
         # apply LoRA, run train loop, save adapter, cleanup.
-        # This runs under asyncio.to_thread, so MLX's thread-local
-        # generation_stream (used by mlx_lm.generate.generate_step inside
-        # GRPOTrainer._sample_completions) is not bound on this worker thread.
-        # Establish a thread-local default stream first, otherwise generate_step
-        # raises "There is no Stream(gpu, N) in current thread." (#430).
+        # This runs under asyncio.to_thread, so MLX's module-level
+        # generation_stream (mlx_lm.generate, captured at import time on the
+        # main thread) is not bound on this worker thread. generate_step does
+        # `with mx.stream(generation_stream)` explicitly, so merely setting the
+        # default stream (the old #430 / PR#432 fix) is NOT enough -- the stale
+        # main-thread stream still raises "There is no Stream(gpu, N) in
+        # current thread." (#751, regression of #430). Rebind the module global
+        # to a fresh worker-thread-local stream so generate_step resolves it
+        # here, and also set it as the active default stream.
+        import importlib
+
         import mlx.core as mx
 
+        # NOTE: `import mlx_lm.generate as x` does NOT bind the submodule --
+        # mlx_lm/__init__ re-exports a `generate` FUNCTION that shadows the
+        # submodule name, so `x` is the function (no .generation_stream attr).
+        # Resolve the real module object via importlib so we can rebind its
+        # module-level generation_stream.
+        _mlx_gen = importlib.import_module("mlx_lm.generate")
+
         logger.info(
-            "GRPO execute(worker): establishing thread-local stream job=%s", job.job_id
+            "GRPO execute(worker): rebinding generation_stream job=%s", job.job_id
         )
         worker_stream = mx.new_thread_local_stream(mx.default_device())
-        with mx.stream(worker_stream):
-            self._run_grpo(job)
+        saved_gen_stream = getattr(_mlx_gen, "generation_stream", None)
+        _mlx_gen.generation_stream = worker_stream
+        try:
+            with mx.stream(worker_stream):
+                self._run_grpo(job)
+        finally:
+            _mlx_gen.generation_stream = saved_gen_stream
 
     def _run_grpo(self, job: GRPOJob):
         import mlx_lm.utils as mlx_utils

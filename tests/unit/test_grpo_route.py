@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -120,3 +121,68 @@ def test_grpo_cancel_not_found():
     client = TestClient(app)
     resp = client.post("/admin/api/fine-tune/grpo/jobs/nope/cancel")
     assert resp.status_code == 404
+
+
+def test_grpo_execute_grpo_rebinds_generation_stream():
+    # Regression for #751: _execute_grpo runs in a worker thread, but
+    # mlx_lm.generate's module-level generation_stream was captured on the main
+    # thread at import. generate_step does `with mx.stream(generation_stream)`
+    # explicitly, so the old default-stream-only fix (#430/PR#432) did not
+    # cover it. _execute_grpo must rebind the module global to a fresh
+    # worker-thread-local stream (and restore it after).
+    try:
+        import importlib
+
+        import mlx.core as mx
+
+        # `import mlx_lm.generate as x` binds the re-exported generate()
+        # FUNCTION (mlx_lm/__init__ shadow), not the submodule -- resolve the
+        # module via importlib so .generation_stream is reachable.
+        mlx_gen = importlib.import_module("mlx_lm.generate")
+    except Exception:
+        pytest.skip("mlx not available in this CI environment")
+
+    app, svc = _build_app()
+    job = svc.create_job(model_id="m1", prompts=["p"], adapter_name="s1")
+
+    original_stream = mlx_gen.generation_stream
+    captured = {}
+
+    def fake_run_grpo(j):
+        # Inside the worker context the module global must be rebound to a
+        # different (worker-thread-local) stream -- not the import-time one.
+        captured["during"] = mlx_gen.generation_stream
+        captured["default"] = mx.default_stream(mx.default_device())
+
+    svc._run_grpo = fake_run_grpo
+    svc._execute_grpo(job)
+
+    # Rebound to a fresh stream distinct from the import-time one.
+    assert captured["during"] is not None
+    assert captured["during"] is not original_stream
+    # Restored after the call (finally block), even though no exception.
+    assert mlx_gen.generation_stream is original_stream
+
+
+def test_grpo_execute_grpo_restores_stream_on_error():
+    # The finally branch: if _run_grpo raises, the module global must still be
+    # restored so a failed GRPO job does not corrupt generation_stream for
+    # later normal serve-side generation.
+    try:
+        import importlib
+
+        mlx_gen = importlib.import_module("mlx_lm.generate")
+    except Exception:
+        pytest.skip("mlx not available in this CI environment")
+
+    app, svc = _build_app()
+    job = svc.create_job(model_id="m1", prompts=["p"], adapter_name="s2")
+    original_stream = mlx_gen.generation_stream
+
+    def fake_run_grpo(j):
+        raise RuntimeError("boom inside train loop")
+
+    svc._run_grpo = fake_run_grpo
+    with pytest.raises(RuntimeError, match="boom"):
+        svc._execute_grpo(job)
+    assert mlx_gen.generation_stream is original_stream

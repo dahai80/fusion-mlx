@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [0.8.65] - 2026-09-02
+
+### Fixed
+- **#751 — GRPO training `RuntimeError: There is no Stream(gpu, N) in current
+  thread`** (regression of #430). GRPO training runs `mlx_lm.generate.generate_step`
+  in a worker thread (`asyncio.to_thread`). `mlx_lm.generate` captures a
+  module-level `generation_stream` at import time on the main thread, and
+  `generate_step` does `with mx.stream(generation_stream)` explicitly — so the
+  prior #430/PR#432 fix (which only set the *default* stream in the worker) did
+  not cover it: the stale main-thread stream is not bound in the worker and
+  raises. Fix: `GRPOService._execute_grpo` now rebinds
+  `mlx_lm.generate.generation_stream` to a fresh worker-thread-local stream
+  (resolved via `importlib.import_module`, since `import mlx_lm.generate as x`
+  binds the re-exported `generate()` *function* from `mlx_lm/__init__`, not the
+  submodule) and restores the original in a `finally` block so a failed job
+  cannot corrupt serve-side generation. Verified end-to-end on a real model:
+  GRPO job completes with finite loss and mean_reward.
+- **N in `Stream(gpu, N)` is the MLX stream index, not `group_size`.** The
+  reporter saw N=4 (group_size=4) and inferred N tracks GRPO config;
+  reproduction saw N=8 (stream-creation order). Documented to prevent
+  recurrence.
+
+### Tests
+- `tests/unit/test_grpo_route.py`: +2 regression tests
+  (`test_grpo_execute_grpo_rebinds_generation_stream`,
+  `test_grpo_execute_grpo_restores_stream_on_error`) verifying the module global
+  is rebound to a distinct worker stream and restored on both success and
+  exception paths. 11 passed, 0 failed.
+
 ## [0.8.64] - 2026-09-01
 
 ### Added
