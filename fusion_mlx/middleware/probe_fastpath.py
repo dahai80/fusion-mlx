@@ -32,12 +32,20 @@ _BASE_HEADERS: list[tuple[bytes, bytes]] = [
 
 def _build_healthz_payload() -> tuple[int, bytes]:
     cfg = get_config()
+    # #754: include instance_id + version so a gateway/CLI doing health-driven
+    # failover can distinguish replicas and route around a draining instance.
+    from .._version import __version__
+    from ..instance import get_instance_id
+
+    instance_id = get_instance_id()
     if getattr(cfg, "draining", False):
         payload = {
             "status": "draining",
             "ready": False,
             "model_loaded": getattr(cfg, "engine", None) is not None,
             "model_name": getattr(cfg, "model_name", ""),
+            "instance_id": instance_id,
+            "version": __version__,
         }
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         return 503, body
@@ -46,6 +54,8 @@ def _build_healthz_payload() -> tuple[int, bytes]:
         "ready": bool(getattr(cfg, "ready", False)),
         "model_loaded": getattr(cfg, "engine", None) is not None,
         "model_name": getattr(cfg, "model_name", ""),
+        "instance_id": instance_id,
+        "version": __version__,
     }
     return 200, json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
