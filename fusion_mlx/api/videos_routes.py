@@ -414,6 +414,12 @@ async def generate_video(
 
     except HTTPException:
         raise
+    except ValueError as exc:
+        # User-actionable config/input error from the engine (e.g. issue #761:
+        # an i2v checkpoint run without conditioning). Surface the message as
+        # 400 instead of the generic 500 so the client sees the remediation.
+        logger.warning("Video generation rejected: %s", exc)
+        raise HTTPException(400, str(exc))
     except Exception as exc:
         logger.exception("Video generation failed")
         raise HTTPException(500, "Internal server error")

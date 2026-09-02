@@ -464,6 +464,38 @@ def generate_video(
 
     config = correct_in_dim(config, model_dir)
 
+    # Issue #761: an i2v checkpoint (model_type=="i2v", in_dim>vae_z_dim)
+    # cannot run pure text-to-video — its patch_embedding expects more
+    # channels than a noise latent provides, so the DiT addmm crashes with a
+    # cryptic shape mismatch (e.g. (768,64) vs (144,5120)). Fail visibly with
+    # a remediation message instead of the addmm traceback. Any conditioning
+    # input (image / camera_conditions / control_video / reference_images)
+    # satisfies the i2v channel-concat path; only the fully unconditioned
+    # request is rejected. Rule 12 — fail visibly, not silently.
+    if (
+        config.model_type == "i2v"
+        and config.in_dim > config.vae_z_dim
+        and image is None
+        and camera_conditions is None
+        and control_video is None
+        and not reference_images
+    ):
+        logger.error(
+            "wan2 i2v checkpoint run without conditioning: model_type=%s "
+            "in_dim=%d vae_z_dim=%d model_dir=%s (issue #761)",
+            config.model_type,
+            config.in_dim,
+            config.vae_z_dim,
+            model_dir,
+        )
+        raise ValueError(
+            f"Wan2 i2v model (model_type=i2v, in_dim={config.in_dim}) at "
+            f"{model_dir} requires an image or conditioning input for "
+            f"text-to-video. This checkpoint is image-to-video; for pure "
+            f"text-to-video use the Wan2.1-T2V-14B model directory. "
+            f"(issue #761)"
+        )
+
     # Apply defaults from config if not overridden
     if steps is None:
         steps = config.sample_steps
