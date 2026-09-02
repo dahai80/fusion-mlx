@@ -17,7 +17,12 @@ from fusion_mlx.video.ltx2_5 import (
     resolve_distilled_sigmas,
 )
 from fusion_mlx.video.ltx2_5.generate import generate_video
-from fusion_mlx.video.ltx2_5.video_vae import _split_vae_weights
+from fusion_mlx.video.ltx2_5.utils import is_flat_layout
+from fusion_mlx.video.ltx2_5.video_vae import (
+    _normalize_stat_key,
+    _pre_convert_mlx_conv_to_pytorch,
+    _split_vae_weights,
+)
 
 
 class TestSchedulerSigmas:
@@ -124,6 +129,97 @@ class TestVAESplit:
     def test_load_decoder_missing_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="not found"):
             load_video_decoder(tmp_path / "nope.safetensors")
+
+
+class TestFlatLayoutSplit:
+    # #762: flat diffusers (dgrauet) enc/dec 分立文件, 键带 vae_encoder_conv./
+    # vae_decoder_conv. 前缀但无 encoder./decoder. 子前缀; stats 下划线/bare。
+    def test_flat_encoder_split_assigns_all_to_enc(self, tmp_path):
+        import mlx.core as mx
+
+        weights = {
+            "vae_encoder_conv.conv_in.conv.weight": mx.zeros((4, 3, 1, 1, 1)),
+            "vae_encoder_conv.conv_in.conv.bias": mx.zeros((4,)),
+            "vae_encoder_conv.per_channel_statistics._mean_of_means": mx.zeros((4,)),
+            "vae_encoder_conv.per_channel_statistics._std_of_means": mx.ones((4,)),
+        }
+        f = tmp_path / "vae_encoder_conv.safetensors"
+        mx.save_safetensors(str(f), weights)
+        enc, dec, stats = _split_vae_weights(f)
+        assert len(enc) == 2
+        assert "conv_in.conv.weight" in enc
+        assert len(dec) == 0
+        assert "per_channel_statistics.mean-of-means" in stats
+        assert "per_channel_statistics.std-of-means" in stats
+
+    def test_flat_decoder_split_assigns_all_to_dec(self, tmp_path):
+        import mlx.core as mx
+
+        weights = {
+            "vae_decoder_conv.up_blocks.0.conv.conv.weight": mx.zeros((3, 4, 1, 1, 1)),
+            "vae_decoder_conv.per_channel_statistics.mean": mx.zeros((4,)),
+            "vae_decoder_conv.per_channel_statistics.std": mx.ones((4,)),
+        }
+        f = tmp_path / "vae_decoder_conv.safetensors"
+        mx.save_safetensors(str(f), weights)
+        enc, dec, stats = _split_vae_weights(f)
+        assert len(dec) == 1
+        assert "up_blocks.0.conv.conv.weight" in dec
+        assert len(enc) == 0
+        assert "per_channel_statistics.mean-of-means" in stats
+        assert "per_channel_statistics.std-of-means" in stats
+
+    def test_normalize_stat_key_all_forms(self):
+        assert _normalize_stat_key("per_channel_statistics._mean_of_means") == (
+            "per_channel_statistics.mean-of-means"
+        )
+        assert _normalize_stat_key("per_channel_statistics.mean-of-means") == (
+            "per_channel_statistics.mean-of-means"
+        )
+        assert _normalize_stat_key("per_channel_statistics.mean") == (
+            "per_channel_statistics.mean-of-means"
+        )
+        assert _normalize_stat_key("per_channel_statistics.std") == (
+            "per_channel_statistics.std-of-means"
+        )
+
+
+class TestPreConvertMlxConv:
+    # #762: dgrauet conv 权重已是 MLX 布局 (Cout,kd,kh,kw,Cin)，shape[1]==3(kernel)。
+    # 预转 PyTorch (Cout,Cin,kd,kh,kw) 让 ltx2 sanitize 转回，避免双重转置。
+    def test_5d_mlx_conv_reversed(self):
+        import mlx.core as mx
+
+        w = mx.zeros((4, 3, 1, 1, 1))  # (Cout, kd=3 fake, kh, kw, Cin)
+        out = _pre_convert_mlx_conv_to_pytorch({"conv.weight": w})
+        assert out["conv.weight"].shape == (4, 1, 3, 1, 1)
+
+    def test_non_conv_weight_untouched(self):
+        import mlx.core as mx
+
+        w = mx.zeros((4, 8))
+        out = _pre_convert_mlx_conv_to_pytorch({"norm.weight": w})
+        assert out["norm.weight"].shape == (4, 8)
+
+
+class TestIsFlatLayout:
+    def test_flat_detected_by_split_model_and_transformer(self, tmp_path):
+        import json
+
+        (tmp_path / "split_model.json").write_text(json.dumps({"recipe": "ltx-2.5"}))
+        (tmp_path / "transformer-distilled.safetensors").write_bytes(b"")
+        assert is_flat_layout(tmp_path) is True
+
+    def test_non_flat_when_no_split_model(self, tmp_path):
+        (tmp_path / "transformer-distilled.safetensors").write_bytes(b"")
+        assert is_flat_layout(tmp_path) is False
+
+    def test_non_flat_when_wrong_recipe(self, tmp_path):
+        import json
+
+        (tmp_path / "split_model.json").write_text(json.dumps({"recipe": "ltx-2"}))
+        (tmp_path / "transformer-distilled.safetensors").write_bytes(b"")
+        assert is_flat_layout(tmp_path) is False
 
 
 class TestGenerateSkeleton:

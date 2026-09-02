@@ -46,6 +46,27 @@ LTX2_5_ENCODER_BLOCKS = [
 
 _STATS_MEAN_KEY = "per_channel_statistics.mean-of-means"
 _STATS_STD_KEY = "per_channel_statistics.std-of-means"
+# #762: flat diffusers (dgrauet) stat 键名与 canon 不同：
+#   enc 用 _mean_of_means/_std_of_means (下划线)
+#   dec 用 mean/std (bare)
+#   canon 用 mean-of-means/std-of-means (连字符)
+# 统一到 canon 连字符形式供 ltx2 sanitize 识别。
+_FLAT_STAT_PREFIXES = (
+    "vae_encoder_conv.",
+    "vae_decoder_conv.",
+)
+
+
+def _normalize_stat_key(k: str) -> str:
+    if k.endswith("._mean_of_means") or k.endswith(".mean-of-means"):
+        return _STATS_MEAN_KEY
+    if k.endswith("._std_of_means") or k.endswith(".std-of-means"):
+        return _STATS_STD_KEY
+    if k.endswith(".mean") or k.endswith(".std"):
+        base = k.rsplit(".", 1)[0]
+        suffix = "mean-of-means" if k.endswith(".mean") else "std-of-means"
+        return f"{base}.{suffix}" if base else _STATS_MEAN_KEY
+    return k
 
 
 def ltx2_5_encoder_config() -> VideoEncoderModelConfig:
@@ -59,18 +80,41 @@ def _split_vae_weights(
     single_file: Path,
 ) -> tuple[dict[str, mx.array], dict[str, mx.array], dict[str, mx.array]]:
     # 单文件拆 encoder./decoder./顶层 stats，剥去前缀。
+    # 两类布局:
+    #   canon Comfy: 单文件含 encoder.*/decoder.*/顶层 stats (连字符)。
+    #   flat diffusers (#762): enc/dec 各一文件, 键带 vae_encoder_conv./
+    #   vae_decoder_conv. 前缀, 但无 encoder./decoder. 子前缀 (enc 文件全
+    #   归 encoder, dec 文件全归 decoder); stats 下划线/bare -> 连字符。
     weights = mx.load(str(single_file))
+    flat_prefix = None
+    for p in _FLAT_STAT_PREFIXES:
+        if any(k.startswith(p) for k in weights):
+            flat_prefix = p
+            break
+    # flat 文件名决定 enc/dec 归属 (无 encoder./decoder. 子前缀)。
+    flat_target = None
+    if flat_prefix == "vae_encoder_conv.":
+        flat_target = "enc"
+    elif flat_prefix == "vae_decoder_conv.":
+        flat_target = "dec"
     enc: dict[str, mx.array] = {}
     dec: dict[str, mx.array] = {}
     stats: dict[str, mx.array] = {}
     other = 0
     for k, v in weights.items():
-        if k.startswith("encoder."):
-            enc[k[len("encoder.") :]] = v
-        elif k.startswith("decoder."):
-            dec[k[len("decoder.") :]] = v
-        elif k in (_STATS_MEAN_KEY, _STATS_STD_KEY):
-            stats[k] = v
+        if k == "__metadata__":
+            continue
+        nk = k[len(flat_prefix) :] if flat_prefix else k
+        if "per_channel_statistics" in nk:
+            stats[_normalize_stat_key(nk)] = v
+        elif nk.startswith("encoder."):
+            enc[nk[len("encoder.") :]] = v
+        elif nk.startswith("decoder."):
+            dec[nk[len("decoder.") :]] = v
+        elif flat_target == "enc":
+            enc[nk] = v
+        elif flat_target == "dec":
+            dec[nk] = v
         else:
             other += 1
     if other:
@@ -80,20 +124,41 @@ def _split_vae_weights(
             sorted(
                 k
                 for k in weights
-                if not k.startswith(("encoder.", "decoder."))
-                and k not in (_STATS_MEAN_KEY, _STATS_STD_KEY)
+                if k != "__metadata__"
+                and not k.startswith(("encoder.", "decoder."))
+                and not any(k.startswith(p) for p in _FLAT_STAT_PREFIXES)
+                and "per_channel_statistics" not in k
             )[:10],
         )
     logger.info(
-        "ltx2_5 VAE split: %s total=%d encoder=%d decoder=%d stats=%d other=%d",
+        "ltx2_5 VAE split: %s total=%d encoder=%d decoder=%d stats=%d other=%d "
+        "(flat_prefix=%s target=%s)",
         single_file.name,
         len(weights),
         len(enc),
         len(dec),
         len(stats),
         other,
+        flat_prefix,
+        flat_target,
     )
     return enc, dec, stats
+
+
+def _pre_convert_mlx_conv_to_pytorch(
+    weights: dict[str, mx.array],
+) -> dict[str, mx.array]:
+    # #762 dgrauet VAE conv 权重已是 MLX 布局 (Cout,kd,kh,kw,Cin)；ltx2
+    # VideoEncoder/VideoDecoder.sanitize 会做 PyTorch->MLX 转置，直接喂入会
+    # 双重转置。先反向转成 PyTorch (Cout,Cin,kd,kh,kw) 让 sanitize 转回正确。
+    out: dict[str, mx.array] = {}
+    for k, v in weights.items():
+        if "conv" in k.lower() and "weight" in k and v.ndim == 5:
+            v = mx.transpose(v, (0, 4, 1, 2, 3))
+        elif "conv" in k.lower() and "weight" in k and v.ndim == 4:
+            v = mx.transpose(v, (0, 3, 1, 2))
+        out[k] = v
+    return out
 
 
 def _audit_and_load(model, sanitized: dict[str, mx.array], name: str, strict: bool):
@@ -184,6 +249,13 @@ def load_video_encoder(weights_path: str | Path) -> VideoEncoder:
     enc, _dec, stats = _split_vae_weights(weights_path)
     if not enc:
         raise RuntimeError(f"no encoder.* keys in {weights_path.name}")
+    # #762 flat dgrauet conv 已是 MLX 布局 -> 预转 PyTorch 让 ltx2 sanitize 转回。
+    if any(
+        "conv" in k and "weight" in k and v.ndim == 5 and v.shape[1] == 3
+        for k, v in enc.items()
+    ):
+        enc = _pre_convert_mlx_conv_to_pytorch(enc)
+        logger.info("ltx2_5 video-encoder: MLX-layout conv detected, pre-converted")
     model = VideoEncoder(ltx2_5_encoder_config())
     # ltx2 VideoEncoder.sanitize 吃 'vae.encoder.' 前缀 + 'vae.' 前缀 stats，
     # 负责 5D/4D conv 转置与键名映射。
@@ -208,6 +280,14 @@ def load_video_decoder(weights_path: str | Path) -> LTX2VideoDecoder:
     _enc, dec, stats = _split_vae_weights(weights_path)
     if not dec:
         raise RuntimeError(f"no decoder.* keys in {weights_path.name}")
+    # #762 flat dgrauet conv 已是 MLX 布局 -> 预转 PyTorch；块推断也读 PyTorch
+    # shape[1]=in_channels，必须先转。sanitize 同样会做 PyTorch->MLX 转回。
+    if any(
+        "conv" in k and "weight" in k and v.ndim == 5 and v.shape[1] == 3
+        for k, v in dec.items()
+    ):
+        dec = _pre_convert_mlx_conv_to_pytorch(dec)
+        logger.info("ltx2_5 video-decoder: MLX-layout conv detected, pre-converted")
     blocks = _infer_conv_decoder_blocks(dec)
     model = LTX2VideoDecoder(
         in_channels=128,

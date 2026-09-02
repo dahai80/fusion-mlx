@@ -22,6 +22,27 @@ from .utils import to_denoised
 logger = logging.getLogger(__name__)
 
 
+def _read_quant_config(model_dir: Path) -> tuple[int, int]:
+    # 从 split_model.json 读 quantization 参数 (#762)。缺失时回退 q8 默认
+    # (group_size=64, bits=8)，与 dgrauet/ltx-2.5-mlx-q8 一致。
+    import json
+
+    split_model = model_dir / "split_model.json"
+    group_size = 64
+    bits = 8
+    if split_model.exists():
+        try:
+            with open(split_model) as f:
+                cfg = json.load(f)
+            if cfg.get("quantization_group_size"):
+                group_size = int(cfg["quantization_group_size"])
+            if cfg.get("quantization_bits"):
+                bits = int(cfg["quantization_bits"])
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.warning("ltx2_5 quant config read failed: %s", exc)
+    return group_size, bits
+
+
 class TransformerArgsPreprocessor:
     def __init__(
         self,
@@ -633,35 +654,50 @@ class LTX2_5Model(nn.Module):
 
         return vx, ax
 
+    @staticmethod
+    def _remap_raw(k: str) -> str:
+        # 原始 diffusers 键名 -> MLX 模块树键名（canon 与 flat connector 共用）。
+        k = k.replace(".to_out.0.", ".to_out.")
+        k = k.replace(".ff.net.0.proj.", ".ff.proj_in.")
+        k = k.replace(".ff.net.2.", ".ff.proj_out.")
+        k = k.replace(".audio_ff.net.0.proj.", ".audio_ff.proj_in.")
+        k = k.replace(".audio_ff.net.2.", ".audio_ff.proj_out.")
+        k = k.replace(".linear_1.", ".linear1.")
+        k = k.replace(".linear_2.", ".linear2.")
+        return k
+
     def sanitize(self, weights: dict) -> dict:
         # 与 ltx2 的差异：不跳过 connector keys（2.5 connector 是 model 子模块）。
+        # 三种布局：
+        #   1. canon Comfy：model.diffusion_model. 前缀 + 原始键名 -> 剥前缀 + remap。
+        #   2. flat diffusers (#762)：transformer. 前缀（键名已 remapped，仅剥前缀）
+        #      + connector. 前缀（原始键名，剥前缀 + remap），两文件合并后传入。
+        #   3. 其他：原样返回。
         sanitized = {}
 
         has_raw_prefix = any(k.startswith("model.diffusion_model.") for k in weights)
-        if not has_raw_prefix:
-            return weights
+        if has_raw_prefix:
+            for key, value in weights.items():
+                if not key.startswith("model.diffusion_model."):
+                    continue
+                sanitized[
+                    self._remap_raw(key.replace("model.diffusion_model.", ""))
+                ] = value
+            return sanitized
 
-        for key, value in weights.items():
-            new_key = key
+        has_flat_transformer = any(k.startswith("transformer.") for k in weights)
+        has_flat_connector = any(k.startswith("connector.") for k in weights)
+        if has_flat_transformer or has_flat_connector:
+            for key, value in weights.items():
+                if key.startswith("transformer."):
+                    # flat transformer 键名已是 MLX 格式（to_out 非 to_out.0），
+                    # 仅剥前缀，不再 remap。
+                    sanitized[key[len("transformer.") :]] = value
+                elif key.startswith("connector."):
+                    sanitized[self._remap_raw(key[len("connector.") :])] = value
+            return sanitized
 
-            if not key.startswith("model.diffusion_model."):
-                continue
-
-            new_key = new_key.replace("model.diffusion_model.", "")
-
-            new_key = new_key.replace(".to_out.0.", ".to_out.")
-
-            new_key = new_key.replace(".ff.net.0.proj.", ".ff.proj_in.")
-            new_key = new_key.replace(".ff.net.2.", ".ff.proj_out.")
-            new_key = new_key.replace(".audio_ff.net.0.proj.", ".audio_ff.proj_in.")
-            new_key = new_key.replace(".audio_ff.net.2.", ".audio_ff.proj_out.")
-
-            new_key = new_key.replace(".linear_1.", ".linear1.")
-            new_key = new_key.replace(".linear_2.", ".linear2.")
-
-            sanitized[new_key] = value
-
-        return sanitized
+        return weights
 
     @classmethod
     def from_pretrained(
@@ -670,8 +706,11 @@ class LTX2_5Model(nn.Module):
         config: LTX2_5ModelConfig | None = None,
         variant: LTX2_5Variant | str = LTX2_5Variant.DISTILLED,
         strict: bool = True,
+        connector_weights: str | Path | None = None,
     ) -> "LTX2_5Model":
         # 2.5 单文件 checkpoint 无 config.json，配置由 default_ltx2_5_config 合成。
+        # flat diffusers 布局 (#762) 把 connector 单列为独立文件，通过
+        # connector_weights 传入并合并到 transformer 键集中统一 sanitize。
         weights_path = Path(weights_path)
         if not weights_path.exists():
             raise FileNotFoundError(
@@ -700,6 +739,16 @@ class LTX2_5Model(nn.Module):
             weights = {}
             for wf in weight_files:
                 weights.update(mx.load(str(wf)))
+        if connector_weights is not None:
+            connector_weights = Path(connector_weights)
+            if connector_weights.exists():
+                cw = mx.load(str(connector_weights))
+                logger.info(
+                    "ltx2_5 from_pretrained: merged connector %s (%d keys)",
+                    connector_weights.name,
+                    len(cw),
+                )
+                weights.update(cw)
         logger.info(
             "ltx2_5 from_pretrained: loaded %d weight keys from %d files",
             len(weights),
@@ -711,6 +760,33 @@ class LTX2_5Model(nn.Module):
             k: v.astype(mx.bfloat16) if v.dtype == mx.float32 else v
             for k, v in sanitized.items()
         }
+
+        # 量化检测 (#762): checkpoint 含 .scales 键 → 用 checkpoint 驱动的
+        # class_predicate 在 load_weights 前 nn.quantize，使 Linear 变为
+        # QuantizedLinear（带 .scales/.biases 参数）以匹配 q8 键。predicate
+        # 用模块树路径 path（与 checkpoint 键前缀一致）判断该 Linear 是否在
+        # checkpoint 中有对应 .scales。group_size/bits 从 split_model.json 读。
+        is_quantized = any(k.endswith(".scales") for k in sanitized)
+        if is_quantized:
+            group_size, bits = _read_quant_config(weights_path.parent)
+            sanitized_keys_set = set(sanitized.keys())
+
+            def _quant_predicate(path, module):
+                return isinstance(module, nn.Linear) and (
+                    f"{path}.scales" in sanitized_keys_set
+                )
+
+            nn.quantize(
+                model,
+                group_size=group_size,
+                bits=bits,
+                class_predicate=_quant_predicate,
+            )
+            logger.info(
+                "ltx2_5 from_pretrained: quantized group_size=%d bits=%d",
+                group_size,
+                bits,
+            )
 
         try:
             model_params = dict(tree_flatten(model.parameters()))
