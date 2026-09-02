@@ -53,6 +53,16 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
         "flux2_klein_9b",
         1.0,
     ),
+    # FLUX.2-dev: upstream-blocked. mflux has no flux2_dev factory/variant and
+    # no all-MLX Mistral3 text encoder (dev uses Mistral3, klein uses Qwen3).
+    # Sentinel entry so _infer_variant can route here; start() fails visibly.
+    # Upstream tracking: mflux-community/mflux#707.
+    "flux2_dev": (
+        "",
+        "",
+        "flux2_dev",
+        3.5,
+    ),
     # FLUX.1 base txt2img (dev / schnell). mflux ships Flux1 in
     # flux.cli.flux_generate; ModelConfig.dev()/schnell() are classmethods.
     "flux1_dev": (
@@ -264,6 +274,16 @@ def _infer_variant(model_path: str) -> str:
         return "qwen_image_edit"
     if "qwen-image" in name or "qwen_image" in name:
         return "qwen_image"
+    # FLUX.2-dev: upstream mflux has no flux2_dev variant/factory and no
+    # all-MLX Mistral3 text encoder (the dev text encoder is Mistral3, not
+    # the Qwen3 encoder klein uses). Route to a fail-visible variant rather
+    # than silently falling through to flux2_klein (wrong arch → confusing
+    # crash on the missing text_encoder/ dir). Upstream: mflux#707.
+    # Match both "flux2-dev" and "FLUX.2-dev" (dot form); strip dots for
+    # the version-segment check so the dotted HF repo id matches.
+    flat = name.replace(".", "")
+    if "flux2" in flat and "dev" in name and "klein" not in name:
+        return "flux2_dev"
     # FLUX.1 base txt2img: distinguish from FLUX.2 klein.
     # "schnell" is unique to FLUX.1; "dev" without klein/flux2 is FLUX.1-dev.
     if "schnell" in name:
@@ -388,6 +408,25 @@ class ImageGenEngine(BaseNonStreamingEngine):
             )
             self._mflux_missing = True
             return
+        # #759/#764: FLUX.2-dev is upstream-blocked — mflux has no
+        # flux2_dev factory/variant and no all-MLX Mistral3 text encoder
+        # (dev uses Mistral3; klein uses Qwen3). Fail visibly with the
+        # upstream pointer instead of silently loading wrong klein config.
+        # Upstream tracking: mflux-community/mflux#707.
+        if self._variant == "flux2_dev":
+            logger.error(
+                "FLUX.2-dev (%s) is not supported: upstream mflux has no "
+                "flux2_dev variant and no all-MLX Mistral3 text encoder. "
+                "See mflux-community/mflux#707. Use FLUX.2-klein meanwhile.",
+                self._model_path,
+            )
+            raise RuntimeError(
+                "FLUX.2-dev is not supported yet: upstream mflux lacks a "
+                "flux2_dev variant and an all-MLX Mistral3 text encoder "
+                "(dev's text encoder is Mistral3, not the Qwen3 encoder "
+                "klein uses). Tracked upstream at mflux-community/mflux#707. "
+                "Use a FLUX.2-klein checkpoint in the meantime."
+            )
         module_path, cls_name, config_label, default_guidance = VARIANT_MAP[
             self._variant
         ]
