@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from ..middleware.auth import check_rate_limit, request_principal, verify_api_key
+from ..middleware.tenant import scoped_principal
 from ..sessions import get_session_tracker, set_session_max_context
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,13 @@ def set_sessions_context(pool: Any, server_state: Any) -> None:
     _server_state = server_state
 
 
+def _session_principal(http_request: Request) -> str:
+    # #756: namespace the session principal by the authoritative tenant
+    # when tenant isolation is on, so sessions/stats/context caps stay
+    # isolated per tenant (foreign tenant -> different principal -> 404).
+    return scoped_principal(http_request, request_principal(http_request))
+
+
 class SessionContextConfig(BaseModel):
     max_context_tokens: int | None = None
 
@@ -44,7 +52,7 @@ class SessionContextConfig(BaseModel):
     dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
 )
 async def get_session_stats(session_id: str, http_request: Request) -> dict:
-    principal = request_principal(http_request)
+    principal = _session_principal(http_request)
     stats = get_session_tracker().get(session_id, principal=principal)
     if stats is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -58,7 +66,7 @@ async def get_session_stats(session_id: str, http_request: Request) -> dict:
 async def set_session_context(
     session_id: str, config: SessionContextConfig, http_request: Request
 ) -> dict:
-    principal = request_principal(http_request)
+    principal = _session_principal(http_request)
     ok = set_session_max_context(
         session_id, config.max_context_tokens, principal=principal
     )
@@ -98,7 +106,7 @@ async def get_context_budget(
     prompt_used = 0
     completion_used = 0
     if session_id:
-        principal = request_principal(http_request)
+        principal = _session_principal(http_request)
         stats = get_session_tracker().get(session_id, principal=principal)
         if stats is not None:
             prompt_used = stats.prompt_tokens
