@@ -340,7 +340,11 @@ class TestComfySingleFileLayout:
         root.mkdir()
         (root / "diffusion_models").mkdir()
         (root / "vae").mkdir()
-        (root / "diffusion_models" / "ltx-2.5-22b-distilled-transformer-bf16.safetensors").write_bytes(b"x")
+        (
+            root
+            / "diffusion_models"
+            / "ltx-2.5-22b-distilled-transformer-bf16.safetensors"
+        ).write_bytes(b"x")
         (root / "vae" / "ltx-2.5-video-vae-bf16.safetensors").write_bytes(b"x")
         assert _is_comfy_ltx2_5_layout(root)
         assert _is_video_model(root)
@@ -410,6 +414,58 @@ class TestComfySingleFileLayout:
         root.mkdir()
         (root / "diffusion_models").mkdir()
         (root / "vae").mkdir()
-        (root / "diffusion_models" / "ltx-2.5-22b-distilled-transformer-bf16.safetensors").write_bytes(b"x")
+        (
+            root
+            / "diffusion_models"
+            / "ltx-2.5-22b-distilled-transformer-bf16.safetensors"
+        ).write_bytes(b"x")
         (root / "vae" / "ltx-2.5-video-vae-bf16.safetensors").write_bytes(b"x")
         assert _is_hf_cache_mlx_compatible(root, "Lightricks/LTX-2.5")
+
+    def test_flat_ltx2_5_layout_detected_as_video(self, tmp_path):
+        # Issue #758: quantized LTX-2.5 fork (dgrauet/ltx-2.5-mlx-q8) ships
+        # root transformer-*.safetensors + split_model.json (recipe=ltx-2.5)
+        # + embedded_config.json, no Comfy subdirs.
+        from fusion_mlx.pool.model_discovery import (
+            _is_comfy_ltx2_5_layout,
+            _is_flat_ltx2_5_layout,
+            _is_hf_cache_mlx_compatible,
+            _is_video_model,
+            detect_model_type,
+        )
+
+        root = tmp_path / "ltx-2.5-mlx-q8"
+        root.mkdir()
+        (root / "transformer-distilled.safetensors").write_bytes(b"x")
+        (root / "transformer-dev.safetensors").write_bytes(b"x")
+        (root / "audio_vae.safetensors").write_bytes(b"x")
+        (root / "embedded_config.json").write_text(
+            '{"transformer": {"_class_name": "AVTransformer3DModel"}}'
+        )
+        (root / "split_model.json").write_text(
+            '{"recipe": "ltx-2.5", "quantized": true}'
+        )
+        assert _is_flat_ltx2_5_layout(root)
+        assert not _is_comfy_ltx2_5_layout(root)
+        assert _is_video_model(root)
+        assert detect_model_type(root) == "video"
+        assert _is_hf_cache_mlx_compatible(root, "dgrauet/ltx-2.5-mlx-q8")
+
+    def test_flat_ltx2_5_layout_rejects_wrong_recipe(self, tmp_path):
+        # split_model.json with a different recipe must not match.
+        from fusion_mlx.pool.model_discovery import _is_flat_ltx2_5_layout
+
+        root = tmp_path / "other"
+        root.mkdir()
+        (root / "transformer-distilled.safetensors").write_bytes(b"x")
+        (root / "split_model.json").write_text('{"recipe": "ltx-2"}')
+        assert not _is_flat_ltx2_5_layout(root)
+
+    def test_flat_ltx2_5_layout_rejects_missing_transformer(self, tmp_path):
+        # split_model.json recipe=ltx-2.5 but no root transformer-*.safetensors.
+        from fusion_mlx.pool.model_discovery import _is_flat_ltx2_5_layout
+
+        root = tmp_path / "no-weights"
+        root.mkdir()
+        (root / "split_model.json").write_text('{"recipe": "ltx-2.5"}')
+        assert not _is_flat_ltx2_5_layout(root)

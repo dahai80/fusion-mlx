@@ -1062,6 +1062,53 @@ def _is_comfy_ltx2_5_layout(path: Path) -> bool:
     return has_transformer and has_video_vae
 
 
+def _is_flat_ltx2_5_layout(path: Path) -> bool:
+    # Flat diffusers layout for quantized LTX-2.5 forks (issue #758, e.g.
+    # dgrauet/ltx-2.5-mlx-q8): the repo ships root-level
+    # transformer-dev.safetensors / transformer-distilled.safetensors +
+    # audio_vae.safetensors / vae_decoder_conv.safetensors + an
+    # ``embedded_config.json`` (diffusers nested config, transformer
+    # ``_class_name`` = ``AVTransformer3DModel``) and a ``split_model.json``
+    # (``recipe`` = ``ltx-2.5``), with no top-level config.json /
+    # configuration.json / model_index.json and no Comfy subdirs. The
+    # canonical Lightricks/LTX-2.5 Comfy layout is handled by
+    # _is_comfy_ltx2_5_layout above; this catches the flat diffusers variant.
+    # NOTE: the ltx2_5 backend currently maps Comfy ``model.diffusion_model.``
+    # weight keys only, so a flat diffusers repo is discovered as video but
+    # NOT yet loadable — tracked in follow-up #762. Discovery is correct
+    # regardless: a video model misclassified as an LLM raises
+    # "Model type ... not supported" on load, which is worse than a clear
+    # backend-format error. Gated on the split_model recipe + the canonical
+    # transformer weight files to avoid matching an unrelated dir.
+    split_model = path / "split_model.json"
+    if not split_model.exists():
+        return False
+    try:
+        with open(split_model) as f:
+            if json.load(f).get("recipe") != "ltx-2.5":
+                return False
+    except (OSError, json.JSONDecodeError):
+        return False
+    has_transformer = any(
+        p.name.startswith("transformer-")
+        and p.name.endswith(".safetensors")
+        and (p.is_file() or p.is_symlink())
+        for p in _iter_root_safetensors_entries(path)
+    )
+    return has_transformer
+
+
+def _iter_root_safetensors_entries(dir_path: Path):
+    # Yield root-level (non-recursive) entries ending in .safetensors,
+    # tolerant of broken symlinks (entry exists but target missing).
+    try:
+        for p in dir_path.iterdir():
+            if p.name.endswith(".safetensors") and (p.is_file() or p.is_symlink()):
+                yield p
+    except OSError:
+        return
+
+
 def _is_comfy_flux2_layout(path: Path) -> bool:
     # Comfy single-file layout for FLUX.2 checkpoints (issue #758): the repo
     # ships sharded transformer/*.safetensors + vae/*.safetensors with a
@@ -1081,9 +1128,7 @@ def _is_comfy_flux2_layout(path: Path) -> bool:
     has_shards = any(
         p.suffix == ".safetensors" for p in _iter_safetensors_entries(transformer)
     )
-    has_vae = any(
-        p.suffix == ".safetensors" for p in _iter_safetensors_entries(vae)
-    )
+    has_vae = any(p.suffix == ".safetensors" for p in _iter_safetensors_entries(vae))
     has_shard_index = (transformer / "model.safetensors.index.json").exists() or (
         vae / "model.safetensors.index.json"
     ).exists()
@@ -1095,9 +1140,7 @@ def _iter_safetensors_entries(dir_path: Path):
     # tolerant of broken symlinks (entry exists but target missing).
     try:
         for p in dir_path.iterdir():
-            if p.name.endswith(".safetensors") and (
-                p.is_file() or p.is_symlink()
-            ):
+            if p.name.endswith(".safetensors") and (p.is_file() or p.is_symlink()):
                 yield p
     except OSError:
         return
@@ -1133,6 +1176,11 @@ def _is_video_model(path: Path) -> bool:
     # Comfy single-file LTX-2.5 layout (#758): no task manifest and no
     # config.json, recognized by diffusion_models/ + vae/ canonical files.
     if _is_comfy_ltx2_5_layout(path):
+        return True
+    # Flat diffusers LTX-2.5 layout (#758): quantized fork repos ship root
+    # transformer-*.safetensors + split_model.json (recipe=ltx-2.5), no Comfy
+    # subdirs. Discovered as video; load tracked in #762.
+    if _is_flat_ltx2_5_layout(path):
         return True
     # Wan2.2 models ship config.json with model_type in {t2v, i2v, ti2v} but
     # may omit the configuration.json task manifest. These sub-types are
@@ -1359,10 +1407,16 @@ def _is_hf_cache_mlx_compatible(model_dir: Path, source_repo_id: str) -> bool:
     # transformer/ or diffusion_models/ + vae/, never as a root
     # model*.safetensors, so the LLM-centric glob gate below rejects them.
     # _is_model_dir already classified them as image/video via
-    # _is_comfy_*_layout, so accept before that gate.
-    if _is_comfy_flux2_layout(model_dir) or _is_comfy_ltx2_5_layout(model_dir):
+    # _is_comfy_*_layout / _is_flat_ltx2_5_layout, so accept before that gate.
+    # The flat LTX-2.5 layout carries root transformer-*.safetensors (not
+    # model*.safetensors), so the glob gate below would also reject it.
+    if (
+        _is_comfy_flux2_layout(model_dir)
+        or _is_comfy_ltx2_5_layout(model_dir)
+        or _is_flat_ltx2_5_layout(model_dir)
+    ):
         logger.info(
-            f"Accepting HF cache Comfy image/video layout: {source_repo_id}"
+            f"Accepting HF cache Comfy/flat image/video layout: {source_repo_id}"
         )
         return True
 
