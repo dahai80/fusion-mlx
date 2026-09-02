@@ -1194,6 +1194,7 @@ fusion-mlx is the link endpoint in a 3-tier chain: App -> Gateway -> MLX. By def
 | `FUSION_ROUTE_WARN_ONLY` | `false` | Dev/standalone override (#349). When `true`, restores phase-1 warn-only behavior: a missing `X-Fusion-Route` is logged at WARN and allowed. Set this for standalone local-server use without a gateway. |
 | `FUSION_ALLOW_ANONYMOUS` | `false` | Dev override. When `true`, requests without an API key are allowed. Does **not** bypass a configured `api_key` - a matching key is still required when one is set. |
 | `FUSION_ROUTE_TOKEN` | _(unset)_ | #352. Optional shared secret for cross-host gateway→MLX auth. When set, `X-Fusion-Route`'s value must equal this token (constant-time compare); missing/mismatched → `403 invalid_route_token`. When unset, `X-Fusion-Route` keeps its provenance-only presence check (#343). The token is enforced even under `FUSION_ROUTE_WARN_ONLY=true` (stricter wins). |
+| `FUSION_TENANT_ISOLATION` | `false` | #756. Multi-tenant mode for deployments behind fusion-gateway. When `true`, the backend half of the gateway contract is enforced: the `X-Fusion-Route` **value** must equal `gateway-decision` (a bare presence check is not enough — a direct-port caller could inject any value), and `X-Fusion-Tenant` must be present and non-empty. Missing/wrong route value → `403 invalid_route_origin`; missing tenant → `403 missing_tenant`. Per-tenant state (sessions, stats, context caps) is scoped by composing the tenant into the per-caller principal. `FUSION_ROUTE_TOKEN` (stricter) takes precedence when both are set. Default OFF: single-tenant dev is unaffected. |
 | `FUSION_MLX_ALLOWED_READ_DIRS` | _(unset)_ | #633. Colon-separated list of extra directories appended to the path-traversal read allow-list (`~/.fusion-mlx/models`, `~/.fusion-mlx/cache`, `/tmp`, `/var/tmp`). Lets scene-continuity condition images (i2va first-frame, l2va last-frame) from custom output dirs (e.g. fusion-comfyui) pass `is_safe_local_path` without writing to `/tmp`. |
 
 ### CORS (#641 / #675)
@@ -1246,6 +1247,20 @@ The `/metrics` endpoint exposes Prometheus-format series (requires `verify_manag
 - **Management endpoints (#344):** `/metrics` and `/v1/status` require `verify_management_access` - a valid API key or `FUSION_ALLOW_ANONYMOUS=true`. Since v0.7.0 (#350) loopback no longer exempts management endpoints: a same-host client (including a co-located gateway) must forward a valid API key, or set the dev override. `X-Fusion-Route` is not accepted as authentication.
 - **Model lifecycle (#345):** `/v1/models/load` and `/v1/models/unload` require `X-Fusion-Source: model-hub` (or a loopback client); otherwise `403`. **#631:** the gui_compat router registers these paths first and shadows the engine-pool handler; its `unload` falls back to the engine pool (`_unload_pool_model`) when the model is loaded in the pool but not tracked in the gui database, so a loaded model is actually unloaded (no memory leak).
 - **Anonymous access (#346):** rejected by default. Allow only for local dev via `FUSION_ALLOW_ANONYMOUS=true`. Since v0.7.0 (#350) loopback clients are no longer exempt - a same-host client (including a co-located gateway) must present a valid API key. A gateway must forward a valid API key; `X-Fusion-Route` alone does not authenticate.
+- **Multi-tenant isolation (#756):** opt in with `FUSION_TENANT_ISOLATION=true` for deployments where fusion-gateway serves multiple tenants off one MLX backend. The gateway derives an authoritative tenant from the `api_key` → team binding and stamps it on every upstream request. The backend enforces the matching half:
+    - **Origin gate.** `X-Fusion-Route`'s **value** must equal `gateway-decision` (not just present). Any other value → `403 invalid_route_origin`. This blocks a direct-port caller from injecting an arbitrary route header to bypass the gateway's tenant binding. `FUSION_ROUTE_TOKEN` (#352, shared-secret) is stricter and takes precedence when both are set.
+    - **Tenant stamp.** `X-Fusion-Tenant` must be present and non-empty, else `403 missing_tenant`. A valid route without a tenant means a bypassed/misconfigured gateway and must not reach handlers (no tenant = unscoped state access).
+    - **Per-tenant state.** Session stats and context caps (`/v1/sessions/*`, `/v1/context/budget`) are scoped by composing the tenant into the per-caller principal (`t:<tenant>:<bucket>`), so two tenants that share a bearer-key shape cannot read or mutate each other's sessions — a foreign-tenant lookup returns `404`, preserving the existing IDOR non-disclosure guarantee cross-tenant.
+    - **`X-Space-Id` is non-authoritative.** It is a client-supplied passthrough the gateway may forward, but it is deliberately ignored for tenant derivation. A spoofed `X-Space-Id` must not cross tenant boundaries.
+    - Default OFF: single-tenant and standalone dev deployments keep the legacy behavior. Tenant→model ACL (restricting which models a tenant may load) is out of scope here and tracked as a follow-up; the current isolation covers per-tenant **state** + origin/tenant stamping only.
+
+```bash
+# Multi-tenant deployment behind fusion-gateway
+FUSION_TENANT_ISOLATION=true fusion-mlx serve --model-dir ~/.fusion-mlx/models
+# Gateway stamps on every upstream request:
+#   X-Fusion-Route: gateway-decision
+#   X-Fusion-Tenant: <team-from-api-key-binding>
+```
 
 ```bash
 # Bind loopback only (default)

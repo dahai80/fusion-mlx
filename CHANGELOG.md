@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.8.69] - 2026-09-02
+
+### Added
+- **#756 — multi-tenant isolation for gateway deployments.** Opt-in mode
+  (`FUSION_TENANT_ISOLATION=true`) for fusion-mlx backends serving multiple
+  tenants behind fusion-gateway. The gateway derives an authoritative tenant
+  from the `api_key` → team binding and stamps it on every upstream request;
+  fusion-mlx now enforces the matching backend half. The route guard rejects
+  a non-gateway `X-Fusion-Route` value (`403 invalid_route_origin` — a bare
+  presence check is insufficient under isolation) and a missing/empty
+  `X-Fusion-Tenant` (`403 missing_tenant`). Per-tenant state — session stats
+  and context caps on `/v1/sessions/*` and `/v1/context/budget` — is scoped
+  by composing the tenant into the per-caller principal (`t:<tenant>:<bucket>`),
+  so two tenants sharing a bearer-key shape cannot reach each other's sessions
+  (foreign-tenant lookup → `404`, preserving the IDOR non-disclosure guarantee
+  cross-tenant). `X-Space-Id` is deliberately ignored for tenant derivation
+  (non-authoritative passthrough). `FUSION_ROUTE_TOKEN` (#352, shared secret)
+  takes precedence when both are set. Default OFF: single-tenant and
+  standalone dev deployments are unaffected. Tenant→model ACL is out of scope
+  (follow-up); this release covers per-tenant **state** isolation + origin and
+  tenant stamping. New module `fusion_mlx/middleware/tenant.py`; 18 contract
+  tests in `tests/unit/test_tenant_isolation.py`.
+
 ## [0.8.68] - 2026-09-02
 
 ### Added
