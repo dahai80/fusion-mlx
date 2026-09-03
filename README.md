@@ -1001,6 +1001,50 @@ curl -X POST http://localhost:11434/admin/api/fine-tune/adapters/qwen3.5-9b/my-l
 curl -X POST http://localhost:11434/admin/api/fine-tune/adapters/qwen3.5-9b/my-lora/unload
 ```
 
+### MXFP8 Training (#425)
+
+Mixed-precision training via the `mxfp8` config flag. MLX 0.32.0 has no
+native fp8 dtype (`float8_e4m3fn` / `float8_e5m2` are absent), so real fp8
+GEMM compute is impossible on this stack. Rather than fail visibly,
+`mxfp8: true` self-implements by routing to the existing **QLoRA 8-bit
+path**: the frozen base model is quantized to 8-bit (group_size=64) and a
+LoRA adapter is trained on top. Honest semantics = **8-bit-base LoRA**
+(memory saving), not fp8 compute.
+
+When `mxfp8: true` is set, `validate()` forces `quantize_base=true`,
+`quant_bits=8`, and `fine_tune_type="qlora"`. This honors the downstream
+`fusion-trainer` `use_mxfp8=True` switch with a working training path
+today; when a future MLX release adds real fp8, a native fp8 compute path
+can activate behind the same flag.
+
+**Constraint:** `mxfp8` is incompatible with `fine_tune_type="full"`
+(full fine-tuning unfreezes the base, so there is no frozen base to
+quantize) — the request fails visibly with a `ValueError`. Use
+`lora` / `dora` / `qlora` with `mxfp8`.
+
+```bash
+# Train with mxfp8 (routes to QLoRA 8-bit: 8-bit frozen base + LoRA)
+curl -X POST http://localhost:11434/admin/api/fine-tune/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_id": "qwen3.5-9b",
+    "dataset": " ~/data/my-dataset.jsonl",
+    "adapter_name": "mxfp8-lora",
+    "config": {
+      "mxfp8": true,
+      "lora_rank": 8,
+      "lora_alpha": 16.0,
+      "lora_layers": 16,
+      "learning_rate": 1e-5,
+      "batch_size": 4,
+      "iters": 100,
+      "max_seq_length": 2048
+    }
+  }'
+# validate() forces: quantize_base=true, quant_bits=8, fine_tune_type="qlora"
+# logs: "mxfp8=True: routing to QLoRA 8-bit path (8-bit frozen base + LoRA)"
+```
+
 ### Logprob Scoring (#363 Phase 1)
 
 Score a completion under a prompt (teacher-forcing single forward pass).

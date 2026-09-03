@@ -808,6 +808,47 @@ python3 -c "from mlx_mfa import has_nax; print(has_nax())"
 2. **60+ block 整体 mx.compile 劣化是通用规律**: 算子图按 N× 累积触 Metal Command Buffer 雾溅, 双层编译 (block 整编译 + transformer 循环编译) 是最优路径
 3. **mlx-mfa 预编译路径**: 本地源 + scikit-build-core + nanobind + `pip install -e --no-build-isolation` 成功触发 CMake build 生成 `_ext.so`, 避 PyPI wheel build 耗时不可控
 
+## 微调（MXFP8 训练, #425）
+
+通过 `mxfp8` 配置项进行混合精度训练。MLX 0.32.0 没有原生 fp8 dtype
+（缺少 `float8_e4m3fn` / `float8_e5m2`），无法进行真正的 fp8 矩阵计算。
+因此 `mxfp8: true` 并非直接失败，而是自我实现：路由到现有的
+**QLoRA 8-bit 路径**——将冻结的基座模型量化到 8-bit（group_size=64），
+在其上训练 LoRA 适配器。真实语义 = **8-bit 基座 + LoRA**（节省显存），
+而非 fp8 计算。
+
+当 `mxfp8: true` 时，`validate()` 会强制 `quantize_base=true`、
+`quant_bits=8`、`fine_tune_type="qlora"`。这使下游 `fusion-trainer` 的
+`use_mxfp8=True` 开关现在就能获得可用的训练路径；未来 MLX 加入原生 fp8
+后，可在同一开关后激活真正的 fp8 计算路径。
+
+**约束：** `mxfp8` 与 `fine_tune_type="full"` 不兼容（full 全参微调解冻
+基座，没有可量化的冻结基座）——请求会以 `ValueError` 显式失败。请将
+`mxfp8` 与 `lora` / `dora` / `qlora` 搭配使用。
+
+```bash
+# 使用 mxfp8 训练（路由到 QLoRA 8-bit：8-bit 冻结基座 + LoRA）
+curl -X POST http://localhost:11434/admin/api/fine-tune/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_id": "qwen3.5-9b",
+    "dataset": " ~/data/my-dataset.jsonl",
+    "adapter_name": "mxfp8-lora",
+    "config": {
+      "mxfp8": true,
+      "lora_rank": 8,
+      "lora_alpha": 16.0,
+      "lora_layers": 16,
+      "learning_rate": 1e-5,
+      "batch_size": 4,
+      "iters": 100,
+      "max_seq_length": 2048
+    }
+  }'
+# validate() 强制: quantize_base=true, quant_bits=8, fine_tune_type="qlora"
+# 日志: "mxfp8=True: routing to QLoRA 8-bit path (8-bit frozen base + LoRA)"
+```
+
 ## 许可证
 
 Apache-2.0
