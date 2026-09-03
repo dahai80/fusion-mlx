@@ -316,6 +316,46 @@ Apple M5 Max (128 GB RAM, 40 GPU 核心)，MLX 0.32.0.dev - 2026-07-04。
 
 欢迎提交你的基准测试结果到 [bench.dpdns.org](https://bench.dpdns.org/)。
 
+### Paged KV Cache（分页 KV 缓存）
+
+分页 KV 缓存后端（`fusion_mlx/custom_kernels/`），将 KV block 存储在扁平物理池中，
+通过每请求的 `block_table` 间接寻址，消除默认 `KVCache` 每步的 `mx.concatenate`。
+三个相互独立的可选阶段，默认全部**关闭**：
+
+- **阶段 1 — `FUSION_PAGED_KV=on`**：分页 KV 缓存后端。解码路径通过 `block_table`
+  间接寻址从扁平池读取 K/V。对贪婪解码与上游 `KVCache` 逐位一致（fp16 容差）。
+- **阶段 2 — `FUSION_PAGED_FUSED_KERNEL=on`**：融合解码注意力 Metal kernel
+  （llama 系列：llama / qwen2 / qwen3）。在 kernel 内部直接通过 `block_table`
+  间接寻址从物理 block 池读取 K/V，解码路径每步 concat 完全消除。预填充保留 concat
+  路径。在 tiled kernel 落地前默认关闭（见下方限制）。
+  性能报告：`~/fusion/audit/paged-kv-phase2-perf-report.md`。
+- **阶段 3 — `FUSION_PAGED_POOL=on` + `FUSION_PAGED_POOL_NUM_BLOCKS=<cap>`**：
+  用于连续批处理的共享 `FusionPagedKVPool`。一个物理池、共享 free-list、每请求
+  `block_table`。通过 cap 限定内存上限；池耗尽时新请求以 `503` 拒绝（无队头阻塞）。
+  经共享池的顺序逐请求提交已验证逐位一致、无交叉污染。
+  性能报告：`~/fusion/audit/paged-kv-phase3-concurrency-perf-report.md`。
+
+| 变量 | 默认值 | 作用 |
+|------|--------|------|
+| `FUSION_PAGED_KV` | `off` | 阶段 1 分页 KV 缓存后端。 |
+| `FUSION_PAGED_FUSED_KERNEL` | `off` | 阶段 2 融合解码注意力 Metal kernel（llama 系列）。 |
+| `FUSION_PAGED_POOL` | `off` | 阶段 3 用于连续批处理的共享 `FusionPagedKVPool`。 |
+| `FUSION_PAGED_POOL_NUM_BLOCKS` | `256` | `FUSION_PAGED_POOL` 的池上限（block 数）。 |
+
+限制：
+
+- 阶段 2 融合 kernel 白名单仅覆盖 llama 系列注意力（llama / qwen2 / qwen3）。
+  Gemma / Mistral 滑动窗口注意力暂不支持 — 已建立非 llama 系列跟进 issue。
+- 阶段 2 朴素标量 kernel 慢于 concat 路径；在融合路径可默认启用前，需要
+  Steel 风格的 tiled/threadgroup 优化 kernel。已建立跟进 issue。
+- 阶段 3 共享池在 cap 耗尽时以 `503` 拒绝；LRU 驱逐（释放最久未用请求的 block）
+  暂缓。已建立跟进 issue。
+- 通过 `BatchedEngine` 的真正并发批量解码（B>1）尚未端到端打通：
+  `FusionPagedRequestCache.merge`（B=N 堆叠）已有单测，但
+  `model_settings` -> `FusionConfig.from_model_settings` 对
+  `fusion_paged_pool="on"` 的 plumbing 尚未接入引擎。顺序逐请求提交为已验证路径。
+  已建立跟进 issue。
+
 ### Video Generation (SkyReels-V3)
 
 SkyReels-V3 (R2V / V2V / A2V) 纯 MLX 移植，真实权重端到端跑通（完整 40 层 DiT 前向，非骨架 stub）。Apple M5 Max (128 GB, 40 GPU 核心)，MLX 0.32.0，2026-07-18，bfloat16，5 frames 256P latent:

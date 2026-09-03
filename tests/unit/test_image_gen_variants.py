@@ -15,10 +15,20 @@ class TestVariantMap:
         for name, entry in VARIANT_MAP.items():
             assert len(entry) == 4, f"variant '{name}' must have 4-tuple"
             module_path, cls_name, config_label, default_guidance = entry
-            assert isinstance(module_path, str) and module_path
-            assert isinstance(cls_name, str) and cls_name
+            assert isinstance(module_path, str)
+            assert isinstance(cls_name, str)
             assert isinstance(config_label, str) and config_label
             assert isinstance(default_guidance, (int, float))
+            if module_path:
+                assert cls_name, f"variant '{name}' has module_path but no class"
+
+    def test_fail_visible_sentinels_have_empty_module(self):
+        for name, entry in VARIANT_MAP.items():
+            module_path, cls_name, _label, _guidance = entry
+            if not module_path:
+                assert (
+                    not cls_name
+                ), f"fail-visible sentinel '{name}' must have empty cls_name"
 
     def test_txt2img_exists(self):
         assert "txt2img" in VARIANT_MAP
@@ -37,6 +47,14 @@ class TestVariantMap:
 
     def test_redux_exists(self):
         assert "redux" in VARIANT_MAP
+
+    def test_flux2_dev_sentinel_exists(self):
+        assert "flux2_dev" in VARIANT_MAP
+        module_path, cls_name, config_label, default_guidance = VARIANT_MAP["flux2_dev"]
+        assert module_path == ""
+        assert cls_name == ""
+        assert config_label == "flux2_dev"
+        assert default_guidance == 3.5
 
     def test_flux1_dev_exists(self):
         assert "flux1_dev" in VARIANT_MAP
@@ -70,6 +88,11 @@ class TestInferVariant:
             ("FLUX.1-Redux", "redux"),
             ("flux-redux-dev", "redux"),
             ("FLUX.2-klein", "txt2img"),
+            ("FLUX.2-dev", "flux2_dev"),
+            ("flux2-dev", "flux2_dev"),
+            ("AITRADER/FLUX2-dev-mlx-8bit", "flux2_dev"),
+            ("black-forest-labs/FLUX.2-dev", "flux2_dev"),
+            ("FLUX.2-klein-dev", "txt2img"),
             ("some-llm-model", "txt2img"),
             ("", "txt2img"),
             ("flux1-dev.safetensors", "flux1_dev"),
@@ -151,6 +174,22 @@ class TestImageGenEngineInit:
 
     def test_flux2_klein_still_txt2img(self):
         eng = ImageGenEngine(model_name="FLUX.2-klein-9B")
+        assert eng.variant == "txt2img"
+
+    def test_inferred_flux2_dev_from_path(self):
+        eng = ImageGenEngine(model_name="FLUX.2-dev")
+        assert eng.variant == "flux2_dev"
+
+    def test_inferred_flux2_dev_from_aitrader_path(self):
+        eng = ImageGenEngine(model_name="AITRADER/FLUX2-dev-mlx-8bit")
+        assert eng.variant == "flux2_dev"
+
+    def test_explicit_flux2_dev_variant(self):
+        eng = ImageGenEngine(model_name="foo", variant="flux2_dev")
+        assert eng.variant == "flux2_dev"
+
+    def test_flux2_klein_dev_not_treated_as_dev(self):
+        eng = ImageGenEngine(model_name="FLUX.2-klein-dev")
         assert eng.variant == "txt2img"
 
     def test_unknown_variant_falls_back(self):
@@ -244,3 +283,14 @@ class TestTextCache:
                 os.environ["FUSION_DIFFUSION_TEXT_CACHE"] = old
             else:
                 del os.environ["FUSION_DIFFUSION_TEXT_CACHE"]
+
+
+class TestFlux2DevFailVisible:
+    def test_start_raises_with_upstream_pointer(self):
+        import asyncio
+
+        pytest.importorskip("mflux")
+        eng = ImageGenEngine(model_name="FLUX.2-dev")
+        assert eng.variant == "flux2_dev"
+        with pytest.raises(RuntimeError, match="mflux-community/mflux#707"):
+            asyncio.run(eng.start())
