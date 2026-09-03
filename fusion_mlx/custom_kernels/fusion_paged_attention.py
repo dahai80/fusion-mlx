@@ -45,9 +45,9 @@ def _make_paged_decode_attention_kernel():
           for (uint t = 0; t < block_len; ++t) {
             float s = 0.0f;
             for (uint d = 0; d < HEAD_DIM; ++d) {
-              s += q[batch * N_HEADS * HEAD_DIM + q_head * HEAD_DIM + d]
-                   * keys_pool[((pb * B + batch) * N_KV_HEADS + kv_head) * BLOCK_SIZE * HEAD_DIM
-                               + t * HEAD_DIM + d];
+              s += float(q[batch * N_HEADS * HEAD_DIM + q_head * HEAD_DIM + d])
+                   * float(keys_pool[((pb * B + batch) * N_KV_HEADS + kv_head) * BLOCK_SIZE * HEAD_DIM
+                               + t * HEAD_DIM + d]);
             }
             float m_new = metal::max(m, s);
             float exp_m = metal::exp(m - m_new);
@@ -55,8 +55,8 @@ def _make_paged_decode_attention_kernel():
             l = l * exp_m + exp_s;
             for (uint d = 0; d < HEAD_DIM; ++d) {
               o[d] = o[d] * exp_m
-                   + exp_s * values_pool[((pb * B + batch) * N_KV_HEADS + kv_head) * BLOCK_SIZE * HEAD_DIM
-                                         + t * HEAD_DIM + d];
+                   + exp_s * float(values_pool[((pb * B + batch) * N_KV_HEADS + kv_head) * BLOCK_SIZE * HEAD_DIM
+                                         + t * HEAD_DIM + d]);
             }
             m = m_new;
           }
@@ -104,7 +104,7 @@ def paged_decode_attention(
     n_kv_heads = keys_pool.shape[2]
     block_size = keys_pool.shape[3]
 
-    q_scaled = (q.astype(mx.float32) * float(scale)).astype(q.dtype)
+    q_scaled = q.astype(mx.float32) * float(scale)
 
     global _logged_compile
     if not _logged_compile:
@@ -125,8 +125,8 @@ def paged_decode_attention(
         grid=(B * n_heads, 1, 1),
         threadgroup=(1, 1, 1),
         output_shapes=[(B, n_heads, 1, head_dim)],
-        output_dtypes=[q.dtype],
+        output_dtypes=[mx.float32],
         init_value=0,
         stream=stream or mx.gpu,
     )
-    return out[0]
+    return out[0].astype(q.dtype)
