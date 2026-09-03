@@ -351,7 +351,22 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
         is_valid, error_msg = validate_api_key(request.api_key)
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_msg)
-        sj.setdefault("auth", {})["api_key"] = request.api_key
+        # #770: Keychain path stores in Keychain, leaves disk field empty.
+        try:
+            from .keychain import is_available, is_enabled, set_key
+
+            if is_enabled() and is_available():
+                if not set_key(request.api_key):
+                    raise HTTPException(
+                        status_code=500, detail="Failed to store key in Keychain"
+                    )
+                sj.setdefault("auth", {})["api_key"] = None
+            else:
+                sj.setdefault("auth", {})["api_key"] = request.api_key
+        except HTTPException:
+            raise
+        except Exception:
+            sj.setdefault("auth", {})["api_key"] = request.api_key
         state = _get_server_state()
         if state is not None:
             state.api_key = request.api_key
