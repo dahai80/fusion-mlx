@@ -28,10 +28,7 @@ def _measure(model_path, fused):
         os.environ.pop("FUSION_PAGED_FUSED_KERNEL", None)
 
     from fusion_mlx.fusion_takeover.config import FusionConfig
-    from fusion_mlx.fusion_takeover.patcher import (
-        FusionModulePatcher,
-        _wrap_attention,
-    )
+    from fusion_mlx.fusion_takeover.patcher import FusionModulePatcher
 
     model, tokenizer = mlx_lm.load(model_path)
     cfg = FusionConfig(
@@ -40,16 +37,6 @@ def _measure(model_path, fused):
         fused_decode_enabled=fused,
     )
     FusionModulePatcher.patch_model(model, cfg)
-    if fused:
-        for layer in getattr(model, "layers", []) or []:
-            attn = (
-                getattr(layer, "self_attn", None)
-                or getattr(layer, "attention", None)
-                or getattr(layer, "attn", None)
-            )
-            if attn is not None:
-                _wrap_attention(attn)
-        logger.info("bench: fused wrapper applied")
 
     t0 = time.perf_counter()
     n = 0

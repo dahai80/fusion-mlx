@@ -21,10 +21,7 @@ def _greedy_tokens(model_path, prompt, max_tokens, fused):
     from mlx_lm.generate import stream_generate
 
     from fusion_mlx.fusion_takeover.config import FusionConfig
-    from fusion_mlx.fusion_takeover.patcher import (
-        FusionModulePatcher,
-        _wrap_attention,
-    )
+    from fusion_mlx.fusion_takeover.patcher import FusionModulePatcher
 
     if fused:
         os.environ["FUSION_PAGED_FUSED_KERNEL"] = "on"
@@ -38,16 +35,6 @@ def _greedy_tokens(model_path, prompt, max_tokens, fused):
         fused_decode_enabled=fused,
     )
     FusionModulePatcher.patch_model(model, cfg)
-    if fused:
-        for layer in getattr(model, "layers", []) or []:
-            attn = (
-                getattr(layer, "self_attn", None)
-                or getattr(layer, "attention", None)
-                or getattr(layer, "attn", None)
-            )
-            if attn is not None:
-                _wrap_attention(attn)
-        logger.info("fused decode wrapper manually applied (self_attn attr)")
     toks = []
     for resp in stream_generate(model, tokenizer, prompt, max_tokens=max_tokens):
         toks.append(int(resp.token))

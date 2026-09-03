@@ -116,7 +116,11 @@ def _wrap_attention(attn):
 
 def _install_fused_decode(model):
     for layer in getattr(model, "layers", []) or []:
-        attn = getattr(layer, "attention", None) or getattr(layer, "attn", None)
+        attn = (
+            getattr(layer, "self_attn", None)
+            or getattr(layer, "attention", None)
+            or getattr(layer, "attn", None)
+        )
         if attn is None:
             continue
         _wrap_attention(attn)
