@@ -16,6 +16,8 @@ class FusionConfig:
     paged_kv_num_blocks: int = 256
     target_model_types: tuple[str, ...] = field(default_factory=tuple)
     fused_decode_enabled: bool = False
+    pool_enabled: bool = False
+    pool_num_blocks: int = 256
 
     def __post_init__(self) -> None:
         if self.quant not in (None, "q4_k_m", "nvfp4", "mxfp8", "bf16"):
@@ -26,6 +28,8 @@ class FusionConfig:
             raise ValueError("paged_kv_block_size must be >= 1")
         if self.paged_kv_num_blocks < 1:
             raise ValueError("paged_kv_num_blocks must be >= 1")
+        if self.pool_num_blocks < 1:
+            raise ValueError("pool_num_blocks must be >= 1")
 
     @classmethod
     def from_model_settings(cls, model_settings: Any) -> FusionConfig:
@@ -38,7 +42,17 @@ class FusionConfig:
             getattr(model_settings, "fusion_target_model_types", ()) or ()
         )
         fused = getattr(model_settings, "fusion_paged_fused_kernel", None) == "on"
-        logger.info("FusionConfig.from_model_settings: fused_decode_enabled=%s", fused)
+        pool_enabled = getattr(model_settings, "fusion_paged_pool", None) == "on"
+        pool_num_blocks = int(
+            getattr(model_settings, "fusion_paged_pool_num_blocks", 256)
+        )
+        logger.info(
+            "FusionConfig.from_model_settings: fused_decode_enabled=%s "
+            "pool_enabled=%s pool_num_blocks=%d",
+            fused,
+            pool_enabled,
+            pool_num_blocks,
+        )
         return cls(
             enabled=enabled,
             quant=quant,
@@ -47,6 +61,8 @@ class FusionConfig:
             paged_kv_num_blocks=num_blocks,
             target_model_types=target_types,
             fused_decode_enabled=fused,
+            pool_enabled=pool_enabled,
+            pool_num_blocks=pool_num_blocks,
         )
 
     def is_supported_model_type(self, model_type: str | None) -> bool:
