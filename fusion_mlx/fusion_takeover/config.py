@@ -15,6 +15,7 @@ class FusionConfig:
     paged_kv_block_size: int = 16
     paged_kv_num_blocks: int = 256
     target_model_types: tuple[str, ...] = field(default_factory=tuple)
+    fused_decode_enabled: bool = False
 
     def __post_init__(self) -> None:
         if self.quant not in (None, "q4_k_m", "nvfp4", "mxfp8", "bf16"):
@@ -36,6 +37,8 @@ class FusionConfig:
         target_types = tuple(
             getattr(model_settings, "fusion_target_model_types", ()) or ()
         )
+        fused = getattr(model_settings, "fusion_paged_fused_kernel", None) == "on"
+        logger.info("FusionConfig.from_model_settings: fused_decode_enabled=%s", fused)
         return cls(
             enabled=enabled,
             quant=quant,
@@ -43,6 +46,7 @@ class FusionConfig:
             paged_kv_block_size=block_size,
             paged_kv_num_blocks=num_blocks,
             target_model_types=target_types,
+            fused_decode_enabled=fused,
         )
 
     def is_supported_model_type(self, model_type: str | None) -> bool:
