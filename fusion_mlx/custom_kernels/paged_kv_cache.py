@@ -11,14 +11,15 @@ _DEFAULT_SLAB_SIZE = 64
 
 
 class FusionPagedKVCache:
-    """Block-paged KV cache with lazy slab growth.
+    """Block-paged KV cache backed by one flat pre-allocated pool tensor.
 
-    Physical blocks live in growable slabs (each a single contiguous tensor
-    holding slab_size blocks), allocated on demand up to a num_blocks cap.
+    Physical blocks live in a single contiguous pool tensor of shape
+    [num_blocks, B, n_kv_heads, block_size, k_head_dim] (keys) and the
+    analogous shape for values, allocated once up to the num_blocks cap.
     A block_table maps logical block index -> physical block index; a
-    free-list recycles physical indices on trim/evict. Lazy slabs keep Metal
-    buffer count and memory proportional to blocks actually used, not the
-    cap.
+    free-list recycles physical indices on trim/evict. The flat pool is
+    the simplest kernel input for the Phase 2 fused decode-attention
+    Metal kernel, which takes array inputs (not a Python list of slabs).
 
     Stores raw (unquantized) KV per block so attention math is exact; quantize
     on fetch is a Phase 2 concern (fused GQA decode-attention GEMV).
@@ -40,8 +41,8 @@ class FusionPagedKVCache:
         self.num_blocks = num_blocks
         self.slab_size = slab_size
         self.offset = 0
-        self.keys_slabs: list = []
-        self.values_slabs: list = []
+        self.keys_pool: mx.array | None = None
+        self.values_pool: mx.array | None = None
         self.block_table: list = []
         self.free_list: list = []
         self._shape: tuple | None = None
@@ -60,58 +61,51 @@ class FusionPagedKVCache:
         v_head_dim: int,
         dtype: Any,
     ):
-        if self.keys_slabs:
-            return
-        self._shape = (B, n_kv_heads, self.block_size, k_head_dim)
+        desired = (B, n_kv_heads, self.block_size, k_head_dim)
+        if self.keys_pool is not None:
+            if (
+                self._shape == desired
+                and self._v_head_dim == v_head_dim
+                and self._dtype == dtype
+            ):
+                return
+        self._shape = desired
         self._v_head_dim = v_head_dim
         self._dtype = dtype
+        self.keys_pool = mx.zeros(
+            (self.num_blocks, B, n_kv_heads, self.block_size, k_head_dim),
+            dtype=dtype,
+        )
+        self.values_pool = mx.zeros(
+            (self.num_blocks, B, n_kv_heads, self.block_size, v_head_dim),
+            dtype=dtype,
+        )
+        self.free_list = list(range(self.num_blocks))
+        self.free_list.reverse()
+        self._total_blocks = self.num_blocks
         logger.debug(
-            "paged_kv pool init: cap=%d block_size=%d slab_size=%d shape=%s dtype=%s",
+            "paged_kv flat pool init: cap=%d block_size=%d shape=%s dtype=%s",
             self.num_blocks,
             self.block_size,
-            self.slab_size,
             self._shape,
             dtype,
         )
 
-    def _add_slab(self) -> int:
-        if self._total_blocks >= self.num_blocks:
-            return -1
-        n = min(self.slab_size, self.num_blocks - self._total_blocks)
-        B, n_kv_heads, _bs, k_head_dim = self._shape
-        v_head_dim = self._v_head_dim
-        k_slab = mx.zeros(
-            (n, B, n_kv_heads, self.block_size, k_head_dim), dtype=self._dtype
-        )
-        v_slab = mx.zeros(
-            (n, B, n_kv_heads, self.block_size, v_head_dim), dtype=self._dtype
-        )
-        self.keys_slabs.append(k_slab)
-        self.values_slabs.append(v_slab)
-        slab_idx = len(self.keys_slabs) - 1
-        base = slab_idx * self.slab_size
-        for i in range(n - 1, -1, -1):
-            self.free_list.append(base + i)
-        self._total_blocks += n
-        return slab_idx
-
     def _alloc_block(self) -> int:
         if not self.free_list:
-            slab_idx = self._add_slab()
-            if slab_idx < 0:
-                raise RuntimeError(
-                    f"paged_kv pool exhausted: num_blocks={self.num_blocks} "
-                    f"block_size={self.block_size} "
-                    "(raise num_blocks or evict other requests via evict_request)"
-                )
+            logger.warning(
+                "paged_kv pool exhausted: num_blocks=%d block_size=%d",
+                self.num_blocks,
+                self.block_size,
+            )
+            raise RuntimeError(
+                f"paged_kv pool exhausted: num_blocks={self.num_blocks} "
+                f"block_size={self.block_size} "
+                "(raise num_blocks or evict other requests via evict_request)"
+            )
         idx = self.free_list.pop()
         self._num_alloc += 1
         return idx
-
-    def _slab_loc(self, pb: int):
-        slab_idx = pb // self.slab_size
-        in_slab = pb % self.slab_size
-        return self.keys_slabs[slab_idx], self.values_slabs[slab_idx], in_slab
 
     def _logical_to_block(self, logical_pos: int) -> int:
         return logical_pos // self.block_size
@@ -143,12 +137,11 @@ class FusionPagedKVCache:
             if n <= 0:
                 continue
             pb = self.block_table[lb]
-            k_slab, v_slab, in_slab = self._slab_loc(pb)
             pos_start = self._pos_in_block(max(prev, block_start_logical))
-            k_slab[in_slab, ..., pos_start : pos_start + n, :] = keys[
+            self.keys_pool[pb, ..., pos_start : pos_start + n, :] = keys[
                 ..., s_start:s_end, :
             ]
-            v_slab[in_slab, ..., pos_start : pos_start + n, :] = values[
+            self.values_pool[pb, ..., pos_start : pos_start + n, :] = values[
                 ..., s_start:s_end, :
             ]
 
@@ -162,16 +155,14 @@ class FusionPagedKVCache:
         v_parts = []
         for lb in range(num_full):
             pb = self.block_table[lb]
-            k_slab, v_slab, in_slab = self._slab_loc(pb)
-            k_parts.append(k_slab[in_slab])
-            v_parts.append(v_slab[in_slab])
+            k_parts.append(self.keys_pool[pb])
+            v_parts.append(self.values_pool[pb])
         if rem:
             lb = num_full
             if lb < len(self.block_table):
                 pb = self.block_table[lb]
-                k_slab, v_slab, in_slab = self._slab_loc(pb)
-                k_parts.append(k_slab[in_slab, ..., :rem, :])
-                v_parts.append(v_slab[in_slab, ..., :rem, :])
+                k_parts.append(self.keys_pool[pb, ..., :rem, :])
+                v_parts.append(self.values_pool[pb, ..., :rem, :])
         if not k_parts:
             d = self._shape[-1] if self._shape else 1
             empty = mx.zeros((1, 1, 0, d), dtype=mx.float16)
@@ -193,10 +184,8 @@ class FusionPagedKVCache:
         v_head_dim = values.shape[-1]
         self._ensure_pool(B, n_kv_heads, k_head_dim, v_head_dim, keys.dtype)
         self.block_table = []
-        self.free_list = []
-        self.keys_slabs = []
-        self.values_slabs = []
-        self._total_blocks = 0
+        self.free_list = list(range(self.num_blocks))
+        self.free_list.reverse()
         self.offset = 0
         num_blocks_needed = (length + self.block_size - 1) // self.block_size
         for lb in range(num_blocks_needed):
@@ -210,12 +199,11 @@ class FusionPagedKVCache:
             if n <= 0:
                 continue
             pb = self.block_table[lb]
-            k_slab, v_slab, in_slab = self._slab_loc(pb)
             pos_start = self._pos_in_block(max(0, block_start_logical))
-            k_slab[in_slab, ..., pos_start : pos_start + n, :] = keys[
+            self.keys_pool[pb, ..., pos_start : pos_start + n, :] = keys[
                 ..., s_start:s_end, :
             ]
-            v_slab[in_slab, ..., pos_start : pos_start + n, :] = values[
+            self.values_pool[pb, ..., pos_start : pos_start + n, :] = values[
                 ..., s_start:s_end, :
             ]
         self.offset = length
@@ -251,12 +239,9 @@ class FusionPagedKVCache:
 
     @property
     def nbytes(self):
-        if not self.keys_slabs:
+        if self.keys_pool is None:
             return 0
-        slab_n = self.keys_slabs[0].nbytes + self.values_slabs[0].nbytes
-        n_in_slab = self.keys_slabs[0].shape[0]
-        per_block = slab_n // n_in_slab
-        return per_block * len(self.block_table)
+        return self.keys_pool.nbytes + self.values_pool.nbytes
 
     def free_all(self) -> int:
         freed = len(self.block_table)
@@ -271,6 +256,12 @@ class FusionPagedKVCache:
 
         return create_attention_mask(*args, offset=self.offset, **kwargs)
 
+    def fused_decode_available(self, num_new: int = 1) -> bool:
+        logger.debug(
+            "paged_kv fused_decode_available stub: num_new=%d -> False", num_new
+        )
+        return False
+
     def stats(self) -> dict:
         return {
             "offset": self.offset,
@@ -278,7 +269,8 @@ class FusionPagedKVCache:
             "blocks_free": len(self.free_list),
             "block_size": self.block_size,
             "num_blocks": self.num_blocks,
-            "slabs": len(self.keys_slabs),
+            "pool_cap": self.num_blocks,
+            "nbytes_cap": self.nbytes,
             "total_blocks": self._total_blocks,
             "evicted": self._evicted,
             "swapped": self._swapped,

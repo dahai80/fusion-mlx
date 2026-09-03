@@ -5,17 +5,21 @@ Verifies bit-exact storage/fetch vs a naive contiguous reference cache,
 covering: single-step decode, multi-step prefill, block-boundary spans,
 trim round-trip, state round-trip, and pool-exhaustion fail-visible.
 """
-import numpy as np
-import pytest
 
 import mlx.core as mx
+import numpy as np
+import pytest
 
 from fusion_mlx.custom_kernels.paged_kv_cache import FusionPagedKVCache
 
 
 def _random_kv(batch, heads, steps, kdim, vdim, dtype=mx.float16):
-    k = mx.array(np.random.randn(batch, heads, steps, kdim).astype(np.float32)).astype(dtype)
-    v = mx.array(np.random.randn(batch, heads, steps, vdim).astype(np.float32)).astype(dtype)
+    k = mx.array(np.random.randn(batch, heads, steps, kdim).astype(np.float32)).astype(
+        dtype
+    )
+    v = mx.array(np.random.randn(batch, heads, steps, vdim).astype(np.float32)).astype(
+        dtype
+    )
     return k, v
 
 
@@ -151,6 +155,17 @@ def test_free_all_resets():
     assert paged.offset == 0
     assert paged.block_table == []
     assert paged.empty()
+
+
+def test_flat_pool_storage_shape():
+    cache = FusionPagedKVCache(block_size=4, num_blocks=8)
+    keys = mx.random.uniform(shape=(1, 2, 3, 8))
+    values = mx.random.uniform(shape=(1, 2, 3, 8))
+    cache.update_and_fetch(keys, values)
+    assert hasattr(cache, "keys_pool")
+    assert cache.keys_pool.shape == (8, 1, 2, 4, 8)
+    assert cache.values_pool.shape == (8, 1, 2, 4, 8)
+    assert not hasattr(cache, "keys_slabs")
 
 
 def test_make_mask_offset_propagates():
