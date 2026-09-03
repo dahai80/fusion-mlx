@@ -755,6 +755,160 @@ w8a16 **慢 20%**。4B 模型在 bf16 下已完全装入统一内存, int8 反�
 带宽收益, 且 `mx.compile` 已优化 bf16 路径。**量化不是 Flux2Klein 的速度优化**,
 仅作**内存优化** (9B 模型权重 ~18G -> ~9G, 适配 16G Mac)。
 
+## FLUX.2-dev 全 MLX 变体 (自实现, #759, 2026-09-03)
+
+上游 `mflux` 仅提供 FLUX.2-klein (蒸馏版, Qwen3 文本编码器,
+`guidance_embeds=False`)。完整教师模型 **FLUX.2-dev** (Mistral3 Small 文本
+编码器, `guidance_embeds=True`, 56 层 DiT, inner_dim 6144) 上游无加载路径。
+按 "fusion-mlx 自实现, 不等上游" 方针, 我们自行实现, 绕过 mflux#707。
+
+**新增内容** (位于 `fusion_mlx/engines/flux2_dev/`, fusion-mlx 原生代码):
+
+- `text_encoder.py` — `Mistral3TextEncoder`: 纯 MLX 手写的 Mistral3 解码层
+  (RMSNorm + GQA + RoPE theta 1e9 + SiLU MLP)。在第 9/18/27 层抽取隐藏状态
+  (3 x 5120 = 15360 = `joint_attention_dim`)。注意力在 float32 下调用
+  `mx.fast.scaled_dot_product_attention`, 与 mflux `Qwen3VLAttention` 模式一致。
+- `weights.py` — 加载 AITRADER 8-bit MLX DiT/VAE (通过
+  `model.safetensors.index.json` 分片, `nn.quantize` group_size=64 bits=8) 与
+  Comfy-Org bf16 文本编码器单文件 (sanitize 剔除 `vision_tower`,
+  `multi_modal_projector`, `tekken_model`; 去掉 `model.` 前缀)。
+- `tokenizer.py` — Mistral 分词器 (来自 `diffusers/FLUX.2-dev-bnb-4bit`), 包装
+  成 mflux `LanguageTokenizer` 的 `.tokenize(prompt, max_length)` 接口。通过
+  `HF_ENDPOINT=https://hf-mirror.com` 下载。**关键**: 强制 `padding_side=right`
+  (见下方 NaN 修复)。
+- `variant.py` — `Flux2Dev(nn.Module)` 组装 mflux `Flux2Transformer` (dev 覆盖
+  参数: 8 双流 + 48 单流块, 48 头, head_dim 128, `guidance_embeds=True`) +
+  `Flux2VAE` + 新文本编码器 + 分词器。`generate_image` 对齐 `Flux2Klein`, 但向
+  transformer 传入真实 `guidance` 值 (非 `None`), 因 dev 非蒸馏, 使用 guidance
+  嵌入。`guidance > 1.0` 时执行 CFG 混合。本地 `_DevModelConfig` 数据类提供 mflux
+  `Config` 所需属性 (`num_train_steps`, `requires_sigma_shift`, `supports_guidance`)。
+
+**复用未改** mflux: `Flux2Transformer`, `Flux2VAE`, `Flux2LatentCreator`,
+`Flux2PromptEncoder.encode_prompt` (鸭子类型 — 接受任何具备正确方法的
+tokenizer/text_encoder), `Config` + scheduler。
+
+**关键 NaN 修复**: Mistral chat 模板默认**左填充** (pad token id=11 填在
+0..314, 真实文本在 315..511)。因果注意力下, 完全被遮蔽的 pad 查询行 → MLX
+`scaled_dot_product_attention` 返回 NaN (float32 下也复现); NaN 的 pad 输出经
+残差与下一层因果 key 投影泄漏到真实位置, 导致全 NaN 图像。mflux Qwen3 文本编码器
+之所以正常, 因 Qwen 分词器默认**右填充**。**修复**: 在 `load_mistral_tokenizer`
+中强制 `hf_tokenizer.padding_side = "right"`, 真实 token 占据 0..N 位置, RoPE
+位置对齐, NaN 消失。端到端验证: 全阶段 nan=0, 解码输出有效 (min=-2.49 max=2.44)。
+
+**变体路由**: `_infer_variant` 识别 `FLUX2-dev` / `flux2-dev` /
+`AITRADER/FLUX2-dev-mlx-8bit` (保留点号剥离 GOTCHA) -> `flux2_dev` ->
+`VARIANT_MAP["flux2_dev"]` = `("fusion_mlx.engines.flux2_dev.variant",
+"Flux2Dev", "flux2_dev", 3.5)`。原生 `_load()` 分支 (module_path 以
+`fusion_mlx.` 开头) 构造 `Flux2Dev(model_config=None, model_path=...,
+quantize=...)`。旧的 fail-visible RuntimeError 哨兵已移除。
+
+**权重来源** (均经 hf-mirror.com):
+
+| 组件 | 仓库 | 格式 |
+|---|---|---|
+| DiT 8-bit + VAE | `AITRADER/FLUX2-dev-mlx-8bit` | mflux 8-bit MLX (32 B 参数) |
+| 文本编码器 bf16 | `Comfy-Org/flux2-dev` | 单 safetensors (35.6 GB) |
+| 分词器 | `diffusers/FLUX.2-dev-bnb-4bit` | HF 分词器文件 |
+
+BFL `black-forest-labs/FLUX.2-dev` 本身受限; 上述再托管仓库开放。文本编码器
+(30 层裁剪, 0-29) 以 `num_hidden_layers=30` 加载; 抽取层 9/18/27 均存在。
+
+**加载验证**: DiT 737 keys (missing=0, unexpected=0), VAE 266 keys (missing=0,
+unexpected=0), 文本编码器 kept=272 dropped=223 (missing=0, unexpected=0)。
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com hf download AITRADER/FLUX2-dev-mlx-8bit \
+  --local-dir ~/.fusion-mlx/models/AITRADER-FLUX2-dev-mlx-8bit
+echo '{"task":"text-to-image"}' > ~/.fusion-mlx/models/AITRADER-FLUX2-dev-mlx-8bit/configuration.json
+fusion-mlx serve --model-dir ~/.fusion-mlx/models --port 11434
+curl -s http://127.0.0.1:11434/v1/images/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"AITRADER-FLUX2-dev-mlx-8bit","prompt":"a photo of a cat","width":1024,"height":1024,"steps":20,"guidance":3.5}'
+```
+
+dev 为基座 (非蒸馏) 模型: 使用 `steps>=20`, `guidance=3.5` (默认)。步数过少
+收敛不足。模型加载较重 (~66 G 统一内存, 8-bit DiT + bf16 文本编码器)。
+
+## FLUX.2-dev 全 MLX 变体 (自主实现, #759, 2026-09-03)
+
+上游 `mflux` 只发布 FLUX.2-klein (蒸馏版, Qwen3 文本编码器,
+`guidance_embeds=False`)。完整教师模型 **FLUX.2-dev** (Mistral3 Small 文本
+编码器, `guidance_embeds=True`, 56 层 DiT, inner_dim 6144) 上游无路径。不等待
+mflux#707, fusion-mlx 自主实现。
+
+**新增内容** (位于 `fusion_mlx/engines/flux2_dev/`, fusion-mlx 原生代码):
+
+- `text_encoder.py` — `Mistral3TextEncoder`: 纯 MLX 手写移植 Mistral3 解码层
+  (RMSNorm + GQA + RoPE theta 1e9 + SiLU MLP)。在第 9/18/27 层提取隐藏状态
+  (3 x 5120 = 15360 = `joint_attention_dim`)。注意力在 float32 下调用
+  `mx.fast.scaled_dot_product_attention`, 与 mflux `Qwen3VLAttention` 模式一致。
+- `weights.py` — 加载 AITRADER 8-bit MLX DiT/VAE (通过
+  `model.safetensors.index.json` 分片合并, `nn.quantize` group_size=64 bits=8),
+  以及 Comfy-Org bf16 文本编码器单文件 (sanitize 去除 `vision_tower`、
+  `multi_modal_projector`、`tekken_model`, 去掉 `model.` 前缀)。
+- `tokenizer.py` — Mistral 分词器 (来自 `diffusers/FLUX.2-dev-bnb-4bit`),
+  封装为 mflux `LanguageTokenizer` 的 `.tokenize(prompt, max_length)` 接口。
+  通过 `HF_ENDPOINT=https://hf-mirror.com` 下载。**关键**: 强制
+  `padding_side=right` (见下方 NaN 修复)。
+- `variant.py` — `Flux2Dev(nn.Module)` 组装 mflux `Flux2Transformer`
+  (dev 覆盖: 8 double + 48 single 层, 48 头, head_dim 128,
+  `guidance_embeds=True`) + `Flux2VAE` + 新文本编码器 + 分词器。
+  `generate_image` 仿照 `Flux2Klein`, 但向 transformer 传入真实 `guidance` 值
+  (非 `None`), 因 dev 非蒸馏, 使用 guidance embedding。`guidance > 1.0` 时执行
+  CFG 混合。本地 `_DevModelConfig` dataclass 提供 mflux `Config` 读取的属性
+  (`num_train_steps`、`requires_sigma_shift`、`supports_guidance`)。
+
+**NaN 根因与修复** (#759 关键 bug):
+
+Mistral chat 模板默认 **左填充** (pad token id=11 占据位置 0..314, 真实文本在
+315..511)。在因果注意力下, 被完全 mask 的 pad 查询行 → MLX
+`scaled_dot_product_attention` 返回 NaN (即使在 float32 下) → NaN 通过残差与下一
+层因果 key 投影泄漏到真实位置。mflux Qwen3 之所以正常, 是因为 Qwen 分词器默认
+**右填充**。
+
+修复: 在 `load_mistral_tokenizer` 中强制
+`hf_tokenizer.padding_side = "right"`。右填充使真实 token 位于位置 0..N, 因果
+注意力不再触发 pad NaN, RoPE 位置也对齐。已端到端验证: prompt_embeds nan=0,
+各步噪声 nan=0, 解码输出有限 (min=-2.49 max=2.44)。
+
+**复用不变** (来自 mflux): `Flux2Transformer`、`Flux2VAE`、
+`Flux2LatentCreator`、`Flux2PromptEncoder.encode_prompt` (鸭子类型 — 接受任何具
+有正确方法的 tokenizer/text_encoder)、`Config` + scheduler。
+
+**变体路由**: `_infer_variant` 检测 `FLUX2-dev` / `flux2-dev` /
+`AITRADER/FLUX2-dev-mlx-8bit` (dot-strip GOTCHA 保留) -> `flux2_dev` ->
+`VARIANT_MAP["flux2_dev"]` = `("fusion_mlx.engines.flux2_dev.variant",
+"Flux2Dev", "flux2_dev", 3.5)`。原生 `_load()` 分支 (module_path 以
+`fusion_mlx.` 开头) 构造 `Flux2Dev(model_config=None, model_path=...,
+quantize=...)`。旧的 fail-visible RuntimeError 哨兵已移除。
+
+**权重来源** (均通过 hf-mirror.com):
+
+| 组件 | 仓库 | 格式 |
+|---|---|---|
+| DiT 8-bit + VAE | `AITRADER/FLUX2-dev-mlx-8bit` | mflux 8-bit MLX (32 B 参数) |
+| 文本编码器 bf16 | `Comfy-Org/flux2-dev` | 单文件 safetensors (35.6 GB) |
+| 分词器 | `diffusers/FLUX.2-dev-bnb-4bit` | HF 分词器文件 |
+
+BFL `black-forest-labs/FLUX.2-dev` 本身受限; 上述重新托管的仓库开放。文本编码器
+(30 层裁剪版, 0-29) 以 `num_hidden_layers=30` 加载; 提取层 9/18/27 均存在。
+
+**加载验证**: DiT 737 keys (missing=0, unexpected=0), VAE 266 keys (missing=0,
+unexpected=0), 文本编码器 kept=272 dropped=223 (missing=0, unexpected=0)。
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com hf download AITRADER/FLUX2-dev-mlx-8bit \
+  --local-dir ~/.fusion-mlx/models/AITRADER-FLUX2-dev-mlx-8bit
+echo '{"task":"text-to-image"}' > ~/.fusion-mlx/models/AITRADER-FLUX2-dev-mlx-8bit/configuration.json
+fusion-mlx serve --model-dir ~/.fusion-mlx/models --port 11434
+curl -s http://127.0.0.1:11434/v1/images/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"AITRADER-FLUX2-dev-mlx-8bit","prompt":"a photo of a cat","width":1024,"height":1024,"steps":20,"guidance":3.5}'
+```
+
+dev 是基座 (非蒸馏) 模型: 使用 `steps>=20` 和 `guidance=3.5` (默认)。步数太少
+欠收敛。模型加载较重 (8-bit DiT + bf16 文本编码器, 统一内存约 66 G)。
+
 ## Flux-1.lite-8B-MLX 深度优化 (2026-07-19)
 
 ### 性能数据 (M5 Max 128GB / MLX 0.32 / Q4)

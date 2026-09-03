@@ -53,13 +53,13 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
         "flux2_klein_9b",
         1.0,
     ),
-    # FLUX.2-dev: upstream-blocked. mflux has no flux2_dev factory/variant and
-    # no all-MLX Mistral3 text encoder (dev uses Mistral3, klein uses Qwen3).
-    # Sentinel entry so _infer_variant can route here; start() fails visibly.
-    # Upstream tracking: mflux-community/mflux#707.
+    # FLUX.2-dev: self-implemented (#759). mflux ships no flux2_dev variant
+    # and no all-MLX Mistral3 text encoder, so fusion-mlx builds its own
+    # native Flux2Dev variant (DiT/VAE from AITRADER 8-bit MLX, text encoder
+    # from Comfy Mistral3 Small bf16, Mistral tokenizer). guidance_embeds=True.
     "flux2_dev": (
-        "",
-        "",
+        "fusion_mlx.engines.flux2_dev.variant",
+        "Flux2Dev",
         "flux2_dev",
         3.5,
     ),
@@ -408,25 +408,6 @@ class ImageGenEngine(BaseNonStreamingEngine):
             )
             self._mflux_missing = True
             return
-        # #759/#764: FLUX.2-dev is upstream-blocked — mflux has no
-        # flux2_dev factory/variant and no all-MLX Mistral3 text encoder
-        # (dev uses Mistral3; klein uses Qwen3). Fail visibly with the
-        # upstream pointer instead of silently loading wrong klein config.
-        # Upstream tracking: mflux-community/mflux#707.
-        if self._variant == "flux2_dev":
-            logger.error(
-                "FLUX.2-dev (%s) is not supported: upstream mflux has no "
-                "flux2_dev variant and no all-MLX Mistral3 text encoder. "
-                "See mflux-community/mflux#707. Use FLUX.2-klein meanwhile.",
-                self._model_path,
-            )
-            raise RuntimeError(
-                "FLUX.2-dev is not supported yet: upstream mflux lacks a "
-                "flux2_dev variant and an all-MLX Mistral3 text encoder "
-                "(dev's text encoder is Mistral3, not the Qwen3 encoder "
-                "klein uses). Tracked upstream at mflux-community/mflux#707. "
-                "Use a FLUX.2-klein checkpoint in the meantime."
-            )
         module_path, cls_name, config_label, default_guidance = VARIANT_MAP[
             self._variant
         ]
@@ -600,7 +581,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                         gen_kwargs["redux_image_strengths"] = reference_strengths
                     if image_strength is not None:
                         gen_kwargs["image_strength"] = image_strength
-                elif variant in ("txt2img", "flux1_dev", "flux1_schnell"):
+                elif variant in ("txt2img", "flux1_dev", "flux1_schnell", "flux2_dev"):
                     if edit_image is not None or control_image is not None:
                         img = edit_image or control_image
                         gen_kwargs["image_path"] = img
