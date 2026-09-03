@@ -51,13 +51,31 @@ class TestExecuteTraining402Validation:
     # regardless (Rule 9: a test passing for the wrong reason is worse than
     # no test).
 
-    def test_mxfp8_raises_loudly(self):
-        # #425: mxfp8 is staged but upstream-blocked; setting True must fail
-        # visibly with the real message (not silently ignored).
+    def test_mxfp8_routes_to_qlora_8bit(self):
+        # #425: mxfp8 self-implements by routing to the QLoRA 8-bit path.
+        # MLX 0.32.0 has no fp8 dtype, so mxfp8=True coerces quantize_base=True,
+        # quant_bits=8, fine_tune_type="qlora" (8-bit frozen base + LoRA).
         cfg = FineTuneConfig(mxfp8=True)
+        cfg.validate()
+        assert cfg.quantize_base is True
+        assert cfg.quant_bits == 8
+        assert cfg.fine_tune_type == "qlora"
+
+    def test_mxfp8_preserves_qlora_when_already_set(self):
+        # mxfp8 with an explicit qlora type still routes cleanly.
+        cfg = FineTuneConfig(mxfp8=True, fine_tune_type="qlora", quant_bits=8)
+        cfg.validate()
+        assert cfg.fine_tune_type == "qlora"
+        assert cfg.quant_bits == 8
+        assert cfg.quantize_base is True
+
+    def test_mxfp8_with_full_fails_visibly(self):
+        # mxfp8 + full fine-tune is a contradiction (full unfreezes the base,
+        # no frozen base to quantize) — must fail visibly (Rule 12).
+        cfg = FineTuneConfig(mxfp8=True, fine_tune_type="full")
         with pytest.raises(ValueError, match="mxfp8") as exc:
             cfg.validate()
-        assert "mlx-lm 0.31.3" in str(exc.value)
+        assert "full" in str(exc.value)
 
     def test_bad_quant_bits_raises(self):
         cfg = FineTuneConfig(fine_tune_type="qlora", quant_bits=3)

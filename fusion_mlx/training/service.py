@@ -60,9 +60,11 @@ class FineTuneConfig:
     # is a QuantizedLinear, so we quantize on load when quantize_base=True).
     quantize_base: bool = False
     quant_bits: int = 4  # 4 | 8 (ignored unless quantize_base / qlora)
-    # #402: MXFP8 mixed-precision training. mlx-lm 0.31.3 has NO fp8 training
-    # path (mxfp8 is inference-only weight quant). Field exists to mirror the
-    # fusion-trainer API surface; setting it True fails loudly until landed.
+    # #425: MXFP8 mixed-precision training. MLX 0.32.0 has no native fp8
+    # dtype, so this self-implements by routing to the QLoRA 8-bit path
+    # (8-bit frozen base + LoRA). validate() forces quantize_base=True,
+    # quant_bits=8, fine_tune_type="qlora" when mxfp8=True. Honest semantics
+    # = 8-bit-base LoRA (memory saving), NOT fp8 compute.
     mxfp8: bool = False
     learning_rate: float = 1e-5
     batch_size: int = 4
@@ -154,14 +156,31 @@ class FineTuneConfig:
         # _execute_training so invalid configs fail fast before the expensive
         # model+dataset load. Single source of truth for the #402/#425 guards
         # so tests exercise real production code instead of replicating it.
-        # #425: mxfp8 is staged but mlx-lm 0.31.3 has no fp8 training path.
-        # Fail loudly instead of silently ignoring the switch (Rule 12).
+        # #425: mxfp8 self-implement. MLX 0.32.0 has no native fp8 dtype
+        # (float8_e4m3fn/e5m2 absent) so real fp8 GEMM compute is impossible
+        # on this stack. We honor the downstream fusion-trainer use_mxfp8=True
+        # switch by routing to the EXISTING QLoRA 8-bit path: quantize the
+        # frozen base to 8-bit (group_size=64) and attach LoRA. Honest
+        # semantics = 8-bit-base LoRA (memory saving), NOT fp8 compute. When
+        # a future MLX adds real fp8, the mfa/fp8_linear path can activate.
+        # mxfp8 + full fine-tune is a contradiction (full unfreezes the base,
+        # so there is nothing to quantize) — fail visibly (Rule 12).
         if self.mxfp8:
-            raise ValueError(
-                "mxfp8 mixed-precision training is not yet supported "
-                "(mlx-lm 0.31.3 has no fp8 training path). Use qlora for "
-                "memory savings; mxfp8 will be landed in a later phase."
+            if self.fine_tune_type == "full":
+                raise ValueError(
+                    "mxfp8 is incompatible with fine_tune_type='full' (full "
+                    "fine-tuning unfreezes the base, so there is no frozen "
+                    "base to quantize); use lora/dora/qlora with mxfp8 "
+                    "(issue #425)"
+                )
+            logger.info(
+                "mxfp8=True: routing to QLoRA 8-bit path (8-bit frozen base "
+                "+ LoRA). MLX 0.32.0 has no fp8 dtype, so this is 8-bit-base "
+                "LoRA for memory saving, NOT fp8 compute (issue #425)."
             )
+            self.quantize_base = True
+            self.quant_bits = 8
+            self.fine_tune_type = "qlora"
         # #402: QLoRA / quantize_base needs 4- or 8-bit base.
         if (self.fine_tune_type == "qlora" or self.quantize_base) and (
             self.quant_bits not in (4, 8)
