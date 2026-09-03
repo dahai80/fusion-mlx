@@ -6,6 +6,8 @@ covering: single-step decode, multi-step prefill, block-boundary spans,
 trim round-trip, state round-trip, and pool-exhaustion fail-visible.
 """
 
+import os
+
 import mlx.core as mx
 import numpy as np
 import pytest
@@ -176,3 +178,53 @@ def test_make_mask_offset_propagates():
     assert mask is None
     mask2 = paged.make_mask(5, return_array=True, window_size=None)
     assert mask2 is not None
+
+
+def _seed_decode_cache(n_kv_heads=2, head_dim=8, block_size=4, num_blocks=8):
+    cache = FusionPagedKVCache(block_size=block_size, num_blocks=num_blocks)
+    for _ in range(5):
+        k = mx.random.normal(shape=(1, n_kv_heads, 1, head_dim)) * 0.1
+        v = mx.random.normal(shape=(1, n_kv_heads, 1, head_dim)) * 0.1
+        cache.update_and_fetch(k, v)
+    return cache
+
+
+def test_fused_decode_available_gated_off_by_default():
+    cache = _seed_decode_cache()
+    os.environ.pop("FUSION_PAGED_FUSED_KERNEL", None)
+    assert cache.fused_decode_available(num_new=1) is False
+
+
+def test_fused_decode_available_off_when_not_decode():
+    os.environ["FUSION_PAGED_FUSED_KERNEL"] = "on"
+    try:
+        cache = _seed_decode_cache()
+        assert cache.fused_decode_available(num_new=4) is False
+    finally:
+        os.environ.pop("FUSION_PAGED_FUSED_KERNEL", None)
+
+
+def test_fused_decode_attention_matches_concat_path(monkeypatch):
+    monkeypatch.setenv("FUSION_PAGED_FUSED_KERNEL", "on")
+    n_kv_heads, head_dim, n_heads = 2, 8, 8
+    cache = _seed_decode_cache(n_kv_heads=n_kv_heads, head_dim=head_dim)
+    gqa = n_heads // n_kv_heads
+    k_new = mx.random.normal(shape=(1, n_kv_heads, 1, head_dim)) * 0.1
+    v_new = mx.random.normal(shape=(1, n_kv_heads, 1, head_dim)) * 0.1
+    k_view, v_view = cache.update_and_fetch(k_new, v_new)
+    scale = 1.0 / (head_dim**0.5)
+    q = mx.random.normal(shape=(1, n_heads, 1, head_dim)) * 0.1
+    if gqa > 1:
+        k_ref = mx.repeat(k_view, gqa, axis=1)
+        v_ref = mx.repeat(v_view, gqa, axis=1)
+    else:
+        k_ref, v_ref = k_view, v_view
+    ref = mx.fast.scaled_dot_product_attention(q, k_ref, v_ref, scale=scale)
+    if not cache.fused_decode_available(num_new=1):
+        pytest.skip("metal kernel unavailable")
+    out = cache.fused_decode_attention(
+        q, scale=scale, n_heads=n_heads, head_dim=head_dim
+    )
+    assert out.shape == ref.shape
+    rel = mx.max(mx.abs(out - ref)) / (mx.max(mx.abs(ref)) + 1e-9)
+    assert float(rel) < 2e-2, f"rel diff {float(rel)} too large"

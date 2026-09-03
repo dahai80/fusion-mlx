@@ -83,12 +83,19 @@ class FusionPagedKVCache:
         self.free_list = list(range(self.num_blocks))
         self.free_list.reverse()
         self._total_blocks = self.num_blocks
+        self._n_kv_heads = n_kv_heads
+        self._head_dim = k_head_dim
+        self._B = B
         logger.debug(
-            "paged_kv flat pool init: cap=%d block_size=%d shape=%s dtype=%s",
+            "paged_kv flat pool init: cap=%d block_size=%d shape=%s dtype=%s "
+            "n_kv_heads=%d head_dim=%d B=%d",
             self.num_blocks,
             self.block_size,
             self._shape,
             dtype,
+            self._n_kv_heads,
+            self._head_dim,
+            self._B,
         )
 
     def _alloc_block(self) -> int:
@@ -257,10 +264,46 @@ class FusionPagedKVCache:
         return create_attention_mask(*args, offset=self.offset, **kwargs)
 
     def fused_decode_available(self, num_new: int = 1) -> bool:
-        logger.debug(
-            "paged_kv fused_decode_available stub: num_new=%d -> False", num_new
+        import os
+
+        from .fusion_paged_attention import metal_available
+
+        if os.environ.get("FUSION_PAGED_FUSED_KERNEL", "off") != "on":
+            return False
+        if not metal_available():
+            return False
+        if self.offset <= 0:
+            return False
+        if num_new != 1:
+            return False
+        if self.keys_pool is None:
+            return False
+        return True
+
+    def fused_decode_attention(self, queries, scale, n_heads, head_dim):
+        from .fusion_paged_attention import paged_decode_attention
+
+        n_kv_heads = self.keys_pool.shape[2]
+        gqa_factor = n_heads // n_kv_heads
+        block_table_mx = mx.array(self.block_table, dtype=mx.uint32)
+        num_kv = self.offset
+        logger.info(
+            "paged_kv fused decode: offset=%d gqa=%d n_heads=%d n_kv=%d",
+            self.offset,
+            gqa_factor,
+            n_heads,
+            n_kv_heads,
         )
-        return False
+        return paged_decode_attention(
+            queries,
+            self.keys_pool,
+            self.values_pool,
+            block_table_mx,
+            num_kv,
+            scale,
+            gqa_factor,
+            stream=None,
+        )
 
     def stats(self) -> dict:
         return {
