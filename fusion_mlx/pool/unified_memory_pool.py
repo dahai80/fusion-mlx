@@ -487,8 +487,29 @@ class KVCacheBridge:
             return len(self._active_handoffs)
 
     def evict_or_swap_active_kv(self, request_id: str) -> None:
-        """Evict or swap KV cache for a request during preemption."""
+        """Evict or swap KV cache for a request during preemption.
+
+        Phase 1: calls fusion paged_kv evict_request_by_id to free the
+        request's physical blocks back to the free-list. Swap-to-host is a
+        Phase 3 concern; for now eviction is destructive (blocks recycled).
+        """
         logger.debug(f"[Bridge] evict_or_swap for request {request_id}")
+        try:
+            from ..custom_kernels.fusion_paged_kv import evict_request_by_id
+
+            freed = evict_request_by_id(request_id)
+            if freed:
+                logger.info(
+                    f"[Bridge] evicted {freed} paged_kv blocks for {request_id}"
+                )
+        except ImportError:
+            logger.debug(
+                f"[Bridge] paged_kv unavailable, no eviction for {request_id}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[Bridge] evict_or_swap failed for {request_id}: {e}"
+            )
 
 
 @dataclass
