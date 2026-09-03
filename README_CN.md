@@ -700,6 +700,16 @@ Swift App -> WhichLLMService -> PythonRuntime -> whichllm_bridge.py -> whichllm
 
 首次含模型加载 8.5s (9.6G lazy load)。
 
+### Keychain API key 存储 (#770)
+
+默认 API key 存于 `~/.fusion-mlx/settings.json` (权限 `0o600`)。macOS 部署若偏好 Keychain 而非明文落盘，设置 `FUSION_KEYCHAIN=on`：
+
+- key 读写均走 macOS Keychain (service `fusion-mlx.api-key`, account `fusion-mlx`)，用系统自带 `security` CLI，无额外依赖。
+- 读取优先级变为 **CLI `--api-key` > `FUSION_MLX_API_KEY` 环境变量 > Keychain > `settings.json` `auth.api_key`**。
+- 启动时若 `settings.json` 有明文 `api_key` 而 Keychain 为空，自动迁移进 Keychain 并清除磁盘明文字段。
+- admin 设置写入走 Keychain，磁盘 `api_key` 字段留空。
+- 非 macOS 或缺少 `security` CLI 时，每次调用显式失败 (记日志) 并回退到明文 `settings.json` 路径，行为不变。默认关闭。
+
 ### Serve 步骤
 
 mflux Flux2 repo 是 diffusers 格式 (`model_index.json`)，**无** mflux 的

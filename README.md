@@ -1279,6 +1279,16 @@ This applies to **every serve path**: single-model (`serve <model>`), audio (`se
 
 `start.sh` resolves the key from `FUSION_MLX_API_KEY` (env) then `settings.json`, passes it as `--api-key`, and exports `FUSION_MLX_API_KEY` into the server process — so the env path also catches it for `--model-dir` launches.
 
+### Keychain API-key storage (#770)
+
+By default the API key is stored in `~/.fusion-mlx/settings.json` (mode `0o600`). For macOS deployments that prefer the Keychain over plaintext on disk, set `FUSION_KEYCHAIN=on`:
+
+- The key is read from / written to the macOS Keychain (service `fusion-mlx.api-key`, account `fusion-mlx`) via the shipped `security` CLI — no extra dependency.
+- Read priority becomes **CLI `--api-key` > `FUSION_MLX_API_KEY` env > Keychain > `settings.json` `auth.api_key`**.
+- On startup, if a plaintext `api_key` exists in `settings.json` but the Keychain is empty, it is migrated into the Keychain and the plaintext field is cleared from disk.
+- Admin settings writes route to the Keychain and leave the on-disk `api_key` field empty.
+- On non-macOS, or if the `security` CLI is absent, every call fails visibly (logged) and the plaintext `settings.json` path is used unchanged. Default off.
+
 ### Rate limiting (#635)
 
 `--rate-limit N` caps requests per minute per client (default `0` = disabled). `--rate-limit 0` explicitly disables the limiter; a positive value enables it. #635 fixed `--rate-limit 0` leaving the limiter active at its 60 rpm default on the `serve <model>` and `serve --model-dir` paths.

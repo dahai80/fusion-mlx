@@ -108,7 +108,20 @@ def verify_api_key(input_key: str | None, expected_key: str) -> bool:
 
 
 def _get_settings_api_key(gs) -> str:
-    """Extract API key from settings object (handles both flat and nested auth)."""
+    """Extract API key from settings object (handles both flat and nested auth).
+
+    #770: when FUSION_KEYCHAIN=on, the key is read from the Keychain first.
+    The Settings object holds None in that case (plaintext cleared on load).
+    """
+    try:
+        from .keychain import get_key, is_available, is_enabled
+
+        if is_enabled() and is_available():
+            kc = get_key()
+            if kc:
+                return kc
+    except Exception:
+        logger.debug("keychain: read in _get_settings_api_key failed, fallback")
     if gs is None:
         return ""
     if hasattr(gs, "auth") and gs.auth:
