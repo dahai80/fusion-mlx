@@ -2127,6 +2127,90 @@ Values: `w8a16`/`w8`/`int8`/`8` -> 8-bit, `w4`/`nf4`/`int4`/`4` -> 4-bit,
 > is not a speed optimization for Flux2Klein** - use it only for memory (9B ~18 G ->
 > ~9 G, to fit 16 G Macs).
 
+## FLUX.2-dev All-MLX Variant (self-implemented, #759, 2026-09-03)
+
+Upstream `mflux` ships only FLUX.2-klein (distilled, Qwen3 text encoder,
+`guidance_embeds=False`). The full teacher **FLUX.2-dev** (Mistral3 Small
+text encoder, `guidance_embeds=True`, 56-block DiT, inner_dim 6144) had no
+upstream path. Rather than wait on mflux#707, fusion-mlx self-implements it.
+
+**What is new** (in `fusion_mlx/engines/flux2_dev/`, fusion-mlx-native code):
+
+- `text_encoder.py` — `Mistral3TextEncoder`: a pure-MLX hand-ported Mistral3
+  decoder (RMSNorm + GQA + RoPE theta 1e9 + SiLU MLP). Extracts hidden states
+  at layers 9/18/27 (3 x 5120 = 15360 = `joint_attention_dim`). Attention
+  uses `mx.fast.scaled_dot_product_attention` in float32 (matches the mflux
+  `Qwen3VLAttention` pattern).
+- `tokenizer.py` — Mistral tokenizer (from `diffusers/FLUX.2-dev-bnb-4bit`),
+  wrapped in the mflux `LanguageTokenizer` `.tokenize(prompt, max_length)`
+  interface. Downloads via `HF_ENDPOINT=https://hf-mirror.com`. **Critical**:
+  forces `padding_side=right` (see NaN fix below).
+- `weights.py` — loads the AITRADER 8-bit MLX DiT/VAE (sharded via
+  `model.safetensors.index.json`, `nn.quantize` group_size=64 bits=8) and the
+  Comfy-Org bf16 text-encoder single-file (sanitize strips `vision_tower`,
+  `multi_modal_projector`, `tekken_model`; strips `model.` prefix).
+- `variant.py` — `Flux2Dev(nn.Module)` wires mflux `Flux2Transformer`
+  (dev overrides: 8 double + 48 single blocks, 48 heads, head_dim 128,
+  `guidance_embeds=True`) + `Flux2VAE` + the new text encoder + tokenizer.
+  `generate_image` mirrors `Flux2Klein` but passes a real `guidance` value
+  (not `None`) to the transformer, because dev is non-distilled and uses
+  guidance embedding. CFG blend runs when `guidance > 1.0`. A local
+  `_DevModelConfig` dataclass supplies the attrs mflux `Config` reads
+  (`num_train_steps`, `requires_sigma_shift`, `supports_guidance`).
+
+**Reused unchanged** from mflux: `Flux2Transformer`, `Flux2VAE`,
+`Flux2LatentCreator`, `Flux2PromptEncoder.encode_prompt` (duck-typed — accepts
+any tokenizer/text_encoder with the right methods), `Config` + scheduler.
+
+**NaN root cause + fix (#759 key bug):** the Mistral chat template defaults to
+**left-padding** (pad token id=11 fills positions 0..314, real text at
+315..511). Under causal attention, fully-masked pad query rows -> MLX
+`scaled_dot_product_attention` returns NaN (even in float32) -> NaN leaks into
+real positions via residual + next-layer causal key projection. mflux Qwen3
+works because the Qwen tokenizer **right-pads** by default. Fix: force
+`hf_tokenizer.padding_side = "right"` in `load_mistral_tokenizer` so real tokens
+occupy positions 0..N. Verified end-to-end: prompt_embeds nan=0, all step noise
+nan=0, decoded finite (min=-2.49 max=2.44). A regression test
+(`test_mistral_tokenizer_forced_right_padding`) guards the static source.
+
+**Variant routing:** `_infer_variant` detects `FLUX2-dev` / `flux2-dev` /
+`AITRADER/FLUX2-dev-mlx-8bit` (dot-strip GOTCHA preserved) -> `flux2_dev` ->
+`VARIANT_MAP["flux2_dev"]` = `("fusion_mlx.engines.flux2_dev.variant",
+"Flux2Dev", "flux2_dev", 3.5)`. The native `_load()` branch (module_path
+starts with `fusion_mlx.`) constructs `Flux2Dev(model_config=None,
+model_path=..., quantize=...)`. The old fail-visible RuntimeError sentinel is
+removed.
+
+**Weight sources** (all via hf-mirror.com):
+
+| Component | Repo | Format |
+|---|---|---|
+| DiT 8-bit + VAE | `AITRADER/FLUX2-dev-mlx-8bit` | mflux 8-bit MLX (32 B params) |
+| Text encoder bf16 | `Comfy-Org/flux2-dev` | single safetensors (35.6 GB) |
+| Tokenizer | `diffusers/FLUX.2-dev-bnb-4bit` | HF tokenizer files |
+
+BFL `black-forest-labs/FLUX.2-dev` itself is gated; the re-hosted repos above
+are open. The text encoder (30 pruned layers, 0-29) is loaded with
+`num_hidden_layers=30`; extraction layers 9/18/27 are all present.
+
+**Load verified:** DiT 737 keys (missing=0, unexpected=0), VAE 266 keys
+(missing=0, unexpected=0), text encoder kept=272 dropped=223 (missing=0,
+unexpected=0).
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com hf download AITRADER/FLUX2-dev-mlx-8bit \
+  --local-dir ~/.fusion-mlx/models/AITRADER-FLUX2-dev-mlx-8bit
+echo '{"task":"text-to-image"}' > ~/.fusion-mlx/models/AITRADER-FLUX2-dev-mlx-8bit/configuration.json
+fusion-mlx serve --model-dir ~/.fusion-mlx/models --port 11434
+curl -s http://127.0.0.1:11434/v1/images/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"AITRADER-FLUX2-dev-mlx-8bit","prompt":"a photo of a cat","width":1024,"height":1024,"steps":20,"guidance":3.5}'
+```
+
+dev is a base (non-distilled) model: use `steps>=20` and `guidance=3.5`
+(default). Fewer steps underconverge. Model load is heavy (~66 G unified
+memory at 8-bit DiT + bf16 text encoder).
+
 ## Flux-1.lite-8B-MLX Deep Optimization (2026-07-19)
 
 **Performance** (M5 Max 128 GB / MLX 0.32 / Q4):
