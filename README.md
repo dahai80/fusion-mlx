@@ -1380,6 +1380,54 @@ Batched decode, fusion-mlx (aggregate / per-request tok/s):
 
 Submit your own benchmarks at [bench.dpdns.org](https://bench.dpdns.org/).
 
+### Paged KV Cache
+
+A paged KV cache backend (`fusion_mlx/custom_kernels/`) that stores KV blocks
+in a flat physical pool and addresses them through a per-request `block_table`,
+eliminating the per-step `mx.concatenate` of the default `KVCache`. Three
+independent opt-in phases, all default **OFF**:
+
+- **Phase 1 — `FUSION_PAGED_KV=on`**: paged KV cache backend. Decode reads K/V
+  from the flat pool via `block_table` indirection. Bit-exact vs upstream
+  `KVCache` for greedy decode (fp16 tol).
+- **Phase 2 — `FUSION_PAGED_FUSED_KERNEL=on`**: fused decode-attention Metal
+  kernel (llama-family: llama / qwen2 / qwen3). Reads K/V directly from the
+  physical block pool through `block_table` indirection inside the kernel, so
+  the per-step concat is eliminated entirely on the decode path. Prefill keeps
+  the concat path. Default off until the tiled kernel lands (see Limitations).
+  Perf report: `~/fusion/audit/paged-kv-phase2-perf-report.md`.
+- **Phase 3 — `FUSION_PAGED_POOL=on` + `FUSION_PAGED_POOL_NUM_BLOCKS=<cap>`**:
+  shared `FusionPagedKVPool` for continuous batching. One physical pool, shared
+  free-list, per-request `block_table`. Bounds memory by the cap; when the pool
+  is exhausted a new request is rejected with `503` (no head-of-line blocking).
+  Sequential-per-request submission through the shared pool is validated
+  bit-exact with no cross-contamination. Perf report:
+  `~/fusion/audit/paged-kv-phase3-concurrency-perf-report.md`.
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `FUSION_PAGED_KV` | `off` | Phase 1 paged KV cache backend. |
+| `FUSION_PAGED_FUSED_KERNEL` | `off` | Phase 2 fused decode-attention Metal kernel (llama-family). |
+| `FUSION_PAGED_POOL` | `off` | Phase 3 shared `FusionPagedKVPool` for continuous batching. |
+| `FUSION_PAGED_POOL_NUM_BLOCKS` | `256` | Pool cap (block count) for `FUSION_PAGED_POOL`. |
+
+Limitations:
+
+- The Phase 2 fused kernel allowlist covers llama-family attention (llama /
+  qwen2 / qwen3). Gemma / Mistral sliding-window attention is not yet supported
+  — non-llama-family follow-up issue tracked.
+- The Phase 2 naive scalar kernel is slower than the concat path; a
+  Steel-style tiled/threadgroup-optimized kernel is required before the fused
+  path can be enabled by default. Follow-up issue tracked.
+- The Phase 3 shared pool rejects with `503` when the cap is exhausted; LRU
+  eviction (freeing the least-recently-used request's blocks) is deferred.
+  Follow-up issue tracked.
+- True simultaneous batched decode (B>1) through `BatchedEngine` is not yet
+  wired end-to-end: `FusionPagedRequestCache.merge` (B=N stack) is unit-tested
+  but the `model_settings` -> `FusionConfig.from_model_settings` plumbing for
+  `fusion_paged_pool="on"` is not hooked into the engine. Sequential-per-request
+  submission is the validated path. Follow-up issue tracked.
+
 ### Video Generation (SkyReels-V3)
 
 Pure-MLX port of SkyReels-V3 (R2V / V2V / A2V), running end-to-end on real weights
