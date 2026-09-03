@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import mlx.core as mx
 import mlx.nn as nn
 
 from .paged_kv_cache import FusionPagedKVCache
@@ -35,13 +36,33 @@ def _infer_kv_geometry(model: nn.Module) -> tuple[int, int]:
             "n_kv_heads=1 head_dim=1 for pool geometry"
         )
         return 1, 1
-    n_kv_heads = int(getattr(args, "n_kv_heads", 1))
+    n_kv_heads = int(
+        getattr(args, "n_kv_heads", None)
+        or getattr(args, "num_key_value_heads", None)
+        or 1
+    )
     head_dim = getattr(args, "head_dim", None)
     if head_dim is None:
-        n_heads = int(getattr(args, "n_heads", 1))
-        dim = int(getattr(args, "dim", 1))
+        n_heads = int(
+            getattr(args, "n_heads", None)
+            or getattr(args, "num_attention_heads", None)
+            or 1
+        )
+        dim = int(getattr(args, "dim", None) or getattr(args, "hidden_size", None) or 1)
         head_dim = dim // n_heads if n_heads else 1
     return n_kv_heads, int(head_dim)
+
+
+def _infer_model_dtype(model: nn.Module) -> Any:
+    try:
+        leaves = nn.utils.tree_flatten(model.parameters())
+        for leaf in leaves:
+            dt = getattr(leaf, "dtype", None)
+            if dt is not None:
+                return dt
+    except Exception as e:
+        logger.debug("install_paged_kv: dtype inference failed (%s)", e)
+    return mx.float32
 
 
 def install_paged_kv(model: nn.Module, config: Any) -> None:
@@ -64,11 +85,13 @@ def install_paged_kv(model: nn.Module, config: Any) -> None:
         setattr(model, _CACHE_REGISTRY_ATTR, {})
         if pool_enabled:
             n_kv_heads, head_dim = _infer_kv_geometry(model)
+            model_dtype = _infer_model_dtype(model)
             pool = FusionPagedKVPool(
                 block_size=block_size,
                 num_blocks=pool_num_blocks,
                 n_kv_heads=n_kv_heads,
                 head_dim=head_dim,
+                dtype=model_dtype,
             )
             setattr(model, _POOL_ATTR, pool)
             setattr(model, _POOL_SEQ_ATTR, 0)
@@ -77,11 +100,13 @@ def install_paged_kv(model: nn.Module, config: Any) -> None:
                 pool_obj = getattr(model, _POOL_ATTR, None)
                 if pool_obj is None:
                     n_kv_heads_l, head_dim_l = _infer_kv_geometry(model)
+                    model_dtype_l = _infer_model_dtype(model)
                     pool_obj = FusionPagedKVPool(
                         block_size=block_size,
                         num_blocks=pool_num_blocks,
                         n_kv_heads=n_kv_heads_l,
                         head_dim=head_dim_l,
+                        dtype=model_dtype_l,
                     )
                     setattr(model, _POOL_ATTR, pool_obj)
                     logger.info(

@@ -18,7 +18,7 @@ class FusionPagedKVPool:
         head_dim: int,
         k_head_dim: int | None = None,
         v_head_dim: int | None = None,
-        dtype: Any = mx.float16,
+        dtype: Any = mx.float32,
     ):
         if block_size < 1:
             raise ValueError("block_size must be >= 1")
@@ -80,6 +80,26 @@ class FusionPagedKVPool:
     def available(self) -> int:
         return len(self.free_list)
 
+    def _adapt_dtype(self, dtype: Any) -> None:
+        if dtype == self.dtype:
+            return
+        if self.in_use:
+            logger.warning(
+                "paged_kv pool cannot adapt dtype %s -> %s with blocks in_use; "
+                "keeping existing storage",
+                self.dtype,
+                dtype,
+            )
+            return
+        logger.info(
+            "paged_kv pool adapting dtype %s -> %s (model compute dtype)",
+            self.dtype,
+            dtype,
+        )
+        self.dtype = dtype
+        self.keys_pool = mx.zeros(self.keys_pool.shape, dtype=dtype)
+        self.values_pool = mx.zeros(self.values_pool.shape, dtype=dtype)
+
     def stats(self) -> dict:
         return {
             "cap": self.num_blocks,
@@ -116,6 +136,8 @@ class FusionPagedRequestCache:
         B, n_kv_heads, num_steps, k_head_dim = keys.shape
         v_head_dim = values.shape[-1]
         dtype = keys.dtype
+        if dtype != self.pool.dtype:
+            self.pool._adapt_dtype(dtype)
         self._B = B
         self._n_kv_heads = n_kv_heads
         self._k_head_dim = k_head_dim
