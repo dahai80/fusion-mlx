@@ -2,6 +2,80 @@
 
 ## [Unreleased]
 
+## [0.8.73] - 2026-09-04
+
+### Added
+- **#770 — store API key in macOS Keychain (`FUSION_KEYCHAIN=on`).** New
+  Keychain backend (`fusion_mlx/admin/keychain.py`) using the shipped
+  `security` CLI, no extra dependency. Read priority becomes
+  CLI > env > Keychain > settings.json when enabled. On startup, a
+  plaintext `api_key` in settings.json is migrated into the Keychain and
+  cleared from disk. Admin writes route to the Keychain and leave the
+  on-disk field empty. Non-macOS / missing CLI falls back to plaintext
+  (fail visible, logged). Default off. 9 unit tests (mocked subprocess).
+- **#425 — route mxfp8 training to QLoRA 8-bit path.** MLX 0.32.0 has no
+  native fp8 dtype, so `mxfp8=True` self-implements by routing to the
+  existing QLoRA 8-bit path: `mxfp8=True` forces
+  `quantize_base=True` / `quant_bits=8` / `fine_tune_type=qlora`.
+  `mxfp8=True` combined with `full` fine-tune raises `ValueError`
+  (fail-visible). The existing QLoRA path already handles 8-bit, so no new
+  training code. MLX 0.32.0's 8-bit-base LoRA is quantized weights, not
+  fp8 compute.
+- **#759 — self-implement all-MLX FLUX.2-dev variant.** Replaces the
+  flux2_dev fail-visible sentinel with a real all-MLX load path,
+  bypassing upstream mflux#707 (no flux2_dev variant, no all-MLX Mistral3
+  text encoder). New package `fusion_mlx/engines/flux2_dev/`:
+  - `text_encoder.py`: pure-MLX `Mistral3TextEncoder` (hidden_size=5120,
+    30 pruned Comfy layers, extract 9/18/27 -> 15360
+    joint_attention_dim). Hand-ported decoder layer matching
+    `model.layers.N.*` keys; attention uses
+    `mx.fast.scaled_dot_product_attention` in float32.
+  - `tokenizer.py`: Mistral tokenizer via hf-mirror, wrapped in mflux
+    `LanguageTokenizer`. **Critical:** forces `padding_side="right"` —
+    the Mistral chat template defaults to left-padding, and fully-masked
+    pad query rows under causal attention make MLX
+    `scaled_dot_product_attention` return NaN, which leaks into real
+    positions via residual + next-layer causal key projection.
+    Right-padding fixes it (verified end-to-end: prompt_embeds nan=0,
+    all step noise nan=0, decoded finite).
+  - `weights.py`: load AITRADER 8-bit MLX DiT/VAE (sharded,
+    group_size=64), Comfy bf16 text encoder (sanitize strips
+    vision_tower/projector/tekken).
+  - `variant.py`: `Flux2Dev` wires mflux `Flux2Transformer` (dev
+    overrides: 8 double + 48 single blocks, 48 heads x 128 dim,
+    joint_attention_dim 15360, `guidance_embeds=True`) + `Flux2VAE` +
+    `Mistral3TextEncoder`; `generate_image` reuses mflux
+    Config/scheduler/latent/`Flux2PromptEncoder` flow with real guidance
+    routing.
+  - `image_gen.py`: `VARIANT_MAP` flux2_dev entry -> native fusion_mlx
+    path; fail-visible `RuntimeError` sentinel removed.
+  - Tests: 10 unit tests pass + 1 skip (offline tokenizer download).
+    `test_mistral_tokenizer_forced_right_padding` guards the static
+    source. Verified on real 66GB model load: weights applied missing=0
+    unexpected=0, NaN=0 across all denoise steps, valid VAE decode.
+    README.md (English) + README_CN.md (Chinese) sections added.
+
+### Changed
+- **Paged-KV Phase 2 + Phase 3 — fused decode kernel + shared pool
+  (#775).** `fusion_mlx_lm` / `fusion_mlx_vlm` shim packages re-export
+  the full upstream mlx_lm / mlx_vlm API identity-identically (only
+  `load()` wrapped to apply post-load transforms). `fusion_takeover`:
+  `FusionConfig` (parsed from `ModelSettings`, default OFF),
+  `FusionModulePatcher` tags linear-like layers (`nn.Linear` AND
+  `QuantizedLinear`) with `_fusion_quant` (idempotent, fail-visible;
+  GOTCHA: `QuantizedLinear` is NOT an `nn.Linear` subclass — naive
+  `isinstance` tree-walker finds 0 layers on real quantized models).
+  `fusion_paged_kv`: slab-based lazy-growth `FusionPagedKVCache`
+  (64-block slabs, allocated on demand up to `num_blocks` cap) replacing
+  the single eager 8192-block tensor that caused a 16GB eager-alloc +
+  decode-collapse regression. 6 new `ModelSettings` fields (orthogonal
+  to existing mtp/dflash/turboquant). 14 unit tests; bit-exact on
+  Qwen3-0.6B-8bit (takeover ON == upstream == takeover OFF).
+  **Perf note:** single-stream tok/s overhead (-15% to -37% decode) is
+  the Python block-management + per-step concat cost of a raw-KV paged
+  view; reclaimed by a future fused GQA decode-attention Metal kernel
+  (tracked in #771-#774, not in this release).
+
 ## [0.8.71] - 2026-09-02
 
 ### Added
