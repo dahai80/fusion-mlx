@@ -39,6 +39,7 @@ _fine_tune_service = None
 _engine_pool_ref = None
 _grpo_service = None
 _rft_service = None
+_vlm_service = None
 _dpo_service = None
 _reward_service = None
 
@@ -63,6 +64,13 @@ def set_grpo_context(pool, service=None):
 def set_rft_context(pool, service=None):
     global _rft_service
     _rft_service = service
+    if service is not None and pool is not None:
+        service.set_engine_pool(pool)
+
+
+def set_vlm_context(pool, service=None):
+    global _vlm_service
+    _vlm_service = service
     if service is not None and pool is not None:
         service.set_engine_pool(pool)
 
@@ -101,6 +109,17 @@ def _get_rft_service():
         if _engine_pool_ref is not None:
             _rft_service.set_engine_pool(_engine_pool_ref)
     return _rft_service
+
+
+def _get_vlm_service():
+    global _vlm_service
+    if _vlm_service is None:
+        from fusion_mlx.training.vlm_service import VLMFineTuneService
+
+        _vlm_service = VLMFineTuneService()
+        if _engine_pool_ref is not None:
+            _vlm_service.set_engine_pool(_engine_pool_ref)
+    return _vlm_service
 
 
 def _get_dpo_service():
@@ -836,6 +855,154 @@ async def stream_rft_progress(
     is_admin: bool = Depends(require_admin),
 ):
     svc = _get_rft_service()
+    job = svc.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    async def event_generator():
+        seen = 0
+        try:
+            while True:
+                async with job.cond:
+                    while seen >= len(job.events) and not job.terminal:
+                        try:
+                            await asyncio.wait_for(job.cond.wait(), timeout=60.0)
+                        except TimeoutError:
+                            break
+                    new = list(job.events[seen:])
+                    seen = len(job.events)
+                    done = job.terminal
+
+                for ev in new:
+                    yield f"data: {json.dumps(ev)}\n\n"
+                if not new and not done:
+                    yield ": keepalive\n\n"
+                if done:
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# =============================================================================
+# VLM (vision-language) fine-tune Endpoints (#797)
+# =============================================================================
+
+
+@_router.post("/api/fine-tune/vlm/jobs")
+async def create_vlm_fine_tune_job(
+    request: Request,
+    is_admin: bool = Depends(require_admin),
+):
+    # Create a VL (vision-language) fine-tune job. Body:
+    # {model_id, dataset, adapter_name?, config?: VLMFineTuneConfig}.
+    # dataset = HuggingFace dataset id or local dir (images + jsonl) consumed
+    # by mlx_vlm.lora.load_dataset -> VisionDataset. LoRA/SFT over HTTP,
+    # mirrors text SFT lifecycle. Blocks fusion-trainer #55.
+    body = await request.json()
+
+    model_id = body.get("model_id", "")
+    dataset = body.get("dataset", "")
+    adapter_name = body.get("adapter_name", "")
+
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    if not dataset:
+        raise HTTPException(status_code=400, detail="dataset is required")
+
+    from fusion_mlx.training.vlm_service import VLMFineTuneConfig
+
+    config_body = body.get("config", {})
+    try:
+        config = VLMFineTuneConfig(**config_body)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid config: {e}")
+
+    pool = _get_engine_pool()
+    if pool is not None:
+        entry = pool.get_entry(model_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+        if entry.model_type not in ("vlm", None):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model {model_id} is not a vision-language model "
+                f"(type: {entry.model_type})",
+            )
+
+    svc = _get_vlm_service()
+    job = svc.create_job(
+        model_id=model_id,
+        dataset=dataset,
+        config=config,
+        adapter_name=adapter_name,
+    )
+    svc.start_processing()
+    return job.to_dict()
+
+
+@_router.get("/api/fine-tune/vlm/jobs")
+async def list_vlm_fine_tune_jobs(
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_vlm_service()
+    return [job.to_dict() for job in svc.list_jobs()]
+
+
+@_router.get("/api/fine-tune/vlm/jobs/{job_id}")
+async def get_vlm_fine_tune_job(
+    job_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_vlm_service()
+    job = svc.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return job.to_dict()
+
+
+@_router.post("/api/fine-tune/vlm/jobs/{job_id}/cancel")
+async def cancel_vlm_fine_tune_job(
+    job_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_vlm_service()
+    if not svc.cancel_job(job_id):
+        raise HTTPException(
+            status_code=404, detail=f"Job not found or not cancellable: {job_id}"
+        )
+    job = svc.get_job(job_id)
+    return job.to_dict() if job else {"status": "cancelled"}
+
+
+@_router.delete("/api/fine-tune/vlm/jobs/{job_id}")
+async def delete_vlm_fine_tune_job(
+    job_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_vlm_service()
+    if not svc.delete_job(job_id):
+        raise HTTPException(
+            status_code=404, detail=f"Job not found or currently running: {job_id}"
+        )
+    return {"status": "deleted"}
+
+
+@_router.get("/api/fine-tune/vlm/jobs/{job_id}/stream")
+async def stream_vlm_fine_tune_progress(
+    job_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_vlm_service()
     job = svc.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")

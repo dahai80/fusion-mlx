@@ -99,6 +99,10 @@ def test_alerts_surface_flush_failures(client, monkeypatch):
                 "flushes_failed": 2,
             }
 
+        # emit._reset_for_tests() calls _queue.shutdown(timeout=...) on teardown.
+        def shutdown(self, timeout=None):
+            pass
+
     monkeypatch.setattr(emit, "_queue", _FakeQueue(), raising=False)
     resp = client.get("/api/telemetry/alerts")
     assert resp.status_code == 200

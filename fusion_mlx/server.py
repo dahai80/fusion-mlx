@@ -1564,6 +1564,15 @@ class Server:
         _rft_svc.set_loop(asyncio.get_running_loop())
         set_rft_context(self.pool, _rft_svc)
 
+        # Wire VLM (vision-language) fine-tune service (#797)
+        from .admin.fine_tune_route import set_vlm_context
+        from .training.vlm_service import VLMFineTuneService
+
+        _vlm_svc = VLMFineTuneService()
+        _vlm_svc.set_engine_pool(self.pool)
+        _vlm_svc.set_loop(asyncio.get_running_loop())
+        set_vlm_context(self.pool, _vlm_svc)
+
         # Wire DPO/ORPO service (#399)
         from .admin.fine_tune_route import set_dpo_context
         from .training.dpo_service import DPOService

@@ -964,6 +964,12 @@ copy, correct for quantized bases. See
 | GET | `/admin/api/fine-tune/rft/jobs/{id}/stream` | SSE RFT progress stream |
 | POST | `/admin/api/fine-tune/rft/jobs/{id}/cancel` | Cancel an RFT job |
 | DELETE | `/admin/api/fine-tune/rft/jobs/{id}` | Delete an RFT job record |
+| POST | `/admin/api/fine-tune/vlm/jobs` | Create a vision-language LoRA/SFT fine-tune job (#797) |
+| GET | `/admin/api/fine-tune/vlm/jobs` | List VL fine-tune jobs |
+| GET | `/admin/api/fine-tune/vlm/jobs/{id}` | Get VL fine-tune job details |
+| GET | `/admin/api/fine-tune/vlm/jobs/{id}/stream` | SSE VL fine-tune progress stream |
+| POST | `/admin/api/fine-tune/vlm/jobs/{id}/cancel` | Cancel a VL fine-tune job |
+| DELETE | `/admin/api/fine-tune/vlm/jobs/{id}` | Delete a VL fine-tune job record |
 | POST | `/admin/api/fine-tune/dpo/jobs` | Create a DPO preference training job (#399) |
 | POST | `/admin/api/fine-tune/orpo/jobs` | Create an ORPO preference training job (#399) |
 | GET | `/admin/api/fine-tune/dpo/jobs` | List DPO/ORPO jobs |
