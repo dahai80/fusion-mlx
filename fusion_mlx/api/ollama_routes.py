@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -487,3 +490,292 @@ async def api_version() -> JSONResponse:
     except Exception:
         ver = "0.1.0"
     return JSONResponse({"version": ver})
+
+
+# =============================================================================
+# POST /api/show — model details (modelfile, parameters, info)
+# =============================================================================
+
+
+class OllamaShowRequest(BaseModel):
+    name: str
+    model: str | None = None
+
+
+@router.post("/api/show")
+async def api_show(
+    request: OllamaShowRequest,
+    _auth: bool = Depends(verify_api_key),
+) -> JSONResponse:
+    name = request.name or request.model or ""
+    logger.info("Ollama /api/show name=%s", name)
+    if _pool is None:
+        raise HTTPException(404, f"model '{name}' not found")
+    from ..server import resolve_model_with_profile
+
+    resolved, _ = resolve_model_with_profile(name)
+    entry = _pool.get_entry(resolved)
+    if entry is None:
+        raise HTTPException(404, f"model '{name}' not found")
+    family = (
+        entry.config_model_type
+        or (resolved.split("-")[0] if "-" in resolved else resolved)
+        or "llm"
+    )
+    size = (
+        entry.last_observed_size
+        or entry.actual_size
+        or entry.estimated_size
+        or 0
+    )
+    return JSONResponse(
+        {
+            "name": resolved,
+            "modified_at": time.strftime(
+                "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
+            ),
+            "size": size,
+            "digest": "sha256:" + uuid.uuid4().hex[:64],
+            "details": {
+                "parent_model": "",
+                "format": "mlx",
+                "family": family,
+                "families": [family],
+                "parameter_size": "",
+                "quantization_level": "",
+            },
+            "model_info": {
+                "general.architecture": family,
+                "general.file_type": "mlx",
+            },
+            "modelfile": f"# Modelfile for {resolved}\nFROM {resolved}\n",
+            "parameters": "",
+        }
+    )
+
+
+# =============================================================================
+# GET /api/ps — list running (loaded) models
+# =============================================================================
+
+
+@router.get("/api/ps")
+async def api_ps(
+    _auth: bool = Depends(verify_api_key),
+) -> JSONResponse:
+    logger.info("Ollama /api/ps")
+    if _pool is None:
+        return JSONResponse({"models": []})
+    try:
+        loaded = _pool.get_loaded_model_ids()
+    except Exception:
+        loaded = []
+    models = []
+    for mid in loaded:
+        entry = _pool.get_entry(mid) if hasattr(_pool, "get_entry") else None
+        size = (
+            (entry.last_observed_size or entry.estimated_size) if entry else 0
+        )
+        models.append(
+            {
+                "name": mid,
+                "model": mid,
+                "modified_at": time.strftime(
+                    "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
+                ),
+                "size": size or 0,
+                "digest": "sha256:" + uuid.uuid4().hex[:64],
+                "expires_at": None,
+                "size_vram": size or 0,
+                "details": {
+                    "parent_model": "",
+                    "format": "mlx",
+                    "family": mid.split("-")[0] if "-" in mid else mid,
+                    "families": [mid.split("-")[0] if "-" in mid else mid],
+                    "parameter_size": "",
+                    "quantization_level": "",
+                },
+            }
+        )
+    return JSONResponse({"models": models})
+
+
+# =============================================================================
+# POST /api/pull — local-first no-op (models are downloaded via admin/HF mirror)
+# =============================================================================
+
+
+class OllamaPullRequest(BaseModel):
+    name: str
+    model: str | None = None
+    stream: bool = True
+    insecure: bool = False
+
+
+@router.post("/api/pull")
+async def api_pull(
+    request: OllamaPullRequest,
+    _auth: bool = Depends(verify_api_key),
+) -> Any:
+    name = request.name or request.model or ""
+    logger.info("Ollama /api/pull name=%s stream=%s", name, request.stream)
+    if _pool is not None:
+        from ..server import resolve_model_with_profile
+
+        try:
+            resolved, _ = resolve_model_with_profile(name)
+        except Exception:
+            resolved = name
+        if resolved and _pool.get_entry(resolved) is not None:
+            msg = f"model '{name}' already available locally"
+        else:
+            msg = (
+                f"pull is a no-op on fusion-mlx; download '{name}' via the "
+                f"admin UI / hf_downloader (HF_MIRROR=https://hf-mirror.com)"
+            )
+    else:
+        msg = "pool unavailable"
+    if not request.stream:
+        return JSONResponse({"status": "success", "message": msg})
+    now = time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime())
+
+    async def _stream():
+        yield (
+            json.dumps({"status": "pulling model", "id": name, "created_at": now})
+            + "\n"
+        )
+        yield (
+            json.dumps({"status": "success", "total": 0, "completed": 0})
+            + "\n"
+        )
+        yield (json.dumps({"status": "success"}) + "\n")
+
+    return StreamingResponse(_stream(), media_type="application/x-ndjson")
+
+
+# =============================================================================
+# DELETE /api/delete — remove model files from disk (guarded)
+# =============================================================================
+
+
+def _models_root() -> Path:
+    return Path(os.path.expanduser("~/.fusion-mlx/models"))
+
+
+def _safe_model_dir(model_path: str) -> Path:
+    root = _models_root().resolve()
+    target = Path(model_path).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        raise HTTPException(
+            400,
+            f"refusing to delete model outside ~/.fusion-mlx/models: {model_path}",
+        )
+    if not target.exists():
+        raise HTTPException(404, f"model directory not found: {model_path}")
+    return target
+
+
+@router.delete("/api/delete")
+async def api_delete(
+    name: str = Query(..., description="model name to delete"),
+    _auth: bool = Depends(verify_api_key),
+) -> JSONResponse:
+    logger.warning("Ollama /api/delete name=%s", name)
+    if _pool is None:
+        raise HTTPException(503, "model pool not initialized")
+    from ..server import resolve_model_with_profile
+
+    resolved, _ = resolve_model_with_profile(name)
+    entry = _pool.get_entry(resolved)
+    if entry is None:
+        raise HTTPException(404, f"model '{name}' not found")
+    if entry.engine is not None:
+        raise HTTPException(
+            409,
+            f"model '{resolved}' is currently loaded; unload before deleting",
+        )
+    target = _safe_model_dir(entry.model_path)
+    try:
+        shutil.rmtree(target)
+    except Exception as e:
+        logger.exception("api_delete: rmtree failed for %s", target)
+        raise HTTPException(500, f"failed to delete model: {e}")
+    logger.info("api_delete: removed %s", target)
+    return JSONResponse({"status": "success", "message": f"deleted {resolved}"})
+
+
+# =============================================================================
+# POST /api/copy — create an alias directory (symlink) for a model
+# =============================================================================
+
+
+class OllamaCopyRequest(BaseModel):
+    source: str
+    destination: str
+
+
+@router.post("/api/copy")
+async def api_copy(
+    request: OllamaCopyRequest,
+    _auth: bool = Depends(verify_api_key),
+) -> JSONResponse:
+    logger.info(
+        "Ollama /api/copy source=%s destination=%s",
+        request.source,
+        request.destination,
+    )
+    if _pool is None:
+        raise HTTPException(503, "model pool not initialized")
+    if not request.source or not request.destination:
+        raise HTTPException(400, "source and destination are required")
+    if request.source == request.destination:
+        raise HTTPException(400, "source and destination must differ")
+    if "/" in request.destination or os.sep in request.destination:
+        raise HTTPException(400, "destination must be a plain model name, no path")
+    from ..server import resolve_model_with_profile
+
+    src_resolved, _ = resolve_model_with_profile(request.source)
+    src_entry = _pool.get_entry(src_resolved)
+    if src_entry is None:
+        raise HTTPException(404, f"source model '{request.source}' not found")
+    src_dir = _safe_model_dir(src_entry.model_path)
+    dest_dir = _models_root() / request.destination
+    if dest_dir.exists():
+        raise HTTPException(409, f"destination '{request.destination}' already exists")
+    try:
+        dest_dir.symlink_to(src_dir)
+    except Exception as e:
+        logger.exception("api_copy: symlink failed %s -> %s", src_dir, dest_dir)
+        raise HTTPException(500, f"failed to copy model: {e}")
+    logger.info("api_copy: %s -> %s", src_dir, dest_dir)
+    return JSONResponse({"status": "success"})
+
+
+# =============================================================================
+# POST /api/embeddings — alias to the internal embeddings endpoint
+# =============================================================================
+
+
+class OllamaEmbeddingsRequest(BaseModel):
+    model: str = "default"
+    prompt: str = ""
+    options: dict | None = None
+    keep_alive: str | None = None
+
+
+@router.post("/api/embeddings")
+async def api_embeddings(
+    request: OllamaEmbeddingsRequest,
+    _auth: bool = Depends(verify_api_key),
+) -> JSONResponse:
+    logger.info("Ollama /api/embeddings model=%s", request.model)
+    from .embeddings_routes import create_embeddings
+    from .models import EmbeddingRequest
+
+    req = EmbeddingRequest(model=request.model, input=request.prompt)
+    result = await create_embeddings(req)
+    data = result.data[0] if getattr(result, "data", None) else None
+    embedding = data.embedding if data is not None else []
+    return JSONResponse({"embedding": embedding})
