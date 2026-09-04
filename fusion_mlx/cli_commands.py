@@ -2348,7 +2348,10 @@ def telemetry_command(args) -> None:
         record_consent,
         reset_state,
     )
-    from fusion_mlx.telemetry.schema import sample_preview_payload
+    from fusion_mlx.telemetry.schema import (
+        sample_preview_payload,
+        sample_request_preview_payload,
+    )
     from fusion_mlx.telemetry.state import client_id_path, consent_path
 
     action = getattr(args, "telemetry_action", None) or "status"
@@ -2404,6 +2407,13 @@ def telemetry_command(args) -> None:
         print("  Sample payload (this is exactly the shape we send):")
         print()
         print(json.dumps(payload.to_dict(), indent=2))
+        print()
+        req_preview = sample_request_preview_payload(
+            client_id=cid, fusion_mlx_version=fusion_mlx_version
+        )
+        print("  Request sample (per-call payload shape):")
+        print()
+        print(json.dumps(req_preview.to_dict(), indent=2, sort_keys=True))
         print()
         if not is_enabled(cli_no_telemetry=cli_no):
             print("  Telemetry is currently disabled — nothing is actually sent.")
