@@ -180,6 +180,23 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
                 b64 = base64.b64encode(img_bytes).decode()
                 outputs.append(ImageOutput(url=f"data:image/png;base64,{b64}"))
 
+        try:
+            from ..telemetry import emit
+            from ..telemetry.activation_spec import (
+                ACTIVATION_FIRST_IMAGE_GENERATION,
+                SURFACE_API,
+            )
+
+            emit.activation(
+                activation_kind=ACTIVATION_FIRST_IMAGE_GENERATION,
+                surface=SURFACE_API,
+            )
+        except Exception:
+            logger.debug(
+                "telemetry image-generation activation emit failed",
+                exc_info=True,
+            )
+
         return ImageGenerateResponse(data=outputs)
 
     except HTTPException:
