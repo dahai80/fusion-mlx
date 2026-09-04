@@ -99,7 +99,7 @@ def _make_paged_decode_attention_kernel_tiled():
     if not mx.metal.is_available():
         return None
 
-    # Tiled kernel: grid=(B*n_heads,1,1), threadgroup=(THREADS,1,1).
+    # Tiled kernel: grid=(B*n_heads*THREADS,1,1), threadgroup=(THREADS,1,1).
     # One threadgroup owns one (batch, q_head). Threads cooperatively load
     # the current K/V block into threadgroup shared memory (strided loop),
     # barrier, then thread 0 runs the online-softmax accumulation over
