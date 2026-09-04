@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.8.80] — 2026-09-05
+
+### Added
+- **#797: Vision-language fine-tune endpoint over HTTP** — new
+  `/api/fine-tune/vlm/jobs` route family (create/list/get/cancel/delete +
+  SSE progress stream) driving `mlx_vlm` SFT/LoRA. `VLMFineTuneService`
+  mirrors the text SFT service: singleton job queue, CRUD, stdout-pipe
+  progress reader (mlx_vlm reports via `print()`, no callback), adapter
+  save. Image + text input, structured text target. Blocks fusion-trainer
+  #55.
+- **#795: VLM GUI-agent optimization guide** — `docs/vlm-gui-agent.md`
+  with recommended fast VLM (Qwen2.5-VL-3B 4bit, GUI-tuned), pinned
+  residency, prefix-cache-stable request shape, `max_tokens` cap, latency
+  budget, and tuning knobs for <100 ms perception→action turns.
+
+### Changed
+- **#798: Server-side KV-cache reuse (verified + documented)** —
+  `BlockAwarePrefixCache` cross-request prefix reuse is on by default;
+  new `tests/unit/test_kv_cache_reuse_798.py` proves shared-prefix hits,
+  distinct-prefix misses, partial-block-boundary hits, and repeated
+  reuse. Documented in `docs/configuration.md` (Prefix Cache) with the
+  `FUSION_MLX_PREFIX_CACHE=radix` option.
+- **#796: Concurrent multi-model Fast+Slow serving (verified +
+  documented)** — `EnginePool` keeps fast + slow models resident
+  concurrently; pinning + in-use lease prevent LRU eviction mid-request.
+  New `tests/unit/test_concurrent_multi_model_796.py` proves residency,
+  pin protection, lease blocking, and parallel acquire. Documented in
+  `docs/configuration.md` (Concurrent Multi-Model Serving).
+
 ## [Unreleased]
 
 ### Added

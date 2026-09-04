@@ -105,7 +105,11 @@ Copy-on-write prefix sharing for common prompts:
 | `paged_ssd_cache_dir` | `None` | SSD cache dir; `None` = pure-memory mode (default) |
 | `hot_cache_max_size` | `0` | In-memory KV budget bytes; `0` = 1 GiB in pure-memory mode |
 
+**Cross-request reuse (#798)**: Prefix KV cache is shared across requests by default. `BlockAwarePrefixCache` builds a chain-hash block index (256 tokens per block) so a second request whose token prefix matches a prior request hits the cached blocks and only prefills the suffix — no recomputation. This is what makes long-context sessions (repeated system prompt, multi-turn chat, agent loops) cheap: the shared prefix is paid once, reused across every subsequent request in the session.
+
 **Pure-memory mode (#158)**: When `prefix_cache_enabled=True` and `paged_ssd_cache_dir` is unset (the default), prefix-cache hits reconstruct KV tensors from an in-memory LRU store instead of always reporting `cached_tokens=0`. KV tensors are kept in `hot_cache` bounded by `hot_cache_max_size` (1 GiB default when unset); evicted blocks are dropped cleanly with no disk backing. This is the default `serve` behavior - no extra flags required.
+
+**Radix-tree cache (optional)**: Set env `FUSION_MLX_PREFIX_CACHE=radix` to use `RadixPrefixCache` instead of the default `BlockAwarePrefixCache`. The radix variant organizes prefixes in a radix tree for exact-match prefix lookup; the default chain-hash variant is block-granular and COW-friendly. Both provide cross-request reuse.
 
 To opt into SSD offload for larger working sets, set `paged_ssd_cache_dir` (a `SchedulerConfig` field, advanced/internal):
 
@@ -240,6 +244,18 @@ Each model can have custom settings stored in `~/.fusion-mlx/settings/`:
 | `vlm_mtp_enabled` | Enable VLM MTP with gemma4_assistant drafter |
 
 > The speculative-decoding settings above (`specprefill_enabled`, `dflash_enabled`, `mtp_enabled`, `vlm_mtp_enabled`) mirror the `serve` flags. For the full method matrix, selection guide, the boot-time loading constraint, and the `SpecAutoRouter` API, see [Speculative Decoding](speculative-decoding.md).
+
+## Concurrent Multi-Model Serving (#796)
+
+fusion-mlx keeps multiple models resident at once and serves them concurrently — a Fast model (small, low-latency) and a Slow model (large, high-quality) can both stay loaded and handle interleaved requests without evicting each other. This is the Fast+Slow pattern: route trivial/interactive turns to the fast model and heavy reasoning to the slow model.
+
+How residency is protected:
+
+- **Pin** a model (`"pinned": true` in per-model settings, or the admin model-manager API) to exclude it from LRU eviction. Pin both the Fast and Slow models to keep them resident.
+- **In-use lease**: every request acquires a lease (`EnginePool.acquire`) that prevents the model from being unloaded mid-request, even if unpinned.
+- **Idle-only unload**: `unload_if_idle_unpinned` refuses to unload any model that is pinned or has an in-flight lease, so a concurrent request on the other model cannot trigger eviction of the busy one.
+
+Memory permitting, any number of models can be resident concurrently; LRU eviction only kicks in under memory pressure, and pinned models are never chosen as victims. Use `ttl_seconds` (per-model) or leave models unpinned to let the pool reclaim idle models automatically when memory is tight.
 
 ## Server Config Summary
 
