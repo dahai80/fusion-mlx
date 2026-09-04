@@ -2,6 +2,60 @@
 
 ## [Unreleased]
 
+## [0.8.74] - 2026-09-04
+
+### Added
+- **#771 — sliding-window + softcapping fused decode kernel.** Extended
+  the paged decode-attention Metal kernel with a `SLIDING_WINDOW`
+  template (0 = full causal) and a runtime `softcap` float32 array
+  (applies `tanh(score/softcap)*softcap` before online-softmax
+  accumulation). Extended `_FUSED_DECODE_MODEL_FAMILIES` to
+  `("llama","qwen2","qwen3","gemma2","gemma3","mistral3","mistral")`.
+  Per-layer heterogeneity handled by `_resolve_sliding_softcap(layer,
+  attn, model)` reading `is_sliding`/`use_sliding` from the correct
+  module (attn vs layer vs model): gemma3 `is_sliding` on attn +
+  `window_size` on model; llama/mistral3 `use_sliding` on layer +
+  `sliding_window` on model; gemma2 `attn_logit_softcapping` on attn
+  (tanh). Window>0 guard prevents silent full-causal fallback. 15 tests
+  green (Metal-gated).
+- **#773 — LRU eviction in `FusionPagedKVPool`.** `alloc_block` now
+  evicts the least-recently-used IDLE request on exhaustion (tracked via
+  `_step`/`_last_access`, `touch()` on every alloc) instead of raising.
+  The actively-decoding request is never evicted under itself (guarded
+  by `active_ids`). Fail-visible `RuntimeError` still raised when no
+  request is evictable (all active / single owner). Default behavior
+  unchanged until the pool is turned on.
+
+### Changed
+- **#772 — tiled Metal decode-attention kernel (correctness-only).**
+  Rewrote the scalar `fusion_paged_decode_attention` kernel with
+  threadgroup tiling: grid `(B*n_heads*_TILE_THREADS,1,1)`,
+  threadgroup `(_TILE_THREADS=64,1,1)`, one threadgroup per
+  (batch, query_head). K/V cooperatively staged into threadgroup shared
+  memory (`BLOCK_SIZE*HEAD_DIM` floats), barriers synchronize, thread 0
+  runs the same scalar online-softmax over shared-mem reads (bit-equivalent
+  numerics). Scalar kernel kept as fallback when
+  `BLOCK_SIZE*HEAD_DIM > 8192` (`_TILE_SHARED_MEM_LIMIT`). `SLIDING_WINDOW`
+  + softcap preserved. Correctness verified vs SDPA within `rel<1e-2`
+  across 3 shape configs — perf validation pending a controlled
+  benchmark (no perf claim).
+- **#774 — batched concurrency wiring for the shared paged pool.**
+  Declared `fusion_paged_pool: str = "off"` and
+  `fusion_paged_pool_num_blocks: int = 256` in `ModelSettings` (already
+  read by `FusionConfig.from_model_settings` via `getattr`, now
+  serialized/admin-exposed). Added `_free_paged_pool_cache` scheduler
+  helper that returns pool blocks to the free-list by iterating
+  `request.prompt_cache` and calling `FusionPagedRequestCache.free_all()`
+  on each — wired into both the reject/abort path
+  (`_release_paged_cache_for_request`, via `self.requests`) and the
+  normal completion path (`_cleanup_finished`, free-before-null). Fixes
+  the request_id mismatch: the pool registers caches under `"pool_{seq}"`
+  ids but the scheduler evicts by its own UUID, so freeing via the cache
+  objects directly avoids id matching. Additive — existing
+  `block_aware_cache` / `paged_cache_manager` branches untouched. 5
+  ungated unit tests (merge shape/padding, free_all restores pool, mixed
+  caches) + 1 gated real-model test (run deferred per memory budget).
+
 ## [0.8.73] - 2026-09-04
 
 ### Added

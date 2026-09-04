@@ -101,6 +101,8 @@ class ModelSettings:
     fusion_paged_kv_enabled: bool = False
     fusion_paged_kv_block_size: int = 16
     fusion_paged_kv_num_blocks: int = 256
+    fusion_paged_pool: str = "off"
+    fusion_paged_pool_num_blocks: int = 256
     fusion_target_model_types: tuple[str, ...] = ()
 
     display_name: str | None = None

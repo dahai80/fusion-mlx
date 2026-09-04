@@ -343,6 +343,34 @@ def _release_paged_cache_for_request(self, request_id: str) -> None:
     elif self.paged_cache_manager is not None:
         self.paged_cache_manager.delete_block_table(request_id)
 
+    request = self.requests.get(request_id)
+    if request is not None:
+        self._free_paged_pool_cache(request)
+
+
+def _free_paged_pool_cache(self, request) -> int:
+    prompt_cache = getattr(request, "prompt_cache", None)
+    if not prompt_cache:
+        return 0
+    from fusion_mlx.custom_kernels.paged_kv_pool import (
+        FusionPagedRequestCache,
+    )
+
+    freed = 0
+    for c in prompt_cache:
+        if isinstance(c, FusionPagedRequestCache):
+            try:
+                freed += c.free_all()
+            except Exception as e:
+                logger.warning("paged_kv pool free failed: %s", e)
+    if freed:
+        logger.info(
+            "paged_kv pool released %d blocks for request %s",
+            freed,
+            getattr(request, "request_id", "?"),
+        )
+    return freed
+
 
 def _cleanup_finished(self, finished_ids: set[str]) -> None:
     """Clean up finished requests and store caches for reuse."""
@@ -385,6 +413,8 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                 f"skipping cleanup (likely removed by abort/preemption)"
             )
             continue
+
+        self._free_paged_pool_cache(request)
 
         # Store cache for future reuse (G2-async): submit to background
         # executor so the post-finish 28GB+ memcpy doesn't block response

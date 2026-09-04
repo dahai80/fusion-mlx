@@ -69,6 +69,7 @@ from .sched_query import (
 from .sched_response import *  # noqa: F403
 from .sched_response import (
     _cleanup_finished,
+    _free_paged_pool_cache,
     _is_cache_corruption_error,
     _release_paged_cache_for_request,
     _reschedule_running_requests,
@@ -168,6 +169,9 @@ class Scheduler:
 
     def _release_paged_cache_for_request(self, *args, **kwargs):
         return _release_paged_cache_for_request(self, *args, **kwargs)
+
+    def _free_paged_pool_cache(self, *args, **kwargs):
+        return _free_paged_pool_cache(self, *args, **kwargs)
 
     def _cleanup_finished(self, *args, **kwargs):
         return _cleanup_finished(self, *args, **kwargs)

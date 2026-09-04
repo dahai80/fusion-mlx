@@ -10,7 +10,15 @@ from .config import FusionConfig
 logger = logging.getLogger(__name__)
 
 _TAKEOVER_ATTR = "_fusion_takeover_applied"
-_FUSED_DECODE_MODEL_FAMILIES = ("llama", "qwen2", "qwen3")
+_FUSED_DECODE_MODEL_FAMILIES = (
+    "llama",
+    "qwen2",
+    "qwen3",
+    "gemma2",
+    "gemma3",
+    "mistral3",
+    "mistral",
+)
 
 try:
     from mlx.nn.layers.quantized import QuantizedLinear
@@ -65,11 +73,44 @@ def _iter_linear(parent: nn.Module, prefix: str = ""):
                     yield from _iter_linear(item, item_name)
 
 
-def _wrap_attention(attn):
+def _resolve_sliding_softcap(layer, attn, model) -> tuple[int, float]:
+    is_sliding = bool(getattr(attn, "is_sliding", False))
+    use_sliding = bool(getattr(layer, "use_sliding", False))
+    softcap = float(getattr(attn, "attn_logit_softcapping", 0.0) or 0.0)
+    text_model = getattr(model, "model", None)
+    window = (
+        int(getattr(model, "window_size", 0) or 0)
+        or int(getattr(text_model, "window_size", 0) or 0)
+        or int(getattr(model, "sliding_window", 0) or 0)
+        or int(getattr(text_model, "sliding_window", 0) or 0)
+        or 0
+    )
+    if (is_sliding or use_sliding) and window > 0:
+        resolved_sw = window
+    else:
+        resolved_sw = 0
+    logger.debug(
+        "resolve sliding: is_sliding=%s use_sliding=%s window=%d softcap=%s -> sw=%d",
+        is_sliding,
+        use_sliding,
+        window,
+        softcap,
+        resolved_sw,
+    )
+    return resolved_sw, softcap
+
+
+def _wrap_attention(layer, attn, model):
     from fusion_mlx.custom_kernels.paged_kv_cache import FusionPagedKVCache
 
     base_call = type(attn).__call__
     has_qnorm = hasattr(attn, "q_norm")
+    sliding_window, softcap = _resolve_sliding_softcap(layer, attn, model)
+    logger.debug(
+        "paged_kv sliding layer window=%d softcap=%s (memory-cap follow-up)",
+        sliding_window,
+        softcap,
+    )
 
     def fused_call(self, x, mask=None, cache=None):
         B, L, D = x.shape
@@ -97,10 +138,18 @@ def _wrap_attention(attn):
         keys, values = cache.update_and_fetch(keys, values)
         head_dim = queries.shape[-1]
         output = cache.fused_decode_attention(
-            queries, self.scale, self.n_heads, head_dim
+            queries,
+            self.scale,
+            self.n_heads,
+            head_dim,
+            sliding_window=sliding_window,
+            softcap=softcap,
         )
         logger.info(
-            "paged_kv fused decode attention path taken offset=%d", cache.offset
+            "paged_kv fused decode attention path taken offset=%d sw=%d sc=%s",
+            cache.offset,
+            sliding_window,
+            softcap,
         )
         output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return self.o_proj(output)
@@ -111,7 +160,12 @@ def _wrap_attention(attn):
         {"__call__": fused_call},
     )
     attn.__class__ = wrapped_cls
-    logger.debug("paged_kv fused decode wrap installed on attn=%r", attn)
+    logger.debug(
+        "paged_kv fused decode wrap installed on attn=%r sw=%d sc=%s",
+        attn,
+        sliding_window,
+        softcap,
+    )
 
 
 def _install_fused_decode(model):
@@ -123,7 +177,7 @@ def _install_fused_decode(model):
         )
         if attn is None:
             continue
-        _wrap_attention(attn)
+        _wrap_attention(layer, attn, model)
 
 
 class FusionModulePatcher:
