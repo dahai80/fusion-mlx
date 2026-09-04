@@ -102,6 +102,7 @@ from .api.session_routes import set_sessions_context
 from .api.spec_routes import router as spec_router
 from .api.videos_routes import router as videos_router
 from .api.videos_routes import set_videos_context
+from .cluster.routes import router as cluster_router
 from .config import ServerConfig
 from .dispatch import CloudRouter, RequestRouter
 from .engine_core import AsyncEngineCore
@@ -1044,6 +1045,7 @@ class Server:
         app.include_router(cache_router)
         app.include_router(gc_router)
         app.include_router(admin_router)
+        app.include_router(cluster_router)
 
         # #357: /v1/models/status MUST be registered before the gui_compat
         # router's /v1/models/{model_name} catch-all. Starlette matches routes
