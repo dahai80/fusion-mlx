@@ -834,8 +834,14 @@ async def _run_chat(
                 "required_memory_mb": (
                     exc.required // (1024 * 1024) if exc.required else 0
                 ),
+                "used_memory_mb": (exc.current // (1024 * 1024) if exc.current else 0),
+                "ceiling_memory_mb": (
+                    exc.ceiling // (1024 * 1024) if exc.ceiling else 0
+                ),
                 "available_memory_mb": (
-                    exc.current // (1024 * 1024) if exc.current else 0
+                    (exc.ceiling - exc.current) // (1024 * 1024)
+                    if exc.ceiling and exc.ceiling > exc.current
+                    else 0
                 ),
                 "loaded_models": exc.loaded_models,
             }
@@ -1427,7 +1433,13 @@ async def _stream_chat_generator(
             "status": 503,
             "type": "model_unavailable",
             "required_memory_mb": exc.required // (1024 * 1024) if exc.required else 0,
-            "available_memory_mb": exc.current // (1024 * 1024) if exc.current else 0,
+            "used_memory_mb": exc.current // (1024 * 1024) if exc.current else 0,
+            "ceiling_memory_mb": exc.ceiling // (1024 * 1024) if exc.ceiling else 0,
+            "available_memory_mb": (
+                (exc.ceiling - exc.current) // (1024 * 1024)
+                if exc.ceiling and exc.ceiling > exc.current
+                else 0
+            ),
             "loaded_models": exc.loaded_models,
         }
         if exc.loaded_models:
@@ -1830,8 +1842,14 @@ async def chat_completions(
                 "required_memory_mb": (
                     exc.required // (1024 * 1024) if exc.required else 0
                 ),
+                "used_memory_mb": (exc.current // (1024 * 1024) if exc.current else 0),
+                "ceiling_memory_mb": (
+                    exc.ceiling // (1024 * 1024) if exc.ceiling else 0
+                ),
                 "available_memory_mb": (
-                    exc.current // (1024 * 1024) if exc.current else 0
+                    (exc.ceiling - exc.current) // (1024 * 1024)
+                    if exc.ceiling and exc.ceiling > exc.current
+                    else 0
                 ),
                 "loaded_models": exc.loaded_models,
             }
@@ -1912,8 +1930,14 @@ async def completions(
                 "required_memory_mb": (
                     exc.required // (1024 * 1024) if exc.required else 0
                 ),
+                "used_memory_mb": (exc.current // (1024 * 1024) if exc.current else 0),
+                "ceiling_memory_mb": (
+                    exc.ceiling // (1024 * 1024) if exc.ceiling else 0
+                ),
                 "available_memory_mb": (
-                    exc.current // (1024 * 1024) if exc.current else 0
+                    (exc.ceiling - exc.current) // (1024 * 1024)
+                    if exc.ceiling and exc.ceiling > exc.current
+                    else 0
                 ),
                 "loaded_models": exc.loaded_models,
             }

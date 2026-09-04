@@ -247,6 +247,47 @@ class EnginePool:
         )
         return min(int(max_kv), 2 * 1024**3)
 
+    def _admission_current_usage(self) -> int:
+        # #779: reconcile the tracked _current_model_memory accumulator with
+        # the live Metal/process gauges before admission.
+        #
+        # The accumulator (incremented on load, decremented on unload) can
+        # drift high when a decrement is skipped — e.g. an aborted unload or a
+        # cancelled settle barrier exits after _detach_engine set
+        # entry.engine = None but before the counter update. A drifted-high
+        # accumulator then dominates `max(active, phys, accumulator)` and
+        # rejects loads that genuinely fit, surfacing as the false "hard
+        # memory pressure but no models loaded" + model_unavailable error in
+        # #779.
+        #
+        # When at least one engine is loaded, live gauges can under-report a
+        # resident model (#1623), so the accumulator is trusted. When NO engine
+        # is loaded, the accumulator should read ~0; if it reads above the live
+        # gauges it is stale drift, and the live gauges (phys_footprint
+        # includes IOAccelerator/Metal pages) are the authoritative physical
+        # usage. Clamp the accumulator down to the live max in that case and
+        # log the correction so drift is observable.
+        active_mem = mx.get_active_memory()
+        phys = get_phys_footprint()
+        live = max(active_mem, phys)
+        tracked = self._current_model_memory
+        has_loaded = any(e.engine is not None for e in self._entries.values())
+        if has_loaded or tracked <= live:
+            return max(active_mem, phys, tracked)
+        # No engine loaded and the accumulator is above the live gauges: drift.
+        logger.warning(
+            "admission: stale _current_model_memory=%s above live gauges "
+            "(active=%s phys=%s) with no engine loaded; reconciling to live",
+            format_size(tracked),
+            format_size(active_mem),
+            format_size(phys),
+        )
+        self._current_model_memory = live
+        enforcer = self._process_memory_enforcer
+        if enforcer is not None:
+            enforcer.update_loaded_model_bytes(-int(tracked - live))
+        return max(active_mem, phys, live)
+
     def _wake_process_memory_enforcer(self, *, active: bool = False) -> None:
         enforcer = self._process_memory_enforcer
         wake = getattr(enforcer, "wake", None) if enforcer is not None else None
@@ -1107,11 +1148,7 @@ class EnginePool:
             effective_size = entry.last_observed_size or entry.estimated_size
             kv_headroom = self._kv_admission_headroom()
             for _ in range(20):
-                current = max(
-                    mx.get_active_memory(),
-                    get_phys_footprint(),
-                    self._current_model_memory,
-                )
+                current = self._admission_current_usage()
                 projected = current + effective_size + kv_headroom
                 if projected <= ceiling:
                     logger.debug(
@@ -1161,6 +1198,7 @@ class EnginePool:
                 raise InsufficientMemoryError(
                     required=effective_size + kv_headroom,
                     current=current,
+                    ceiling=ceiling,
                     message=(
                         f"Cannot load {model_id}: projected memory "
                         f"{format_size(projected)} would exceed the memory "
@@ -1801,11 +1839,7 @@ class EnginePool:
         evicted_any = False
         async with self._lock:
             while True:
-                current = max(
-                    mx.get_active_memory(),
-                    get_phys_footprint(),
-                    self._current_model_memory,
-                )
+                current = self._admission_current_usage()
                 if current + predicted <= target:
                     return evicted_any
 
