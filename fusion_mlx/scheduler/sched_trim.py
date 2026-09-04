@@ -231,6 +231,23 @@ def _do_abort_request(self, request_id: str) -> bool:
     # so this is the single cleanup point for aborted requests.
     req_to_remove = self.requests.pop(request_id, None)
     if req_to_remove is not None:
+        # Disconnect KV two-end sync — persist end: snapshot the live KV
+        # tail to disk BEFORE nulling the cache refs so a resumed request
+        # can re-seed instead of re-prefilling. Best-effort; a write
+        # failure is logged inside the helper and never blocks abort.
+        try:
+            from ..service.kv_resume import persist_request_kv
+
+            persist_request_kv(
+                request_id,
+                req_to_remove.prompt_cache,
+                int(req_to_remove.num_computed_tokens),
+                model_name=getattr(getattr(self, "config", None), "model_name", None),
+            )
+        except Exception as persist_exc:
+            logger.debug(
+                "KV persist on abort failed for %s: %s", request_id, persist_exc
+            )
         req_to_remove._extracted_cache = None
         req_to_remove.prompt_cache = None
 
