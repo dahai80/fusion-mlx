@@ -26,6 +26,7 @@ helpers own the four things every call site needs to get right:
 from __future__ import annotations
 
 import itertools
+import logging
 import threading
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -39,11 +40,18 @@ from fusion_mlx.telemetry.redact import (
     bucket_tps,
     bucket_ttft_ms,
     fingerprint_traceback,
+    normalize_caller_agent,
     normalize_model_path,
     platform_info,
 )
 from fusion_mlx.telemetry.schema import SCHEMA_VERSION
-from fusion_mlx.telemetry.state import get_or_create_client_id, is_enabled
+from fusion_mlx.telemetry.state import (
+    claim_activation_marker,
+    get_or_create_client_id,
+    is_enabled,
+)
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------- singleton
 
@@ -128,6 +136,14 @@ def _normalize_subcommand(raw: str) -> str:
     if not isinstance(raw, str):
         return "other"
     return raw if raw in _ALLOWED_SUBCOMMANDS else "other"
+
+
+def server_surface() -> str:
+    import os
+
+    from .activation_spec import CHAT_SPAWN_ENV, SURFACE_API, SURFACE_CLI
+
+    return SURFACE_CLI if os.environ.get(CHAT_SPAWN_ENV) else SURFACE_API
 
 
 def get_queue() -> TelemetryQueue:
@@ -416,6 +432,24 @@ def _normalize_endpoint(raw: str) -> str:
     return path if path in _ALLOWED_ENDPOINTS else "other"
 
 
+def _request_sample_rate() -> float:
+    import os
+
+    raw = os.environ.get("FUSION_MLX_TELEMETRY_REQUEST_SAMPLE", "0.1")
+    try:
+        rate = float(raw)
+    except ValueError:
+        logger.warning("bad FUSION_MLX_TELEMETRY_REQUEST_SAMPLE=%r, default 0.1", raw)
+        return 0.1
+    return max(0.0, min(1.0, rate))
+
+
+def _should_sample_request() -> bool:
+    import random
+
+    return random.random() < _request_sample_rate()
+
+
 @_safe
 def request(
     *,
@@ -428,6 +462,10 @@ def request(
     ttft_ms: float,
     tps: float,
     status: int,
+    caller_agent: str | None = None,
+    output_degenerate: bool = False,
+    completion_empty: bool = False,
+    completion_abnormally_short: bool = False,
 ) -> None:
     """Emit a ``request`` payload (Phase 2.2 sites use this).
 
@@ -435,6 +473,8 @@ def request(
     later. The Phase 2.0/2.1 PR does not call this — it ships dark.
     """
     if not is_enabled():
+        return
+    if not _should_sample_request():
         return
     payload = _envelope("request")
     payload["request"] = {
@@ -447,6 +487,34 @@ def request(
         "ttft_ms_bucket": bucket_ttft_ms(ttft_ms),
         "tps_bucket": bucket_tps(tps),
         "status": int(status),
+        "caller_agent": normalize_caller_agent(caller_agent),
+        "output_degenerate": bool(output_degenerate),
+        "completion_empty": bool(completion_empty),
+        "completion_abnormally_short": bool(completion_abnormally_short),
+    }
+    get_queue().enqueue(payload)
+
+
+@_safe
+def activation(activation_kind: str, surface: str, **extra: object) -> None:
+    if not is_enabled():
+        return
+    from .activation_spec import ACTIVATION_SPEC_VERSION, is_allowed_activation
+
+    if not is_allowed_activation(activation_kind, surface):
+        logger.warning("emit.activation: rejected pair %s/%s", activation_kind, surface)
+        return
+    if not claim_activation_marker(activation_kind):
+        return
+    import time
+
+    payload = _envelope("activation")
+    payload["activation"] = {
+        "activation_kind": activation_kind,
+        "surface": surface,
+        "client_id": get_or_create_client_id(),
+        "spec_version": ACTIVATION_SPEC_VERSION,
+        "occurred_at_epoch": int(time.time()),
     }
     get_queue().enqueue(payload)
 
