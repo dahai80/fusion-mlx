@@ -14,11 +14,14 @@ pipeline can actually count without re-identifying a session.
 from __future__ import annotations
 
 import hashlib
+import logging
 import platform
 import re
 import traceback
 from functools import lru_cache
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------- bucketing
 
@@ -130,6 +133,30 @@ def normalize_model_path(path: str) -> str:
         return "<local>"
     # Bare alias names (``qwen3.5-9b-4bit``) are public + harmless.
     return path
+
+
+# ---------------------------------------------------------------- caller agent
+
+_CALLER_AGENT_MARKERS: list[tuple[str, str]] = [
+    ("claude-cli", "claude-code"),
+    ("claude-code", "claude-code"),
+    ("cursor", "cursor"),
+    ("aider", "aider"),
+    ("continue", "continue"),
+    ("cline", "cline"),
+    ("roo", "roo"),
+]
+
+
+def normalize_caller_agent(user_agent: str | None) -> str:
+    if not user_agent:
+        return "other"
+    ua_lower = user_agent.lower()
+    for marker, label in _CALLER_AGENT_MARKERS:
+        if marker in ua_lower:
+            return label
+    logger.debug("redact: unrecognized caller agent, bucketed as other")
+    return "other"
 
 
 # ---------------------------------------------------------------- argv flags
