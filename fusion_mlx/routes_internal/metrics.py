@@ -398,6 +398,144 @@ def _render_uptime_metal() -> list[str]:
     return lines
 
 
+def _render_kv_checkpoint_metrics() -> list[str]:
+    lines: list[str] = []
+    try:
+        import fusion_mlx.runtime.disk_kv_checkpoint as dkc
+
+        stats = dkc.get_stats()
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_kv_checkpoint_writes_total",
+                "counter",
+                "Disk KV-cache checkpoints written.",
+                int(stats.get("writes", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_kv_checkpoint_loads_total",
+                "counter",
+                "Disk KV-cache checkpoints loaded.",
+                int(stats.get("loads", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_kv_checkpoint_bytes_total",
+                "counter",
+                "Total bytes of disk KV-cache checkpoints.",
+                int(stats.get("bytes", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_kv_checkpoint_evictions_total",
+                "counter",
+                "Disk KV-cache checkpoints evicted by cap enforcement.",
+                int(stats.get("evictions", 0)),
+            )
+        )
+    except Exception:
+        logger.debug("kv checkpoint metrics render error", exc_info=True)
+    return lines
+
+
+def _render_ubc_metrics() -> list[str]:
+    lines: list[str] = []
+    try:
+        import fusion_mlx.runtime.ubc_evict as ubc_mod
+
+        lines.extend(ubc_mod.render_prometheus_lines())
+        snap = ubc_mod.snapshot()
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_ubc_evict_calls_total",
+                "counter",
+                "UBC eviction pass invocations.",
+                int(snap.get("ubc_evict_calls_total", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_ubc_evict_failed_total",
+                "counter",
+                "UBC eviction pass failures (msync/msync-invalidate errors).",
+                int(snap.get("ubc_evict_failed_total", 0)),
+            )
+        )
+    except Exception:
+        logger.debug("ubc metrics render error", exc_info=True)
+    return lines
+
+
+def _render_radix_cache_metrics() -> list[str]:
+    lines: list[str] = []
+    try:
+        from ..cache.radix_diffusion_cache import all_cache_stats
+
+        for entry in all_cache_stats():
+            name = entry.get("name") or "unknown"
+            labels = {"cache": name}
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_radix_cache_hits_total",
+                    "counter",
+                    "Diffusion radix-cache hits.",
+                    int(entry.get("hits", 0)),
+                    labels,
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_radix_cache_misses_total",
+                    "counter",
+                    "Diffusion radix-cache misses.",
+                    int(entry.get("misses", 0)),
+                    labels,
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_radix_cache_evictions_total",
+                    "counter",
+                    "Diffusion radix-cache evictions.",
+                    int(entry.get("evictions", 0)),
+                    labels,
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_radix_cache_insertions_total",
+                    "counter",
+                    "Diffusion radix-cache insertions.",
+                    int(entry.get("insertions", 0)),
+                    labels,
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_radix_cache_leaf_count",
+                    "gauge",
+                    "Diffusion radix-cache live leaf nodes.",
+                    int(entry.get("leaf_count", 0)),
+                    labels,
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_radix_cache_bytes",
+                    "gauge",
+                    "Diffusion radix-cache estimated bytes.",
+                    int(entry.get("total_bytes", 0)),
+                    labels,
+                )
+            )
+    except Exception:
+        logger.debug("radix cache metrics render error", exc_info=True)
+    return lines
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
@@ -409,6 +547,9 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_kv_cache_dtype_gauge())
     lines.extend(_render_response_format_metrics())
     lines.extend(_render_response_cache_metrics())
+    lines.extend(_render_kv_checkpoint_metrics())
+    lines.extend(_render_ubc_metrics())
+    lines.extend(_render_radix_cache_metrics())
     return "\n".join(lines) + "\n"
 
 

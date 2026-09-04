@@ -74,3 +74,75 @@ def test_queue_gauges_zero_without_engine_pool():
             logger.info("queue running value=0.0 (no engine pool) OK")
             return
     pytest.fail("fusion_mlx_requests_running line not found")
+
+
+def test_kv_checkpoint_metrics_render():
+    import fusion_mlx.runtime.disk_kv_checkpoint as dkc
+
+    dkc.reset_stats_for_tests()
+    logger.info("dkc stats after reset: %s", dkc.get_stats())
+    body = _render()
+    expected_names = [
+        "fusion_mlx_kv_checkpoint_writes_total",
+        "fusion_mlx_kv_checkpoint_loads_total",
+        "fusion_mlx_kv_checkpoint_bytes_total",
+        "fusion_mlx_kv_checkpoint_evictions_total",
+    ]
+    for name in expected_names:
+        assert name in body, f"missing metric: {name}"
+    assert "# TYPE fusion_mlx_kv_checkpoint_writes_total counter" in body
+    assert "fusion_mlx_kv_checkpoint_writes_total 0" in body
+    logger.info("kv checkpoint metrics rendered with 4 families")
+
+
+def test_ubc_metrics_render():
+    import fusion_mlx.runtime.ubc_evict as ubc_mod
+
+    ubc_mod.reset_for_tests()
+    logger.info("ubc snapshot after reset: %s", ubc_mod.snapshot())
+    body = _render()
+    assert "fusion_mlx_ubc_evicted_bytes_total" in body
+    assert "# TYPE fusion_mlx_ubc_evicted_bytes_total counter" in body
+    assert "fusion_mlx_ubc_evict_calls_total" in body
+    assert "fusion_mlx_ubc_evict_failed_total" in body
+    logger.info("ubc metrics rendered (evicted_bytes + calls + failed)")
+
+
+def test_radix_cache_metrics_empty_when_no_cache():
+    from fusion_mlx.cache.radix_diffusion_cache import all_cache_stats
+
+    caches = all_cache_stats()
+    logger.info("live radix caches before render: %d", len(caches))
+    body = _render()
+    assert "fusion_mlx_radix_cache_hits_total" not in body
+    logger.info("radix cache metrics absent with no live cache (no fabrication)")
+
+
+def test_radix_cache_metrics_render_with_live_cache():
+    from fusion_mlx.cache.radix_diffusion_cache import _REGISTRY
+
+    class _FakeCache:
+        name = "test-cache"
+
+        def stats(self):
+            return {
+                "hits": 2,
+                "misses": 1,
+                "evictions": 0,
+                "insertions": 1,
+                "leaf_count": 1,
+                "total_bytes": 128,
+            }
+
+    fake = _FakeCache()
+    _REGISTRY.add(fake)
+    try:
+        body = _render()
+        assert 'fusion_mlx_radix_cache_hits_total{cache="test-cache"} 2' in body
+        assert 'fusion_mlx_radix_cache_misses_total{cache="test-cache"} 1' in body
+        assert 'fusion_mlx_radix_cache_leaf_count{cache="test-cache"} 1' in body
+        assert 'fusion_mlx_radix_cache_bytes{cache="test-cache"} 128' in body
+        logger.info("radix cache metrics rendered with live fake cache")
+    finally:
+        _REGISTRY.discard(fake)
+        logger.info("cleaned up fake cache from _REGISTRY")
