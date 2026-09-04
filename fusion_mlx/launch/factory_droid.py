@@ -19,5 +19,5 @@ def write_or_patch_config(
 ) -> None:
     print("Factory Droid uses environment variables — no config file to patch.")
     print(f"  Set OPENAI_BASE_URL={server_url.rstrip('/')}/v1")
-    print(f"  Set OPENAI_API_KEY={api_key}")
+    print(f"  Set OPENAI_API_KEY={_common.mask_api_key(api_key)}")
     print(f"  Set FACTORY_DROID_MODEL={model}")

@@ -8,9 +8,15 @@ This module provides FastAPI routes for MCP tool management:
 - POST /v1/mcp/execute - Execute an MCP tool
 """
 
+import logging
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 
+logger = logging.getLogger(__name__)
+
 from ..admin.auth import require_admin
+from ..mcp.security import MCPSecurityError, get_sandbox
 from .openai_models import (
     MCPExecuteRequest,
     MCPExecuteResponse,
@@ -104,9 +110,36 @@ async def execute_mcp_tool(
             status_code=503, detail="MCP not configured. Start server with --mcp-config"
         )
 
-    result = await manager.execute_tool(
-        request.tool_name,
+    tool_name = request.tool_name
+    server_name = (
+        tool_name.split("__")[0] if "__" in tool_name else "unknown"
+    )
+    bare_tool = tool_name.split("__")[-1] if "__" in tool_name else tool_name
+
+    sandbox = get_sandbox()
+    try:
+        sandbox.validate_tool_execution(bare_tool, server_name, request.arguments)
+    except MCPSecurityError as e:
+        logger.warning("mcp/execute blocked by sandbox: %s", e)
+        sandbox.record_execution(
+            bare_tool,
+            server_name,
+            request.arguments,
+            success=False,
+            error_message=str(e),
+        )
+        raise HTTPException(status_code=403, detail=str(e))
+
+    start_time = time.time()
+    result = await manager.execute_tool(tool_name, request.arguments)
+    execution_time_ms = (time.time() - start_time) * 1000
+    sandbox.record_execution(
+        bare_tool,
+        server_name,
         request.arguments,
+        success=not result.is_error,
+        error_message=result.error_message,
+        execution_time_ms=execution_time_ms,
     )
 
     return MCPExecuteResponse(

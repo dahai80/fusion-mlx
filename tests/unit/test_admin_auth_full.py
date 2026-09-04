@@ -209,7 +209,7 @@ class TestValidateApiKey(unittest.TestCase):
     def test_too_short_rejected(self):
         is_valid, msg = auth.validate_api_key("abc")
         self.assertFalse(is_valid)
-        self.assertIn("at least 4", msg)
+        self.assertIn("at least 12", msg)
 
     def test_empty_rejected(self):
         self.assertFalse(auth.validate_api_key("")[0])
@@ -219,15 +219,15 @@ class TestValidateApiKey(unittest.TestCase):
         self.assertFalse(is_valid)
 
     def test_non_ascii_long_rejected(self):
-        is_valid, msg = auth.validate_api_key("密钥密钥密钥")
+        is_valid, msg = auth.validate_api_key("密钥密钥密钥密钥密钥密钥")
         self.assertFalse(is_valid)
         self.assertIn("ASCII", msg)
 
     def test_min_length_boundary(self):
-        self.assertTrue(auth.validate_api_key("abcd")[0])
+        self.assertTrue(auth.validate_api_key("abcdefghijkl")[0])
 
     def test_special_chars_allowed(self):
-        self.assertTrue(auth.validate_api_key("sk-12345!@#")[0])
+        self.assertTrue(auth.validate_api_key("sk-12345!@#$")[0])
 
 
 class TestVerifyApiKey(unittest.TestCase):

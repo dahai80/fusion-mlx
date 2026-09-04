@@ -75,7 +75,7 @@ class TestSetupApiKeyUnit:
             with pytest.raises(HTTPException) as exc:
                 await setup_api_key(request_data, response, fastapi_request)
             assert exc.value.status_code == 400
-            assert "at least 4" in exc.value.detail.lower()
+            assert "at least 12" in exc.value.detail.lower()
 
     @pytest.mark.asyncio
     async def test_key_non_ascii(self):
@@ -83,8 +83,8 @@ class TestSetupApiKeyUnit:
         from fusion_mlx.admin.models import SetupApiKeyRequest
 
         request_data = SetupApiKeyRequest(
-            api_key="\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5",
-            api_key_confirm="\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5",
+            api_key="\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5",
+            api_key_confirm="\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5",
         )
         response = MagicMock()
         fastapi_request = AsyncMock(spec=Request)
