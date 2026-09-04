@@ -312,10 +312,22 @@ def __init__(
             model_name=self.config.model_name,
             initial_blocks=self.config.initial_cache_blocks,
         )
-        self.block_aware_cache = BlockAwarePrefixCache(
-            model=model,
-            paged_cache_manager=self.paged_cache_manager,
-        )
+        import os as _os
+
+        _prefix_impl = _os.environ.get("FUSION_MLX_PREFIX_CACHE", "").strip().lower()
+        if _prefix_impl == "radix":
+            from ..cache.radix_prefix_cache import RadixPrefixCache
+
+            logger.info("scheduler prefix cache: radix tree")
+            self.block_aware_cache = RadixPrefixCache(
+                model=model,
+                paged_cache_manager=self.paged_cache_manager,
+            )
+        else:
+            self.block_aware_cache = BlockAwarePrefixCache(
+                model=model,
+                paged_cache_manager=self.paged_cache_manager,
+            )
 
         # Auto-init MemoryMonitor BEFORE _init_tiered_cache so the
         # SSD manager can use model-derived KV bytes-per-token instead

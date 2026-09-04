@@ -10,6 +10,7 @@ Memory KV cache is managed by mlx-lm's BatchGenerator. When paged_ssd_cache_dir
 is None, a pure-memory PagedCacheManager is created with LRU eviction.
 """
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     from .paged_ssd_cache import PagedSSDCacheManager
     from .prefix_cache import BlockAwarePrefixCache
     from .tiered_cache import TieredCacheManager
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -149,6 +152,19 @@ class CacheFactory:
         """
         if paged_cache is None:
             return None
+
+        import os
+
+        impl = os.environ.get("FUSION_MLX_PREFIX_CACHE", "").strip().lower()
+        if impl == "radix":
+            from .radix_prefix_cache import RadixPrefixCache
+
+            logger.info("prefix cache implementation: radix tree")
+            return RadixPrefixCache(
+                model=model,
+                paged_cache_manager=paged_cache,
+                paged_ssd_cache_manager=paged_ssd_cache,
+            )
 
         from .prefix_cache import BlockAwarePrefixCache
 
