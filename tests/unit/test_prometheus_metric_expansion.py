@@ -146,3 +146,49 @@ def test_radix_cache_metrics_render_with_live_cache():
     finally:
         _REGISTRY.discard(fake)
         logger.info("cleaned up fake cache from _REGISTRY")
+
+
+def test_multimodal_metrics_render():
+    body = _render()
+    expected = [
+        "fusion_mlx_video_requests_total",
+        "fusion_mlx_image_generation_requests_total",
+        "fusion_mlx_vision_requests_total",
+        "fusion_mlx_audio_requests_total",
+    ]
+    for name in expected:
+        assert name in body, f"missing multimodal metric: {name}"
+    assert "# TYPE fusion_mlx_video_requests_total counter" in body
+    assert "fusion_mlx_video_requests_total 0" in body
+    logger.info("multimodal metrics rendered (4 counters)")
+
+
+def test_paged_kv_metrics_render_zero_when_no_pool():
+    body = _render()
+    assert "fusion_mlx_paged_kv_total_blocks" in body
+    assert "# TYPE fusion_mlx_paged_kv_total_blocks gauge" in body
+    assert "fusion_mlx_paged_kv_utilization" in body
+    assert "fusion_mlx_paged_kv_total_blocks 0" in body
+    assert "fusion_mlx_paged_kv_allocated_blocks 0" in body
+    logger.info("paged kv metrics rendered zero (no engine pool)")
+
+
+def test_lifespan_metrics_render_or_absent():
+    from fusion_mlx.server_metrics import get_server_metrics
+
+    startup = get_server_metrics().to_dict().get("startup_epoch")
+    body = _render()
+    if startup is not None:
+        assert "fusion_mlx_process_start_epoch" in body
+        logger.info("startup_epoch present, start_epoch gauge rendered")
+    else:
+        assert "fusion_mlx_process_start_epoch" not in body
+        logger.info("startup_epoch None, start_epoch gauge omitted (no fabrication)")
+    assert "fusion_mlx_process_shutdown_epoch" not in body
+    logger.info("shutdown_epoch None, shutdown gauge omitted (no fabrication)")
+
+
+def test_no_rapid_mlx_prefix_still_clean():
+    body = _render()
+    assert "rapid_mlx_" not in body, "stale rapid_mlx_ prefix reintroduced after T17"
+    logger.info("rapid_mlx_ prefix still absent after T17 additions")

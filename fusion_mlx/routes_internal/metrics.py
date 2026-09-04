@@ -536,6 +536,178 @@ def _render_radix_cache_metrics() -> list[str]:
     return lines
 
 
+def _render_multimodal_metrics() -> list[str]:
+    lines: list[str] = []
+    try:
+        m = get_server_metrics().to_dict()
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_video_requests_total",
+                "counter",
+                "Video generation inference requests.",
+                int(m.get("video_requests", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_image_generation_requests_total",
+                "counter",
+                "Image generation inference requests.",
+                int(m.get("image_generation_requests", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_vision_requests_total",
+                "counter",
+                "Vision (image-input) inference requests.",
+                int(m.get("vision_requests", 0)),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_audio_requests_total",
+                "counter",
+                "Audio (STT/TTS) inference requests.",
+                int(m.get("audio_requests", 0)),
+            )
+        )
+    except Exception:
+        logger.debug("multimodal metrics render error", exc_info=True)
+    return lines
+
+
+def _render_paged_kv_metrics() -> list[str]:
+    lines: list[str] = []
+    try:
+        from ..server import _server_state
+
+        pool = _server_state.get("engine_pool")
+        total_blocks = 0
+        allocated_blocks = 0
+        free_blocks = 0
+        shared_blocks = 0
+        total_tokens_cached = 0
+        cow_copies = 0
+        if pool is not None:
+            for _mid, entry in getattr(pool, "_entries", {}).items():
+                engine = getattr(entry, "engine", None)
+                if engine is None:
+                    continue
+                sched = getattr(engine, "scheduler", None)
+                if sched is None:
+                    core = getattr(engine, "_engine", None)
+                    core = getattr(core, "engine", None)
+                    sched = getattr(core, "scheduler", None)
+                if sched is None:
+                    continue
+                bac = getattr(sched, "block_aware_cache", None)
+                if bac is None:
+                    continue
+                pc = getattr(bac, "paged_cache", None)
+                if pc is None:
+                    continue
+                get_stats = getattr(pc, "get_stats", None)
+                if not callable(get_stats):
+                    continue
+                ps = get_stats()
+                total_blocks += int(getattr(ps, "total_blocks", 0))
+                allocated_blocks += int(getattr(ps, "allocated_blocks", 0))
+                free_blocks += int(getattr(ps, "free_blocks", 0))
+                shared_blocks += int(getattr(ps, "shared_blocks", 0))
+                total_tokens_cached += int(getattr(ps, "total_tokens_cached", 0))
+                cow_copies += int(getattr(ps, "cow_copies", 0))
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_paged_kv_total_blocks",
+                "gauge",
+                "Paged KV-cache total block capacity.",
+                total_blocks,
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_paged_kv_allocated_blocks",
+                "gauge",
+                "Paged KV-cache allocated blocks.",
+                allocated_blocks,
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_paged_kv_free_blocks",
+                "gauge",
+                "Paged KV-cache free blocks.",
+                free_blocks,
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_paged_kv_shared_blocks",
+                "gauge",
+                "Paged KV-cache blocks shared (ref_count > 1).",
+                shared_blocks,
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_paged_kv_tokens_cached_total",
+                "counter",
+                "Paged KV-cache total tokens cached (cumulative).",
+                total_tokens_cached,
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_paged_kv_cow_copies_total",
+                "counter",
+                "Paged KV-cache copy-on-write copies (cumulative).",
+                cow_copies,
+            )
+        )
+        utilization = allocated_blocks / total_blocks if total_blocks > 0 else 0.0
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_paged_kv_utilization",
+                "gauge",
+                "Paged KV-cache utilization (allocated/total, 0-1).",
+                round(float(utilization), 4),
+            )
+        )
+    except Exception:
+        logger.debug("paged kv metrics render error", exc_info=True)
+    return lines
+
+
+def _render_lifespan_metrics() -> list[str]:
+    lines: list[str] = []
+    try:
+        m = get_server_metrics().to_dict()
+        startup = m.get("startup_epoch")
+        if startup is not None:
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_process_start_epoch",
+                    "gauge",
+                    "Process startup time (unix epoch seconds).",
+                    float(startup),
+                )
+            )
+        shutdown = m.get("shutdown_epoch")
+        if shutdown is not None:
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_process_shutdown_epoch",
+                    "gauge",
+                    "Process shutdown time (unix epoch seconds), set on graceful drain.",
+                    float(shutdown),
+                )
+            )
+    except Exception:
+        logger.debug("lifespan metrics render error", exc_info=True)
+    return lines
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
@@ -550,6 +722,9 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_kv_checkpoint_metrics())
     lines.extend(_render_ubc_metrics())
     lines.extend(_render_radix_cache_metrics())
+    lines.extend(_render_multimodal_metrics())
+    lines.extend(_render_paged_kv_metrics())
+    lines.extend(_render_lifespan_metrics())
     return "\n".join(lines) + "\n"
 
 
