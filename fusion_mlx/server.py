@@ -1555,6 +1555,15 @@ class Server:
         _grpo_svc.set_loop(asyncio.get_running_loop())
         set_grpo_context(self.pool, _grpo_svc)
 
+        # Wire RFT (rejection-sampling fine-tuning) service (#9)
+        from .admin.fine_tune_route import set_rft_context
+        from .training.rft_service import RFTService
+
+        _rft_svc = RFTService()
+        _rft_svc.set_engine_pool(self.pool)
+        _rft_svc.set_loop(asyncio.get_running_loop())
+        set_rft_context(self.pool, _rft_svc)
+
         # Wire DPO/ORPO service (#399)
         from .admin.fine_tune_route import set_dpo_context
         from .training.dpo_service import DPOService
