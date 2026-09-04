@@ -210,12 +210,23 @@ class Gemma4LanguageModel(nn.Module):
         lm = cls(config=config)
 
         flat_prefix = "text_encoder."
+        mlxcomm_prefix = "language_model."
         is_flat = any(k.startswith(flat_prefix) for k in raw)
+        is_mlxcomm = any(k.startswith(mlxcomm_prefix) for k in raw)
         if is_flat:
             stripped = {
                 k[len(flat_prefix) :]: v
                 for k, v in raw.items()
                 if k.startswith(flat_prefix)
+            }
+        elif is_mlxcomm:
+            # #786: mlx-community shard keys language_model.model.* (含 projection
+            # 时 language_model.text_embedding_projection.*, 但投影通常在 connector)。
+            # 剥 language_model. 前缀 -> 剩 model.* (走 canon 分支)。
+            stripped = {
+                k[len(mlxcomm_prefix) :]: v
+                for k, v in raw.items()
+                if k.startswith(mlxcomm_prefix)
             }
         else:
             stripped = raw
@@ -352,6 +363,32 @@ def _build_default_text_config() -> TextConfig:
     # checkpoint 不含 config.json, 这里硬编码经过验证的 12b 配置。
     from mlx_vlm.models.gemma4.config import TextConfig
 
+    # #792: 三处显式设置, 不依赖 TextConfig.__post_init__ 默认推导 (旧版 mlx_vlm
+    # 默认 layer_types=full_attention 会导致所有层用 global_head_dim=512 崩溃):
+    #   1. attention_k_eq_v=True: full_attention 层 (5/11/.../47) checkpoint 仅含
+    #      k_proj=512 (1*512), 无 v_proj -> v 复用 k。默认 False 会用
+    #      num_key_value_heads=8 -> 期望 k_proj=4096, 与 checkpoint 512 不匹配
+    #      -> reshape ValueError。
+    #   2. layer_types: 5 sliding + 1 full 重复 8 次 = 48 层 (sliding head_dim=256,
+    #      full head_dim=512)。
+    #   3. rope_parameters: full (theta=1e6, proportional, partial_rotary=0.25),
+    #      sliding (theta=1e4, default)。
+    # 验证来源: dgrauet/ltx-2.5-mlx-q8 text_encoder.safetensors 逐层 k/q/v 形状
+    # + mlx-community/ltx-2.5-mlx-q8 gemma4-12b-ltx-v1/config.json 权威配置。
+    layer_types = []
+    for _ in range(8):
+        layer_types.extend(["sliding_attention"] * 5 + ["full_attention"])
+    rope_parameters = {
+        "full_attention": {
+            "partial_rotary_factor": 0.25,
+            "rope_theta": 1000000.0,
+            "rope_type": "proportional",
+        },
+        "sliding_attention": {
+            "rope_theta": 10000.0,
+            "rope_type": "default",
+        },
+    }
     return TextConfig(
         hidden_size=3840,
         num_hidden_layers=48,
@@ -362,8 +399,11 @@ def _build_default_text_config() -> TextConfig:
         num_key_value_heads=8,
         num_global_key_value_heads=1,
         num_kv_shared_layers=0,
+        attention_k_eq_v=True,
         sliding_window=1024,
         sliding_window_pattern=6,
+        layer_types=layer_types,
+        rope_parameters=rope_parameters,
         vocab_size=262144,
         vocab_size_per_layer_input=262144,
         hidden_size_per_layer_input=0,
@@ -525,49 +565,111 @@ def _split_projection_weights(weights: dict) -> tuple[dict, dict]:
     return lang, legacy_proj
 
 
+def _load_sharded_weights(shard_dir: Path) -> dict:
+    # #786: 多分片 text_encoder 目录 (gemma4-12b-ltx-v1/model-*.safetensors)。
+    # 按 model.safetensors.index.json 顺序合并所有分片 -> 单一 weights dict。
+    # mlx-community 分片键 language_model.model.* (在 from_checkpoint 剥前缀)。
+    index = shard_dir / "model.safetensors.index.json"
+    if index.exists():
+        with open(index) as f:
+            idx = json.load(f)
+        shard_files = sorted(set(idx.get("weight_map", {}).values()))
+    else:
+        shard_files = sorted(
+            p.name
+            for p in shard_dir.iterdir()
+            if p.name.startswith("model-") and p.name.endswith(".safetensors")
+        )
+    if not shard_files:
+        raise FileNotFoundError(f"no text-encoder shards found in {shard_dir}")
+    merged: dict = {}
+    for shard_name in shard_files:
+        shard_path = shard_dir / shard_name
+        part = mx.load(str(shard_path))
+        merged.update(part)
+        logger.info("ltx2_5 te shard loaded: %s (%d keys)", shard_name, len(part))
+    logger.info(
+        "ltx2_5 te sharded weights merged: %d keys from %d shards",
+        len(merged),
+        len(shard_files),
+    )
+    return merged
+
+
+def _load_connector_projection(connector_path: Path) -> dict:
+    # #786: mlx-community connector.safetensors 含 connector.text_embedding_projection.*
+    # (video/audio_aggregate_embed)。剥 connector. 前缀 -> text_embedding_projection.*
+    # 供 feature_extractor 装载。
+    raw = mx.load(str(connector_path))
+    proj_prefix = "connector." + _PROJ_PREFIX
+    proj_weights = {
+        k[len(proj_prefix) :]: v for k, v in raw.items() if k.startswith(proj_prefix)
+    }
+    logger.info(
+        "ltx2_5 te connector projection: %d keys from %s",
+        len(proj_weights),
+        connector_path.name,
+    )
+    return proj_weights
+
+
 def load_text_encoder(
     weights_path: str | Path,
     *,
     config_path: str | Path | None = None,
     tokenizer_cache_dir: str | Path | None = None,
+    projection_weights_path: str | Path | None = None,
 ) -> LTX2_5TextEncoder:
-    # 从单文件 checkpoint 加载 Gemma4-12b + aggregate projection + tokenizer。
-    # 两类布局:
-    #   canon Comfy: 内嵌 tokenizer_json + hf_asset__tokenizer_config.json。
-    #   flat diffusers (#762, dgrauet): tokenizer.json/tokenizer_config.json 在
-    #   仓根 (非内嵌), 须 standalone fallback。
+    # 加载 Gemma4-12b + aggregate projection + tokenizer。三类布局:
+    #   canon Comfy: 单文件, 内嵌 tokenizer_json + text_embedding_projection.*。
+    #   flat diffusers (#762, dgrauet): 单文件 text_encoder.safetensors,
+    #     tokenizer.json 在仓根 standalone。
+    #   mlx-community (#786): weights_path 为分片目录 (gemma4-12b-ltx-v1/),
+    #     projection 在独立 connector.safetensors (须传 projection_weights_path),
+    #     tokenizer.json 在分片子目录 standalone。
     # fail visible (Rule 12): 权重/config 缺失直接 raise, 不静默零初始化。
     weights_path = Path(weights_path)
     if not weights_path.exists():
         raise FileNotFoundError(
             f"LTX-2.5 text encoder weights not found: {weights_path}"
         )
+    is_sharded = weights_path.is_dir()
 
-    # #762: flat 布局 config 在仓根 text_encoder_config.json; 未显式传 config_path
-    # 时自动探测 weights 同级目录。
+    # config 探测: flat 仓根 text_encoder_config.json / mlxcomm 分片子目录
+    # config.json (gemma4-12b-ltx-v1/config.json) / canon 同级 config.json。
     if config_path is None:
-        for cand in (
-            weights_path.parent / "text_encoder_config.json",
-            weights_path.parent / "config.json",
-        ):
-            if cand.exists():
-                config_path = cand
+        cand_dirs = [weights_path.parent] if is_sharded else [weights_path.parent]
+        for cand_dir in cand_dirs:
+            for name in ("text_encoder_config.json", "config.json"):
+                cand = cand_dir / name
+                if cand.exists():
+                    config_path = cand
+                    break
+            if config_path is not None:
                 break
 
     text_config = _load_text_config(config_path)
 
     logger.info(
-        "load_text_encoder: hidden_size=%d layers=%d caption=%d",
+        "load_text_encoder: hidden_size=%d layers=%d caption=%d sharded=%s",
         getattr(text_config, "hidden_size", GEMMA4_HIDDEN_SIZE),
         getattr(text_config, "num_hidden_layers", GEMMA4_NUM_LAYERS),
         LTX2_5_CAPTION_CHANNELS,
+        is_sharded,
     )
 
-    raw = mx.load(str(weights_path))
+    if is_sharded:
+        raw = _load_sharded_weights(weights_path)
+    else:
+        raw = mx.load(str(weights_path))
 
     language_model, proj_weights = Gemma4LanguageModel.from_checkpoint(
         weights_path, text_config, raw_weights=raw
     )
+
+    # #786: mlx-community projection 在 connector.safetensors (非 TE 分片)。
+    if not proj_weights and projection_weights_path is not None:
+        proj_weights = _load_connector_projection(Path(projection_weights_path))
 
     feature_extractor = GemmaFeaturesExtractorV2(
         flat_dim=AGGREGATE_FLAT_DIM,
@@ -618,9 +720,18 @@ def load_text_encoder(
                 "LTX2_5TextEncoder: loaded embedded tokenizer from %s", tok_path
             )
         else:
-            # flat #762: standalone tokenizer.json + tokenizer_config.json 在仓根。
-            tok_root = weights_path.parent
-            if (tok_root / "tokenizer.json").exists():
+            # standalone tokenizer.json + tokenizer_config.json。flat #762 在仓根
+            # (weights_path.parent); mlx-community #786 在分片子目录 (weights_path
+            # 本身即为目录) 或其上级。
+            tok_roots = (
+                [weights_path, weights_path.parent]
+                if is_sharded
+                else [weights_path.parent]
+            )
+            tok_root = next(
+                (r for r in tok_roots if (r / "tokenizer.json").exists()), None
+            )
+            if tok_root is not None:
                 from transformers import AutoTokenizer
 
                 tokenizer = AutoTokenizer.from_pretrained(

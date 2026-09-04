@@ -82,6 +82,38 @@ _LTX2_5_FLAT_FILES = {
     "temporal_upscaler": "temporal_upscaler_x2_v1_0.safetensors",
 }
 
+# mlx-community 布局 (#786, mlx-community/ltx-2.5-mlx-q8 等公开 4/8-bit 仓)：
+# 无 split_model.json, 根 config.json model_type=AudioVideo + model_version=2.5.0。
+# VAE 文件名无 _conv 后缀, spatial upscaler _v1_1, text_encoder 为子目录分片
+# (gemma4-12b-ltx-v1/model-*.safetensors), transformer 在独立 dit 仓 (调用方
+# 须显式传 transformer_weights, resolve_component 不解析)。
+_LTX2_5_MLXCOMM_FILES = {
+    "connector": "connector.safetensors",
+    "video_vae_conv_encoder": "vae_encoder.safetensors",
+    "video_vae_conv_decoder": "vae_decoder.safetensors",
+    "text_encoder": "gemma4-12b-ltx-v1",
+    "duration_head": "duration_head.safetensors",
+    "spatial_upscaler": "spatial_upscaler_x2_v1_1.safetensors",
+    "temporal_upscaler": "temporal_upscaler_x2_v1_0.safetensors",
+}
+
+# 三种布局: "comfy" (子目录), "flat" (dgrauet 根级单文件), "mlxcomm" (#786)。
+_LAYOUT_COMFY = "comfy"
+_LAYOUT_FLAT = "flat"
+_LAYOUT_MLXCOMM = "mlxcomm"
+
+
+def detect_layout(root: Path) -> str:
+    # 统一布局探测: 返回 _LAYOUT_COMFY / _LAYOUT_FLAT / _LAYOUT_MLXCOMM。
+    # flat 优先 (split_model.json recipe=ltx-2.5), 次 mlx-community (config.json
+    # model_type=AudioVideo + model_version=2.5.0, 无 diffusion_models/ 子目录),
+    # 兜底 comfy。
+    if is_flat_layout(root):
+        return _LAYOUT_FLAT
+    if is_mlx_community_layout(root):
+        return _LAYOUT_MLXCOMM
+    return _LAYOUT_COMFY
+
 
 def is_flat_layout(root: Path) -> bool:
     # 检测根目录是否为 flat diffusers 布局：split_model.json recipe=ltx-2.5 +
@@ -104,6 +136,37 @@ def is_flat_layout(root: Path) -> bool:
         and (p.is_file() or p.is_symlink())
         for p in root.iterdir()
     )
+
+
+def is_mlx_community_layout(root: Path) -> bool:
+    # 检测 mlx-community 布局 (#786): 根 config.json model_type=AudioVideo +
+    # model_version=2.5.0, 无 diffusion_models/ 子目录 (排除 Comfy), 无
+    # split_model.json (排除 flat)。验证来源 mlx-community/ltx-2.5-mlx-q8。
+    config = root / "config.json"
+    if not config.exists():
+        return False
+    if (root / "split_model.json").exists():
+        return False
+    if (root / "diffusion_models").is_dir():
+        return False
+    try:
+        import json
+
+        with open(config) as f:
+            cfg = json.load(f)
+        return (
+            cfg.get("model_type") == "AudioVideo"
+            and str(cfg.get("model_version")) == "2.5.0"
+        )
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
+def is_split_layout(root: Path) -> bool:
+    # VAE enc/dec 分立 + connector 独立文件的布局: flat (dgrauet, #762) 或
+    # mlxcomm (#786)。Comfy 布局 VAE 单文件含 enc+dec, connector 嵌 transformer。
+    layout = detect_layout(root)
+    return layout in (_LAYOUT_FLAT, _LAYOUT_MLXCOMM)
 
 
 def get_model_path(model_repo: str = _LTX2_5_REPO) -> Path:
@@ -141,12 +204,28 @@ def resolve_component(
     *,
     variant: str = "distilled",
 ) -> Path:
-    # 在已解析的仓根目录下定位单个组件文件。flat diffusers 布局（#762）用
-    # 根级单文件名 + 独立 connector 组件；Comfy 布局用子目录映射。
+    # 在已解析的仓根目录下定位单个组件文件。三布局: flat (dgrauet 根级单文件 +
+    # 独立 connector, #762), mlxcomm (mlx-community, #786), comfy (子目录)。
+    # mlxcomm text_encoder 为子目录分片 (gemma4-12b-ltx-v1/), 其余为根级单文件。
+    # mlxcomm 不含 transformer (在独立 dit 仓, 调用方须显式传 transformer_weights)。
     if key == "transformer":
         key = "transformer_distilled" if variant == "distilled" else "transformer_dev"
-    files = _LTX2_5_FLAT_FILES if is_flat_layout(root) else _LTX2_5_FILES
+    layout = detect_layout(root)
+    if layout == _LAYOUT_FLAT:
+        files = _LTX2_5_FLAT_FILES
+    elif layout == _LAYOUT_MLXCOMM:
+        files = _LTX2_5_MLXCOMM_FILES
+    else:
+        files = _LTX2_5_FILES
     if key not in files:
+        if layout == _LAYOUT_MLXCOMM and key in (
+            "transformer_distilled",
+            "transformer_dev",
+        ):
+            raise ValueError(
+                "mlx-community layout has no transformer weights; pass "
+                "transformer_weights explicitly from the dit repo"
+            )
         raise ValueError(f"unknown LTX-2.5 component key: {key!r}")
     rel = files[key]
     candidate = root / rel

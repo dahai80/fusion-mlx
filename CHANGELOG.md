@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+## [0.8.79] - 2026-09-04
+
+### Fixed
+- **#792: LTX-2.5 Gemma4-12b text-encoder `k_proj` reshape crash.** The
+  default `TextConfig` left `attention_k_eq_v=False`, so the 8
+  `full_attention` layers (5/11/.../47) expected `k_proj=4096`
+  (8 heads * 512), but the checkpoint ships `k_proj=512` (1 * 512, v
+  reuses k). The reshape raised `ValueError`. `_build_default_text_config()`
+  now sets `attention_k_eq_v=True`, an explicit `layer_types` list
+  (5 sliding + 1 full repeated 8 times = 48), and `rope_parameters`
+  (full: theta=1e6, proportional, partial_rotary=0.25; sliding:
+  theta=1e4, default). The stale issue assumption ("all layers
+  full_attention") was wrong — the real root cause was the missing
+  `attention_k_eq_v` flag.
+- **#786: LTX-2.5 `mlx-community` flat-layout support.** The
+  `mlx-community/ltx-2.5-mlx-q8` repos use a distinct layout: root
+  `config.json` with `model_type=AudioVideo` + `model_version=2.5.0`
+  (no `split_model.json`, no `diffusion_models/`), VAE files without
+  the `_conv` suffix, spatial upscaler `v1_1`, a sharded text encoder
+  sub-directory `gemma4-12b-ltx-v1/model-*.safetensors` (keys prefixed
+  `language_model.model.*`), and the aggregate projection in a separate
+  `connector.safetensors` (`connector.text_embedding_projection.*`).
+  `detect_layout()` returns `"mlxcomm"` for this layout;
+  `is_split_layout()` now covers both `flat` and `mlxcomm`;
+  `resolve_component()` maps to the correct file names and raises a
+  clear `ValueError` for the transformer (it lives in a separate dit
+  repo and must be passed explicitly). `load_text_encoder()` gains a
+  `projection_weights_path` argument, multi-shard directory loading
+  (`_load_sharded_weights` via `model.safetensors.index.json`), and
+  connector-projection extraction (`_load_connector_projection`).
+  `generate.py` computes the connector path once and feeds it to both
+  the text encoder and the transformer; `ltx2_5_model.from_pretrained`
+  filters `text_embedding_projection` keys out of the connector merge
+  so they do not trip the transformer strict-load.
+
 ## [0.8.78] - 2026-09-04
 
 ### Added
