@@ -17,7 +17,9 @@ stream pass measures TTFT). Seeds are fixed. No model weights are touched
 by this script — it only sends HTTP.
 
 Reports: benchmarks/reports/<model>_<timestamp>.json
-Summary:  benchmarks/reports/SUMMARY_<timestamp>.json + updates README table.
+Summary:  benchmarks/reports/SUMMARY_<timestamp>.json
+Matrix:   benchmarks/MATRIX.md + benchmarks/matrix.json, built from reports by
+          `generate_matrix.py` (run that, not this, to update the public table).
 """
 
 from __future__ import annotations
