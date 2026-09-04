@@ -37,9 +37,40 @@ from .types import (
 )
 
 
+def _sync_paged_pool_active(self) -> None:
+    """#781: publish the batch-wide active set to the paged KV pool each step.
+
+    ``FusionPagedKVPool.alloc_block`` evicts the LRU idle request on
+    exhaustion, but only if it knows which request ids are actively
+    decoding. The cache call sites (``update_and_fetch`` / ``state``
+    setter) run deep inside mlx-lm's forward pass and can only see their
+    own ``request_id``, so without a batch-wide active set the pool
+    defaults ``active_ids={request_id}`` and could evict an actively
+    decoding peer. Set the pool's active set to the current ``running``
+    keys + refresh last-access so a decode step that allocates no new
+    blocks does not let LRU go stale. Also installs the evict callback
+    once so a reclaimed peer's dangling ``block_table`` is cleared
+    fail-visible (see ``invalidate_request``).
+    """
+    pool = getattr(self.model, "_fusion_paged_pool", None)
+    if pool is None:
+        return
+    try:
+        if getattr(pool, "_evict_cb", None) is None:
+            from ..custom_kernels.fusion_paged_kv import invalidate_request
+
+            pool.set_evict_callback(invalidate_request)
+        pool.set_active_ids(set(self.running.keys()))
+        pool.touch_active()
+    except Exception as e:
+        logger.debug("paged_kv pool active-sync failed: %s", e)
+
+
 def step(self) -> SchedulerOutput:
     output = SchedulerOutput()
     self._step_counter += 1
+
+    self._sync_paged_pool_active()
 
     # --- Pure-decode fast path ---
     # When there are no waiting/prefilling requests and only 1 running request,

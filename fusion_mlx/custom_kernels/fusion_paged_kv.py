@@ -223,6 +223,42 @@ def evict_request_by_id(request_id: str) -> int:
     return freed
 
 
+def invalidate_request(request_id: str) -> int:
+    """Clear a victim's cache handles WITHOUT popping the registry.
+
+    Called by the pool's evict callback when LRU reclaims a peer's blocks.
+    The blocks are already freed back to the pool free-list by
+    ``FusionPagedKVPool.free_request``; the victim's
+    ``FusionPagedRequestCache.block_table`` still points at those now-free
+    block ids (dangling). Any later fetch through that stale block_table
+    would read/write the wrong request's data — silent corruption. Clear
+    the block_table + offset so the next access fails visibly instead of
+    corrupting. The registry entry stays so the victim's eventual
+    completion/abort path still finds + frees it cleanly.
+    """
+    caches = _GLOBAL_CACHE_REGISTRY.get(request_id)
+    if not caches:
+        return 0
+    cleared = 0
+    for c in caches:
+        try:
+            if getattr(c, "_is_merged", False):
+                continue
+            if c.block_table:
+                c.block_table = []
+                c.offset = 0
+                cleared += 1
+        except Exception as e:
+            logger.warning("invalidate_request: %s clear failed: %s", request_id, e)
+    if cleared:
+        logger.warning(
+            "invalidate_request: cleared %d dangling block_table(s) for %s",
+            cleared,
+            request_id,
+        )
+    return cleared
+
+
 __all__ = [
     "is_paged_kv_available",
     "install_paged_kv",
@@ -231,4 +267,5 @@ __all__ = [
     "register_cache",
     "evict_request",
     "evict_request_by_id",
+    "invalidate_request",
 ]
