@@ -104,12 +104,17 @@ def test_patcher_wraps_llama_attention(monkeypatch):
     assert out.shape == (1, 1, 64)
 
 
-def test_patcher_skips_non_llama_family():
+def test_patcher_wraps_gemma_family():
+    from fusion_mlx.fusion_takeover.patcher import _FUSED_DECODE_MODEL_FAMILIES
+
+    assert "gemma3" in _FUSED_DECODE_MODEL_FAMILIES
+
     class FakeModel(nn.Module):
-        model_type = "gemma"
+        model_type = "gemma3"
         layers = []
 
     model = FakeModel()
     cfg = FusionConfig(enabled=True, paged_kv_enabled=True, fused_decode_enabled=True)
     patcher = FusionModulePatcher()
     patcher.patch_model(model, cfg)
+    assert getattr(model, "_fusion_takeover_applied", False)

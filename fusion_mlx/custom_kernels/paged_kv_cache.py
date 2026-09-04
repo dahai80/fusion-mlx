@@ -280,7 +280,15 @@ class FusionPagedKVCache:
             return False
         return True
 
-    def fused_decode_attention(self, queries, scale, n_heads, head_dim):
+    def fused_decode_attention(
+        self,
+        queries,
+        scale,
+        n_heads,
+        head_dim,
+        sliding_window=0,
+        softcap=0.0,
+    ):
         from .fusion_paged_attention import paged_decode_attention
 
         n_kv_heads = self.keys_pool.shape[2]
@@ -288,11 +296,13 @@ class FusionPagedKVCache:
         block_table_mx = mx.array(self.block_table, dtype=mx.uint32)
         num_kv = self.offset
         logger.info(
-            "paged_kv fused decode: offset=%d gqa=%d n_heads=%d n_kv=%d",
+            "paged_kv fused decode: offset=%d gqa=%d n_heads=%d n_kv=%d sw=%d sc=%s",
             self.offset,
             gqa_factor,
             n_heads,
             n_kv_heads,
+            int(sliding_window),
+            float(softcap),
         )
         return paged_decode_attention(
             queries,
@@ -302,6 +312,8 @@ class FusionPagedKVCache:
             num_kv,
             scale,
             gqa_factor,
+            sliding_window=sliding_window,
+            softcap=softcap,
             stream=None,
         )
 

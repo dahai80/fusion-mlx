@@ -37,17 +37,27 @@ def _make_paged_decode_attention_kernel():
         float l = 0.0f;
         float o[HEAD_DIM];
         for (uint d = 0; d < HEAD_DIM; ++d) o[d] = 0.0f;
+        float sc = float(softcap[0]);
 
         const uint num_blocks = (NUM_KV + BLOCK_SIZE - 1) / BLOCK_SIZE;
         for (uint lb = 0; lb < num_blocks; ++lb) {
           uint pb = block_table[lb];
           uint block_len = (lb + 1 == num_blocks) ? (NUM_KV - lb * BLOCK_SIZE) : BLOCK_SIZE;
           for (uint t = 0; t < block_len; ++t) {
+            uint kv_pos = lb * BLOCK_SIZE + t;
+            if (SLIDING_WINDOW > 0) {
+              if (kv_pos + SLIDING_WINDOW < NUM_KV) {
+                continue;
+              }
+            }
             float s = 0.0f;
             for (uint d = 0; d < HEAD_DIM; ++d) {
               s += float(q[batch * N_HEADS * HEAD_DIM + q_head * HEAD_DIM + d])
                    * float(keys_pool[((pb * B + batch) * N_KV_HEADS + kv_head) * BLOCK_SIZE * HEAD_DIM
                                + t * HEAD_DIM + d]);
+            }
+            if (sc > 0.0f) {
+              s = metal::tanh(s / sc) * sc;
             }
             float m_new = metal::max(m, s);
             float exp_m = metal::exp(m - m_new);
@@ -68,7 +78,7 @@ def _make_paged_decode_attention_kernel():
 
     return mx.fast.metal_kernel(
         name="fusion_paged_decode_attention",
-        input_names=["q", "keys_pool", "values_pool", "block_table"],
+        input_names=["q", "keys_pool", "values_pool", "block_table", "softcap"],
         output_names=["out"],
         source=source,
     )
@@ -85,6 +95,8 @@ def paged_decode_attention(
     num_kv,
     scale,
     gqa_factor,
+    sliding_window=0,
+    softcap=0.0,
     stream=None,
 ):
     if not metal_available():
@@ -105,14 +117,22 @@ def paged_decode_attention(
     block_size = keys_pool.shape[3]
 
     q_scaled = q.astype(mx.float32) * float(scale)
+    sw = int(sliding_window)
+    sc = float(softcap)
+    softcap_arr = mx.array([sc], dtype=mx.float32)
 
     global _logged_compile
     if not _logged_compile:
-        logger.info("paged fused decode kernel: grid=(%d) compiled", B * n_heads)
+        logger.info(
+            "paged fused decode kernel: grid=(%d) compiled sw=%d softcap=%s",
+            B * n_heads,
+            sw,
+            sc,
+        )
         _logged_compile = True
 
     out = kernel(
-        inputs=[q_scaled, keys_pool, values_pool, block_table],
+        inputs=[q_scaled, keys_pool, values_pool, block_table, softcap_arr],
         template=[
             ("BLOCK_SIZE", block_size),
             ("HEAD_DIM", head_dim),
@@ -121,6 +141,7 @@ def paged_decode_attention(
             ("N_HEADS", n_heads),
             ("N_KV_HEADS", n_kv_heads),
             ("B", B),
+            ("SLIDING_WINDOW", sw),
         ],
         grid=(B * n_heads, 1, 1),
         threadgroup=(1, 1, 1),
