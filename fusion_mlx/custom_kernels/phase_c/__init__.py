@@ -97,8 +97,10 @@ def w4a8_fused_matmul(
     )
 
 
+from .fused_gdn import FusedGDN, apply_fused_gdn
 from .glm_moe_ffn import is_native_available as moe_ffn_is_native_available
 from .glm_moe_ffn import moe_ffn_fused
+from .w4a8_kernel import W4A8Linear, convert_to_w4a8, w4a8_tiled_matmul
 
 __all__ = [
     "NATIVE_SYMBOLS",
@@ -110,4 +112,9 @@ __all__ = [
     "w4a8_fused_matmul",
     "moe_ffn_fused",
     "moe_ffn_is_native_available",
+    "W4A8Linear",
+    "convert_to_w4a8",
+    "w4a8_tiled_matmul",
+    "FusedGDN",
+    "apply_fused_gdn",
 ]

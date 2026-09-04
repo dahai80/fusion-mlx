@@ -91,10 +91,14 @@ def verify_session(token: str) -> bool:
 
 def validate_api_key(key: str) -> tuple[bool, str]:
     """Validate API key format. Returns (is_valid, error_message)."""
-    if len(key) < 4:
-        return (False, "API key must be at least 4 characters")
+    if len(key) < 12:
+        return (False, "API key must be at least 12 characters")
     if not key.isascii():
         return (False, "API key must contain only ASCII characters")
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in key):
+        return (False, "API key must not contain control characters")
+    if " " in key:
+        return (False, "API key must not contain spaces")
     return (True, "")
 
 

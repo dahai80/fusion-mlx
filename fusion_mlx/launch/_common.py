@@ -156,3 +156,19 @@ def which(cmd: str) -> str | None:
     import shutil
 
     return shutil.which(cmd)
+
+
+def mask_api_key(key: str) -> str:
+    """Mask an API key for safe display: show last 4 chars only.
+
+    Short keys (<=8) collapse to ``****`` so we never reveal enough to
+    reconstruct them. Used by launch adapters that print env-var setup
+    instructions to stdout — a plaintext key there would leak into shell
+    history, CI logs, and terminal scrollback.
+    """
+    if not key:
+        return "****"
+    if len(key) <= 8:
+        return "****"
+    return f"****{key[-4:]}"
+

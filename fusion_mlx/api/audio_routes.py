@@ -547,6 +547,18 @@ async def create_transcription(
             SURFACE_API,
         )
 
+        _audio_text = result.get("text", "") or ""
+        emit.request(
+            endpoint="/v1/audio/transcriptions",
+            model_alias=resolved_model,
+            stream=False,
+            tool_call_used=False,
+            prompt_tokens=0,
+            completion_tokens=len(_audio_text),
+            ttft_ms=0.0,
+            tps=0.0,
+            status=200,
+        )
         emit.activation(
             activation_kind=ACTIVATION_FIRST_DICTATION,
             surface=SURFACE_API,

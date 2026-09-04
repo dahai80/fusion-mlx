@@ -116,6 +116,7 @@ from .profile import router as profile_router
 from .settings import router as settings_router
 from .stats import router as stats_router
 from .subkey import router as subkey_router
+from .telemetry_route import router as telemetry_router
 from .update_check import router as update_check_router
 
 # Register all sub-routers
@@ -130,6 +131,7 @@ router.include_router(preset_router)
 router.include_router(settings_router)
 router.include_router(logs_router)
 router.include_router(stats_router)
+router.include_router(telemetry_router)
 router.include_router(hf_download_router)
 router.include_router(ms_download_router)
 router.include_router(accuracy_bench_router)

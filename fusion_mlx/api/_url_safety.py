@@ -63,39 +63,62 @@ def is_safe_url(url: str) -> bool:
         return False
 
 
-def is_safe_url_with_dns(url: str) -> bool:
+def resolve_safe_ips(url: str) -> list[str] | None:
+    """Resolve ``url``'s host to a list of safe public IP strings.
+
+    Returns None if the URL is malformed or resolves to a private/internal
+    address. The returned IPs are the ones validated NOW; callers that make
+    an outbound fetch SHOULD pin the connection to one of these IPs (e.g.
+    via a custom HTTP adapter / Host header) to close the DNS-rebinding
+    TOCTOU window between this check and the actual connect.
+
+    Single-hostname A records can still rotate under us; the robust fix is
+    to re-resolve and re-check at connect time. See ``is_safe_url_with_dns``
+    for the boolean convenience wrapper.
+    """
     if not is_safe_url(url):
-        return False
+        return None
     parsed = urlparse(url)
     hostname = parsed.hostname
     if not hostname:
-        return False
+        return None
     try:
         addr = ipaddress.ip_address(hostname)
-        return not _is_private_addr(addr)
+        if _is_private_addr(addr):
+            return None
+        return [str(addr)]
     except ValueError:
         pass
     try:
         infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        for family, _type, _proto, _canon, sockaddr in infos:
-            ip_str = sockaddr[0]
-            try:
-                addr = ipaddress.ip_address(ip_str)
-                if _is_private_addr(addr):
-                    logger.warning(
-                        "is_safe_url_with_dns: resolved %s -> %s (private)",
-                        hostname,
-                        ip_str,
-                    )
-                    return False
-            except ValueError:
-                continue
     except Exception:
         logger.debug(
-            "is_safe_url_with_dns: DNS lookup failed for %s", hostname, exc_info=True
+            "resolve_safe_ips: DNS lookup failed for %s", hostname, exc_info=True
         )
-        return False
-    return True
+        return None
+    safe: list[str] = []
+    for _family, _type, _proto, _canon, sockaddr in infos:
+        ip_str = sockaddr[0]
+        try:
+            addr = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if _is_private_addr(addr):
+            logger.warning(
+                "resolve_safe_ips: resolved %s -> %s (private), blocking",
+                hostname,
+                ip_str,
+            )
+            return None
+        safe.append(ip_str)
+    if not safe:
+        logger.warning("resolve_safe_ips: %s resolved to no usable IPs", hostname)
+        return None
+    return safe
+
+
+def is_safe_url_with_dns(url: str) -> bool:
+    return resolve_safe_ips(url) is not None
 
 
 _ALLOWED_READ_DIRS: list[str] = [

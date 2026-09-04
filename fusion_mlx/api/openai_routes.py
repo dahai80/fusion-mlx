@@ -18,6 +18,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from ..api.adapters.base import InternalResponse, StreamChunk
 from ..api.adapters.openai import OpenAIAdapter
@@ -917,6 +918,16 @@ async def _run_chat(
             type(exc).__name__,
             exc,
         )
+        try:
+            from ..telemetry import emit
+
+            emit.error(
+                category="request_failure",
+                exc=exc,
+                phase="request",
+            )
+        except Exception:
+            logger.debug("telemetry error emit failed", exc_info=True)
         raise HTTPException(500, "Internal server error")
     finally:
         await _release()
@@ -1008,6 +1019,8 @@ async def _stream_chat_generator(
     principal: str | None = None,
     profile_overrides: dict | None = None,
     headers: dict | None = None,
+    resume_prompt_cache: list | None = None,
+    resume_cached_tokens: int = 0,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a streaming chat completion.
 
@@ -1166,6 +1179,8 @@ async def _stream_chat_generator(
                 or _detect_prefix_cache_boundary(request.messages)
             ),
             compiled_grammar=compiled_grammar,
+            resume_prompt_cache=resume_prompt_cache,
+            resume_cached_tokens=resume_cached_tokens,
         ):
             if gen.new_text:
                 if keepalive:
@@ -1558,6 +1573,8 @@ async def _stream_chat(
     _skip_cap_check: bool = False,
     principal: str | None = None,
     headers: dict | None = None,
+    resume_prompt_cache: list | None = None,
+    resume_cached_tokens: int = 0,
 ) -> StreamingResponse:
     """Execute a streaming chat completion.
 
@@ -1637,6 +1654,8 @@ async def _stream_chat(
             principal=principal,
             profile_overrides=profile_overrides,
             headers=headers,
+            resume_prompt_cache=resume_prompt_cache,
+            resume_cached_tokens=resume_cached_tokens,
         ),
         media_type="text/event-stream",
         headers=_stream_headers,
@@ -2080,3 +2099,73 @@ async def list_models(
         )
 
     return ModelsResponse(data=models)
+
+
+class ResumeRequest(BaseModel):
+    previous_request_id: str
+    model: str
+    messages: list[dict[str, Any]]
+    max_tokens: int | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    stream: bool = True
+
+
+@router.post("/resume")
+async def resume_completion(
+    body: ResumeRequest,
+    _auth: bool = Depends(verify_api_key),
+) -> Any:
+    """Resume a chat completion from a prior request's persisted KV.
+
+    Loads the most recent disk KV checkpoint written for
+    ``previous_request_id`` (on a client disconnect / scheduler abort),
+    seeds a fresh request with that cached tail, and streams the
+    continuation. Requires FUSION_MLX_KV_CHECKPOINT_INTERVAL>0; without
+    it the persist end never wrote a checkpoint and this endpoint
+    returns 409 so the client falls back to a normal completion.
+    """
+    from ..service.kv_resume import load_resumable_kv
+
+    loaded = load_resumable_kv(body.previous_request_id, model_name=body.model)
+    if loaded is None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No resumable KV checkpoint for "
+                f"{body.previous_request_id}. Either checkpointing is "
+                "disabled (FUSION_MLX_KV_CHECKPOINT_INTERVAL=0) or the "
+                "prior request never persisted (clean finish / aborted "
+                "before first boundary)."
+            ),
+        )
+
+    logger.info(
+        "Resume: loaded KV for %s at %d tokens -> seeding continuation",
+        body.previous_request_id,
+        loaded.token_offset,
+    )
+
+    chat_req = ChatCompletionRequest(
+        model=body.model,
+        messages=body.messages,
+        max_tokens=body.max_tokens or 4096,
+        temperature=body.temperature if body.temperature is not None else 0.7,
+        top_p=body.top_p if body.top_p is not None else 0.9,
+        stream=body.stream,
+    )
+
+    if not body.stream:
+        # Non-stream resume: seed via the engine add_request resume path
+        # through _run_chat is not plumbed today; route through stream and
+        # let callers that need a single buffer collect the SSE. Most
+        # disconnect-resume callers stream anyway.
+        chat_req.stream = True
+
+    return await _stream_chat(
+        chat_req,
+        _skip_cap_check=False,
+        resume_prompt_cache=list(loaded.cache),
+        resume_cached_tokens=int(loaded.token_offset),
+    )
+

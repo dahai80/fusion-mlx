@@ -187,6 +187,17 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
                 SURFACE_API,
             )
 
+            emit.request(
+                endpoint="/v1/images/generate",
+                model_alias=model_name,
+                stream=False,
+                tool_call_used=False,
+                prompt_tokens=0,
+                completion_tokens=len(image_bytes_list),
+                ttft_ms=0.0,
+                tps=0.0,
+                status=200,
+            )
             emit.activation(
                 activation_kind=ACTIVATION_FIRST_IMAGE_GENERATION,
                 surface=SURFACE_API,

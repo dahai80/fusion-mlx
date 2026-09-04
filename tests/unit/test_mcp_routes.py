@@ -237,3 +237,41 @@ class TestExecuteMcpTool:
         r = app_client.post("/v1/mcp/execute", json={"arguments": {}})
         assert r.status_code == 422
         mgr.execute_tool.assert_not_awaited()
+
+    def test_sandbox_blocks_path_traversal_arg(self, app_client):
+        from fusion_mlx.mcp.security import get_sandbox, set_sandbox, ToolSandbox
+
+        original = get_sandbox()
+        set_sandbox(ToolSandbox(enabled=True))
+        try:
+            mgr = MagicMock()
+            mgr.execute_tool = AsyncMock()
+            mcp_routes.set_mcp_manager_getter(lambda: mgr)
+
+            r = app_client.post(
+                "/v1/mcp/execute",
+                json={"tool_name": "srv__read", "arguments": {"path": "../../etc/passwd"}},
+            )
+            assert r.status_code == 403
+            mgr.execute_tool.assert_not_awaited()
+        finally:
+            set_sandbox(original)
+
+    def test_sandbox_blocks_high_risk_tool(self, app_client):
+        from fusion_mlx.mcp.security import get_sandbox, set_sandbox, ToolSandbox
+
+        original = get_sandbox()
+        set_sandbox(ToolSandbox(enabled=True))
+        try:
+            mgr = MagicMock()
+            mgr.execute_tool = AsyncMock()
+            mcp_routes.set_mcp_manager_getter(lambda: mgr)
+
+            r = app_client.post(
+                "/v1/mcp/execute",
+                json={"tool_name": "srv__shell", "arguments": {"cmd": "ls"}},
+            )
+            assert r.status_code == 403
+            mgr.execute_tool.assert_not_awaited()
+        finally:
+            set_sandbox(original)

@@ -105,6 +105,14 @@ class ModelSettings:
     fusion_paged_pool_num_blocks: int = 256
     fusion_target_model_types: tuple[str, ...] = ()
 
+    # Phase C kernels (#4): W4A8 activation-int8 linear conversion + NVFP4
+    # load-time dequant. Both default OFF; env FUSION_MLX_W4A8=1 /
+    # FUSION_MLX_NVFP4_DEQUANT=1 force-enable when settings are absent.
+    w4a8_enabled: bool = False
+    w4a8_group_size: int = 64
+    nvfp4_dequant_enabled: bool = False
+    fused_gdn_enabled: bool = False
+
     display_name: str | None = None
     description: str | None = None
     active_profile_name: str | None = None

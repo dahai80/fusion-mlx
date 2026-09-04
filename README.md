@@ -958,6 +958,12 @@ copy, correct for quantized bases. See
 | GET | `/admin/api/fine-tune/grpo/jobs/{id}/stream` | SSE GRPO progress stream |
 | POST | `/admin/api/fine-tune/grpo/jobs/{id}/cancel` | Cancel a GRPO job |
 | DELETE | `/admin/api/fine-tune/grpo/jobs/{id}` | Delete a GRPO job record |
+| POST | `/admin/api/fine-tune/rft/jobs` | Create an RFT rejection-sampling training job (#9) |
+| GET | `/admin/api/fine-tune/rft/jobs` | List RFT jobs |
+| GET | `/admin/api/fine-tune/rft/jobs/{id}` | Get RFT job details |
+| GET | `/admin/api/fine-tune/rft/jobs/{id}/stream` | SSE RFT progress stream |
+| POST | `/admin/api/fine-tune/rft/jobs/{id}/cancel` | Cancel an RFT job |
+| DELETE | `/admin/api/fine-tune/rft/jobs/{id}` | Delete an RFT job record |
 | POST | `/admin/api/fine-tune/dpo/jobs` | Create a DPO preference training job (#399) |
 | POST | `/admin/api/fine-tune/orpo/jobs` | Create an ORPO preference training job (#399) |
 | GET | `/admin/api/fine-tune/dpo/jobs` | List DPO/ORPO jobs |
@@ -965,6 +971,10 @@ copy, correct for quantized bases. See
 | GET | `/admin/api/fine-tune/dpo/jobs/{id}/stream` | SSE DPO/ORPO progress stream |
 | POST | `/admin/api/fine-tune/dpo/jobs/{id}/cancel` | Cancel a DPO/ORPO job |
 | DELETE | `/admin/api/fine-tune/dpo/jobs/{id}` | Delete a DPO/ORPO job record |
+| GET | `/admin/api/telemetry/status` | Telemetry enabled/consent/queue/activation overview (#5) |
+| GET | `/admin/api/telemetry/queue` | Telemetry queue counters (pending/enqueued/dropped/flushes) |
+| GET | `/admin/api/telemetry/activations` | Activation milestone markers fired |
+| GET | `/admin/api/telemetry/alerts` | Derived alert signals (flush failures, drops, backlog) |
 
 ### Quick Example
 

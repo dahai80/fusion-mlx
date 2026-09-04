@@ -33,30 +33,30 @@ class TestValidateApiKey(unittest.TestCase):
     def test_too_short_rejected(self):
         is_valid, msg = validate_api_key("abc")
         self.assertFalse(is_valid)
-        self.assertIn("at least 4", msg)
+        self.assertIn("at least 12", msg)
 
     def test_empty_rejected(self):
         is_valid, msg = validate_api_key("")
         self.assertFalse(is_valid)
 
     def test_non_ascii_rejected(self):
-        # "密钥" 是 2 字符（非 ASCII），先触发长度检查（<4），故错误信息是 "at least 4"
+        # "密钥" 是 2 字符（非 ASCII），先触发长度检查（<12），故错误信息是 "at least 12"
         is_valid, msg = validate_api_key("密钥")
         self.assertFalse(is_valid)
 
     def test_non_ascii_long_enough_rejected(self):
-        # 4+ 字符非 ASCII 应触发 ASCII 检查
-        is_valid, msg = validate_api_key("密钥密钥密钥")
+        # 12+ 字符非 ASCII 应触发 ASCII 检查
+        is_valid, msg = validate_api_key("密钥密钥密钥密钥密钥密钥")
         self.assertFalse(is_valid)
         self.assertIn("ASCII", msg)
 
     def test_min_length_boundary(self):
-        # 恰好 4 字符应通过
-        self.assertTrue(validate_api_key("abcd")[0])
+        # 恰好 12 字符应通过
+        self.assertTrue(validate_api_key("abcdefghijkl")[0])
 
     def test_special_chars_allowed(self):
         # ASCII 特殊字符应通过
-        self.assertTrue(validate_api_key("sk-12345!@#")[0])
+        self.assertTrue(validate_api_key("sk-12345!@#$")[0])
 
 
 class TestVerifyApiKey(unittest.TestCase):

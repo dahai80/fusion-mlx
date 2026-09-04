@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 _fine_tune_service = None
 _engine_pool_ref = None
 _grpo_service = None
+_rft_service = None
 _dpo_service = None
 _reward_service = None
 
@@ -55,6 +56,13 @@ def set_fine_tune_context(pool, service=None):
 def set_grpo_context(pool, service=None):
     global _grpo_service
     _grpo_service = service
+    if service is not None and pool is not None:
+        service.set_engine_pool(pool)
+
+
+def set_rft_context(pool, service=None):
+    global _rft_service
+    _rft_service = service
     if service is not None and pool is not None:
         service.set_engine_pool(pool)
 
@@ -82,6 +90,17 @@ def _get_grpo_service():
         if _engine_pool_ref is not None:
             _grpo_service.set_engine_pool(_engine_pool_ref)
     return _grpo_service
+
+
+def _get_rft_service():
+    global _rft_service
+    if _rft_service is None:
+        from fusion_mlx.training.rft_service import RFTService
+
+        _rft_service = RFTService()
+        if _engine_pool_ref is not None:
+            _rft_service.set_engine_pool(_engine_pool_ref)
+    return _rft_service
 
 
 def _get_dpo_service():
@@ -671,6 +690,152 @@ async def stream_grpo_progress(
     is_admin: bool = Depends(require_admin),
 ):
     svc = _get_grpo_service()
+    job = svc.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+
+    async def event_generator():
+        seen = 0
+        try:
+            while True:
+                async with job.cond:
+                    while seen >= len(job.events) and not job.terminal:
+                        try:
+                            await asyncio.wait_for(job.cond.wait(), timeout=60.0)
+                        except TimeoutError:
+                            break
+                    new = list(job.events[seen:])
+                    seen = len(job.events)
+                    done = job.terminal
+
+                for ev in new:
+                    yield f"data: {json.dumps(ev)}\n\n"
+                if not new and not done:
+                    yield ": keepalive\n\n"
+                if done:
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# =============================================================================
+# RFT (rejection-sampling fine-tuning) Endpoints (#9)
+# =============================================================================
+
+
+@_router.post("/api/fine-tune/rft/jobs")
+async def create_rft_job(
+    request: Request,
+    is_admin: bool = Depends(require_admin),
+):
+    # Create an RFT (rejection-sampling fine-tuning) job. Body:
+    # {model_id, prompts: [str], adapter_name?, config?: RFTConfig}.
+    # RFT samples N completions per prompt, scores via reward, keeps top_k
+    # winners, then applies a plain SFT CE loss — no PPO/value-model needed.
+    body = await request.json()
+
+    model_id = body.get("model_id", "")
+    prompts = body.get("prompts", [])
+    adapter_name = body.get("adapter_name", "")
+
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    if not prompts or not isinstance(prompts, list):
+        raise HTTPException(status_code=400, detail="prompts (non-empty list) required")
+
+    from fusion_mlx.training.rft import RFTConfig
+
+    config_body = body.get("config", {})
+    try:
+        config = RFTConfig(**config_body)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid config: {e}")
+
+    pool = _get_engine_pool()
+    if pool is not None:
+        entry = pool.get_entry(model_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+        if entry.model_type not in ("llm", "vlm", None):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model {model_id} is not a text model (type: {entry.model_type})",
+            )
+
+    svc = _get_rft_service()
+    job = svc.create_job(
+        model_id=model_id,
+        prompts=prompts,
+        config=config,
+        adapter_name=adapter_name,
+    )
+    svc.start_processing()
+    return job.to_dict()
+
+
+@_router.get("/api/fine-tune/rft/jobs")
+async def list_rft_jobs(
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_rft_service()
+    return [job.to_dict() for job in svc.list_jobs()]
+
+
+@_router.get("/api/fine-tune/rft/jobs/{job_id}")
+async def get_rft_job(
+    job_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_rft_service()
+    job = svc.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return job.to_dict()
+
+
+@_router.post("/api/fine-tune/rft/jobs/{job_id}/cancel")
+async def cancel_rft_job(
+    job_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_rft_service()
+    if not svc.cancel_job(job_id):
+        raise HTTPException(
+            status_code=404, detail=f"Job not found or not cancellable: {job_id}"
+        )
+    job = svc.get_job(job_id)
+    return job.to_dict() if job else {"status": "cancelled"}
+
+
+@_router.delete("/api/fine-tune/rft/jobs/{job_id}")
+async def delete_rft_job(
+    job_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_rft_service()
+    if not svc.delete_job(job_id):
+        raise HTTPException(
+            status_code=404, detail=f"Job not found or currently running: {job_id}"
+        )
+    return {"status": "deleted"}
+
+
+@_router.get("/api/fine-tune/rft/jobs/{job_id}/stream")
+async def stream_rft_progress(
+    job_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_rft_service()
     job = svc.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")

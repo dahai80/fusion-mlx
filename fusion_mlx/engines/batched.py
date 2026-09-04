@@ -894,12 +894,25 @@ class BatchedEngine(BaseEngine):
                 "specprefill_system_end"
             )
 
+        # Disconnect KV resume: optional externally-loaded KV checkpoint
+        # (from kv_resume.load_resumable_kv) seeds the request so the
+        # cached tail skips prefill. Popped here and forwarded to
+        # add_request; absent on the normal path.
+        resume_kwargs = {}
+        if kwargs.get("resume_prompt_cache") is not None:
+            resume_kwargs["resume_prompt_cache"] = kwargs.pop(
+                "resume_prompt_cache"
+            )
+        if kwargs.get("resume_cached_tokens"):
+            resume_kwargs["resume_cached_tokens"] = int(kwargs.pop("resume_cached_tokens"))
+
         engine = self._engine
         request_id = await engine.add_request(
             prompt=prompt,
             sampling_params=sampling_params,
             streaming=True,
             **specprefill_kwargs,
+            **resume_kwargs,
         )
         finished_normally = False
         try:
@@ -1083,6 +1096,9 @@ class BatchedEngine(BaseEngine):
 
         kv_handoff = kwargs.pop("kv_handoff", None)
         prefill_only = kwargs.pop("prefill_only", False)
+        # Disconnect KV resume kwargs (forwarded to stream_generate).
+        resume_prompt_cache = kwargs.pop("resume_prompt_cache", None)
+        resume_cached_tokens = kwargs.pop("resume_cached_tokens", 0)
         if prefill_only:
             # prefill_only on streaming path: yield single result from non-streaming
             result = await self.chat(
@@ -1167,6 +1183,8 @@ class BatchedEngine(BaseEngine):
             min_p=min_p,
             repetition_penalty=repetition_penalty,
             presence_penalty=presence_penalty,
+            resume_prompt_cache=resume_prompt_cache,
+            resume_cached_tokens=resume_cached_tokens,
             **kwargs,
         ):
             if output.finished and tools and not output.tool_calls:

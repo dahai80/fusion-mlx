@@ -60,12 +60,28 @@ def add_request(self, request: Request) -> None:
             request.prompt_token_ids = list(request.prompt)
         request.num_prompt_tokens = len(request.prompt_token_ids)
 
+    # Disconnect KV resume: the caller (kv_resume endpoint) already seeded
+    # request.prompt_cache / cached_tokens from a disk checkpoint. Skip the
+    # prefix-cache-prep branches so the externally-loaded KV survives into
+    # _schedule_waiting instead of being overwritten by a fresh fetch_cache.
+    if request.prompt_cache is not None and request.cached_tokens > 0:
+        if request.remaining_tokens is None:
+            request.remaining_tokens = request.prompt_token_ids[
+                request.cached_tokens :
+            ]
+        logger.info(
+            "Resume hit for %s: using seeded KV (%d cached tokens, "
+            "%d remaining)",
+            request.request_id,
+            request.cached_tokens,
+            len(request.remaining_tokens),
+        )
     # Cache freshness: if a store_cache is in flight, defer the prefix
     # lookup to _schedule_waiting (executor thread) so add_request (FastAPI
     # event loop) never races an in-flight store_cache and reads stale KV.
     # _should_defer registers a freshness wait for relevant stores (above
     # thresholds); either way prep is deferred to _schedule_waiting.
-    if self._inflight_store_futures:
+    elif self._inflight_store_futures:
         self._should_defer_for_cache_freshness(request)
         request.remaining_tokens = request.prompt_token_ids
         logger.debug(

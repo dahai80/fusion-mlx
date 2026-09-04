@@ -217,6 +217,23 @@ async def create_embeddings(request: EmbeddingRequest):
         model_id=request.model,
     )
 
+    try:
+        from ..telemetry import emit
+
+        emit.request(
+            endpoint="/v1/embeddings",
+            model_alias=request.model,
+            stream=False,
+            tool_call_used=False,
+            prompt_tokens=tokens,
+            completion_tokens=0,
+            ttft_ms=elapsed * 1000.0,
+            tps=0.0,
+            status=200,
+        )
+    except Exception:
+        logger.debug("telemetry request emit failed", exc_info=True)
+
     if dedup_mapping is not None:
         deduped_embeddings = [embeddings_list[idx] for idx in dedup_mapping]
         embeddings_list = deduped_embeddings

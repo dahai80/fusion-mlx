@@ -3,10 +3,88 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _w4a8_requested(model_settings: Any | None) -> bool:
+    # Env FUSION_MLX_W4A8=1 forces W4A8 on even when settings are absent;
+    # explicit settings field wins over env when present.
+    if model_settings is not None and getattr(model_settings, "w4a8_enabled", False):
+        return True
+    return os.environ.get("FUSION_MLX_W4A8", "") == "1"
+
+
+def _nvfp4_dequant_requested(model_settings: Any | None) -> bool:
+    if model_settings is not None and getattr(
+        model_settings, "nvfp4_dequant_enabled", False
+    ):
+        return True
+    return os.environ.get("FUSION_MLX_NVFP4_DEQUANT", "") == "1"
+
+
+def _fused_gdn_requested(model_settings: Any | None) -> bool:
+    if model_settings is not None and getattr(
+        model_settings, "fused_gdn_enabled", False
+    ):
+        return True
+    return os.environ.get("FUSION_MLX_FUSED_GDN", "") == "1"
+
+
+def _apply_nvfp4_dequant(model: Any) -> Any:
+    # Post-load NVFP4 parameter-tree rewrite. Walks model.parameters() (a
+    # nested {key: array|dict}) into a flat dotted dict, runs the NVFP4
+    # reader, and if any tensors changed, writes them back via
+    # model.update(). No-op (debug log) for non-NVFP4 checkpoints.
+    try:
+        from ..custom_kernels.nvfp4 import dequant_nvfp4_weights
+    except Exception as e:
+        logger.warning("NVFP4 dequant import failed: %s", e)
+        return model
+    params = model.parameters() if hasattr(model, "parameters") else None
+    if params is None:
+        logger.debug("NVFP4 dequant: model has no parameters(), skip")
+        return model
+
+    def _flatten(tree, prefix=""):
+        out = {}
+        for k, v in tree.items():
+            key = f"{prefix}{k}"
+            if hasattr(v, "items"):
+                out.update(_flatten(v, f"{key}."))
+            else:
+                out[key] = v
+        return out
+
+    flat = _flatten(params)
+    before_ids = {k: id(v) for k, v in flat.items()}
+    flat = dequant_nvfp4_weights(flat)
+    changed = [k for k, v in flat.items() if id(v) != before_ids.get(k)]
+    if not changed:
+        logger.debug(
+            "NVFP4 dequant: no NVFP4 (uint8 + block-scale) tensors found "
+            "(expected — non-NVFP4 checkpoint)"
+        )
+        return model
+    logger.info("NVFP4 dequant: rewrote %d tensors", len(changed))
+
+    def _inject(tree, prefix, flat):
+        for k, v in tree.items():
+            key = f"{prefix}{k}"
+            if hasattr(v, "items"):
+                _inject(v, f"{key}.", flat)
+            elif key in flat:
+                tree[k] = flat[key]
+
+    _inject(params, "", flat)
+    try:
+        model.update(params)
+    except Exception as e:
+        logger.warning("NVFP4 dequant: model.update() failed: %s", e)
+    return model
 
 
 def materialize_lazy_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -99,6 +177,43 @@ def apply_post_load_transforms(model: Any, model_settings: Any | None = None) ->
         model = apply_fusion_takeover(model, model_settings)
     except Exception as e:
         logger.warning("fusion takeover dispatch failed: %s", e)
+    # Phase C #4: W4A8 activation-int8 linear conversion. Replaces nn.Linear
+    # and nn.QuantizedLinear with W4A8Linear (int8 activation path). Runs
+    # after fusion_takeover so takeover-tagged layers are skipped by the
+    # W4A8 walker (they are not bare nn.Linear). Default OFF.
+    if _w4a8_requested(model_settings):
+        try:
+            from ..custom_kernels.phase_c import convert_to_w4a8
+
+            group_size = (
+                getattr(model_settings, "w4a8_group_size", 64)
+                if model_settings is not None
+                else 64
+            )
+            model, n = convert_to_w4a8(model, group_size=group_size)
+            logger.info("post-load W4A8 conversion: %d layers", n)
+        except Exception as e:
+            logger.warning("post-load W4A8 conversion failed: %s", e)
+    # Phase C #4: fused GDN megakernel. No in-repo model consumes standalone
+    # GDN today; the converter is a no-op scan unless a module declares
+    # _is_gdn. Logged at debug so the "no GDN found" message is visible
+    # only when an operator explicitly opts in.
+    if _fused_gdn_requested(model_settings):
+        try:
+            from ..custom_kernels.phase_c import apply_fused_gdn
+
+            model = apply_fused_gdn(model)
+        except Exception as e:
+            logger.warning("post-load fused GDN conversion failed: %s", e)
+    # Phase C #4: NVFP4 load-time dequant. Flattens the model parameter tree
+    # to a {dotted.key: array} dict and runs dequant_nvfp4_weights, which only
+    # fires on uint8 weights with a sibling block-scale tensor (1 scale per 16
+    # elements). A normal fp16/bf16/W4 LLM checkpoint has no such pairs → the
+    # pass is a no-op logged at debug. This is a format-compatibility bridge
+    # (4-bit storage win is NOT retained at inference); blocked on upstream
+    # mlx#2962 for a native speed path. See custom_kernels/nvfp4.py.
+    if _nvfp4_dequant_requested(model_settings):
+        model = _apply_nvfp4_dequant(model)
     freq = getattr(model_settings, "index_cache_freq", None)
     if freq is None:
         return model

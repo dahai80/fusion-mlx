@@ -80,8 +80,10 @@ from .admin.helpers import (
     set_ms_downloader,
     set_oq_manager,
 )
+from .api.bench_routes import router as bench_router
 from .api.embeddings_routes import router as embeddings_router
 from .api.embeddings_routes import set_embeddings_context
+from .api.flywheel_routes import router as flywheel_router
 from .api.ner_routes import router as ner_router
 from .api.ner_routes import set_ner_context
 from .api.ocr_routes import router as ocr_router
@@ -94,6 +96,7 @@ from .api.openclaw_routes import router as openclaw_router
 from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.reasoning_routes import router as reasoning_router
 from .api.reasoning_routes import set_reasoning_context
+from .api.recommend_batch_routes import router as recommend_batch_router
 from .api.recommend_routes import router as recommend_router
 from .api.rerank_routes import router as rerank_router
 from .api.rerank_routes import set_rerank_context
@@ -102,6 +105,7 @@ from .api.session_routes import set_sessions_context
 from .api.spec_routes import router as spec_router
 from .api.videos_routes import router as videos_router
 from .api.videos_routes import set_videos_context
+from .cluster.routes import router as cluster_router
 from .config import ServerConfig
 from .dispatch import CloudRouter, RequestRouter
 from .engine_core import AsyncEngineCore
@@ -1029,6 +1033,9 @@ class Server:
         app.include_router(layered_quantize_router)
         app.include_router(distributed_router)
         app.include_router(recommend_router)
+        app.include_router(bench_router)
+        app.include_router(recommend_batch_router)
+        app.include_router(flywheel_router)
         app.include_router(spec_router)
         app.include_router(embeddings_router)
         app.include_router(rerank_router)
@@ -1044,6 +1051,7 @@ class Server:
         app.include_router(cache_router)
         app.include_router(gc_router)
         app.include_router(admin_router)
+        app.include_router(cluster_router)
 
         # #357: /v1/models/status MUST be registered before the gui_compat
         # router's /v1/models/{model_name} catch-all. Starlette matches routes
@@ -1546,6 +1554,15 @@ class Server:
         _grpo_svc.set_engine_pool(self.pool)
         _grpo_svc.set_loop(asyncio.get_running_loop())
         set_grpo_context(self.pool, _grpo_svc)
+
+        # Wire RFT (rejection-sampling fine-tuning) service (#9)
+        from .admin.fine_tune_route import set_rft_context
+        from .training.rft_service import RFTService
+
+        _rft_svc = RFTService()
+        _rft_svc.set_engine_pool(self.pool)
+        _rft_svc.set_loop(asyncio.get_running_loop())
+        set_rft_context(self.pool, _rft_svc)
 
         # Wire DPO/ORPO service (#399)
         from .admin.fine_tune_route import set_dpo_context

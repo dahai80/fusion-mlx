@@ -367,6 +367,17 @@ async def generate_video(
                     SURFACE_API,
                 )
 
+                emit.request(
+                    endpoint="/v1/videos/generate",
+                    model_alias=request.model,
+                    stream=False,
+                    tool_call_used=False,
+                    prompt_tokens=0,
+                    completion_tokens=len(video_bytes_list),
+                    ttft_ms=0.0,
+                    tps=0.0,
+                    status=200,
+                )
                 emit.activation(
                     activation_kind=ACTIVATION_FIRST_VIDEO_GENERATION,
                     surface=SURFACE_API,

@@ -646,6 +646,8 @@ class EngineCore:
         specprefill_threshold: int | None = None,
         specprefill_system_end: int | None = None,
         streaming: bool = False,
+        resume_prompt_cache: list | None = None,
+        resume_cached_tokens: int = 0,
     ) -> str:
         if request_id is None:
             request_id = str(uuid.uuid4())
@@ -664,6 +666,12 @@ class EngineCore:
             vlm_cache_key_start=vlm_cache_key_start,
             vlm_cache_key_ranges=vlm_cache_key_ranges,
         )
+        # Disconnect KV resume: seed externally-loaded KV (from a disk
+        # checkpoint written on a prior disconnect) so add_request's
+        # prefix-cache-prep is skipped and the cached tail survives.
+        if resume_prompt_cache is not None and resume_cached_tokens > 0:
+            request.prompt_cache = list(resume_prompt_cache)
+            request.cached_tokens = int(resume_cached_tokens)
         if specprefill is not None:
             request._specprefill_enabled = specprefill
         elif (
