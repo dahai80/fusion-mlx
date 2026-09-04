@@ -540,6 +540,23 @@ async def create_transcription(
 
     _record_audio_request(resolved_model)
 
+    try:
+        from ..telemetry import emit
+        from ..telemetry.activation_spec import (
+            ACTIVATION_FIRST_DICTATION,
+            SURFACE_API,
+        )
+
+        emit.activation(
+            activation_kind=ACTIVATION_FIRST_DICTATION,
+            surface=SURFACE_API,
+        )
+    except Exception:
+        logger.debug(
+            "telemetry dictation activation emit failed",
+            exc_info=True,
+        )
+
     # Build response directly from the dict returned by STTEngine
     segments = result.get("segments") or None
 

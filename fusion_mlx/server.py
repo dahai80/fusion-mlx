@@ -1371,8 +1371,18 @@ class Server:
             write_status("running")
             clear_crash_counter()
             yield
-        except Exception:
+        except Exception as exc:
             record_crash()
+            try:
+                from .telemetry import emit
+
+                emit.error(
+                    category="lifespan_failure",
+                    phase="startup",
+                    exc=exc,
+                )
+            except Exception:
+                logger.debug("telemetry error emit failed", exc_info=True)
             write_status("crashed")
             write_exit_status("crash")
             raise

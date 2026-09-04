@@ -360,6 +360,23 @@ async def generate_video(
                 _encode_video_output(vb, request.response_format)
                 for vb in video_bytes_list
             ]
+            try:
+                from ..telemetry import emit
+                from ..telemetry.activation_spec import (
+                    ACTIVATION_FIRST_VIDEO_GENERATION,
+                    SURFACE_API,
+                )
+
+                emit.activation(
+                    activation_kind=ACTIVATION_FIRST_VIDEO_GENERATION,
+                    surface=SURFACE_API,
+                )
+            except Exception:
+                logger.debug(
+                    "telemetry video-generation activation emit failed",
+                    exc_info=True,
+                )
+
             return VideoGenerateResponse(data=outputs)
         finally:
             if image_is_temp and image_path:

@@ -740,6 +740,46 @@ async def _run_chat(
             cached_tokens=getattr(gen, "cached_tokens", 0) or 0,
             principal=principal,
         )
+        try:
+            from ..telemetry import emit
+            from ..telemetry.activation_spec import (
+                ACTIVATION_FIRST_INFERENCE,
+                is_successful_inference,
+            )
+            from ..telemetry.coherence import (
+                is_abnormally_short,
+                is_empty,
+                looks_like_garbage,
+            )
+
+            _ct = getattr(gen, "completion_tokens", 0) or 0
+            _pt = getattr(gen, "prompt_tokens", 0) or 0
+            _gen_dur = time.perf_counter() - _start
+            _tps = (_ct / _gen_dur) if _gen_dur > 0 else 0.0
+            _ua = headers.get("user-agent") if headers else None
+            _out_text = gen.text or ""
+            emit.request(
+                endpoint="/v1/chat/completions",
+                model_alias=model_name,
+                stream=False,
+                tool_call_used=bool(tool_calls),
+                prompt_tokens=_pt,
+                completion_tokens=_ct,
+                ttft_ms=0.0,
+                tps=_tps,
+                status=200,
+                caller_agent=_ua,
+                output_degenerate=looks_like_garbage(_out_text, _ct),
+                completion_empty=is_empty(_ct),
+                completion_abnormally_short=is_abnormally_short(_out_text, _ct),
+            )
+            if is_successful_inference(200, _ct):
+                emit.activation(
+                    activation_kind=ACTIVATION_FIRST_INFERENCE,
+                    surface=emit.server_surface(),
+                )
+        except Exception:
+            logger.debug("telemetry request emit failed", exc_info=True)
         resp = _adapter.format_response(internal, request)
 
         # Context scaling for Claude Code via OpenAI API
@@ -1394,6 +1434,41 @@ async def _stream_chat_generator(
             cached_tokens=cached_tokens or 0,
             principal=principal,
         )
+        try:
+            from ..telemetry import emit
+            from ..telemetry.activation_spec import (
+                ACTIVATION_FIRST_INFERENCE,
+                is_successful_inference,
+            )
+            from ..telemetry.coherence import is_empty
+
+            _sct = completion_tokens or 0
+            _spt = prompt_tokens or 0
+            _sgen_dur = time.perf_counter() - _start
+            _stps = (_sct / _sgen_dur) if _sgen_dur > 0 else 0.0
+            _sua = headers.get("user-agent") if headers else None
+            emit.request(
+                endpoint="/v1/chat/completions",
+                model_alias=model_name,
+                stream=True,
+                tool_call_used=bool(tool_calls_in_stream),
+                prompt_tokens=_spt,
+                completion_tokens=_sct,
+                ttft_ms=0.0,
+                tps=_stps,
+                status=200,
+                caller_agent=_sua,
+                output_degenerate=False,
+                completion_empty=is_empty(_sct),
+                completion_abnormally_short=False,
+            )
+            if is_successful_inference(200, _sct):
+                emit.activation(
+                    activation_kind=ACTIVATION_FIRST_INFERENCE,
+                    surface=emit.server_surface(),
+                )
+        except Exception:
+            logger.debug("telemetry streaming request emit failed", exc_info=True)
 
     except asyncio.CancelledError:
         logger.info("Client disconnected during streaming: %s", request_id)

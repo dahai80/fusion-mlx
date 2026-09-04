@@ -2,6 +2,73 @@
 
 ## [Unreleased]
 
+## [0.8.78] - 2026-09-04
+
+### Added
+- **Per-request telemetry wiring (prod-visible).** `emit.request()` is
+  wired into the non-streaming OpenAI chat-completion path
+  (`openai_routes._run_chat`, after `record_chat_session`) and the
+  streaming finalize path, recording endpoint, model alias, prompt /
+  completion tokens, TTFT, decode TPS, status, stream flag, tool-call
+  flag, and the coherence flags (`output_degenerate`,
+  `completion_empty`, `completion_abnormally_short`) plus the bucketed
+  `caller_agent`. Request emits are cache-HIT bypassed and wrapped in
+  telemetry-only `try/except` so an emit failure can never swallow a
+  response or reach the client. Sampling gate
+  (`FUSION_MLX_TELEMETRY_REQUEST_SAMPLE`, default 0.1) bounds volume.
+- **Error telemetry wiring.** `emit.error(category=..., exc=...)`
+  fires on lifespan startup failure (`server.py`, re-raises after
+  emit) — the unprotected lifespan path now reports
+  `lifespan_failure/startup`. Shutdown wiring intentionally omitted
+  (lifespan has no shutdown `except` block; restructuring would violate
+  surgical scope).
+- **Activation milestone wiring.** `emit.activation()` fires
+  once-per-install milestones on the prod surfaces: `first_inference`
+  (chat completion, cli + api), `model_pull` (cli model download,
+  mirror + HF tails), `first_image_generation` (image-generation
+  route), `first_video_generation` (video-generation route),
+  `first_dictation` (audio transcription / STT route, NOT TTS). The
+  `(first_dictation, api)` surface pair was added to
+  `ACTIVATION_KIND_SURFACE_PAIRS` (additive; fusion extends Rapid's
+  desktop-only dictation milestone with an API-surface variant per the
+  design spec). `ACTIVATION_SPEC_VERSION` unchanged at 3.
+- **Prometheus metric expansion.** `/metrics` gains new families,
+  each rendered defensively (zero + `logger.debug` on absent state,
+  never fabricated):
+  - TTFT / decode-TPS histograms (`server_metrics.Histogram`).
+  - Modality counters: `video_requests`,
+    `image_generation_requests`, `vision_requests`, `audio_requests`.
+  - Lifespan timestamps: `process_start_epoch`,
+    `process_shutdown_epoch` (omitted when absent — never 0-fabricated).
+  - Queue gauges: `requests_running`, `requests_waiting`
+    (via public `engine.get_stats()`).
+  - Uptime + Metal: `uptime_seconds`, `metal_active_bytes`,
+    `metal_cache_bytes`, `metal_peak_bytes` (Metal-guarded).
+  - KV-cache checkpoint: writes / loads / bytes / evictions counters.
+  - UBC eviction: `ubc_evicted_bytes_total` (via the module's own
+    `render_prometheus_lines`) + eviction-pass calls / failures counters.
+  - Radix diffusion cache: per-cache labeled hits / misses /
+    evictions / insertions / leaf-count / bytes.
+  - Paged-KV cache: total / allocated / free / shared block gauges,
+    tokens-cached / cow-copies counters, and a utilization gauge
+    (defensive scheduler traversal; honest zero when no pool loaded).
+
+### Changed
+- **`rapid_mlx_` metric prefix → `fusion_mlx_`.** All Prometheus metric
+  names now use the `fusion_mlx_` prefix (5 renames); no Rapid-MLX
+  prefix remains.
+
+### Notes
+- Families with no reachable module-level stat accessor are NOT
+  rendered — fabricating counters for nonexistent state would emit
+  stale zeros that look real (false-confidence). Skipped per scope
+  rulings: speculative-decode cumulative metrics (instance state on
+  `scheduler._spec_decode_state`, not reachable without a fragile
+  private-attr chain across 8 engine types), `turboquant`, `pflash`,
+  `embedding_truncations`, and distributed-decode per-node stats
+  (no accessor). These remain parked for a future engine-state
+  telemetry task.
+
 ## [0.8.77] - 2026-09-04
 
 ### Added
