@@ -80,8 +80,10 @@ from .admin.helpers import (
     set_ms_downloader,
     set_oq_manager,
 )
+from .api.bench_routes import router as bench_router
 from .api.embeddings_routes import router as embeddings_router
 from .api.embeddings_routes import set_embeddings_context
+from .api.flywheel_routes import router as flywheel_router
 from .api.ner_routes import router as ner_router
 from .api.ner_routes import set_ner_context
 from .api.ocr_routes import router as ocr_router
@@ -94,6 +96,7 @@ from .api.openclaw_routes import router as openclaw_router
 from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.reasoning_routes import router as reasoning_router
 from .api.reasoning_routes import set_reasoning_context
+from .api.recommend_batch_routes import router as recommend_batch_router
 from .api.recommend_routes import router as recommend_router
 from .api.rerank_routes import router as rerank_router
 from .api.rerank_routes import set_rerank_context
@@ -1030,6 +1033,9 @@ class Server:
         app.include_router(layered_quantize_router)
         app.include_router(distributed_router)
         app.include_router(recommend_router)
+        app.include_router(bench_router)
+        app.include_router(recommend_batch_router)
+        app.include_router(flywheel_router)
         app.include_router(spec_router)
         app.include_router(embeddings_router)
         app.include_router(rerank_router)
