@@ -36,7 +36,7 @@ def test_consent_round_trip(fake_home):
     assert state is not None
     assert state.consent is True
     assert state.prompted_version == "0.6.33"
-    assert state.schema_version == 1
+    assert state.schema_version == 3
     assert state.prompted_at.endswith("Z")
     assert is_enabled() is True
 

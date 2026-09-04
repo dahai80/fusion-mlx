@@ -54,7 +54,7 @@ class TestConsentStateDataclass(unittest.TestCase):
             consent=True, prompted_at="2026-07-04T00:00:00Z", prompted_version="0.4.1"
         )
         self.assertTrue(cs.consent)
-        self.assertEqual(cs.schema_version, 1)
+        self.assertEqual(cs.schema_version, 3)
 
     def test_frozen(self):
         cs = state.ConsentState(consent=False, prompted_at="x", prompted_version="y")
@@ -96,7 +96,7 @@ class TestGetConsentState(unittest.TestCase):
                         "consent": True,
                         "prompted_at": "2026-07-04T00:00:00Z",
                         "prompted_version": "0.4.1",
-                        "schema_version": 1,
+                        "schema_version": 3,
                     }
                 )
             )
@@ -117,7 +117,7 @@ class TestGetConsentState(unittest.TestCase):
                         "consent": False,
                         "prompted_at": "2026-07-04T00:00:00Z",
                         "prompted_version": "0.4.1",
-                        "schema_version": 1,
+                        "schema_version": 3,
                     }
                 )
             )
@@ -153,7 +153,7 @@ class TestGetConsentState(unittest.TestCase):
                         "consent": "yes",  # 非 bool
                         "prompted_at": "x",
                         "prompted_version": "y",
-                        "schema_version": 1,
+                        "schema_version": 3,
                     }
                 )
             )
@@ -171,7 +171,7 @@ class TestGetConsentState(unittest.TestCase):
                         "consent": True,
                         "prompted_at": 123,  # 非 str
                         "prompted_version": "y",
-                        "schema_version": 1,
+                        "schema_version": 3,
                     }
                 )
             )
@@ -196,7 +196,7 @@ class TestGetConsentState(unittest.TestCase):
             with patch.object(state, "consent_path", return_value=p):
                 self.assertIsNone(state.get_consent_state())
 
-    def test_non_int_schema_version_defaults_to_1(self):
+    def test_non_int_schema_version_defaults_to_1_then_rejected(self):
         import yaml
 
         with tempfile.TemporaryDirectory() as td:
@@ -212,10 +212,9 @@ class TestGetConsentState(unittest.TestCase):
                 )
             )
             with patch.object(state, "consent_path", return_value=p):
-                # schema_version 非整数→默认 1→与 CURRENT 一致→返回 state
+                # schema_version 非整数→默认 1→1 != CURRENT(3)→返回 None
                 cs = state.get_consent_state()
-            self.assertIsNotNone(cs)
-            self.assertEqual(cs.schema_version, 1)
+            self.assertIsNone(cs)
 
     def test_empty_file_returns_none(self):
         with tempfile.TemporaryDirectory() as td:
@@ -468,7 +467,7 @@ class TestEnvVarConstant(unittest.TestCase):
         self.assertEqual(state.ENV_VAR, "FUSION_MLX_TELEMETRY")
 
     def test_schema_version_constant(self):
-        self.assertEqual(state.CURRENT_CONSENT_SCHEMA_VERSION, 1)
+        self.assertEqual(state.CURRENT_CONSENT_SCHEMA_VERSION, 3)
 
 
 if __name__ == "__main__":
