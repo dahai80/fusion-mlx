@@ -1434,6 +1434,41 @@ async def _stream_chat_generator(
             cached_tokens=cached_tokens or 0,
             principal=principal,
         )
+        try:
+            from ..telemetry import emit
+            from ..telemetry.activation_spec import (
+                ACTIVATION_FIRST_INFERENCE,
+                is_successful_inference,
+            )
+            from ..telemetry.coherence import is_empty
+
+            _sct = completion_tokens or 0
+            _spt = prompt_tokens or 0
+            _sgen_dur = time.perf_counter() - _start
+            _stps = (_sct / _sgen_dur) if _sgen_dur > 0 else 0.0
+            _sua = headers.get("user-agent") if headers else None
+            emit.request(
+                endpoint="/v1/chat/completions",
+                model_alias=model_name,
+                stream=True,
+                tool_call_used=bool(tool_calls_in_stream),
+                prompt_tokens=_spt,
+                completion_tokens=_sct,
+                ttft_ms=0.0,
+                tps=_stps,
+                status=200,
+                caller_agent=_sua,
+                output_degenerate=False,
+                completion_empty=is_empty(_sct),
+                completion_abnormally_short=False,
+            )
+            if is_successful_inference(200, _sct):
+                emit.activation(
+                    activation_kind=ACTIVATION_FIRST_INFERENCE,
+                    surface=emit.server_surface(),
+                )
+        except Exception:
+            logger.debug("telemetry streaming request emit failed", exc_info=True)
 
     except asyncio.CancelledError:
         logger.info("Client disconnected during streaming: %s", request_id)
