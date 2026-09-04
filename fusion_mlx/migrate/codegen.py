@@ -11,11 +11,24 @@ User instruction verbatim: "做一个端到端的功能，做模型迁移和量�
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 
 from .architectures import ArchTemplate
 
 logger = logging.getLogger(__name__)
+
+
+_VALID_TEMPLATE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+
+def _validate_template_name(name: str) -> str:
+    if not name or not _VALID_TEMPLATE_NAME.match(name):
+        raise ValueError(
+            f"Invalid template name {name!r}: must be a Python identifier "
+            f"(letters/digits/underscore, no quotes, newlines, or shell metachars)"
+        )
+    return name
 
 
 @dataclass
@@ -26,6 +39,7 @@ class CodegenResult:
 
 
 def _build_model_args(template: ArchTemplate, config: dict) -> str:
+    _validate_template_name(template.name)
     defaults = {
         "num_hidden_layers": config.get("num_hidden_layers", 0),
         "hidden_size": config.get("hidden_size", 0),
@@ -244,6 +258,7 @@ def generate_model_code(
 
 
 def list_model_files(template: ArchTemplate, config: dict) -> list[str]:
+    _validate_template_name(template.name)
     files = [
         f"{template.name}.py",
         "config.json",
