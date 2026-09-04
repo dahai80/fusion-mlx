@@ -118,3 +118,112 @@ def test_patcher_wraps_gemma_family():
     patcher = FusionModulePatcher()
     patcher.patch_model(model, cfg)
     assert getattr(model, "_fusion_takeover_applied", False)
+
+
+def test_resolve_sliding_softcap_gemma3():
+    from fusion_mlx.fusion_takeover.patcher import _resolve_sliding_softcap
+
+    attn = types.SimpleNamespace(is_sliding=True, attn_logit_softcapping=0.0)
+    layer = types.SimpleNamespace()
+    model = types.SimpleNamespace(window_size=16)
+    sw, sc = _resolve_sliding_softcap(layer, attn, model)
+    assert sw == 16 and sc == 0.0
+
+
+def test_resolve_sliding_softcap_llama():
+    from fusion_mlx.fusion_takeover.patcher import _resolve_sliding_softcap
+
+    attn = types.SimpleNamespace(attn_logit_softcapping=0.0)
+    layer = types.SimpleNamespace(use_sliding=True)
+    model = types.SimpleNamespace(model=types.SimpleNamespace(sliding_window=512))
+    sw, sc = _resolve_sliding_softcap(layer, attn, model)
+    assert sw == 512 and sc == 0.0
+
+
+def test_resolve_sliding_softcap_gemma2_softcap():
+    from fusion_mlx.fusion_takeover.patcher import _resolve_sliding_softcap
+
+    attn = types.SimpleNamespace(attn_logit_softcapping=50.0)
+    layer = types.SimpleNamespace()
+    model = types.SimpleNamespace()
+    sw, sc = _resolve_sliding_softcap(layer, attn, model)
+    assert sw == 0 and sc == 50.0
+
+
+def test_patcher_wraps_gemma_sliding_layer(monkeypatch):
+    monkeypatch.setenv("FUSION_PAGED_FUSED_KERNEL", "on")
+
+    class FakeRope:
+        def __call__(self, x, offset=None):
+            return x
+
+    class FakeAttention(nn.Module):
+        n_heads = 8
+        n_kv_heads = 2
+        head_dim = 8
+        scale = 1.0 / (8**0.5)
+        is_sliding = True
+
+        def __init__(self):
+            super().__init__()
+            self.q_proj = nn.Linear(64, 64)
+            self.k_proj = nn.Linear(64, 16)
+            self.v_proj = nn.Linear(64, 16)
+            self.o_proj = nn.Linear(64, 64)
+            self.rope = FakeRope()
+
+        def __call__(self, x, mask=None, cache=None):
+            B, L, D = x.shape
+            queries = (
+                self.q_proj(x).reshape(B, L, self.n_heads, -1).transpose(0, 2, 1, 3)
+            )
+            keys = (
+                self.k_proj(x).reshape(B, L, self.n_kv_heads, -1).transpose(0, 2, 1, 3)
+            )
+            values = (
+                self.v_proj(x).reshape(B, L, self.n_kv_heads, -1).transpose(0, 2, 1, 3)
+            )
+            if cache is not None:
+                queries = self.rope(queries, offset=cache.offset)
+                keys = self.rope(keys, offset=cache.offset)
+                keys, values = cache.update_and_fetch(keys, values)
+            output = mx.fast.scaled_dot_product_attention(
+                queries, keys, values, cache=cache, scale=self.scale, mask=mask
+            )
+            output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
+            return self.o_proj(output)
+
+    class FakeLayer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.attention = FakeAttention()
+
+    class FakeModel(nn.Module):
+        model_type = "gemma3"
+        window_size = 16
+
+        def __init__(self):
+            super().__init__()
+            self.layers = [FakeLayer()]
+
+        def make_cache(self):
+            return [FusionPagedKVCache(block_size=4, num_blocks=8)]
+
+    model = FakeModel()
+    cfg = FusionConfig(enabled=True, paged_kv_enabled=True, fused_decode_enabled=True)
+    patcher = FusionModulePatcher()
+    patcher.patch_model(model, cfg)
+
+    cache = model.make_cache()[0]
+    assert isinstance(cache, FusionPagedKVCache)
+    for _ in range(5):
+        k = mx.random.normal(shape=(1, 2, 1, 8)) * 0.1
+        v = mx.random.normal(shape=(1, 2, 1, 8)) * 0.1
+        cache.update_and_fetch(k, v)
+    assert cache.offset > 0
+
+    attn = model.layers[0].attention
+    assert attn.__class__.__name__.endswith("FusedDecode")
+    x = mx.random.normal(shape=(1, 1, 64)) * 0.1
+    out = attn(x, cache=cache)
+    assert out.shape == (1, 1, 64)

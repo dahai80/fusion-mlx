@@ -73,24 +73,39 @@ def _iter_linear(parent: nn.Module, prefix: str = ""):
                     yield from _iter_linear(item, item_name)
 
 
-def _resolve_sliding_softcap(attn) -> tuple[int, float]:
+def _resolve_sliding_softcap(layer, attn, model) -> tuple[int, float]:
     is_sliding = bool(getattr(attn, "is_sliding", False))
-    use_sliding = bool(getattr(attn, "use_sliding", False))
-    window = int(getattr(attn, "sliding_window", 0) or 0)
+    use_sliding = bool(getattr(layer, "use_sliding", False))
     softcap = float(getattr(attn, "attn_logit_softcapping", 0.0) or 0.0)
-    if is_sliding or use_sliding:
+    text_model = getattr(model, "model", None)
+    window = (
+        int(getattr(model, "window_size", 0) or 0)
+        or int(getattr(text_model, "window_size", 0) or 0)
+        or int(getattr(model, "sliding_window", 0) or 0)
+        or int(getattr(text_model, "sliding_window", 0) or 0)
+        or 0
+    )
+    if (is_sliding or use_sliding) and window > 0:
         resolved_sw = window
     else:
         resolved_sw = 0
+    logger.debug(
+        "resolve sliding: is_sliding=%s use_sliding=%s window=%d softcap=%s -> sw=%d",
+        is_sliding,
+        use_sliding,
+        window,
+        softcap,
+        resolved_sw,
+    )
     return resolved_sw, softcap
 
 
-def _wrap_attention(attn):
+def _wrap_attention(layer, attn, model):
     from fusion_mlx.custom_kernels.paged_kv_cache import FusionPagedKVCache
 
     base_call = type(attn).__call__
     has_qnorm = hasattr(attn, "q_norm")
-    sliding_window, softcap = _resolve_sliding_softcap(attn)
+    sliding_window, softcap = _resolve_sliding_softcap(layer, attn, model)
     logger.debug(
         "paged_kv sliding layer window=%d softcap=%s (memory-cap follow-up)",
         sliding_window,
@@ -162,7 +177,7 @@ def _install_fused_decode(model):
         )
         if attn is None:
             continue
-        _wrap_attention(attn)
+        _wrap_attention(layer, attn, model)
 
 
 class FusionModulePatcher:
