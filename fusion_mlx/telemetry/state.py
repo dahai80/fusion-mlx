@@ -34,6 +34,7 @@ Users who want to opt in run ``fusion-mlx telemetry enable`` once.
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from dataclasses import dataclass
@@ -42,12 +43,14 @@ from pathlib import Path
 
 import yaml
 
+logger = logging.getLogger(__name__)
+
 ENV_VAR = "FUSION_MLX_TELEMETRY"
 
 # Bump when the on-disk consent file format changes incompatibly. A
 # stored record with a smaller schema_version is treated as "never
 # prompted" so the user gets re-asked under the new disclosure copy.
-CURRENT_CONSENT_SCHEMA_VERSION = 1
+CURRENT_CONSENT_SCHEMA_VERSION = 3
 
 
 def _default_telemetry_dir() -> Path:
@@ -63,6 +66,40 @@ def consent_path() -> Path:
     return _default_telemetry_dir() / "telemetry-consent.yaml"
 
 
+_activation_latch: set[str] = set()
+
+
+def _validate_activation_kind(kind: str) -> bool:
+    from .activation_spec import ACTIVATION_KINDS
+
+    return kind in ACTIVATION_KINDS
+
+
+def activation_marker_path(kind: str) -> Path:
+    if not _validate_activation_kind(kind):
+        raise ValueError(f"unknown activation kind: {kind}")
+    return _default_telemetry_dir() / f"activation_seen_{kind}"
+
+
+def claim_activation_marker(kind: str) -> bool:
+    if kind in _activation_latch:
+        return False
+    path = activation_marker_path(kind)
+    try:
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+    except FileExistsError:
+        _activation_latch.add(kind)
+        logger.info("activation marker already present: %s", kind)
+        return False
+    except OSError:
+        logger.warning("activation marker write failed: %s", kind, exc_info=True)
+        return False
+    _activation_latch.add(kind)
+    logger.info("activation milestone claimed: %s", kind)
+    return True
+
+
 @dataclass(frozen=True)
 class ConsentState:
     """The on-disk record of the user's opt-in answer.
@@ -75,7 +112,7 @@ class ConsentState:
     consent: bool
     prompted_at: str  # ISO-8601 UTC, "Z" suffix
     prompted_version: str  # fusion-mlx version that showed the prompt
-    schema_version: int = 1
+    schema_version: int = CURRENT_CONSENT_SCHEMA_VERSION
 
 
 def get_consent_state() -> ConsentState | None:
@@ -188,6 +225,16 @@ def reset_state() -> None:
             path.unlink()
         except FileNotFoundError:
             pass
+    import glob
+
+    for marker in glob.glob(str(_default_telemetry_dir() / "activation_seen_*")):
+        try:
+            os.remove(marker)
+        except OSError:
+            logger.warning(
+                "failed to remove activation marker %s", marker, exc_info=True
+            )
+    _activation_latch.clear()
 
 
 def _env_kill_switch_active() -> bool:

@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+## [0.8.77] - 2026-09-04
+
+### Added
+- **Telemetry activation funnel (dark).** Opt-in telemetry gains a
+  growth/engagement activation funnel (`fusion_mlx/telemetry/activation_spec.py`)
+  with 9 milestones across 3 surfaces (cli/api/desktop), spec version 3.
+  Milestones fire at most once per install via atomic file markers
+  (`claim_activation_marker`, `O_CREAT|O_EXCL`) plus an in-process latch;
+  `reset_state()` wipes them. Valid `(kind, surface)` pairs are pinned in
+  `ACTIVATION_KIND_SURFACE_PAIRS` and checked by `is_allowed_activation`
+  before enqueue. fusion extends Rapid-MLX's v2 (7 milestones) to v3 by
+  adding multimodal milestones: `first_image`,
+  `first_image_generation`, `first_video_generation`.
+- **`ActivationPayload` + per-request telemetry fields.** The schema
+  gains an activation envelope slot and request fields
+  `caller_agent`, `output_degenerate`, `completion_empty`,
+  `completion_abnormally_short`.
+- **Request sampling gate.** `emit.request()` samples at
+  `FUSION_MLX_TELEMETRY_REQUEST_SAMPLE` (default 0.1) to bound request
+  telemetry volume; tests set 1.0.
+- **Consent schema v3 + activation markers in `state.py`.**
+  `CURRENT_CONSENT_SCHEMA_VERSION` bumped 1→3 (forces re-prompt under new
+  disclosure copy); `ConsentState.schema_version` default follows the
+  constant so `record_consent` writes the live version (regression fix:
+  the dataclass default was left at 1, which `load_consent` rejected,
+  silently disabling all telemetry).
+- **`normalize_caller_agent` UA bucketing** (`redact.py`) — buckets
+  caller tool User-Agent strings into a small allowlist, no raw UA sent.
+- **Deterministic coherence heuristic** (`coherence.py`) —
+  `is_empty`, `is_abnormally_short`, `looks_like_garbage` flag
+  output-degenerate completions for telemetry. Pure heuristic, no model
+  routing, no randomness (Rule 5 compliant).
+- **CLI request preview.** `fusion-mlx telemetry preview` now shows the
+  per-call request payload shape alongside the session sample.
+- **`docs/telemetry-activation.md`** — human-facing funnel spec.
+
+### Changed
+- Telemetry remains **dark**: no production call sites emit yet. All
+  `emit.*` calls short-circuit when `is_enabled()` is False. Activation
+  wiring into request/error paths lands in a follow-up PR.
+
 ## [0.8.76] - 2026-09-04
 
 ### Added

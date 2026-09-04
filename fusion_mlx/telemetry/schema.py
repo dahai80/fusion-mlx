@@ -67,6 +67,10 @@ class RequestPayload:
     ttft_ms_bucket: str
     tps_bucket: str
     status: int
+    caller_agent: str = "other"
+    output_degenerate: bool = False
+    completion_empty: bool = False
+    completion_abnormally_short: bool = False
 
 
 @dataclass(frozen=True)
@@ -77,11 +81,20 @@ class ErrorPayload:
 
 
 @dataclass(frozen=True)
+class ActivationPayload:
+    activation_kind: str
+    surface: str
+    client_id: str
+    spec_version: int
+    occurred_at_epoch: int
+
+
+@dataclass(frozen=True)
 class TelemetryPayload:
     """The complete on-the-wire envelope.
 
-    Exactly one of ``session`` / ``request`` / ``error`` is populated
-    per payload — the discriminator is the ``event`` field.
+    Exactly one of ``session`` / ``request`` / ``error`` / ``activation``
+    is populated per payload — the discriminator is the ``event`` field.
     """
 
     schema_version: int
@@ -89,20 +102,21 @@ class TelemetryPayload:
     session_id: str
     fusion_mlx_version: str
     platform: PlatformInfo
-    event: str  # "session_start" | "session_end" | "request" | "error"
+    event: str  # "session_start" | "session_end" | "request" | "error" | "activation"
     timestamp: str  # ISO-8601 UTC, "Z" suffix
     session: SessionPayload | None = None
     request: RequestPayload | None = None
     error: ErrorPayload | None = None
+    activation: ActivationPayload | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Render the envelope as a JSON-ready dict.
 
         ``None`` event-payload fields are dropped so the payload doesn't
-        carry empty placeholders for the two events it isn't.
+        carry empty placeholders for the events it isn't.
         """
         d = asdict(self)
-        for key in ("session", "request", "error"):
+        for key in ("session", "request", "error", "activation"):
             if d.get(key) is None:
                 d.pop(key, None)
         return d
@@ -148,7 +162,44 @@ def sample_preview_payload(
     )
 
 
+def sample_request_preview_payload(
+    *,
+    client_id: str,
+    fusion_mlx_version: str,
+) -> TelemetryPayload:
+    info = platform_info()
+    return TelemetryPayload(
+        schema_version=SCHEMA_VERSION,
+        client_id=client_id,
+        session_id="preview-0000000000000000",
+        fusion_mlx_version=fusion_mlx_version,
+        platform=PlatformInfo(
+            os=info["os"],
+            os_version=info["os_version"],
+            arch=info["arch"],
+            chip=info["chip"],
+            memory_gb=info["memory_gb"],
+            python_version=info["python_version"],
+        ),
+        event="request",
+        timestamp=_utc_now_iso(),
+        request=RequestPayload(
+            endpoint="/v1/chat/completions",
+            model_alias="mlx-community/Qwen3.5-9B-4bit",
+            stream=False,
+            tool_call_used=False,
+            prompt_tokens_bucket="100-500",
+            completion_tokens_bucket="100-500",
+            ttft_ms_bucket="100-500",
+            tps_bucket="10-50",
+            status=200,
+            caller_agent="claude-code",
+        ),
+    )
+
+
 __all__ = [
+    "ActivationPayload",
     "ErrorPayload",
     "PlatformInfo",
     "RequestPayload",
@@ -157,4 +208,5 @@ __all__ = [
     "TelemetryPayload",
     "bucket_memory_gb",
     "sample_preview_payload",
+    "sample_request_preview_payload",
 ]
