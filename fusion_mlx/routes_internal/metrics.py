@@ -179,7 +179,7 @@ def _render_response_format_metrics() -> list[str]:
     lines: list[str] = []
     lines.extend(
         _fmt_metric(
-            "rapid_mlx_response_format_strict_total",
+            "fusion_mlx_response_format_strict_total",
             "counter",
             "Total strict json_schema response_format requests seen.",
             snap.get("strict_requests_total", 0),
@@ -187,7 +187,7 @@ def _render_response_format_metrics() -> list[str]:
     )
     lines.extend(
         _fmt_metric(
-            "rapid_mlx_response_format_strict_violations_total",
+            "fusion_mlx_response_format_strict_violations_total",
             "counter",
             "Strict json_schema outputs that violated the schema.",
             snap.get("strict_violations_total", 0),
@@ -195,7 +195,7 @@ def _render_response_format_metrics() -> list[str]:
     )
     lines.extend(
         _fmt_metric(
-            "rapid_mlx_response_format_strict_repairs_attempted_total",
+            "fusion_mlx_response_format_strict_repairs_attempted_total",
             "counter",
             "Strict json_schema repair retries attempted.",
             snap.get("strict_repairs_attempted_total", 0),
@@ -203,7 +203,7 @@ def _render_response_format_metrics() -> list[str]:
     )
     lines.extend(
         _fmt_metric(
-            "rapid_mlx_response_format_strict_repairs_succeeded_total",
+            "fusion_mlx_response_format_strict_repairs_succeeded_total",
             "counter",
             "Strict json_schema repair retries that produced valid output.",
             snap.get("strict_repairs_succeeded_total", 0),
@@ -211,7 +211,7 @@ def _render_response_format_metrics() -> list[str]:
     )
     lines.extend(
         _fmt_metric(
-            "rapid_mlx_response_format_strict_repairs_skipped_context_overflow_total",
+            "fusion_mlx_response_format_strict_repairs_skipped_context_overflow_total",
             "counter",
             "Strict repair retries skipped due to context overflow.",
             snap.get("strict_repairs_skipped_context_overflow_total", 0),
@@ -290,12 +290,122 @@ def _render_disconnect_metrics() -> list[str]:
     )
 
 
+def _render_queue_metrics() -> list[str]:
+    lines: list[str] = []
+    try:
+        from ..server import _server_state
+
+        pool = _server_state.get("engine_pool")
+        running = 0
+        waiting = 0
+        if pool is not None:
+            for _mid, entry in getattr(pool, "_entries", {}).items():
+                engine = getattr(entry, "engine", None)
+                if engine is None:
+                    continue
+                get_stats = getattr(engine, "get_stats", None)
+                if callable(get_stats):
+                    stats = get_stats() or {}
+                    running += int(stats.get("num_running", 0))
+                    waiting += int(stats.get("num_waiting", 0))
+                else:
+                    sched = getattr(engine, "scheduler", None)
+                    if sched is None:
+                        sched = getattr(
+                            getattr(engine, "_engine", None), "scheduler", None
+                        )
+                        if sched is not None:
+                            sched = getattr(
+                                getattr(sched, "engine", None),
+                                "scheduler",
+                                None,
+                            )
+                    if sched is None:
+                        continue
+                    gs = getattr(sched, "get_stats", None)
+                    if callable(gs):
+                        stats = gs() or {}
+                        running += int(stats.get("num_running", 0))
+                        waiting += int(stats.get("num_waiting", 0))
+                    else:
+                        running += len(getattr(sched, "running", []) or [])
+                        waiting += len(getattr(sched, "waiting", []) or [])
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_requests_running",
+                "gauge",
+                "Currently running inference requests.",
+                running,
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_requests_waiting",
+                "gauge",
+                "Requests waiting in scheduler queues.",
+                waiting,
+            )
+        )
+    except Exception:
+        logger.debug("queue metrics render error", exc_info=True)
+    return lines
+
+
+def _render_uptime_metal() -> list[str]:
+    lines: list[str] = []
+    try:
+        m = get_server_metrics().to_dict()
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_uptime_seconds",
+                "gauge",
+                "Process uptime in seconds.",
+                float(m.get("uptime_seconds", 0)),
+            )
+        )
+    except Exception:
+        logger.debug("uptime metric render error", exc_info=True)
+    try:
+        import mlx.core as mx
+
+        if mx.metal.is_available():
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_metal_active_bytes",
+                    "gauge",
+                    "MLX Metal active memory in bytes.",
+                    int(mx.get_active_memory() or 0),
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_metal_cache_bytes",
+                    "gauge",
+                    "MLX Metal cache memory in bytes.",
+                    int(mx.get_cache_memory() or 0),
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_metal_peak_bytes",
+                    "gauge",
+                    "MLX Metal peak memory in bytes.",
+                    int(mx.get_peak_memory() or 0),
+                )
+            )
+    except Exception:
+        logger.debug("mlx memory metrics unavailable", exc_info=True)
+    return lines
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
     lines.extend(_render_engine_metrics())
     lines.extend(_render_disconnect_metrics())
     lines.extend(_render_pool_metrics())
+    lines.extend(_render_queue_metrics())
+    lines.extend(_render_uptime_metal())
     lines.extend(_render_kv_cache_dtype_gauge())
     lines.extend(_render_response_format_metrics())
     lines.extend(_render_response_cache_metrics())
