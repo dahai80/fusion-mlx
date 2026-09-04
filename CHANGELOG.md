@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+## [0.8.75] - 2026-09-04
+
+### Fixed
+- **#781 — batch-wide `active_ids` plumbing for Paged-KV pool.** The LRU
+  eviction shipped in #773 (v0.8.74) received `active_ids={request_id}`
+  (single-request) at the two cache call sites, so it could reclaim an
+  actively-decoding peer in a concurrent batch. The scheduler now publishes
+  `set(self.running.keys())` to the pool each `step()` via
+  `set_active_ids()` + `touch_active()`; the cache call sites
+  (`update_and_fetch`, `state.setter`) no longer override the batch-wide set
+  with a single id. An evicted victim's dangling `block_table`/`offset` is
+  now cleared fail-visible via `invalidate_request()` (wired as the pool
+  evict callback) instead of silently pointing at freed blocks. `touch_active`
+  refreshes LRU each decode step so non-allocating steps don't go stale.
+  `fusion_paged_pool` default remains `"off"`; this is the last known
+  correctness gate before the default can be lifted in a future release.
+  PR #784.
+- **#779 — false hard memory pressure blocking admission.** A stale
+  `_current_model_memory` accumulator (decrement skipped on a cancelled
+  settle / aborted unload) inflated the admission `current` gauge past the
+  ceiling, rejecting a model that genuinely fits while reporting
+  `available_memory_mb=122995`. The accumulator is now reconciled toward
+  the live gauges when no engine is loaded (gated on `has_loaded == False`
+  so the #1623 under-reporting case — a loaded engine whose live gauge reads
+  low — still trusts the accumulator). PR #783.
+
 ## [0.8.74] - 2026-09-04
 
 ### Added
