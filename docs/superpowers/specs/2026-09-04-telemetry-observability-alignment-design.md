@@ -219,6 +219,81 @@ All new render functions added to `routes_internal/metrics.py` `render_prometheu
 
 ---
 
+## Section 4 — Lead capabilities (beyond Rapid-MLX)
+
+Sections 1-3 reach parity with what Rapid-MLX has. Section 4 adds observability dimensions Rapid-MLX structurally lacks — exploiting fusion's multimodal, Paged-KV, and distributed-decode advantages. Target: after landing + absorbing the 3 feature-gap losses (#787/#788/#789), fusion still leads because these dimensions have no Rapid-MLX counterpart.
+
+### Multimodal inference metrics (Rapid is text-only)
+
+- `fusion_mlx_vision_requests_total` — image/video inference request count
+- `fusion_mlx_audio_requests_total` — STT/TTS request count
+- `fusion_mlx_video_requests_total` — video generation request count
+- `fusion_mlx_image_generation_requests_total` — image generation count
+- `fusion_mlx_vae_encode_seconds{model}` — VAE encode time histogram
+- `fusion_mlx_vae_decode_seconds{model}` — VAE decode time histogram
+- `fusion_mlx_video_generation_seconds{model}` — total video generation time histogram (per model)
+
+Per-modality request counts + VAE/video timing — Rapid has no multimodal dimension.
+
+### Multimodal activation milestones (extend funnel beyond Rapid)
+
+Rapid's activation spec covers text + 4 desktop milestones. fusion extends with API-surface multimodal milestones:
+
+- `first_image_generation` — fusion has image gen, Rapid has no such milestone → NEW
+- `first_video_generation` — fusion has video gen, Rapid has no such milestone → NEW
+- `first_audio_transcription` — Rapid has `first_dictation` (desktop only); fusion adds API-surface variant
+
+`ACTIVATION_KIND_SURFACE_PAIRS` extended: `+ (first_image_generation, api)`, `+ (first_video_generation, api)`. `ACTIVATION_SPEC_VERSION` → 3 (beyond Rapid v2).
+
+### KV cache advanced metrics (fusion has Paged-KV, Rapid does not)
+
+fusion shipped Paged-KV (v0.8.74 LRU + sliding-window). Rapid has no paged-KV subsystem → expose its internal state as a lead:
+
+- `fusion_mlx_kv_cache_pages_total{model}` — paged-KV page count gauge
+- `fusion_mlx_kv_cache_evictions_total{model}` — LRU eviction count
+- `fusion_mlx_kv_cache_block_utilization{model}` — block utilization gauge
+
+### Prefix-cache advanced metrics (beyond Rapid's 9 radix series)
+
+Rapid exposes radix hits/misses/depth/nodes/inserts/removes. fusion adds derived gauges:
+
+- `fusion_mlx_prefix_cache_radix_hit_rate` — hit-rate gauge (Rapid has hits/misses counts, no ratio gauge)
+- `fusion_mlx_prefix_cache_radix_avg_depth` — average-depth gauge (Rapid has max_depth only)
+
+### Distributed decode metrics (fusion has #630 distributed decode, Rapid does not)
+
+- `fusion_mlx_distributed_decode_tokens_total{node}` — distributed decode token count
+- `fusion_mlx_distributed_decode_rtt_seconds{node}` — node RTT histogram
+
+### Daemon/serve lifecycle metrics (Rapid has none)
+
+- `fusion_mlx_lifespan_startup_seconds` — startup time histogram (model load to ready)
+- `fusion_mlx_lifespan_shutdown_seconds` — shutdown time histogram
+
+### Tests (Section 4)
+
+- `tests/unit/test_prometheus_multimodal_metrics.py` — modality counters + VAE/video histograms render
+- `tests/unit/test_telemetry_activation_multimodal.py` — new milestones fire once-per-install, surface=api, spec version 3
+- `tests/unit/test_prometheus_kv_cache_advanced.py` — paged-KV gauges render from pool state
+- `tests/unit/test_prometheus_lifespan_metrics.py` — startup/shutdown histograms
+
+### Lead accounting
+
+| Dimension | Rapid-MLX | fusion after Section 4 |
+|---|---|---|
+| Telemetry package (usage events) | full | full (parity) |
+| Activation funnel milestones | 7 (text + desktop) | 9 (+ image/video gen, API multimodal) |
+| Prometheus modality metrics | none | 7 series |
+| Paged-KV metrics | none (no subsystem) | 3 series |
+| Distributed decode metrics | none | 2 series |
+| Lifespan metrics | none | 2 series |
+| Prefix-cache derived gauges | raw counts only | + hit_rate, avg_depth |
+| Observability endpoints | basic probes + /metrics + /v1/status | + /v1/health, /v1/metrics/json, admin stats, drain |
+
+Net: Sections 1-3 = parity on shared surface; Section 4 = lead on fusion-only surface. Feature gaps #787/#788/#789 filed as issues (not telemetry responsibility); their metric families wire when the features land. Landing losses absorbed, fusion still ahead.
+
+---
+
 ## Global Constraints
 
 - Only modify `/Users/dahai/claude-home/fusion-mlx` code
@@ -234,5 +309,6 @@ All new render functions added to `routes_internal/metrics.py` `render_prometheu
 ## Open Items / Decisions Logged
 
 - Tech stack: Python (not Rust) — performance not on critical path, target is Python, Rust = toolchain overhead with no benefit. User confirmed performance was only concern.
-- Skipped metric families (suffix_decode, spec_decode_mtp, mxfp4_moe_guardrail): no fusion module. Documented, not fabricated.
+- Skipped metric families (suffix_decode, spec_decode_mtp, mxfp4_moe_guardrail): no fusion module. Documented, not fabricated. Issues filed: #787 (suffix-decode), #788 (MTP), #789 (mxfp4 guardrail) — feature gaps, not telemetry responsibility.
 - `output_degenerate` coherence detector: deterministic heuristic, no model routing (Rule 5).
+- Section 4 (lead capabilities): fusion leads after landing via multimodal / Paged-KV / distributed-decode / lifespan dimensions Rapid structurally lacks. `ACTIVATION_SPEC_VERSION` → 3 (beyond Rapid v2). Target is lead, not parity — parity absorbs landing losses into a loss.
