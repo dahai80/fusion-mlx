@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 def fake_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("FUSION_MLX_TELEMETRY", raising=False)
+    monkeypatch.setenv("FUSION_MLX_TELEMETRY_REQUEST_SAMPLE", "1.0")
 
     import fusion_mlx.telemetry.state as state
 

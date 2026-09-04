@@ -112,7 +112,7 @@ class ConsentState:
     consent: bool
     prompted_at: str  # ISO-8601 UTC, "Z" suffix
     prompted_version: str  # fusion-mlx version that showed the prompt
-    schema_version: int = 1
+    schema_version: int = CURRENT_CONSENT_SCHEMA_VERSION
 
 
 def get_consent_state() -> ConsentState | None:
