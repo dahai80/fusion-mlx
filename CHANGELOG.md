@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+- **#4: Phase C quantization kernels wired into the inference load path.**
+  Three opt-in post-load transforms, all default OFF, force-enabled via env
+  when model settings are absent:
+  - `FUSION_MLX_W4A8=1` — converts `nn.Linear`/`nn.QuantizedLinear` to
+    `W4A8Linear`, a 4-bit weight + int8 activation path (`w4a8_tiled_matmul`).
+    MLX has no int8 MMA, so the A8 *storage/bandwidth* win is realized
+    (activations held int8) but compute is fp16-accumulate; a native Metal
+    kernel (`metal/w4a8_fused_matmul.metal`) is the speed path, deferred.
+  - `FUSION_MLX_NVFP4_DEQUANT=1` — post-load NVFP4 (E2M1 + E4M3 block scale)
+    dequant bridge to bf16, via `dequant_nvfp4_weights`. Fires only on uint8
+    weights with a sibling block-scale tensor (1 per 16 elements); a no-op
+    debug log on normal fp16/W4 checkpoints. Format-compatibility bridge —
+    the 4-bit storage win is NOT retained at inference (blocked on upstream
+    mlx#2962 for a native speed path).
+  - `FUSION_MLX_FUSED_GDN=1` — registers the fused GDN (generalized divisive
+    normalization) megakernel; a no-op scan unless a module declares
+    `_is_gdn` (no in-repo model consumes standalone GDN today).
+
 ## [0.8.79] - 2026-09-04
 
 ### Fixed
