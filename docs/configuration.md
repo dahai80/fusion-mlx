@@ -105,7 +105,11 @@ Copy-on-write prefix sharing for common prompts:
 | `paged_ssd_cache_dir` | `None` | SSD cache dir; `None` = pure-memory mode (default) |
 | `hot_cache_max_size` | `0` | In-memory KV budget bytes; `0` = 1 GiB in pure-memory mode |
 
+**Cross-request reuse (#798)**: Prefix KV cache is shared across requests by default. `BlockAwarePrefixCache` builds a chain-hash block index (256 tokens per block) so a second request whose token prefix matches a prior request hits the cached blocks and only prefills the suffix — no recomputation. This is what makes long-context sessions (repeated system prompt, multi-turn chat, agent loops) cheap: the shared prefix is paid once, reused across every subsequent request in the session.
+
 **Pure-memory mode (#158)**: When `prefix_cache_enabled=True` and `paged_ssd_cache_dir` is unset (the default), prefix-cache hits reconstruct KV tensors from an in-memory LRU store instead of always reporting `cached_tokens=0`. KV tensors are kept in `hot_cache` bounded by `hot_cache_max_size` (1 GiB default when unset); evicted blocks are dropped cleanly with no disk backing. This is the default `serve` behavior - no extra flags required.
+
+**Radix-tree cache (optional)**: Set env `FUSION_MLX_PREFIX_CACHE=radix` to use `RadixPrefixCache` instead of the default `BlockAwarePrefixCache`. The radix variant organizes prefixes in a radix tree for exact-match prefix lookup; the default chain-hash variant is block-granular and COW-friendly. Both provide cross-request reuse.
 
 To opt into SSD offload for larger working sets, set `paged_ssd_cache_dir` (a `SchedulerConfig` field, advanced/internal):
 
