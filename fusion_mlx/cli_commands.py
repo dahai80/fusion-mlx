@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """CLI commands for fusion-mlx (models, pull, rm, ps, chat, info, agents, upgrade, telemetry)."""
 
+import logging
 import os
 import sys
 
@@ -14,6 +15,8 @@ from fusion_mlx.cli_serve import (
     _ensure_model_downloaded,
     _try_mirror_prefetch,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _format_bytes(n: int) -> str:
@@ -413,6 +416,16 @@ def pull_command(args):
             snapshot_dir = repo_root
             print(f"  Cached at: {repo_root}")
         _print_pull_summary(repo_id, snapshot_dir, time.monotonic() - t0)
+        try:
+            from .telemetry import emit
+            from .telemetry.activation_spec import ACTIVATION_MODEL_PULL, SURFACE_CLI
+
+            emit.activation(
+                activation_kind=ACTIVATION_MODEL_PULL,
+                surface=SURFACE_CLI,
+            )
+        except Exception:
+            logger.debug("telemetry model_pull activation failed", exc_info=True)
         return
     # Mirror returned False — fall through to plain snapshot_download.
     # Either the catalog was unreachable, the alias isn't catalog-listed,
@@ -449,6 +462,16 @@ def pull_command(args):
         raise
     print(f"  Cached at: {path}")
     _print_pull_summary(repo_id, path, time.monotonic() - t0)
+    try:
+        from .telemetry import emit
+        from .telemetry.activation_spec import ACTIVATION_MODEL_PULL, SURFACE_CLI
+
+        emit.activation(
+            activation_kind=ACTIVATION_MODEL_PULL,
+            surface=SURFACE_CLI,
+        )
+    except Exception:
+        logger.debug("telemetry model_pull activation failed", exc_info=True)
 
 
 def rm_command(args):
