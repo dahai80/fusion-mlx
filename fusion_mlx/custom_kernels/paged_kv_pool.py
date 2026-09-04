@@ -40,6 +40,8 @@ class FusionPagedKVPool:
         self.in_use: dict[int, str] = {}
         self._step: int = 0
         self._last_access: dict[str, int] = {}
+        self._active_ids: set[str] | None = None
+        self._evict_cb = None
         logger.info(
             "paged_kv pool init: cap=%d block_size=%d n_kv=%d head_dim=%d/%d",
             num_blocks,
@@ -48,6 +50,25 @@ class FusionPagedKVPool:
             self.k_head_dim,
             self.v_head_dim,
         )
+
+    def set_active_ids(self, ids: set[str] | None) -> None:
+        self._active_ids = set(ids) if ids else None
+        logger.debug("paged_kv pool set_active_ids=%s", self._active_ids or set())
+
+    def touch_active(self) -> None:
+        if not self._active_ids:
+            return
+        self._step += 1
+        for rid in self._active_ids:
+            self._last_access[rid] = self._step
+        logger.debug(
+            "paged_kv pool touch_active n=%d step=%d",
+            len(self._active_ids),
+            self._step,
+        )
+
+    def set_evict_callback(self, cb) -> None:
+        self._evict_cb = cb
 
     def touch(self, request_id: str) -> None:
         self._step += 1
@@ -58,7 +79,7 @@ class FusionPagedKVPool:
         self._step += 1
         self._last_access[request_id] = self._step
         if active_ids is None:
-            active_ids = {request_id}
+            active_ids = self._active_ids if self._active_ids else {request_id}
         if not self.free_list:
             owners = set(self.in_use.values())
             evictable = owners - active_ids
@@ -68,6 +89,15 @@ class FusionPagedKVPool:
                     key=lambda rid: self._last_access.get(rid, 0),
                 )
                 self.free_request(victim)
+                if self._evict_cb is not None:
+                    try:
+                        self._evict_cb(victim)
+                    except Exception as e:
+                        logger.warning(
+                            "paged_kv pool evict_cb failed for %s: %s",
+                            victim,
+                            e,
+                        )
                 logger.warning(
                     "paged_kv LRU evicting idle request=%s available=%d",
                     victim,
@@ -181,9 +211,7 @@ class FusionPagedRequestCache:
 
         for lb in range(first_block, last_block + 1):
             while len(self.block_table) <= lb:
-                pb = self.pool.alloc_block(
-                    self.request_id, active_ids={self.request_id}
-                )
+                pb = self.pool.alloc_block(self.request_id)
                 self.block_table.append(pb)
                 logger.debug(
                     "paged_kv request=%s block_table grow lb=%d pb=%d",
@@ -261,7 +289,7 @@ class FusionPagedRequestCache:
         self.offset = 0
         num_blocks_needed = (length + self.pool.block_size - 1) // self.pool.block_size
         for lb in range(num_blocks_needed):
-            pb = self.pool.alloc_block(self.request_id, active_ids={self.request_id})
+            pb = self.pool.alloc_block(self.request_id)
             self.block_table.append(pb)
         for lb in range(num_blocks_needed):
             block_start_logical = lb * self.pool.block_size
