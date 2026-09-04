@@ -14,6 +14,50 @@ _KV_CACHE_DTYPE_KNOWN = ("bf16", "int8", "int4")
 _STATS_JSON = Path.home() / ".fusion-mlx" / "stats.json"
 _ALLTIME_SAVE_INTERVAL = 10.0
 
+_TTFT_BUCKETS = [0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, float("inf")]
+_TPS_BUCKETS = [1.0, 5.0, 10.0, 20.0, 40.0, 80.0, 160.0, float("inf")]
+
+
+class Histogram:
+    def __init__(self, buckets: list[float]):
+        self.buckets = sorted(buckets)
+        self.counts = [0] * len(self.buckets)
+        self.sum = 0.0
+        self.count = 0
+        self.max = 0.0
+
+    def observe(self, value: float) -> None:
+        self.count += 1
+        self.sum += float(value)
+        if value > self.max:
+            self.max = float(value)
+        for i, b in enumerate(self.buckets):
+            if value <= b:
+                self.counts[i] += 1
+
+    def render(self, name: str, labels: dict | None = None) -> list[str]:
+        label_pairs = [f'{k}="{v}"' for k, v in (labels or {}).items()]
+        base_labels = ",".join(label_pairs)
+        lines: list[str] = []
+        for i, b in enumerate(self.buckets):
+            le = "+Inf" if b == float("inf") else str(b)
+            pairs = [f'le="{le}"'] + label_pairs
+            lines.append(f'{name}_bucket{{{",".join(pairs)}}} {self.counts[i]}')
+        suffix = f"{{{base_labels}}}" if base_labels else ""
+        lines.append(f"{name}_count{suffix} {self.count}")
+        lines.append(f"{name}_sum{suffix} {self.sum}")
+        lines.append(f"{name}_max{suffix} {self.max}")
+        return lines
+
+    def snapshot(self) -> dict:
+        return {
+            "buckets": list(self.buckets),
+            "counts": list(self.counts),
+            "sum": self.sum,
+            "count": self.count,
+            "max": self.max,
+        }
+
 
 def _load_alltime_from_disk() -> dict:
     try:
@@ -88,6 +132,10 @@ class ServerMetrics:
     cancelled_requests: int = 0
     # Per-model stats: model_name -> dict
     model_stats: dict[str, dict[str, Any]] = field(default_factory=dict)
+    vision_requests: int = 0
+    audio_requests: int = 0
+    video_requests: int = 0
+    image_generation_requests: int = 0
 
     def __post_init__(self):
         self._lock = threading.Lock()
@@ -95,6 +143,10 @@ class ServerMetrics:
         self._alltime = _load_alltime_from_disk()
         self._alltime_dirty = False
         self._alltime_last_save = time.monotonic()
+        self._ttft_hist: dict[str, Histogram] = {}
+        self._tps_hist: dict[str, Histogram] = {}
+        self._startup_epoch: float | None = None
+        self._shutdown_epoch: float | None = None
 
     def inc_tokens(self, generated: int = 0, prompt: int = 0, cached: int = 0) -> None:
         with self._lock:
@@ -126,6 +178,7 @@ class ServerMetrics:
         prefill_duration: float = 0.0,
         generation_duration: float = 0.0,
         model_id: str | None = None,
+        ttft_ms: float = 0.0,
     ) -> None:
         with self._lock:
             self.total_requests += 1
@@ -159,6 +212,19 @@ class ServerMetrics:
                     stats["avg_generation_tps"] = (
                         old_avg * (stats["requests"] - 1) + tps
                     ) / stats["requests"]
+                if ttft_ms and ttft_ms > 0:
+                    h = self._ttft_hist.get(model_id)
+                    if h is None:
+                        h = Histogram(_TTFT_BUCKETS)
+                        self._ttft_hist[model_id] = h
+                    h.observe(ttft_ms / 1000.0)
+                if generation_duration > 0 and completion_tokens > 0:
+                    tps = completion_tokens / generation_duration
+                    th = self._tps_hist.get(model_id)
+                    if th is None:
+                        th = Histogram(_TPS_BUCKETS)
+                        self._tps_hist[model_id] = th
+                    th.observe(tps)
 
             # Update alltime accumulators
             at = self._alltime
@@ -205,6 +271,43 @@ class ServerMetrics:
             self.active_requests = 0
             self.cancelled_requests = 0
             self.model_stats.clear()
+            self.vision_requests = 0
+            self.audio_requests = 0
+            self.video_requests = 0
+            self.image_generation_requests = 0
+            self._ttft_hist.clear()
+            self._tps_hist.clear()
+            self._startup_epoch = None
+            self._shutdown_epoch = None
+
+    def record_modality_request(self, modality: str) -> None:
+        with self._lock:
+            if modality == "vision":
+                self.vision_requests += 1
+            elif modality == "audio":
+                self.audio_requests += 1
+            elif modality == "video":
+                self.video_requests += 1
+            elif modality == "image_generation":
+                self.image_generation_requests += 1
+            else:
+                logger.debug("unknown modality for metrics: %s", modality)
+
+    def record_startup(self) -> None:
+        with self._lock:
+            self._startup_epoch = time.time()
+
+    def record_shutdown(self) -> None:
+        with self._lock:
+            self._shutdown_epoch = time.time()
+
+    def get_ttft_histograms(self) -> dict[str, Histogram]:
+        with self._lock:
+            return dict(self._ttft_hist)
+
+    def get_tps_histograms(self) -> dict[str, Histogram]:
+        with self._lock:
+            return dict(self._tps_hist)
 
     def clear_alltime_metrics(self) -> None:
         with self._lock:
@@ -293,6 +396,12 @@ class ServerMetrics:
             "avg_generation_tps": avg_gen,
             "uptime_seconds": self.uptime_seconds(),
             "kv_cache_dtype": _resolve_kv_cache_dtype(),
+            "vision_requests": self.vision_requests,
+            "audio_requests": self.audio_requests,
+            "video_requests": self.video_requests,
+            "image_generation_requests": self.image_generation_requests,
+            "startup_epoch": self._startup_epoch,
+            "shutdown_epoch": self._shutdown_epoch,
         }
 
 
@@ -311,6 +420,7 @@ def record_llm_metrics(
     prefill_duration: float = 0.0,
     generation_duration: float = 0.0,
     model_id: str | None = None,
+    ttft_ms: float = 0.0,
 ) -> None:
     try:
         get_server_metrics().record_request_complete(
@@ -320,6 +430,7 @@ def record_llm_metrics(
             prefill_duration=prefill_duration,
             generation_duration=generation_duration,
             model_id=model_id,
+            ttft_ms=ttft_ms,
         )
     except Exception as exc:
         logger.debug("Failed to record LLM metrics for %s: %s", model_id, exc)
