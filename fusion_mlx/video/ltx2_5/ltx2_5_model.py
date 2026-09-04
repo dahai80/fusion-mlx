@@ -743,6 +743,11 @@ class LTX2_5Model(nn.Module):
             connector_weights = Path(connector_weights)
             if connector_weights.exists():
                 cw = mx.load(str(connector_weights))
+                # #786: mlx-community connector.safetensors 同时含
+                # connector.text_embedding_projection.* (TE 聚合投影, 归 text_encoder,
+                # 非本 transformer 参数树)。剥除避免 strict load 误报 unmatched。
+                _te_proj = "text_embedding_projection"
+                cw = {k: v for k, v in cw.items() if _te_proj not in k}
                 logger.info(
                     "ltx2_5 from_pretrained: merged connector %s (%d keys)",
                     connector_weights.name,

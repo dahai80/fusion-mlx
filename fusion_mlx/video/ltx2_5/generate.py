@@ -36,7 +36,7 @@ from .ltx2_5_model import LTX2_5Model
 from .scheduler import DISTILLED_STAGE_1_SIGMAS, DISTILLED_STAGE_2_SIGMAS
 from .text_encoder import load_text_encoder
 from .upsampler import load_spatial_upsampler_2_5, load_temporal_upsampler
-from .utils import get_model_path, is_flat_layout, resolve_component
+from .utils import get_model_path, is_split_layout, resolve_component
 from .video_vae import load_video_decoder, load_video_encoder
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ def _encode_image_latent(
             logger.info("ltx2_5 latent cache hit: %dx%d (%s)", h, w, key)
             return cached, vae_encoder
     if vae_encoder is None:
-        if is_flat_layout(root):
+        if is_split_layout(root):
             enc_path = resolve_component(root, "video_vae_conv_encoder")
         else:
             enc_path = resolve_component(root, "video_vae_conv")
@@ -178,7 +178,16 @@ def generate_video(
         else resolve_component(root, "text_encoder", variant=var_str)
     )
     logger.info("Loading text encoder: %s", te_path.name)
-    text_encoder = load_text_encoder(te_path)
+    # split 布局 (flat #762 / mlxcomm #786) connector 独立文件。mlxcomm projection
+    # 在 connector.safetensors, TE 加载时需传 projection_weights_path。
+    te_conn_path = None
+    if is_split_layout(root):
+        te_conn_path = resolve_component(root, "connector", variant=var_str)
+        if not te_conn_path.exists():
+            raise FileNotFoundError(
+                f"LTX-2.5 split layout requires connector.safetensors at {te_conn_path}"
+            )
+    text_encoder = load_text_encoder(te_path, projection_weights_path=te_conn_path)
     mx.eval(text_encoder.parameters())
     # encode 返回 pre-connector (video_features[4096], audio_features[2048])。
     # connector 在 transformer 内, generate 显式运行。T2V 只需 video。
@@ -203,17 +212,10 @@ def generate_video(
         else resolve_component(root, "transformer", variant=var_str)
     )
     logger.info("Loading transformer: %s", tx_path.name)
-    # flat diffusers 布局 (#762) 把 connector 单列为独立文件，需与 transformer
-    # 合并加载到同一模型树；Comfy 布局 connector 嵌在 transformer 文件内。
-    conn_path = None
-    if is_flat_layout(root):
-        conn_path = resolve_component(root, "connector", variant=var_str)
-        if not conn_path.exists():
-            raise FileNotFoundError(
-                f"LTX-2.5 flat layout requires connector.safetensors at {conn_path}"
-            )
+    # split 布局 (flat #762 / mlxcomm #786) connector 独立文件 (步骤 1 已解析为
+    # te_conn_path)。Comfy 布局 connector 嵌在 transformer 文件内。
     transformer = LTX2_5Model.from_pretrained(
-        tx_path, variant=var_str, connector_weights=conn_path
+        tx_path, variant=var_str, connector_weights=te_conn_path
     )
     mx.eval(transformer.parameters())
     logger.info("Transformer loaded")
@@ -257,10 +259,11 @@ def generate_video(
     )
 
     # ---- 6. VAE decoder (conv 变体; load_video_decoder 拒绝 det 变体) ----
-    # flat diffusers (#762) enc/dec 各一文件 -> 取 decoder; Comfy 单文件含两者。
+    # split 布局 (flat #762 / mlxcomm #786) enc/dec 各一文件 -> 取 decoder;
+    # Comfy 单文件含两者。
     if video_vae_weights:
         vae_path = Path(video_vae_weights)
-    elif is_flat_layout(root):
+    elif is_split_layout(root):
         vae_path = resolve_component(root, "video_vae_conv_decoder", variant=var_str)
     else:
         vae_path = resolve_component(root, "video_vae_conv", variant=var_str)
