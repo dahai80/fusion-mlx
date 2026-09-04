@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.8.76] - 2026-09-04
+
+### Added
+- **#782 — LTX-2.5 image-to-video (I2V) conditioning.** The LTX-2.5
+  distilled backend supported text-to-video only; I2V raised
+  `NotImplementedError`. The I2V path now VAE-encodes the input image at
+  both stage resolutions (stage1 half-res, stage2 full-res, with the
+  spatial upsampler between) and injects it as latent-level conditioning
+  via `LatentState` + `VideoConditionByLatentIndex` (reused from the ltx2
+  backend). Conditioned frames get `denoise_mask = 1 - strength` so the
+  transformer treats them as clean (`timesteps = 0`) and
+  `apply_denoise_mask` re-clamps them to `clean_latent` after each x0
+  prediction, freezing them across re-noise steps. `denoise_distilled_t2v`
+  gains a `state: LatentState | None = None` param — `None` preserves the
+  original T2V path bit-exact. Image latents are cached per
+  `model_repo`/resolution/dtype via the UMA Radix latent cache
+  (`get_image_latent_cache`), skipping the VAE load+forward on repeat I2V
+  requests. The `NotImplementedError` guard is removed; `image=None`
+  keeps the T2V path unchanged. Real-model end-to-end verification is
+  gated on a 4-bit checkpoint (22B bf16 ~180GB exceeds the 128GB M5 Max);
+  synthetic unit tests cover the conditioning splice, denoise-mask
+  semantics, and the `state=`-aware timesteps/clean-frame path. PR #785.
+
 ## [0.8.75] - 2026-09-04
 
 ### Fixed
