@@ -38,6 +38,8 @@ class FusionPagedKVPool:
         )
         self.free_list: deque[int] = deque(range(num_blocks - 1, -1, -1))
         self.in_use: dict[int, str] = {}
+        self._step: int = 0
+        self._last_access: dict[str, int] = {}
         logger.info(
             "paged_kv pool init: cap=%d block_size=%d n_kv=%d head_dim=%d/%d",
             num_blocks,
@@ -47,13 +49,39 @@ class FusionPagedKVPool:
             self.v_head_dim,
         )
 
-    def alloc_block(self, request_id: str) -> int:
+    def touch(self, request_id: str) -> None:
+        self._step += 1
+        self._last_access[request_id] = self._step
+        logger.debug("paged_kv pool touch request=%s step=%d", request_id, self._step)
+
+    def alloc_block(self, request_id: str, *, active_ids: set | None = None) -> int:
+        self._step += 1
+        self._last_access[request_id] = self._step
+        if active_ids is None:
+            active_ids = {request_id}
         if not self.free_list:
-            logger.error("paged_kv pool exhausted for request=%s", request_id)
-            raise RuntimeError(
-                f"paged_kv pool exhausted (cap={self.num_blocks}); "
-                f"reject request or raise pool_num_blocks"
-            )
+            owners = set(self.in_use.values())
+            evictable = owners - active_ids
+            if evictable:
+                victim = min(
+                    evictable,
+                    key=lambda rid: self._last_access.get(rid, 0),
+                )
+                self.free_request(victim)
+                logger.warning(
+                    "paged_kv LRU evicting idle request=%s available=%d",
+                    victim,
+                    len(self.free_list),
+                )
+            else:
+                logger.error(
+                    "paged_kv pool exhausted for request=%s (no evictable idle)",
+                    request_id,
+                )
+                raise RuntimeError(
+                    f"paged_kv pool exhausted (cap={self.num_blocks}); "
+                    f"reject request or raise pool_num_blocks"
+                )
         pb = self.free_list.pop()
         self.in_use[pb] = request_id
         logger.debug(
@@ -69,6 +97,8 @@ class FusionPagedKVPool:
         for pb in freed:
             self.in_use.pop(pb, None)
             self.free_list.append(pb)
+        if freed:
+            self._last_access.pop(request_id, None)
         logger.info(
             "paged_kv pool free request=%s blocks=%d available=%d",
             request_id,
@@ -151,7 +181,9 @@ class FusionPagedRequestCache:
 
         for lb in range(first_block, last_block + 1):
             while len(self.block_table) <= lb:
-                pb = self.pool.alloc_block(self.request_id)
+                pb = self.pool.alloc_block(
+                    self.request_id, active_ids={self.request_id}
+                )
                 self.block_table.append(pb)
                 logger.debug(
                     "paged_kv request=%s block_table grow lb=%d pb=%d",
@@ -229,7 +261,7 @@ class FusionPagedRequestCache:
         self.offset = 0
         num_blocks_needed = (length + self.pool.block_size - 1) // self.pool.block_size
         for lb in range(num_blocks_needed):
-            pb = self.pool.alloc_block(self.request_id)
+            pb = self.pool.alloc_block(self.request_id, active_ids={self.request_id})
             self.block_table.append(pb)
         for lb in range(num_blocks_needed):
             block_start_logical = lb * self.pool.block_size
