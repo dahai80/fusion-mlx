@@ -403,8 +403,11 @@ _ALLOWED_ENDPOINTS: frozenset[str] = frozenset(
         "/v1/completions",
         "/v1/embeddings",
         "/v1/audio/transcriptions",
+        "/v1/audio/speech",
+        "/v1/audio/process",
         "/v1/messages",
-        "/v1/images/generations",
+        "/v1/images/generate",
+        "/v1/videos/generate",
     }
 )
 

@@ -971,6 +971,10 @@ copy, correct for quantized bases. See
 | GET | `/admin/api/fine-tune/dpo/jobs/{id}/stream` | SSE DPO/ORPO progress stream |
 | POST | `/admin/api/fine-tune/dpo/jobs/{id}/cancel` | Cancel a DPO/ORPO job |
 | DELETE | `/admin/api/fine-tune/dpo/jobs/{id}` | Delete a DPO/ORPO job record |
+| GET | `/admin/api/telemetry/status` | Telemetry enabled/consent/queue/activation overview (#5) |
+| GET | `/admin/api/telemetry/queue` | Telemetry queue counters (pending/enqueued/dropped/flushes) |
+| GET | `/admin/api/telemetry/activations` | Activation milestone markers fired |
+| GET | `/admin/api/telemetry/alerts` | Derived alert signals (flush failures, drops, backlog) |
 
 ### Quick Example
 

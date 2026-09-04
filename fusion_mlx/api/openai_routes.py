@@ -918,6 +918,16 @@ async def _run_chat(
             type(exc).__name__,
             exc,
         )
+        try:
+            from ..telemetry import emit
+
+            emit.error(
+                category="request_failure",
+                exc=exc,
+                phase="request",
+            )
+        except Exception:
+            logger.debug("telemetry error emit failed", exc_info=True)
         raise HTTPException(500, "Internal server error")
     finally:
         await _release()

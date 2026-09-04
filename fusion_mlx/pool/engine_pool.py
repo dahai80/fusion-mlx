@@ -2371,6 +2371,28 @@ class EnginePool:
                 loading_event.set()
             self._wake_process_memory_enforcer()
 
+            # Telemetry: emit model_load_failure when the load did not
+            # complete (raised before setting load_completed=True). The
+            # broad except keeps a telemetry bug from masking the real
+            # load error that is propagating to the caller.
+            if not load_completed:
+                try:
+                    from ..telemetry import emit
+
+                    emit.error(
+                        category="model_load_failure",
+                        exc=ModelLoadingError(
+                            model_id,
+                            f"load did not complete for {model_id}",
+                        ),
+                        phase="warmup",
+                    )
+                except Exception:
+                    logger.debug(
+                        "telemetry model_load_failure emit failed",
+                        exc_info=True,
+                    )
+
     async def preload_pinned_models(self) -> None:
         """
         Preload all pinned models at startup.
