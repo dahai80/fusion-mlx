@@ -11,6 +11,7 @@ import mlx.core as mx
 
 from fusion_mlx.engines.video_backends._inpaint import apply_inpaint_mask
 
+from ..ltx2.conditioning import LatentState, apply_denoise_mask
 from .transformer import Modality
 
 logger = logging.getLogger(__name__)
@@ -26,10 +27,15 @@ def denoise_distilled_t2v(
     controlnet_image=None,
     inpaint_mask=None,
     init_latent=None,
+    state: LatentState | None = None,
 ) -> mx.array:
-    # 两阶段 distilled T2V 去噪。latents (b,c,f,h,w), sigmas 降序 -> 0。
+    # 两阶段 distilled T2V/I2V 去噪。latents (b,c,f,h,w), sigmas 降序 -> 0。
     # 每步: 展平 latent -> Modality(context=text_embeddings) -> transformer ->
     # velocity -> x0 = latent - sigma*velocity -> 重新加噪到 sigma_next。
+    # #782 I2V: state (LatentState) 开启 latent-level 条件注入 — 条件帧
+    # denoise_mask=0 -> timesteps=0 -> transformer 视为干净帧; 每步 x0 预测后
+    # apply_denoise_mask 把条件帧夹回 clean_latent, 跨 re-noise 步冻结。
+    # state=None 走原 T2V 路径 (uniform timesteps) bit-exact 不变。
     # #735 Surface B: ControlNet not fabricatable for ltx2_5 (shared adapter is
     # Wan2-arch, no per-backend model). Fail visible — refuse silent T2V degrade.
     # #735 Surface C: DiT-agnostic latent-space inpaint re-composite after each
@@ -41,6 +47,8 @@ def denoise_distilled_t2v(
             "Refusing to silently degrade to T2V (#735)."
         )
     dtype = latents.dtype
+    if state is not None:
+        latents = state.latent
     latents = latents.astype(mx.float32)
     num_steps = len(sigmas) - 1
     if verbose:
@@ -60,7 +68,13 @@ def denoise_distilled_t2v(
             dtype
         )
 
-        timesteps = mx.full((b, num_tokens), sigma, dtype=dtype)
+        if state is not None:
+            denoise_mask_flat = mx.reshape(state.denoise_mask, (b, 1, f, 1, 1))
+            denoise_mask_flat = mx.broadcast_to(denoise_mask_flat, (b, 1, f, h, w))
+            denoise_mask_flat = mx.reshape(denoise_mask_flat, (b, num_tokens))
+            timesteps = mx.array(sigma, dtype=dtype) * denoise_mask_flat
+        else:
+            timesteps = mx.full((b, num_tokens), sigma, dtype=dtype)
 
         video_modality = Modality(
             latent=latents_flat,
@@ -80,6 +94,11 @@ def denoise_distilled_t2v(
         timesteps_f32 = mx.expand_dims(timesteps.astype(mx.float32), axis=-1)
         x0_f32 = latents_flat_f32 - timesteps_f32 * velocity.astype(mx.float32)
         denoised = mx.reshape(mx.transpose(x0_f32, (0, 2, 1)), (b, c, f, h, w))
+
+        if state is not None:
+            denoised = apply_denoise_mask(
+                denoised, state.clean_latent.astype(mx.float32), state.denoise_mask
+            )
 
         mx.eval(denoised)
 

@@ -20,18 +20,87 @@ from pathlib import Path
 import mlx.core as mx
 import numpy as np
 
+from fusion_mlx.cache.latent_cache import get_image_latent_cache, image_latent_key
+
+from ..ltx2.conditioning import (
+    LatentState,
+    VideoConditionByLatentIndex,
+    apply_conditioning,
+)
 from ..ltx2.positions import create_position_grid
 from ..ltx2.upsampler import upsample_latents
+from ..ltx2.utils import load_image, prepare_image_for_encoding
 from .config import LTX2_5Variant
 from .denoise import denoise_distilled_t2v
 from .ltx2_5_model import LTX2_5Model
 from .scheduler import DISTILLED_STAGE_1_SIGMAS, DISTILLED_STAGE_2_SIGMAS
 from .text_encoder import load_text_encoder
 from .upsampler import load_spatial_upsampler_2_5, load_temporal_upsampler
-from .utils import get_model_path, resolve_component
-from .video_vae import load_video_decoder
+from .utils import get_model_path, is_flat_layout, resolve_component
+from .video_vae import load_video_decoder, load_video_encoder
 
 logger = logging.getLogger(__name__)
+
+
+def _encode_image_latent(
+    src,
+    h,
+    w,
+    model_repo,
+    root,
+    model_dtype,
+    latent_cache,
+    vae_encoder,
+):
+    # #782: VAE-encode a single image at (h,w) -> 128-channel latent for I2V
+    # conditioning。ltx2_5 用 load_video_encoder(path) (conv VAE) + 复用 ltx2
+    # 的 load_image / prepare_image_for_encoding (纯图像 helper, 架构无关)。
+    # latent_cache (UMA Radix) hit 时零拷贝复用, 跳过 VAE encoder load+forward。
+    key = image_latent_key(model_repo, src, h, w, model_dtype)
+    if latent_cache is not None:
+        cached = latent_cache.get(key)
+        if cached is not None:
+            logger.info("ltx2_5 latent cache hit: %dx%d (%s)", h, w, key)
+            return cached, vae_encoder
+    if vae_encoder is None:
+        if is_flat_layout(root):
+            enc_path = resolve_component(root, "video_vae_conv_encoder")
+        else:
+            enc_path = resolve_component(root, "video_vae_conv")
+        vae_encoder = load_video_encoder(enc_path)
+        mx.eval(vae_encoder.parameters())
+    loaded = load_image(src, height=h, width=w, dtype=model_dtype)
+    latent = vae_encoder(prepare_image_for_encoding(loaded, h, w, dtype=model_dtype))
+    mx.eval(latent)
+    if latent_cache is not None:
+        latent_cache.put(key, latent)
+        logger.info("ltx2_5 latent cache miss+insert: %dx%d (%s)", h, w, key)
+    return latent, vae_encoder
+
+
+def _build_i2v_conditionings(
+    image_latent,
+    image_frame_idx: int,
+    image_strength: float,
+    end_image_latent=None,
+    end_image_strength: float = 1.0,
+):
+    # 与 ltx2 同构: 首帧条件 frame_idx (有 end_image 时固定 0), 尾帧 frame_idx=-1。
+    conditionings = []
+    if image_latent is not None:
+        idx = 0 if end_image_latent is not None else image_frame_idx
+        conditionings.append(
+            VideoConditionByLatentIndex(
+                latent=image_latent, frame_idx=idx, strength=image_strength
+            )
+        )
+    if end_image_latent is not None:
+        conditionings.append(
+            VideoConditionByLatentIndex(
+                latent=end_image_latent, frame_idx=-1, strength=end_image_strength
+            )
+        )
+    return conditionings
 
 
 def generate_video(
@@ -94,11 +163,6 @@ def generate_video(
         raise ValueError(
             f"LTX-2.5 width/height must be divisible by 32, got {width}x{height}"
         )
-    if image is not None:
-        raise NotImplementedError(
-            "LTX-2.5 I2V path not yet wired (requires VAE encoder + "
-            "conditioning). T2V only this round."
-        )
     if not two_stage:
         raise NotImplementedError(
             "LTX-2.5 single-stage path not supported; distilled is two-stage."
@@ -141,8 +205,6 @@ def generate_video(
     logger.info("Loading transformer: %s", tx_path.name)
     # flat diffusers 布局 (#762) 把 connector 单列为独立文件，需与 transformer
     # 合并加载到同一模型树；Comfy 布局 connector 嵌在 transformer 文件内。
-    from .utils import is_flat_layout
-
     conn_path = None
     if is_flat_layout(root):
         conn_path = resolve_component(root, "connector", variant=var_str)
@@ -209,6 +271,30 @@ def generate_video(
     latent_std = vae_decoder.per_channel_statistics.std
     logger.info("VAE decoder loaded")
 
+    # ---- 6.5 I2V image encode (#782) ----
+    # 两阶段 distilled 各分辨率独立 VAE-encode 同一图像: stage1 半分辨率,
+    # stage2 全分辨率 (spatial upsampler x2 之间)。条件是 latent-level 注入,
+    # transformer 无需改动。无图像时 is_i2v=False, 走原 T2V 路径不变。
+    is_i2v = image is not None
+    stage1_image_latent = None
+    stage2_image_latent = None
+    vae_encoder = None
+    if is_i2v:
+        logger.info("ltx2_5 I2V: encoding image at stage resolutions...")
+        latent_cache = get_image_latent_cache(model_repo)
+        s1_h, s1_w = stage1_h * 32, stage1_w * 32
+        s2_h, s2_w = stage2_h * 32, stage2_w * 32
+        stage1_image_latent, vae_encoder = _encode_image_latent(
+            image, s1_h, s1_w, model_repo, root, model_dtype, latent_cache, vae_encoder
+        )
+        stage2_image_latent, vae_encoder = _encode_image_latent(
+            image, s2_h, s2_w, model_repo, root, model_dtype, latent_cache, vae_encoder
+        )
+        if vae_encoder is not None:
+            del vae_encoder
+            mx.clear_cache()
+        logger.info("ltx2_5 I2V: image latents encoded")
+
     # ---- 7. stage1 denoise ----
     logger.info(
         "Stage 1: Generating at %dx%d (%d steps)",
@@ -219,10 +305,39 @@ def generate_video(
     mx.random.seed(seed)
     positions = create_position_grid(1, latent_frames, stage1_h, stage1_w)
     mx.eval(positions)
-    latents = mx.random.normal(
-        (1, 128, latent_frames, stage1_h, stage1_w), dtype=model_dtype
-    )
-    mx.eval(latents)
+
+    state1 = None
+    if is_i2v and stage1_image_latent is not None:
+        # stage1 从 zeros latent 出发; 条件帧 (image_frame_idx) 注入 clean_latent,
+        # denoise_mask=1-strength (条件帧保持干净, 不去噪)。
+        latent_shape = (1, 128, latent_frames, stage1_h, stage1_w)
+        state1 = LatentState(
+            latent=mx.zeros(latent_shape, dtype=model_dtype),
+            clean_latent=mx.zeros(latent_shape, dtype=model_dtype),
+            denoise_mask=mx.ones((1, 1, latent_frames, 1, 1), dtype=model_dtype),
+        )
+        conditionings = _build_i2v_conditionings(
+            stage1_image_latent, image_frame_idx, image_strength
+        )
+        state1 = apply_conditioning(state1, conditionings)
+        # 按 denoise_mask 重新加噪到 STAGE_1_SIGMAS[0]: 条件帧 mask=0 -> 不加噪,
+        # 自由帧 mask=1 -> 全噪声。
+        noise = mx.random.normal(latent_shape, dtype=model_dtype)
+        noise_scale = mx.array(DISTILLED_STAGE_1_SIGMAS[0], dtype=model_dtype)
+        scaled_mask = state1.denoise_mask * noise_scale
+        state1 = LatentState(
+            latent=noise * scaled_mask
+            + state1.latent * (mx.array(1.0, dtype=model_dtype) - scaled_mask),
+            clean_latent=state1.clean_latent,
+            denoise_mask=state1.denoise_mask,
+        )
+        latents = state1.latent
+        mx.eval(latents)
+    else:
+        latents = mx.random.normal(
+            (1, 128, latent_frames, stage1_h, stage1_w), dtype=model_dtype
+        )
+        mx.eval(latents)
 
     latents = denoise_distilled_t2v(
         latents,
@@ -234,6 +349,7 @@ def generate_video(
         controlnet_image=controlnet_image,
         inpaint_mask=inpaint_mask,
         init_latent=init_latent,
+        state=state1,
     )
     mx.eval(latents)
     mx.clear_cache()
@@ -255,12 +371,38 @@ def generate_video(
     )
     positions = create_position_grid(1, latent_frames, stage2_h, stage2_w)
     mx.eval(positions)
-    # stage2 从 stage1 上采样结果出发, 重新加噪到 STAGE_2_SIGMAS[0]。
-    noise_scale = mx.array(DISTILLED_STAGE_2_SIGMAS[0], dtype=mx.float32)
-    one_minus_scale = mx.array(1.0 - DISTILLED_STAGE_2_SIGMAS[0], dtype=mx.float32)
-    noise = mx.random.normal(latents.shape).astype(mx.float32)
-    latents = noise * noise_scale + latents.astype(mx.float32) * one_minus_scale
-    mx.eval(latents)
+
+    state2 = None
+    if is_i2v and stage2_image_latent is not None:
+        # stage2 从 stage1 上采样 latents 出发; 同样注入条件帧 clean_latent,
+        # 按 denoise_mask 重新加噪到 STAGE_2_SIGMAS[0]。
+        state2 = LatentState(
+            latent=latents,
+            clean_latent=mx.zeros_like(latents),
+            denoise_mask=mx.ones((1, 1, latent_frames, 1, 1), dtype=model_dtype),
+        )
+        conditionings = _build_i2v_conditionings(
+            stage2_image_latent, image_frame_idx, image_strength
+        )
+        state2 = apply_conditioning(state2, conditionings)
+        noise = mx.random.normal(latents.shape).astype(model_dtype)
+        noise_scale = mx.array(DISTILLED_STAGE_2_SIGMAS[0], dtype=model_dtype)
+        scaled_mask = state2.denoise_mask * noise_scale
+        state2 = LatentState(
+            latent=noise * scaled_mask
+            + state2.latent * (mx.array(1.0, dtype=model_dtype) - scaled_mask),
+            clean_latent=state2.clean_latent,
+            denoise_mask=state2.denoise_mask,
+        )
+        latents = state2.latent
+        mx.eval(latents)
+    else:
+        # stage2 从 stage1 上采样结果出发, 重新加噪到 STAGE_2_SIGMAS[0]。
+        noise_scale = mx.array(DISTILLED_STAGE_2_SIGMAS[0], dtype=mx.float32)
+        one_minus_scale = mx.array(1.0 - DISTILLED_STAGE_2_SIGMAS[0], dtype=mx.float32)
+        noise = mx.random.normal(latents.shape).astype(mx.float32)
+        latents = noise * noise_scale + latents.astype(mx.float32) * one_minus_scale
+        mx.eval(latents)
 
     latents = denoise_distilled_t2v(
         latents,
@@ -272,6 +414,7 @@ def generate_video(
         controlnet_image=controlnet_image,
         inpaint_mask=inpaint_mask,
         init_latent=init_latent,
+        state=state2,
     )
     mx.eval(latents)
     del transformer
