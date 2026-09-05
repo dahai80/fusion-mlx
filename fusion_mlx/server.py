@@ -1723,7 +1723,7 @@ class Server:
         try:
             from .runtime.cache import load_prefix_cache_from_disk
 
-            load_prefix_cache_from_disk()
+            await load_prefix_cache_from_disk()
         except Exception as e:
             logger.debug("prefix cache load failed (non-fatal): %s", e)
 
@@ -1797,7 +1797,7 @@ class Server:
         try:
             from .runtime.cache import save_prefix_cache_to_disk
 
-            save_prefix_cache_to_disk()
+            await save_prefix_cache_to_disk()
         except Exception as e:
             logger.debug("prefix cache save failed (non-fatal): %s", e)
 

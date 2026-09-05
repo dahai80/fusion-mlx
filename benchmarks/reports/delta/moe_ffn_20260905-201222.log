@@ -1,0 +1,28 @@
+Phase C MoE FFN fusion viability — fused (gate_up+down, 2 matmul) vs unfused (3 matmul)
+  mlx 0.31.2  device=Device(gpu, 0)
+  fused   = 1 gate_up matmul (out=2*inter) + split + SiLU*up + 1 down matmul
+  unfused = 3 matmuls (gate, up, down) + SiLU*up
+  native megakernel additionally keeps inter activation in threadgroup
+
+  Verdict rule: speedup>=1.10x -> hits native-vs-separated Δ>=10% target on floor;
+                ~1.0x -> break-even, megakernel must win via threadgroup inter;
+                <1.0x -> unfused fine, megakernel the only path.
+
+  correctness: fused-split == unfused  OK
+
+  [glm-decode-b1   ] fused=  1.555ms  unfused=  1.507ms  speedup= 0.97x
+  [glm-decode-b4   ] fused=  1.773ms  unfused=  1.853ms  speedup= 1.05x
+  [glm-prefill-512 ] fused=  4.331ms  unfused=  5.200ms  speedup= 1.20x
+  [glm-prefill-2048] fused= 16.575ms  unfused= 21.711ms  speedup= 1.31x
+  [llama-prefill-512] fused=  3.535ms  unfused=  3.506ms  speedup= 0.99x
+  [llama-prefill-2048] fused= 13.244ms  unfused= 17.000ms  speedup= 1.28x
+
+Verdict:
+  glm-decode-b1   : speedup= 0.97x -> BREAK-EVEN -> megakernel must win via threadgroup inter
+  glm-decode-b4   : speedup= 1.05x -> BREAK-EVEN -> megakernel must win via threadgroup inter
+  glm-prefill-512 : speedup= 1.20x -> FUSED WINS -> native-vs-separated Δ>=10% met on projection floor
+  glm-prefill-2048: speedup= 1.31x -> FUSED WINS -> native-vs-separated Δ>=10% met on projection floor
+  llama-prefill-512: speedup= 0.99x -> BREAK-EVEN -> megakernel must win via threadgroup inter
+  llama-prefill-2048: speedup= 1.28x -> FUSED WINS -> native-vs-separated Δ>=10% met on projection floor
+
+Summary: 3/6 regimes meet Δ>=10% on projection floor.

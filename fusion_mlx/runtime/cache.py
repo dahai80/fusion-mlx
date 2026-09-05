@@ -28,9 +28,9 @@ def _shutdown_budget_sec() -> float:
         return _DEFAULT_SHUTDOWN_BUDGET_SEC
 
 
-def load_prefix_cache_from_disk() -> None:
+async def load_prefix_cache_from_disk() -> None:
     cfg = get_config()
-    engine = _get_engine(cfg)
+    engine = await _get_engine(cfg)
     if engine is None:
         return
     try:
@@ -75,9 +75,9 @@ def _resolve_memory_aware_cache(engine):
     return getattr(scheduler, "memory_aware_cache", None)
 
 
-def save_prefix_cache_to_disk(budget_sec: float | None = None) -> None:
+async def save_prefix_cache_to_disk(budget_sec: float | None = None) -> None:
     cfg = get_config()
-    engine = _get_engine(cfg)
+    engine = await _get_engine(cfg)
     if engine is None:
         return
     if budget_sec is None:
@@ -150,7 +150,7 @@ def _call_save_cache_to_disk(engine, cache_dir: str, should_abort):
     return engine.save_cache_to_disk(cache_dir)
 
 
-def _get_engine(cfg):
+async def _get_engine(cfg):
     """Resolve the engine instance from config or server state.
 
     Rapid-MLX stores cfg.engine directly. Fusion-mlx uses an EnginePool
@@ -166,7 +166,7 @@ def _get_engine(cfg):
         if pool is not None:
             engines = pool.get_loaded_model_ids()
             if engines:
-                return pool.get_engine(engines[0])
+                return await pool.get_engine(engines[0])
     except Exception:
         pass
     return None

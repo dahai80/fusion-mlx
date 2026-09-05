@@ -1,5 +1,47 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **#807 RadixPrefixCache: KV tensor storage non-functional** — the radix
+  prefix cache (`FUSION_MLX_PREFIX_CACHE=radix`) built a token-id trie and
+  allocated paged block metadata but never persisted KV tensor data, so
+  prefix reuse could not skip prefill (0% TTFT reduction). `store_cache`
+  now delegates KV persistence (tensor-slice extraction + SSD save) to a
+  composed `BlockAwarePrefixCache` over the same `PagedCacheManager`, and
+  indexes the returned block_ids into the radix trie; `reconstruct_cache`,
+  `preload_blocks`, `release_cache`, `fork_cache`, `clear` likewise
+  delegate. After the fix, radix cuts TTFT 19.1 s → 11.3 s (Δ=40.8%),
+  clearing the PRD Δ≥30% target (was -3.1%).
+- **#808 ltx2_5: str-root crash in layout detection** —
+  `detect_layout`/`is_flat_layout`/`is_mlx_community_layout` called
+  `root / "..."` with `root` a `str`, raising `TypeError`. Added
+  `Path(root)` coercion at each entry point.
+- **#809 mcp test fixture: python not in PATH** — `test_mcp_manager.py`
+  used `"command": "python"` which is absent on macOS default PATH,
+  triggering `MCPSecurityError`. Replaced with `sys.executable`.
+- **runtime/cache: un-awaited coroutine in prefix-cache load/save** —
+  `_get_engine` called the async `EnginePool.get_engine` without `await`,
+  so `load_prefix_cache_from_disk`/`save_prefix_cache_to_disk` resolved to
+  a coroutine and silently no-op'd ("'coroutine' object has no attribute
+  'load_cache_from_disk'"). Made `_get_engine`,
+  `load_prefix_cache_from_disk`, `save_prefix_cache_to_disk` async and
+  awaited them in the `server.py` lifespan. Tests updated to `AsyncMock`.
+- **RadixPrefixCache: missing interface methods** — the radix prefix
+  cache (`FUSION_MLX_PREFIX_CACHE=radix`) crashed scheduler/runtime init
+  with AttributeError for `expected_num_layers`,
+  `set_paged_ssd_cache_manager`, `set_cold_restore_callback`,
+  `preload_blocks`, `reconstruct_cache`, `get_stats_dict`, `clear`,
+  `__len__`. Implemented (delegating to the composed BlockAware instance).
+
+### Added
+- **Phase C Δ-bench harnesses** — `scripts/bench_phase_c_moe_ffn.py`
+  (MoE FFN fusion viability, fused-vs-unfused matmul floor) and
+  `scripts/bench_radix_vs_baseline.py` (radix vs hash-baseline prefix
+  cache TTFT). Consolidated report in
+  `benchmarks/reports/delta/DELTA_REPORT.md`. PRD targets: w4a8, moe_ffn,
+  and radix all MET.
+
 ## [0.8.80] — 2026-09-05
 
 ### Added

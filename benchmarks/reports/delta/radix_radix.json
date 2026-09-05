@@ -1,0 +1,22 @@
+{
+  "label": "radix",
+  "model": "mlx-community--Qwen3.5-9B-4bit",
+  "rounds": 4,
+  "median_cold_ttft_s": 19.1247,
+  "median_hot_ttft_s": 11.33,
+  "delta_pct": 40.8,
+  "cold_ttfts_s": [
+    19.6417,
+    19.2167,
+    19.0327,
+    11.0518
+  ],
+  "hot_ttfts_s": [
+    21.6569,
+    11.3867,
+    0.5759,
+    11.2732
+  ],
+  "target_pct": 30.0,
+  "met_target": true
+}

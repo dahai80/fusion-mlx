@@ -11,11 +11,14 @@ from fusion_mlx.cache.radix_prefix_cache import RadixPrefixCache, _RadixNode
 def _make_paged(block_size: int = 4, max_blocks: int = 64):
     mgr = MagicMock()
     mgr.block_size = block_size
+    mgr.model_name = "test-model"
 
     class _Block:
         def __init__(self, bid, token_count=0):
             self.block_id = bid
             self.token_count = token_count
+            # chain hash sentinel so fetch_cache's KV-backed guard matches.
+            self.block_hash = f"hash-{bid}".encode()
 
     counter = {"n": 0}
     mgr.allocated_blocks = {}
@@ -40,17 +43,119 @@ def _make_paged(block_size: int = 4, max_blocks: int = 64):
     def _delete_block_table(request_id):
         return None
 
+    def _free_block(bid):
+        mgr.allocated_blocks.pop(bid, None)
+        return True
+
+    def _get_block_table(request_id):
+        return None
+
     mgr.create_block_table = _create_block_table
     mgr.allocate_block = _allocate_block
     mgr.increment_ref = _increment_ref
     mgr.delete_block_table = _delete_block_table
+    mgr.free_block = _free_block
+    mgr.get_block_table = _get_block_table
+    mgr.handle_memory_pressure = lambda n: True
+    mgr.find_cached_block = lambda tokens, parent_hash, **kw: None
+    mgr.register_block_hash = lambda *a, **kw: None
+    mgr.get_memory_usage = lambda: {"blocks": len(mgr.allocated_blocks)}
+    mgr.clear = lambda: mgr.allocated_blocks.clear()
     return mgr
+
+
+class _FakeKV:
+    # Lightweight stand-in for the BlockAware KV delegate. The radix trie
+    # under test is a pure token-id index over block_ids; KV persistence is
+    # BlockAware's responsibility and is covered by its own tests. This fake
+    # allocates blocks via the paged manager and returns a BlockTable so the
+    # trie indexing / fetch matching logic can be exercised in isolation.
+
+    def __init__(self, paged, block_size):
+        self.paged_cache = paged
+        self.block_size = block_size
+        self.paged_ssd_cache = None
+        self._request_tables = {}
+
+    def store_cache(self, request_id, tokens, cache_data, **kw):
+        import time
+
+        from fusion_mlx.cache.paged_cache import BlockTable
+        from fusion_mlx.cache.prefix_cache import BlockCacheEntry
+
+        if not tokens:
+            return None
+        block_table = BlockTable(request_id=request_id)
+        n_full = len(tokens) // self.block_size
+        for i in range(n_full):
+            blk = self.paged_cache.allocate_block()
+            if blk is None:
+                break
+            blk.token_count = self.block_size
+            self.paged_cache.increment_ref(blk.block_id)
+            block_table.block_ids.append(blk.block_id)
+            block_table.num_tokens += self.block_size
+        self._request_tables[request_id] = BlockCacheEntry(
+            block_table=block_table, last_access=time.time()
+        )
+        return block_table
+
+    def fetch_cache(self, request_id, tokens, **kw):
+        return None, tokens
+
+    def reconstruct_cache(self, block_table, promote_to_hot_cache=True):
+        return []
+
+    def preload_blocks(self, block_table):
+        return 0
+
+    def release_cache(self, request_id):
+        self._request_tables.pop(request_id, None)
+        self.paged_cache.delete_block_table(request_id)
+
+    def clear_request_entry(self, request_id):
+        self._request_tables.pop(request_id, None)
+
+    def fork_cache(self, src, new_id):
+        import time
+
+        from fusion_mlx.cache.paged_cache import BlockTable
+        from fusion_mlx.cache.prefix_cache import BlockCacheEntry
+
+        entry = self._request_tables.get(src)
+        if entry is None:
+            return None
+        new_table = BlockTable(request_id=new_id)
+        for bid in entry.block_table.block_ids:
+            self.paged_cache.increment_ref(bid)
+            blk = self.paged_cache.allocated_blocks.get(bid)
+            if blk:
+                new_table.block_ids.append(bid)
+                new_table.num_tokens += blk.token_count
+        self._request_tables[new_id] = BlockCacheEntry(
+            block_table=new_table, last_access=time.time()
+        )
+        return new_table
+
+    def clear(self):
+        self._request_tables.clear()
+
+    def set_paged_ssd_cache_manager(self, mgr):
+        self.paged_ssd_cache = mgr
+
+    def set_cold_restore_callback(self, cb):
+        pass
 
 
 def _make_cache(block_size: int = 4, max_blocks: int = 64):
     model = MagicMock()
     paged = _make_paged(block_size, max_blocks)
-    return RadixPrefixCache(model=model, paged_cache_manager=paged), paged
+    cache = RadixPrefixCache(model=model, paged_cache_manager=paged)
+    # Replace the real BlockAware delegate with the lightweight fake so the
+    # trie logic is tested without a full paged-cache + SSD stack.
+    cache._kv_cache = _FakeKV(paged, block_size)
+    cache.paged_ssd_cache = None
+    return cache, paged
 
 
 class TestInsertAndLookup:
@@ -157,7 +262,13 @@ class TestInterfaceParity:
 
     def test_has_fetch_store_release_fork(self):
         cache, _ = _make_cache()
-        for meth in ("fetch_cache", "store_cache", "release_cache", "fork_cache", "clear_request_entry"):
+        for meth in (
+            "fetch_cache",
+            "store_cache",
+            "release_cache",
+            "fork_cache",
+            "clear_request_entry",
+        ):
             assert callable(getattr(cache, meth))
 
     def test_root_is_radix_node(self):

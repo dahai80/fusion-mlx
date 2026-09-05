@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # ── share/warning.py ─────────────────────────────────────────────────
 from fusion_mlx.share import warning as warn_mod
@@ -273,18 +274,18 @@ class TestLoadPrefixCacheFromDisk:
     def test_no_engine_returns(self, monkeypatch):
         cfg = MagicMock()
         monkeypatch.setattr(cache_mod, "get_config", lambda *a, **k: cfg)
-        with patch.object(cache_mod, "_get_engine", return_value=None):
-            cache_mod.load_prefix_cache_from_disk()  # no crash
+        with patch.object(cache_mod, "_get_engine", new=AsyncMock(return_value=None)):
+            asyncio.run(cache_mod.load_prefix_cache_from_disk())  # no crash
 
     def test_engine_loads_cache(self, monkeypatch, tmp_path):
         cfg = MagicMock()
         monkeypatch.setattr(cache_mod, "get_config", lambda *a, **k: cfg)
         engine = MagicMock()
         engine.load_cache_from_disk.return_value = 5  # loaded 5 entries
-        with patch.object(cache_mod, "_get_engine", return_value=engine):
+        with patch.object(cache_mod, "_get_engine", new=AsyncMock(return_value=engine)):
             with patch.object(cache_mod, "get_cache_dir", return_value=str(tmp_path)):
                 with patch.object(cache_mod, "_load_radix_index_after_cache"):
-                    cache_mod.load_prefix_cache_from_disk()
+                    asyncio.run(cache_mod.load_prefix_cache_from_disk())
                     engine.load_cache_from_disk.assert_called_once()
 
     def test_engine_no_entries(self, monkeypatch, tmp_path):
@@ -292,58 +293,60 @@ class TestLoadPrefixCacheFromDisk:
         monkeypatch.setattr(cache_mod, "get_config", lambda *a, **k: cfg)
         engine = MagicMock()
         engine.load_cache_from_disk.return_value = 0
-        with patch.object(cache_mod, "_get_engine", return_value=engine):
+        with patch.object(cache_mod, "_get_engine", new=AsyncMock(return_value=engine)):
             with patch.object(cache_mod, "get_cache_dir", return_value=str(tmp_path)):
                 with patch.object(cache_mod, "_load_radix_index_after_cache"):
-                    cache_mod.load_prefix_cache_from_disk()
+                    asyncio.run(cache_mod.load_prefix_cache_from_disk())
 
     def test_load_exception_caught(self, monkeypatch, tmp_path):
         cfg = MagicMock()
         monkeypatch.setattr(cache_mod, "get_config", lambda *a, **k: cfg)
         engine = MagicMock()
         engine.load_cache_from_disk.side_effect = RuntimeError("boom")
-        with patch.object(cache_mod, "_get_engine", return_value=engine):
+        with patch.object(cache_mod, "_get_engine", new=AsyncMock(return_value=engine)):
             with patch.object(cache_mod, "get_cache_dir", return_value=str(tmp_path)):
                 with patch("fusion_mlx.runtime.cache.logger.warning"):
-                    cache_mod.load_prefix_cache_from_disk()  # no raise
+                    asyncio.run(cache_mod.load_prefix_cache_from_disk())  # no raise
 
 
 class TestSavePrefixCacheToDisk:
     def test_no_engine_returns(self, monkeypatch):
         cfg = MagicMock()
         monkeypatch.setattr(cache_mod, "get_config", lambda *a, **k: cfg)
-        with patch.object(cache_mod, "_get_engine", return_value=None):
-            cache_mod.save_prefix_cache_to_disk()  # no crash
+        with patch.object(cache_mod, "_get_engine", new=AsyncMock(return_value=None)):
+            asyncio.run(cache_mod.save_prefix_cache_to_disk())  # no crash
 
     def test_with_budget_calls_save(self, monkeypatch, tmp_path):
         cfg = MagicMock()
         monkeypatch.setattr(cache_mod, "get_config", lambda *a, **k: cfg)
         engine = MagicMock()
-        with patch.object(cache_mod, "_get_engine", return_value=engine):
+        with patch.object(cache_mod, "_get_engine", new=AsyncMock(return_value=engine)):
             with patch.object(cache_mod, "get_cache_dir", return_value=str(tmp_path)):
                 with patch.object(
                     cache_mod, "_call_save_cache_to_disk", return_value=True
                 ):
                     with patch.object(cache_mod, "_save_radix_index_after_cache"):
-                        cache_mod.save_prefix_cache_to_disk(budget_sec=10.0)
+                        asyncio.run(
+                            cache_mod.save_prefix_cache_to_disk(budget_sec=10.0)
+                        )
 
     def test_no_budget_no_should_abort(self, monkeypatch, tmp_path):
         cfg = MagicMock()
         monkeypatch.setattr(cache_mod, "get_config", lambda *a, **k: cfg)
         engine = MagicMock()
-        with patch.object(cache_mod, "_get_engine", return_value=engine):
+        with patch.object(cache_mod, "_get_engine", new=AsyncMock(return_value=engine)):
             with patch.object(cache_mod, "get_cache_dir", return_value=str(tmp_path)):
                 with patch.object(
                     cache_mod, "_call_save_cache_to_disk", return_value=True
                 ):
                     with patch.object(cache_mod, "_save_radix_index_after_cache"):
-                        cache_mod.save_prefix_cache_to_disk(budget_sec=0.0)
+                        asyncio.run(cache_mod.save_prefix_cache_to_disk(budget_sec=0.0))
 
     def test_save_exception_caught(self, monkeypatch, tmp_path):
         cfg = MagicMock()
         monkeypatch.setattr(cache_mod, "get_config", lambda *a, **k: cfg)
         engine = MagicMock()
-        with patch.object(cache_mod, "_get_engine", return_value=engine):
+        with patch.object(cache_mod, "_get_engine", new=AsyncMock(return_value=engine)):
             with patch.object(cache_mod, "get_cache_dir", return_value=str(tmp_path)):
                 with patch.object(
                     cache_mod,
@@ -351,4 +354,4 @@ class TestSavePrefixCacheToDisk:
                     side_effect=RuntimeError("boom"),
                 ):
                     with patch("fusion_mlx.runtime.cache.logger.warning"):
-                        cache_mod.save_prefix_cache_to_disk()  # no raise
+                        asyncio.run(cache_mod.save_prefix_cache_to_disk())  # no raise

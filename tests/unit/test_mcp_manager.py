@@ -4,6 +4,7 @@ Tests for MCP client manager (fusion_mlx/mcp/manager.py).
 """
 
 import json
+import sys
 from unittest.mock import AsyncMock
 
 import pytest
@@ -36,7 +37,7 @@ class TestMCPClientManagerInit:
                 "servers": {
                     "server1": {
                         "transport": "stdio",
-                        "command": "python",
+                        "command": sys.executable,
                         "args": ["-m", "server1"],
                     },
                     "server2": {
@@ -66,7 +67,7 @@ class TestMCPClientManagerStartStop:
                 "servers": {
                     "server1": {
                         "transport": "stdio",
-                        "command": "python",
+                        "command": sys.executable,
                     },
                     "server2": {
                         "transport": "stdio",
@@ -115,7 +116,7 @@ class TestMCPClientManagerStartStop:
                 "servers": {
                     "good": {
                         "transport": "stdio",
-                        "command": "python",
+                        "command": sys.executable,
                     },
                     "bad": {
                         "transport": "stdio",
@@ -145,12 +146,12 @@ class TestMCPClientManagerStartStop:
                 "servers": {
                     "enabled": {
                         "transport": "stdio",
-                        "command": "python",
+                        "command": sys.executable,
                         "enabled": True,
                     },
                     "disabled": {
                         "transport": "stdio",
-                        "command": "python",
+                        "command": sys.executable,
                         "enabled": False,
                     },
                 }
@@ -203,7 +204,7 @@ class TestMCPClientManagerTools:
                 "servers": {
                     "weather": {
                         "transport": "stdio",
-                        "command": "python",
+                        "command": sys.executable,
                     },
                     "search": {
                         "transport": "stdio",
@@ -343,7 +344,7 @@ class TestMCPClientManagerServerStatus:
         config = MCPConfig.from_dict(
             {
                 "servers": {
-                    "server1": {"transport": "stdio", "command": "python"},
+                    "server1": {"transport": "stdio", "command": sys.executable},
                     "server2": {"transport": "sse", "url": "http://test.com"},
                 }
             }
@@ -384,7 +385,7 @@ class TestMCPClientManagerExecuteTool:
                 "servers": {
                     "test": {
                         "transport": "stdio",
-                        "command": "python",
+                        "command": sys.executable,
                     },
                 },
                 "default_timeout": 30.0,
@@ -506,7 +507,7 @@ class TestMCPClientManagerRefreshReconnect:
         config = MCPConfig.from_dict(
             {
                 "servers": {
-                    "server1": {"transport": "stdio", "command": "python"},
+                    "server1": {"transport": "stdio", "command": sys.executable},
                     "server2": {"transport": "stdio", "command": "node"},
                 }
             }
