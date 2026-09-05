@@ -1,0 +1,22 @@
+{
+  "label": "baseline",
+  "model": "mlx-community--Qwen3.5-9B-4bit",
+  "rounds": 4,
+  "median_cold_ttft_s": 19.0376,
+  "median_hot_ttft_s": 0.7032,
+  "delta_pct": 96.3,
+  "cold_ttfts_s": [
+    18.9495,
+    19.3418,
+    18.9106,
+    19.1257
+  ],
+  "hot_ttfts_s": [
+    20.8626,
+    0.6841,
+    0.7223,
+    0.6084
+  ],
+  "target_pct": 30.0,
+  "met_target": true
+}

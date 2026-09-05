@@ -1,0 +1,19 @@
+Phase C W4A8 viability — activation-quant overhead vs W4 MatMul baseline
+  mlx 0.31.2  device=Device(gpu, 0)
+  baseline = mx.quantized_matmul (W4 weights, fp16 activations)
+  A8-roundtrip = mx.quantize(A,8)+dequant (overhead a fused W4A8 absorbs)
+  A8-naive = baseline on dequantized A (sanity: ~base + roundtrip)
+
+  Verdict rule: overhead<20% → W4A8 promising (int8 upside may net-win);
+                overhead>100% → W4A8 loses at that regime.
+
+  [decode-b1     ] base=  0.299ms  A8-roundtrip=  0.170ms  A8-naive=  0.309ms  overhead=  57.0% of base
+  [decode-b4     ] base=  0.404ms  A8-roundtrip=  0.169ms  A8-naive=  0.412ms  overhead=  41.8% of base
+  [prefill-512   ] base=  4.165ms  A8-roundtrip=  0.218ms  A8-naive=  4.192ms  overhead=   5.2% of base
+  [prefill-2048  ] base= 15.958ms  A8-roundtrip=  0.382ms  A8-naive= 16.118ms  overhead=   2.4% of base
+
+Verdict:
+  decode-b1     : overhead= 57.0% → MARGINAL — needs int8 MatMul >2x to net-win
+  decode-b4     : overhead= 41.8% → MARGINAL — needs int8 MatMul >2x to net-win
+  prefill-512   : overhead=  5.2% → PROMISING — int8 upside may net-win
+  prefill-2048  : overhead=  2.4% → PROMISING — int8 upside may net-win

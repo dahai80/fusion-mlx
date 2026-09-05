@@ -108,6 +108,7 @@ def detect_layout(root: Path) -> str:
     # flat 优先 (split_model.json recipe=ltx-2.5), 次 mlx-community (config.json
     # model_type=AudioVideo + model_version=2.5.0, 无 diffusion_models/ 子目录),
     # 兜底 comfy。
+    root = Path(root)
     if is_flat_layout(root):
         return _LAYOUT_FLAT
     if is_mlx_community_layout(root):
@@ -119,6 +120,7 @@ def is_flat_layout(root: Path) -> bool:
     # 检测根目录是否为 flat diffusers 布局：split_model.json recipe=ltx-2.5 +
     # 根级 transformer-*.safetensors（与 model_discovery._is_flat_ltx2_5_layout
     # 同构，避免 backend 模块反向依赖 pool）。
+    root = Path(root)
     split_model = root / "split_model.json"
     if not split_model.exists():
         return False
@@ -142,6 +144,7 @@ def is_mlx_community_layout(root: Path) -> bool:
     # 检测 mlx-community 布局 (#786): 根 config.json model_type=AudioVideo +
     # model_version=2.5.0, 无 diffusion_models/ 子目录 (排除 Comfy), 无
     # split_model.json (排除 flat)。验证来源 mlx-community/ltx-2.5-mlx-q8。
+    root = Path(root)
     config = root / "config.json"
     if not config.exists():
         return False
