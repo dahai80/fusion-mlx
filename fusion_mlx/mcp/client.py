@@ -150,8 +150,8 @@ class MCPClient:
         # E-28: the MCP SDK's stdio_client owns the subprocess spawn and
         # StdioServerParameters exposes no preexec_fn / rlimit / process-group
         # hook, so we cannot set CPU/memory/FD limits or a child timeout at
-        # fork time from here (upstream gap — tracked separately). What we
-        # CAN enforce at our layer is a bounded startup so a hung or
+        # fork time from here (upstream gap — modelcontextprotocol/python-sdk#3457).
+        # What we CAN enforce at our layer is a bounded startup so a hung or
         # malicious MCP server cannot stall the inference host indefinitely
         # on connect. Configurable via FUSION_MCP_CONNECT_TIMEOUT_SECONDS.
         import os as _os
