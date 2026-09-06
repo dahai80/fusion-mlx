@@ -194,6 +194,13 @@ class VisionFeatureSSDCache:
         except queue.Full:
             pass
         self._writer_thread.join(timeout=10.0)
+        # P3 (#811): join(timeout=10) returns silently if the writer is
+        # stuck — pending SSD writes would be lost without a loud signal.
+        if self._writer_thread.is_alive():
+            logger.warning(
+                "vision feature cache writer did not drain within 10s — "
+                "pending writes may be lost"
+            )
         logger.debug(
             "Vision feature cache closed: %s",
             {k: v for k, v in self._stats.items() if v > 0},

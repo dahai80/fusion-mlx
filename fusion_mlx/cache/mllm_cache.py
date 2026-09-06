@@ -111,6 +111,13 @@ class MLLMPrefixCacheEntry:
         if self.vision_embeddings is not None:
             if hasattr(self.vision_embeddings, "nbytes"):
                 size += self.vision_embeddings.nbytes
+            else:
+                # P3 (#811): silently skipping a non-nbytes vision tensor
+                # understates memory and skews eviction math. Log it so the
+                # undercount is observable instead of invisible.
+                logger.debug(
+                    "mllm memory_size: vision_embeddings lacks nbytes — undercounting"
+                )
         if self.kv_cache is not None:
             for layer_cache in self.kv_cache:
                 if hasattr(layer_cache, "state"):
@@ -119,6 +126,10 @@ class MLLMPrefixCacheEntry:
                         for tensor in state:
                             if hasattr(tensor, "nbytes"):
                                 size += tensor.nbytes
+                            else:
+                                logger.debug(
+                                    "mllm memory_size: kv tensor lacks nbytes — undercounting"
+                                )
         return size
 
     def get_prefix_match_length(self, new_token_ids: list[int]) -> int:

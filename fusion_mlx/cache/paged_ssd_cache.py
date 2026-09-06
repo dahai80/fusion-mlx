@@ -1895,6 +1895,24 @@ class PagedSSDCacheManager:
             skipped_incompatible,
         )
 
+        # P3 (#811): verify_and_repair_index was never auto-called, so
+        # orphan .tmp files from a crashed write and stale index entries
+        # whose backing file was deleted out-of-band accumulated across
+        # restarts. Run it once now (disk mode only — _scan_disk_index is
+        # not reached in hot_cache_only mode) so each boot starts clean.
+        try:
+            repair = self.verify_and_repair_index()
+            if repair["orphaned_files_removed"] or repair["stale_entries_evicted"]:
+                logger.info(
+                    "SSD cache startup repair: removed %d orphan files, evicted %d stale entries",
+                    repair["orphaned_files_removed"],
+                    repair["stale_entries_evicted"],
+                )
+        except Exception:
+            logger.debug(
+                "SSD cache startup verify_and_repair_index failed", exc_info=True
+            )
+
     def _add_to_incompatible_index(self, file_path: Path, file_metadata: dict):
         block_hash_hex = file_metadata.get("block_hash", "")
         if not block_hash_hex:
