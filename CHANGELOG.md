@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.8.81] — 2026-09-06
+
 ### Security
 - **#811 audit: 0906 adversarial architecture audit, batch 1 + 2** —
   independent critical architecture audit (report at
@@ -192,6 +194,45 @@
   cache TTFT). Consolidated report in
   `benchmarks/reports/delta/DELTA_REPORT.md`. PRD targets: w4a8, moe_ffn,
   and radix all MET.
+
+### Security (audit batch 3 — P1 surgical mitigations + image-gen)
+- **#817: chunked-prefill bypassed admission cap → idle-burst OOM** —
+  the admission gate `len(self.running) < max_num_seqs` ignored requests
+  mid-chunked-prefill (they live in `self.prefilling`, never `running`),
+  so an idle engine admitted an unlimited burst of long prompts and OOM'd.
+  Gate now counts prefilling via `_num_admitted_requests()`.
+- **#818: priority scheduling was silent dead code** —
+  `SchedulingPolicy.PRIORITY` + `Request.priority` were never consulted
+  (admission pops FIFO); a PRIORITY config silently behaved as FCFS.
+  Now warns at Scheduler init so operators don't rely on non-existent
+  ordering. Field retained for a future real implementation.
+- **#819: no concurrent-load cap → load-storm OOM** — `is_loading` only
+  serialized same-model loads; distinct models loaded concurrently.
+  Added a global `asyncio.Semaphore` (`FUSION_MAX_CONCURRENT_LOADS`,
+  default 1 = serial) wrapping `_load_engine`.
+- **#821: TieredCache demote was a no-op stub** — `_simple_demote`/
+  `_cow_demote` logged but never wrote KV data to the cold layer
+  (`CacheBlock` holds metadata only). Demotion dropped blocks without
+  persisting. Now warns once when demotion runs.
+- **#822: cloud fallback had no per-request consent → silent prompt
+  leak** — over-threshold prompts silently routed to a third-party
+  cloud. Added `cloud_fallback_consent` (default OFF = deny) to
+  `RouterConfig`; cloud fallback is now opt-in.
+- **#823: image-gen steps default too low for full-diffusion DiTs** —
+  a flat default of 4 under-denoised full-diffusion models (Qwen-Image
+  needs ~30). Steps now resolve per-variant (`VARIANT_DEFAULT_STEPS`)
+  when unset, mirroring the existing guidance=None pattern. Explicit
+  client steps still win.
+
+### Deferred (architecture rewrites, design decision needed)
+- **#815 (A-3): no aggregate memory coordinator across cache layers** —
+  deferred; needs a shared memory-budget authority across all cache
+  layers. Tracked as design home.
+- **#816 (A-4): no process isolation** — deferred; one model per
+  subprocess is a foundational engine-lifecycle change. Tracked as
+  design home.
+- **#820 (A-9): distributed KV no cross-shard consistency** — deferred;
+  needs a consistency protocol across shards. Tracked as design home.
 
 ## [0.8.80] — 2026-09-05
 
