@@ -122,7 +122,9 @@ async def create_graph(
             logger.warning(
                 "Agent graph store full (MAX_GRAPHS=%d); evicted oldest "
                 "graph %s to make room for %s",
-                MAX_GRAPHS, oldest_id, graph_id,
+                MAX_GRAPHS,
+                oldest_id,
+                graph_id,
             )
         else:
             break

@@ -137,6 +137,33 @@ class MLLMPrefixCacheEntry:
             match_length = i + 1
         return match_length
 
+    def clone_for_use(self) -> "MLLMPrefixCacheEntry":
+        # E-42 (#811): the old fetch path did copy.deepcopy(entry) on every
+        # hit, duplicating the WHOLE entry — vision embeddings (hundreds of
+        # MB), the KV cache list (GB-scale), AND the token-id list. Only
+        # kv_cache is mutated in place during generation (documented at the
+        # fetch site); vision_embeddings and token_ids are read-only inputs.
+        # Deep-copy only the mutable kv_cache, shallow-copy token_ids (a
+        # list of ints — cheap, and protects against append mutation), and
+        # SHARE the large read-only vision_embeddings + image_meta instead
+        # of re-copying them on every hit.
+        return MLLMPrefixCacheEntry(
+            image_hash=self.image_hash,
+            prompt_hash=self.prompt_hash,
+            vision_embeddings=self.vision_embeddings,
+            kv_cache=copy.deepcopy(self.kv_cache),
+            token_ids=list(self.token_ids),
+            num_image_tokens=self.num_image_tokens,
+            num_text_tokens=self.num_text_tokens,
+            prompt_tokens=self.prompt_tokens,
+            is_vision_placeholder=self.is_vision_placeholder,
+            image_meta=self.image_meta,
+            actual_vision_token_len=self.actual_vision_token_len,
+            created_at=self.created_at,
+            hit_count=self.hit_count,
+            model_name=self.model_name,
+        )
+
 
 def compute_image_hash(image_path: str) -> str:
     """
@@ -339,8 +366,9 @@ class MLLMPrefixCacheManager:
                 f"MLLM cache HIT: {cache_key[:32]}..., prefix_match={match_length}"
             )
 
-            # Deep copy: generation mutates kv_cache state in-place.
-            return copy.deepcopy(entry), match_length
+            # E-42 (#811): clone only the mutable kv_cache, share the
+            # large read-only vision embeddings — see clone_for_use.
+            return entry.clone_for_use(), match_length
 
         # Check for image-only match (can reuse vision embeddings)
         if images:
@@ -359,7 +387,9 @@ class MLLMPrefixCacheManager:
 
                     # Return entry for vision embeddings, but 0 prefix match
                     # (prompt is different, so KV cache can't be reused)
-                    return copy.deepcopy(entry), 0
+                    # E-42 (#811): partial vision-only hit still needs a
+                    # mutable kv_cache copy — use clone_for_use.
+                    return entry.clone_for_use(), 0
 
         self.stats.misses += 1
         logger.debug(f"MLLM cache MISS: {cache_key[:32]}...")
