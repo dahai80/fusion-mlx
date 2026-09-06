@@ -1451,10 +1451,13 @@ class EngineCore:
         try:
             if self._owns_model and not self._closed:
                 get_registry().release(self.model, self._engine_id)
-        except Exception:
-            logger.debug("swallowed exception at fusion_mlx/engine_core.py:403")
-
-            pass
+        except Exception as e:
+            # P3 (#811): bare pass swallowed the release error silently.
+            # __del__ runs at GC time so a raised exception is uncatchable
+            # and would just print to stderr; log the real cause at debug
+            # (release failures during interpreter shutdown are common and
+            # benign, but a real bug should still be traceable).
+            logger.debug("EngineCore.__del__ model release failed: %s", e)
 
     @property
     def engine_id(self) -> str:

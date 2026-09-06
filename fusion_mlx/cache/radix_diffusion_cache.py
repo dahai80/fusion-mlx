@@ -358,7 +358,12 @@ class DiffusionRadixCache:
         if isinstance(value, dict):
             total = 0
             for v in value.values():
-                if HAS_MLX and isinstance(v, mx.array) or hasattr(v, "nbytes"):
+                # P3 (#811): parenthesize the precedence. The bare
+                # `HAS_MLX and isinstance(...) or hasattr(...)` parsed as
+                # `(HAS_MLX and isinstance) or hasattr`, which happened to
+                # work but is fragile. Match the intent explicitly: an mlx
+                # array OR any object exposing nbytes.
+                if (HAS_MLX and isinstance(v, mx.array)) or hasattr(v, "nbytes"):
                     total += v.nbytes
             return total or 64
         if hasattr(value, "nbytes"):

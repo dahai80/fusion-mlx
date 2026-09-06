@@ -18,9 +18,37 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+
+def _cuda_available_percent() -> float:
+    # P3 (#811): the CUDA node always advertised available_percent: 0.0,
+    # so the cluster load balancer (lower load_score is better) saw this
+    # node as maximally loaded and never routed to it. vLLM requires torch
+    # with CUDA, so query the real free/total ratio here. Falls back to
+    # 100.0 (not 0.0) when torch.cuda is unavailable so the node is not
+    # blackholed by a stale-zero snapshot.
+    try:
+        import torch  # type: ignore
+
+        if not torch.cuda.is_available():
+            logger.warning(
+                "cuda-node: torch.cuda unavailable — advertising available_percent=100.0"
+            )
+            return 100.0
+        free, total = torch.cuda.mem_get_info()
+        if total <= 0:
+            return 100.0
+        return round((free / total) * 100.0, 1)
+    except Exception as e:
+        logger.warning(
+            "cuda-node: GPU memory probe failed — advertising available_percent=100.0: %s",
+            e,
+        )
+        return 100.0
 
 
 @dataclass
@@ -123,7 +151,7 @@ def create_cuda_app(config: CudaNodeConfig):
                     "port": config.port,
                     "platform": "windows-cuda",
                     "models": [{"id": served_model, "loaded": True}],
-                    "memory": {"available_percent": 0.0},
+                    "memory": {"available_percent": _cuda_available_percent()},
                 }
                 txt = build_txt_records(snapshot)
                 advertiser = MdnsAdvertiser(
@@ -185,7 +213,9 @@ def create_cuda_app(config: CudaNodeConfig):
             presence_penalty=float(request.get("presence_penalty", 0.0)),
             frequency_penalty=float(request.get("frequency_penalty", 0.0)),
         )
-        request_id = f"cuda-node-{int(time.time() * 1000)}"
+        # P3 (#811): int(time.time()*1000) collides under concurrent requests.
+        # Append a uuid4 short suffix so each request_id is unique.
+        request_id = f"cuda-node-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
         final_text = ""
         final_finish = None
         try:
@@ -207,7 +237,7 @@ def create_cuda_app(config: CudaNodeConfig):
         text, finish = await _generate(str(prompt), request, is_chat=False)
         return JSONResponse(
             {
-                "id": f"cmpl-cuda-{int(time.time() * 1000)}",
+                "id": f"cmpl-cuda-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}",
                 "object": "text_completion",
                 "created": int(time.time()),
                 "model": served_model,
@@ -252,7 +282,7 @@ def create_cuda_app(config: CudaNodeConfig):
         text, finish = await _generate(prompt, request, is_chat=True)
         return JSONResponse(
             {
-                "id": f"chatcmpl-cuda-{int(time.time() * 1000)}",
+                "id": f"chatcmpl-cuda-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}",
                 "object": "chat.completion",
                 "created": int(time.time()),
                 "model": served_model,
