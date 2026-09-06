@@ -62,6 +62,26 @@ class NodeUnavailableError(Exception):
         super().__init__(f"node {node_id} unavailable: {reason}")
 
 
+class PartialStreamError(NodeUnavailableError):
+    # E-47 (#811): a streaming call that raised mid-stream may have
+    # already delivered partial output to the client. The bare re-raise
+    # of the underlying NodeUnavailableError made a 90%-complete stream
+    # indistinguishable from a zero-byte failure, so a caller that
+    # retries on NodeUnavailableError would duplicate output. This
+    # subclass lets the caller branch: catch NodeUnavailableError for
+    # zero-byte (retry-safe) failures, catch PartialStreamError for
+    # mid-stream failures (do NOT retry — surface the partial + abort
+    # per OpenAI streaming semantics). It still IS-A
+    # NodeUnavailableError so existing `except NodeUnavailableError`
+    # handlers keep working.
+    """Streaming call failed after partial output was delivered."""
+
+    def __init__(self, node_id: str, reason: str = "", cause: Exception | None = None):
+        super().__init__(node_id, reason)
+        self.cause = cause
+        self.partial_delivered = True
+
+
 @dataclass
 class ClusterNode:
     node_id: str
@@ -393,12 +413,20 @@ class FailoverRouter:
                     # node from the next selection by marking it dead locally.
                     await self.registry.mark_dead(exc.node_id, exc.reason)
                 if stream:
+                    # E-47 (#811): distinguish a mid-stream failure (some
+                    # output already delivered to the client) from a
+                    # zero-byte failure. Wrap in PartialStreamError so the
+                    # caller can branch on whether a retry would duplicate
+                    # output. Still IS-A NodeUnavailableError for existing
+                    # handlers.
                     logger.error(
                         "cluster: streaming request to %s failed — NOT retrying "
-                        "(would duplicate output)",
+                        "(partial output may have been delivered)",
                         exc.node_id,
                     )
-                    raise
+                    raise PartialStreamError(
+                        exc.node_id, exc.reason, cause=exc
+                    ) from exc
                 continue
         if last_error is not None:
             raise last_error

@@ -1210,6 +1210,16 @@ class ProcessMemoryEnforcer:
                 self._engine_pool._lock.acquire(), timeout=2.0
             )
         except TimeoutError:
+            # E-46 (#811): the pool lock could not be acquired in 2s, so we
+            # cannot hold it to mutate _entries. This path is safe under
+            # single-thread asyncio (no await below, so no cooperative
+            # yield lets another coroutine mutate _entries mid-iteration),
+            # but a cross-thread caller holding _lock could resize the dict
+            # while we iterate. Snapshot the entries first so dict-resize-
+            # during-iteration cannot raise RuntimeError here; the
+            # abort_loading flag is a cooperative signal the loading path
+            # reads under the lock, so an unlocked write is benign as long
+            # as it is to a real entry object (the .get() guards None).
             victim = self._engine_pool._find_lru_victim()
             if victim:
                 self._eviction_marked.add(victim)
@@ -1221,7 +1231,8 @@ class ProcessMemoryEnforcer:
                         f"(pressure={new_level}, lock timeout)"
                     )
             if new_level == "hard":
-                for entry in self._engine_pool._entries.values():
+                _entries_snapshot = list(self._engine_pool._entries.values())
+                for entry in _entries_snapshot:
                     if entry.is_loading and not entry.abort_loading:
                         entry.abort_loading = True
                         logger.warning(
