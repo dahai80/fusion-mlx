@@ -422,6 +422,28 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # never which model alias loads, which parser fires, or which tier
         # engages. Mirrors the existing ``FUSION_MLX_MODEL_DIR`` sandbox knob.
         "FUSION_MLX_ALLOWED_READ_DIRS",
+        # Prefix-cache on/off toggle (cache/factory.py:158,
+        # scheduler/sched_init.py:317). Enables/disables the block-aware
+        # prefix cache — a KV reuse optimization, not a routing decision.
+        # Pure cache toggle — never selects model / parser / tier.
+        "FUSION_MLX_PREFIX_CACHE",
+        # W4A8 mixed-precision quant path toggle (utils/model_loading.py:18).
+        # Selects the weight layout the loaded weights are decoded with —
+        # a quantization knob, not a routing decision. The model alias
+        # and tier are unchanged; only the in-memory dequant path differs.
+        "FUSION_MLX_W4A8",
+        # NVFP4 dequant fast-path toggle (utils/model_loading.py:26).
+        # Same shape as W4A8 — a quantization-decode knob, not routing.
+        "FUSION_MLX_NVFP4_DEQUANT",
+        # Fused group-norm toggle (utils/model_loading.py:34). Selects the
+        # fused vs un-fused GDN kernel for vision/audio encoders — a
+        # kernel-selection knob, not a routing decision.
+        "FUSION_MLX_FUSED_GDN",
+        # KV-cache checkpoint write interval (seconds,
+        # service/kv_resume.py:32). Bounds how often the persisted KV
+        # snapshot flushes to disk. Pure durability/IO knob — never
+        # selects model / parser / tier.
+        "FUSION_MLX_KV_CHECKPOINT_INTERVAL",
     }
 )
 
