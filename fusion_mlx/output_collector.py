@@ -19,17 +19,35 @@ class RequestOutputCollector:
     """
 
     _waiting_consumers: int = 0
+    # E-4 (#811): backpressure cap on the streaming deque. A slow client plus
+    # logprobs (full-vocab vector per token, ~50-500KB each) could accumulate
+    # unbounded memory — a 4k-token logprobs request can reach ~2GB. A bounded
+    # deque drops the OLDEST buffered output when full rather than OOM; the
+    # consumer's stream SSE already delivers tokens in order, so dropping a
+    # stale buffered chunk under extreme backpressure is preferable to killing
+    # the process. Aggregated (non-streaming) mode is unaffected — it merges
+    # into a single RequestOutput, never a growing queue.
+    _STREAM_DEQUE_MAXLEN = 8192
 
     def __init__(self, aggregate: bool = True):
         self.aggregate = aggregate
         self.ready = asyncio.Event()
         self._is_waiting = False
+        # E-5 (#811): closed flag. The orphan reaper calls clear() after a
+        # request finishes and its consumer has gone away, but a slow
+        # streaming consumer can still be blocked in get() → ready.wait().
+        # A bare ready.clear() there would leave it blocked forever. Setting
+        # this flag + ready.set() in clear() wakes the consumer so get()
+        # returns None instead of hanging.
+        self._closed = False
         if aggregate:
             self._merged: RequestOutput | None = None
         else:
-            self._queue: deque[RequestOutput] = deque()
+            self._queue: deque[RequestOutput] = deque(maxlen=self._STREAM_DEQUE_MAXLEN)
 
     def put(self, output: RequestOutput) -> None:
+        if self._closed:
+            return
         if self.aggregate:
             if self._merged is None:
                 self._merged = output
@@ -61,8 +79,16 @@ class RequestOutputCollector:
             RequestOutputCollector._waiting_consumers += 1
         try:
             while True:
+                # E-5 (#811): a cleared/closed collector must not hang a
+                # waiting consumer — wake and return rather than block.
+                if self._closed:
+                    return None
                 while not (self._merged if self.aggregate else self._queue):
+                    if self._closed:
+                        return None
                     await self.ready.wait()
+                    if self._closed:
+                        return None
                 output = self.get_nowait()
                 if output is not None:
                     return output
@@ -129,11 +155,15 @@ class RequestOutputCollector:
         return _as_list(existing) + _as_list(new)
 
     def clear(self) -> None:
+        self._closed = True
         if self.aggregate:
             self._merged = None
         else:
             self._queue.clear()
-        self.ready.clear()
+        # E-5 (#811): set (not clear) so a consumer blocked in ready.wait()
+        # inside get() wakes up, sees _closed, and returns None instead of
+        # hanging forever. A fresh collector starts with _closed=False.
+        self.ready.set()
         if self._is_waiting:
             self._is_waiting = False
             RequestOutputCollector._waiting_consumers -= 1

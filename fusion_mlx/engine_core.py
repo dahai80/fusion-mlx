@@ -69,7 +69,8 @@ def _resolve_video_max_workers() -> int:
             logger.warning(
                 "FUSION_MLX_MAX_CONCURRENT_VIDEO=%d: concurrent video "
                 "generation risks Metal OOM (stage-1 latent + 22B "
-                "transformer + VAE per concurrent job)", n
+                "transformer + VAE per concurrent job)",
+                n,
             )
             return n
     except ValueError:
@@ -304,7 +305,13 @@ class EngineCore:
         # Per-engine executor with dedicated mx.Stream (#1248).
         # Each EngineCore gets its own thread + GPU stream so different
         # models can run scheduler.step() concurrently.
-        self._mlx_stream = mx.new_thread_local_stream(mx.default_device())
+        # E-12 (#811): do NOT create the stream here on the main thread —
+        # _make_scheduler() reassigns self._mlx_stream to the executor
+        # thread's default stream (the one weights bind to). A stream
+        # created here on the main thread would be leaked (never closed),
+        # accumulating across reload churn. Defer; the scheduler create on
+        # the executor thread sets the canonical stream.
+        self._mlx_stream = None
         if executor is not None:
             # Reuse caller-provided executor (BatchedEngine._start_llm's
             # _model_load_executor) so scheduler creation + model load + step
@@ -346,7 +353,20 @@ class EngineCore:
             )
 
         _fut = self._mlx_executor.submit(_make_scheduler)
-        _fut.result()
+        try:
+            _fut.result()
+        except BaseException:
+            # E-13 (#811): _make_scheduler raised (OOM, bad weights, config
+            # error). The registry acquired the model above, but without a
+            # scheduler the engine is unusable and start() would never be
+            # reached to clean up. Release the model now so it is not
+            # orphaned in the registry, then re-raise the original error.
+            self._owns_model = False
+            try:
+                get_registry().release(self.model, self._engine_id)
+            except Exception:
+                logger.debug("registry release on failed init", exc_info=True)
+            raise
         self.scheduler = _sched_result[0]
 
         # Draft-model speculative decode safety gate. The draft-model verify
@@ -505,8 +525,15 @@ class EngineCore:
             self._wake_event.set()
         if self._task:
             self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
+            with suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                # E-6 (#811): bound the wait for the cancelled engine loop.
+                # A long prefill/video step on the executor keeps _task alive
+                # past cancellation; an unbounded await here blocks close()'s
+                # scheduler.shutdown submit behind it, which then hits its own
+                # 60s timeout and fatal-exits, skipping the rest of teardown.
+                # Bounded wait lets close() proceed to teardown instead of
+                # stalling the whole shutdown.
+                await asyncio.wait_for(self._task, timeout=5.0)
             self._task = None
         self._wake_event = None
         self._loop = None
@@ -702,8 +729,16 @@ class EngineCore:
                 # request re-triggers the same fault each iteration, burning
                 # CPU and flooding logs. After N consecutive errors, stop the
                 # loop loudly so the pool can evict and reload the engine.
+                # E-7 (#811): the counter is global (not per-fault-signature)
+                # so unrelated transient errors (e.g. 50 different prompts
+                # each OOMing once) can trip it. Mitigate by keeping the
+                # threshold modest — a genuine persistent fault repeats on
+                # the SAME re-submitted request and crosses quickly, while
+                # 20 independent one-shot transients are rare in practice.
+                # The counter resets on every successful step, so a healthy
+                # engine never accumulates.
                 self._consecutive_loop_errors += 1
-                if self._consecutive_loop_errors >= 50:
+                if self._consecutive_loop_errors >= 20:
                     logger.critical(
                         "Engine loop hit %d consecutive errors — stopping "
                         "engine to break persistent-failure spin",
@@ -1089,8 +1124,23 @@ class EngineCore:
                             output = await asyncio.wait_for(
                                 collector.get(), timeout=timeout
                             )
+                            # E-5 (#811): closed collector returns None.
+                            if output is None:
+                                logger.info(
+                                    "stream_outputs collector closed for %s, stopping",
+                                    request_id,
+                                )
+                                break
                     else:
                         output = collector.get_nowait() or await collector.get()
+                    # E-5 (#811): a reaped/closed collector returns None from
+                    # get() — stop the stream instead of yielding None.
+                    if output is None:
+                        logger.info(
+                            "stream_outputs collector closed for %s, stopping",
+                            request_id,
+                        )
+                        break
                     yield output
                     if output.error:
                         _raise_request_output_error(output)
@@ -1370,6 +1420,18 @@ class EngineCore:
                 except RuntimeError:
                     pass
             else:
+                # E-10 (#811): the executor must stay alive (its worker thread
+                # holds a thread-local MLX Stream + CompilerCache that cannot
+                # be torn down without a GIL-free crash), but we CAN cancel
+                # queued-but-not-started futures — they are safe to drop
+                # (no MLX state yet). cancel_futures=True does that without
+                # blocking on the running (immortal) worker thread.
+                try:
+                    self._mlx_executor.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    logger.debug(
+                        "immortal executor cancel_futures failed", exc_info=True
+                    )
                 _immortal_mlx_executors.append(self._mlx_executor)
                 if self._mlx_stream is not None:
                     _immortal_mlx_streams.append(self._mlx_stream)

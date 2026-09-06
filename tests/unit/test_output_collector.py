@@ -324,7 +324,11 @@ class TestRequestOutputCollectorClear:
         collector.clear()
 
         assert collector._merged is None
-        assert not collector.ready.is_set()
+        # E-5 (#811): clear() sets _closed + ready.set() (not clear) so a
+        # consumer blocked in get()→ready.wait() wakes and returns None
+        # instead of hanging forever. A fresh collector is unaffected.
+        assert collector._closed is True
+        assert collector.ready.is_set()
 
     def test_clear_resets_waiting_flag(self):
         """Test clear() resets waiting flag."""
