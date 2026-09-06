@@ -101,13 +101,17 @@ class Eagle3Speculator:
         family = self.target_family
         matchers = self._FAMILY_MATCHERS.get(family)
         if not matchers:
-            # Unknown family — no matcher, allow (best-effort) but warn.
+            # E-17 (#811): unknown family previously returned True (best-effort
+            # allow), which silently paired an Eagle3 draft trained for one
+            # family with an unmatched target — garbage drafts, wrong logits,
+            # corrupted output with only a warning. Fail closed: disable spec
+            # decode so the target runs natively instead of emitting garbage.
             logger.warning(
-                "eagle3: no family matcher for target_family=%s, "
-                "skipping compatibility guard",
+                "eagle3: no family matcher for target_family=%s — disabling "
+                "spec decode to avoid garbage drafts (E-17 fail-closed)",
                 family,
             )
-            return True
+            return False
         name = (target_model_name or "").lower()
         # Also consider the basename of a local model dir.
         base = os.path.basename(name.rstrip("/"))

@@ -169,6 +169,15 @@ def generate_video(
         )
 
     root = get_model_path(model_repo)
+    # Fail visible (Rule 12): a missing or bogus repo root must surface as a
+    # FileNotFoundError here, not crash deep inside a load_* call with an
+    # unrelated AttributeError. get_model_path may return a non-existent path
+    # when snapshot_download is mocked or the repo id is invalid; validate the
+    # resolved root before descending into component resolution.
+    if not Path(root).exists():
+        raise FileNotFoundError(
+            f"LTX-2.5 model repo not found at {root} (resolved from {model_repo!r})"
+        )
     var_str = variant.value
 
     # ---- 1. text encoder (Gemma4-12b) ----

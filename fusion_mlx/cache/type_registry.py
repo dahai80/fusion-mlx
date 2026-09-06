@@ -7,6 +7,7 @@ by cache type enum or class name string.
 """
 
 import logging
+import threading
 from typing import Any
 
 from .type_handlers import (
@@ -23,6 +24,15 @@ from .type_handlers import (
 )
 
 logger = logging.getLogger(__name__)
+
+# P3 (#811): _handlers is a class-level mutable dict shared across all
+# instances and mutated by register() at import time AND dynamically by
+# deepseek_v4 / TurboQuant patches applied on the MLX executor thread.
+# A patch re-apply racing with import could lose an update. RLock guards
+# the write; reads stay lock-free (a stale read resolves on the next
+# register once it observes the final dict, and dict assignment is
+# GIL-atomic).
+_REGISTRY_LOCK = threading.RLock()
 
 
 class CacheTypeRegistry:
@@ -80,7 +90,8 @@ class CacheTypeRegistry:
         Args:
             handler: Handler instance to register
         """
-        cls._handlers[handler.cache_type] = handler
+        with _REGISTRY_LOCK:
+            cls._handlers[handler.cache_type] = handler
         logger.debug(f"Registered handler for {handler.cache_type.value}")
 
     @classmethod

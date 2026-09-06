@@ -887,8 +887,11 @@ class BoundarySnapshotSSDStore:
                 try:
                     if p is not None and p.exists():
                         p.unlink()
-                except Exception:
-                    pass
+                except Exception as e:
+                    # P3 (#811): bare pass swallowed the unlink failure
+                    # silently. Log it (best-effort cleanup, not fatal) so a
+                    # permissions/disk error is visible, not invisible.
+                    logger.debug("prefix snapshot temp cleanup unlink failed: %s", e)
 
     def _enforce_prefix_cap(self) -> None:
         """LRU-evict prefix snapshots until under the disk cap.
@@ -1000,12 +1003,14 @@ class BoundarySnapshotSSDStore:
                 req_dir = file_path.parent
                 if req_dir.exists():
                     shutil.rmtree(req_dir)
-            except Exception:
+            except Exception as e:
+                # P3 (#811): was a bare pass swallowing the rmtree failure.
+                # Log the real error so a disk/permission issue is visible.
                 logger.debug(
-                    "swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:555"
+                    "snapshot cancelled-cleanup rmtree failed at %s: %s",
+                    file_path,
+                    e,
                 )
-
-                pass
             self._dec_cancelled(pw_key[0])
             return
 
@@ -1020,12 +1025,13 @@ class BoundarySnapshotSSDStore:
                 try:
                     if temp_path.exists():
                         temp_path.unlink()
-                except Exception:
+                except Exception as e:
+                    # P3 (#811): bare pass swallowed the unlink failure.
                     logger.debug(
-                        "swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:572"
+                        "snapshot cancelled temp unlink failed at %s: %s",
+                        temp_path,
+                        e,
                     )
-
-                    pass
                 with self._pending_lock:
                     self._pending_writes.pop(pw_key, None)
                 self._dec_cancelled(pw_key[0])
@@ -1038,22 +1044,24 @@ class BoundarySnapshotSSDStore:
                 try:
                     if file_path.exists():
                         file_path.unlink()
-                except Exception:
+                except Exception as e:
+                    # P3 (#811): bare pass swallowed the unlink failure.
                     logger.debug(
-                        "swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:587"
+                        "snapshot cancelled file unlink failed at %s: %s",
+                        file_path,
+                        e,
                     )
-
-                    pass
                 req_dir = file_path.parent
                 try:
                     if req_dir.exists():
                         shutil.rmtree(req_dir)
-                except Exception:
+                except Exception as e:
+                    # P3 (#811): bare pass swallowed the rmtree failure.
                     logger.debug(
-                        "swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:594"
+                        "snapshot cancelled req-dir rmtree failed at %s: %s",
+                        req_dir,
+                        e,
                     )
-
-                    pass
                 self._dec_cancelled(pw_key[0])
         except Exception as e:
             logger.debug("Background snapshot write failed: %s", e)
@@ -1061,12 +1069,11 @@ class BoundarySnapshotSSDStore:
                 try:
                     if p is not None and p.exists():
                         p.unlink()
-                except Exception:
-                    logger.debug(
-                        "swallowed exception at fusion_mlx/cache/boundary_snapshot_store.py:604"
-                    )
-
-                    pass
+                except Exception as e:
+                    # P3 (#811): bare pass swallowed the cleanup unlink
+                    # failure after a write error. Log it so the disk/
+                    # permission cause is visible.
+                    logger.debug("snapshot write-fail cleanup unlink failed: %s", e)
             # Same bookkeeping invariant as the early-return path: if
             # cleanup_request bumped the counter and the failure was a
             # side-effect of that cleanup (e.g. its rmtree pulled the

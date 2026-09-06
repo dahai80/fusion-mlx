@@ -997,7 +997,15 @@ class CacheListHandler(CacheTypeHandler):
             return CacheList.from_state(
                 sub_states, (class_names, sanitized_sub_meta_states)
             )
-        except (ImportError, AttributeError, TypeError, KeyError, Exception) as e:
+        except (ImportError, AttributeError, TypeError, KeyError) as e:
+            # E-41 (#811): the old tuple ended with bare `Exception`,
+            # making this catch-all — it swallowed every real bug (a
+            # genuine reconstruction ValueError surfaced as a silent
+            # debug-log fallthrough to the manual path). The named set
+            # covers the expected upstream API-drift modes; anything else
+            # now propagates instead of being masked. Log the drift at
+            # DEBUG (the manual fallback below is the designed recovery),
+            # but do NOT broaden the catch.
             logger.debug(f"CacheList.from_state() unavailable or failed: {e}")
 
         # Fallback: manually reconstruct sub-caches

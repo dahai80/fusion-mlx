@@ -147,9 +147,40 @@ class MCPClient:
             cwd=self.config.cwd,
         )
 
+        # E-28: the MCP SDK's stdio_client owns the subprocess spawn and
+        # StdioServerParameters exposes no preexec_fn / rlimit / process-group
+        # hook, so we cannot set CPU/memory/FD limits or a child timeout at
+        # fork time from here (upstream gap — modelcontextprotocol/python-sdk#3457).
+        # What we CAN enforce at our layer is a bounded startup so a hung or
+        # malicious MCP server cannot stall the inference host indefinitely
+        # on connect. Configurable via FUSION_MCP_CONNECT_TIMEOUT_SECONDS.
+        import os as _os
+
+        connect_timeout = float(_os.getenv("FUSION_MCP_CONNECT_TIMEOUT_SECONDS", "30"))
+
         # Create stdio client context
         self._stdio_client = stdio_client(server_params)
-        self._read, self._write = await self._stdio_client.__aenter__()
+        try:
+            self._read, self._write = await asyncio.wait_for(
+                self._stdio_client.__aenter__(), timeout=connect_timeout
+            )
+        except TimeoutError:
+            # __aexit__ on a half-entered context would hang too; the SDK's
+            # stdio_client spawns the subprocess inside __aenter__, so on
+            # timeout we must best-effort clean up and surface a visible
+            # failure rather than leave an orphaned child.
+            logger.error(
+                "MCP server '%s' stdio connect timed out after %.0fs — "
+                "possible orphaned subprocess (SDK owns the spawn; no "
+                "rlimit/proc-group hook available upstream, E-28)",
+                self.name,
+                connect_timeout,
+            )
+            await self._cleanup_resources()
+            raise TimeoutError(
+                f"MCP server '{self.name}' failed to connect within "
+                f"{connect_timeout:.0f}s"
+            )
 
         # Create session
         self._session = ClientSession(self._read, self._write)

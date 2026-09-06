@@ -55,8 +55,20 @@ class NGramPredictor:
         self._total_entries = 0
 
     def reset(self):
-        """Reset history for a new request."""
+        """Reset state for a new request.
+
+        P3 (#811): the old reset() cleared only ``_history``, leaving the
+        accumulated n-gram frequency tables from request A visible to the
+        next request B under continuous batching. With interleaved
+        requests, ``NGramSpecState.on_new_request`` calls reset() on every
+        request-id change but never cleared the tables — leaking A's
+        n-gram context into B's draft predictions. Clear the tables too
+        so each request starts from an empty frequency model.
+        """
         self._history.clear()
+        for table in self._tables.values():
+            table.clear()
+        self._total_entries = 0
 
     def add_token(self, token: int):
         """Record a token and update n-gram tables."""

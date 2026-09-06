@@ -1355,25 +1355,32 @@ class PagedSSDCacheManager:
         return layers if layers else None
 
     def _load_safetensors_raw(self, path: str) -> tuple[dict, dict] | None:
+        # E-38 (#811): read header AND all tensor data from a single open
+        # handle. The old code reopened the file once per tensor; between
+        # opens an eviction could unlink the file, so the second open
+        # raised FileNotFoundError mid-loop. One handle, one atomic read.
         try:
             with open(path, "rb") as f:
                 header_size = struct.unpack("<Q", f.read(8))[0]
                 if header_size < 1 or header_size > 100 * 1024 * 1024:
                     return None
                 header_json = f.read(header_size).decode("utf-8")
-            header = json.loads(header_json)
-            file_metadata = header.pop("__metadata__", {})
-            tensors_raw = {}
-            for name, info in sorted(header.items()):
-                dtype_str = info["dtype"]
-                shape = info["shape"]
-                data_offsets = info["data_offsets"]
-                data_len = data_offsets[1] - data_offsets[0]
-                with open(path, "rb") as f:
-                    f.seek(8 + header_size + data_offsets[0])
+                header = json.loads(header_json)
+                file_metadata = header.pop("__metadata__", {})
+                tensors_raw = {}
+                data_base = 8 + header_size
+                for name, info in sorted(header.items()):
+                    dtype_str = info["dtype"]
+                    shape = info["shape"]
+                    data_offsets = info["data_offsets"]
+                    data_len = data_offsets[1] - data_offsets[0]
+                    f.seek(data_base + data_offsets[0])
                     raw = f.read(data_len)
-                tensors_raw[name] = (raw, dtype_str, shape)
+                    tensors_raw[name] = (raw, dtype_str, shape)
             return tensors_raw, file_metadata
+        except FileNotFoundError:
+            logger.debug("SSD safetensors vanished mid-read (evicted?): %s", path)
+            return None
         except Exception as e:
             logger.debug("Failed to read raw safetensors %s: %s", path, e)
             return None
@@ -1888,6 +1895,24 @@ class PagedSSDCacheManager:
             skipped_incompatible,
         )
 
+        # P3 (#811): verify_and_repair_index was never auto-called, so
+        # orphan .tmp files from a crashed write and stale index entries
+        # whose backing file was deleted out-of-band accumulated across
+        # restarts. Run it once now (disk mode only — _scan_disk_index is
+        # not reached in hot_cache_only mode) so each boot starts clean.
+        try:
+            repair = self.verify_and_repair_index()
+            if repair["orphaned_files_removed"] or repair["stale_entries_evicted"]:
+                logger.info(
+                    "SSD cache startup repair: removed %d orphan files, evicted %d stale entries",
+                    repair["orphaned_files_removed"],
+                    repair["stale_entries_evicted"],
+                )
+        except Exception:
+            logger.debug(
+                "SSD cache startup verify_and_repair_index failed", exc_info=True
+            )
+
     def _add_to_incompatible_index(self, file_path: Path, file_metadata: dict):
         block_hash_hex = file_metadata.get("block_hash", "")
         if not block_hash_hex:
@@ -1998,6 +2023,11 @@ class PagedSSDCacheManager:
                 effective,
                 self._configured_max_size,
             )
+        # E-37 (#811): gather victim file paths under the lock, unlink
+        # AFTER release — holding _state_lock across unlink stalls every
+        # SSD op on a slow disk. Index entries are removed under the lock
+        # so they can't be re-selected; the file unlink is best-effort.
+        victims: list[Path] = []
         with self._state_lock:
             if self._tracked_ssd_size() <= effective:
                 return
@@ -2007,12 +2037,7 @@ class PagedSSDCacheManager:
                     lru = self._incompatible_index.get_lru_entries(1)
                     if lru:
                         victim = lru[0]
-                        file_path = self._get_file_path(victim.block_hash)
-                        try:
-                            if file_path.exists():
-                                file_path.unlink()
-                        except OSError as e:
-                            logger.debug("Incompatible unlink failed: %s", e)
+                        victims.append(self._get_file_path(victim.block_hash))
                         self._incompatible_index.remove(victim.block_hash)
                         continue
                 if self._index.count == 0:
@@ -2023,19 +2048,25 @@ class PagedSSDCacheManager:
                 if not lru:
                     break
                 victim = lru[0]
-                file_path = self._get_file_path(victim.block_hash)
-                try:
-                    if file_path.exists():
-                        file_path.unlink()
-                except OSError as e:
-                    logger.debug("Inline unlink failed: %s", e)
-                    self._stats["evict_unlink_failures"] += 1
+                victims.append(self._get_file_path(victim.block_hash))
                 self._index.remove(victim.block_hash)
                 unlinks_done += 1
+
+        for file_path in victims:
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+            except OSError as e:
+                logger.debug("Inline unlink failed: %s", e)
+                self._stats["evict_unlink_failures"] += 1
 
     def enforce_size_limit(self) -> int:
         effective = self._get_effective_max_size()
         freed = 0
+        # E-37 (#811): collect victim file paths under the lock, unlink
+        # AFTER release — matching _enforce_size_limit_for_new_block. The
+        # index entries are removed under the lock; unlink is best-effort.
+        victims: list[Path] = []
         with self._state_lock:
             while self._tracked_ssd_size() > effective:
                 if self._incompatible_index.count > 0:
@@ -2043,12 +2074,7 @@ class PagedSSDCacheManager:
                     if lru:
                         victim = lru[0]
                         freed += victim.file_size
-                        file_path = self._get_file_path(victim.block_hash)
-                        try:
-                            if file_path.exists():
-                                file_path.unlink()
-                        except OSError as e:
-                            logger.debug("Enforce incompatible unlink failed: %s", e)
+                        victims.append(self._get_file_path(victim.block_hash))
                         self._incompatible_index.remove(victim.block_hash)
                         continue
                 if self._index.count == 0:
@@ -2058,13 +2084,15 @@ class PagedSSDCacheManager:
                     break
                 victim = lru[0]
                 freed += victim.file_size
-                file_path = self._get_file_path(victim.block_hash)
-                try:
-                    if file_path.exists():
-                        file_path.unlink()
-                except OSError as e:
-                    logger.debug("Enforce unlink failed: %s", e)
+                victims.append(self._get_file_path(victim.block_hash))
                 self._index.remove(victim.block_hash)
+
+        for file_path in victims:
+            try:
+                if file_path.exists():
+                    file_path.unlink()
+            except OSError as e:
+                logger.debug("Enforce unlink failed: %s", e)
         return freed
 
     def preload_matched_blocks(self, block_hashes: list[bytes]) -> int:

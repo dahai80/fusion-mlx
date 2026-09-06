@@ -85,18 +85,25 @@ class TieredCacheManager(CacheManager):
         if self._cold is not None:
             cold_data, found = self._cold.fetch(block_hash)
             if found and cold_data is not None:
-                self._stats.record_hit()
-                self._stats.cold_hits += 1
-                logger.debug(
-                    "tiered fetch HIT cold: %s",
-                    (
-                        block_hash.hex()[:16]
-                        if isinstance(block_hash, bytes)
-                        else block_hash
-                    ),
-                )
-                if self._promotion_on_cold_hit:
-                    self._promote(block_hash, cold_data)
+                # E-40 (#811): the cold-hit sequence (stat + promote) was
+                # lockless, so concurrent fetch of the same key double-
+                # counted stats and double-promoted. Serialize the
+                # cold-hit side effects under _lock. The hot get above
+                # stays outside the lock (it is already atomic); only the
+                # cold-hit stat/promote critical section is guarded.
+                with self._lock:
+                    self._stats.record_hit()
+                    self._stats.cold_hits += 1
+                    logger.debug(
+                        "tiered fetch HIT cold: %s",
+                        (
+                            block_hash.hex()[:16]
+                            if isinstance(block_hash, bytes)
+                            else block_hash
+                        ),
+                    )
+                    if self._promotion_on_cold_hit:
+                        self._promote(block_hash, cold_data)
                 return cold_data, True
 
         self._stats.record_miss()

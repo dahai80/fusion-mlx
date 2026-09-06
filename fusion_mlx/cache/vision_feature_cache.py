@@ -17,9 +17,11 @@ for consistency and bfloat16 support.
 
 import errno
 import hashlib
+import json
 import logging
 import os
 import queue
+import struct
 import threading
 import time
 from collections import OrderedDict
@@ -51,6 +53,42 @@ def _composite_hash(model_name: str, image_hash: str) -> str:
     return hashlib.sha256(f"{model_name}:{image_hash}".encode()).hexdigest()
 
 
+def _read_safetensors_metadata_only(path: str) -> dict[str, str] | None:
+    # P3 (#811): _scan_existing_files only needs the __metadata__ block
+    # (image_hash / model_name / num_tensors), not the tensor arrays.
+    # mx.load(..., return_metadata=True) STILL materializes every tensor
+    # into MLX memory, wasting the full vision-feature bytes on a startup
+    # index rebuild. Parse the safetensors header JSON directly: 8-byte
+    # LE u64 header length, then that many bytes of JSON. No tensor data
+    # is read. Returns the metadata dict, or None on any parse error.
+    try:
+        with open(path, "rb") as f:
+            raw_len = f.read(8)
+            if len(raw_len) < 8:
+                return None
+            header_len = struct.unpack("<Q", raw_len)[0]
+            # Sanity bound: a metadata-only header is small; a corrupt
+            # or non-safetensors file could report an absurd length.
+            if header_len < 1 or header_len > 100 * 1024 * 1024:
+                logger.debug(
+                    "safetensors header length out of bounds for %s: %d",
+                    path,
+                    header_len,
+                )
+                return None
+            header_json = f.read(header_len).decode("utf-8")
+            if len(header_json) < header_len:
+                return None
+            header = json.loads(header_json)
+            metadata = header.get("__metadata__", {})
+            if not isinstance(metadata, dict):
+                return None
+            return metadata
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        logger.debug("Failed to parse safetensors header for %s: %s", path, e)
+        return None
+
+
 @dataclass
 class VisionFeatureSSDEntry:
     """Metadata for a cached vision feature stored on SSD."""
@@ -78,10 +116,15 @@ class VisionFeatureSSDCache:
         cache_dir: Path | None = None,
         max_size_bytes: int = 10 * 1024**3,
         max_memory_entries: int = 20,
+        max_memory_bytes: int = 0,
     ):
         self._cache_dir = cache_dir
         self._max_size_bytes = max_size_bytes
         self._max_memory_entries = max_memory_entries
+        # E-36 (#811): in-memory LRU was count-capped only; mx.array vision
+        # features can be large, so add a memory cap. 0 = count cap only.
+        self._max_memory_bytes = max_memory_bytes
+        self._memory_bytes = 0
 
         # In-memory LRU cache: composite_key -> mx.array (or list[mx.array])
         self._memory_cache: OrderedDict[str, Any] = OrderedDict()
@@ -189,6 +232,13 @@ class VisionFeatureSSDCache:
         except queue.Full:
             pass
         self._writer_thread.join(timeout=10.0)
+        # P3 (#811): join(timeout=10) returns silently if the writer is
+        # stuck — pending SSD writes would be lost without a loud signal.
+        if self._writer_thread.is_alive():
+            logger.warning(
+                "vision feature cache writer did not drain within 10s — "
+                "pending writes may be lost"
+            )
         logger.debug(
             "Vision feature cache closed: %s",
             {k: v for k, v in self._stats.items() if v > 0},
@@ -201,21 +251,58 @@ class VisionFeatureSSDCache:
 
     # ── Memory LRU helpers ──────────────────────────────────────────
 
+    @staticmethod
+    def _feature_nbytes(features: Any) -> int:
+        # Best-effort byte size of an mx.array or list of mx arrays.
+        nbytes = getattr(features, "nbytes", None)
+        if isinstance(nbytes, int):
+            return nbytes
+        if isinstance(features, (list, tuple)):
+            total = 0
+            for arr in features:
+                a = getattr(arr, "nbytes", None)
+                if isinstance(a, int):
+                    total += a
+            return total
+        size = getattr(features, "size", None)
+        itemsize = getattr(features, "itemsize", None)
+        if isinstance(size, int) and isinstance(itemsize, int):
+            return size * itemsize
+        return 0
+
     def _memory_put(self, key: str, features: Any) -> None:
         """Insert into memory LRU, evicting oldest if over limit.
 
         Caller must hold _memory_lock.
         """
+        entry_bytes = self._feature_nbytes(features)
+
         if key in self._memory_cache:
+            # Overwrite: subtract old bytes before replacing.
+            old = self._memory_cache[key]
+            self._memory_bytes -= self._feature_nbytes(old)
+            if self._memory_bytes < 0:
+                self._memory_bytes = 0
             self._memory_cache.move_to_end(key)
             self._memory_cache[key] = features
+            self._memory_bytes += entry_bytes
             return
 
-        # Evict oldest if over limit
-        while len(self._memory_cache) >= self._max_memory_entries:
-            self._memory_cache.popitem(last=False)
+        # Evict oldest if over count limit OR over the memory cap (E-36).
+        # If the new entry alone exceeds the cap, still store it (don't drop
+        # a single huge feature on insert) but evict everything else first.
+        while len(self._memory_cache) >= self._max_memory_entries or (
+            self._max_memory_bytes > 0
+            and self._memory_bytes + entry_bytes > self._max_memory_bytes
+            and len(self._memory_cache) > 0
+        ):
+            old_key, old_val = self._memory_cache.popitem(last=False)
+            self._memory_bytes -= self._feature_nbytes(old_val)
+            if self._memory_bytes < 0:
+                self._memory_bytes = 0
 
         self._memory_cache[key] = features
+        self._memory_bytes += entry_bytes
 
     # ── SSD persistence ─────────────────────────────────────────────
 
@@ -285,8 +372,24 @@ class VisionFeatureSSDCache:
             with self._ssd_lock:
                 self._ssd_index[key] = entry
                 self._ssd_total_size += estimated_size
-                # Evict old entries if over limit
-                self._evict_ssd_if_needed()
+                # Evict old entries if over limit — collect victim paths
+                # under the lock, unlink AFTER release (E-39: holding the
+                # lock across unlink stalls all SSD ops on a slow disk).
+                victims = self._evict_ssd_if_needed()
+
+            # Unlink evicted SSD files outside the lock; log failures
+            # loudly instead of swallowing (E-39: silent unlink failure
+            # left orphan files accumulating on disk).
+            for victim_path in victims:
+                try:
+                    if victim_path.exists():
+                        victim_path.unlink()
+                except OSError:
+                    logger.warning(
+                        "vision feature SSD unlink failed (orphan left): %s",
+                        victim_path,
+                        exc_info=True,
+                    )
 
             # Enqueue write
             try:
@@ -307,24 +410,19 @@ class VisionFeatureSSDCache:
             with self._pending_lock:
                 self._pending_write_keys.discard(key)
 
-    def _evict_ssd_if_needed(self) -> None:
+    def _evict_ssd_if_needed(self) -> list[Path]:
         """Evict oldest SSD entries until total size is under limit.
 
-        Caller must hold _ssd_lock.
+        Caller must hold _ssd_lock. Returns the list of victim file paths
+        to unlink OUTSIDE the lock (E-39: do not hold the lock across
+        unlink — a slow disk would stall every SSD op).
         """
+        victims: list[Path] = []
         while self._ssd_total_size > self._max_size_bytes and self._ssd_index:
             _, oldest = self._ssd_index.popitem(last=False)
             self._ssd_total_size -= oldest.file_size
-            # Delete file in background (non-blocking)
-            try:
-                if oldest.file_path.exists():
-                    oldest.file_path.unlink()
-            except Exception:
-                logger.debug(
-                    "swallowed exception at fusion_mlx/cache/vision_feature_cache.py:325"
-                )
-
-                pass
+            victims.append(oldest.file_path)
+        return victims
 
     def _load_from_ssd(self, key: str) -> Any | None:
         """Load cached features from SSD.
@@ -409,7 +507,10 @@ class VisionFeatureSSDCache:
             for file_path in subdir_path.glob("*.safetensors"):
                 scanned += 1
                 try:
-                    _, metadata = mx.load(str(file_path), return_metadata=True)
+                    metadata = _read_safetensors_metadata_only(str(file_path))
+                    if metadata is None:
+                        errors += 1
+                        continue
                     image_hash = metadata.get("image_hash", "")
                     model_name = metadata.get("model_name", "")
                     num_tensors = int(metadata.get("num_tensors", "1"))

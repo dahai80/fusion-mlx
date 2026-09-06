@@ -54,10 +54,34 @@ _immortal_mlx_executors: list = []
 _immortal_mlx_streams: list = []
 
 
+def _resolve_video_max_workers() -> int:
+    # E-2 (#811): video max_workers=1 was the ONLY thing preventing
+    # concurrent diffusion OOM. It was implicit — a future "performance"
+    # PR bumping it to 2 would OOM with no warning. Make it an explicit,
+    # documented knob (env override for power users) so the serial-invariant
+    # is visible, not accidental. Default stays 1.
+    raw = os.environ.get("FUSION_MLX_MAX_CONCURRENT_VIDEO", "").strip()
+    if not raw:
+        return 1
+    try:
+        n = int(raw)
+        if n >= 1:
+            logger.warning(
+                "FUSION_MLX_MAX_CONCURRENT_VIDEO=%d: concurrent video "
+                "generation risks Metal OOM (stage-1 latent + 22B "
+                "transformer + VAE per concurrent job)",
+                n,
+            )
+            return n
+    except ValueError:
+        pass
+    return 1
+
+
 _executor_config: dict[str, dict[str, Any]] = {
     "llm": {"max_workers": 1, "prefix": "mlx-llm"},
     "image": {"max_workers": 1, "prefix": "mlx-image"},
-    "video": {"max_workers": 1, "prefix": "mlx-video"},
+    "video": {"max_workers": _resolve_video_max_workers(), "prefix": "mlx-video"},
     # audio must be max_workers=1: mlx-audio's Metal Stream is thread-local,
     # so load_model() and generate() must run on the same thread (else
     # "no Stream(gpu, N) in current thread").
@@ -281,7 +305,13 @@ class EngineCore:
         # Per-engine executor with dedicated mx.Stream (#1248).
         # Each EngineCore gets its own thread + GPU stream so different
         # models can run scheduler.step() concurrently.
-        self._mlx_stream = mx.new_thread_local_stream(mx.default_device())
+        # E-12 (#811): do NOT create the stream here on the main thread —
+        # _make_scheduler() reassigns self._mlx_stream to the executor
+        # thread's default stream (the one weights bind to). A stream
+        # created here on the main thread would be leaked (never closed),
+        # accumulating across reload churn. Defer; the scheduler create on
+        # the executor thread sets the canonical stream.
+        self._mlx_stream = None
         if executor is not None:
             # Reuse caller-provided executor (BatchedEngine._start_llm's
             # _model_load_executor) so scheduler creation + model load + step
@@ -323,7 +353,20 @@ class EngineCore:
             )
 
         _fut = self._mlx_executor.submit(_make_scheduler)
-        _fut.result()
+        try:
+            _fut.result()
+        except BaseException:
+            # E-13 (#811): _make_scheduler raised (OOM, bad weights, config
+            # error). The registry acquired the model above, but without a
+            # scheduler the engine is unusable and start() would never be
+            # reached to clean up. Release the model now so it is not
+            # orphaned in the registry, then re-raise the original error.
+            self._owns_model = False
+            try:
+                get_registry().release(self.model, self._engine_id)
+            except Exception:
+                logger.debug("registry release on failed init", exc_info=True)
+            raise
         self.scheduler = _sched_result[0]
 
         # Draft-model speculative decode safety gate. The draft-model verify
@@ -482,8 +525,15 @@ class EngineCore:
             self._wake_event.set()
         if self._task:
             self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
+            with suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                # E-6 (#811): bound the wait for the cancelled engine loop.
+                # A long prefill/video step on the executor keeps _task alive
+                # past cancellation; an unbounded await here blocks close()'s
+                # scheduler.shutdown submit behind it, which then hits its own
+                # 60s timeout and fatal-exits, skipping the rest of teardown.
+                # Bounded wait lets close() proceed to teardown instead of
+                # stalling the whole shutdown.
+                await asyncio.wait_for(self._task, timeout=5.0)
             self._task = None
         self._wake_event = None
         self._loop = None
@@ -679,8 +729,16 @@ class EngineCore:
                 # request re-triggers the same fault each iteration, burning
                 # CPU and flooding logs. After N consecutive errors, stop the
                 # loop loudly so the pool can evict and reload the engine.
+                # E-7 (#811): the counter is global (not per-fault-signature)
+                # so unrelated transient errors (e.g. 50 different prompts
+                # each OOMing once) can trip it. Mitigate by keeping the
+                # threshold modest — a genuine persistent fault repeats on
+                # the SAME re-submitted request and crosses quickly, while
+                # 20 independent one-shot transients are rare in practice.
+                # The counter resets on every successful step, so a healthy
+                # engine never accumulates.
                 self._consecutive_loop_errors += 1
-                if self._consecutive_loop_errors >= 50:
+                if self._consecutive_loop_errors >= 20:
                     logger.critical(
                         "Engine loop hit %d consecutive errors — stopping "
                         "engine to break persistent-failure spin",
@@ -1066,8 +1124,23 @@ class EngineCore:
                             output = await asyncio.wait_for(
                                 collector.get(), timeout=timeout
                             )
+                            # E-5 (#811): closed collector returns None.
+                            if output is None:
+                                logger.info(
+                                    "stream_outputs collector closed for %s, stopping",
+                                    request_id,
+                                )
+                                break
                     else:
                         output = collector.get_nowait() or await collector.get()
+                    # E-5 (#811): a reaped/closed collector returns None from
+                    # get() — stop the stream instead of yielding None.
+                    if output is None:
+                        logger.info(
+                            "stream_outputs collector closed for %s, stopping",
+                            request_id,
+                        )
+                        break
                     yield output
                     if output.error:
                         _raise_request_output_error(output)
@@ -1149,6 +1222,16 @@ class EngineCore:
         prompts: list[str | list[int]],
         sampling_params: SamplingParams | None = None,
     ) -> list[RequestOutput]:
+        # P3 (#811): this sync path drives scheduler.step() directly,
+        # bypassing the AsyncEngineCore continuous-batching loop, the MLX
+        # executor, streaming, abort-on-disconnect, and the error handlers.
+        # It has no production callers (not in public_api) — it is a
+        # bench/test convenience. Prefer generate_batch_async / generate.
+        logger.warning(
+            "generate_batch_sync bypasses the executor + streaming + "
+            "abort/error handling; prefer generate_batch_async for "
+            "production paths"
+        )
         if sampling_params is None:
             sampling_params = SamplingParams()
         request_ids = []
@@ -1347,6 +1430,18 @@ class EngineCore:
                 except RuntimeError:
                     pass
             else:
+                # E-10 (#811): the executor must stay alive (its worker thread
+                # holds a thread-local MLX Stream + CompilerCache that cannot
+                # be torn down without a GIL-free crash). ThreadPoolExecutor
+                # has no API to cancel queued futures WITHOUT marking the
+                # executor shut down — shutdown(cancel_futures=True) sets
+                # _shutdown=True, which would reject future submits and
+                # contradict the "immortal, reusable" intent. So leave the
+                # executor fully alive. Queued-but-not-started futures carry
+                # no MLX state yet and are harmless to let drain on the
+                # worker thread; the executor is pinned in
+                # _immortal_mlx_executors and never re-submitted to after
+                # close (self._mlx_executor is nulled below).
                 _immortal_mlx_executors.append(self._mlx_executor)
                 if self._mlx_stream is not None:
                     _immortal_mlx_streams.append(self._mlx_stream)
@@ -1366,10 +1461,13 @@ class EngineCore:
         try:
             if self._owns_model and not self._closed:
                 get_registry().release(self.model, self._engine_id)
-        except Exception:
-            logger.debug("swallowed exception at fusion_mlx/engine_core.py:403")
-
-            pass
+        except Exception as e:
+            # P3 (#811): bare pass swallowed the release error silently.
+            # __del__ runs at GC time so a raised exception is uncatchable
+            # and would just print to stderr; log the real cause at debug
+            # (release failures during interpreter shutdown are common and
+            # benign, but a real bug should still be traceable).
+            logger.debug("EngineCore.__del__ model release failed: %s", e)
 
     @property
     def engine_id(self) -> str:

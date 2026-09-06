@@ -1145,7 +1145,12 @@ class Server:
             }
 
         @app.get("/api/stats/alltime")
-        async def api_stats_alltime():
+        async def api_stats_alltime(is_admin: bool = Depends(require_admin)):
+            # E-30 (#811): /api/stats/alltime exposed aggregate request
+            # counts, token throughput, model-load counts, and uptime
+            # with no auth — reconnaissance goldmine for an attacker
+            # profiling the instance. Sibling /stats (line 1086) is
+            # already require_admin-gated; this was the outlier.
             return get_server_metrics().to_alltime_dict()
 
         @app.post("/v1/models/{model_id:path}/load")
@@ -1461,11 +1466,19 @@ class Server:
         tier_str = getattr(mem_cfg, "tier", "balanced")
         if hasattr(tier_str, "name"):
             tier_str = tier_str.name.lower()
+        # E-9 (#811): the config-file custom tier (MemoryConfig.custom_limit_mb)
+        # was silently ignored at construction — only the runtime admin route set
+        # the custom ceiling. Pass it here so a custom tier in settings.json takes
+        # effect at boot. custom_limit_mb is None when unset; leave 0 (disabled).
+        custom_ceiling_gb = 0.0
+        if tier_str == "custom" and getattr(mem_cfg, "custom_limit_mb", None):
+            custom_ceiling_gb = float(mem_cfg.custom_limit_mb) / 1024.0
         self.pool._process_memory_enforcer = ProcessMemoryEnforcer(
             engine_pool=self.pool,
             memory_guard_tier=tier_str,
             soft_threshold=mem_cfg.soft_threshold,
             hard_threshold=mem_cfg.hard_threshold,
+            memory_guard_custom_ceiling_gb=custom_ceiling_gb,
         )
         self.pool._process_memory_enforcer.start()
         self.pool._get_final_ceiling = (

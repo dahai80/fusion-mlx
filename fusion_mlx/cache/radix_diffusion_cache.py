@@ -198,8 +198,12 @@ class DiffusionRadixCache:
     def __del__(self) -> None:
         try:
             _REGISTRY.discard(self)
-        except Exception:
-            pass
+        except Exception as e:
+            # P3 (#811): bare pass hid teardown errors. __del__ runs at GC
+            # time so re-raising is uncatchable and just spams stderr; log
+            # at debug so a real bug stays traceable while benign shutdown
+            # noise stays quiet.
+            logger.debug("DiffusionRadixCache.__del__ deregister failed: %s", e)
 
     def _walk(self, key: str) -> _RadixNode | None:
         """Walk the radix tree for key lookup. Returns None if not found."""
@@ -259,17 +263,42 @@ class DiffusionRadixCache:
         return node
 
     def _evict_if_needed(self) -> None:
+        # E-34: a pinned leaf (ref_count > 0) at the LRU position previously
+        # broke the whole eviction loop, so a single pinned leaf let the cache
+        # grow past max_bytes unbounded -> OOM. Skip pinned leaves and keep
+        # evicting the next LRU candidate instead. Bound consecutive skips by
+        # leaf_count so an all-pinned trie terminates instead of spinning.
+        skipped = 0
         while self._stats.total_bytes > self.max_bytes and self._stats.leaf_count > 1:
+            if skipped >= self._stats.leaf_count:
+                logger.warning(
+                    "radix cache: all %d leaves pinned (ref_count>0); cannot "
+                    "evict below max_bytes (total=%d, max=%d)",
+                    self._stats.leaf_count,
+                    self._stats.total_bytes,
+                    self.max_bytes,
+                )
+                break
             victim = self._pop_lru_leaf()
             if victim is None:
                 break
             parent, edge_key, lru_node = victim
             if lru_node.ref_count > 0:
-                break
+                skipped += 1
+                continue
+            skipped = 0
             self._stats.total_bytes -= lru_node.size_bytes
             self._stats.leaf_count -= 1
             self._stats.evictions += 1
             del parent.children[edge_key]
+            # P3 (#811): mark the evicted node so the LRU heap pop filter
+            # (line ~306: ``node.value is None``) rejects its stale tuples
+            # cheaply instead of re-walking the trie via _find_parent. The
+            # heap still carries one tuple per historical _touch(); without
+            # this mark those dead tuples accumulate unboundedly and each
+            # only falls out lazily on the next eviction scan.
+            lru_node.value = None
+            lru_node._heap_seq = -1
             self._cleanup_chains(self._root, None, "")
             logger.debug(
                 "radix cache evicted %d bytes (leaves=%d, evictions=%d)",
@@ -341,7 +370,12 @@ class DiffusionRadixCache:
         if isinstance(value, dict):
             total = 0
             for v in value.values():
-                if HAS_MLX and isinstance(v, mx.array) or hasattr(v, "nbytes"):
+                # P3 (#811): parenthesize the precedence. The bare
+                # `HAS_MLX and isinstance(...) or hasattr(...)` parsed as
+                # `(HAS_MLX and isinstance) or hasattr`, which happened to
+                # work but is fragile. Match the intent explicitly: an mlx
+                # array OR any object exposing nbytes.
+                if (HAS_MLX and isinstance(v, mx.array)) or hasattr(v, "nbytes"):
                     total += v.nbytes
             return total or 64
         if hasattr(value, "nbytes"):

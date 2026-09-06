@@ -18,6 +18,7 @@ import gc
 import json
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -129,6 +130,9 @@ class EngineEntry:
     loading_event: asyncio.Event | None = None  # Signaled when loading completes
     is_pinned: bool = False  # Never evict if True
     abort_loading: bool = False  # Set by memory enforcer to abort in-progress load
+    last_load_failed: bool = (
+        False  # E-19 (#811): last load raised; waiters fast-fail, don't retry
+    )
     in_use: int = 0  # in-flight acquire/use lease count; never evict while > 0
     abort_requested: bool = False  # Set under hard pressure for leased requests
     pending_unload_reason: str | None = None  # Unload as soon as leases/activity drain
@@ -165,6 +169,9 @@ class EnginePool:
         """
         self._entries: dict[str, EngineEntry] = {}
         self._lock = asyncio.Lock()
+        # P3 (#811): guards is_pinned writes from a sync/threadpool caller
+        # against in-flight unload reads on the event-loop thread.
+        self._pinned_lock = threading.Lock()
         self._current_model_memory = 0
         self._scheduler_config = scheduler_config or SchedulerConfig()
         self._process_memory_enforcer: object | None = None  # Set by server
@@ -615,12 +622,27 @@ class EnginePool:
 
         Returns:
             True if successful, False if model not found.
+
+        P3 (#811): this mutates ``entry.is_pinned`` without the pool's
+        ``asyncio.Lock`` that the unload/eviction paths hold when they
+        READ ``is_pinned`` (release_engine, unload_if_idle_unpinned). All
+        current callers run on the event-loop thread (async routes +
+        startup), so the bool write is GIL-atomic and cannot interleave
+        inside a locked unload block (no await between the is_pinned
+        check and the detach decision). The ``_pinned_lock`` guards the
+        write for a future threadpool/sync caller so a pin toggle from a
+        worker thread cannot tear against an in-flight unload on the
+        loop thread. The async readers do NOT take this lock (they hold
+        ``self._lock`` and run on the same thread); if a real second
+        thread is ever added, also take ``_pinned_lock`` around their
+        is_pinned reads.
         """
-        entry = self._entries.get(model_id)
-        if entry is None:
-            return False
-        entry.is_pinned = pinned
-        return True
+        with self._pinned_lock:
+            entry = self._entries.get(model_id)
+            if entry is None:
+                return False
+            entry.is_pinned = pinned
+            return True
 
     def _case_insensitive_entry_match(self, name: str) -> str | None:
         """Find a model entry matching *name* case-insensitively.
@@ -1143,8 +1165,19 @@ class EnginePool:
                 entry_key,
             )
             await wait_event.wait()
-            # Retry from the top — the engine is now loaded (or the load
-            # failed and get_engine will re-trigger a fresh attempt).
+            # E-19 (#811): the loader may have FAILED. Without this guard
+            # every waiting coroutine recurses into get_engine, and since
+            # is_loading is now False + engine is None, each one starts a
+            # fresh full load — N waiters run N serial full load attempts
+            # after one failure (re-downloading, re-compiling, amplifying
+            # the error). Fast-fail instead; the next explicit request can
+            # retry.
+            if entry.last_load_failed:
+                raise RuntimeError(
+                    f"concurrent load of '{entry_key}' failed; refusing to "
+                    f"re-trigger a load for the waiter (E-19)"
+                )
+            # Load succeeded — retry from the top to acquire the now-loaded engine.
             return await self.get_engine(
                 model_id,
                 force_lm=force_lm,
@@ -1299,6 +1332,8 @@ class EnginePool:
                     reason,
                 )
                 settle_pre = await self._detach_engine(entry_key)
+                # P3 (#811): adapter cleanup under the lock we already hold.
+                self._remove_stale_adapters_locked(entry_key)
         if settle_pre is not None:
             await self._settle_unloaded_engine(entry_key, settle_pre)
 
@@ -1323,6 +1358,8 @@ class EnginePool:
                 return False
 
             settle_pre = await self._detach_engine(model_id)
+            # P3 (#811): adapter cleanup under the lock we already hold.
+            self._remove_stale_adapters_locked(model_id)
         if settle_pre is not None:
             await self._settle_unloaded_engine(model_id, settle_pre)
         return True
@@ -1618,13 +1655,27 @@ class EnginePool:
         entry.abort_requested = False
         entry.pending_unload_reason = None
         entry.runtime_settings_signature = None
-        # #209-M1: remove LoRA adapter entries whose base model was just unloaded
+        # P3 (#811): the LoRA adapter-entry cleanup (#209-M1) used to live
+        # here, but _detach_engine is called by unload_engine_async OUTSIDE
+        # self._lock (the lock block ends before the await _detach_engine
+        # call). Deleting from self._entries lockless raced a concurrent
+        # get_engine (which holds self._lock and iterates _entries). Moved
+        # to _remove_stale_adapters_locked, invoked by each caller inside
+        # its own lock context. The two callers that already hold the lock
+        # (release_engine, unload_if_idle_unpinned) call it directly;
+        # unload_engine_async acquires the lock around it after detach.
+        return pre_unload_active
+
+    def _remove_stale_adapters_locked(self, model_id: str) -> None:
+        # #209-M1 + P3 (#811): remove LoRA adapter entries whose base model
+        # was just unloaded. MUST be called with self._lock held — every
+        # other _entries mutation takes it, and a concurrent get_engine
+        # iterating _entries would observe a half-deleted dict otherwise.
         adapter_prefix = f"{model_id}::lora::"
         stale_adapters = [k for k in self._entries if k.startswith(adapter_prefix)]
         for ak in stale_adapters:
             del self._entries[ak]
             logger.info("removed stale adapter entry: %s", ak)
-        return pre_unload_active
 
     async def unload_engine_async(
         self,
@@ -1719,11 +1770,31 @@ class EnginePool:
             pre_unload_active = await self._detach_engine(model_id)
             if pre_unload_active is None:
                 return
+            # P3 (#811): _detach_engine no longer deletes stale LoRA adapter
+            # entries (it ran lockless here — the lock block ended before
+            # the await above). Remove them now under the lock so a
+            # concurrent get_engine iterating _entries cannot observe a
+            # half-deleted dict. asyncio.Lock is not reentrant: a
+            # caller_holds_lock=True caller still holds self._lock through
+            # this whole call, so call the helper directly; the lockless
+            # callers acquire the lock here.
+            if caller_holds_lock:
+                self._remove_stale_adapters_locked(model_id)
+            else:
+                async with self._lock:
+                    self._remove_stale_adapters_locked(model_id)
             if with_settle:
                 await self._settle_unloaded_engine(model_id, pre_unload_active)
             else:
                 entry = self._entries.get(model_id)
                 if entry is not None:
+                    # E-21 (#811): the unload decrement races the load
+                    # increment at the end of _load_engine (phase 2, lockless).
+                    # We do NOT take self._lock here: with_settle=False callers
+                    # include _unload_pending_if_idle_locked (holds the lock)
+                    # and shutdown (holds the lock), and asyncio.Lock is not
+                    # reentrant. The is_unloading / is_loading markers already
+                    # serialize load-vs-unload for the same model.
                     self._current_model_memory -= entry.estimated_size
                 logger.debug(
                     f"Fast unload (no settle) for '{model_id}': "
@@ -1833,6 +1904,14 @@ class EnginePool:
             )
 
         # Release memory tracking AFTER barrier
+        # E-21 (#811): the unload decrement races the load increment at the
+        # end of _load_engine (phase 2, lockless). We do NOT take self._lock
+        # here because (a) the is_unloading / is_loading markers already
+        # serialize load-vs-unload for the same model (a settling model had
+        # entry.engine=None set by _detach_engine, so a concurrent get_engine
+        # starts a fresh load whose increment lands after this decrement —
+        # correct order), and (b) shutdown() calls this under self._lock, and
+        # asyncio.Lock is not reentrant — acquiring it here would deadlock.
         self._current_model_memory -= entry.estimated_size
 
         if settled:
@@ -2073,6 +2152,8 @@ class EnginePool:
             entry.is_loading = True
             entry.loading_started_at = time.monotonic()
             entry.abort_loading = False
+        # E-19 (#811): clear prior failure marker for this fresh load attempt.
+        entry.last_load_failed = False
         self._wake_process_memory_enforcer(active=True)
         load_started_at = entry.loading_started_at
         load_completed = False
@@ -2493,7 +2574,14 @@ class EnginePool:
             # P2-5: now that intermediate buffers are cleared, record the
             # resident footprint so the enforcer sees the true post-load
             # baseline rather than the ~2x peak.
-            self._current_model_memory += entry.estimated_size
+            # E-21 (#811): this += runs in _load_engine phase 2 (OUTSIDE the
+            # pool lock) while concurrent unload paths also -= this same
+            # field under the lock — a lost update skews the memory budget.
+            # Take the lock briefly so the read-modify-write is atomic vs
+            # unload. The enforcer callback below is a plain setter, not
+            # await-coupled, so it stays inside the critical section.
+            async with self._lock:
+                self._current_model_memory += entry.estimated_size
             if self._process_memory_enforcer is not None:
                 self._process_memory_enforcer.update_loaded_model_bytes(
                     int(entry.estimated_size)
@@ -2532,6 +2620,13 @@ class EnginePool:
             entry.is_loading = False
             entry.loading_started_at = None
             entry.abort_loading = False
+            # E-19 (#811): record whether this load succeeded. Waiting
+            # coroutines (get_engine phase 1) wake on loading_event and
+            # recurse into get_engine; without a failure marker each one
+            # re-triggers a fresh full load, so N waiters run N full load
+            # attempts in series after a single failure. The marker lets a
+            # waiter fast-fail instead of re-loading.
+            entry.last_load_failed = not load_completed
             loading_event = entry.loading_event
             entry.loading_event = None
             if loading_event is not None:
@@ -2739,19 +2834,47 @@ class EnginePool:
         now = time.time()
         expired: list[str] = []
 
+        # E-22 (#811): settings_manager.get_settings() does disk I/O. Calling
+        # it inside the pool lock blocks ALL pool operations (get_engine,
+        # unload, serve) for the duration of every model's settings read on
+        # every TTL sweep. Two-pass instead: snapshot candidate model_ids and
+        # their last_access under the lock, read settings (I/O) OUTSIDE the
+        # lock, then re-acquire the lock for the decision pass (re-checking
+        # the entry is still loaded and not busy — it may have been unloaded
+        # or acquired while the lock was released).
+        candidates: list[tuple[str, float]] = []
         async with self._lock:
             for model_id, entry in self._entries.items():
                 if entry.engine is None or entry.is_loading or entry.is_pinned:
                     continue
+                candidates.append((model_id, entry.last_access))
 
-                settings = settings_manager.get_settings(model_id)
-                effective_ttl = settings.ttl_seconds
-                if effective_ttl is None:
-                    effective_ttl = global_idle_timeout_seconds
+        # Settings I/O outside the lock.
+        ttl_by_model: dict[str, int | None] = {}
+        for model_id, _last_access in candidates:
+            settings = settings_manager.get_settings(model_id)
+            effective_ttl = settings.ttl_seconds
+            if effective_ttl is None:
+                effective_ttl = global_idle_timeout_seconds
+            if effective_ttl is not None:
+                ttl_by_model[model_id] = effective_ttl
+
+        # Decision pass under the lock — cheap, no I/O.
+        async with self._lock:
+            for model_id, last_access in candidates:
+                effective_ttl = ttl_by_model.get(model_id)
                 if effective_ttl is None:
                     continue
+                entry = self._entries.get(model_id)
+                if (
+                    entry is None
+                    or entry.engine is None
+                    or entry.is_loading
+                    or entry.is_pinned
+                ):
+                    continue
 
-                idle_time = now - entry.last_access
+                idle_time = now - last_access
                 if idle_time < effective_ttl:
                     continue
 

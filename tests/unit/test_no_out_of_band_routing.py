@@ -444,6 +444,16 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # snapshot flushes to disk. Pure durability/IO knob — never
         # selects model / parser / tier.
         "FUSION_MLX_KV_CHECKPOINT_INTERVAL",
+        # Max concurrent video-generation jobs (engine_core.py:57).
+        # Default 1; the only thing preventing concurrent-diffusion OOM.
+        # Pure concurrency/worker knob — never selects model / parser / tier.
+        "FUSION_MLX_MAX_CONCURRENT_VIDEO",
+        # Cap on the in-memory agent-graph store (api/agent_routes.py:25).
+        # Pure capacity knob — never selects model / parser / tier.
+        "FUSION_MLX_MAX_AGENT_GRAPHS",
+        # Model-load timeout in seconds (engines/batched.py). Pure timing knob
+        # — never selects model / parser / tier.
+        "FUSION_MLX_MODEL_LOAD_TIMEOUT",
     }
 )
 

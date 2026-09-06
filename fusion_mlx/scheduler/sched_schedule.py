@@ -41,6 +41,14 @@ from .types import (
 # or memory ceiling can never deadlock scheduling (#1684).
 _ADMISSION_STALL_TIMEOUT_S = 60.0
 
+# P3 (#811): reorder grace. Before the hard reject timeout, rotate a stalled
+# head to the back of the waiting queue so the requests behind it get an
+# admission attempt instead of head-of-line blocking the whole queue for
+# the full 60s. A small prompt behind a huge stalled one, or a per-request
+# store-cache stall, can then proceed. The stalled request keeps its turn
+# in rotation; only a stall exceeding the full timeout is hard-rejected.
+_ADMISSION_STALL_REORDER_GRACE_S = 10.0
+
 # R-21 (#811): prompts above this many tokens use chunked prefill even when
 # chunked_prefill=False, so an inline full-prefill can't block every running
 # decode request for tens of seconds. 4x the default prefill_step_size (2048)
@@ -85,7 +93,13 @@ def _schedule_waiting(
     # Track SpecPrefill: these requests must be alone (RoPE patching affects whole model)
     batch_specprefill_status: bool | None = None
 
-    while self.waiting and len(self.running) < self.config.max_num_seqs:
+    # E-44 (#811): use _effective_max_num_seqs() not the raw config so
+    # that Llama 4 serialization and generation-overflow recovery requests
+    # are admitted one at a time. The method returns 1 when either flag is
+    # set, otherwise config.max_num_seqs — so the common path is unchanged
+    # but overflow-recovery requests no longer flood the running set.
+    _max_seqs = self._effective_max_num_seqs()
+    while self.waiting and len(self.running) < _max_seqs:
         # Token budget guard: max_num_batched_tokens bounds the total
         # tokens (decode + prefill) in a single forward pass.
         batched_tokens = len(self.running) + sum(
@@ -101,12 +115,22 @@ def _schedule_waiting(
 
         # Admission pause: set by ProcessMemoryEnforcer when phys
         # crosses soft_threshold. New prefills wait; in-flight requests
-        # continue. First request always passes (self.running is empty)
-        # so admission can recover by completing the current generation.
-        if self._admission_paused and self.running:
+        # continue. E-45 (#811): the old `and self.running` guard made
+        # the pause a no-op when the engine was idle — an idle server
+        # under memory pressure admitted an UNLIMITED first burst (the
+        # while loop kept iterating with running=0), the exact OOM path
+        # the pause is meant to prevent. Keep the recovery seed: allow
+        # exactly ONE request through when nothing is running (so the
+        # system can recover by completing it), but respect the pause
+        # for every subsequent admission. `scheduled` tracks how many
+        # we have admitted in THIS _schedule_waiting call, so the seed
+        # is the first admit only.
+        if self._admission_paused and (self.running or scheduled):
             logger.debug(
-                "Admission paused by memory pressure, %d running",
+                "Admission paused by memory pressure, %d running, "
+                "%d already scheduled this pass",
                 len(self.running),
+                len(scheduled),
             )
             break
 
@@ -235,6 +259,35 @@ def _schedule_waiting(
                 if mem_blocked_id is None:
                     self._memory_admission_blocked_request_id = _next.request_id
                     self._memory_admission_blocked_since = now
+                # P3 (#811): reorder before hard-blocking. Memory headroom
+                # is per-request: a huge prompt may not fit while a smaller
+                # one behind it will. Once the head has stalled past the
+                # reorder grace (but under the hard reject timeout), rotate
+                # it to the back and try admitting the next request instead
+                # of head-of-line blocking the whole queue for 60s. The
+                # blocker stays on the rotated request's id so the stall
+                # timer keeps accruing toward the reject threshold.
+                stalled_for = now - (mem_blocked_since or now)
+                if (
+                    len(self.waiting) > 1
+                    and stalled_for >= _ADMISSION_STALL_REORDER_GRACE_S
+                ):
+                    rotated = self.waiting.popleft()
+                    self.waiting.append(rotated)
+                    logger.debug(
+                        "Memory stall reorder: rotated %s to back after "
+                        "%.1fs (prefill=%s > headroom=%s), %d still waiting",
+                        rotated.request_id,
+                        stalled_for,
+                        estimated_prefill,
+                        self._memory_limit_bytes - current,
+                        len(self.waiting),
+                    )
+                    # break (not continue): advance the head by one position
+                    # this pass, retry on the next step(). Avoids a tight
+                    # rotate-everything spin that would re-run the memory
+                    # probe + cache clear for the whole queue each step.
+                    break
                 logger.debug(
                     "Generation memory guard: deferring scheduling "
                     "(current=%s + prefill=%s > limit=%s), %d running",

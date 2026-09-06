@@ -35,6 +35,32 @@ _jobs_lock = threading.Lock()
 # jobs to avoid OOM. A queued job waits for the prior one to finish.
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="convert-job")
 
+
+def shutdown_convert_executor(wait: bool = False) -> None:
+    # E-11 (#811): the convert/quantize executor was never closed. On
+    # SIGTERM a running conversion left a half-written output dir on
+    # disk AND a lingering worker thread. Mark every in-flight job as
+    # interrupted so the half-written state is visible to pollers, then
+    # shut the executor down. Best-effort: the running job cannot be
+    # cancelled mid-convert (mlx-lm convert() has no cancel hook), but
+    # shutdown(wait=False) drains the queue and lets the worker exit
+    # without starting queued jobs.
+    with _jobs_lock:
+        for job in _jobs.values():
+            if job["status"] in ("queued", "running"):
+                job["status"] = "interrupted"
+                job["error"] = "server shutdown"
+                job["updated_at"] = _now()
+    try:
+        _executor.shutdown(wait=wait, cancel_futures=True)
+    except Exception:
+        logger.debug("convert executor shutdown raised", exc_info=True)
+
+
+import atexit
+
+atexit.register(shutdown_convert_executor)
+
 _FP_QUANT_MODES = ("mxfp4", "nvfp4", "mxfp8")
 
 

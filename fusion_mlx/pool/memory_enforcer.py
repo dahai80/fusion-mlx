@@ -555,6 +555,14 @@ class ProcessMemoryEnforcer:
         hard = min(candidates)
         # Safety floor: never drop below loaded model size + 10 GB.
         floor = self.get_loaded_model_bytes() + 10 * 1024**3
+        # E-8 (#811): the floor can lift the hard ceiling PAST the Metal cap
+        # (30GB loaded + 10GB floor = 40GB > 36GB Metal cap), so the
+        # soft/hard watermarks never trigger while MLX is already at its
+        # limit → enforcer does nothing and the process OOMs. Cap the floor
+        # at the Metal cap so it never exceeds the physical ceiling. When
+        # there is no metal_cap (0/unknown) leave the floor unconstrained.
+        if metal_cap > 0:
+            floor = min(floor, metal_cap)
         hard = max(hard, floor)
         return {
             "static": static_ceiling,
@@ -897,7 +905,24 @@ class ProcessMemoryEnforcer:
         return getattr(eng, "_prefill_guard", None)
 
     def _propagate_memory_limit(self) -> None:
-        """Propagate ceiling-derived watermarks to all schedulers."""
+        """Propagate ceiling-derived watermarks to all schedulers.
+
+        P3 (#811): this runs on the asyncio event-loop thread and writes
+        scheduler watermark attributes that ``step()`` reads on the MLX
+        executor thread — a cross-thread write with no lock. The fields are
+        independent scalar thresholds (soft/hard/abort/margin), each a
+        single GIL-atomic int/float/bool assignment, and the scheduler
+        treats them as separate sample-then-act guards (it snapshots each
+        into a local before comparing). A transient partial update — e.g.
+        a new soft limit visible before the matching hard limit — is
+        harmless: the next propagation and the next step() both converge,
+        and memory guards are approximate by design (current footprint is
+        itself a noisy sample). No lock is added: serializing every
+        step() memory check against the enforcer would cost throughput for
+        no correctness gain. If these ever become a co-dependent snapshot
+        (must be read atomically together), switch to swapping a single
+        immutable dataclass reference instead of per-field writes.
+        """
         breakdown = self._get_ceiling_breakdown()
         ceiling = breakdown["hard_limit"]
         abort_limit = self._get_abort_limit_bytes()
@@ -1202,6 +1227,16 @@ class ProcessMemoryEnforcer:
                 self._engine_pool._lock.acquire(), timeout=2.0
             )
         except TimeoutError:
+            # E-46 (#811): the pool lock could not be acquired in 2s, so we
+            # cannot hold it to mutate _entries. This path is safe under
+            # single-thread asyncio (no await below, so no cooperative
+            # yield lets another coroutine mutate _entries mid-iteration),
+            # but a cross-thread caller holding _lock could resize the dict
+            # while we iterate. Snapshot the entries first so dict-resize-
+            # during-iteration cannot raise RuntimeError here; the
+            # abort_loading flag is a cooperative signal the loading path
+            # reads under the lock, so an unlocked write is benign as long
+            # as it is to a real entry object (the .get() guards None).
             victim = self._engine_pool._find_lru_victim()
             if victim:
                 self._eviction_marked.add(victim)
@@ -1213,7 +1248,8 @@ class ProcessMemoryEnforcer:
                         f"(pressure={new_level}, lock timeout)"
                     )
             if new_level == "hard":
-                for entry in self._engine_pool._entries.values():
+                _entries_snapshot = list(self._engine_pool._entries.values())
+                for entry in _entries_snapshot:
                     if entry.is_loading and not entry.abort_loading:
                         entry.abort_loading = True
                         logger.warning(

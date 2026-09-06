@@ -62,6 +62,26 @@ class NodeUnavailableError(Exception):
         super().__init__(f"node {node_id} unavailable: {reason}")
 
 
+class PartialStreamError(NodeUnavailableError):
+    # E-47 (#811): a streaming call that raised mid-stream may have
+    # already delivered partial output to the client. The bare re-raise
+    # of the underlying NodeUnavailableError made a 90%-complete stream
+    # indistinguishable from a zero-byte failure, so a caller that
+    # retries on NodeUnavailableError would duplicate output. This
+    # subclass lets the caller branch: catch NodeUnavailableError for
+    # zero-byte (retry-safe) failures, catch PartialStreamError for
+    # mid-stream failures (do NOT retry — surface the partial + abort
+    # per OpenAI streaming semantics). It still IS-A
+    # NodeUnavailableError so existing `except NodeUnavailableError`
+    # handlers keep working.
+    """Streaming call failed after partial output was delivered."""
+
+    def __init__(self, node_id: str, reason: str = "", cause: Exception | None = None):
+        super().__init__(node_id, reason)
+        self.cause = cause
+        self.partial_delivered = True
+
+
 @dataclass
 class ClusterNode:
     node_id: str
@@ -106,6 +126,15 @@ class NodeRegistry:
     alive peers are suitable. Peers are added/removed by the discovery
     layer (gateway handshake, mDNS browse) and health-checked by
     ``ClusterHealthMonitor``.
+
+    P3 (#811): every mutator/accessor is ``async def`` and guards state with
+    ``asyncio.Lock``. This is correct for the current call sites (cluster
+    routes + health monitor, all awaited from the event loop) but is NOT
+    safe for a future synchronous caller — there is no running event loop
+    to acquire the lock from a sync context, and ``asyncio.Lock`` cannot be
+    used without ``await``. Do not add sync helpers that touch ``_nodes``
+    directly; if a sync read path is ever needed, expose a snapshot updated
+    by the async side instead of locking here.
     """
 
     def __init__(self) -> None:
@@ -114,6 +143,11 @@ class NodeRegistry:
 
     async def register(self, node: ClusterNode) -> None:
         async with self._lock:
+            # E-24: register() never set last_heartbeat, so a freshly-registered
+            # node kept the dataclass default 0.0 (epoch 0) and any future
+            # liveness calculation saw a ~57-year-old heartbeat. Stamp it now
+            # on both the new-node and re-register paths.
+            now = time.time()
             existing = self._nodes.get(node.node_id)
             if existing is not None:
                 # Re-register refreshes metadata but preserves liveness state
@@ -122,12 +156,14 @@ class NodeRegistry:
                 existing.host = node.host
                 existing.port = node.port
                 existing.platform = node.platform
+                existing.last_heartbeat = now
                 if existing.state == NodeState.EVICTED:
                     logger.info("cluster: re-adding evicted node %s", node.node_id)
                     existing.state = NodeState.ALIVE
                     existing.missed_beats = 0
                 logger.debug("cluster: refreshed peer %s", node.node_id)
                 return
+            node.last_heartbeat = now
             self._nodes[node.node_id] = node
             logger.info(
                 "cluster: registered peer %s (%s:%d)",
@@ -386,12 +422,20 @@ class FailoverRouter:
                     # node from the next selection by marking it dead locally.
                     await self.registry.mark_dead(exc.node_id, exc.reason)
                 if stream:
+                    # E-47 (#811): distinguish a mid-stream failure (some
+                    # output already delivered to the client) from a
+                    # zero-byte failure. Wrap in PartialStreamError so the
+                    # caller can branch on whether a retry would duplicate
+                    # output. Still IS-A NodeUnavailableError for existing
+                    # handlers.
                     logger.error(
                         "cluster: streaming request to %s failed — NOT retrying "
-                        "(would duplicate output)",
+                        "(partial output may have been delivered)",
                         exc.node_id,
                     )
-                    raise
+                    raise PartialStreamError(
+                        exc.node_id, exc.reason, cause=exc
+                    ) from exc
                 continue
         if last_error is not None:
             raise last_error

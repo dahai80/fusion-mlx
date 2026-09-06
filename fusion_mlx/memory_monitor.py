@@ -258,14 +258,14 @@ class MemoryMonitor:
 
     def has_model_info(self) -> bool:
         """Whether set_model_info has been called with real dims."""
-        return (
-            self._num_layers is not None
-            and self._num_layers > 0
-            and self._num_kv_heads is not None
-            and self._num_kv_heads > 0
-            and self._head_dim is not None
-            and self._head_dim > 0
-        )
+        # Defensive: a non-int value (unset, mock, or garbage from a partial
+        # set_model_info) must report "no model info" rather than raise
+        # TypeError on the `> 0` comparison — callers gate KV-cache math on
+        # this and a crash here propagates up the admission path.
+        for v in (self._num_layers, self._num_kv_heads, self._head_dim):
+            if not isinstance(v, int) or v <= 0:
+                return False
+        return True
 
     def set_model_info(
         self,

@@ -160,6 +160,18 @@ class PriorityScheduler:
         config: PrioritySchedulerConfig | None = None,
         memory_pool: Any | None = None,
     ):
+        # P3 (#811): this wrapper is dead code — no production call site
+        # instantiates it. The threading.Lock below guards the priority
+        # queues and is only safe on the single MLX executor thread (the
+        # same model the base Scheduler.step() uses). Wiring step()/
+        # add_request directly into the asyncio engine loop would block
+        # the event loop on a contended lock. If this is ever wired, run
+        # every method via loop.run_in_executor(self._mlx_executor, ...).
+        logger.warning(
+            "PriorityScheduler instantiated but has no production wiring; "
+            "its threading.Lock is executor-thread-only — do not call "
+            "step()/add_request from the asyncio event loop"
+        )
         self.base = base_scheduler
         self.config = config or PrioritySchedulerConfig()
         self.memory_pool = memory_pool

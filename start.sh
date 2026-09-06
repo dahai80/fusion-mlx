@@ -340,9 +340,14 @@ do_stop() {
     log_step "Stopping fusion-mlx (PID ${pid})"
 
     # Graceful: SIGTERM the serve child.
+    # E-16 (#811): the graceful window was 15s, shorter than the server's own
+    # shutdown (pool drain ~10s + per-engine unload + mx.clear_cache + SSE
+    # generator drain up to 10s). SIGKILL fired mid-drain truncated streaming
+    # responses and lost prefix-cache persistence. Bump to 45s so a multi-
+    # model unload completes; a genuinely stuck process still hits SIGKILL.
     kill -TERM "${pid}" 2>/dev/null || true
     local waited=0
-    while (( waited < 15 )); do
+    while (( waited < 45 )); do
         if ! kill -0 "${pid}" 2>/dev/null; then
             log_info "Server stopped gracefully"
             break

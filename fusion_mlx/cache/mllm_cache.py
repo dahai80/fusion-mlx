@@ -111,6 +111,18 @@ class MLLMPrefixCacheEntry:
         if self.vision_embeddings is not None:
             if hasattr(self.vision_embeddings, "nbytes"):
                 size += self.vision_embeddings.nbytes
+            else:
+                # P3 (#811): a tensor without nbytes is silently skipped,
+                # understating memory and skewing eviction math toward
+                # evicting too late (OOM risk). debug was invisible in
+                # production — escalate to warning so the undercount is
+                # observable. A true byte count needs shape*itemsize, but
+                # mlx arrays always expose nbytes, so hitting this path
+                # means an unexpected tensor type worth investigating.
+                logger.warning(
+                    "mllm memory_size: vision_embeddings lacks nbytes — "
+                    "undercounting memory (eviction may run late)"
+                )
         if self.kv_cache is not None:
             for layer_cache in self.kv_cache:
                 if hasattr(layer_cache, "state"):
@@ -119,6 +131,12 @@ class MLLMPrefixCacheEntry:
                         for tensor in state:
                             if hasattr(tensor, "nbytes"):
                                 size += tensor.nbytes
+                            else:
+                                logger.warning(
+                                    "mllm memory_size: kv tensor lacks "
+                                    "nbytes — undercounting memory "
+                                    "(eviction may run late)"
+                                )
         return size
 
     def get_prefix_match_length(self, new_token_ids: list[int]) -> int:
@@ -136,6 +154,33 @@ class MLLMPrefixCacheEntry:
                 break
             match_length = i + 1
         return match_length
+
+    def clone_for_use(self) -> "MLLMPrefixCacheEntry":
+        # E-42 (#811): the old fetch path did copy.deepcopy(entry) on every
+        # hit, duplicating the WHOLE entry — vision embeddings (hundreds of
+        # MB), the KV cache list (GB-scale), AND the token-id list. Only
+        # kv_cache is mutated in place during generation (documented at the
+        # fetch site); vision_embeddings and token_ids are read-only inputs.
+        # Deep-copy only the mutable kv_cache, shallow-copy token_ids (a
+        # list of ints — cheap, and protects against append mutation), and
+        # SHARE the large read-only vision_embeddings + image_meta instead
+        # of re-copying them on every hit.
+        return MLLMPrefixCacheEntry(
+            image_hash=self.image_hash,
+            prompt_hash=self.prompt_hash,
+            vision_embeddings=self.vision_embeddings,
+            kv_cache=copy.deepcopy(self.kv_cache),
+            token_ids=list(self.token_ids),
+            num_image_tokens=self.num_image_tokens,
+            num_text_tokens=self.num_text_tokens,
+            prompt_tokens=self.prompt_tokens,
+            is_vision_placeholder=self.is_vision_placeholder,
+            image_meta=self.image_meta,
+            actual_vision_token_len=self.actual_vision_token_len,
+            created_at=self.created_at,
+            hit_count=self.hit_count,
+            model_name=self.model_name,
+        )
 
 
 def compute_image_hash(image_path: str) -> str:
@@ -339,8 +384,9 @@ class MLLMPrefixCacheManager:
                 f"MLLM cache HIT: {cache_key[:32]}..., prefix_match={match_length}"
             )
 
-            # Deep copy: generation mutates kv_cache state in-place.
-            return copy.deepcopy(entry), match_length
+            # E-42 (#811): clone only the mutable kv_cache, share the
+            # large read-only vision embeddings — see clone_for_use.
+            return entry.clone_for_use(), match_length
 
         # Check for image-only match (can reuse vision embeddings)
         if images:
@@ -359,7 +405,9 @@ class MLLMPrefixCacheManager:
 
                     # Return entry for vision embeddings, but 0 prefix match
                     # (prompt is different, so KV cache can't be reused)
-                    return copy.deepcopy(entry), 0
+                    # E-42 (#811): partial vision-only hit still needs a
+                    # mutable kv_cache copy — use clone_for_use.
+                    return entry.clone_for_use(), 0
 
         self.stats.misses += 1
         logger.debug(f"MLLM cache MISS: {cache_key[:32]}...")
@@ -426,6 +474,13 @@ class MLLMPrefixCacheManager:
         # Then evict by count
         self._evict_by_count()
 
+        # E-35: if cache_key already held an entry, its memory_size was never
+        # subtracted before adding the new one -> _current_memory double-counted
+        # the slot on every overwrite -> premature eviction. Drop the old
+        # entry's bytes first (the dict overwrite below replaces the reference).
+        old = self._cache.get(cache_key)
+        if old is not None:
+            self._current_memory = max(0, self._current_memory - old.memory_size)
         self._cache[cache_key] = entry
         self._current_memory += entry.memory_size
 

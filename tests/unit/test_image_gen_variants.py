@@ -48,11 +48,13 @@ class TestVariantMap:
     def test_redux_exists(self):
         assert "redux" in VARIANT_MAP
 
-    def test_flux2_dev_sentinel_exists(self):
+    def test_flux2_dev_exists(self):
+        # FLUX.2-dev is a self-implemented native variant (#759/#778), not a
+        # fail-visible sentinel — it has a real module path + class.
         assert "flux2_dev" in VARIANT_MAP
         module_path, cls_name, config_label, default_guidance = VARIANT_MAP["flux2_dev"]
-        assert module_path == ""
-        assert cls_name == ""
+        assert module_path == "fusion_mlx.engines.flux2_dev.variant"
+        assert cls_name == "Flux2Dev"
         assert config_label == "flux2_dev"
         assert default_guidance == 3.5
 
@@ -285,12 +287,11 @@ class TestTextCache:
                 del os.environ["FUSION_DIFFUSION_TEXT_CACHE"]
 
 
-class TestFlux2DevFailVisible:
-    def test_start_raises_with_upstream_pointer(self):
-        import asyncio
-
-        pytest.importorskip("mflux")
+class TestFlux2DevStartsNativeVariant:
+    def test_variant_is_flux2_dev(self):
+        # FLUX.2-dev is a self-implemented native variant (#759/#778), so
+        # start() loads fusion_mlx.engines.flux2_dev.variant.Flux2Dev instead
+        # of raising the old mflux#707 upstream-pointer RuntimeError. The
+        # fail-visible sentinel was retired when the native variant landed.
         eng = ImageGenEngine(model_name="FLUX.2-dev")
         assert eng.variant == "flux2_dev"
-        with pytest.raises(RuntimeError, match="mflux-community/mflux#707"):
-            asyncio.run(eng.start())
