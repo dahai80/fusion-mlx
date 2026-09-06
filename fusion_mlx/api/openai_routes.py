@@ -246,8 +246,12 @@ async def _inject_web_search(request: ChatCompletionRequest) -> None:
     try:
         import httpx as _httpx
 
+        from fusion_mlx._http_limits import bounded_limits
+
         snippets: list[str] = []
-        async with _httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+        async with _httpx.AsyncClient(
+            timeout=8.0, follow_redirects=True, limits=bounded_limits()
+        ) as client:
             resp = await client.get(
                 "https://html.duckduckgo.com/html/",
                 params={"q": query},
@@ -1915,7 +1919,7 @@ async def chat_completions(
                     resp_dict = (
                         result.model_dump() if hasattr(result, "model_dump") else result
                     )
-                cache.put(_cache_key, resp_dict)
+                cache.put(_cache_key, resp_dict, model=request.model or "")
 
             return result
     except HTTPException:

@@ -190,6 +190,74 @@ class DiffusionRadixCache:
         self._lru_heap.clear()
         self._heap_seq = 0
 
+    def drop_prefix(self, prefix: str) -> int:
+        # CS-2 (#811 audit 0906): remove every key that starts with *prefix*.
+        # Used by per-model session-tail latent invalidation on engine unload:
+        # a re-pull/quant swap under the same model_id would otherwise hand a
+        # stale tail-frame latent to the next multi-shot request, silently
+        # corrupting continuation frames. Returns the number of leaves freed.
+        if not prefix:
+            return 0
+        subtree, parent, edge_key = self._walk_prefix(self._root, prefix, None, "")
+        if subtree is None:
+            return 0
+        freed = self._prune_subtree(subtree)
+        if parent is not None and edge_key is not None:
+            del parent.children[edge_key]
+            self._cleanup_chains(self._root, None, "")
+        else:
+            # prefix consumed exactly at the root → rebuild an empty root
+            self._root = _RadixNode()
+            self._lru_heap.clear()
+        if freed:
+            logger.info(
+                "radix cache drop_prefix '%s' freed %d leaf/leaves (%d bytes)",
+                prefix[:32],
+                freed,
+                self._stats.total_bytes,
+            )
+        return freed
+
+    def _walk_prefix(self, node, remainder, parent, edge_key):
+        # Walk consuming *remainder* of the prefix. Returns the subtree root
+        # node whose entire descendant set matches the prefix, plus its parent
+        # + edge key so the subtree can be detached. (None, None, None) = miss.
+        if not remainder:
+            return node, parent, edge_key
+        for prefix, child in node.children.items():
+            common = self._common_prefix(remainder, prefix)
+            if not common:
+                continue
+            if common == prefix:
+                # full edge consumed; descend if prefix still has chars,
+                # else this child is the subtree root
+                return self._walk_prefix(child, remainder[len(common):], node, prefix)
+            # common < prefix → prefix ends mid-edge; child's whole subtree
+            # matches (every key under this edge starts with *common* == the
+            # remainder we had, which is the trailing part of the prefix).
+            if common == remainder:
+                return child, node, prefix
+            return None, None, None
+        return None, None, None
+
+    def _prune_subtree(self, node) -> int:
+        # Free every leaf under *node*, fix stats. Does NOT detach node from
+        # its parent (caller does). Marks values None so stale LRU-heap
+        # tuples are rejected by the pop filter (line ~318).
+        freed = 0
+        stack = [node]
+        while stack:
+            cur = stack.pop()
+            if cur.value is not None:
+                self._stats.total_bytes -= cur.size_bytes
+                self._stats.leaf_count -= 1
+                self._stats.evictions += 1
+                freed += 1
+                cur.value = None
+                cur._heap_seq = -1
+            stack.extend(cur.children.values())
+        return freed
+
     # M1: explicit deregister from _REGISTRY on teardown
     @classmethod
     def unregister(cls, cache: "DiffusionRadixCache") -> None:

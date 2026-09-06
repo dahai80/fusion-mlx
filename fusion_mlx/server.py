@@ -15,6 +15,7 @@ Wires together all API routes:
 
 import asyncio
 import logging
+import os
 import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -1484,6 +1485,13 @@ class Server:
         self.pool._get_final_ceiling = (
             self.pool._process_memory_enforcer.get_final_ceiling
         )
+        # RC-3 (#811 audit 0906): every unload path funnels through
+        # EnginePool._detach_engine, but only Server.unload_model popped
+        # engine_cores — LRU eviction / admin route / TTL unloaded via
+        # pool.unload_engine_async without popping, leaking a stale
+        # AsyncEngineCore (holding MLX weights). Register a callback so the
+        # pool keeps engine_cores in sync regardless of the trigger.
+        self.pool._on_engine_detached = self._drop_engine_core
 
         # Populate _server_state so admin helpers that import it directly
         # (instead of using getter functions) can find engine_pool etc.
@@ -1806,6 +1814,22 @@ class Server:
 
         # mDNS/Bonjour cluster advertising (#264 part 2)
         if getattr(self.config, "cluster_advertise", False):
+            # CL-5 (#811 audit 0906): this node serves HTTP plaintext on the
+            # advertised port. Node-to-node prompt/completion traffic is
+            # unencrypted — an on-subnet sniffer reads prompts. fusion-mlx
+            # does not terminate TLS in-process (that is the reverse
+            # proxy / fusion-gateway's job). Fail visibly: warn loudly so an
+            # operator deploying cluster advertising on a shared subnet
+            # knows to put the node behind a TLS-terminating gateway, or set
+            # FUSION_CLUSTER_TLS_ACK to acknowledge the plaintext risk.
+            if not os.environ.get("FUSION_CLUSTER_TLS_ACK", "").strip():
+                logger.warning(
+                    "CL-5 (#811 audit 0906): cluster advertising is ON but "
+                    "this node serves plaintext HTTP — node-to-node prompt "
+                    "traffic is unencrypted and sniffable on the subnet. "
+                    "Deploy behind a TLS-terminating gateway (fusion-gateway) "
+                    "or set FUSION_CLUSTER_TLS_ACK=1 to acknowledge the risk."
+                )
             try:
                 from .cluster.mdns import MdnsAdvertiser, build_txt_records
 
@@ -1919,6 +1943,12 @@ class Server:
         if self.pool:
             self.pool.unload_engine(model_id)
         logger.info("Unloaded model %s from pool", model_id)
+
+    def _drop_engine_core(self, model_id: str) -> None:
+        # RC-3 (#811 audit 0906): pop is idempotent — unload_model already
+        # pops and fires this on the same path, so a missing key is normal.
+        self.engine_cores.pop(model_id, None)
+        logger.debug("RC-3: engine_cores dropped detached model %s", model_id)
 
     async def _load_single_model(self, pending: dict) -> None:
         # Load the staged single model (``serve --model <X>``) into the pool.

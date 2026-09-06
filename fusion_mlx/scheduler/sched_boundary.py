@@ -237,8 +237,13 @@ def _maybe_capture_boundary_snapshot(self, request: Request, uid: int) -> None:
             and not request.vlm_extra_keys_for_cache
         ):
             _prefix_tokens = request.prompt_token_ids[:total_tokens]
+            # CS-4 (#811 audit 0906): pass the content signature, not the raw
+            # path, so a re-pull at the same path changes the chain hash and
+            # never restores stale KV. getattr fallback keeps bare test fakes
+            # (which don't set _model_cache_sig) on the raw model_name.
+            _model_sig = getattr(self, "_model_cache_sig", "") or self.config.model_name
             _prefix_hashes = self._boundary_snapshot_store.compute_prefix_chain_hashes(
-                _prefix_tokens, block_size, self.config.model_name
+                _prefix_tokens, block_size, _model_sig
             )
             if _prefix_hashes:
                 self._boundary_snapshot_store.save_prefix(
@@ -282,8 +287,10 @@ def _try_prefix_snapshot_warm_start(self, request: Request) -> bool:
     if block_size <= 0:
         return False
 
+    # CS-4 (#811 audit 0906): pass the content signature (see save site).
+    _model_sig = getattr(self, "_model_cache_sig", "") or self.config.model_name
     prefix_hashes = self._boundary_snapshot_store.compute_prefix_chain_hashes(
-        request.prompt_token_ids, block_size, self.config.model_name
+        request.prompt_token_ids, block_size, _model_sig
     )
     if not prefix_hashes:
         return False

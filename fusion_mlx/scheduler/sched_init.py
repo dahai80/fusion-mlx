@@ -297,6 +297,11 @@ def __init__(
     self._boundary_snapshot_required: bool | None = None
     # SSD store for offloading boundary snapshots (initialized in _init_tiered_cache).
     self._boundary_snapshot_store: BoundarySnapshotSSDStore | None = None
+    # CS-4 (#811 audit 0906): content signature of the loaded model's weight
+    # dir, folded into boundary/prefix chain hashes so a re-pull at the same
+    # path invalidates persisted KV snapshots instead of restoring stale ones.
+    # Computed once at init; "" when no model path is set (no regression).
+    self._model_cache_sig = ""
 
     # paged SSD cache for KV state persistence (FusionMLX only supports paged SSD-based caching)
     self.paged_cache_manager: PagedCacheManager | None = None
@@ -323,6 +328,13 @@ def __init__(
             model_name=self.config.model_name,
             initial_blocks=self.config.initial_cache_blocks,
         )
+        # CS-4 (#811 audit 0906): compute the weight content signature once
+        # for the boundary/prefix chain hashes (paged_cache_manager folds its
+        # own copy at init). Falls back to "" when no path is set.
+        if self.config.model_name:
+            from ..cache.model_fingerprint import model_path_signature
+
+            self._model_cache_sig = model_path_signature(self.config.model_name)
         import os as _os
 
         _prefix_impl = _os.environ.get("FUSION_MLX_PREFIX_CACHE", "").strip().lower()

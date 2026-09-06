@@ -76,7 +76,11 @@ def _resolve_endpoint(endpoint: str) -> str:
     original_host = urlparse(endpoint).netloc
     resolved = endpoint
     try:
-        with httpx.Client(follow_redirects=False, timeout=5.0) as client:
+        from fusion_mlx._http_limits import bounded_limits
+
+        with httpx.Client(
+            follow_redirects=False, timeout=5.0, limits=bounded_limits()
+        ) as client:
             r = client.head(probe)
             # Walk up to 3 permanent hops; stop on first non-permanent status.
             hops = 0

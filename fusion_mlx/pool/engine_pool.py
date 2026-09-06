@@ -177,6 +177,12 @@ class EnginePool:
         self._process_memory_enforcer: object | None = None  # Set by server
         self._get_final_ceiling: object | None = None  # Set by server
         self._settings_manager: object | None = None  # Set by server
+        # RC-3 (#811 audit 0906): invoked from _detach_engine on EVERY unload
+        # path (LRU eviction, admin unload, manual unload_model, TTL). The
+        # Server registers a callback that drops its engine_cores reference so
+        # a stale AsyncEngineCore (holding MLX weights) is not leaked when the
+        # pool evicts a model without going through Server.unload_model.
+        self._on_engine_detached: object | None = None  # Set by server
         self._suppress_ttl: bool = False  # Suppress TTL during benchmarks
         self._max_adapter_engines: int = int(
             os.getenv("FUSION_MAX_ADAPTER_ENGINES", "4")
@@ -1163,6 +1169,15 @@ class EnginePool:
                 if entry.is_loading:
                     wait_event = entry.loading_event or asyncio.Event()
                     entry.loading_event = wait_event
+                elif entry.is_unloading:
+                    # RC-2 (#811 audit 0906): a concurrent unload (LRU
+                    # eviction) set is_unloading and is mid-detach. Starting
+                    # a load now races the teardown — the engine object can
+                    # be half-constructed then torn down, or the old reference
+                    # leaked. Wait for the unload to finish (it signals
+                    # loading_event) before we begin loading.
+                    wait_event = entry.loading_event or asyncio.Event()
+                    entry.loading_event = wait_event
                 else:
                     entry.is_loading = True
                     entry.loading_started_at = time.monotonic()
@@ -1666,6 +1681,21 @@ class EnginePool:
         except Exception:
             logger.debug("model_registry cleanup failed", exc_info=True)
         entry.engine = None
+        # RC-3 (#811 audit 0906): notify the Server so it drops its
+        # engine_cores reference for this model. Without this, an unload
+        # via LRU eviction / admin route / TTL (not Server.unload_model)
+        # leaves a stale AsyncEngineCore in Server.engine_cores, pinning
+        # the model's MLX weights in memory long after the pool freed them.
+        cb = self._on_engine_detached
+        if cb is not None:
+            try:
+                cb(model_id)
+            except Exception:
+                logger.debug(
+                    "on_engine_detached callback failed for %s",
+                    model_id,
+                    exc_info=True,
+                )
         entry.last_access = 0.0
         entry.actual_size = None
         entry.abort_requested = False
@@ -1786,6 +1816,47 @@ class EnginePool:
             pre_unload_active = await self._detach_engine(model_id)
             if pre_unload_active is None:
                 return
+            # CS-1 (#811 audit 0906): invalidate cached completions for this
+            # model on unload. The response-cache fingerprint keys on the
+            # alias string, not weight revision/quant, so a re-pull or quant
+            # swap under the same alias would otherwise return stale
+            # completions for up to TTL (silent wrong-model output).
+            try:
+                from ..cache.response_cache import get_response_cache
+
+                get_response_cache().invalidate_model(model_id)
+            except Exception:
+                logger.debug(
+                    "response_cache invalidate_model('%s') failed",
+                    model_id,
+                    exc_info=True,
+                )
+            # CS-2 (#811 audit 0906): invalidate session-tail latent caches
+            # for this model on unload. A re-pull/quant swap under the same
+            # alias would otherwise hand a stale tail-frame latent to the
+            # next multi-shot continuation (silent frame corruption).
+            try:
+                from ..cache.latent_cache import remove_session_tail_model
+
+                remove_session_tail_model(model_id)
+            except Exception:
+                logger.debug(
+                    "session_tail invalidate('%s') failed",
+                    model_id,
+                    exc_info=True,
+                )
+            # CS-1b (#811 audit 0906): drop the per-model image latent cache
+            # too (VAE-encoded first-frame reuse). Same re-pull/quant hazard.
+            try:
+                from ..cache.latent_cache import remove_image_latent_cache
+
+                remove_image_latent_cache(model_id)
+            except Exception:
+                logger.debug(
+                    "image_latent invalidate('%s') failed",
+                    model_id,
+                    exc_info=True,
+                )
             # P3 (#811): _detach_engine no longer deletes stale LoRA adapter
             # entries (it ran lockless here — the lock block ended before
             # the await above). Remove them now under the lock so a

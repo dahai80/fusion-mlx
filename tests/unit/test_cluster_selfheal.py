@@ -4,6 +4,8 @@ dynamic least-loaded LB, mid-request failover, + /v1/cluster/health route."""
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -35,7 +37,11 @@ def _node(
 
 
 @pytest.fixture(autouse=True)
-def fresh_registry():
+def fresh_registry(monkeypatch):
+    # CL-4 (#811 audit 0906): give the cluster a deterministic shared secret
+    # so compute_cluster_token()/verify_cluster_token() are exercisable in
+    # the route tests without depending on a global api_key env var.
+    monkeypatch.setenv("FUSION_CLUSTER_TOKEN", "test-cluster-secret")
     reg = NodeRegistry()
     set_registry(reg)
     yield reg
@@ -206,6 +212,47 @@ class TestFailover:
             await router.route(call_fn, stream=False)
 
     @pytest.mark.asyncio
+    async def test_inflight_cap_rejects_overflow(self, fresh_registry):
+        # CL-3 (#811 audit 0906): a bounded inflight cap rejects overflow fast
+        # (NodeUnavailableError) instead of piling unbounded forwards.
+        await fresh_registry.register(_node("slow", active_requests=0))
+        lb = ClusterLoadBalancer(fresh_registry)
+        started = asyncio.Event()
+
+        async def slow_call(node):
+            started.set()
+            await asyncio.sleep(10)
+            return "ok"
+
+        router = FailoverRouter(fresh_registry, lb, max_retries=0, max_inflight=1)
+        first = asyncio.ensure_future(router.route(slow_call))
+        await started.wait()
+        # Cap is now held by `first` — a second concurrent route must reject.
+        with pytest.raises(NodeUnavailableError) as exc:
+            await router.route(slow_call)
+        assert "inflight" in exc.value.reason
+        first.cancel()
+        try:
+            await first
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    @pytest.mark.asyncio
+    async def test_inflight_unbounded_by_default(self, fresh_registry):
+        # CL-3 (#811 audit 0906): max_inflight=0 (default) is unbounded —
+        # back-compat with existing callers; no semaphore acquired.
+        await fresh_registry.register(_node("n", active_requests=0))
+        lb = ClusterLoadBalancer(fresh_registry)
+
+        async def call_fn(node):
+            return "ok"
+
+        router = FailoverRouter(fresh_registry, lb, max_retries=0)
+        assert router._inflight is None
+        result = await router.route(call_fn)
+        assert result == "ok"
+
+    @pytest.mark.asyncio
     async def test_no_peers_raises_local_unavailable(self, fresh_registry):
         lb = ClusterLoadBalancer(fresh_registry)
 
@@ -239,6 +286,8 @@ class TestClusterRoutes:
         assert body["nodes"] == []
 
     def test_register_then_health(self, app_client):
+        from fusion_mlx.cluster.mdns import compute_cluster_token
+
         r = app_client.post(
             "/v1/cluster/register",
             json={
@@ -247,6 +296,7 @@ class TestClusterRoutes:
                 "port": 11434,
                 "platform": "mac",
                 "active_requests": 2,
+                "cluster_token": compute_cluster_token(),
             },
         )
         assert r.status_code == 200
@@ -258,9 +308,16 @@ class TestClusterRoutes:
         assert body["nodes"][0]["state"] == "alive"
 
     def test_evict_then_health(self, app_client):
+        from fusion_mlx.cluster.mdns import compute_cluster_token
+
         app_client.post(
             "/v1/cluster/register",
-            json={"node_id": "peer-1", "host": "10.0.0.2", "port": 11434},
+            json={
+                "node_id": "peer-1",
+                "host": "10.0.0.2",
+                "port": 11434,
+                "cluster_token": compute_cluster_token(),
+            },
         )
         r = app_client.post(
             "/v1/cluster/evict",
@@ -276,3 +333,25 @@ class TestClusterRoutes:
     def test_evict_unknown_404(self, app_client):
         r = app_client.post("/v1/cluster/evict", json={"node_id": "ghost"})
         assert r.status_code == 404
+
+    def test_register_rejects_missing_token(self, app_client):
+        # CL-4 (#811 audit 0906): a rogue host advertising as a node has no
+        # cluster secret — register must 403 (fail-closed).
+        r = app_client.post(
+            "/v1/cluster/register",
+            json={"node_id": "rogue", "host": "10.0.0.99", "port": 11434},
+        )
+        assert r.status_code == 403
+
+    def test_register_rejects_wrong_token(self, app_client):
+        # CL-4 (#811 audit 0906): a forged/mismatched token is rejected.
+        r = app_client.post(
+            "/v1/cluster/register",
+            json={
+                "node_id": "rogue",
+                "host": "10.0.0.99",
+                "port": 11434,
+                "cluster_token": "not-the-secret",
+            },
+        )
+        assert r.status_code == 403

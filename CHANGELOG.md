@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+### Security
+- **#811 audit: 0906 adversarial architecture audit, batch 3 + 4** —
+  P0/P2/P3 fixes from the second-round audit
+  (`audit/fusion-mlx-audit-result-0906.md`):
+  - **R-1 VLM MTP flush failure dropped requests (P0)** — when a batched
+    VLM MTP prefill or generator setup crashed, queued requests were
+    deleted from the pending queue but never failed, so `generate()`
+    awaited a `finished_event` that was never set and the client hung
+    forever. Both failure sites now push a terminal `RequestOutput`
+    (`finish_reason="error"`) via `_vlm_mtp_fail_queue`, merged into the
+    step output, so the client sees the failure instead of hanging.
+  - **CS-4/CS-5/CS-6 caches keyed on weight path/alias, not content
+    revision** — paged/prefix/boundary caches keyed on the weight *path*
+    and the response cache keyed on the request *alias*; in-place weight
+    or LoRA overwrite at the same path silently served stale KV/cached
+    responses. New `cache/model_fingerprint.py` folds a cheap
+    filesystem signature (weight-file sizes + max mtime) into the cache
+    key at the single-source chokepoints, with a raw-path fallback to
+    avoid regression on non-weight dirs.
+  - **EH-5 tool-call parse failure silently degraded to plain text** —
+    `parse_tool_calls` returned `None` for both "no markers" and "parse
+    failed"; 14 callers used a truthy check so a parse failure looked
+    like a no-tool response with no signal. Non-stream and stream paths
+    now emit a WARNING naming the failure mode; the client-facing
+    fail-signal refactor is tracked separately.
+  - **EH-7 metrics/telemetry errors permanently silent** — the `_safe`
+    decorator and `server_metrics` recorders swallowed all exceptions at
+    DEBUG (invisible by default). A per-function one-shot WARNING now
+    surfaces a persistent recorder bug once.
+  - **RC-5 HTTP connection pool had no global cap** — every outbound
+    httpx client used the default `Limits` with a new client per call,
+    so concurrent bursts could open hundreds of sockets. New
+    `_http_limits.py` provides an env-overridable bounded limit
+    (`FUSION_HTTP_MAX_CONNECTIONS`/`FUSION_HTTP_MAX_KEEPALIVE`/
+    `FUSION_HTTP_KEEPALIVE_EXPIRY`, defaults 64/16/5s) applied at the
+    runtime fetch sites.
+
+### Fixed
+- **R-4 admission underestimated in-flight chunked-prefill (P2)** — the
+  admission pause gate and token-budget guard ignored `self.prefilling`,
+  so a backlog of in-flight prefill chunks could bypass both and trigger
+  Metal OOM. Both guards now count `self.prefilling`.
+- **RC-3 engine_cores dict leak on non-`unload_model` unloads** — paths
+  that detached an engine without going through `unload_model` left a
+  stale entry in `engine_cores`. Added an `on_engine_detached` callback
+  fired after `entry.engine = None`, registered to pop the core.
+- **MCP command whitelist rejected versioned interpreters** — a venv
+  `sys.executable` named `python3.12` was rejected (whitelist only had
+  `python`/`python3`). `validate_command` now treats `python3.NN` as a
+  `python3` alias.
+
+
 ## [0.8.81] — 2026-09-06
 
 ### Security

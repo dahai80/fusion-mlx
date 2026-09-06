@@ -448,3 +448,118 @@ class TestCallBackbone:
         assert result[0] is logits
         assert result[1] is hidden
         assert result[2] is gdn
+
+
+# ---------------------------------------------------------------------------
+# R-1 (#811 audit 0906): batched prefill flush failure must fail requests
+# visibly, NOT silently drop them.
+# ---------------------------------------------------------------------------
+
+
+class TestVlmMtpFlushFailVisible:
+    """A crash inside the batched prefill forward must produce a terminal
+    error RequestOutput for every queued request and mark them aborted, so
+    the consumer never hangs waiting on a request that vanished."""
+
+    def _make_sched(self, request_ids):
+        from fusion_mlx.request import Request, RequestStatus, SamplingParams
+
+        sched = MagicMock()
+        sched._vlm_mtp_pending_queue = []
+        sched._vlm_mtp_failed_outputs = []
+        sched.requests = {}
+        sched.finished_req_ids = set()
+        sched._stream = mx.stream(mx.cpu)
+        sched._vlm_mtp_max_batch_size = 4
+        sched._vlm_mtp_next_uid = -1
+        sched._get_stop_tokens = MagicMock(return_value=set())
+
+        queue = []
+        for rid in request_ids:
+            req = MagicMock(spec=Request)
+            req.request_id = rid
+            req.sampling_params = MagicMock(stop_token_ids=None)
+            req.rope_deltas = 0.0
+            queue.append(
+                {
+                    "request": req,
+                    "prefilled_cache": [MagicMock()],
+                    "last_tokens": [1, 2, 3],
+                    "sampler": MagicMock(return_value=mx.array([4])),
+                    "state_machine": MagicMock(),
+                }
+            )
+            sched.requests[rid] = req
+        return sched, queue
+
+    def test_fail_queue_pushes_terminal_error(self):
+        from fusion_mlx.request import RequestStatus
+
+        from fusion_mlx.scheduler.sched_vlm_mtp_batched import (
+            _vlm_mtp_fail_queue,
+        )
+
+        sched, queue = self._make_sched(["r1", "r2"])
+        _vlm_mtp_fail_queue(sched, queue, "boom")
+
+        assert len(sched._vlm_mtp_failed_outputs) == 2
+        for out, item in zip(sched._vlm_mtp_failed_outputs, queue):
+            assert out.finished is True
+            assert out.finish_reason == "error"
+            assert out.request_id == item["request"].request_id
+            assert "boom" in out.error
+        # Both requests marked aborted + removed from registry.
+        for item in queue:
+            req = item["request"]
+            assert req.request_id not in sched.requests
+            assert req.request_id in sched.finished_req_ids
+
+    def test_flush_batch_crash_fails_queue(self):
+        from fusion_mlx.scheduler.sched_vlm_mtp_batched import (
+            _vlm_mtp_flush_batch,
+        )
+
+        sched, queue = self._make_sched(["r1", "r2"])
+        lm = MagicMock()
+        lm.rollback_speculative_cache = MagicMock()
+        # The prefill forward raises.
+        lm.side_effect = RuntimeError("prefill OOM")
+        rows = _vlm_mtp_flush_batch(sched, lm, MagicMock(), queue)
+        assert rows == []
+        assert len(sched._vlm_mtp_failed_outputs) == 2
+        assert all(o.finished for o in sched._vlm_mtp_failed_outputs)
+
+    def test_flush_batch_generator_setup_crash_fails_queue(self):
+        # R-1 (#811 audit 0906): generator setup (run_vlm_mtp_decode) crash
+        # must also fail visibly, not silently return [].
+        from unittest.mock import patch
+
+        from fusion_mlx.scheduler.sched_vlm_mtp_batched import (
+            _vlm_mtp_flush_batch,
+        )
+
+        sched, queue = self._make_sched(["r1", "r2"])
+        lm = MagicMock()
+        lm.rollback_speculative_cache = MagicMock()
+        # Prefill forward succeeds (returns a fake output with logits +
+        # hidden_states), but run_vlm_mtp_decode setup raises.
+        # Use a real Stream so mx.stream(self._stream) works (the shared
+        # _make_sched sets _stream to a StreamContext, which the prefill-
+        # crash test avoids by raising before mx.stream runs).
+        sched._stream = mx.new_stream(mx.cpu)
+        fake_out = MagicMock()
+        fake_out.logits = mx.zeros((2, 1, 8))
+        fake_out.hidden_states = [mx.zeros((2, 1, 8))]
+        lm.return_value = fake_out
+        with patch(
+            "fusion_mlx.speculative.vlm_mtp.run_vlm_mtp_decode",
+            side_effect=RuntimeError("generator setup OOM"),
+        ):
+            rows = _vlm_mtp_flush_batch(sched, lm, MagicMock(), queue)
+        assert rows == []
+        assert len(sched._vlm_mtp_failed_outputs) == 2
+        assert all(o.finished for o in sched._vlm_mtp_failed_outputs)
+        assert all(
+            "generator setup OOM" in o.error
+            for o in sched._vlm_mtp_failed_outputs
+        )

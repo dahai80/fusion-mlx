@@ -134,6 +134,13 @@ def step(self) -> SchedulerOutput:
         if rejected:
             output.outputs.extend(rejected)
             output.has_work = True
+        # R-1 (#811 audit 0906): merge vlm_mtp flush-failure terminal error
+        # outputs produced during _schedule_waiting (batched prefill crash).
+        vlm_failed = getattr(self, "_vlm_mtp_failed_outputs", None)
+        if vlm_failed:
+            output.outputs.extend(vlm_failed)
+            output.has_work = True
+            vlm_failed.clear()
 
         # Run generation step if we have running requests.
         # Use next_generated() which returns only GenerationBatch.Response

@@ -1441,8 +1441,16 @@ Examples:
     cuda_node_parser.add_argument(
         "model", help="Heavy model to serve (HF repo, e.g. Qwen/Qwen2.5-72B-Instruct)"
     )
-    cuda_node_parser.add_argument("--host", default="0.0.0.0", help="Bind host")
+    cuda_node_parser.add_argument(
+        "--host", default="127.0.0.1", help="Bind host (default loopback)"
+    )
     cuda_node_parser.add_argument("--port", type=int, default=11434, help="Bind port")
+    cuda_node_parser.add_argument(
+        "--api-key",
+        default=None,
+        help="API key gating inference routes (also FUSION_MLX_API_KEY). "
+        "REQUIRED when --host is non-loopback (CL-2 #811 audit 0906).",
+    )
     cuda_node_parser.add_argument(
         "--tensor-parallel-size", "-tp", type=int, default=1, help="vLLM TP size"
     )
@@ -2113,6 +2121,7 @@ Examples:
             model=args.model,
             host=args.host,
             port=args.port,
+            api_key=args.api_key,
             tensor_parallel_size=args.tensor_parallel_size,
             gpu_memory_utilization=args.gpu_memory_utilization,
             quantization=args.quantization,

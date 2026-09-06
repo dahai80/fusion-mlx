@@ -126,6 +126,32 @@ def remove_image_latent_cache(model_id: str) -> bool:
     return False
 
 
+def remove_session_tail_model(model_id: str) -> int:
+    # CS-2 (#811 audit 0906): drop every session-tail latent cached under
+    # *model_id*. Called on engine unload/reload so a re-pulled or quant-
+    # swapped model under the same alias cannot serve a stale tail-frame
+    # latent to the next multi-shot continuation (silent frame corruption).
+    if not model_id:
+        return 0
+    with _CACHE_LOCK:
+        cache = _SESSION_TAIL_CACHE
+    if cache is None:
+        return 0
+    prefix = f"session_tail:{model_id}:"
+    try:
+        freed = cache.drop_prefix(prefix)
+    except Exception:
+        logger.debug("session tail drop_prefix('%s') failed", prefix, exc_info=True)
+        return 0
+    if freed:
+        logger.info(
+            "session tail cache invalidated %d entr(y/ies) for model '%s'",
+            freed,
+            model_id,
+        )
+    return freed
+
+
 def clear_all_latent_caches() -> int:
     with _CACHE_LOCK:
         count = len(_IMAGE_LATENT_CACHES)
