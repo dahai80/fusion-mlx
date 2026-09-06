@@ -99,7 +99,13 @@ def _schedule_waiting(
     # set, otherwise config.max_num_seqs — so the common path is unchanged
     # but overflow-recovery requests no longer flood the running set.
     _max_seqs = self._effective_max_num_seqs()
-    while self.waiting and len(self.running) < _max_seqs:
+    # #817 (audit A-6): chunked-prefill requests live in self.prefilling
+    # and bypass the running-set — the old gate `len(self.running) < _max_seqs`
+    # ignored them, so an idle engine admitted an unlimited burst of long
+    # prompts (each appended to prefilling, never counted) and OOM'd. Count
+    # prefilling against the cap via the _num_admitted_requests() helper so a
+    # long prompt in mid-prefill holds its slot just like a running request.
+    while self.waiting and self._num_admitted_requests() < _max_seqs:
         # Token budget guard: max_num_batched_tokens bounds the total
         # tokens (decode + prefill) in a single forward pass.
         batched_tokens = len(self.running) + sum(
