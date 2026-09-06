@@ -426,6 +426,13 @@ class MLLMPrefixCacheManager:
         # Then evict by count
         self._evict_by_count()
 
+        # E-35: if cache_key already held an entry, its memory_size was never
+        # subtracted before adding the new one -> _current_memory double-counted
+        # the slot on every overwrite -> premature eviction. Drop the old
+        # entry's bytes first (the dict overwrite below replaces the reference).
+        old = self._cache.get(cache_key)
+        if old is not None:
+            self._current_memory = max(0, self._current_memory - old.memory_size)
         self._cache[cache_key] = entry
         self._current_memory += entry.memory_size
 

@@ -259,13 +259,30 @@ class DiffusionRadixCache:
         return node
 
     def _evict_if_needed(self) -> None:
+        # E-34: a pinned leaf (ref_count > 0) at the LRU position previously
+        # broke the whole eviction loop, so a single pinned leaf let the cache
+        # grow past max_bytes unbounded -> OOM. Skip pinned leaves and keep
+        # evicting the next LRU candidate instead. Bound consecutive skips by
+        # leaf_count so an all-pinned trie terminates instead of spinning.
+        skipped = 0
         while self._stats.total_bytes > self.max_bytes and self._stats.leaf_count > 1:
+            if skipped >= self._stats.leaf_count:
+                logger.warning(
+                    "radix cache: all %d leaves pinned (ref_count>0); cannot "
+                    "evict below max_bytes (total=%d, max=%d)",
+                    self._stats.leaf_count,
+                    self._stats.total_bytes,
+                    self.max_bytes,
+                )
+                break
             victim = self._pop_lru_leaf()
             if victim is None:
                 break
             parent, edge_key, lru_node = victim
             if lru_node.ref_count > 0:
-                break
+                skipped += 1
+                continue
+            skipped = 0
             self._stats.total_bytes -= lru_node.size_bytes
             self._stats.leaf_count -= 1
             self._stats.evictions += 1

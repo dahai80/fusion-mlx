@@ -30,6 +30,12 @@ class _RadixNode:
     block_id: int | None = None
     # children keyed by their first token id for O(1) descent
     children: dict[int, _RadixNode] = field(default_factory=dict)
+    # parent link + the key under which this node sits in parent.children,
+    # so a freed block whose node is now a dead leaf (no block_id, no
+    # children) can be unlinked up the trie instead of accumulating
+    # forever (E-33). None on the root.
+    parent: _RadixNode | None = None
+    parent_key: int | None = None
     # last access epoch for LRU eviction
     last_access: float = 0.0
     # number of cached token positions this node represents
@@ -109,6 +115,23 @@ class RadixPrefixCache:
             node = self._node_index.pop(block_id, None)
             if node is not None:
                 node.block_id = None
+                # E-33: prune now-dead nodes up the trie. A node is dead when
+                # it holds no block_id and has no children — it is pure dead
+                # structure. Walk parentward unlinking dead leaves so the trie
+                # and its memory do not grow without bound on block churn.
+                # Stop at the root (parent is None) or the first ancestor that
+                # is still live (has a block_id or remaining children).
+                prune = node
+                while (
+                    prune.parent is not None
+                    and prune.block_id is None
+                    and not prune.children
+                ):
+                    parent = prune.parent
+                    pkey = prune.parent_key
+                    if pkey is not None and parent.children.get(pkey) is prune:
+                        del parent.children[pkey]
+                    prune = parent
                 logger.debug("radix detached freed block %d from trie", block_id)
 
     def _block_slices(self, tokens: list[int]):
@@ -339,6 +362,10 @@ class RadixPrefixCache:
                         num_tokens=self.block_size,
                     )
                     node.children[block_key[0]] = child
+                    # E-33: record parent link so dead leaves can be pruned
+                    # in _on_block_freed instead of accumulating forever.
+                    child.parent = node
+                    child.parent_key = block_key[0]
 
                 # Attach the block_id BlockAware allocated for this token range.
                 bid = block_table.block_ids[inserted]
