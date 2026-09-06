@@ -1466,11 +1466,19 @@ class Server:
         tier_str = getattr(mem_cfg, "tier", "balanced")
         if hasattr(tier_str, "name"):
             tier_str = tier_str.name.lower()
+        # E-9 (#811): the config-file custom tier (MemoryConfig.custom_limit_mb)
+        # was silently ignored at construction — only the runtime admin route set
+        # the custom ceiling. Pass it here so a custom tier in settings.json takes
+        # effect at boot. custom_limit_mb is None when unset; leave 0 (disabled).
+        custom_ceiling_gb = 0.0
+        if tier_str == "custom" and getattr(mem_cfg, "custom_limit_mb", None):
+            custom_ceiling_gb = float(mem_cfg.custom_limit_mb) / 1024.0
         self.pool._process_memory_enforcer = ProcessMemoryEnforcer(
             engine_pool=self.pool,
             memory_guard_tier=tier_str,
             soft_threshold=mem_cfg.soft_threshold,
             hard_threshold=mem_cfg.hard_threshold,
+            memory_guard_custom_ceiling_gb=custom_ceiling_gb,
         )
         self.pool._process_memory_enforcer.start()
         self.pool._get_final_ceiling = (

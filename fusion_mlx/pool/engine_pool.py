@@ -129,6 +129,9 @@ class EngineEntry:
     loading_event: asyncio.Event | None = None  # Signaled when loading completes
     is_pinned: bool = False  # Never evict if True
     abort_loading: bool = False  # Set by memory enforcer to abort in-progress load
+    last_load_failed: bool = (
+        False  # E-19 (#811): last load raised; waiters fast-fail, don't retry
+    )
     in_use: int = 0  # in-flight acquire/use lease count; never evict while > 0
     abort_requested: bool = False  # Set under hard pressure for leased requests
     pending_unload_reason: str | None = None  # Unload as soon as leases/activity drain
@@ -1143,8 +1146,19 @@ class EnginePool:
                 entry_key,
             )
             await wait_event.wait()
-            # Retry from the top — the engine is now loaded (or the load
-            # failed and get_engine will re-trigger a fresh attempt).
+            # E-19 (#811): the loader may have FAILED. Without this guard
+            # every waiting coroutine recurses into get_engine, and since
+            # is_loading is now False + engine is None, each one starts a
+            # fresh full load — N waiters run N serial full load attempts
+            # after one failure (re-downloading, re-compiling, amplifying
+            # the error). Fast-fail instead; the next explicit request can
+            # retry.
+            if entry.last_load_failed:
+                raise RuntimeError(
+                    f"concurrent load of '{entry_key}' failed; refusing to "
+                    f"re-trigger a load for the waiter (E-19)"
+                )
+            # Load succeeded — retry from the top to acquire the now-loaded engine.
             return await self.get_engine(
                 model_id,
                 force_lm=force_lm,
@@ -2073,6 +2087,8 @@ class EnginePool:
             entry.is_loading = True
             entry.loading_started_at = time.monotonic()
             entry.abort_loading = False
+        # E-19 (#811): clear prior failure marker for this fresh load attempt.
+        entry.last_load_failed = False
         self._wake_process_memory_enforcer(active=True)
         load_started_at = entry.loading_started_at
         load_completed = False
@@ -2532,6 +2548,13 @@ class EnginePool:
             entry.is_loading = False
             entry.loading_started_at = None
             entry.abort_loading = False
+            # E-19 (#811): record whether this load succeeded. Waiting
+            # coroutines (get_engine phase 1) wake on loading_event and
+            # recurse into get_engine; without a failure marker each one
+            # re-triggers a fresh full load, so N waiters run N full load
+            # attempts in series after a single failure. The marker lets a
+            # waiter fast-fail instead of re-loading.
+            entry.last_load_failed = not load_completed
             loading_event = entry.loading_event
             entry.loading_event = None
             if loading_event is not None:

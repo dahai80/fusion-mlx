@@ -555,6 +555,14 @@ class ProcessMemoryEnforcer:
         hard = min(candidates)
         # Safety floor: never drop below loaded model size + 10 GB.
         floor = self.get_loaded_model_bytes() + 10 * 1024**3
+        # E-8 (#811): the floor can lift the hard ceiling PAST the Metal cap
+        # (30GB loaded + 10GB floor = 40GB > 36GB Metal cap), so the
+        # soft/hard watermarks never trigger while MLX is already at its
+        # limit → enforcer does nothing and the process OOMs. Cap the floor
+        # at the Metal cap so it never exceeds the physical ceiling. When
+        # there is no metal_cap (0/unknown) leave the floor unconstrained.
+        if metal_cap > 0:
+            floor = min(floor, metal_cap)
         hard = max(hard, floor)
         return {
             "static": static_ceiling,
