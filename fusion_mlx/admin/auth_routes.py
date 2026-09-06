@@ -33,6 +33,7 @@ from .models import (
     LoginRequest,
     SetupApiKeyRequest,
 )
+from ..middleware.auth import check_rate_limit
 
 _router = APIRouter()
 
@@ -42,7 +43,11 @@ _router = APIRouter()
 
 
 @_router.post("/api/login")
-async def login(request: LoginRequest, response: Response):
+async def login(
+    request: LoginRequest,
+    response: Response,
+    fastapi_request: Request,
+):
     """
     Authenticate with API key and create session.
 
@@ -52,6 +57,8 @@ async def login(request: LoginRequest, response: Response):
     Args:
         request: LoginRequest containing the API key.
         response: FastAPI response object for setting cookies.
+        fastapi_request: FastAPI Request for rate-limit bucketing,
+            injected by the router.
 
     Returns:
         JSON response with success status.
@@ -59,6 +66,10 @@ async def login(request: LoginRequest, response: Response):
     Raises:
         HTTPException: 400 if no API key configured, 401 if invalid.
     """
+    # E-32 (#811): /api/login had no rate limit. A brute-force attacker
+    # could try API keys unbounded. check_rate_limit buckets by HMAC of
+    # the supplied bearer key when present, else client /24 subnet.
+    await check_rate_limit(fastapi_request)
     global_settings = _get_global_settings()
     server_api_key = global_settings.auth.api_key if global_settings else None
 
@@ -234,18 +245,25 @@ async def auto_login(fastapi_request: Request, redirect: str = "/admin/dashboard
 async def auto_login_get(
     fastapi_request: Request,
     redirect: str = "/admin/dashboard",
-    key: str = "",
 ):
     """
     GET variant of auto-login for browser bookmarks and menubar URLs.
 
-    The macOS menubar constructs a URL like
-      /admin/auto-login?redirect=/admin/dashboard&key=<api_key>
-    which the browser opens as GET. This handler reads the key from the
-    query string, validates it, sets the session cookie, and redirects.
+    The API key is read from the ``Authorization: Bearer <key>`` header,
+    NOT from the query string. A query-string key leaks into access logs,
+    browser history, Referer headers, and proxy logs (E-31 #811). The
+    macOS menubar client must set the Authorization header on the GET.
+    No header or wrong key → redirect to /admin login form (no error
+    surfaced, to avoid leaking whether a key is valid).
     """
     if not redirect.startswith("/admin"):
         raise HTTPException(status_code=400, detail="Invalid redirect path")
+
+    # E-31 (#811): never accept the API key from the query string.
+    raw_auth = fastapi_request.headers.get("authorization", "") or ""
+    key = ""
+    if raw_auth.lower().startswith("bearer "):
+        key = raw_auth[7:].strip()
 
     global_settings = _get_global_settings()
     server_api_key = global_settings.auth.api_key if global_settings else None

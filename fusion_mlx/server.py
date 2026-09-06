@@ -1145,7 +1145,12 @@ class Server:
             }
 
         @app.get("/api/stats/alltime")
-        async def api_stats_alltime():
+        async def api_stats_alltime(is_admin: bool = Depends(require_admin)):
+            # E-30 (#811): /api/stats/alltime exposed aggregate request
+            # counts, token throughput, model-load counts, and uptime
+            # with no auth — reconnaissance goldmine for an attacker
+            # profiling the instance. Sibling /stats (line 1086) is
+            # already require_admin-gated; this was the outlier.
             return get_server_metrics().to_alltime_dict()
 
         @app.post("/v1/models/{model_id:path}/load")
