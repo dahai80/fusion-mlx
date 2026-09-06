@@ -30,6 +30,11 @@ router = APIRouter(prefix="/v1/openclaw/agent", tags=["openclaw-agent"])
 # OrderedDict for LRU eviction when cap is reached.
 _SESSION_TTL_SECONDS = 3600  # 1 hour
 _SESSION_MAX_COUNT = 1000
+# E-25: per-session message history cap. A single long-lived session
+# otherwise accumulates unbounded messages (each carrying the full LLM
+# context) and exhausts memory before the 1000-session cap ever triggers.
+# Keep the most recent messages; drop the oldest via list slicing.
+_MAX_MESSAGES_PER_SESSION = 200
 _sessions: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
 
@@ -42,6 +47,13 @@ def _init_session() -> dict[str, Any]:
         "created_at": time.time(),
         "last_accessed": time.time(),
     }
+
+
+def _trim_session_messages(session: dict[str, Any]) -> None:
+    """Bound per-session message history (E-25). Drops oldest messages."""
+    msgs = session.get("messages")
+    if isinstance(msgs, list) and len(msgs) > _MAX_MESSAGES_PER_SESSION:
+        del msgs[: len(msgs) - _MAX_MESSAGES_PER_SESSION]
 
 
 def _cleanup_expired_sessions() -> None:
@@ -228,6 +240,7 @@ async def execute_turn(
     session["turn_count"] += 1
     session["last_accessed"] = time.time()
     session["messages"].extend(req.messages)
+    _trim_session_messages(session)
 
     if req.tools:
         session["tools"] = req.tools
@@ -288,6 +301,7 @@ async def _execute_turn_auto(
         if result.tool_calls:
             assistant_msg["tool_calls"] = result.tool_calls
         session["messages"].append(assistant_msg)
+        _trim_session_messages(session)
 
         # Check for tool calls
         if not result.tool_calls:
@@ -305,6 +319,7 @@ async def _execute_turn_auto(
                     "content": tool_result,
                 }
             )
+            _trim_session_messages(session)
 
         if iteration == req.max_auto_iterations - 1:
             final_content = result.content
@@ -320,18 +335,33 @@ async def _execute_turn_auto(
 def _execute_local_tool(tool_call: dict) -> str:
     """Execute a single tool call locally.
 
-    For now, returns a stub result. In a full Agent Studio deployment this
-    would dispatch to the ToolRegistry.
+    E-26: this server has no local tool runtime — a previous stub returned
+    ``{"status": "ok"}`` for ANY tool name without executing anything, so the
+    agent loop fed a fabricated "success" back to the LLM and downstream
+    reasoning was built on a lie (user misled into believing an action ran).
+    Fail visibly instead: return an explicit "not executed" result so the
+    agent loop knows the tool was not run and can surface it. A real
+    ToolRegistry dispatch is a follow-up (tracked separately).
     """
     import json
 
     try:
         func_name = tool_call.get("function", {}).get("name", "unknown")
         args = tool_call.get("function", {}).get("arguments", "{}")
-        # Parse arguments for display
         parsed = json.loads(args) if isinstance(args, str) else args
+        logger.warning(
+            "openclaw: local tool %r NOT executed (no local tool runtime) — "
+            "returning explicit not-executed result (E-26 fail-visible)",
+            func_name,
+        )
         return json.dumps(
-            {"executed": func_name, "args": parsed, "status": "ok"}, ensure_ascii=False
+            {
+                "executed": func_name,
+                "args": parsed,
+                "status": "not_executed",
+                "error": "fusion-mlx has no local tool runtime; tool was not run",
+            },
+            ensure_ascii=False,
         )
     except (json.JSONDecodeError, TypeError, AttributeError) as e:
         return json.dumps({"error": str(e), "status": "failed"}, ensure_ascii=False)
@@ -405,8 +435,15 @@ async def _call_chat_completion(pool, body: dict) -> TurnResponse:
     except (HTTPException, RuntimeError):
         raise
     except Exception as exc:
+        # E-27: raw exception strings (file paths, hostnames, partial SQL)
+        # fed into LLM context can be echoed or acted on — a prompt-injection
+        # vector. Log the full detail server-side; give the model a generic
+        # sanitized message so no internal detail reaches the context.
         logger.exception("Chat completion failed")
-        return TurnResponse(content=f"Error: {exc}", session_id="")
+        return TurnResponse(
+            content="The request could not be completed due to an internal error.",
+            session_id="",
+        )
 
 
 # ── Tool Result Submission ───────────────────────────────────────────────
