@@ -207,7 +207,20 @@ class GuidedGenerator:
             )
             return None
         except Exception:
-            logger.exception("Guided generation failed")
+            # E-29 (#811): returning None lets the caller fall back to
+            # UNCONSTRAINED generation. If the schema was a security control
+            # (forcing JSON-only tool output, blocking free-text injection),
+            # that control just disappeared. Log loudly at WARNING with the
+            # degrade called out so operators can alert on it; the
+            # best-effort fallback contract is preserved for non-security
+            # callers. Strict callers use strict_json_schema.py which
+            # validates post-generate and surfaces 422 instead of degrading.
+            logger.warning(
+                "Guided generation failed — schema constraint degraded to "
+                "unconstrained generation. If this schema was a security "
+                "control, it is now NOT enforced.",
+                exc_info=True,
+            )
             return None
 
     def generate_json_object(
@@ -278,5 +291,12 @@ def generate_with_schema(
             temperature=temperature,
         )
     except Exception as e:
-        logger.error(f"generate_with_schema failed: {e}")
+        # E-29 (#811): match generate_json's loud degrade warning — the
+        # traceback matters for diagnosing outlines API drift.
+        logger.warning(
+            "generate_with_schema failed: %s — schema constraint degraded "
+            "to unconstrained generation",
+            e,
+            exc_info=True,
+        )
         return None
