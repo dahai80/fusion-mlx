@@ -33,15 +33,26 @@ def client(app):
 class TestSetupApiKeyUnit:
     """Unit-level tests: call the underlying auth_routes functions directly."""
 
+    @staticmethod
+    def _local_request():
+        # _is_loopback_client (#811 R-14) rejects any forwarded/proxy header,
+        # so headers must be a real mapping whose .get(...) returns None,
+        # not an AsyncMock attribute that returns a truthy MagicMock.
+        fastapi_request = AsyncMock(spec=Request)
+        fastapi_request.client.host = "127.0.0.1"
+        fastapi_request.headers = {}
+        return fastapi_request
+
     @pytest.mark.asyncio
     async def test_key_confirmation_mismatch(self):
         from fusion_mlx.admin.auth_routes import setup_api_key
         from fusion_mlx.admin.models import SetupApiKeyRequest
 
-        request_data = SetupApiKeyRequest(api_key="key-one", api_key_confirm="key-two")
+        request_data = SetupApiKeyRequest(
+            api_key="key-one-abcdef", api_key_confirm="key-two-abcdef"
+        )
         response = MagicMock()
-        fastapi_request = AsyncMock(spec=Request)
-        fastapi_request.client.host = "127.0.0.1"
+        fastapi_request = self._local_request()
 
         with patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs:
             settings = MagicMock()
@@ -62,8 +73,7 @@ class TestSetupApiKeyUnit:
 
         request_data = SetupApiKeyRequest(api_key="ab", api_key_confirm="ab")
         response = MagicMock()
-        fastapi_request = AsyncMock(spec=Request)
-        fastapi_request.client.host = "127.0.0.1"
+        fastapi_request = self._local_request()
 
         with patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs:
             settings = MagicMock()
@@ -87,8 +97,7 @@ class TestSetupApiKeyUnit:
             api_key_confirm="\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5\u5bc6\u94a5",
         )
         response = MagicMock()
-        fastapi_request = AsyncMock(spec=Request)
-        fastapi_request.client.host = "127.0.0.1"
+        fastapi_request = self._local_request()
 
         with patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs:
             settings = MagicMock()
@@ -108,15 +117,14 @@ class TestSetupApiKeyUnit:
         from fusion_mlx.admin.models import SetupApiKeyRequest
 
         request_data = SetupApiKeyRequest(
-            api_key="new-key-123", api_key_confirm="new-key-123"
+            api_key="new-key-123456", api_key_confirm="new-key-123456"
         )
         response = MagicMock()
-        fastapi_request = AsyncMock(spec=Request)
-        fastapi_request.client.host = "127.0.0.1"
+        fastapi_request = self._local_request()
 
         with patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs:
             settings = MagicMock()
-            settings.auth.api_key = "already-set"
+            settings.auth.api_key = "already-set-123"
             mock_gs.return_value = settings
 
             from fastapi import HTTPException
@@ -135,8 +143,7 @@ class TestSetupApiKeyUnit:
             api_key="valid-key-1234", api_key_confirm="valid-key-1234"
         )
         response = MagicMock()
-        fastapi_request = AsyncMock(spec=Request)
-        fastapi_request.client.host = "127.0.0.1"
+        fastapi_request = self._local_request()
 
         with (
             patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs,
@@ -164,6 +171,7 @@ class TestSetupApiKeyUnit:
         response = MagicMock()
         fastapi_request = AsyncMock(spec=Request)
         fastapi_request.client.host = "192.168.1.1"  # non-loopback
+        fastapi_request.headers = {}
 
         from fastapi import HTTPException
 
