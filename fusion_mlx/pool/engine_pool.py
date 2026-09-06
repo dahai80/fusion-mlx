@@ -195,6 +195,18 @@ class EnginePool:
         self._active_swap: dict[str, object] = {}
         self._load_seconds_per_gb_ema: float | None = None
         self._load_time_observations: int = 0
+        # #819 (audit A-8): per-model is_loading only serializes loads of the
+        # SAME model; different models load concurrently and a burst of N
+        # distinct load_model calls fans out N simultaneous MLX weight
+        # loads → load-storm OOM. A global asyncio.Semaphore caps the total
+        # concurrent loads process-wide. Default 1 (fully serial) is the
+        # conservative choice on Apple Silicon where a single load saturates
+        # memory bandwidth; raise via FUSION_MAX_CONCURRENT_LOADS to allow
+        # parallel loads on machines with headroom.
+        self._max_concurrent_loads = max(
+            1, int(os.getenv("FUSION_MAX_CONCURRENT_LOADS", "1"))
+        )
+        self._load_semaphore = asyncio.Semaphore(self._max_concurrent_loads)
         self.configure_hot_cache_budget()
 
     @property
@@ -1273,12 +1285,16 @@ class EnginePool:
                     loaded_models=loaded_models,
                 )
 
-        # Now load the model (slow, outside lock)
-        await self._load_engine(
-            entry_key,
-            force_lm=force_lm,
-            runtime_settings=runtime_settings,
-        )
+        # Now load the model (slow, outside lock). #819: hold the global
+        # load semaphore so concurrent distinct-model loads are capped
+        # (is_loading above only serializes same-model). Released even if
+        # _load_engine raises — the try/finally keeps the slot available.
+        async with self._load_semaphore:
+            await self._load_engine(
+                entry_key,
+                force_lm=force_lm,
+                runtime_settings=runtime_settings,
+            )
 
         async with self._lock:
             loaded = self._entries[entry_key]

@@ -99,6 +99,14 @@ class RouterConfig:
     # Cloud fallback threshold (uncached tokens)
     cloud_fallback_threshold: int = 32768
 
+    # #822 (audit A-12): per-request consent gate for cloud fallback. Cloud
+    # fallback silently sends the full prompt to a third-party provider once
+    # uncached tokens exceed cloud_fallback_threshold — a privacy leak with no
+    # per-request opt-in. Default OFF (deny): cloud fallback is disabled
+    # unless an operator explicitly sets cloud_fallback_consent=True, making
+    # the third-party data flow an intentional opt-in rather than silent.
+    cloud_fallback_consent: bool = False
+
     # Enable benchmark-based routing (run kernel benchmarks at load time)
     enable_benchmark_routing: bool = True
 
@@ -188,6 +196,9 @@ class SmartRouter:
         self._split_count: int = 0
         self._cloud_count: int = 0
         self._lock = threading.Lock()
+        # #822: one-shot warning flag so the suppressed-cloud-fallback log
+        # fires once per router, not on every over-threshold request.
+        self._cloud_consent_warned: bool = False
         # EMA state — instance-level, not on config (avoids cross-instance pollution)
         self._ema_state: dict[str, dict[str, dict[str, float]]] = {}
 
@@ -228,17 +239,34 @@ class SmartRouter:
                 reason=f"explicit override: {backend_override.value}",
             )
 
-        # 2. Cloud fallback for massive uncached context
+        # 2. Cloud fallback for massive uncached context.
+        # #822: gated on cloud_fallback_consent (default OFF). Without
+        # explicit consent the prompt must NOT silently leave the local
+        # process for a third-party cloud — fall through to local inference
+        # instead. The first time the threshold is hit with consent off,
+        # log once so the operator sees the suppressed fallback.
         if self.cloud_router and new_tokens > self.config.cloud_fallback_threshold:
-            with self._lock:
-                self._cloud_count += 1
-            self._record_route("cloud", False)
-            return RouteDecision(
-                prefill_backend=EngineBackend.CLOUD,
-                decode_backend=EngineBackend.CLOUD,
-                reason=f"cloud fallback: {new_tokens} uncached tokens > {self.config.cloud_fallback_threshold}",
-                split_phases=False,
-            )
+            if not self.config.cloud_fallback_consent:
+                if not self._cloud_consent_warned:
+                    self._cloud_consent_warned = True
+                    logger.warning(
+                        "Cloud fallback suppressed (uncached_tokens=%d > "
+                        "threshold=%d): cloud_fallback_consent is OFF. "
+                        "Set cloud_fallback_consent=True to enable sending "
+                        "prompts to the cloud provider. See issue #822.",
+                        new_tokens,
+                        self.config.cloud_fallback_threshold,
+                    )
+            else:
+                with self._lock:
+                    self._cloud_count += 1
+                self._record_route("cloud", False)
+                return RouteDecision(
+                    prefill_backend=EngineBackend.CLOUD,
+                    decode_backend=EngineBackend.CLOUD,
+                    reason=f"cloud fallback: {new_tokens} uncached tokens > {self.config.cloud_fallback_threshold}",
+                    split_phases=False,
+                )
 
         # 3. Priority-based routing (resolved before benchmark to prevent
         # REALTIME requests from being routed to high-TPS/high-latency backends)

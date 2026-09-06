@@ -53,6 +53,15 @@ class TieredCacheManager(CacheManager):
         self._demotion_in_progress = False
         self._last_demotion_time: float = 0.0
         self._demotion_cooldown: float = 2.0
+        # #821 (audit A-11): one-shot warning flag. _simple_demote /
+        # _cow_demote only log — they do NOT copy the block's KV data to the
+        # cold layer (CacheBlock holds metadata only, not the KV arrays, so
+        # there is no cache_data to save). Demotion therefore drops the hot
+        # block without persisting it; the cold layer only ever receives
+        # data via direct store(). Warn once when demotion actually runs so
+        # operators know hot→cold migration is not relieving memory pressure
+        # as advertised.
+        self._demote_noop_warned: bool = False
         logger.info(
             "TieredCacheManager init: hot=%s, cold=%s, "
             "demotion_threshold=%.0f%%, promotion=%s",
@@ -220,6 +229,18 @@ class TieredCacheManager(CacheManager):
         for block in evictable:
             if block.block_hash is None:
                 continue
+
+            # #821: the demote methods below are no-op stubs (log only, no
+            # cold-layer write). Warn once that the demoted block's KV data
+            # is NOT being persisted — memory pressure relief is broken.
+            if not self._demote_noop_warned:
+                self._demote_noop_warned = True
+                logger.warning(
+                    "TieredCache demote is a no-op stub: _simple_demote/"
+                    "_cow_demote log but do not write KV data to the cold "
+                    "layer (CacheBlock holds metadata only). Demoted blocks "
+                    "are dropped, not migrated. See issue #821."
+                )
 
             if block.ref_count > 1:
                 self._cow_demote(block)

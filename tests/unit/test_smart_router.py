@@ -36,10 +36,24 @@ class TestSmartRouterDecide:
     def test_cloud_fallback_for_massive_context(self):
         cr = MagicMock()
         cr.cloud_fallback_threshold = 8192
-        config = RouterConfig(cloud_fallback_threshold=8192)
+        # #822: cloud fallback is opt-in via cloud_fallback_consent.
+        config = RouterConfig(
+            cloud_fallback_threshold=8192, cloud_fallback_consent=True
+        )
         router = SmartRouter(config=config, cloud_router=cr, llm_engine=AsyncMock())
         decision = router.decide(prompt_length=20000, cache_hit_rate=0.0)
         assert decision.prefill_backend == EngineBackend.CLOUD
+
+    def test_cloud_fallback_denied_without_consent(self):
+        # #822 (audit A-12): default-deny. Without explicit consent a
+        # massive-context prompt must NOT silently route to cloud — it
+        # falls through to local inference instead.
+        cr = MagicMock()
+        config = RouterConfig(cloud_fallback_threshold=8192)
+        assert config.cloud_fallback_consent is False
+        router = SmartRouter(config=config, cloud_router=cr, llm_engine=AsyncMock())
+        decision = router.decide(prompt_length=20000, cache_hit_rate=0.0)
+        assert decision.prefill_backend != EngineBackend.CLOUD
 
     def test_phase_split_for_long_prompt_low_cache(self):
         router = self._make_router(phase_split_threshold=1024)

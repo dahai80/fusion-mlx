@@ -55,7 +55,7 @@ from ..speculative.vlm_mtp import VLMMTPDrafter
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
-from .config import SchedulerConfig
+from .config import SchedulerConfig, SchedulingPolicy
 from .helpers import (
     _default_generation_stream,
 )
@@ -93,6 +93,17 @@ def __init__(
     self.tokenizer = copy.deepcopy(tokenizer)
     self.config = copy.copy(config) if config else SchedulerConfig()
     self._stream = stream if stream is not None else _default_generation_stream
+
+    # #818 (audit A-7): SchedulingPolicy.PRIORITY is dead code — the admission
+    # loop pops self.waiting FIFO and never consults Request.priority, so a
+    # PRIORITY config silently behaves as FCFS. Fail visibly so operators do
+    # not rely on priority ordering that never happens. The Request.priority
+    # field + __lt__ are retained for a future real implementation.
+    if self.config.policy == SchedulingPolicy.PRIORITY:
+        logger.warning(
+            "Scheduler policy=PRIORITY is not implemented; falling back to "
+            "FCFS ordering. Request.priority is ignored. See issue #818."
+        )
 
     # Load additional EOS tokens from generation_config.json.
     # Some models (e.g. GLM-4.6V) define multiple EOS tokens there
