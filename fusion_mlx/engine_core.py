@@ -1222,6 +1222,16 @@ class EngineCore:
         prompts: list[str | list[int]],
         sampling_params: SamplingParams | None = None,
     ) -> list[RequestOutput]:
+        # P3 (#811): this sync path drives scheduler.step() directly,
+        # bypassing the AsyncEngineCore continuous-batching loop, the MLX
+        # executor, streaming, abort-on-disconnect, and the error handlers.
+        # It has no production callers (not in public_api) — it is a
+        # bench/test convenience. Prefer generate_batch_async / generate.
+        logger.warning(
+            "generate_batch_sync bypasses the executor + streaming + "
+            "abort/error handling; prefer generate_batch_async for "
+            "production paths"
+        )
         if sampling_params is None:
             sampling_params = SamplingParams()
         request_ids = []

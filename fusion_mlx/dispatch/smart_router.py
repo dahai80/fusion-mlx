@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import os
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -23,6 +24,23 @@ from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# P3 (#811): TPS-estimation magic constants were inline literals scattered
+# through _estimate_tps_from_params, making the calibration opaque and hard
+# to tune per-chip. Centralize them here with env overrides so a deployment
+# can recalibrate for M-series silicon other than the M4 Max baseline
+# without editing source. Values are conservative peak-FLOPS estimates.
+_PEAK_GFLOPS_MLX = float(os.environ.get("FUSION_MLX_PEAK_GFLOPS_MLX", "1400e9"))
+_PEAK_GFLOPS_RAPID = float(os.environ.get("FUSION_MLX_PEAK_GFLOPS_RAPID", "1000e9"))
+_PEAK_GFLOPS_FALLBACK = float(
+    os.environ.get("FUSION_MLX_PEAK_GFLOPS_FALLBACK", "800e9")
+)
+_EFFICIENCY_MLX = float(os.environ.get("FUSION_MLX_EFFICIENCY_MLX", "0.30"))
+_EFFICIENCY_RAPID = float(os.environ.get("FUSION_MLX_EFFICIENCY_RAPID", "0.35"))
+_BASE_OVERHEAD_MS_MLX = float(os.environ.get("FUSION_MLX_BASE_OVERHEAD_MS_MLX", "25"))
+_BASE_OVERHEAD_MS_RAPID = float(
+    os.environ.get("FUSION_MLX_BASE_OVERHEAD_MS_RAPID", "15")
+)
 
 
 class TaskPriority(enum.Enum):
@@ -640,20 +658,27 @@ class SmartRouter:
         # FLOPs per token = 2 * param_count * (16 / bits) for decode (1-token input)
         flops_per_token = 2 * param_count * (16.0 / bits)
 
-        # Backend peak FLOPS (conservative estimates for M4 Max)
+        # Backend peak FLOPS — named constants (env-overridable, see module
+        # top) so the calibration is not buried inline.
         peak_gflops = {
-            EngineBackend.MLX: 1400e9,
-            EngineBackend.RAPID: 1000e9,
+            EngineBackend.MLX: _PEAK_GFLOPS_MLX,
+            EngineBackend.RAPID: _PEAK_GFLOPS_RAPID,
         }
-        peak = peak_gflops.get(backend, 800e9)
+        peak = peak_gflops.get(backend, _PEAK_GFLOPS_FALLBACK)
 
-        # Estimated TPS = peak / flops_per_token, with 30% efficiency factor
-        efficiency = 0.3 if backend == EngineBackend.MLX else 0.35
+        # Estimated TPS = peak / flops_per_token, with efficiency factor
+        efficiency = (
+            _EFFICIENCY_MLX if backend == EngineBackend.MLX else _EFFICIENCY_RAPID
+        )
         tps = (peak * efficiency) / flops_per_token
         tps = max(5.0, min(tps, 200.0))
 
         # Latency estimate: base overhead + 1/tps
-        base_overhead_ms = 15.0 if backend == EngineBackend.RAPID else 25.0
+        base_overhead_ms = (
+            _BASE_OVERHEAD_MS_RAPID
+            if backend == EngineBackend.RAPID
+            else _BASE_OVERHEAD_MS_MLX
+        )
         latency_ms = base_overhead_ms + 1000.0 / tps
         return (tps, latency_ms)
 
@@ -675,18 +700,25 @@ class SmartRouter:
         except (FileNotFoundError, json.JSONDecodeError, KeyError):
             pass
 
-        # Infer from model name — common patterns
+        # Infer from model name — common patterns. P3 (#811): the old
+        # `if suffix in name_lower` substring match mis-classified models
+        # whose size token appears inside another (e.g. a 27B model matched
+        # "7b", a 24B matched "4b"). Match size tokens on a word boundary so
+        # "27b" does not collapse to 7B. Order largest-first so the first
+        # boundary match wins.
+        import re
+
         name_lower = model_id.lower()
         for suffix, params in [
-            ("70b", 70_000_000_000),
             ("72b", 72_000_000_000),
+            ("70b", 70_000_000_000),
             ("35b", 35_000_000_000),
             ("32b", 32_000_000_000),
             ("14b", 14_000_000_000),
             ("13b", 13_000_000_000),
             ("10b", 10_000_000_000),
-            ("7b", 7_000_000_000),
             ("8b", 8_000_000_000),
+            ("7b", 7_000_000_000),
             ("4b", 4_000_000_000),
             ("3b", 3_000_000_000),
             ("2b", 2_000_000_000),
@@ -696,7 +728,7 @@ class SmartRouter:
             ("350m", 350_000_000),
             ("260m", 260_000_000),
         ]:
-            if suffix in name_lower:
+            if re.search(r"(?<![0-9])" + re.escape(suffix) + r"(?![0-9])", name_lower):
                 return params
         return 3_000_000_000
 
