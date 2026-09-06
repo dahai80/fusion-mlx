@@ -195,8 +195,48 @@ class CloudRouter:
 
         yield "data: [DONE]\n\n"
 
+    @staticmethod
+    def _is_retryable_cloud_error(exc: BaseException) -> bool:
+        """R-18 (#811): classify whether a cloud-call error is worth retrying.
+
+        The prior `except (TimeoutError, Exception)` retried EVERY failure —
+        auth rejects (401/403), content-policy violations (400), bad-request
+        (400) — burning 1+2=3s of backoff per dead prompt and re-sending the
+        same prompt up to 3x, widening the prompt-exfiltration window and
+        hanging the client up to 90s under a network partition. Only
+        transient faults deserve a retry: timeouts, connection resets, 429
+        rate-limit, and 5xx server errors. Definitive 4xx client errors fail
+        fast on the first attempt.
+        """
+        if isinstance(exc, TimeoutError | asyncio.TimeoutError):
+            return True
+        status = getattr(exc, "status_code", None)
+        try:
+            status = int(status)
+        except (TypeError, ValueError):
+            status = None
+        if status is not None:
+            if status == 429:
+                return True
+            if 500 <= status < 600:
+                return True
+            return False
+        name = type(exc).__name__
+        retryable_names = {
+            "APIConnectionError",
+            "ServiceUnavailableError",
+            "InternalServerError",
+            "RateLimitError",
+            "Timeout",
+            "ReadTimeout",
+            "ConnectTimeout",
+            "ConnectionError",
+            "ConnectionResetError",
+        }
+        return name in retryable_names
+
     async def _call_cloud(self, litellm, call_kwargs: dict, is_stream: bool):
-        """Call litellm.acompletion with 30s timeout and exponential backoff retry (max 3)."""
+        """Call litellm.acompletion with 30s timeout and classified retry (max 3)."""
         last_error = None
         for attempt in range(3):
             try:
@@ -205,6 +245,13 @@ class CloudRouter:
                 )
             except (TimeoutError, Exception) as e:
                 last_error = e
+                if not self._is_retryable_cloud_error(e):
+                    logger.warning(
+                        f"[CLOUD] Non-retryable error ({type(e).__name__}, "
+                        f"status={getattr(e, 'status_code', '?')}, "
+                        f"{self.cloud_model}) — failing fast"
+                    )
+                    raise
                 if attempt < 2:
                     wait = 1.0 * (2**attempt)
                     logger.warning(

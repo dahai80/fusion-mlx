@@ -25,17 +25,17 @@ class TestSetApiKey:
 
 class TestValidateApiKey:
     def test_valid_key_returns_tuple(self):
-        is_valid, error = validate_api_key("Valid1key")
+        is_valid, error = validate_api_key("Valid1keyABCD")
         assert is_valid is True
         assert error == ""
 
     def test_too_short(self):
         is_valid, error = validate_api_key("Ab")
         assert is_valid is False
-        assert "4 characters" in error
+        assert "at least 12" in error
 
     def test_non_ascii(self):
-        is_valid, error = validate_api_key("éééé")
+        is_valid, error = validate_api_key("éééééééééééé")
         assert is_valid is False
         assert "ASCII" in error
 

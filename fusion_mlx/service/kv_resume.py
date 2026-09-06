@@ -134,13 +134,17 @@ def load_resumable_kv(
             if os.path.join(root, req_hash) in path
         ]
         if not candidates:
-            logger.debug("[kv_resume] no checkpoint for %s (hash=%s)", request_id, req_hash)
+            logger.debug(
+                "[kv_resume] no checkpoint for %s (hash=%s)", request_id, req_hash
+            )
             return None
         candidates.sort(key=lambda t: t[1], reverse=True)
         newest_path = candidates[0][0]
         loaded = load_checkpoint(newest_path)
         if loaded is None:
-            logger.warning("[kv_resume] load_checkpoint returned None for %s", newest_path)
+            logger.warning(
+                "[kv_resume] load_checkpoint returned None for %s", newest_path
+            )
             return None
         logger.info(
             "[kv_resume] resumed KV for %s at %d tokens from %s",

@@ -117,11 +117,23 @@ def build_weight_map(
     num_layers = config.get("num_hidden_layers", config.get("n_layer", 0))
 
     family = template.family
-    if family in ("llama", "qwen2", "gemma", "mistral", "phi3", "deepseek"):
+    supported = ("llama", "qwen2", "gemma", "mistral", "phi3", "deepseek")
+    if family in supported:
         rules = _llama_rules(template)
     else:
-        logger.warning("Unknown family '%s', falling back to LLaMA rules", family)
-        rules = _llama_rules(template)
+        # R-26 (#811): silent LLaMA-rules fallback for an unknown family
+        # produces a weight map that *looks* valid but maps tensors under
+        # the wrong naming convention — weights load with mismatched
+        # shapes or, worse, silently misbind, yielding a corrupted model
+        # that generates garbage. Fail visibly so the operator knows the
+        # arch needs an explicit template/rule set, not a guessed mapping.
+        raise ValueError(
+            f"Unsupported model family '{family}'. The migrate converter "
+            f"only has explicit weight-map rules for {supported}. Add a "
+            f"rule set for this family in weight_mapper before converting, "
+            f"or set the arch template family to one of the supported "
+            f"values if the naming convention genuinely matches."
+        )
 
     expanded = _expand_layer_rules(rules, num_layers)
 

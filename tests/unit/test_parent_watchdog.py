@@ -434,3 +434,36 @@ class TestDefaultOnOrphan:
         assert kills == [_signal.SIGTERM, _signal.SIGKILL]
         # Exactly 5 s of sleep between SIGTERM and SIGKILL.
         assert any(args[0] == 5.0 for args, _ in mock_sleep.call_args_list)
+
+
+class TestSignalHandlerChaining:
+    """P0-4: install_signal_handlers must chain to the previous SIGTERM/SIGINT
+    handler (uvicorn's handle_exit) so Server.should_exit gets set and the
+    ASGI shutdown phase runs. A no-op replacement left every stop as SIGKILL."""
+
+    def test_chains_to_previous_handler(self):
+        import signal
+
+        called = {"n": 0}
+
+        def prev(signum, frame):
+            called["n"] += 1
+
+        old_term = signal.getsignal(signal.SIGTERM)
+        old_int = signal.getsignal(signal.SIGINT)
+        try:
+            signal.signal(signal.SIGTERM, prev)
+            signal.signal(signal.SIGINT, prev)
+            pwd.install_signal_handlers()
+            # raise the signal via the installed handler directly
+            handler = signal.getsignal(signal.SIGTERM)
+            handler(signal.SIGTERM, None)
+            assert called["n"] == 1, "previous SIGTERM handler must be chained"
+            handler_int = signal.getsignal(signal.SIGINT)
+            handler_int(signal.SIGINT, None)
+            assert called["n"] == 2, "previous SIGINT handler must be chained"
+            assert pwd.is_shutting_down()
+        finally:
+            signal.signal(signal.SIGTERM, old_term)
+            signal.signal(signal.SIGINT, old_int)
+            pwd._SHUTDOWN_EVENT.clear()

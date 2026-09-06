@@ -876,7 +876,7 @@ class TestEnginePoolDFlashIsolation:
 
         unloaded = []
 
-        async def fake_unload(model_id):
+        async def fake_unload(model_id, **kwargs):
             unloaded.append(model_id)
             pool._entries[model_id].engine = None
 
@@ -1439,7 +1439,7 @@ class TestEnginePoolPrefillEviction:
         pool._current_model_memory = 60 * gb
         unloaded = []
 
-        async def fake_unload(model_id):
+        async def fake_unload(model_id, **kwargs):
             unloaded.append(model_id)
             entry = pool._entries[model_id]
             entry.engine = None
@@ -1744,27 +1744,29 @@ class TestHasActiveRequests:
         assert engine.has_active_requests() is False
 
     def test_batched_engine_has_active_requests(self):
-        """Test BatchedEngine.has_active_requests() via _output_collectors."""
+        """Test BatchedEngine.has_active_requests() via _active_contexts
+        (P0-5: previously read the nonexistent _output_collectors)."""
         from fusion_mlx.engines.batched import BatchedEngine
 
         engine = BatchedEngine.__new__(BatchedEngine)
         engine._engine = None
         assert engine.has_active_requests() is False
 
-        # Simulate engine with active collectors
+        # Simulate engine core with active contexts
         mock_engine_core = MagicMock()
         mock_inner = MagicMock()
-        mock_inner._output_collectors = {"req1": MagicMock()}
+        mock_inner._active_contexts = {"req1": MagicMock()}
         mock_engine_core.engine = mock_inner
         engine._engine = mock_engine_core
         assert engine.has_active_requests() is True
 
-        # Empty collectors
-        mock_inner._output_collectors = {}
+        # Empty contexts
+        mock_inner._active_contexts = {}
         assert engine.has_active_requests() is False
 
     def test_vlm_engine_has_active_requests(self):
-        """Test VLMBatchedEngine.has_active_requests() via _output_collectors."""
+        """Test VLMBatchedEngine.has_active_requests() via _active_contexts
+        (P0-5: previously read the nonexistent _output_collectors)."""
         from fusion_mlx.engines.vlm import VLMBatchedEngine
 
         engine = VLMBatchedEngine.__new__(VLMBatchedEngine)
@@ -1773,7 +1775,7 @@ class TestHasActiveRequests:
 
         mock_engine_core = MagicMock()
         mock_inner = MagicMock()
-        mock_inner._output_collectors = {"req1": MagicMock()}
+        mock_inner._active_contexts = {"req1": MagicMock()}
         mock_engine_core.engine = mock_inner
         engine._engine = mock_engine_core
         assert engine.has_active_requests() is True

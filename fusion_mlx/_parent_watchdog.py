@@ -183,14 +183,32 @@ def install_parent_watchdog(
 
 
 def install_signal_handlers() -> None:
+    # Capture uvicorn's existing signal handlers (installed by Server.run()
+    # before the ASGI lifespan startup) so we can chain into them. uvicorn's
+    # handle_exit sets Server.should_exit, which is what actually drives the
+    # ASGI shutdown phase (resuming the lifespan past `yield`). Without
+    # chaining, replacing the handler leaves should_exit unset, the lifespan
+    # never resumes, and _shutdown() never runs — every stop becomes a
+    # SIGKILL from start.sh (#807 P0-4).
+    _prev_handlers: dict[int, object] = {
+        signal.SIGTERM: signal.getsignal(signal.SIGTERM),
+        signal.SIGINT: signal.getsignal(signal.SIGINT),
+    }
+
     def _handler(signum, frame):
         sig_name = signal.Signals(signum).name
         logger.info("received %s, initiating graceful shutdown", sig_name)
         _trigger_shutdown(0)
+        prev = _prev_handlers.get(signum)
+        if prev is not None and callable(prev):
+            try:
+                prev(signum, frame)
+            except Exception:
+                logger.debug("previous %s handler raised", sig_name, exc_info=True)
 
     signal.signal(signal.SIGTERM, _handler)
     signal.signal(signal.SIGINT, _handler)
-    logger.debug("signal handlers installed (SIGTERM, SIGINT)")
+    logger.debug("signal handlers installed (SIGTERM, SIGINT), chained to previous")
 
 
 def _trigger_shutdown(exit_code: int = 0) -> None:

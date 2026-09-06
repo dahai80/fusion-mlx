@@ -41,15 +41,25 @@ def add_request(self, request: Request) -> None:
     if request.request_id in self.requests:
         raise ValueError(f"Request {request.request_id} already exists")
 
-    # Cap the waiting queue so client-side polling can't accumulate
-    # unbounded work and the scheduler can apply backpressure via 503.
-    max_waiting = max(self.config.max_num_seqs * 4, 32)
-    if len(self.waiting) >= max_waiting:
+    # Cap in-flight work so client-side polling can't accumulate unbounded
+    # requests and the scheduler can apply backpressure via 503. Count
+    # waiting + prefilling + running, not just waiting: a flood of prefills
+    # already admitted to the active set still consumes KV memory, so capping
+    # only `waiting` would let total in-flight grow unbounded while the
+    # waiting queue stays small (P3-2 memory-flood backpressure gap).
+    max_inflight = max(self.config.max_num_seqs * 4, 32)
+    # `prefilling` is lazily initialized (sched_trim), not set in __init__,
+    # so getattr with an empty-deque default keeps add_request safe on a fresh
+    # scheduler that has never run a step.
+    inflight = (
+        len(self.waiting) + len(getattr(self, "prefilling", ())) + len(self.running)
+    )
+    if inflight >= max_inflight:
         from ..exceptions import SchedulerQueueFullError
 
         raise SchedulerQueueFullError(
-            current_depth=len(self.waiting),
-            max_depth=max_waiting,
+            current_depth=inflight,
+            max_depth=max_inflight,
         )
 
     # Tokenize if needed
@@ -66,12 +76,9 @@ def add_request(self, request: Request) -> None:
     # _schedule_waiting instead of being overwritten by a fresh fetch_cache.
     if request.prompt_cache is not None and request.cached_tokens > 0:
         if request.remaining_tokens is None:
-            request.remaining_tokens = request.prompt_token_ids[
-                request.cached_tokens :
-            ]
+            request.remaining_tokens = request.prompt_token_ids[request.cached_tokens :]
         logger.info(
-            "Resume hit for %s: using seeded KV (%d cached tokens, "
-            "%d remaining)",
+            "Resume hit for %s: using seeded KV (%d cached tokens, " "%d remaining)",
             request.request_id,
             request.cached_tokens,
             len(request.remaining_tokens),

@@ -2,6 +2,157 @@
 
 ## [Unreleased]
 
+### Security
+- **#811 audit: 0906 adversarial architecture audit, batch 1 + 2** —
+  independent critical architecture audit (report at
+  `audit/fusion-mlx-audit-result-0906.md`) covering module boundaries,
+  cache strategy, error handling, resource control, and multi-node
+  concurrency. Batch 1 + 2 P0/P1 fixes landed:
+  - **A-1/A-2 silent KV cache corruption** — `BlockAwarePrefixCache`
+    held an independent `_prefix_index` with no block-freed callback, so
+    a freed/realloced paged block silently served wrong KV. Registered
+    `_on_block_freed` + reverse index; `PagedCacheManager.clear()` now
+    fires invalidation for every allocated block before rebuild.
+  - **A-10 dead cache lock** — `_cache_lock` was an `asyncio.Lock`
+    defined but never acquired. Switched to `threading.Lock` guarding
+    all index reads/writes.
+  - **R-3 hung video generation permanently blocks all video** — a
+    single hung video pipeline (infinite MLX loop, deadlock) on the
+    `max_workers=1` executor cannot be cancelled from Python, so every
+    subsequent video request queued and timed out until process restart.
+    A poisoned-executor registry now fast-fails later requests with a
+    loud "restart required" error and swaps in a fresh worker thread.
+  - **R-7 KV eviction fast path dead** — `_evict_kv_cache` imported a
+    non-existent top-level `mx`, swallowed by `except Exception`, so
+    Phase-1 KV-only eviction never fired; memory pressure jumped
+    straight to ~20s full unload. Now uses the module-level alias.
+  - **R-13 unauthenticated reasoning endpoint** — `/v1/reasoning`
+    bypassed auth + rate limit. Now requires `verify_api_key` +
+    `check_rate_limit`.
+  - **P0-5 CloudRouter startup TypeError** — `CloudRouter(cloud_model=...)`
+    was constructed without the required positional `cloud_model`, so
+    `--cloud-router` crashed on boot. New `--cloud-model` CLI flag +
+    `FUSION_CLOUD_MODEL` env; missing value now fails visibly with
+    guidance instead of a stack trace.
+  - **R-1 watchdog parent leak on stop** — `do_stop` killed the serve
+    child but left the `start.sh --watchdog` parent orphaned. Now
+    explicitly SIGTERM/SIGKILL the watchdog parent.
+  - **R-2 non-atomic weight conversion** — `migrate convert` wrote
+    `config.json` + `model.safetensors` directly to the final path; a
+    crash left a half-written model that `mlx_lm.load` silently accepted
+    as valid. Now builds in a `.tmp.<pid>` tree and `os.rename` swaps
+    on success, with `fsync` on the weight file.
+  See `audit/fusion-mlx-audit-result-0906.md` "修复状态" for the full
+  per-defect breakdown and the remaining batch-3 backlog.
+
+### Fixed
+- **#811 audit: 0906 architecture audit, batch 3** — runtime P1 fixes
+  (R-6/R-9..R-11/R-18/R-20..R-27). Report at
+  `audit/fusion-mlx-audit-result-0906.md`.
+  - **R-6 use-after-stop unload race** — `unload_engine_async` deferred
+    teardown on a phantom active-request count (a leaked decrement left
+    `has_active_requests()` true with no live consumer), so a model could
+    be unloaded while a real lease still held it, *or* never unload at all.
+    Deferral now keys only on `entry.in_use > 0` (a real lease); a phantom
+    count (in_use==0) proceeds to teardown + activity-counter reset.
+  - **R-9/R-10/R-11 memory enforcer hardening** — unrecoverable pressure
+    (post-eviction still over hard limit) now flips a `draining` flag so
+    `/health/ready` returns 503 (fail visibly, rely on macOS jetsam no
+    more); eviction cooldown (`_EVICT_COOLDOWN_SECONDS`) stops LRU
+    thrash; eviction candidates exclude pinned models.
+  - **R-18 cloud retry misclassification** — `CloudRouter` retried 4xx
+    client errors, wasting quota. Now retries only transient
+    (5xx/timeout/conn-error); 4xx fails fast.
+  - **R-20 ShardManager concurrency** — shard bookkeeping now guarded by
+    a `threading.RLock`.
+  - **R-21 chunked-prefill no fallback** — a bad/spec prefill input that
+    broke chunked prefill OOM'd with no recourse. Now auto-falls back to
+    inline prefill; new escape hatch `FUSION_FORCE_INLINE_PREFILL=1`
+    forces inline prefill entirely.
+  - **R-22 model-load executor leak** — the `_model_load_executor`
+    thread pool was never shut down, leaking threads over a long-running
+    multi-model server. Lifecycle now bounded with explicit shutdown.
+  - **R-23 hung client on engine-loop failure** — `fail_all_requests`
+    only reported scheduler-queue rids, so a rid sitting in
+    `_active_contexts` (race during add_request insert) never got an
+    error output and its `finished_event` stayed unset → `generate()`
+    hung forever. New `_fail_unchanged_contexts` sweep pushes an
+    `finish_reason="error"` output + sets the event in all three
+    engine-loop error branches (circuit-breaker/Exception/BaseException).
+  - **R-24 vendored MTP wrong-distribution logprobs** — at a speculative
+    reject position the token is sampled from the *residual*
+    distribution, but the yielded logprob came from the target
+    distribution. Downstream calibration/eval was silently wrong. The
+    non-greedy reject now yields the logprob of the residual
+    distribution the token was actually drawn from.
+  - **R-25 no graceful degradation on draft-model failure** — a buggy
+    draft model (operator-supplied via `--dspark-drafter-path`) threw on
+    `draft_block`/`_step_mtp_chain` → HTTP 500 for *every* request, with
+    the base model never carrying on alone. Both are now wrapped:
+    failure logs a WARNING and degrades to base-only decode that round.
+  - **R-26 silent LLaMA fallback for unknown arch in migrate** —
+    `build_weight_map` fell back to LLaMA naming rules for any unknown
+    `template.family`, producing a weight map that *looked* valid but
+    misbound tensors → a garbage/crashing converted model. Unknown
+    families now raise `ValueError` (caught by the converter into a
+    visible `ConvertResult.error`).
+  - **R-27 silent parser-config skip for unknown arch** —
+    `detect_model_config` returns `None` for unrecognized models and
+    callers treated that as "skip", leaving `tool-call-parser` /
+    `reasoning-parser` unset. The server came up serving a model whose
+    tool calls silently returned empty `tool_calls` and whose reasoning
+    tags were never separated — reads as "the model got dumber". Boot
+    now emits a WARNING naming the model and the explicit
+    `--tool-call-parser`/`--reasoning-parser` flags to pass.
+  See `audit/fusion-mlx-audit-result-0906.md` "修复状态（批次 3）" for
+  the per-defect breakdown.
+
+### Security
+- **#342-#346 audit: adversarial review P0-P3 hardening batch** — full
+  adversarial reverse-engineering audit (audit report at
+  `audit/fusion-mlx-0905.md`) found 5 P0 + 11 P1 + 10 P2 + 5 P3 defects.
+  All fixed. Headline fixes:
+  - **P0-1 silent KV corruption** — radix trie indexed paged block_ids as
+    stable handles, but `PagedCacheManager` can free/realloc any ref-0
+    block_id; reuse returned the wrong KV with no error. Registered an
+    eviction callback so `free_block`/evict detaches the trie node and
+    fetch treats a detached node as a miss.
+  - **P0-4 SIGTERM no-op** — graceful shutdown (drain, persistence,
+    telemetry) was skipped; every stop was effectively SIGKILL. SIGTERM
+    now triggers the full drain/shutdown path.
+  - **P0-2 engine loop `Exception` not `BaseException`** — in-flight
+    requests hung on SIGINT/KeyboardInterrupt. Loop now catches
+    `BaseException`.
+  - **P0-3 add_request abort race**, **P0-5 `has_active_requests` wrong
+    attribute** — both closed.
+  - **P1-11 remote unauth OOM DoS** — single oversized request could OOM
+    the server and all co-located tenants. Body-limit middleware now
+    enforces a hard cap before parsing.
+  - **P2-6 CORS** — legacy `_create_app` set `allow_credentials=True`
+    with wildcard `["*"]` (spec violation). Routed through
+    `_resolve_cors_credentials`.
+  - **P2-8 ThreadPoolExecutor leak** — `BatchedEngine.start()` registered
+    the model-load executor as immortal so a partial-start failure no
+    longer orphans the MLX-bound thread pool.
+  - **P3-1 orphaned chain descendants** — `CacheBlock.parent_hash` +
+    cascade eviction reclaim memory the LRU would otherwise hold until
+    it noticed.
+  - **P3-2 queue cap** — `add_request` now backpressures on
+    `waiting + prefilling + running`, not `waiting` alone.
+  - **P3-3 prefill eviction lock** — `_evict_idle_lru_for_prefill`
+    releases the pool lock before the unload settle so `get_engine` is
+    not blocked.
+  - **P3-4 rate-limit behind proxy** — new `FUSION_TRUSTED_PROXIES` env
+    (comma-separated CIDRs) makes the rate limiter walk `X-Forwarded-For`
+    for the real client IP instead of collapsing a co-located /24 into
+    one bucket. XFF is ignored unless the env is set.
+  - **P3-5 model-not-found info leak** — `ModelNotFoundError` now returns
+    a generic message to unauthenticated callers; full exception is
+    logged server-side. Set `FUSION_REVEAL_MODEL_LIST=1` to restore the
+    verbose message for dev/debug.
+  See `audit/fusion-mlx-0905.md` "Fix status" for the full per-defect
+  breakdown.
+
 ### Fixed
 - **#807 RadixPrefixCache: KV tensor storage non-functional** — the radix
   prefix cache (`FUSION_MLX_PREFIX_CACHE=radix`) built a token-id trie and

@@ -58,21 +58,15 @@ class TestInterval:
 
 class TestPersistDisabled:
     def test_noop_when_interval_zero(self, disabled):
-        path = kv_resume.persist_request_kv(
-            "req-1", _fake_cache(), 100, model_name="m"
-        )
+        path = kv_resume.persist_request_kv("req-1", _fake_cache(), 100, model_name="m")
         assert path is None
 
     def test_noop_when_no_cache(self, enabled, temp_root):
-        path = kv_resume.persist_request_kv(
-            "req-1", None, 100, model_name="m"
-        )
+        path = kv_resume.persist_request_kv("req-1", None, 100, model_name="m")
         assert path is None
 
     def test_noop_when_zero_tokens(self, enabled, temp_root):
-        path = kv_resume.persist_request_kv(
-            "req-1", _fake_cache(), 0, model_name="m"
-        )
+        path = kv_resume.persist_request_kv("req-1", _fake_cache(), 0, model_name="m")
         assert path is None
 
 
@@ -87,9 +81,7 @@ class TestPersistLoadCleanup:
 
             dst_dir = os.path.join(root, req_hash)
             os.makedirs(dst_dir, exist_ok=True)
-            body = os.path.join(
-                dst_dir, f"checkpoint-{token_offset}.safetensors"
-            )
+            body = os.path.join(dst_dir, f"checkpoint-{token_offset}.safetensors")
             meta = os.path.join(dst_dir, f"checkpoint-{token_offset}.json")
             import json
 
@@ -97,7 +89,11 @@ class TestPersistLoadCleanup:
                 pass
             with open(meta, "w") as fh:
                 json.dump(
-                    {"token_offset": token_offset, "kv_dtype": "bf16", **kwargs.get("extra_metadata", {})},
+                    {
+                        "token_offset": token_offset,
+                        "kv_dtype": "bf16",
+                        **kwargs.get("extra_metadata", {}),
+                    },
                     fh,
                 )
             written["cache"] = list(cache)
@@ -113,9 +109,7 @@ class TestPersistLoadCleanup:
         )
 
         cache = _fake_cache(3)
-        path = kv_resume.persist_request_kv(
-            "req-42", cache, 512, model_name="llama"
-        )
+        path = kv_resume.persist_request_kv("req-42", cache, 512, model_name="llama")
         assert path is not None
         assert os.path.isfile(path)
         assert written["cache"] == cache
@@ -147,9 +141,7 @@ class TestPersistLoadCleanup:
         loaded = kv_resume.load_resumable_kv("anything", model_name="m")
         assert loaded is None
 
-    def test_cleanup_removes_checkpoint_dir(
-        self, enabled, temp_root, monkeypatch
-    ):
+    def test_cleanup_removes_checkpoint_dir(self, enabled, temp_root, monkeypatch):
         from fusion_mlx.runtime import disk_kv_checkpoint
 
         req_hash = disk_kv_checkpoint.request_hash("req-7", "llama")
@@ -182,9 +174,7 @@ class TestNeverRaises:
             "fusion_mlx.runtime.disk_kv_checkpoint.model_requires_full_checkpoint",
             lambda m: False,
         )
-        path = kv_resume.persist_request_kv(
-            "req-1", _fake_cache(), 100, model_name="m"
-        )
+        path = kv_resume.persist_request_kv("req-1", _fake_cache(), 100, model_name="m")
         assert path is None
 
     def test_load_swallows_scan_failure(self, enabled, monkeypatch):

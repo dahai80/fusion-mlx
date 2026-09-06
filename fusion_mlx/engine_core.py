@@ -5,6 +5,7 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -150,6 +151,66 @@ def get_video_gen_timeout() -> float:
         )
         return _VIDEO_GEN_TIMEOUT_DEFAULT_S
     return val
+
+
+# Poisoned-executor registry (#811 R-3). A hung video job on the single
+# max_workers=1 video executor cannot be cancelled from Python (the worker
+# thread keeps running the MLX pipeline), so every subsequent video request
+# would queue and time out, making the video subsystem dead until process
+# restart. Rather than silently queueing forever, we mark the executor
+# poisoned the first time a generation times out (or runs past a watchdog
+# deadline) and fast-fail later requests with a loud "restart required"
+# error. A new executor replaces the old one in _global_executors so a fresh
+# request starts a fresh worker thread (it will reload model weights on its
+# own thread-local stream). The poisoned flag keeps anything still enqueued
+# on the old executor from being mistaken for live work.
+_video_executor_poisoned = False
+_video_executor_poison_lock = threading.Lock()
+
+
+def is_video_executor_poisoned() -> bool:
+    return _video_executor_poisoned
+
+
+def reset_video_executor_poison() -> None:
+    # Called after a confirmed clean stop/restart of the video engine.
+    global _video_executor_poisoned
+    with _video_executor_poison_lock:
+        _video_executor_poisoned = False
+
+
+def poison_executor(pool_type: str = "video") -> None:
+    # Mark a pool's executor poisoned and swap in a replacement so new work
+    # is not queued behind a stuck worker (#811 R-3). The old executor is
+    # NOT shut down (shutting it down would block on the hung thread); it is
+    # abandoned to the process lifetime. MLX weights are thread-local, so
+    # the replacement worker reloads on first use.
+    global _video_executor_poisoned
+    with _video_executor_poison_lock:
+        if pool_type == "video" and _video_executor_poisoned:
+            return
+        exec_ = _global_executors.get(pool_type)
+        if exec_ is None:
+            return
+        cfg = _executor_config.get(
+            pool_type, {"max_workers": 1, "prefix": f"mlx-{pool_type}"}
+        )
+        new_exec = concurrent.futures.ThreadPoolExecutor(
+            max_workers=cfg["max_workers"],
+            thread_name_prefix=cfg["prefix"],
+            initializer=_init_mlx_thread,
+        )
+        _global_executors[pool_type] = new_exec
+        if pool_type == "video":
+            _video_executor_poisoned = True
+            logger.error(
+                "video executor POISONED (#811 R-3): a generation hung and could "
+                "not be cancelled. New worker spawned; the stuck thread is "
+                "abandoned. RESTART fusion-mlx to reclaim its memory. "
+                "Subsequent video requests will reload on the fresh worker."
+            )
+        else:
+            logger.error("%s executor replaced after a hung job (#811 R-3).", pool_type)
 
 
 @dataclass
@@ -401,6 +462,8 @@ class EngineCore:
         self._wake_event: asyncio.Event | None = None
         self._start_time: float | None = None
         self._steps_executed = 0
+        # P2-7: consecutive-error counter for the engine-loop circuit breaker.
+        self._consecutive_loop_errors = 0
         logger.debug("Engine %s initialized", self._engine_id)
 
     async def start(self) -> None:
@@ -510,6 +573,9 @@ class EngineCore:
                         self._mlx_executor, self._step_burst
                     )
                     self._steps_executed += len(step_outputs)
+                    # P2-7: a successful step resets the circuit breaker.
+                    if self._consecutive_loop_errors:
+                        self._consecutive_loop_errors = 0
 
                     contexts = self._active_contexts
                     eviction_request = None
@@ -606,6 +672,55 @@ class EngineCore:
 
                 logger.error("Engine loop error: %s\n%s", e, traceback.format_exc())
 
+                # P2-7: circuit breaker. A persistent scheduler failure (e.g.
+                # corrupted KV, broken model forward) would otherwise spin the
+                # loop forever — fail_all_requests empties waiting/running so
+                # has_requests() returns False, but a re-submitted or stuck
+                # request re-triggers the same fault each iteration, burning
+                # CPU and flooding logs. After N consecutive errors, stop the
+                # loop loudly so the pool can evict and reload the engine.
+                self._consecutive_loop_errors += 1
+                if self._consecutive_loop_errors >= 50:
+                    logger.critical(
+                        "Engine loop hit %d consecutive errors — stopping "
+                        "engine to break persistent-failure spin",
+                        self._consecutive_loop_errors,
+                    )
+                    self._running = False
+                    try:
+                        failed_ids = await loop.run_in_executor(
+                            self._mlx_executor, self.scheduler.fail_all_requests
+                        )
+                    except Exception:
+                        failed_ids = []
+                    for rid in failed_ids:
+                        ctx = self._active_contexts.get(rid)
+                        if ctx is not None:
+                            try:
+                                ctx.collector.put(
+                                    RequestOutput(
+                                        request_id=rid,
+                                        finished=True,
+                                        finish_reason="error",
+                                        error="engine loop stopped: repeated failures",
+                                    )
+                                )
+                            except Exception:
+                                pass
+                        self._mark_request_finished(rid)
+                    # R-23 (#811): sweep any context fail_all_requests missed
+                    # so no consumer hangs on an un-set finished_event.
+                    leaked = self._fail_unfinished_contexts(
+                        "engine loop stopped: repeated failures"
+                    )
+                    if leaked:
+                        logger.critical(
+                            "R-23: %d active context(s) missed by "
+                            "fail_all_requests — force-finished to avoid hang",
+                            leaked,
+                        )
+                    return
+
                 # Fail all requests and remove from scheduler to prevent
                 # infinite loop (has_requests() must return False).
                 def _safe_fail():
@@ -627,7 +742,56 @@ class EngineCore:
                             )
                         )
                     self._mark_request_finished(rid)
+                # R-23 (#811): sweep any context fail_all_requests missed.
+                leaked = self._fail_unfinished_contexts(str(e))
+                if leaked:
+                    logger.critical(
+                        "R-23: %d active context(s) missed by "
+                        "fail_all_requests — force-finished to avoid hang",
+                        leaked,
+                    )
                 await asyncio.sleep(0.1)
+            except BaseException as e:
+                # P0-2: KeyboardInterrupt/SystemExit from inside scheduler.step
+                # (run on the MLX executor) bypass the Exception branch above.
+                # Without this, in-flight requests hang forever: their
+                # _active_contexts entries are never cleaned and finished_event
+                # is never set. Fail everything loudly, then re-raise so the
+                # process interrupt propagates normally.
+                logger.error("Engine loop terminating on %r", e)
+                self._running = False
+                try:
+                    failed_ids = await loop.run_in_executor(
+                        self._mlx_executor, self.scheduler.fail_all_requests
+                    )
+                except Exception:
+                    failed_ids = []
+                for rid in failed_ids:
+                    ctx = self._active_contexts.get(rid)
+                    if ctx is not None:
+                        try:
+                            ctx.collector.put(
+                                RequestOutput(
+                                    request_id=rid,
+                                    finished=True,
+                                    finish_reason="error",
+                                    error=f"engine loop terminated: {e!r}",
+                                )
+                            )
+                        except Exception:
+                            pass
+                    self._mark_request_finished(rid)
+                # R-23 (#811): sweep any context fail_all_requests missed.
+                leaked = self._fail_unfinished_contexts(
+                    f"engine loop terminated: {e!r}"
+                )
+                if leaked:
+                    logger.critical(
+                        "R-23: %d active context(s) missed by "
+                        "fail_all_requests — force-finished to avoid hang",
+                        leaked,
+                    )
+                raise
 
     async def add_request(
         self,
@@ -649,6 +813,16 @@ class EngineCore:
         resume_prompt_cache: list | None = None,
         resume_cached_tokens: int = 0,
     ) -> str:
+        # P1-7: reject new requests once stop() has torn the engine down.
+        # Without this guard add_request enqueues into the scheduler after the
+        # engine loop is cancelled, so no one processes the request and the
+        # caller hangs forever waiting for output.
+        if not self._running:
+            logger.error(
+                "add_request rejected: engine not running (request_id=%s)",
+                request_id,
+            )
+            raise RuntimeError("engine is not running; request rejected")
         if request_id is None:
             request_id = str(uuid.uuid4())
         if sampling_params is None:
@@ -714,8 +888,16 @@ class EngineCore:
                 # never reaches stream_outputs()/generate()'s try/finally, so
                 # nothing would mark it finished or clean it up. Drop tracking
                 # and abort any partial scheduler insert before re-raising.
+                # P0-3: route the abort through the SAME executor step() runs
+                # on, so abort_request cannot mutate scheduler.waiting/running
+                # concurrently with a step() mid-iteration on the executor
+                # thread (deque popleft/append are not atomic). Blocking here
+                # is acceptable: we are about to re-raise anyway.
                 try:
-                    self.scheduler.abort_request(request_id)
+                    fut = self._mlx_executor.submit(
+                        self.scheduler.abort_request, request_id
+                    )
+                    fut.result(timeout=5.0)
                 except Exception as abort_exc:
                     logger.debug(
                         "Abort of partial insert for %s failed: %s",
@@ -800,6 +982,36 @@ class EngineCore:
             ctx.collector.clear()
         self._finished_at.pop(request_id, None)
 
+    def _fail_unfinished_contexts(self, error_msg: str) -> int:
+        # R-23 (#811): fail_all_requests only reports rids it found in the
+        # scheduler queues. A rid can exist in _active_contexts but be missed
+        # — narrow races during add_request's executor insert, scheduler queue
+        # inconsistency mid-step, or a request that finished in the scheduler
+        # but whose collector never received a terminal output. Without this
+        # sweep those ctx's finished_event stays unset and generate() hangs
+        # forever. Push a terminal error output to every context that has not
+        # yet been marked finished, so no waiting consumer is left dangling.
+        # Pop-only-reap-safe: a live consumer holds its own collector ref, so
+        # a put() here is harmless even if the dict entry was already reaped.
+        n = 0
+        for rid, ctx in list(self._active_contexts.items()):
+            if ctx.finished_event.is_set():
+                continue
+            try:
+                ctx.collector.put(
+                    RequestOutput(
+                        request_id=rid,
+                        finished=True,
+                        finish_reason="error",
+                        error=error_msg,
+                    )
+                )
+            except Exception:
+                pass
+            self._mark_request_finished(rid)
+            n += 1
+        return n
+
     def _mark_request_finished(self, request_id: str) -> None:
         """Stamp finish time and signal the consumer.
 
@@ -811,12 +1023,16 @@ class EngineCore:
         if ctx is not None:
             ctx.finished_event.set()
 
-    def _reap_orphaned_collectors(self, now: float, grace: float = 5.0) -> int:
+    def _reap_orphaned_collectors(self, now: float, grace: float | None = None) -> int:
         """Drop tracking for finished requests whose consumer never cleaned up.
 
         Pop-only: never clear() the collector object. A live consumer holds its
         own reference, so dropping the dict entry cannot truncate output.
+        grace defaults to _orphan_reap_grace (overridable per engine type, e.g.
+        video/long-streaming) so slow consumers are not starved.
         """
+        if grace is None:
+            grace = getattr(self, "_orphan_reap_grace", 5.0)
         if not self._finished_at:
             return 0
         stale = [rid for rid, ts in self._finished_at.items() if now - ts >= grace]
@@ -867,6 +1083,24 @@ class EngineCore:
                     logger.warning("Timeout waiting for request %s", request_id)
                     break
         finally:
+            # P2-4: if the consumer disconnected before the request finished
+            # (generator closed/cancelled mid-stream), abort the scheduler
+            # request so decode stops burning tokens for a dead client. Only
+            # abort when still active — a finished request is already cleaned.
+            ctx_after = self._active_contexts.get(request_id)
+            if ctx_after is not None and not ctx_after.finished_event.is_set():
+                logger.info(
+                    "stream_outputs client disconnect before finish, " "aborting %s",
+                    request_id,
+                )
+                try:
+                    await self.abort_request(request_id)
+                except Exception as e:
+                    logger.warning(
+                        "abort_request on stream disconnect %s failed: %s",
+                        request_id,
+                        e,
+                    )
             self._cleanup_request(request_id)
 
     async def generate(

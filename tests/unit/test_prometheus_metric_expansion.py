@@ -8,6 +8,23 @@ from fusion_mlx.routes_internal.metrics import render_prometheus_metrics
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_diffusion_registry():
+    # Other test modules construct DiffusionRadixCache instances whose
+    # weak refs linger in the shared _REGISTRY across test boundaries, leaking
+    # live-cache metrics into the "empty registry" assertions here.
+    # Clear before + after to restore isolation.
+    import gc
+
+    from fusion_mlx.cache.radix_diffusion_cache import _REGISTRY
+
+    _REGISTRY.clear()
+    gc.collect()
+    _REGISTRY.clear()
+    yield
+    _REGISTRY.clear()
+
+
 def _render() -> str:
     body = render_prometheus_metrics()
     logger.info("prometheus body length=%d", len(body))

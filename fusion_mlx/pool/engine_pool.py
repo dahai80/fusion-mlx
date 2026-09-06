@@ -122,6 +122,9 @@ class EngineEntry:
     ) = None  # Loaded engine instance
     last_access: float = 0.0  # Timestamp for LRU (0 if never loaded)
     is_loading: bool = False  # Prevent concurrent loads
+    is_unloading: bool = (
+        False  # P1-4: lockless unload in progress; block fast-path service
+    )
     loading_started_at: float | None = None  # Timestamp when current load started
     loading_event: asyncio.Event | None = None  # Signaled when loading completes
     is_pinned: bool = False  # Never evict if True
@@ -247,7 +250,7 @@ class EnginePool:
         )
         return min(int(max_kv), 2 * 1024**3)
 
-    def _admission_current_usage(self) -> int:
+    def _admission_current_usage(self, *, exclude_entry_key: str | None = None) -> int:
         # #779: reconcile the tracked _current_model_memory accumulator with
         # the live Metal/process gauges before admission.
         #
@@ -272,8 +275,22 @@ class EnginePool:
         live = max(active_mem, phys)
         tracked = self._current_model_memory
         has_loaded = any(e.engine is not None for e in self._entries.values())
+        # P1-8: account for in-flight loads whose memory is not yet reflected
+        # in _current_model_memory (it is incremented only after the load
+        # completes). Without this, two concurrent get_engine for different
+        # models both read the same baseline, both pass admission, and both
+        # load — overshooting the ceiling and OOMing during prefill. Kept
+        # separate from `tracked` so the drift-reconciliation branch below
+        # (which clamps a stale accumulator) does not also clamp away a
+        # legitimate pending load.
+        pending_load_bytes = 0
+        for key, e in self._entries.items():
+            if key == exclude_entry_key:
+                continue
+            if e.is_loading and e.engine is None:
+                pending_load_bytes += e.last_observed_size or e.estimated_size
         if has_loaded or tracked <= live:
-            return max(active_mem, phys, tracked)
+            return max(active_mem, phys, tracked) + pending_load_bytes
         # No engine loaded and the accumulator is above the live gauges: drift.
         logger.warning(
             "admission: stale _current_model_memory=%s above live gauges "
@@ -286,7 +303,7 @@ class EnginePool:
         enforcer = self._process_memory_enforcer
         if enforcer is not None:
             enforcer.update_loaded_model_bytes(-int(tracked - live))
-        return max(active_mem, phys, live)
+        return max(active_mem, phys, live) + pending_load_bytes
 
     def _wake_process_memory_enforcer(self, *, active: bool = False) -> None:
         enforcer = self._process_memory_enforcer
@@ -749,7 +766,9 @@ class EnginePool:
             model_id,
             reason,
         )
-        await self.unload_engine_async(model_id, with_settle=False)
+        await self.unload_engine_async(
+            model_id, with_settle=False, caller_holds_lock=True
+        )
         return True
 
     def is_abort_requested(self, model_id: str | None) -> bool:
@@ -1056,27 +1075,36 @@ class EnginePool:
 
             # Already loaded - just update access time (fast path)
             if entry.engine is not None:
-                needs_reload = False
-                if (
-                    expected_signature is not None
-                    and entry.runtime_settings_signature is not None
-                    and entry.runtime_settings_signature != expected_signature
-                ) or (
-                    runtime_settings is not None
-                    and entry.runtime_settings_signature is None
-                ):
-                    self._raise_if_reload_busy(
-                        entry,
-                        "reload runtime settings variant",
-                    )
-                    needs_reload = True
-                if (
-                    entry.engine is not None
-                    and force_lm
-                    and isinstance(entry.engine, VLMBatchedEngine)
-                ):
-                    self._raise_if_reload_busy(entry, "reload as LM")
-                    needs_reload = True
+                # P1-4: an in-progress unload (unload_engine_async, called
+                # lockless from get_engine's eviction path) sets is_unloading
+                # before stopping the engine. Without this gate a concurrent
+                # get_engine for the victim hits the fast path and hands out
+                # an engine that _detach_engine is mid-stop() on.
+                if entry.is_unloading:
+                    wait_event = entry.loading_event or asyncio.Event()
+                    entry.loading_event = wait_event
+                else:
+                    needs_reload = False
+                    if (
+                        expected_signature is not None
+                        and entry.runtime_settings_signature is not None
+                        and entry.runtime_settings_signature != expected_signature
+                    ) or (
+                        runtime_settings is not None
+                        and entry.runtime_settings_signature is None
+                    ):
+                        self._raise_if_reload_busy(
+                            entry,
+                            "reload runtime settings variant",
+                        )
+                        needs_reload = True
+                    if (
+                        entry.engine is not None
+                        and force_lm
+                        and isinstance(entry.engine, VLMBatchedEngine)
+                    ):
+                        self._raise_if_reload_busy(entry, "reload as LM")
+                        needs_reload = True
 
                 if not needs_reload:
                     if entry.runtime_settings_signature is None:
@@ -1148,7 +1176,7 @@ class EnginePool:
             effective_size = entry.last_observed_size or entry.estimated_size
             kv_headroom = self._kv_admission_headroom()
             for _ in range(20):
-                current = self._admission_current_usage()
+                current = self._admission_current_usage(exclude_entry_key=entry_key)
                 projected = current + effective_size + kv_headroom
                 if projected <= ceiling:
                     logger.debug(
@@ -1468,7 +1496,6 @@ class EnginePool:
         if hasattr(entry.engine, "clear_kv_cache"):
             try:
                 entry.engine.clear_kv_cache()
-                import mx
 
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(
@@ -1516,8 +1543,24 @@ class EnginePool:
         # per-request completion callbacks, so a non-streaming engine's active_requests
         # counter can leak a phantom count (a stale engine then looks permanently busy).
         # Reset it on teardown so has_active_requests() and the status API stay consistent.
+        # P2-10: stop() already aborted in-flight work, so any non-zero counter is a
+        # phantom (leaked decrement), not a live consumer. Reset unconditionally, but
+        # log loudly when the pre-reset counter was non-zero so the leak stays
+        # observable instead of being silently zeroed.
         reset = getattr(entry.engine, "_reset_activity_tracking", None)
         if callable(reset):
+            pre_count = None
+            try:
+                pre_count = getattr(entry.engine, "_active_count", None)
+            except Exception:
+                pass
+            if pre_count:
+                logger.warning(
+                    "Resetting phantom activity counter for %s (pre-reset count=%s) "
+                    "— a request likely leaked its decrement; investigate",
+                    model_id,
+                    pre_count,
+                )
             try:
                 reset()
             except Exception as e:
@@ -1584,7 +1627,11 @@ class EnginePool:
         return pre_unload_active
 
     async def unload_engine_async(
-        self, model_id: str, with_settle: bool = True
+        self,
+        model_id: str,
+        with_settle: bool = True,
+        caller_holds_lock: bool = False,
+        _marker_already_set: bool = False,
     ) -> None:
         # Full unload (detach + settle). Used by get_engine's reload/evict
         # path (called outside the lock, guarded by entry.is_loading) and by
@@ -1601,21 +1648,114 @@ class EnginePool:
         # the same recovery contract as the settle-indeterminate branch (the
         # #1623 max() in get_engine re-reads the live gauge, so estimate drift
         # self-corrects on the next admission).
-        pre_unload_active = await self._detach_engine(model_id)
-        if pre_unload_active is None:
-            return
-        if with_settle:
-            await self._settle_unloaded_engine(model_id, pre_unload_active)
-        else:
+        # P1-4: acquire an is_unloading marker under the lock so a concurrent
+        # get_engine for this victim bails off the fast path (the engine is
+        # about to be stopped lockless). Reload-path callers already hold
+        # is_loading=True on the same entry and serve no engine during reload,
+        # so skip the marker there to avoid clearing their load flag.
+        # P3-3: _evict_idle_lru_for_prefill sets the marker under the lock then
+        # releases it before calling here with _marker_already_set=True, so the
+        # slow settle does not block all get_engine. We clear the marker in the
+        # finally under the lock in that case.
+        marker_set = False
+        if _marker_already_set:
+            marker_set = True
+        elif caller_holds_lock:
             entry = self._entries.get(model_id)
-            if entry is not None:
-                self._current_model_memory -= entry.estimated_size
-            logger.debug(
-                f"Fast unload (no settle) for '{model_id}': "
-                f"estimate={format_size(entry.estimated_size if entry else 0)}, "
-                f"active_memory={format_size(pre_unload_active)}"
-            )
-            self._wake_process_memory_enforcer()
+            if entry is not None and entry.engine is not None and not entry.is_loading:
+                # R-6 (#811): never stop() an engine a concurrent get_engine
+                # leased (in_use > 0) — doing so causes use-after-stop (garbage
+                # output / hang) once the lease holder runs. Defer via the
+                # pending-unload marker so _unload_pending_if_idle_locked drains
+                # it after leases release instead of racing the stop.
+                # NOTE: only a *real* lease (in_use > 0) defers. A phantom
+                # active count (in_use == 0, has_active_requests() True from a
+                # leaked decrement — the #1595 case) has no live consumer, so
+                # teardown proceeds and the reset at the detach path zeroes the
+                # stale counter. Deferring on a phantom would leave the leak
+                # uncleaned and the engine permanently "busy".
+                if entry.in_use > 0:
+                    self._mark_pending_unload_locked(
+                        model_id,
+                        "unload_engine_async: deferred (busy)",
+                    )
+                    logger.info(
+                        "unload_engine_async('%s') deferred: in_use=%d busy=%s "
+                        "(#811 R-6 use-after-stop guard)",
+                        model_id,
+                        entry.in_use,
+                        self._entry_has_active_requests(entry),
+                    )
+                    return
+                entry.is_unloading = True
+                marker_set = True
+        else:
+            async with self._lock:
+                entry = self._entries.get(model_id)
+                if (
+                    entry is not None
+                    and entry.engine is not None
+                    and not entry.is_loading
+                ):
+                    if entry.in_use > 0:
+                        # R-6 (#811): real lease — defer to avoid
+                        # use-after-stop. See the caller_holds_lock branch
+                        # for the phantom-vs-real-lease rationale.
+                        self._mark_pending_unload_locked(
+                            model_id,
+                            "unload_engine_async: deferred (busy)",
+                        )
+                        logger.info(
+                            "unload_engine_async('%s') deferred: in_use=%d "
+                            "busy=%s (#811 R-6 use-after-stop guard)",
+                            model_id,
+                            entry.in_use,
+                            self._entry_has_active_requests(entry),
+                        )
+                        return
+                    entry.is_unloading = True
+                    marker_set = True
+        try:
+            pre_unload_active = await self._detach_engine(model_id)
+            if pre_unload_active is None:
+                return
+            if with_settle:
+                await self._settle_unloaded_engine(model_id, pre_unload_active)
+            else:
+                entry = self._entries.get(model_id)
+                if entry is not None:
+                    self._current_model_memory -= entry.estimated_size
+                logger.debug(
+                    f"Fast unload (no settle) for '{model_id}': "
+                    f"estimate={format_size(entry.estimated_size if entry else 0)}, "
+                    f"active_memory={format_size(pre_unload_active)}"
+                )
+                self._wake_process_memory_enforcer()
+        finally:
+            if marker_set:
+                if caller_holds_lock:
+                    entry = self._entries.get(model_id)
+                    if entry is not None:
+                        entry.is_unloading = False
+                        event = entry.loading_event
+                        entry.loading_event = None
+                    else:
+                        event = None
+                else:
+                    # _marker_already_set and the lockless reload/evict path
+                    # both arrive here without the lock held; re-acquire it to
+                    # clear the marker + wake waiters consistently with the
+                    # fast-path read (which happens under the lock).
+                    async with self._lock:
+                        entry = self._entries.get(model_id)
+                        if entry is not None:
+                            entry.is_unloading = False
+                            event = entry.loading_event
+                            entry.loading_event = None
+                        else:
+                            event = None
+                if event is not None:
+                    event.set()
 
     async def _settle_unloaded_engine(
         self, model_id: str, pre_unload_active: int
@@ -1837,8 +1977,9 @@ class EnginePool:
             return False
 
         evicted_any = False
-        async with self._lock:
-            while True:
+        while True:
+            victim: str | None
+            async with self._lock:
                 current = self._admission_current_usage()
                 if current + predicted <= target:
                     return evicted_any
@@ -1859,6 +2000,17 @@ class EnginePool:
                         )
                     return evicted_any
 
+                # P3-3: set the is_unloading marker under the lock so a
+                # concurrent get_engine fast-path waits instead of serving
+                # the victim, then RELEASE the lock for the (potentially
+                # slow) settle. Holding the lock across unload_engine_async
+                # blocked every concurrent get_engine for the whole teardown.
+                victim_entry = self._entries.get(victim)
+                if victim_entry is not None:
+                    victim_entry.is_unloading = True
+                    if victim_entry.loading_event is None:
+                        victim_entry.loading_event = asyncio.Event()
+
                 logger.info(
                     "Evicting idle model '%s' for prefill headroom on '%s' "
                     "(request=%s, projected=%s > target=%s)",
@@ -1868,8 +2020,13 @@ class EnginePool:
                     format_size(current + predicted),
                     format_size(target),
                 )
-                await self.unload_engine_async(victim)
-                evicted_any = True
+
+            # Settle the unload outside the lock. unload_engine_async's own
+            # marker path is skipped (we set is_unloading above); pass
+            # caller_holds_lock=False since we are not holding it here, and
+            # signal the waiters when done.
+            await self.unload_engine_async(victim, _marker_already_set=True)
+            evicted_any = True
 
     def _other_entries_serving(self, model_id: str) -> bool:
         """True when any loaded entry other than ``model_id`` is serving.
@@ -2262,12 +2419,14 @@ class EnginePool:
 
             entry.engine = engine
             entry.last_access = time.time()
-            self._current_model_memory += entry.estimated_size
+            # P2-5: defer the memory-counter increment + enforcer update until
+            # AFTER the post-load clear_cache below. The counter drives the
+            # enforcer's eviction decisions; incrementing before clear_cache
+            # makes it read ~estimated_size while real resident memory is still
+            # ~2x (load temporaries), triggering false-positive evictions of
+            # other models mid-load. P1-8's pending_load_bytes already reserves
+            # headroom for concurrent admission, so deferring here is safe.
             load_completed = True
-            if self._process_memory_enforcer is not None:
-                self._process_memory_enforcer.update_loaded_model_bytes(
-                    int(entry.estimated_size)
-                )
 
             # VLM MTP: load gemma4_assistant drafter and attach to engine.
             # Fail-soft — drafter load issues never block the target engine.
@@ -2331,6 +2490,14 @@ class EnginePool:
             post_load_memory = max(mx.get_active_memory(), get_phys_footprint())
             observed_delta = max(0, post_load_memory - pre_load_memory)
             entry.actual_size = observed_delta or entry.estimated_size
+            # P2-5: now that intermediate buffers are cleared, record the
+            # resident footprint so the enforcer sees the true post-load
+            # baseline rather than the ~2x peak.
+            self._current_model_memory += entry.estimated_size
+            if self._process_memory_enforcer is not None:
+                self._process_memory_enforcer.update_loaded_model_bytes(
+                    int(entry.estimated_size)
+                )
             # #355: persist across unload for the next admission projection
             entry.last_observed_size = entry.actual_size
 
@@ -2473,7 +2640,7 @@ class EnginePool:
                 entry = self._entries.get(model_id)
                 if entry and entry.engine is not None:
                     try:
-                        await self.unload_engine_async(model_id)
+                        await self.unload_engine_async(model_id, caller_holds_lock=True)
                     except Exception as e:
                         logger.error(f"Error unloading {model_id} during shutdown: {e}")
 

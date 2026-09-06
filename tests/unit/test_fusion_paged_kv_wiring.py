@@ -1,13 +1,7 @@
-import os
 import types
 
-import mlx.core as mx
-import pytest
-
 from fusion_mlx.custom_kernels.fusion_paged_kv import (
-    evict_request,
     install_paged_kv,
-    register_cache,
 )
 from fusion_mlx.custom_kernels.paged_kv_pool import (
     FusionPagedKVPool,

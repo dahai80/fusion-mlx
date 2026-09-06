@@ -316,6 +316,47 @@ class TestBatchedEngineStreamingCleanup:
         assert fake_engine.aborted_request_id == "request-1"
 
 
+class TestBatchedEngineHasActiveRequests:
+    """P0-5: has_active_requests must read _active_contexts, not the
+    nonexistent _output_collectors."""
+
+    def test_returns_false_when_no_engine(self):
+        from fusion_mlx.engines.batched import BatchedEngine
+
+        engine = BatchedEngine(model_name="test-model")
+        assert engine.has_active_requests() is False
+
+    def test_returns_false_when_no_active_contexts(self):
+        from fusion_mlx.engines.batched import BatchedEngine
+
+        engine = BatchedEngine(model_name="test-model")
+        engine._loaded = True
+
+        class _Inner:
+            _active_contexts = {}
+
+        class _Wrapper:
+            engine = _Inner()
+
+        engine._engine = _Wrapper()
+        assert engine.has_active_requests() is False
+
+    def test_returns_true_when_active_contexts_nonempty(self):
+        from fusion_mlx.engines.batched import BatchedEngine
+
+        engine = BatchedEngine(model_name="test-model")
+        engine._loaded = True
+
+        class _Inner:
+            _active_contexts = {"req-1": object()}
+
+        class _Wrapper:
+            engine = _Inner()
+
+        engine._engine = _Wrapper()
+        assert engine.has_active_requests() is True
+
+
 class TestBatchedEngineApplyChatTemplate:
     """Tests for BatchedEngine._apply_chat_template()."""
 

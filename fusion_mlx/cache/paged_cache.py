@@ -28,7 +28,7 @@ import hashlib
 import logging
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, NewType
 
@@ -150,6 +150,10 @@ class CacheBlock:
     block_id: int
     ref_count: int = 0
     block_hash: BlockHash | None = None
+    # P3-1: parent block_hash in the chain-hash prefix. Tracked so eviction
+    # can cascade to orphaned descendants instead of leaving unreachable
+    # ref-0 blocks in the hash map until LRU notices them.
+    parent_hash: BlockHash | None = None
 
     # Doubly linked list pointers for FreeKVCacheBlockQueue
     prev_free_block: CacheBlock | None = None
@@ -173,6 +177,7 @@ class CacheBlock:
     def reset_hash(self) -> None:
         """Reset block hash when evicted from cache."""
         self.block_hash = None
+        self.parent_hash = None
 
     def touch(self) -> None:
         """Update last access time."""
@@ -584,6 +589,12 @@ class PagedCacheManager(CacheManager):
         # paged SSD cache manager for storage (set via set_paged_ssd_cache_manager)
         self._paged_ssd_cache_manager: Any | None = None
 
+        # Block-content invalidation callbacks. Fired when a block's content
+        # hash is cleared (eviction/free), so external indexes that key on
+        # block_id (e.g. RadixPrefixCache trie) can detach the stale pointer
+        # and avoid serving wrong KV after the block_id is reallocated (#807 P0).
+        self._block_freed_callbacks: list[Callable[[int], None]] = []
+
         logger.info(
             f"PagedCacheManager initialized: block_size={block_size}, "
             f"initial_blocks={initial_count}, max_blocks={max_blocks}, "
@@ -602,6 +613,18 @@ class PagedCacheManager(CacheManager):
         """
         self._paged_ssd_cache_manager = paged_ssd_cache_manager
         logger.info("paged SSD cache manager connected to PagedCacheManager")
+
+    def register_block_freed_callback(self, callback: Callable[[int], None]) -> None:
+        self._block_freed_callbacks.append(callback)
+
+    def _notify_block_content_invalidated(self, block_id: int) -> None:
+        if not self._block_freed_callbacks:
+            return
+        for cb in self._block_freed_callbacks:
+            try:
+                cb(block_id)
+            except Exception as e:
+                logger.debug("block-freed callback error for block %d: %s", block_id, e)
 
     # =========================================================================
     # Dynamic Block Pool Growth (Elastic KV Cache)
@@ -745,6 +768,7 @@ class PagedCacheManager(CacheManager):
 
         if evicted_id is not None:
             block.reset_hash()
+            self._notify_block_content_invalidated(block.block_id)
             self.stats.evictions += 1
             return True
 
@@ -770,10 +794,19 @@ class PagedCacheManager(CacheManager):
 
             if block.ref_count <= 0:
                 # Remove from hash cache
+                freed_parent_hash = None
                 if block.block_hash is not None:
+                    freed_parent_hash = block.block_hash
                     self.cached_block_hash_to_block.pop(
                         block.block_hash, block.block_id
                     )
+                    self._notify_block_content_invalidated(block_id)
+
+                # P3-1: cascade-clear orphaned descendant hash entries whose
+                # chain parent was this block. They are unreachable via the
+                # chain now and would linger until LRU reuse.
+                if freed_parent_hash is not None:
+                    self._cascade_evict_orphans_locked(freed_parent_hash)
 
                 # Remove from allocated
                 del self.allocated_blocks[block_id]
@@ -814,6 +847,7 @@ class PagedCacheManager(CacheManager):
                         self.cached_block_hash_to_block.pop(
                             block.block_hash, block.block_id
                         )
+                        self._notify_block_content_invalidated(block.block_id)
 
                     del self.allocated_blocks[block.block_id]
                     to_free.append(block)
@@ -976,6 +1010,7 @@ class PagedCacheManager(CacheManager):
                     model_name=self.model_name,
                 )
                 block.block_hash = block_hash
+                block.parent_hash = parent_hash
                 block.token_count = len(block_tokens)
 
                 # Add to cache
@@ -1040,6 +1075,7 @@ class PagedCacheManager(CacheManager):
                         block = self._allocate_block_internal()
                         if block is not None:
                             block.block_hash = block_hash
+                            block.parent_hash = parent_hash
                             block.token_count = self.block_size
                             # Cold-registered blocks are metadata-only until a
                             # request claims them via increment_ref().
@@ -1322,10 +1358,16 @@ class PagedCacheManager(CacheManager):
             if curr.ref_count > 0 or bool(curr.is_null):
                 curr = curr.next_free_block
                 continue
+            # P3-1: remember the parent hash before reset so we can cascade
+            # to orphaned descendants — blocks whose chain parent was this
+            # block are now unreachable via the hash chain and would linger
+            # in the hash map until LRU eventually reaches them.
+            evicted_parent_hash = curr.block_hash
             if curr.block_hash is not None:
                 self.cached_block_hash_to_block.pop(curr.block_hash, None)
             self.stats.total_tokens_cached -= curr.token_count
             curr.reset_hash()
+            self._notify_block_content_invalidated(curr.block_id)
             curr.token_count = 0
             if curr.block_id in self.allocated_blocks:
                 del self.allocated_blocks[curr.block_id]
@@ -1333,8 +1375,50 @@ class PagedCacheManager(CacheManager):
             self.stats.evictions += 1
             evicted += 1
             curr = curr.next_free_block
+            if evicted_parent_hash is not None:
+                evicted += self._cascade_evict_orphans_locked(evicted_parent_hash)
         if evicted > 0:
             logger.info(f"Evicted {evicted} LRU blocks from cache")
+        return evicted
+
+    def _cascade_evict_orphans_locked(self, parent_hash: BlockHash) -> int:
+        # P3-1: a parent block's hash entry was just removed. Descendants whose
+        # chain parent was that block are now unreachable via the hash chain
+        # and their stale entries linger in cached_block_hash_to_block until
+        # LRU reuse eventually clears them. Drop those entries eagerly here.
+        # We only clear ref-0 descendants (the block itself stays in the free
+        # queue for reuse — free_block already reclaimed its memory; we are
+        # only purging the stale hash lookup so a future prefix walk stops at
+        # the broken link instead of matching an orphaned child).
+        evicted = 0
+        work = [parent_hash]
+        max_cascade = 256
+        scanned = 0
+        while work and scanned < max_cascade:
+            ph = work.pop()
+            scanned += 1
+            orphans: list[tuple[BlockHash, int, CacheBlock]] = []
+            for b_hash, entry in list(self.cached_block_hash_to_block._cache.items()):
+                blocks = entry if isinstance(entry, dict) else {entry.block_id: entry}
+                for block in blocks.values():
+                    if block.parent_hash == ph and block.ref_count <= 0:
+                        orphans.append((b_hash, block.block_id, block))
+            for b_hash, block_id, block in orphans:
+                if block.ref_count > 0:
+                    continue
+                child_hash = block.block_hash
+                self.cached_block_hash_to_block.pop(b_hash, block_id)
+                block.reset_hash()
+                self._notify_block_content_invalidated(block.block_id)
+                evicted += 1
+                if child_hash is not None:
+                    work.append(child_hash)
+        if evicted > 0:
+            logger.info(
+                "Cascade-cleared %d orphaned descendant hash entries (scanned=%d)",
+                evicted,
+                scanned,
+            )
         return evicted
 
     def evict_lru_blocks(self, num_blocks: int) -> int:
@@ -1435,6 +1519,15 @@ class PagedCacheManager(CacheManager):
             # Count entries before clearing
             cleared_count = len(self.allocated_blocks) - 1  # Exclude null block
 
+            # Fire block-content invalidation callbacks for every allocated block
+            # so external indexes (RadixPrefixCache trie, BlockAwarePrefixCache
+            # _prefix_index, BoundarySnapshotSSDStore) detach stale block_id
+            # pointers BEFORE block_ids get reallocated to new content. Without
+            # this, a post-clear fetch hits a stale index -> wrong KV (#808 P0).
+            stale_block_ids = [
+                b.block_id for b in self.allocated_blocks.values() if not b.is_null
+            ]
+
             # Reset to initial blocks (memory optimization)
             initial_count = min(self.initial_blocks, self.max_blocks)
             self._current_allocated_count = initial_count
@@ -1459,8 +1552,14 @@ class PagedCacheManager(CacheManager):
                 free_blocks=initial_count - 1,
             )
 
+            # Notify external indexes after maps are rebuilt so callbacks reading
+            # paged state see a consistent pool.
+            for bid in stale_block_ids:
+                self._notify_block_content_invalidated(bid)
+
             logger.info(
-                f"PagedCacheManager cleared (reset to {initial_count} initial blocks)"
+                f"PagedCacheManager cleared (reset to {initial_count} initial blocks, "
+                f"invalidated {len(stale_block_ids)} external index entries)"
             )
 
             return max(0, cleared_count)
@@ -1589,6 +1688,7 @@ class PagedCacheManager(CacheManager):
             # Remove from hash cache
             if block.block_hash is not None:
                 self.cached_block_hash_to_block.pop(block.block_hash, block.block_id)
+                self._notify_block_content_invalidated(block_id)
 
             # Clear metadata
             block.reset_hash()

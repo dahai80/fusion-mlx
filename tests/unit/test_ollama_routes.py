@@ -173,9 +173,7 @@ class TestShowEndpoint:
 class TestPsEndpoint:
     def test_ps_lists_loaded(self, app_client, monkeypatch):
         entry = _FakeEntry(engine=object())
-        monkeypatch.setattr(
-            ollama_routes, "_pool", _FakePool({"loaded-model": entry})
-        )
+        monkeypatch.setattr(ollama_routes, "_pool", _FakePool({"loaded-model": entry}))
         r = app_client.get("/api/ps")
         assert r.status_code == 200
         models = r.json()["models"]
@@ -210,9 +208,7 @@ class TestPullEndpoint:
             "POST", "/api/pull", json={"name": "new-model", "stream": True}
         ) as resp:
             assert resp.status_code == 200
-            lines = [
-                ln for ln in resp.iter_lines() if ln and ln.startswith("{")
-            ]
+            lines = [ln for ln in resp.iter_lines() if ln and ln.startswith("{")]
         assert any('"status": "success"' in ln for ln in lines)
 
 
@@ -227,12 +223,8 @@ class TestDeleteEndpoint:
         assert r.status_code == 404
 
     def test_delete_409_when_loaded(self, app_client, monkeypatch, tmp_path):
-        entry = _FakeEntry(
-            engine=object(), model_path=str(tmp_path / "test-model")
-        )
-        monkeypatch.setattr(
-            ollama_routes, "_pool", _FakePool({"test-model": entry})
-        )
+        entry = _FakeEntry(engine=object(), model_path=str(tmp_path / "test-model"))
+        monkeypatch.setattr(ollama_routes, "_pool", _FakePool({"test-model": entry}))
         monkeypatch.setattr(
             "fusion_mlx.server.resolve_model_with_profile",
             lambda m: ("test-model", {}),
@@ -246,9 +238,7 @@ class TestDeleteEndpoint:
         model_dir.mkdir(parents=True)
         (model_dir / "config.json").write_text("{}")
         entry = _FakeEntry(model_path=str(model_dir))
-        monkeypatch.setattr(
-            ollama_routes, "_pool", _FakePool({"test-model": entry})
-        )
+        monkeypatch.setattr(ollama_routes, "_pool", _FakePool({"test-model": entry}))
         monkeypatch.setattr(
             "fusion_mlx.server.resolve_model_with_profile",
             lambda m: ("test-model", {}),
@@ -266,9 +256,7 @@ class TestCopyEndpoint:
         src.mkdir(parents=True)
         (src / "config.json").write_text("{}")
         entry = _FakeEntry(model_path=str(src))
-        monkeypatch.setattr(
-            ollama_routes, "_pool", _FakePool({"src-model": entry})
-        )
+        monkeypatch.setattr(ollama_routes, "_pool", _FakePool({"src-model": entry}))
         monkeypatch.setattr(
             "fusion_mlx.server.resolve_model_with_profile",
             lambda m: ("src-model", {}),
@@ -288,18 +276,14 @@ class TestCopyEndpoint:
         )
         assert r.status_code == 400
 
-    def test_copy_409_when_dest_exists(
-        self, app_client, monkeypatch, tmp_path
-    ):
+    def test_copy_409_when_dest_exists(self, app_client, monkeypatch, tmp_path):
         models_root = tmp_path / "models"
         src = models_root / "src-model"
         dest = models_root / "alias-model"
         src.mkdir(parents=True)
         dest.mkdir(parents=True)
         entry = _FakeEntry(model_path=str(src))
-        monkeypatch.setattr(
-            ollama_routes, "_pool", _FakePool({"src-model": entry})
-        )
+        monkeypatch.setattr(ollama_routes, "_pool", _FakePool({"src-model": entry}))
         monkeypatch.setattr(
             "fusion_mlx.server.resolve_model_with_profile",
             lambda m: ("src-model", {}),

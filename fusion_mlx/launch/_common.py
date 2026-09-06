@@ -171,4 +171,3 @@ def mask_api_key(key: str) -> str:
     if len(key) <= 8:
         return "****"
     return f"****{key[-4:]}"
-

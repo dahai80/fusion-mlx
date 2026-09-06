@@ -1682,11 +1682,18 @@ class VLMBatchedEngine(BaseEngine):
         return len(self._tokenizer.encode(prompt))
 
     def has_active_requests(self) -> bool:
+        # P0-5: EngineCore tracks in-flight requests in _active_contexts, not
+        # _output_collectors (which does not exist on EngineCore).
         ec = getattr(self, "_engine", None)
         if ec is not None:
             inner = getattr(ec, "engine", None)
             if inner is not None:
-                return len(getattr(inner, "_output_collectors", {})) > 0
+                active = getattr(inner, "_active_contexts", None)
+                if active is not None:
+                    return len(active) > 0
+                collectors = getattr(inner, "_output_collectors", None)
+                if collectors is not None:
+                    return len(collectors) > 0
         return False
 
     def get_stats(self) -> dict[str, Any]:

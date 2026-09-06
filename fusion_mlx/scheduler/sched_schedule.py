@@ -41,6 +41,13 @@ from .types import (
 # or memory ceiling can never deadlock scheduling (#1684).
 _ADMISSION_STALL_TIMEOUT_S = 60.0
 
+# R-21 (#811): prompts above this many tokens use chunked prefill even when
+# chunked_prefill=False, so an inline full-prefill can't block every running
+# decode request for tens of seconds. 4x the default prefill_step_size (2048)
+# = ~8k tokens — the point where inline prefill wall-clock visibly stalls
+# co-tenant decoding on Apple Silicon.
+_INLINE_PREFILL_TOKEN_LIMIT = 4 * 2048
+
 
 def _release_multimodal_tensors(request: "Request") -> None:
     """Release multimodal tensors after prefill to free unified memory."""
@@ -175,14 +182,18 @@ def _schedule_waiting(
             )
             break
 
-        # Generation memory guard: when requests are already running,
-        # defer scheduling if current memory + estimated prefill peak
-        # exceeds the soft limit. This prevents admitting new requests
-        # when there isn't enough headroom for their KV cache + SDPA
-        # temp allocations, avoiding Metal OOM during batch_generator.next().
-        # A stall persisting past _ADMISSION_STALL_TIMEOUT_S rejects the
-        # head-of-line request (#1684).
-        if self._prefill_memory_guard and self._memory_limit_bytes > 0 and self.running:
+        # Generation memory guard: defer scheduling if current memory +
+        # estimated prefill peak exceeds the soft limit. This prevents
+        # admitting new requests when there isn't enough headroom for their
+        # KV cache + SDPA temp allocations, avoiding Metal OOM during
+        # batch_generator.next(). A stall persisting past
+        # _ADMISSION_STALL_TIMEOUT_S rejects the head-of-line request (#1684).
+        # R-8 (#811): the guard MUST run when running==0 too — an idle server's
+        # first burst of long-context requests was admitted with zero memory
+        # check, OOMing before any single-engine guard could trigger. The
+        # _ADMISSION_STALL_TIMEOUT_S reject path bounds the worst case so a
+        # single oversized request cannot hang the queue forever.
+        if self._prefill_memory_guard and self._memory_limit_bytes > 0:
             now = time.monotonic()
             mem_blocked_id = self._memory_admission_blocked_request_id
             mem_blocked_since = self._memory_admission_blocked_since
@@ -612,8 +623,22 @@ def _schedule_waiting(
             # Chunked prefill: non-VLM prompts longer than one step are
             # spread across multiple step() calls. The first chunk is run
             # here; subsequent chunks run in _advance_chunked_prefills().
+            #
+            # R-21 (#811): auto-fallback to chunked even when the operator
+            # left chunked_prefill=False (the default). The inline path runs
+            # the whole prompt in one _do_external_prefill call, blocking
+            # every running decode request for the full prompt length — tens
+            # of seconds on a large prompt. Above _INLINE_PREFILL_TOKEN_LIMIT
+            # tokens, force chunked so decode is interleaved. Set
+            # FUSION_FORCE_INLINE_PREFILL=1 to restore the old blocking
+            # behavior for benchmarking.
+            _force_inline = os.environ.get("FUSION_FORCE_INLINE_PREFILL", "") == "1"
+            _use_chunked = self.config.chunked_prefill or (
+                not _force_inline
+                and len(tokens_to_process) > _INLINE_PREFILL_TOKEN_LIMIT
+            )
             if (
-                self.config.chunked_prefill
+                _use_chunked
                 and vlm_embeds is None
                 and len(tokens_to_process) > self.config.prefill_step_size + 1
             ):

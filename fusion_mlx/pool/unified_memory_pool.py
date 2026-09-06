@@ -503,13 +503,9 @@ class KVCacheBridge:
                     f"[Bridge] evicted {freed} paged_kv blocks for {request_id}"
                 )
         except ImportError:
-            logger.debug(
-                f"[Bridge] paged_kv unavailable, no eviction for {request_id}"
-            )
+            logger.debug(f"[Bridge] paged_kv unavailable, no eviction for {request_id}")
         except Exception as e:
-            logger.warning(
-                f"[Bridge] evict_or_swap failed for {request_id}: {e}"
-            )
+            logger.warning(f"[Bridge] evict_or_swap failed for {request_id}: {e}")
 
 
 @dataclass

@@ -92,6 +92,23 @@ _EMERGENCY_OVER_CEILING_MARGIN_BYTES = 2 * 1024**3
 _EMERGENCY_OVER_CEILING_POLLS = 2
 _HOT_CACHE_RESERVATION_SLACK_BYTES = 512 * 1024**2
 
+# R-10 (#811): eviction hysteresis. Without a cooldown the `while current >
+# target` loop evicted a different victim every 1s poll under sustained
+# pressure — A evicted, A reloaded, B evicted, B reloaded — throughput
+# collapsed to zero (only WARNING logs). After evicting a model, refuse to
+# evict the same model again for this many seconds so the reload cost is
+# amortized and the loop can't thrash between two LRU candidates.
+_EVICT_COOLDOWN_SECONDS = 30.0
+
+# R-9 (#811): unrecoverable-pressure guard. When every resident model is
+# pinned (or none evictable) AND usage is over the real ceiling, the enforcer
+# previously logged a WARNING and kept polling until macOS jetsam killed the
+# process — corrupting in-flight responses with no drain, no failover signal.
+# After this many consecutive unrecoverable polls, flip cfg.draining so
+# /health/ready returns 503, downstream load balancers stop sending new
+# requests, and the operator sees a CRITICAL line instead of a silent kill.
+_UNRECOVERABLE_POLL_THRESHOLD = 3
+
 
 def _format_gb(b: int) -> str:
     """Format bytes as GB string."""
@@ -323,6 +340,9 @@ class ProcessMemoryEnforcer:
         self._eviction_marked: set[str] = set()
         self._loaded_model_bytes: int = 0
         self._state_lock = threading.Lock()
+        self._last_evicted_at: dict[str, float] = {}
+        self._unrecoverable_polls: int = 0
+        self._drain_flipped: bool = False
 
     def update_loaded_model_bytes(self, delta: int) -> None:
         """Adjust tracked loaded model byte count."""
@@ -952,11 +972,21 @@ class ProcessMemoryEnforcer:
                 adjust(self._pressure_level)
 
     async def _abort_loaded_requests_for_memory_emergency(self) -> int:
-        """Abort active requests on loaded models without unloading them."""
+        """Abort active requests on loaded models without unloading them.
+
+        R-11 (#811): never abort pinned-model requests. Pin is the operator's
+        hard promise that a model's in-flight work survives memory pressure.
+        The prior loop iterated every entry with no ``is_pinned`` guard, so an
+        all-pinned resident set under emergency pressure had its pinned
+        requests killed — the pin guarantee was violated exactly when it
+        mattered most.
+        """
         aborted_total = 0
         for entry in self._engine_pool._entries.values():
             engine = getattr(entry, "engine", None)
             if engine is None:
+                continue
+            if getattr(entry, "is_pinned", False):
                 continue
 
             abort_all = getattr(engine, "abort_all_requests", None)
@@ -1160,6 +1190,7 @@ class ProcessMemoryEnforcer:
                     self._propagate_memory_limit()
 
         if new_level == "ok":
+            self._unrecoverable_polls = 0
             self._walk_store_cache_caps()
             return
 
@@ -1232,6 +1263,24 @@ class ProcessMemoryEnforcer:
                             if e.engine is not None and not e.is_pinned
                         ]
                         if new_level == "hard" or len(loaded_non_pinned) > 1:
+                            # R-10 (#811): hysteresis — skip a victim evicted
+                            # within the cooldown window. Without this the loop
+                            # re-evicted the same freshly-reloaded model every
+                            # poll, thrashing A<->B under sustained pressure.
+                            last_evict = self._last_evicted_at.get(victim, 0.0)
+                            if (
+                                time.monotonic() - last_evict < _EVICT_COOLDOWN_SECONDS
+                                and not emergency
+                            ):
+                                logger.warning(
+                                    "Eviction thrash guard: victim '%s' evicted "
+                                    "%.1fs ago (cooldown %.0fs); requesting idle "
+                                    "reclaim instead of re-evicting.",
+                                    victim,
+                                    time.monotonic() - last_evict,
+                                    _EVICT_COOLDOWN_SECONDS,
+                                )
+                                break
                             entry = self._engine_pool._entries.get(victim)
                             if (
                                 entry
@@ -1248,6 +1297,7 @@ class ProcessMemoryEnforcer:
                             logger.warning(
                                 f"Evicting model '{victim}' (pressure={new_level})"
                             )
+                            self._last_evicted_at[victim] = time.monotonic()
                             self._engine_pool._lock.release()
                             _lock_held = False
                             await self._engine_pool.unload_engine_async(victim)
@@ -1339,6 +1389,45 @@ class ProcessMemoryEnforcer:
                                     "idle reclaim on %d scheduler(s).",
                                     requested,
                                 )
+                                # R-9 (#811): unrecoverable pressure — over the
+                                # real ceiling with nothing to evict/abort.
+                                # After N consecutive such polls, flip draining
+                                # so /health/ready goes 503 and downstream stops
+                                # sending new traffic, rather than polling until
+                                # macOS jetsam kills the process with no drain.
+                                if emergency:
+                                    self._unrecoverable_polls += 1
+                                    if (
+                                        self._unrecoverable_polls
+                                        >= _UNRECOVERABLE_POLL_THRESHOLD
+                                        and not self._drain_flipped
+                                    ):
+                                        self._drain_flipped = True
+                                        try:
+                                            from ..config import get_config
+
+                                            get_config().draining = True
+                                        except Exception as exc:  # noqa: BLE001
+                                            logger.error(
+                                                "Could not set draining flag "
+                                                "during unrecoverable memory "
+                                                "pressure: %s",
+                                                exc,
+                                            )
+                                        logger.critical(
+                                            "UNRECOVERABLE memory pressure: "
+                                            "current=%s over ceiling=%s for %d "
+                                            "consecutive polls with no evictable/"
+                                            "abortable models. Marked instance "
+                                            "DRAINING so /health/ready returns "
+                                            "503. Operator must free memory "
+                                            "(unpin/kill co-tenants) or restart; "
+                                            "macOS jetsam will otherwise kill "
+                                            "this process.",
+                                            _format_gb(emergency_current),
+                                            _format_gb(ceiling),
+                                            self._unrecoverable_polls,
+                                        )
                             else:
                                 logger.warning(
                                     "Hard memory pressure but no models loaded."
@@ -1361,6 +1450,8 @@ class ProcessMemoryEnforcer:
             post_level = "hard"
         if post_ceiling <= 0 or post_current < post_ceiling:
             self._over_ceiling_polls = 0
+        if post_level == "ok":
+            self._unrecoverable_polls = 0
         if post_level != self._pressure_level:
             self._pressure_level = post_level
             self._propagate_memory_limit()

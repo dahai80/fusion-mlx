@@ -45,7 +45,21 @@ class _BodyReceiveTimeoutError(Exception):
         self.timeout = timeout
 
 
-_GUARDED_PREFIXES = ("/v1/", "/internal/", "/anthropic/", "/distributed/")
+# R-15 (#811): guard the management plane too. The prior allowlist
+# ("/v1/", "/internal/", "/anthropic/", "/distributed/") left /admin/*,
+# /rpc, and /stats unguarded, so a 10GB body or 100k-deep JSON posted to
+# /admin/api/login was buffered into memory by uvicorn and OOM-killed the
+# inference host, taking down every co-tenant model. Admin endpoints carry
+# no file uploads (verified), so the default 8MiB cap is safe.
+_GUARDED_PREFIXES = (
+    "/v1/",
+    "/internal/",
+    "/anthropic/",
+    "/distributed/",
+    "/admin/",
+    "/rpc",
+    "/stats",
+)
 _EXCLUDED_PATHS = frozenset({"/v1/audio/transcriptions"})
 
 

@@ -18,7 +18,7 @@ from fusion_mlx.admin.auth import validate_api_key, verify_api_key
 
 class TestValidateApiKey:
     def test_valid_key_simple(self):
-        is_valid, msg = validate_api_key("abcd")
+        is_valid, msg = validate_api_key("abcd1234efgh")
         assert is_valid is True
         assert msg == ""
 
@@ -29,34 +29,34 @@ class TestValidateApiKey:
     def test_too_short_empty(self):
         is_valid, msg = validate_api_key("")
         assert is_valid is False
-        assert "at least 4" in msg
+        assert "at least 12" in msg
 
     def test_too_short_one_char(self):
         is_valid, msg = validate_api_key("a")
         assert is_valid is False
-        assert "at least 4" in msg
+        assert "at least 12" in msg
 
-    def test_too_short_three_chars(self):
-        is_valid, msg = validate_api_key("abc")
+    def test_too_short_eleven_chars(self):
+        is_valid, msg = validate_api_key("abcdefghijk")
         assert is_valid is False
-        assert "at least 4" in msg
+        assert "at least 12" in msg
 
-    def test_exactly_four_chars(self):
-        is_valid, msg = validate_api_key("abcd")
+    def test_exactly_twelve_chars(self):
+        is_valid, msg = validate_api_key("abcd1234efgh")
         assert is_valid is True
 
     def test_non_ascii_accented(self):
-        is_valid, msg = validate_api_key("café-key")
+        is_valid, msg = validate_api_key("café-key-1234")
         assert is_valid is False
         assert "ASCII" in msg
 
     def test_non_ascii_emoji(self):
-        is_valid, msg = validate_api_key("key-\U0001f511")
+        is_valid, msg = validate_api_key("key-\U0001f511-abcdef")
         assert is_valid is False
         assert "ASCII" in msg
 
     def test_non_ascii_cyrillic(self):
-        is_valid, msg = validate_api_key("ключ-секрет")
+        is_valid, msg = validate_api_key("ключ-секрет-но")
         assert is_valid is False
         assert "ASCII" in msg
 
@@ -120,10 +120,10 @@ class TestSubKeyCRUD:
     def test_create_sub_key_duplicate_main_key(self):
         from fastapi import HTTPException
 
-        mock_settings = self._mock_global_settings(api_key="main-key")
+        mock_settings = self._mock_global_settings(api_key="main-key-12345")
         original = self._patch_getter(mock_settings)
         try:
-            request = subkey_routes.CreateSubKeyRequest(key="main-key")
+            request = subkey_routes.CreateSubKeyRequest(key="main-key-12345")
             with pytest.raises(HTTPException) as exc_info:
                 asyncio.run(subkey_routes.create_sub_key(request, is_admin=True))
             assert exc_info.value.status_code == 400
@@ -134,14 +134,14 @@ class TestSubKeyCRUD:
     def test_create_sub_key_too_short(self):
         from fastapi import HTTPException
 
-        mock_settings = self._mock_global_settings(api_key="main-key")
+        mock_settings = self._mock_global_settings(api_key="main-key-12345")
         original = self._patch_getter(mock_settings)
         try:
-            request = subkey_routes.CreateSubKeyRequest(key="abc")
+            request = subkey_routes.CreateSubKeyRequest(key="abcdefghijk")
             with pytest.raises(HTTPException) as exc_info:
                 asyncio.run(subkey_routes.create_sub_key(request, is_admin=True))
             assert exc_info.value.status_code == 400
-            assert "at least 4" in exc_info.value.detail
+            assert "at least 12" in exc_info.value.detail
         finally:
             self._restore_getter(original)
 
@@ -253,6 +253,14 @@ class TestLoginRejectsSubKey:
 
 
 class TestSetupApiKeyEndpoint:
+    def _local_fastapi_req(self):
+        # _is_loopback_client (#811 R-14) rejects any forwarded/proxy header,
+        # so headers.get(...) must return a falsy value, not a MagicMock.
+        mock_fastapi_req = MagicMock()
+        mock_fastapi_req.client.host = "127.0.0.1"
+        mock_fastapi_req.headers = {}
+        return mock_fastapi_req
+
     def test_setup_rejects_when_key_already_set(self):
         from fastapi import HTTPException
 
@@ -260,10 +268,9 @@ class TestSetupApiKeyEndpoint:
         original = _patch_auth_getter(mock_settings)
         try:
             request = auth_routes.SetupApiKeyRequest(
-                api_key="newkey", api_key_confirm="newkey"
+                api_key="newkey12345678", api_key_confirm="newkey12345678"
             )
-            mock_fastapi_req = MagicMock()
-            mock_fastapi_req.client.host = "127.0.0.1"
+            mock_fastapi_req = self._local_fastapi_req()
             with pytest.raises(HTTPException) as exc_info:
                 asyncio.run(
                     auth_routes.setup_api_key(request, MagicMock(), mock_fastapi_req)
@@ -280,10 +287,9 @@ class TestSetupApiKeyEndpoint:
         original = _patch_auth_getter(mock_settings)
         try:
             request = auth_routes.SetupApiKeyRequest(
-                api_key="key1", api_key_confirm="key2"
+                api_key="key1-abcdef", api_key_confirm="key2-abcdef"
             )
-            mock_fastapi_req = MagicMock()
-            mock_fastapi_req.client.host = "127.0.0.1"
+            mock_fastapi_req = self._local_fastapi_req()
             with pytest.raises(HTTPException) as exc_info:
                 asyncio.run(
                     auth_routes.setup_api_key(request, MagicMock(), mock_fastapi_req)
@@ -300,16 +306,15 @@ class TestSetupApiKeyEndpoint:
         original = _patch_auth_getter(mock_settings)
         try:
             request = auth_routes.SetupApiKeyRequest(
-                api_key="abc", api_key_confirm="abc"
+                api_key="abcdefghijk", api_key_confirm="abcdefghijk"
             )
-            mock_fastapi_req = MagicMock()
-            mock_fastapi_req.client.host = "127.0.0.1"
+            mock_fastapi_req = self._local_fastapi_req()
             with pytest.raises(HTTPException) as exc_info:
                 asyncio.run(
                     auth_routes.setup_api_key(request, MagicMock(), mock_fastapi_req)
                 )
             assert exc_info.value.status_code == 400
-            assert "at least 4" in exc_info.value.detail
+            assert "at least 12" in exc_info.value.detail
         finally:
             _restore_auth_getter(original)
 
