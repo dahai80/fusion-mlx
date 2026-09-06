@@ -1106,6 +1106,27 @@ def _autoconfig_parsers(args, logger):
             from .model_auto_config import detect_model_config
 
             auto_config = detect_model_config(args.model)
+            if auto_config is None:
+                # R-27 (#811): detect_model_config returns None for any
+                # model whose path matches no alias profile and no regex
+                # family pattern. The branches below treat None as "skip",
+                # so tool_call_parser / reasoning_parser stay unset — the
+                # server boots and serves, but tool calls come back empty
+                # and reasoning tags leak into content, which users
+                # misread as the model getting dumber. Surface this loudly
+                # at startup so the operator knows the model was not
+                # classified and tool/reasoning parsing is OFF unless they
+                # pass --tool-call-parser / --reasoning-parser explicitly.
+                logger.warning(
+                    "Auto-config could not classify model '%s' — "
+                    "tool-call-parser and reasoning-parser are UNSET. "
+                    "Tool calling will silently return empty tool_calls "
+                    "and reasoning tags will not be separated. If this "
+                    "model supports tool calls or thinking, pass "
+                    "--tool-call-parser <name> / --reasoning-parser "
+                    "<name> explicitly.",
+                    args.model,
+                )
             if auto_config:
                 if (
                     not args.tool_call_parser

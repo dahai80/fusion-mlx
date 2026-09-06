@@ -484,6 +484,16 @@ def _write_safetensors_no_mx(
         f.write(header_json)
         for chunk in chunks:
             f.write(chunk)
+        # R-12 (#811): fsync the temp file before the caller os.rename()s it
+        # to its final path. Without this, a power loss after the rename
+        # commits in the FS journal but before the data lands on disk leaves
+        # a zero-length / truncated file that verify_and_repair_index accepts
+        # as valid KV -> silent corruption on recovery.
+        try:
+            f.flush()
+            os.fsync(f.fileno())
+        except OSError as e:
+            logger.warning("fsync of SSD cache temp file %s failed: %s", path, e)
     try:
         return os.path.getsize(path)
     except OSError:

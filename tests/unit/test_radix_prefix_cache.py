@@ -12,6 +12,14 @@ def _make_paged(block_size: int = 4, max_blocks: int = 64):
     mgr = MagicMock()
     mgr.block_size = block_size
     mgr.model_name = "test-model"
+    # real PagedCacheManager keeps a list of block-freed callbacks; mirror it
+    # so RadixPrefixCache registration + manual firing works in tests.
+    mgr._block_freed_callbacks = []
+
+    def _register(cb):
+        mgr._block_freed_callbacks.append(cb)
+
+    mgr.register_block_freed_callback = _register
 
     class _Block:
         def __init__(self, bid, token_count=0):
@@ -293,3 +301,40 @@ class TestSharedPrefixAcrossRequests:
         assert bt2 is not None
         assert bt2.num_tokens == 8
         assert rem2 == [30, 31, 32, 33]
+
+
+class TestBlockFreedCallback:
+    def test_callback_detaches_trie_node(self):
+        # P0-1 regression: PagedCacheManager fires the block-freed callback
+        # when a block's content is invalidated. The trie node must detach
+        # (block_id=None, dropped from _node_index) so a later reallocation
+        # of the same block_id for different content cannot be served as a
+        # hit for the old token edge.
+        cache, paged = _make_cache(block_size=4)
+        cache.store_cache("a", [1, 2, 3, 4, 5, 6, 7, 8], cache_data=[])
+        node_ids = [nid for nid in cache._node_index if nid is not None]
+        assert node_ids, "trie should have indexed blocks"
+        freed = node_ids[0]
+        # the callback RadixPrefixCache registered on the paged manager:
+        callbacks = paged._block_freed_callbacks
+        assert callbacks, "radix should have registered a block-freed callback"
+        for cb in callbacks:
+            cb(freed)
+        # trie node for that block_id must be detached
+        assert freed not in cache._node_index
+        # simulate block_id reuse for different content: re-add a block dict
+        # entry under the same id with a fresh hash (as PagedCacheManager
+        # would on reallocation). The detached trie node must NOT re-link.
+        from fusion_mlx.cache.paged_cache import BlockTable  # noqa: F401
+
+        class _Other:
+            block_id = freed
+            token_count = 4
+            block_hash = b"hash-other"
+
+        paged.allocated_blocks[freed] = _Other()
+        # fetch the OLD prefix: the node for `freed` was detached, so descent
+        # must break at that edge -> miss (no false hit on reused block_id).
+        bt, remaining = cache.fetch_cache("c", [1, 2, 3, 4, 5, 6, 7, 8])
+        assert bt is None, "detached node must not serve reallocated block_id"
+        assert remaining == [1, 2, 3, 4, 5, 6, 7, 8]

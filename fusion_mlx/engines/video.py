@@ -12,6 +12,11 @@ from typing import Any
 
 import mlx.core as mx
 
+from ..engine_core import (
+    get_video_gen_timeout,
+    is_video_executor_poisoned,
+    poison_executor,
+)
 from ._progress import StepCallback
 from .base import BaseNonStreamingEngine
 from .video_backends import VideoGenParams, resolve_backend
@@ -59,6 +64,18 @@ class VideoGenEngine(BaseNonStreamingEngine):
         # Callers: openai_routes.py video endpoint, ComfyUI stage callbacks.
         if not self._loaded:
             raise RuntimeError("VideoGen engine not started.")
+        # R-3 (#811): if a prior generation hung and poisoned the video
+        # executor, fast-fail loudly instead of silently queuing behind the
+        # dead worker. The operator must restart fusion-mlx to reclaim the
+        # stuck thread's memory; a fresh worker has already been spawned but
+        # it cannot cancel the hung job.
+        if is_video_executor_poisoned():
+            raise RuntimeError(
+                "video subsystem unavailable: a prior generation hung and "
+                "poisoned the worker thread (#811 R-3). Restart fusion-mlx "
+                "to restore video generation. "
+                "Set FUSION_VIDEO_GEN_TIMEOUT to adjust the hang deadline."
+            )
 
         params = VideoGenParams(
             prompt=prompt,
@@ -111,7 +128,27 @@ class VideoGenEngine(BaseNonStreamingEngine):
         )
 
         try:
-            result = await self._backend.generate(params)
+            try:
+                result = await self._backend.generate(params)
+            except TimeoutError:
+                # R-3 (#811): the backend's per-generation deadline fired but
+                # the worker thread keeps running the hung pipeline (Python
+                # cannot cancel a running thread). Poison + replace the
+                # executor so later requests fast-fail loudly instead of
+                # silently queuing behind the dead worker forever.
+                poison_executor("video")
+                logger.error(
+                    "VideoGen generation timed out after %.0fs and poisoned "
+                    "the video worker (#811 R-3). Subsequent video requests "
+                    "will be rejected until fusion-mlx restart.",
+                    get_video_gen_timeout(),
+                )
+                raise RuntimeError(
+                    "video generation exceeded the hang deadline "
+                    f"({get_video_gen_timeout():.0f}s) and the worker thread "
+                    "could not be cancelled (#811 R-3). The video subsystem "
+                    "is now poisoned; restart fusion-mlx to recover."
+                )
             elapsed = time.monotonic() - t0
             self._update_activity(activity_id, elapsed_seconds=elapsed)
             logger.info("VideoGen generated %d video(s) in %.2fs", len(result), elapsed)

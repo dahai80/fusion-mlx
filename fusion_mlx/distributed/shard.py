@@ -18,6 +18,7 @@ import base64
 import logging
 import os
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 
@@ -149,20 +150,27 @@ class ShardManager:
         # (model_id, layer_range) -> shard_id, so repeated load_shard of the
         # same slice reuses the in-memory model (weights already on GPU).
         self._by_key: dict[tuple[str, tuple[int, int]], str] = {}
+        # R-20 (#811): guard the registries. Without a lock two concurrent
+        # load_shard of the same model_id each ran mlx_lm.load (two full
+        # weight sets resident, orphan entry, GPU leak) and raced on
+        # _by_key/sync_weights vs decode_step reading stale weights. RLock
+        # because _load_model is re-entered from load_shard.
+        self._lock = threading.RLock()
 
     def _load_model(self, model_id: str) -> object:
-        if model_id in self._models:
-            return self._models[model_id]
-        import mlx_lm
+        with self._lock:
+            if model_id in self._models:
+                return self._models[model_id]
+            import mlx_lm
 
-        path = _resolve_model_path(model_id)
-        logger.info("distributed: loading model %s from %s", model_id, path)
-        try:
-            model, _tokenizer = mlx_lm.load(path)
-        except Exception as exc:
-            raise ShardError(f"failed to load model {model_id}: {exc}") from exc
-        self._models[model_id] = model
-        return model
+            path = _resolve_model_path(model_id)
+            logger.info("distributed: loading model %s from %s", model_id, path)
+            try:
+                model, _tokenizer = mlx_lm.load(path)
+            except Exception as exc:
+                raise ShardError(f"failed to load model {model_id}: {exc}") from exc
+            self._models[model_id] = model
+            return model
 
     def _num_layers(self, model: object) -> int:
         inner = getattr(model, "model", None)
@@ -185,46 +193,48 @@ class ShardManager:
         start, end = int(layer_range[0]), int(layer_range[1])
         if start < 0 or end <= start:
             raise ShardError(f"invalid layer_range [{start}, {end})")
-        model = self._load_model(model_id)
-        total = self._num_layers(model)
-        if end > total:
-            raise ShardError(f"layer_range end {end} > num_layers {total}")
-        key = (model_id, (start, end))
-        if key in self._by_key:
-            sid = self._by_key[key]
+        with self._lock:
+            model = self._load_model(model_id)
+            total = self._num_layers(model)
+            if end > total:
+                raise ShardError(f"layer_range end {end} > num_layers {total}")
+            key = (model_id, (start, end))
+            if key in self._by_key:
+                sid = self._by_key[key]
+                logger.info(
+                    "distributed: reuse shard %s for %s layers [%d,%d)",
+                    sid,
+                    model_id,
+                    start,
+                    end,
+                )
+                return self._shards[sid]
+            shard_id = f"shard-{uuid.uuid4().hex[:12]}"
+            self._shards[shard_id] = {
+                "shard_id": shard_id,
+                "model_id": model_id,
+                "shard_index": shard_index,
+                "layer_range": [start, end],
+                "dtype": dtype,
+                "num_layers": total,
+                "kv_cache": None,
+            }
+            self._by_key[key] = shard_id
             logger.info(
-                "distributed: reuse shard %s for %s layers [%d,%d)",
-                sid,
+                "distributed: registered shard %s model=%s layers=[%d,%d) of %d",
+                shard_id,
                 model_id,
                 start,
                 end,
+                total,
             )
-            return self._shards[sid]
-        shard_id = f"shard-{uuid.uuid4().hex[:12]}"
-        self._shards[shard_id] = {
-            "shard_id": shard_id,
-            "model_id": model_id,
-            "shard_index": shard_index,
-            "layer_range": [start, end],
-            "dtype": dtype,
-            "num_layers": total,
-            "kv_cache": None,
-        }
-        self._by_key[key] = shard_id
-        logger.info(
-            "distributed: registered shard %s model=%s layers=[%d,%d) of %d",
-            shard_id,
-            model_id,
-            start,
-            end,
-            total,
-        )
-        return self._shards[shard_id]
+            return self._shards[shard_id]
 
     def _get_shard(self, shard_id: str) -> dict:
-        if shard_id not in self._shards:
-            raise ShardError(f"unknown shard_id {shard_id}")
-        return self._shards[shard_id]
+        with self._lock:
+            if shard_id not in self._shards:
+                raise ShardError(f"unknown shard_id {shard_id}")
+            return self._shards[shard_id]
 
     def pipeline_step(
         self,
@@ -651,67 +661,74 @@ class ShardManager:
         forward-compat but not yet fetched — the scheduler must inline the
         weights for now. Returns the updated param count."""
         shard = self._get_shard(shard_id)
-        model = self._models[shard["model_id"]]
-        if weights_b64 is None and manifest is None:
-            raise ShardError("sync_weights needs weights_b64 or manifest")
-        if weights_b64 is None:
-            raise ShardError(
-                "manifest pull not implemented in first version; inline weights_b64"
-            )
-        try:
-            raw = base64.b64decode(weights_b64, validate=True)
-        except (ValueError, TypeError) as exc:
-            raise ShardError(f"weights base64 invalid: {exc}") from exc
-        if len(raw) > _MAX_WEIGHTS_BYTES:
-            raise ShardError(
-                f"weights payload {len(raw)} bytes exceeds cap {_MAX_WEIGHTS_BYTES}"
-            )
-        with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as fh:
-            path = fh.name
-            fh.write(raw)
-        try:
-            tree = mx.load(path)
-        except Exception as exc:
-            raise ShardError(f"weights .npz decode failed: {exc}") from exc
-        finally:
+        with self._lock:
+            model = self._models[shard["model_id"]]
+            if weights_b64 is None and manifest is None:
+                raise ShardError("sync_weights needs weights_b64 or manifest")
+            if weights_b64 is None:
+                raise ShardError(
+                    "manifest pull not implemented in first version; inline weights_b64"
+                )
             try:
-                os.unlink(path)
-            except OSError:
-                pass
-        if not isinstance(tree, dict) or not tree:
-            raise ShardError("weights payload must be a non-empty {path: array} dict")
-        model.load_weights(list(tree.items()), strict=False)
-        updated = len(tree)
-        logger.info(
-            "distributed: synced %d weight params into shard %s", updated, shard_id
-        )
-        shard["kv_cache"] = None
-        logger.info(
-            "distributed: cleared KV cache on shard %s after weight sync",
-            shard_id,
-        )
-        return {"shard_id": shard_id, "params_updated": updated}
+                raw = base64.b64decode(weights_b64, validate=True)
+            except (ValueError, TypeError) as exc:
+                raise ShardError(f"weights base64 invalid: {exc}") from exc
+            if len(raw) > _MAX_WEIGHTS_BYTES:
+                raise ShardError(
+                    f"weights payload {len(raw)} bytes exceeds cap {_MAX_WEIGHTS_BYTES}"
+                )
+            with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as fh:
+                path = fh.name
+                fh.write(raw)
+            try:
+                tree = mx.load(path)
+            except Exception as exc:
+                raise ShardError(f"weights .npz decode failed: {exc}") from exc
+            finally:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+            if not isinstance(tree, dict) or not tree:
+                raise ShardError(
+                    "weights payload must be a non-empty {path: array} dict"
+                )
+            model.load_weights(list(tree.items()), strict=False)
+            updated = len(tree)
+            logger.info(
+                "distributed: synced %d weight params into shard %s", updated, shard_id
+            )
+            shard["kv_cache"] = None
+            logger.info(
+                "distributed: cleared KV cache on shard %s after weight sync",
+                shard_id,
+            )
+            return {"shard_id": shard_id, "params_updated": updated}
 
     def drop_shard(self, shard_id: str) -> dict:
         """Release a shard's registration (model stays cached for other
         shards of the same model)."""
-        shard = self._get_shard(shard_id)
-        key = (shard["model_id"], tuple(shard["layer_range"]))
-        self._by_key.pop(key, None)
-        self._shards.pop(shard_id, None)
-        logger.info("distributed: dropped shard %s", shard_id)
-        return {"shard_id": shard_id, "dropped": True}
+        with self._lock:
+            shard = self._shards.get(shard_id)
+            if shard is None:
+                raise ShardError(f"unknown shard_id {shard_id}")
+            key = (shard["model_id"], tuple(shard["layer_range"]))
+            self._by_key.pop(key, None)
+            self._shards.pop(shard_id, None)
+            logger.info("distributed: dropped shard %s", shard_id)
+            return {"shard_id": shard_id, "dropped": True}
 
     def list_shards(self) -> list[dict]:
-        out = []
-        for s in self._shards.values():
-            start = s["layer_range"][0]
-            cache = s.get("kv_cache")
-            offset = cache[start].offset if cache is not None else 0
-            row = dict(s)
-            row["kv_offset"] = offset
-            out.append(row)
-        return out
+        with self._lock:
+            out = []
+            for s in self._shards.values():
+                start = s["layer_range"][0]
+                cache = s.get("kv_cache")
+                offset = cache[start].offset if cache is not None else 0
+                row = dict(s)
+                row["kv_offset"] = offset
+                out.append(row)
+            return out
 
 
 # Process-singleton — the routes module grabs this.

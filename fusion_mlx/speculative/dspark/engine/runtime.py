@@ -20,12 +20,15 @@ Invariants (batch=1 throughout):
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
 import mlx.core as mx
+
+logger = logging.getLogger(__name__)
 
 from .adapters import LoadedTargetModel
 from .draft import DSparkDraftModel
@@ -382,21 +385,42 @@ def dspark_generate_stream(
 
         # ---- draft: parallel block forward + serial Markov sampling ----
         draft_start = profile_start(profile_times)
-        drafted, corrected_logits, confidence_logits = draft_block(
-            draft=draft,
-            anchor_token=anchor_token,
-            ctx_taps=ctx_taps,
-            draft_cache=draft_cache,
-            temperature=temperature,
-            keys=keys,
-        )
-        proposal_len = confident_prefix_length(
-            confidence_logits,
-            block_size,
-            confidence_threshold,
-            sts_temperatures=sts_temperatures,
-        )
-        proposal_len = min(proposal_len, proposal_cap)
+        try:
+            drafted, corrected_logits, confidence_logits = draft_block(
+                draft=draft,
+                anchor_token=anchor_token,
+                ctx_taps=ctx_taps,
+                draft_cache=draft_cache,
+                temperature=temperature,
+                keys=keys,
+            )
+        except Exception as draft_exc:
+            # R-25 (#811): draft-model failure must not kill the request.
+            # Fall back to base-only decode this round: proposal_len=0
+            # makes the verify path run a single target forward over the
+            # anchor and commit one bonus token (plain autoregressive
+            # step). The target cache is coherent at the anchor position,
+            # so generation continues correctly; only the speculative
+            # speedup is lost for this round. Subsequent rounds retry the
+            # draft, so a transient fault self-heals.
+            logger.warning(
+                "[DSpark] draft_block failed (%s) — falling back to "
+                "base-only decode this round",
+                draft_exc,
+            )
+            drafted: list[int] = []
+            corrected_logits = None
+            confidence_logits = None
+        if confidence_logits is not None:
+            proposal_len = confident_prefix_length(
+                confidence_logits,
+                block_size,
+                confidence_threshold,
+                sts_temperatures=sts_temperatures,
+            )
+            proposal_len = min(proposal_len, proposal_cap)
+        else:
+            proposal_len = 0
         add_profile_elapsed(profile_times, "draft_time_s", draft_start)
 
         # ---- verify: one target forward over [anchor, x_1..x_l] ----

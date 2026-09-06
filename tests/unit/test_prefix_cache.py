@@ -197,8 +197,12 @@ class TestBlockAwarePrefixCache:
         assert paged_cache.free_blocks == initial_free + 1
 
     def test_clear_request_entry(self, prefix_cache, paged_cache):
-        """Test clearing request entry without freeing blocks."""
+        """clear_request_entry drops the request's block-table refs so the
+        matched blocks do not leak as permanently un-evictable (P1-3), while
+        the cached blocks themselves survive in the hash index for reuse."""
         table = paged_cache.create_block_table("req-001")
+        block = paged_cache.allocate_block()
+        table.block_ids.append(block.block_id)
         prefix_cache._request_tables["req-001"] = BlockCacheEntry(
             block_table=table,
             last_access=time.time(),
@@ -207,8 +211,8 @@ class TestBlockAwarePrefixCache:
         prefix_cache.clear_request_entry("req-001")
 
         assert "req-001" not in prefix_cache._request_tables
-        # Blocks should still be tracked in paged_cache
-        assert "req-001" in paged_cache.request_tables
+        # P1-3: the paged block table is dropped so its refcounts are released.
+        assert "req-001" not in paged_cache.request_tables
 
     def test_fork_cache(self, prefix_cache, paged_cache):
         """Test forking cache from one request to another."""

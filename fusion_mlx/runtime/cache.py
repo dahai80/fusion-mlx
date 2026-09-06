@@ -33,6 +33,15 @@ async def load_prefix_cache_from_disk() -> None:
     engine = await _get_engine(cfg)
     if engine is None:
         return
+    # P1-9: no engine implements load_cache_from_disk. Guard the call so the
+    # absence is reported at INFO (not a swallowed WARNING AttributeError on
+    # every startup) and real I/O errors still surface.
+    if not callable(getattr(engine, "load_cache_from_disk", None)):
+        logger.debug(
+            "[lifespan] engine %s has no load_cache_from_disk; skipping warm-start",
+            type(engine).__name__,
+        )
+        return
     try:
         d = get_cache_dir()
         logger.info("[lifespan] Loading prefix cache from %s", d)
@@ -42,9 +51,15 @@ async def load_prefix_cache_from_disk() -> None:
         else:
             logger.info("[lifespan] No prefix cache entries found on disk")
         _load_radix_index_after_cache(engine, d)
-    except Exception as e:
+    except (OSError, ValueError) as e:
         logger.warning(
             "[lifespan] Failed to load cache from disk: %s", e, exc_info=True
+        )
+    except Exception as e:
+        logger.error(
+            "[lifespan] Unexpected error loading cache from disk: %s",
+            e,
+            exc_info=True,
         )
 
 
@@ -80,6 +95,13 @@ async def save_prefix_cache_to_disk(budget_sec: float | None = None) -> None:
     engine = await _get_engine(cfg)
     if engine is None:
         return
+    # P1-9: guard the absence of save_cache_to_disk the same way as load.
+    if not callable(getattr(engine, "save_cache_to_disk", None)):
+        logger.debug(
+            "[lifespan] engine %s has no save_cache_to_disk; skipping warm-persist",
+            type(engine).__name__,
+        )
+        return
     if budget_sec is None:
         budget_sec = _shutdown_budget_sec()
     should_abort = _make_should_abort(budget_sec) if budget_sec > 0 else None
@@ -101,8 +123,12 @@ async def save_prefix_cache_to_disk(budget_sec: float | None = None) -> None:
         else:
             logger.info("[lifespan] No cache to save")
         _save_radix_index_after_cache(engine, d)
-    except Exception as e:
+    except (OSError, ValueError) as e:
         logger.warning("[lifespan] Failed to save cache to disk: %s", e, exc_info=True)
+    except Exception as e:
+        logger.error(
+            "[lifespan] Unexpected error saving cache to disk: %s", e, exc_info=True
+        )
 
 
 def _save_radix_index_after_cache(engine, cache_dir: str) -> None:

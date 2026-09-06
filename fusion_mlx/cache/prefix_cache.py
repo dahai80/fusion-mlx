@@ -6,9 +6,9 @@ Provides prefix caching using PagedCacheManager for block-based storage
 with SSD persistence. FusionMLX only supports paged SSD-based caching.
 """
 
-import asyncio
 import logging
 import math
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -105,6 +105,11 @@ class BlockAwarePrefixCache(CacheManager):
         # Maps chain-hash(prefix) -> (prefix_len, block_ids, num_blocks)
         self._prefix_index: dict[bytes, tuple[int, tuple[int, ...], int]] = {}
 
+        # Reverse index: block_id -> set of block_hashes that reference it.
+        # Lets the block-freed callback detach stale _prefix_index entries whose
+        # block_id was reallocated, preventing wrong-KV hits (#808 P0).
+        self._block_id_to_hashes: dict[int, set[bytes]] = {}
+
         # Request to block table mapping
         self._request_tables: dict[str, BlockCacheEntry] = {}
 
@@ -122,7 +127,19 @@ class BlockAwarePrefixCache(CacheManager):
         self._tokens_requested_total = 0
         self._last_partial_tokens_skipped = 0
         self._last_tokens_to_next_block = 0
-        self._cache_lock = asyncio.Lock()
+        # threading.Lock (not asyncio.Lock) — fetch/store/insert run sync on the
+        # engine thread, the block-freed callback fires from a different thread
+        # (PagedCacheManager caller). The prior asyncio.Lock was never acquired
+        # anywhere, leaving _prefix_index unprotected under concurrent access.
+        self._cache_lock = threading.Lock()
+        # Register self-invalidation so a freed block_id is stripped from the
+        # prefix index before reallocation, regardless of construction site.
+        try:
+            paged_cache_manager.register_block_freed_callback(self._on_block_freed)
+        except Exception as e:
+            logger.warning(
+                "BlockAwarePrefixCache failed to register block-freed callback: %s", e
+            )
 
     def _get_model_num_layers(self, model: Any) -> int:
         """
@@ -368,23 +385,40 @@ class BlockAwarePrefixCache(CacheManager):
         if best_match:
             prefix_len, matched_block_ids, num_blocks = best_match
 
-            # Fork the matched blocks
+            # Fork the matched blocks. P1-2: a cached block may have been
+            # evicted since the index entry was written, leaving a dead id in
+            # matched_block_ids. Stop at the first dead block and recompute the
+            # matched prefix length from the surviving blocks — otherwise the
+            # engine is told prefix_len tokens are cached but the block table
+            # covers fewer, producing a silent KV gap (garbage decode).
             block_table = self.paged_cache.create_block_table(request_id)
+            live_prefix_len = 0
+            live_count = 0
             for block_id in matched_block_ids[:num_blocks]:
-                self.paged_cache.increment_ref(block_id)
                 block = self.paged_cache.allocated_blocks.get(block_id)
-                if block:
-                    block_table.block_ids.append(block_id)
-                    block_table.num_tokens += block.token_count
+                if block is None:
+                    break
+                self.paged_cache.increment_ref(block_id)
+                block_table.block_ids.append(block_id)
+                block_table.num_tokens += block.token_count
+                live_prefix_len += block.token_count
+                live_count += 1
 
-            remaining = tokens[prefix_len:]
+            if live_count == 0:
+                # entire match evicted — treat as miss
+                self._misses += 1
+                self._tokens_requested_total += len(tokens)
+                return None, tokens
+
+            remaining = tokens[live_prefix_len:]
             self._hits += 1
-            self._tokens_saved += prefix_len
-            self._tokens_matched_total += prefix_len
+            self._tokens_saved += live_prefix_len
+            self._tokens_matched_total += live_prefix_len
             self._tokens_requested_total += len(tokens)
 
             logger.debug(
-                f"Prefix index hit for {request_id}: {prefix_len} tokens matched"
+                f"Prefix index hit for {request_id}: {live_prefix_len} tokens matched"
+                f" (index claimed {prefix_len}, {num_blocks - live_count} evicted)"
             )
 
             return block_table, remaining
@@ -1421,18 +1455,21 @@ class BlockAwarePrefixCache(CacheManager):
             logger.debug(f"Released cache for {request_id}")
 
     def clear_request_entry(self, request_id: str) -> None:
-        """
-        Clear request entry from tracking without freeing blocks.
-
-        This removes the request from _request_tables but keeps the cached
-        blocks available for prefix matching. Use this after store_cache()
-        when the request is complete but cache should remain for future reuse.
-
-        Args:
-            request_id: Request identifier
-        """
+        # Clear request entry from tracking without dropping the cached
+        # blocks (they survive in the hash index for future prefix reuse).
+        # P1-3: a fetch_cache hit increments refcounts on matched blocks via
+        # the paged manager's request_tables. Without deleting that block
+        # table here, those refs stay >= 1 forever and the blocks become
+        # un-evictable. delete_block_table decrements the fetch refs; shared
+        # blocks survive because the store path holds its own ref.
         entry = self._request_tables.pop(request_id, None)
         if entry:
+            try:
+                self.paged_cache.delete_block_table(request_id)
+            except Exception as e:
+                logger.debug(
+                    f"clear_request_entry: delete_block_table({request_id}) failed: {e}"
+                )
             logger.debug(f"Cleared request entry for {request_id} (blocks retained)")
 
     def fork_cache(
@@ -2613,27 +2650,45 @@ class BlockAwarePrefixCache(CacheManager):
         prefix_len = 0
         num_blocks = 0
 
-        for start in range(0, len(tokens), self.block_size):
-            end = min(start + self.block_size, len(tokens))
-            block_tokens = tokens[start:end]
-            if not block_tokens:
-                break
+        with self._cache_lock:
+            for start in range(0, len(tokens), self.block_size):
+                end = min(start + self.block_size, len(tokens))
+                block_tokens = tokens[start:end]
+                if not block_tokens:
+                    break
 
-            parent_hash = compute_block_hash(
-                parent_hash,
-                block_tokens,
-                extra_keys=extra_keys,
-                model_name=self.paged_cache.model_name,
-            )
-            prefix_len += len(block_tokens)
-            num_blocks += 1
+                parent_hash = compute_block_hash(
+                    parent_hash,
+                    block_tokens,
+                    extra_keys=extra_keys,
+                    model_name=self.paged_cache.model_name,
+                )
+                prefix_len += len(block_tokens)
+                num_blocks += 1
 
-            entry = self._prefix_index.get(parent_hash)
-            if entry and entry[0] == prefix_len and prefix_len > best_len:
-                best_match = entry
+                entry = self._prefix_index.get(parent_hash)
+                if entry and entry[0] == prefix_len and prefix_len > best_len:
+                    best_match = entry
                 best_len = prefix_len
 
         return best_match
+
+    def _on_block_freed(self, block_id: int) -> None:
+        # PagedCacheManager invalidated a block's content (hash cleared, block
+        # returned to free pool). Strip every _prefix_index entry that references
+        # this block_id so fetch_cache does not treat the reallocated block_id
+        # as a valid KV pointer -> wrong KV (#808 P0).
+        with self._cache_lock:
+            hashes = self._block_id_to_hashes.pop(block_id, None)
+            if not hashes:
+                return
+            for bh in hashes:
+                self._prefix_index.pop(bh, None)
+            logger.debug(
+                "BlockAwarePrefixCache detached freed block %d from %d index entries",
+                block_id,
+                len(hashes),
+            )
 
     def _update_prefix_index(
         self,
@@ -2646,32 +2701,34 @@ class BlockAwarePrefixCache(CacheManager):
         parent_hash = b""
         prefix_len = 0
 
-        for i, block_id in enumerate(block_ids):
-            start = i * self.block_size
-            end = min(start + self.block_size, len(tokens))
-            block_tokens = tokens[start:end]
-            if not block_tokens:
-                break
+        with self._cache_lock:
+            for i, block_id in enumerate(block_ids):
+                start = i * self.block_size
+                end = min(start + self.block_size, len(tokens))
+                block_tokens = tokens[start:end]
+                if not block_tokens:
+                    break
 
-            block = self.paged_cache.allocated_blocks.get(block_id)
-            block_hash = block.block_hash if block is not None else None
-            if block_hash is None:
-                block_hash = compute_block_hash(
-                    parent_hash,
-                    block_tokens,
-                    extra_keys=extra_keys,
-                    model_name=self.paged_cache.model_name,
+                block = self.paged_cache.allocated_blocks.get(block_id)
+                block_hash = block.block_hash if block is not None else None
+                if block_hash is None:
+                    block_hash = compute_block_hash(
+                        parent_hash,
+                        block_tokens,
+                        extra_keys=extra_keys,
+                        model_name=self.paged_cache.model_name,
+                    )
+                    if block is not None:
+                        block.block_hash = block_hash
+
+                parent_hash = block_hash
+                prefix_len += len(block_tokens)
+                self._prefix_index[block_hash] = (
+                    prefix_len,
+                    tuple(block_ids[: i + 1]),
+                    i + 1,
                 )
-                if block is not None:
-                    block.block_hash = block_hash
-
-            parent_hash = block_hash
-            prefix_len += len(block_tokens)
-            self._prefix_index[block_hash] = (
-                prefix_len,
-                tuple(block_ids[: i + 1]),
-                i + 1,
-            )
+                self._block_id_to_hashes.setdefault(block_id, set()).add(block_hash)
 
     def get_stats(self) -> PrefixCacheStats:
         """
@@ -2745,8 +2802,10 @@ class BlockAwarePrefixCache(CacheManager):
             Number of entries cleared.
         """
         cleared_count = len(self._request_tables) + len(self._prefix_index)
-        self._request_tables.clear()
-        self._prefix_index.clear()
+        with self._cache_lock:
+            self._request_tables.clear()
+            self._prefix_index.clear()
+            self._block_id_to_hashes.clear()
         self.paged_cache.clear()
         self.reset_stats()
         return cleared_count

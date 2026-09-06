@@ -102,6 +102,19 @@ health_curl() {
     fi
 }
 
+# R-17 (#811): readiness probe. /health always returns 200 (even while
+# preloading), so wait_healthy reported success with zero models ready and
+# downstream failover misjudged the node as serving. /health/ready returns
+# 503 during preload and 200 once the pool is up, so this is the correct
+# gate for "server is actually accepting inference".
+ready_curl() {
+    if is_uds; then
+        curl -sf --unix-socket "$(uds_socket)" http://localhost/health/ready
+    else
+        curl -sf "http://${HOST}:${PORT}/health/ready"
+    fi
+}
+
 host_port_args() {
     if is_uds; then
         echo "--host ${HOST}"
@@ -141,14 +154,14 @@ wait_healthy() {
     local timeout="${1:-60}"
     local elapsed=0
     while (( elapsed < timeout )); do
-        if health_curl >/dev/null 2>&1; then
-            log_info "Server is healthy (took ${elapsed}s)"
+        if ready_curl >/dev/null 2>&1; then
+            log_info "Server is ready (took ${elapsed}s)"
             return 0
         fi
         sleep 2
         (( elapsed += 2 ))
     done
-    log_error "Server did not become healthy within ${timeout}s"
+    log_error "Server did not become ready within ${timeout}s"
     return 1
 }
 
@@ -292,6 +305,21 @@ do_start() {
     else
         log_error "Start failed. Check logs: ${LOG_DIR}/server.log"
         tail -20 "${LOG_DIR}/server.log" 2>/dev/null || true
+        # R-16 (#811): kill the half-initialized serve child so it does not
+        # keep holding port 11434 + loaded model weights after the operator
+        # believes start failed. Without this the next `start` reports
+        # "already running" against a zombie pre-init server.
+        if [[ -n "${serve_pid:-}" ]] && kill -0 "${serve_pid}" 2>/dev/null; then
+            log_warn "Killing orphaned serve process ${serve_pid}"
+            kill -TERM "${serve_pid}" 2>/dev/null || true
+            local _k
+            for _k in $(seq 1 15); do
+                kill -0 "${serve_pid}" 2>/dev/null || break
+                sleep 1
+            done
+            kill -0 "${serve_pid}" 2>/dev/null && kill -KILL "${serve_pid}" 2>/dev/null || true
+        fi
+        _stop_watchdog_parent
         exit 1
     fi
 }
@@ -301,6 +329,9 @@ do_stop() {
     ensure_venv
     if ! is_running; then
         log_warn "Server not running on port ${PORT}"
+        # Still try to reap a lingering watchdog parent so it does not
+        # relaunch a server the operator just stopped (#810 P0).
+        _stop_watchdog_parent
         return 0
     fi
 
@@ -308,23 +339,66 @@ do_stop() {
     pid=$(get_pid)
     log_step "Stopping fusion-mlx (PID ${pid})"
 
-    # Graceful: SIGTERM
+    # Graceful: SIGTERM the serve child.
     kill -TERM "${pid}" 2>/dev/null || true
     local waited=0
     while (( waited < 15 )); do
         if ! kill -0 "${pid}" 2>/dev/null; then
             log_info "Server stopped gracefully"
-            return 0
+            break
         fi
         sleep 1
         (( waited += 1 ))
     done
 
-    # Force: SIGKILL
-    log_warn "Graceful shutdown timed out, force killing..."
-    kill -KILL "${pid}" 2>/dev/null || true
-    sleep 1
-    log_info "Server force-stopped"
+    if kill -0 "${pid}" 2>/dev/null; then
+        # Force: SIGKILL
+        log_warn "Graceful shutdown timed out, force killing..."
+        kill -KILL "${pid}" 2>/dev/null || true
+        sleep 1
+        log_info "Server force-stopped"
+    fi
+
+    # Reap the watchdog parent so it does not immediately relaunch the
+    # serve child we just stopped (#810 P0). Must run AFTER the child is
+    # down so the watchdog's own exit is observed cleanly.
+    _stop_watchdog_parent
+}
+
+# Kill the watchdog supervisor process (``bash start.sh start --watchdog``)
+# if present. The watchdog parent argv lacks ``serve``/port so fusion-mlx ps
+# never lists it — a plain do_stop only killed the child and the watchdog
+# loop relaunched it instantly. Match by cmdline containing start.sh + --watchdog.
+_stop_watchdog_parent() {
+    local wpids
+    wpids=$(pgrep -f 'start\.sh.*--watchdog' 2>/dev/null || true)
+    if [[ -z "${wpids}" ]]; then
+        return 0
+    fi
+    log_info "Stopping watchdog supervisor (PID ${wpids//$'\n'/, })"
+    # SIGTERM so the watchdog loop's clean-exit branch (exit_code 143) fires
+    # and it breaks instead of looping.
+    for wpid in ${wpids}; do
+        kill -TERM "${wpid}" 2>/dev/null || true
+    done
+    local wwaited=0
+    while (( wwaited < 5 )); do
+        local remaining=0
+        for wpid in ${wpids}; do
+            if kill -0 "${wpid}" 2>/dev/null; then
+                remaining=1
+                break
+            fi
+        done
+        (( remaining == 0 )) && break
+        sleep 1
+        (( wwaited += 1 ))
+    done
+    for wpid in ${wpids}; do
+        if kill -0 "${wpid}" 2>/dev/null; then
+            kill -KILL "${wpid}" 2>/dev/null || true
+        fi
+    done
 }
 
 # ── restart ─────────────────────────────────────────────────────────
@@ -553,12 +627,14 @@ _run_with_watchdog() {
 
         local exit_code=$?
 
-        if wait_healthy 10 2>/dev/null; then
-            # Clean exit (SIGTERM) — don't record as crash
-            if (( exit_code == 0 || exit_code == 143 )); then
-                log_info "Server exited cleanly (code=${exit_code})"
-                break
-            fi
+        # Clean exit (SIGTERM=143 or explicit exit 0): the serve process is
+        # already gone, so wait_healthy would always fail here — do NOT gate
+        # clean-exit detection on a health probe of a dead server (#810 P0).
+        # Previously a graceful `start.sh stop` was misjudged as a crash and
+        # the watchdog restarted the server the operator just asked to stop.
+        if (( exit_code == 0 || exit_code == 143 )); then
+            log_info "Server exited cleanly (code=${exit_code})"
+            break
         fi
 
         # Unexpected exit — record crash and backoff

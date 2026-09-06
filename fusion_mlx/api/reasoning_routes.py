@@ -14,9 +14,10 @@ import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from ..middleware.auth import check_rate_limit, verify_api_key
 from .thinking import extract_thinking
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,11 @@ def _resolve_engine(model_id: str) -> Any:
 
 
 @router.post("/v1/reasoning", response_model=ReasoningResponse)
-async def create_reasoning(request: ReasoningRequest) -> ReasoningResponse:
+async def create_reasoning(
+    request: ReasoningRequest,
+    _auth: bool = Depends(verify_api_key),
+    _rate: bool = Depends(check_rate_limit),
+) -> ReasoningResponse:
     engine = _resolve_engine(request.model)
 
     budget_tokens = (

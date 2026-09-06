@@ -983,12 +983,16 @@ class Server:
             else:
                 cors_origins = _cors_origins if _cors_origins else ["*"]
                 cors_methods = _resolve_cors_methods()
+                # P2-6: route credentials through _resolve_cors_credentials
+                # so wildcard ["*"] origins force credentials=False per the
+                # fetch spec. bool(_cors_origins) auto-enabled credentials on
+                # any explicit origin and never guarded the wildcard case.
                 app.add_middleware(
                     _SpecAlignedCORSMiddleware,
                     allow_origins=cors_origins,
                     allow_methods=cors_methods,
                     allow_headers=["*"],
-                    allow_credentials=bool(_cors_origins),
+                    allow_credentials=_resolve_cors_credentials(cors_origins),
                 )
                 _cors_mounted = True
                 logger.debug(
@@ -997,9 +1001,15 @@ class Server:
                     cors_methods,
                 )
 
-        # Body-size and depth guards (ASGI-level, run before FastAPI routing)
-        install_request_body_limit_middleware(app)
+        # Body-size and depth guards (ASGI-level, run before FastAPI routing).
+        # Order matters: Starlette runs the LAST-added middleware outermost.
+        # body_depth buffers the body into memory, so body_size MUST be
+        # outermost (added last) to reject an oversized body with 413 BEFORE
+        # body_depth receives a single chunk — otherwise a 10GiB flat JSON
+        # body (depth 2, under the 64 cap) is buffered entirely and OOMs the
+        # server before the 8MiB size cap fires (#807 P1-11).
         install_request_body_depth_middleware(app)
+        install_request_body_limit_middleware(app)
 
         # Request-ID correlation — stamps the logging ContextVar per request
         # and echoes X-Request-Id on the response. Pure ASGI so the ContextVar
@@ -1374,11 +1384,13 @@ class Server:
         write_pid_file()
         write_status("starting")
         logger.info("fusion-mlx starting up...")
+        _startup_ok = False
         try:
             await self._startup()
             write_status("running")
             clear_crash_counter()
             yield
+            _startup_ok = True
         except Exception as exc:
             record_crash()
             try:
@@ -1398,10 +1410,19 @@ class Server:
             from .server_metrics import get_server_metrics
 
             get_server_metrics().flush_alltime()
+            # P1-10: run _shutdown even when _startup raised partway, so MCP
+            # manager / engines / mDNS partly initialized get torn down. The
+            # method internally None-checks every subsystem it touches.
+            try:
+                await self._shutdown()
+            except Exception:
+                logger.debug("shutdown after partial startup failed", exc_info=True)
+            # P2-9: remove pid file AFTER shutdown so start.sh status still
+            # reports running while the port is held during teardown.
             remove_pid_file()
-        await self._shutdown()
-        write_exit_status("clean")
-        write_status("stopped")
+        if _startup_ok:
+            write_exit_status("clean")
+            write_status("stopped")
 
     async def _startup(self):
         """Initialize engine pool, routers, and load models."""
@@ -1486,9 +1507,29 @@ class Server:
 
         # Create cloud router if enabled
         if self.config.cloud_router_enabled:
+            import os
+
+            cloud_model = self.config.cloud_router_model or os.environ.get(
+                "FUSION_CLOUD_MODEL"
+            )
+            if not cloud_model:
+                # Fail visibly — CloudRouter requires a target model string.
+                # Booting with --cloud-router but no --cloud-model used to crash
+                # with a cryptic TypeError (#809 P0).
+                raise RuntimeError(
+                    "Cloud router enabled but no cloud model configured. "
+                    "Pass --cloud-model <litellm-string> or set "
+                    "FUSION_CLOUD_MODEL in the environment."
+                )
             self.cloud_router = CloudRouter(
+                cloud_model=cloud_model,
                 api_key=self.config.cloud_router_api_key,
                 threshold=self.config.cloud_router_threshold,
+            )
+            logger.info(
+                "CloudRouter enabled: target=%s threshold=%d",
+                cloud_model,
+                self.config.cloud_router_threshold,
             )
 
         # Inject context into route modules
@@ -2029,6 +2070,11 @@ def main():
     )
     parser.add_argument("--cloud-api-key", default=None, help="Cloud router API key")
     parser.add_argument(
+        "--cloud-model",
+        default=None,
+        help="Cloud router target model (litellm string, e.g. anthropic/claude-sonnet-4-5)",
+    )
+    parser.add_argument(
         "--api-key",
         type=str,
         default=None,
@@ -2060,6 +2106,8 @@ def main():
     config.cloud_router_enabled = args.cloud_router
     if args.cloud_api_key:
         config.cloud_router_api_key = args.cloud_api_key
+    if args.cloud_model:
+        config.cloud_router_model = args.cloud_model
 
     server = Server(config)
     server.run()

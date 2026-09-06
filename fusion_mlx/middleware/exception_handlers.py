@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import os
 import typing as _t
 from typing import get_args, get_origin
 
@@ -746,11 +747,20 @@ def install_exception_handlers(app: FastAPI) -> None:
                 request.url.path,
                 exc,
             )
+            # P3-5: the default message lists every loaded model. Echoing the
+            # full inventory to an unauthenticated caller leaks the deployment's
+            # model surface (useful for targeting). Log the full exception
+            # server-side (above) and return only the requested model id to the
+            # client, unless FUSION_REVEAL_MODEL_LIST=1 (local dev convenience).
+            if os.environ.get("FUSION_REVEAL_MODEL_LIST", "") == "1":
+                client_message = str(exc)
+            else:
+                client_message = f"Model '{exc.model_id}' not found"
             response = JSONResponse(
                 status_code=404,
                 content={
                     "error": {
-                        "message": str(exc),
+                        "message": client_message,
                         "type": "invalid_request_error",
                         "code": "model_not_found",
                         "param": "model",

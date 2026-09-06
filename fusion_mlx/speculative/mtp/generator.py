@@ -377,10 +377,26 @@ def mtp_generate_step(
 
             hidden_at_main = hidden[:, -1:, :]
             if next_k >= 1:
-                d_toks, d_lps, d_alps, d_xtcs = _step_mtp_chain(
-                    hidden_at_main, main_tok, prev_tokens, next_k
-                )
-                pending_drafts = list(zip(d_toks, d_lps, d_alps, d_xtcs))
+                try:
+                    d_toks, d_lps, d_alps, d_xtcs = _step_mtp_chain(
+                        hidden_at_main, main_tok, prev_tokens, next_k
+                    )
+                    pending_drafts = list(zip(d_toks, d_lps, d_alps, d_xtcs))
+                except Exception as draft_exc:
+                    # R-25 (#811): draft-model failure must not kill the
+                    # request. The base model already emitted main_tok and
+                    # its cache is coherent at this position. Drop
+                    # speculation for this round and continue plain base
+                    # decode — every subsequent round re-attempts the draft
+                    # chain, so a transient fault (one bad mtp_forward)
+                    # self-heals without terminating generation. Only a
+                    # persistent draft failure keeps paying the catch cost.
+                    logger.warning(
+                        "[MTP] draft chain failed (%s) — skipping "
+                        "speculation this round, continuing base decode",
+                        draft_exc,
+                    )
+                    pending_drafts = None
             else:
                 pending_drafts = None
             y = mx.array([main_tok.item()], mx.uint32)
@@ -429,6 +445,18 @@ def mtp_generate_step(
                 dist = mx.where(z > 0, residual, p_target)
                 residual_toks_arr = mx.random.categorical(mx.log(dist))
                 bonus_tok_arr = toks[k_len]
+                # R-24 (#811): the reject-position token is sampled from
+                # `dist` (residual where draft mass was subtracted, else
+                # target), NOT from the target distribution alone. The
+                # logprobs yielded downstream must describe the distribution
+                # the token was actually drawn from, or consumers reading
+                # logprob[verify_tok_id] get the target's value for a token
+                # that was never sampled under it — silent calibration
+                # corruption. log_softmax(log(dist)) is that distribution.
+                _log_dist = mx.log(mx.maximum(dist, 1e-30))
+                residual_logprobs = _log_dist - mx.logsumexp(
+                    _log_dist, axis=-1, keepdims=True
+                )
 
             mx.eval(toks, accept_mask_arr, residual_toks_arr, bonus_tok_arr, u)
 
@@ -496,7 +524,18 @@ def mtp_generate_step(
                 verify_tok_id = int(residual_ids[accepted_count])
 
                 ntoks += 1
-                yield verify_tok_id, lps[accepted_count], False
+                # R-24 (#811): greedy rejects sample from the target's
+                # argmax, so target logprob (lps) is correct. Non-greedy
+                # rejects sample from `dist`, so yield that distribution's
+                # logprob for the emitted token — not the target's.
+                if _is_greedy:
+                    verify_lp = lps[accepted_count]
+                else:
+                    pos = mx.array([accepted_count])
+                    verify_lp = mx.take_along_axis(
+                        residual_logprobs[pos], mx.array([verify_tok_id]), axis=-1
+                    ).squeeze()
+                yield verify_tok_id, verify_lp, False
                 if ntoks >= max_tokens:
                     return
                 last_committed_tok_id = verify_tok_id

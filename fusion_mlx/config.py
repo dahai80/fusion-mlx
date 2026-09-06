@@ -235,6 +235,7 @@ class ServerConfig:
     model_aliases: dict[str, str] = field(default_factory=dict)
     admin_enabled: bool = True
     cloud_router_enabled: bool = False
+    cloud_router_model: str | None = None
     cloud_router_api_key: str | None = None
     cloud_router_threshold: int = 32768
 

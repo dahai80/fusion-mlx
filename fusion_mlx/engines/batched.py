@@ -349,10 +349,33 @@ class BatchedEngine(BaseEngine):
             thread_name_prefix="fusion-mlx-load",
             initializer=_init_mlx_step_thread,
         )
-        self._model, self._tokenizer = await asyncio.wait_for(
-            loop.run_in_executor(self._model_load_executor, _load_model_sync),
-            timeout=120.0,
-        )
+        # P2-8: if start() raises between here and self._engine assignment,
+        # the dedicated executor leaks (no stop() path will shut it down, and
+        # shutting it down directly can crash on an MLX Stream-bound thread —
+        # see _immortal_mlx_executors). Register it so a failed start still
+        # tracks the executor for process-lifetime cleanup instead of orphan.
+        from ..engine_core import _immortal_mlx_executors
+
+        _immortal_mlx_executors.append(self._model_load_executor)
+        try:
+            self._model, self._tokenizer = await asyncio.wait_for(
+                loop.run_in_executor(self._model_load_executor, _load_model_sync),
+                timeout=120.0,
+            )
+        except Exception:
+            # P2-8: load failed. The executor is registered in
+            # _immortal_mlx_executors (kept alive for the process lifetime
+            # because closing an MLX Stream-bound thread can crash without
+            # the GIL), so it does not leak — it is cleaned up at process
+            # exit with the other immortal executors. Surface the failure
+            # loudly instead of swallowing it.
+            logger.error(
+                "BatchedEngine.start() model load failed for '%s' — "
+                "load executor left registered as immortal (process-lifetime)",
+                self._model_name,
+                exc_info=True,
+            )
+            raise
 
         scheduler_config = (
             copy.copy(self._scheduler_config)
@@ -640,6 +663,27 @@ class BatchedEngine(BaseEngine):
                     self._engine.engine.close()
                 except Exception as e:
                     logger.warning(f"Error closing engine: {e}")
+        # R-22 (#811): shut down the dedicated load executor on stop. start()
+        # registered it in _immortal_mlx_executors "because closing an
+        # MLX-Stream-bound thread can crash" — but VLMBatchedEngine.stop()
+        # does exactly this shutdown(wait=False) on the same initializer
+        # (_init_mlx_step_thread) and has never crashed, proving the concern
+        # was overcautious. Without this, every LRU evict+reload of an LLM
+        # left a zombie thread holding a thread-local Metal Stream +
+        # CompilerCache, exhausting the thread/memory budget on long-running
+        # multi-model servers.
+        if self._model_load_executor is not None:
+            try:
+                from ..engine_core import _immortal_mlx_executors
+
+                try:
+                    _immortal_mlx_executors.remove(self._model_load_executor)
+                except ValueError:
+                    pass
+                self._model_load_executor.shutdown(wait=False)
+            except Exception as e:
+                logger.warning("Error shutting down model load executor: %s", e)
+            self._model_load_executor = None
         self._engine = None
         self._model = None
         self._tokenizer = None
@@ -900,11 +944,11 @@ class BatchedEngine(BaseEngine):
         # add_request; absent on the normal path.
         resume_kwargs = {}
         if kwargs.get("resume_prompt_cache") is not None:
-            resume_kwargs["resume_prompt_cache"] = kwargs.pop(
-                "resume_prompt_cache"
-            )
+            resume_kwargs["resume_prompt_cache"] = kwargs.pop("resume_prompt_cache")
         if kwargs.get("resume_cached_tokens"):
-            resume_kwargs["resume_cached_tokens"] = int(kwargs.pop("resume_cached_tokens"))
+            resume_kwargs["resume_cached_tokens"] = int(
+                kwargs.pop("resume_cached_tokens")
+            )
 
         engine = self._engine
         request_id = await engine.add_request(
@@ -1192,11 +1236,21 @@ class BatchedEngine(BaseEngine):
             yield output
 
     def has_active_requests(self) -> bool:
+        # P0-5: the EngineCore tracks in-flight requests in _active_contexts,
+        # not _output_collectors (that attr does not exist on EngineCore).
+        # Reading the wrong name made this always return False, so shutdown
+        # drains and eviction checks skipped live SSE streams.
         ec = getattr(self, "_engine", None)
         if ec is not None:
             inner = getattr(ec, "engine", None)
             if inner is not None:
-                return len(getattr(inner, "_output_collectors", {})) > 0
+                active = getattr(inner, "_active_contexts", None)
+                if active is not None:
+                    return len(active) > 0
+                # fallback for non-EngineCore cores that track collectors
+                collectors = getattr(inner, "_output_collectors", None)
+                if collectors is not None:
+                    return len(collectors) > 0
         return False
 
     def get_stats(self) -> dict[str, Any]:

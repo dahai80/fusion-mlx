@@ -69,6 +69,16 @@ def _save_weights_safetensors(weights: dict[str, mx.array], output_dir: str):
     save_file(np_weights, os.path.join(output_dir, "model.safetensors"))
     del np_weights
 
+    # fsync the weight file so a crash after save does not leave a renamed
+    # but empty/partial model.safetensors that mlx_lm.load silently accepts
+    # as a valid model (#811 P0).
+    try:
+        st_path = os.path.join(output_dir, "model.safetensors")
+        with open(st_path, "rb") as f:
+            os.fsync(f.fileno())
+    except OSError as e:
+        logger.warning("fsync of safetensors failed (non-fatal): %s", e)
+
 
 def _remap_weights(
     hf_weights: dict[str, mx.array],
@@ -170,6 +180,7 @@ def convert_model(
 ) -> ConvertResult:
     result = ConvertResult(output_dir=output_dir)
 
+    tmp_dir: str | None = None
     try:
         if progress_cb:
             progress_cb(0.0, "Loading HF weights")
@@ -199,16 +210,25 @@ def convert_model(
 
         if progress_cb:
             progress_cb(0.8, "Saving MLX model")
-        os.makedirs(output_dir, exist_ok=True)
+        # Atomic-ish write: build the full output tree in a sibling temp dir,
+        # then swap it into output_dir on success. A crash mid-write leaves
+        # the temp dir (cleaned below) rather than a half-written
+        # model.safetensors + config.json that mlx_lm.load would silently
+        # load as a valid but corrupt model (#811 P0).
+        os.makedirs(os.path.dirname(os.path.abspath(output_dir)) or ".", exist_ok=True)
+        tmp_dir = f"{output_dir}.tmp.{os.getpid()}"
+        if os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        os.makedirs(tmp_dir, exist_ok=True)
 
         mlx_config = _build_mlx_config(config, template)
-        config_path = os.path.join(output_dir, "config.json")
+        config_path = os.path.join(tmp_dir, "config.json")
         with open(config_path, "w") as f:
             json.dump(mlx_config, f, indent=2)
-        logger.info("Wrote config.json to %s", output_dir)
+        logger.info("Wrote config.json to %s", tmp_dir)
 
-        _save_weights_safetensors(mlx_weights, output_dir)
-        logger.info("Wrote weights (%d tensors) to %s", len(mlx_weights), output_dir)
+        _save_weights_safetensors(mlx_weights, tmp_dir)
+        logger.info("Wrote weights (%d tensors) to %s", len(mlx_weights), tmp_dir)
 
         tokenizer_src = Path(hf_dir)
         for tok_name in (
@@ -220,11 +240,18 @@ def convert_model(
         ):
             src = tokenizer_src / tok_name
             if src.exists():
-                shutil.copy2(str(src), os.path.join(output_dir, tok_name))
+                shutil.copy2(str(src), os.path.join(tmp_dir, tok_name))
                 logger.info("Copied %s", tok_name)
         for custom_tok in sorted(tokenizer_src.glob("tokenization_*.py")):
-            shutil.copy2(str(custom_tok), os.path.join(output_dir, custom_tok.name))
+            shutil.copy2(str(custom_tok), os.path.join(tmp_dir, custom_tok.name))
             logger.info("Copied custom tokenizer %s", custom_tok.name)
+
+        # Swap the completed temp tree into the final path.
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir, ignore_errors=True)
+        os.rename(tmp_dir, output_dir)
+        tmp_dir = None  # consumed
+        logger.info("Atomically installed converted model to %s", output_dir)
 
         result.num_weights = len(mlx_weights)
         total_elements = sum(np.prod(w.shape) for w in mlx_weights.values())
@@ -236,5 +263,10 @@ def convert_model(
     except Exception as e:
         logger.exception("Conversion failed: %s", e)
         result.error = str(e)
+    finally:
+        # Clean up a half-written temp dir from a failed conversion so it is
+        # not mistaken for a valid model on the next run.
+        if tmp_dir is not None and os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return result

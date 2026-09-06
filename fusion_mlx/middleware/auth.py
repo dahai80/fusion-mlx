@@ -20,6 +20,40 @@ security = HTTPBearer(auto_error=False)
 
 _RATE_LIMIT_HMAC_KEY = secrets.token_bytes(32)
 
+# P3-4: behind a reverse proxy, request.client.host is the proxy, so the /24
+# subnet bucket collapses every co-located client into one rate-limit bucket
+# and a single abuser starves them all. When FUSION_TRUSTED_PROXIES is set
+# (comma-separated CIDRs, e.g. "10.0.0.0/8,172.16.0.0/12"), trust X-Forwarded-For:
+# take the rightmost XFF hop that is NOT in a trusted CIDR as the real client
+# IP for bucketing. Without this env var, XFF is ignored (do not trust client
+# headers by default — that would let a caller spoof its bucket to evade limits).
+_TRUSTED_PROXY_NETWORKS = []
+for _cidr in os.environ.get("FUSION_TRUSTED_PROXIES", "").split(","):
+    _cidr = _cidr.strip()
+    if _cidr:
+        try:
+            _TRUSTED_PROXY_NETWORKS.append(ipaddress.ip_network(_cidr, strict=False))
+        except ValueError:
+            logger.warning("FUSION_TRUSTED_PROXIES: ignoring invalid CIDR '%s'", _cidr)
+
+
+def _xff_client_ip(request: Request) -> str | None:
+    if not _TRUSTED_PROXY_NETWORKS:
+        return None
+    xff = request.headers.get("X-Forwarded-For")
+    if not xff:
+        return None
+    hops = [h.strip() for h in xff.split(",") if h.strip()]
+    # Walk right-to-left; the first hop not in a trusted CIDR is the real client.
+    for hop in reversed(hops):
+        try:
+            addr = ipaddress.ip_address(hop)
+        except ValueError:
+            continue
+        if not any(addr in net for net in _TRUSTED_PROXY_NETWORKS):
+            return hop
+    return None
+
 
 class RateLimiter:
     """In-memory sliding-window rate limiter with amortized O(1) cleanup."""
@@ -125,7 +159,8 @@ def _rate_limit_client_id(request: Request) -> str:
         raw = bearer_key or authorization
         return _bucket_id(raw)
     if request.client and request.client.host:
-        return _subnet_bucket(request.client.host)
+        client_ip = _xff_client_ip(request) or request.client.host
+        return _subnet_bucket(client_ip)
     return "unknown"
 
 
@@ -137,7 +172,8 @@ def _anthropic_rate_limit_client_id(request: Request) -> str:
     if x_api_key:
         return _bucket_id(x_api_key)
     if request.client and request.client.host:
-        return _subnet_bucket(request.client.host)
+        client_ip = _xff_client_ip(request) or request.client.host
+        return _subnet_bucket(client_ip)
     return "unknown"
 
 

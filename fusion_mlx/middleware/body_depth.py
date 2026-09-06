@@ -20,7 +20,16 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _GUARDED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-_GUARDED_PREFIXES = ("/v1/", "/internal/", "/anthropic/", "/distributed/")
+# R-15 (#811): guard the management plane too (see body_size.py).
+_GUARDED_PREFIXES = (
+    "/v1/",
+    "/internal/",
+    "/anthropic/",
+    "/distributed/",
+    "/admin/",
+    "/rpc",
+    "/stats",
+)
 _EXCLUDED_PATHS = frozenset({"/v1/audio/transcriptions"})
 
 _JSON_CONTENT_TYPE_OPTIONAL_PATHS = frozenset(

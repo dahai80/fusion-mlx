@@ -22,6 +22,10 @@ def scheduler():
     s.config = MagicMock(max_num_seqs=8)
     s.waiting = deque()
     s.requests = {}
+    # P3-2: add_request caps waiting+prefilling+running. Seed the active sets
+    # empty so the bare instance reflects a fresh scheduler's in-flight state.
+    s.prefilling = deque()
+    s.running = {}
     return s
 
 

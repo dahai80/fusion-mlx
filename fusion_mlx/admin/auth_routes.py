@@ -112,14 +112,22 @@ async def setup_api_key(
         HTTPException: 400 if key already configured, validation fails,
                         or keys don't match.
     """
+    from ..middleware.auth import _is_loopback_client
     from ..server import _server_state
 
-    # Only allow from localhost to prevent remote takeover
-    client_host = fastapi_request.client.host if fastapi_request.client else ""
-    if client_host not in ("127.0.0.1", "::1", "localhost"):
+    # R-14 (#811): only allow from localhost to prevent remote takeover.
+    # The prior inline `client.host in ("127.0.0.1", "::1", "localhost")`
+    # check ignored forwarded headers, so a loopback reverse proxy
+    # (nginx -> 127.0.0.1:11434) let an external attacker hit this endpoint
+    # (the proxy connection originates from 127.0.0.1) and set the initial
+    # API key before the operator. Use the hardened _is_loopback_client,
+    # which rejects any X-Forwarded-For / Forwarded / Via / cf-connecting-ip
+    # header so a proxied request is never mistaken for a local one.
+    if not _is_loopback_client(fastapi_request):
         raise HTTPException(
             status_code=403,
-            detail="Initial API key setup is only allowed from localhost",
+            detail="Initial API key setup is only allowed from a direct "
+            "localhost connection (no forwarded/proxy headers)",
         )
 
     global_settings = _get_global_settings()

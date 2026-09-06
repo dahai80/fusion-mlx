@@ -161,3 +161,48 @@ class TestGetStats:
         engine = VideoGenEngine("ltx-2")
         await engine.start()
         assert engine.get_stats()["loaded"] is True
+
+
+class TestPoisonGuard:
+    # R-3 (#811): a hung generation poisons the video executor so later
+    # requests fast-fail loudly instead of silently queuing behind the
+    # dead worker forever.
+
+    async def test_poisoned_executor_rejects_generate(self, stub):
+        from fusion_mlx.engine_core import reset_video_executor_poison
+
+        reset_video_executor_poison()
+        engine = VideoGenEngine("ltx-2")
+        await engine.start()
+        # Simulate a prior hang having poisoned the executor.
+        from fusion_mlx import engine_core as ec
+
+        ec._video_executor_poisoned = True
+        try:
+            with pytest.raises(RuntimeError, match="video subsystem unavailable"):
+                await engine.generate(prompt="p", seed=1, num_frames=17)
+        finally:
+            reset_video_executor_poison()
+            await engine.stop()
+
+    async def test_timeout_poisons_executor(self, stub, monkeypatch):
+        # A backend TimeoutError must mark the executor poisoned and surface
+        # a loud restart-required error.
+        from fusion_mlx.engine_core import (
+            is_video_executor_poisoned,
+            reset_video_executor_poison,
+        )
+
+        reset_video_executor_poison()
+
+        async def _raise_timeout(self_backend, params):
+            raise TimeoutError("simulated hang")
+
+        engine = VideoGenEngine("ltx-2")
+        await engine.start()
+        monkeypatch.setattr(type(engine._backend), "generate", _raise_timeout)
+        with pytest.raises(RuntimeError, match="exceeded the hang deadline"):
+            await engine.generate(prompt="p", seed=1, num_frames=17)
+        assert is_video_executor_poisoned() is True
+        reset_video_executor_poison()
+        await engine.stop()
