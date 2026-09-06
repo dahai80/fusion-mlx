@@ -38,8 +38,9 @@ class ImageGenerateRequest(BaseModel):
     # Image dimensions (default 1024x1024)
     width: int = Field(default=1024, ge=256, le=2048)
     height: int = Field(default=1024, ge=256, le=2048)
-    # Diffusion steps (fewer = faster, more = higher quality)
-    steps: int = Field(default=4, ge=1, le=50)
+    # Diffusion steps (None = variant-aware default; #823: 4 was too few for
+    # full-diffusion DiTs like Qwen-Image-2512 which need ~30). 1..50.
+    steps: int | None = Field(default=None, ge=1, le=50)
     # Random seed (None = random)
     seed: int | None = None
     # Guidance scale (None = variant default; txt2img=1.0, flux1 variants=4.0)

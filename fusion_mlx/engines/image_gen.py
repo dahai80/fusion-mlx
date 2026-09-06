@@ -184,6 +184,36 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
     ),
 }
 
+# #823: per-variant default diffusion steps. A single global steps=4
+# default was tuned for Flux-schnell (4-step distilled) but is far too few
+# for full diffusion DiTs (Qwen-Image-2512 needs ~30 for sharp output,
+# SDXL/SD1.5/SD2 ~28-30, Flux-dev ~28). mflux's own variant defaults are
+# all 4 too, so the under-denoised/blurry output was silent. Resolved in
+# ImageGenEngine.generate() when the caller omits steps (None), mirroring
+# the existing guidance=None → variant default pattern. Variants not
+# listed fall back to 4 (preserves Flux-schnell / fast distilled behavior).
+VARIANT_DEFAULT_STEPS: dict[str, int] = {
+    "txt2img": 4,  # Flux2-Klein distilled
+    "flux2_dev": 28,  # full DiT, guidance_embeds
+    "flux1_dev": 28,  # full DiT
+    "flux1_schnell": 4,  # 4-step distilled
+    "controlnet_canny": 28,
+    "controlnet_upscaler": 28,
+    "depth": 28,
+    "fill": 28,
+    "kontext": 28,
+    "redux": 28,
+    "sd3": 28,
+    "sdxl": 28,
+    "cosxl": 28,
+    "sdxs": 4,  # distilled 1-4 step
+    "sd15": 28,
+    "sd2": 28,
+    "stable_cascade": 12,  # prior 20 + decoder 12; image gen uses prior
+    "qwen_image": 30,  # Qwen-Image-2512 DiT — needs ~30 (the #823 report)
+    "qwen_image_edit": 30,
+}
+
 # Per-call executor timeout for image generation / model load (#481). The
 # hard-coded 600s killed legitimate SD1.5 1024x1024 img2img (hires-fix 2nd
 # pass). Override via FUSION_IMAGE_TIMEOUT (seconds). Invalid/non-positive
@@ -482,7 +512,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         prompt: str,
         width: int = 1024,
         height: int = 1024,
-        steps: int = 4,
+        steps: int | None = None,
         seed: int | None = None,
         guidance: float | None = None,
         n_images: int = 1,
@@ -515,6 +545,16 @@ class ImageGenEngine(BaseNonStreamingEngine):
         if guidance is None:
             _, _, _, default_guidance = VARIANT_MAP[self._variant]
             guidance = default_guidance
+        # #823: use variant default steps when caller doesn't specify. A flat
+        # steps=4 was too few for full-diffusion DiTs (Qwen-Image-2512 needs
+        # ~30); per-variant defaults avoid blurry under-denoised output.
+        if steps is None:
+            steps = VARIANT_DEFAULT_STEPS.get(self._variant, 4)
+            logger.debug(
+                "image_gen: steps unset, using variant default for '%s': %d",
+                self._variant,
+                steps,
+            )
         t0 = time.monotonic()
         activity_id = self._begin_activity(
             "generating images",

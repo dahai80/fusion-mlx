@@ -1,6 +1,7 @@
 import pytest
 
 from fusion_mlx.engines.image_gen import (
+    VARIANT_DEFAULT_STEPS,
     VARIANT_MAP,
     ImageGenEngine,
     _infer_variant,
@@ -82,3 +83,24 @@ class TestQwenImageEngineInit:
     def test_qwen_image_4bit_inferred(self):
         eng = ImageGenEngine(model_name="mlx-community/Qwen-Image-2512-4bit")
         assert eng.variant == "qwen_image"
+
+
+class TestVariantDefaultSteps:
+    # #823: Qwen-Image-2512 needs ~30 steps; a flat default of 4 produced
+    # blurry under-denoised output. Every VARIANT_MAP entry should resolve a
+    # sane default (>=4 for distilled, >=12 for full diffusion DiTs).
+    def test_every_variant_has_default_steps(self):
+        for name in VARIANT_MAP:
+            assert name in VARIANT_DEFAULT_STEPS, f"missing default steps for {name}"
+
+    def test_qwen_image_default_steps_30(self):
+        assert VARIANT_DEFAULT_STEPS["qwen_image"] == 30
+        assert VARIANT_DEFAULT_STEPS["qwen_image_edit"] == 30
+
+    def test_schnell_stays_4(self):
+        # 4-step distilled model must not be forced to 28.
+        assert VARIANT_DEFAULT_STEPS["flux1_schnell"] == 4
+
+    def test_full_diffusion_variants_need_many_steps(self):
+        for v in ("flux1_dev", "flux2_dev", "sdxl", "sd15", "sd2", "sd3"):
+            assert VARIANT_DEFAULT_STEPS[v] >= 20, f"{v} under-denoised default"
