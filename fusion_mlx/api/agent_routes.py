@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Any
@@ -22,6 +23,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
 
 # In-memory graph store (SQLite-backed in production)
+# E-48 (#811): admin-gated but was unbounded — a single long-running
+# deployment accumulated graphs without limit. Cap the in-memory store;
+# once full, the oldest graph (FIFO, dict preserves insertion order) is
+# evicted to make room. Env-configurable for power users.
+MAX_GRAPHS = max(8, int(os.environ.get("FUSION_MLX_MAX_AGENT_GRAPHS", "128") or 128))
 _graphs: dict[str, dict[str, Any]] = {}
 
 # ── Helper ──
@@ -105,6 +111,21 @@ async def create_graph(
     graph_id = data.get("id") or uuid.uuid4().hex[:16]
     if graph_id in _graphs:
         raise HTTPException(409, detail=f"Graph '{graph_id}' already exists")
+
+    # E-48 (#811): enforce the in-memory graph cap. Evict the oldest
+    # (FIFO — dict preserves insertion order) before inserting so the
+    # store cannot grow without bound on a long-running deployment.
+    while len(_graphs) >= MAX_GRAPHS:
+        oldest_id = next(iter(_graphs))
+        evicted = _graphs.pop(oldest_id, None)
+        if evicted is not None:
+            logger.warning(
+                "Agent graph store full (MAX_GRAPHS=%d); evicted oldest "
+                "graph %s to make room for %s",
+                MAX_GRAPHS, oldest_id, graph_id,
+            )
+        else:
+            break
 
     now = _now()
     _graphs[graph_id] = {
