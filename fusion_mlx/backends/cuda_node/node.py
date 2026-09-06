@@ -56,8 +56,19 @@ class CudaNodeConfig:
     """Configuration for the vLLM CUDA backend node (#365)."""
 
     model: str
-    host: str = "0.0.0.0"
+    # CL-2 (#811 audit 0906): bind loopback by default. A cluster-exposed
+    # CUDA node on 0.0.0.0 with no auth is an open inference relay — any
+    # peer (or attacker on the subnet) can drive the GPU unauthenticated.
+    # Operators who genuinely need 0.0.0.0 must pass it explicitly AND
+    # configure an api_key (see the startup guard in create_cuda_app).
+    host: str = "127.0.0.1"
     port: int = 8000
+    # CL-2 (#811 audit 0906): API key gating the node's inference routes.
+    # Sourced from CudaNodeConfig.api_key (CLI --api-key / FUSION_MLX_API_KEY).
+    # When unset AND the bind is loopback, anonymous access is permitted
+    # (dev/single-host); when unset AND the bind is non-loopback, the node
+    # REFUSES to start (fail visible — no silent open relay).
+    api_key: str | None = None
     # vLLM engine kwargs
     tensor_parallel_size: int = 1
     gpu_memory_utilization: float = 0.90
@@ -130,7 +141,7 @@ def create_cuda_app(config: CudaNodeConfig):
     """
     from contextlib import asynccontextmanager
 
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import JSONResponse
 
     engine = _build_engine(config)
@@ -177,12 +188,81 @@ def create_cuda_app(config: CudaNodeConfig):
 
     from fusion_mlx._version import __version__
 
+    # CL-2 (#811 audit 0906): fail-visible startup guard. A non-loopback
+    # bind with no api_key is an open inference relay — refuse to serve
+    # rather than silently expose an unauthenticated GPU to the network.
+    _configured_key = config.api_key
+    import os
+
+    if not _configured_key:
+        env_key = os.environ.get("FUSION_MLX_API_KEY")
+        if env_key:
+            _configured_key = env_key
+    _bind_loopback = config.host in {"127.0.0.1", "::1", "localhost"}
+    if not _bind_loopback and not _configured_key:
+        raise RuntimeError(
+            "CL-2 (#811 audit 0906): CUDA node bound to non-loopback host "
+            f"'{config.host}' with no api_key. An unauthenticated node on a "
+            "cluster network is an open inference relay. Set --api-key "
+            "(or FUSION_MLX_API_KEY) or bind 127.0.0.1. Refusing to start."
+        )
+    if _configured_key:
+        logger.info(
+            "cuda-node: API-key auth ENABLED (bind=%s)", config.host
+        )
+    else:
+        logger.warning(
+            "cuda-node: no api_key configured on loopback bind — anonymous "
+            "access permitted (dev/single-host only). Do NOT bind 0.0.0.0."
+        )
+
     app = FastAPI(
         title="fusion-mlx CUDA node",
         description="vLLM-powered OpenAI-compatible heavy LLM node (#365)",
         version=__version__,
         lifespan=lifespan,
     )
+
+    @app.middleware("http")
+    async def _cuda_node_auth(request: Request, call_next):
+        # CL-2 (#811 audit 0906): gate every route behind the configured
+        # api_key (Bearer or x-api-key), mirroring the main server's
+        # verify_api_key. /health is the only unauthenticated probe — a
+        # load balancer needs a liveness check without credentials.
+        path = request.url.path
+        if path == "/health" or _configured_key is None:
+            return await call_next(request)
+        import secrets
+
+        bearer = None
+        authz = request.headers.get("authorization", "")
+        if authz.lower().startswith("bearer "):
+            bearer = authz[7:].strip()
+        x_api_key = request.headers.get("x-api-key")
+        provided = [k for k in (bearer, x_api_key) if k]
+        if not provided:
+            logger.warning(
+                "cuda-node: 401 no api_key host=%s path=%s",
+                request.client.host if request.client else "?",
+                path,
+            )
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "API key required"},
+            )
+        if not all(
+            secrets.compare_digest(k, _configured_key) for k in provided
+        ):
+            logger.warning(
+                "cuda-node: 401 invalid api_key host=%s path=%s",
+                request.client.host if request.client else "?",
+                path,
+            )
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid API key"},
+            )
+        return await call_next(request)
 
     @app.get("/health")
     async def health():

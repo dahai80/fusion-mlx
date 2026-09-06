@@ -559,6 +559,7 @@ class TestEngineCorePropagation:
         core._active_contexts = {}
         core._stream_states = {}
         core._finished_events = {}
+        core._running = True
 
         mock_scheduler = MagicMock(spec=[])
         mock_scheduler._specprefill_draft_model = draft_model

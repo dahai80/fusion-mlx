@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, NewType
 
 from .interface import CacheManager
+from .model_fingerprint import model_path_signature
 from .stats import PagedCacheStats
 
 logger = logging.getLogger(__name__)
@@ -533,7 +534,12 @@ class PagedCacheManager(CacheManager):
         self.block_size = block_size
         self.max_blocks = max_blocks
         self.enable_caching = enable_caching
-        self.model_name = model_name
+        # CS-6 (#811 audit 0906): fold a content signature of the weight dir
+        # into the cache-isolation string so re-pull/re-quant at the SAME path
+        # invalidates prior block hashes instead of returning stale KV. The
+        # signature is computed once at init; missing weights fall back to the
+        # raw path (no regression vs. the pre-fix path-only key).
+        self.model_name = model_path_signature(model_name) if model_name else model_name
         self.initial_blocks = initial_blocks
 
         # Warn if model_name is not set (cache isolation may not work)

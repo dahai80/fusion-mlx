@@ -1,4 +1,7 @@
+import hashlib
+import hmac
 import logging
+import os
 import re
 
 logger = logging.getLogger(__name__)
@@ -17,6 +20,55 @@ _TXT_REFRESH_INTERVAL = 60
 # stale entries age out faster. Kept comfortably above the TXT refresh
 # interval so a live node's periodic refresh re-arms the TTL.
 _SERVICE_TTL_SECONDS = 15
+# CL-4 (#811 audit 0906): cluster-shared secret used to authenticate mDNS
+# peer advertisements. mDNS is an unauthenticated broadcast — without a
+# shared secret any host on the subnet can advertise a fake high-capacity
+# node and have the gateway route prompts to it (prompt exfiltration +
+# request hijack). The token is an HMAC-SHA256 of an explicit
+# FUSION_CLUSTER_TOKEN (preferred) or the configured api_key, keyed by a
+# fixed service salt. A consumer that ingests discovered nodes MUST verify
+# verify_cluster_token() before registering the peer; a mismatched/absent
+# token means the advertiser is not part of this cluster and must be
+# rejected. When no secret material is configured the token is empty and
+# verify_cluster_token() returns False — fail-closed: a cluster with no
+# configured secret rejects ALL discovered peers rather than trusting
+# unauthenticated advertisements.
+_CLUSTER_TOKEN_SALT = b"fusion-mlx-cluster-mdns-v1"
+
+
+def _cluster_secret_material() -> str | None:
+    token = os.environ.get("FUSION_CLUSTER_TOKEN", "").strip()
+    if token:
+        return token
+    try:
+        from ..middleware.auth import _get_configured_api_key
+
+        key = _get_configured_api_key()
+        if key:
+            return key
+    except Exception:
+        logger.debug("CL-4: cluster secret material lookup failed", exc_info=True)
+    return None
+
+
+def compute_cluster_token() -> str:
+    material = _cluster_secret_material()
+    if not material:
+        return ""
+    return hmac.new(_CLUSTER_TOKEN_SALT, material.encode(), hashlib.sha256).hexdigest()
+
+
+def verify_cluster_token(provided: str | None) -> bool:
+    expected = compute_cluster_token()
+    if not expected:
+        logger.warning(
+            "CL-4: no cluster secret configured — rejecting discovered peer "
+            "(set FUSION_CLUSTER_TOKEN or api_key to enable mDNS auth)"
+        )
+        return False
+    if not provided:
+        return False
+    return hmac.compare_digest(provided, expected)
 
 
 def _sanitize_name(node_id: str) -> str:
@@ -36,6 +88,9 @@ def build_txt_records(snapshot: dict) -> dict[str, str]:
     records["models_csv"] = ",".join(loaded)
     mem = snapshot.get("memory", {})
     records["available_percent"] = f"{mem.get('available_percent', 0.0):.1f}"
+    # CL-4 (#811 audit 0906): cluster-shared-secret token so a consumer can
+    # authenticate this advertisement (reject rogue-host fake nodes).
+    records["cluster_token"] = compute_cluster_token()
     return records
 
 

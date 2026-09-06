@@ -343,14 +343,33 @@ class EngineCore:
             # -> cross-stream "There is no Stream(gpu, N) in current thread"
             # on every forward (#KV-0).
             self._mlx_stream = mx.default_stream(mx.default_device())
-            _sched_result.append(
-                Scheduler(
-                    model=model,
-                    tokenizer=tokenizer,
-                    config=scheduler_config,
-                    stream=self._mlx_stream,
-                )
+            sched = Scheduler(
+                model=model,
+                tokenizer=tokenizer,
+                config=scheduler_config,
+                stream=self._mlx_stream,
             )
+            # CS-3 (#811 audit 0906): stamp the SSD hot-cache layer signature
+            # now that the loaded model's real cache types are known. The SSD
+            # manager is built in sched_misc init with only expected_num_layers
+            # (from config), NOT the live per-layer cache-class signature, so
+            # without this refresh the hot cache either adopts whatever the
+            # first block happens to carry (wrong on a quant swap) or never
+            # invalidates stale blocks from a prior model under the same name.
+            # refresh_ssd_layer_signature is a no-op when there is no SSD
+            # manager (pure-memory/SSD disabled).
+            try:
+                sig = sched.refresh_ssd_layer_signature()
+                if sig:
+                    logger.debug(
+                        "SSD layer signature stamped on scheduler build: %d layers",
+                        len(sig),
+                    )
+            except Exception:
+                logger.debug(
+                    "refresh_ssd_layer_signature on build failed", exc_info=True
+                )
+            _sched_result.append(sched)
 
         _fut = self._mlx_executor.submit(_make_scheduler)
         try:
@@ -1411,6 +1430,16 @@ class EngineCore:
                     fn()
                 except RuntimeError:
                     pass
+        # RC-1 (#811 audit 0906): fail every in-flight request BEFORE clearing
+        # collectors. generate() awaits ctx.finished_event; without a terminal
+        # error output + _mark_request_finished the event is never set and the
+        # consumer coroutine hangs forever on engine close. A live consumer
+        # holds its own collector ref, so the dict clear below cannot truncate
+        # the error it just received.
+        try:
+            self._fail_unfinished_contexts("engine closed")
+        except Exception:
+            logger.debug("fail_unfinished_contexts on close failed", exc_info=True)
         for ctx in list(self._active_contexts.values()):
             with suppress(Exception):
                 ctx.collector.clear()

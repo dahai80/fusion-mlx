@@ -32,6 +32,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from .model_fingerprint import adapter_path_signature
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,6 +77,7 @@ class _CacheEntry:
     created_at: float
     last_access: float
     ttl: float
+    model: str = ""
 
 
 class ResponseCache:
@@ -117,7 +120,12 @@ class ResponseCache:
     ) -> str:
         parts = [
             model or "",
-            adapters or "",
+            # CS-5 (#811 audit 0906): fold adapter content (weight size+mtime)
+            # into the key, not just the path string. Overwriting the adapter
+            # at the same path would otherwise reuse completions built against
+            # the old adapter weights. Missing weights fall back to the raw
+            # path (no regression vs. the pre-fix path-only key).
+            adapter_path_signature(adapters) if adapters else "",
             json.dumps(messages, sort_keys=True, separators=(",", ":")),
             str(temperature or 0.0),
             str(top_p or 1.0),
@@ -180,6 +188,8 @@ class ResponseCache:
         key: str,
         value: Any,
         ttl: float | None = None,
+        *,
+        model: str = "",
     ) -> bool:
         try:
             raw = json.dumps(value, separators=(",", ":"))
@@ -217,6 +227,7 @@ class ResponseCache:
                 created_at=now,
                 last_access=now,
                 ttl=ttl or self._default_ttl,
+                model=model or "",
             )
             self._store[key] = entry
             self._stats.size_bytes += size
@@ -244,6 +255,28 @@ class ResponseCache:
             self._store.clear()
             self._stats.size_bytes = 0
             self._stats.entry_count = 0
+
+    def invalidate_model(self, model: str) -> int:
+        # CS-1 (#811 audit 0906): drop every entry cached under *model*. The
+        # fingerprint hashes the alias string (not weight revision/quant), so
+        # a re-pull or quant swap under the same alias would silently return
+        # stale completions for up to TTL. Called on engine unload/reload.
+        if not model:
+            return 0
+        with self._lock:
+            stale = [k for k, e in self._store.items() if e.model == model]
+            for k in stale:
+                entry = self._store.pop(k, None)
+                if entry:
+                    self._stats.size_bytes -= entry.size_bytes
+            self._stats.entry_count = len(self._store)
+            if stale:
+                logger.info(
+                    "Response cache invalidated %d entry(ies) for model '%s'",
+                    len(stale),
+                    model,
+                )
+            return len(stale)
 
     def get_by_response_id(self, response_id: str) -> Any | None:
         with self._lock:

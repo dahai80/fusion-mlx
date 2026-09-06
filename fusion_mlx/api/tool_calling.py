@@ -734,9 +734,18 @@ def parse_tool_calls(
                 rf"{s_esc}(.*?){e_esc}", cleaned_text, flags=re.DOTALL
             )
             if stripped:
+                # EH-5 (#811 audit 0906): tool-call markers were present but no
+                # parser produced a valid ToolCall. The client is about to
+                # receive plain text with no tool_calls and no error signal,
+                # so an Agent waiting on a tool invocation will spin. Warn
+                # loudly (tools=%s) so the operator can alert; a bounded
+                # client-facing signal needs a return-shape change across 14
+                # call sites and is tracked separately.
                 logger.warning(
-                    "Tool call markers found but parsing failed, "
-                    "stripping markers. Raw content: %s",
+                    "Tool call markers found but parsing failed — "
+                    "degrading to plain text with NO tool_calls returned "
+                    "to client. tools_requested=%d stripped_markers=%s",
+                    len(tools or []),
                     stripped,
                 )
             cleaned_text = re.sub(
@@ -746,8 +755,10 @@ def parse_tool_calls(
             idx = cleaned_text.find(_start)
             if idx >= 0:
                 logger.warning(
-                    "Tool call start marker found but parsing failed, "
-                    "stripping marker. Raw content: %s",
+                    "Tool call start marker found but parsing failed — "
+                    "degrading to plain text with NO tool_calls returned "
+                    "to client. tools_requested=%d raw_content=%s",
+                    len(tools or []),
                     cleaned_text[idx:],
                 )
                 cleaned_text = cleaned_text[:idx].strip()
@@ -1166,6 +1177,17 @@ class ToolCallStreamFilter:
         so partial control markup does not leak into user-visible text.
         """
         if self._suppressing or self._suppressing_until is not None:
+            # EH-5 (#811 audit 0906): stream ended mid-tool-call-envelope.
+            # The unterminated marker text is dropped so control markup does
+            # not leak, but the client gets plain text with no tool_calls and
+            # no error event — an Agent waiting on the tool call will spin.
+            logger.warning(
+                "Stream ended inside an unterminated tool-call envelope — "
+                "dropping partial marker, client receives plain text with "
+                "NO tool_calls. suppressed=%s until=%r",
+                self._suppressing,
+                self._suppressing_until,
+            )
             self._buffer = ""
             self._suppressing_until = None
             return ""
@@ -1175,6 +1197,13 @@ class ToolCallStreamFilter:
             tail = self._buffer
             self._buffer = ""
             if self._should_drop_tail_at_finish(tail):
+                # EH-5 (#811 audit 0906): trailing marker-like suffix dropped
+                # at stream finish — same silent-degrade risk as above.
+                logger.warning(
+                    "Stream finished with a dropped tool-call-like tail "
+                    "(%r) — client receives plain text with NO tool_calls.",
+                    tail,
+                )
                 return ""
             return tail
 

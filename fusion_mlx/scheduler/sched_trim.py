@@ -182,6 +182,14 @@ def _do_abort_request(self, request_id: str) -> bool:
     if request_id in self.running:
         del self.running[request_id]
 
+    # R-3 (#811 audit 0906): if this is the active specprefill request, clear
+    # the admission gate + RoPE patches. _cleanup_specprefill otherwise only
+    # runs on the normal-finish path; an aborted specprefill request would
+    # leave _specprefill_active_request_id set and block all non-specprefill
+    # admission forever (queue deadlock).
+    if getattr(self, "_specprefill_active_request_id", None) == request_id:
+        self._cleanup_specprefill(request_id)
+
     # Release blocks for eviction (same as _cleanup_finished)
     if self.paged_cache_manager is not None:
         block_table = self.paged_cache_manager.get_block_table(request_id)

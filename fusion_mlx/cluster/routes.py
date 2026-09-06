@@ -32,6 +32,9 @@ class RegisterRequest(BaseModel):
     active_requests: int = 0
     available_percent: float = 100.0
     models_loaded: list[str] = []
+    # CL-4 (#811 audit 0906): cluster-shared-secret token proving the peer
+    # belongs to this cluster. Verified against compute_cluster_token().
+    cluster_token: str | None = None
 
 
 class EvictRequest(BaseModel):
@@ -55,11 +58,29 @@ async def cluster_health(
         dead,
         evicted,
     )
+    # CL-1 (#811 audit 0906): the health monitor is not wired into the server
+    # lifespan in this release, so ALIVE here is the *registered* state, not a
+    # heartbeat-verified state. Fail visibly: when peers are present but the
+    # monitor never ran, every node stays ALIVE forever and a dead peer is
+    # never evicted — operators routing on this would hit silent dead-node
+    # failures. Surface a loud warning instead of lying.
+    monitor_active = registry.health_monitor_active
+    health_warning = ""
+    if nodes and not monitor_active:
+        health_warning = (
+            "cluster self-healing monitor is NOT running: node liveness is "
+            "unverified (registered state, not heartbeat-verified). A dead "
+            "peer will NOT be detected or evicted. Do not route production "
+            "traffic on this view. See audit CL-1."
+        )
+        logger.warning("cluster /health: %s", health_warning)
     return {
         "total": len(nodes),
         "alive": alive,
         "dead": dead,
         "evicted": evicted,
+        "health_monitor_active": monitor_active,
+        "health_warning": health_warning,
         "nodes": [n.snapshot() for n in nodes],
     }
 
@@ -69,6 +90,23 @@ async def cluster_register(
     req: RegisterRequest,
     _auth: bool = Depends(verify_management_access),
 ) -> dict[str, Any]:
+    # CL-4 (#811 audit 0906): authenticate the registering peer with the
+    # cluster-shared secret. A rogue host on the subnet could otherwise
+    # register a fake node (via the gateway or directly) and have prompts
+    # routed to it. Fail-closed: no secret configured -> reject all peers;
+    # token mismatch -> 403.
+    from .mdns import verify_cluster_token
+
+    if not verify_cluster_token(req.cluster_token):
+        logger.warning(
+            "cluster route: REJECTED register node=%s — invalid/absent "
+            "cluster_token (CL-4 #811 audit 0906)",
+            req.node_id,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="invalid cluster_token — peer not authenticated to this cluster",
+        )
     registry = get_registry()
     node = ClusterNode(
         node_id=req.node_id,

@@ -353,7 +353,9 @@ async def _process_image_urls(urls: list[str]) -> list[str]:
                     raise HTTPException(
                         400, "Image URL targets a private/internal address"
                     )
-                async with httpx.AsyncClient() as c:
+                from fusion_mlx._http_limits import bounded_limits
+
+                async with httpx.AsyncClient(limits=bounded_limits()) as c:
                     r = await c.get(u)
                     r.raise_for_status()
                     ct = r.headers.get("content-type", "")

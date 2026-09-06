@@ -140,6 +140,22 @@ class NodeRegistry:
     def __init__(self) -> None:
         self._nodes: dict[str, ClusterNode] = {}
         self._lock = asyncio.Lock()
+        # CL-1 (#811 audit 0906): the self-healing layer
+        # (ClusterHealthMonitor/ClusterLoadBalancer/FailoverRouter) is NOT
+        # wired into the server lifespan in this release. Without a running
+        # monitor, registered peers keep their initial ALIVE state forever —
+        # a dead node is never detected/evicted, so /v1/cluster/health would
+        # silently report stale-alive nodes an operator would route to. The
+        # flag is flipped on by ClusterHealthMonitor.start() so the health
+        # route can fail visibly (warn, not lie) when the monitor is absent.
+        self._health_monitor_active = False
+
+    @property
+    def health_monitor_active(self) -> bool:
+        return self._health_monitor_active
+
+    def _set_health_monitor_active(self, active: bool) -> None:
+        self._health_monitor_active = active
 
     async def register(self, node: ClusterNode) -> None:
         async with self._lock:
@@ -279,6 +295,7 @@ class ClusterHealthMonitor:
             return
         self._stopped.clear()
         self._task = asyncio.ensure_future(self._loop())
+        self.registry._set_health_monitor_active(True)
         logger.info(
             "cluster health monitor started (interval=%.1fs max_missed=%d)",
             self.interval,
@@ -295,6 +312,7 @@ class ClusterHealthMonitor:
                 pass
             self._task = None
             logger.info("cluster health monitor stopped")
+        self.registry._set_health_monitor_active(False)
 
     async def check_once(self) -> None:
         """Single heartbeat sweep — also used by tests for deterministic checks."""
@@ -386,17 +404,51 @@ class FailoverRouter:
         lb: ClusterLoadBalancer,
         monitor: ClusterHealthMonitor | None = None,
         max_retries: int = 2,
+        # CL-3 (#811 audit 0906): inflight cap — backpressure. Without a
+        # bound a slow peer lets the originator pile up unlimited forwarded
+        # requests, exhausting memory/connections and collapsing global
+        # throughput. A bounded semaphore rejects overflow fast (503) rather
+        # than queuing unbounded. Default 0 = UNBOUNDED for back-compat with
+        # existing callers/tests; a production wire-up MUST pass a positive
+        # cap or set FUSION_CLUSTER_MAX_INFLIGHT.
+        max_inflight: int = 0,
     ) -> None:
         self.registry = registry
         self.lb = lb
         self.monitor = monitor
         self.max_retries = max_retries
+        import os
+
+        env_cap = os.environ.get("FUSION_CLUSTER_MAX_INFLIGHT", "").strip()
+        if env_cap:
+            try:
+                max_inflight = int(env_cap)
+            except ValueError:
+                logger.warning(
+                    "CL-3: invalid FUSION_CLUSTER_MAX_INFLIGHT='%s', ignored",
+                    env_cap,
+                )
+        self.max_inflight = max_inflight
+        self._inflight: asyncio.Semaphore | None = (
+            asyncio.Semaphore(max_inflight) if max_inflight > 0 else None
+        )
 
     async def route(
         self,
         call_fn: Callable[[ClusterNode], Coroutine[Any, Any, Any]],
         stream: bool = False,
     ) -> Any:
+        # CL-3 (#811 audit 0906): backpressure. Reject overflow fast instead
+        # of piling unbounded inflight onto a slow peer. A request that
+        # cannot acquire the cap returns a NodeUnavailableError so the caller
+        # surfaces 503 / falls back to local — never silently queues forever.
+        if self._inflight is not None and self._inflight.locked():
+            logger.warning(
+                "CL-3: cluster inflight cap (%d) saturated — rejecting "
+                "forward (backpressure), falling back",
+                self.max_inflight,
+            )
+            raise NodeUnavailableError("local", "cluster inflight cap saturated")
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             node = await self.lb.select()
@@ -404,7 +456,13 @@ class FailoverRouter:
                 # No alive peers — caller handles local fallback.
                 raise NodeUnavailableError("local", "no alive cluster peers")
             try:
-                result = await call_fn(node)
+                if self._inflight is not None:
+                    await self._inflight.acquire()
+                try:
+                    result = await call_fn(node)
+                finally:
+                    if self._inflight is not None:
+                        self._inflight.release()
                 return result
             except NodeUnavailableError as exc:
                 last_error = exc

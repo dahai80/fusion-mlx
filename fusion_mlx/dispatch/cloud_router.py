@@ -151,49 +151,73 @@ class CloudRouter:
         created = int(time.time())
         token_count = 0
 
-        async for chunk in response:
-            # Extract the delta from litellm's streaming response
-            if not chunk.choices:
-                continue
+        try:
+            async for chunk in response:
+                # Extract the delta from litellm's streaming response
+                if not chunk.choices:
+                    continue
 
-            delta = chunk.choices[0].delta
-            finish_reason = chunk.choices[0].finish_reason
+                delta = chunk.choices[0].delta
+                finish_reason = chunk.choices[0].finish_reason
 
-            # Build SSE chunk in OpenAI format
-            sse_chunk = {
-                "id": request_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model_name,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": finish_reason,
+                # Build SSE chunk in OpenAI format
+                sse_chunk = {
+                    "id": request_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model_name,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": finish_reason,
+                        }
+                    ],
+                }
+
+                # Populate delta fields
+                if hasattr(delta, "role") and delta.role:
+                    sse_chunk["choices"][0]["delta"]["role"] = delta.role
+                if hasattr(delta, "content") and delta.content:
+                    sse_chunk["choices"][0]["delta"]["content"] = delta.content
+                    token_count += 1
+                if hasattr(delta, "tool_calls") and delta.tool_calls:
+                    sse_chunk["choices"][0]["delta"]["tool_calls"] = [
+                        tc.model_dump() for tc in delta.tool_calls
+                    ]
+
+                yield f"data: {json.dumps(sse_chunk)}\n\n"
+
+            elapsed = time.perf_counter() - start
+            logger.info(
+                f"[CLOUD] Streamed {token_count} tokens from {self.cloud_model} "
+                f"in {elapsed:.2f}s"
+            )
+
+            yield "data: [DONE]\n\n"
+        except Exception as exc:
+            # EH-3 (#811 audit 0906): forward the cloud stream failure to
+            # the local client as an SSE error frame instead of letting the
+            # exception propagate out of the generator (which closes the
+            # stream silently from the client's view). The upstream caller
+            # may not wrap this in its own error-event handler.
+            logger.error(
+                "[CLOUD] stream_completion failed after %d tokens: %s(%s)",
+                token_count,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+            err_payload = json.dumps(
+                {
+                    "error": {
+                        "message": f"cloud stream failed: {type(exc).__name__}: {exc}",
+                        "type": "cloud_stream_error",
+                        "status": 502,
                     }
-                ],
-            }
-
-            # Populate delta fields
-            if hasattr(delta, "role") and delta.role:
-                sse_chunk["choices"][0]["delta"]["role"] = delta.role
-            if hasattr(delta, "content") and delta.content:
-                sse_chunk["choices"][0]["delta"]["content"] = delta.content
-                token_count += 1
-            if hasattr(delta, "tool_calls") and delta.tool_calls:
-                sse_chunk["choices"][0]["delta"]["tool_calls"] = [
-                    tc.model_dump() for tc in delta.tool_calls
-                ]
-
-            yield f"data: {json.dumps(sse_chunk)}\n\n"
-
-        elapsed = time.perf_counter() - start
-        logger.info(
-            f"[CLOUD] Streamed {token_count} tokens from {self.cloud_model} "
-            f"in {elapsed:.2f}s"
-        )
-
-        yield "data: [DONE]\n\n"
+                }
+            )
+            yield f"data: {err_payload}\n\n"
 
     @staticmethod
     def _is_retryable_cloud_error(exc: BaseException) -> bool:

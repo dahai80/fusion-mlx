@@ -108,6 +108,12 @@ def _schedule_waiting(
     while self.waiting and self._num_admitted_requests() < _max_seqs:
         # Token budget guard: max_num_batched_tokens bounds the total
         # tokens (decode + prefill) in a single forward pass.
+        # R-4 (#811 audit 0906): in-flight chunked-prefill requests live in
+        # self.prefilling and consume tokens in the SAME forward pass as the
+        # newly scheduled ones. The old budget counted only running + newly
+        # scheduled, so 3 mid-prefill chunks (~8k tokens each) + a fresh admit
+        # silently exceeded max_num_batched_tokens -> Metal OOM. Count the
+        # remaining tokens of every in-flight prefill chunk against the budget.
         batched_tokens = len(self.running) + sum(
             len(
                 r.remaining_tokens
@@ -115,6 +121,13 @@ def _schedule_waiting(
                 else r.prompt_token_ids
             )
             for r in scheduled
+        ) + sum(
+            len(
+                r.remaining_tokens
+                if r.remaining_tokens is not None
+                else r.prompt_token_ids
+            )
+            for r in self.prefilling
         )
         if batched_tokens >= self.config.max_num_batched_tokens:
             break
@@ -131,11 +144,19 @@ def _schedule_waiting(
         # for every subsequent admission. `scheduled` tracks how many
         # we have admitted in THIS _schedule_waiting call, so the seed
         # is the first admit only.
-        if self._admission_paused and (self.running or scheduled):
+        if self._admission_paused and (self.running or scheduled or self.prefilling):
+            # R-4 (#811 audit 0906): the old gate ignored self.prefilling, so
+            # an engine whose ONLY in-flight work was chunked-prefill chunks
+            # (running empty, scheduled empty) bypassed the pause and admitted
+            # a fresh burst under memory pressure -> OOM. Count prefilling so
+            # the pause holds while ANY request is in flight; the E-45 idle
+            # recovery seed still fires when running/scheduled/prefilling are
+            # ALL empty (genuinely idle -> one admit through).
             logger.debug(
                 "Admission paused by memory pressure, %d running, "
-                "%d already scheduled this pass",
+                "%d prefilling, %d already scheduled this pass",
                 len(self.running),
+                len(self.prefilling),
                 len(scheduled),
             )
             break
@@ -659,12 +680,22 @@ def _schedule_waiting(
                 cleanup_rope(self.model)
                 request.specprefill_indices = None
                 tracker.remove(request.request_id)
+                # R-2 (#811 audit 0906): clear the specprefill admission gate
+                # on failure. If this request set _specprefill_active_request_id
+                # (line above) before the abort, leaving it set would block ALL
+                # non-specprefill admission forever — _cleanup_specprefill only
+                # runs on the normal-finish path, so the queue deadlocks.
+                if self._specprefill_active_request_id == request.request_id:
+                    self._specprefill_active_request_id = None
                 raise
             except Exception as e:
                 logger.error(f"SpecPrefill sparse prefill failed: {e}")
                 cleanup_rope(self.model)
                 request.specprefill_indices = None
                 tracker.remove(request.request_id)
+                # R-2 (#811 audit 0906): same gate-clear as the abort branch.
+                if self._specprefill_active_request_id == request.request_id:
+                    self._specprefill_active_request_id = None
                 # Fall through to normal prefill
 
         # External prefill: process tokens[0:N-1] outside BatchGenerator.
@@ -860,6 +891,14 @@ def _schedule_waiting(
         if pending_queue and any(
             p["request"].request_id == request.request_id for p in pending_queue
         ):
+            continue
+
+        # R-1 (#811 audit 0906): if the batch was full and _route_to_vlm_mtp
+        # flushed immediately but that flush failed, the request was already
+        # failed visibly (terminal error output pushed via
+        # _vlm_mtp_failed_outputs) and removed from self.requests. Do NOT
+        # fall through to BatchGenerator insert with an aborted request.
+        if RequestStatus.is_finished(request.status):
             continue
 
         # Insert into BatchGenerator with pre-filled cache + last token.

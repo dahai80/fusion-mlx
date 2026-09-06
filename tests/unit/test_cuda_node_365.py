@@ -131,12 +131,15 @@ def stubbed_vllm(monkeypatch):
     return vllm
 
 
-def test_create_cuda_app_routes(stubbed_vllm):
+def test_create_cuda_app_routes(stubbed_vllm, monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.backends.cuda_node import CudaNodeConfig, create_cuda_app
 
-    cfg = CudaNodeConfig(model="Qwen/Qwen2.5-72B-Instruct", cluster_advertise=False)
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
+    cfg = CudaNodeConfig(
+        model="Qwen/Qwen2.5-72B-Instruct", cluster_advertise=False, api_key="k"
+    )
     app = create_cuda_app(cfg)
     with TestClient(app) as client:
         r = client.get("/health")
@@ -145,7 +148,9 @@ def test_create_cuda_app_routes(stubbed_vllm):
         assert body["platform"] == "windows-cuda"
         assert body["model"] == "Qwen/Qwen2.5-72B-Instruct"
 
-        r = client.get("/v1/models")
+        r = client.get(
+            "/v1/models", headers={"Authorization": "Bearer k"}
+        )
         assert r.status_code == 200
         data = r.json()
         assert data["object"] == "list"
@@ -154,27 +159,39 @@ def test_create_cuda_app_routes(stubbed_vllm):
         r = client.post(
             "/v1/chat/completions",
             json={"messages": [{"role": "user", "content": "hi"}], "max_tokens": 8},
+            headers={"Authorization": "Bearer k"},
         )
         assert r.status_code == 200
         chat = r.json()
         assert chat["object"] == "chat.completion"
         assert chat["choices"][0]["message"]["content"] == "hello from cuda"
 
-        r = client.post("/v1/completions", json={"prompt": "hi", "max_tokens": 8})
+        r = client.post(
+            "/v1/completions",
+            json={"prompt": "hi", "max_tokens": 8},
+            headers={"Authorization": "Bearer k"},
+        )
         assert r.status_code == 200
         comp = r.json()
         assert comp["object"] == "text_completion"
         assert comp["choices"][0]["text"] == "hello from cuda"
 
 
-def test_create_cuda_app_rejects_missing_messages(stubbed_vllm):
+def test_create_cuda_app_rejects_missing_messages(stubbed_vllm, monkeypatch):
     from fastapi.testclient import TestClient
 
     from fusion_mlx.backends.cuda_node import CudaNodeConfig, create_cuda_app
 
-    app = create_cuda_app(CudaNodeConfig(model="m", cluster_advertise=False, port=0))
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
+    app = create_cuda_app(
+        CudaNodeConfig(model="m", cluster_advertise=False, port=0, api_key="k")
+    )
     with TestClient(app) as client:
-        r = client.post("/v1/chat/completions", json={})
+        r = client.post(
+            "/v1/chat/completions",
+            json={},
+            headers={"Authorization": "Bearer k"},
+        )
         assert r.status_code == 400
 
 
@@ -182,12 +199,84 @@ def test_cuda_node_config_defaults():
     from fusion_mlx.backends.cuda_node import CudaNodeConfig
 
     cfg = CudaNodeConfig(model="m")
-    assert cfg.host == "0.0.0.0"
+    # CL-2 (#811 audit 0906): loopback by default — no silent open relay.
+    assert cfg.host == "127.0.0.1"
     assert cfg.port == 8000
     assert cfg.tensor_parallel_size == 1
     assert cfg.gpu_memory_utilization == 0.90
     assert cfg.cluster_advertise is True
     assert cfg.quantization is None
+    assert cfg.api_key is None
+
+
+def test_cuda_node_refuses_non_loopback_without_key(stubbed_vllm, monkeypatch):
+    # CL-2 (#811 audit 0906): non-loopback bind with no api_key must REFUSE
+    # to start — fail visible, no silent open inference relay.
+    from fusion_mlx.backends.cuda_node import CudaNodeConfig, create_cuda_app
+
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
+    bad = CudaNodeConfig(
+        model="m", host="0.0.0.0", cluster_advertise=False, api_key=None
+    )
+    with pytest.raises(RuntimeError, match="open inference relay"):
+        create_cuda_app(bad)
+
+
+def test_cuda_node_non_loopback_starts_with_key(stubbed_vllm, monkeypatch):
+    # CL-2 (#811 audit 0906): non-loopback WITH an api_key is allowed.
+    from fastapi.testclient import TestClient
+
+    from fusion_mlx.backends.cuda_node import CudaNodeConfig, create_cuda_app
+
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
+    cfg = CudaNodeConfig(
+        model="m",
+        host="0.0.0.0",
+        cluster_advertise=False,
+        api_key="secret-key",
+        port=0,
+    )
+    app = create_cuda_app(cfg)
+    with TestClient(app) as client:
+        # /health stays unauthenticated (liveness probe).
+        assert client.get("/health").status_code == 200
+        # inference without key -> 401
+        r = client.post(
+            "/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert r.status_code == 401
+        # invalid key -> 401
+        r = client.post(
+            "/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer wrong"},
+        )
+        assert r.status_code == 401
+        # valid key -> 200
+        r = client.post(
+            "/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer secret-key"},
+        )
+        assert r.status_code == 200
+
+
+def test_cuda_node_loopback_anonymous_ok(stubbed_vllm, monkeypatch):
+    # CL-2 (#811 audit 0906): loopback with no key allows anonymous (dev).
+    from fastapi.testclient import TestClient
+
+    from fusion_mlx.backends.cuda_node import CudaNodeConfig, create_cuda_app
+
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
+    cfg = CudaNodeConfig(model="m", host="127.0.0.1", cluster_advertise=False)
+    app = create_cuda_app(cfg)
+    with TestClient(app) as client:
+        r = client.post(
+            "/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+        )
+        assert r.status_code == 200
 
 
 def test_import_vllm_raises_without_vllm(monkeypatch):

@@ -32,6 +32,7 @@ from typing import Any
 
 import mlx.core as mx
 
+from ..request import RequestOutput, RequestStatus
 from .types import (
     _VLMMTPDecodeState,
     _VLMMTPResponse,
@@ -40,6 +41,42 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_MTP_BATCH_SIZE = 4
+
+
+def _vlm_mtp_fail_queue(self, queue: list[dict], reason: str) -> None:
+    # R-1 (#811 audit 0906): batched prefill flush failure must NOT silently
+    # drop queued requests. Previously _vlm_mtp_flush_batch caught the MLX
+    # exception, logged a warning, and returned [] — the requests vanished
+    # from every queue (pending deleted before flush, never registered in
+    # running), so generate() awaited a finished_event that was never set
+    # and the client hung forever. Push a terminal error RequestOutput so
+    # the consumer sees the failure, mark the request aborted, and remove
+    # it from the registry. Outputs are stashed on
+    # _vlm_mtp_failed_outputs and merged into rejected outputs in step().
+    failed = getattr(self, "_vlm_mtp_failed_outputs", None)
+    if failed is None:
+        self._vlm_mtp_failed_outputs = []
+        failed = self._vlm_mtp_failed_outputs
+    for item in queue:
+        request = item["request"]
+        rid = request.request_id
+        logger.error(
+            "vlm_mtp flush failed for request %s: %s — failing visibly",
+            rid,
+            reason,
+        )
+        failed.append(
+            RequestOutput(
+                request_id=rid,
+                finished=True,
+                finish_reason="error",
+                error=f"vlm_mtp_batched_prefill_failed: {reason}",
+                error_code="vlm_mtp_batched_prefill_failed",
+            )
+        )
+        request.set_finished(RequestStatus.FINISHED_ABORTED)
+        self.finished_req_ids.add(rid)
+        self.requests.pop(rid, None)
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +238,7 @@ def _vlm_mtp_flush_batch(
             mx.eval([c.state for c in batched_cache])
     except Exception as e:
         logger.warning("vlm_mtp batched prefill failed: %s", e)
+        _vlm_mtp_fail_queue(self, queue, str(e))
         return []
 
     # Sample first bonus token per row. Mask _model_suppress_tokens before
@@ -272,7 +310,13 @@ def _vlm_mtp_flush_batch(
             token_dtype=mx.int32,
         )
     except Exception as e:
+        # R-1 (#811 audit 0906): generator setup failure dropped requests
+        # the same way prefill failure used to — pending already deleted
+        # (caller's del pending[:max_batch]), no row returned, no visible
+        # failure. Fail visibly via _vlm_mtp_fail_queue so the client sees
+        # a terminal error instead of hanging forever.
         logger.warning("vlm_mtp batched generator setup failed: %s", e)
+        _vlm_mtp_fail_queue(self, queue, str(e))
         return []
 
     # Create batch rows

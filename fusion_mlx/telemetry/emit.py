@@ -53,6 +53,11 @@ from fusion_mlx.telemetry.state import (
 
 logger = logging.getLogger(__name__)
 
+# EH-7 (#811 audit 0906): tracks which emit functions have already logged a
+# WARNING on first failure, so a telemetry backend outage surfaces once in
+# the log instead of being perma-silent (or flooding WARNING per call).
+_telemetry_warned_fns: set[str] = set()
+
 # ---------------------------------------------------------------- singleton
 
 _queue_lock = threading.Lock()
@@ -272,6 +277,7 @@ def _safe(fn: Any) -> Any:
     import inspect
 
     sig = inspect.signature(fn)
+    _fn_name = getattr(fn, "__name__", repr(fn))
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> None:
@@ -283,6 +289,23 @@ def _safe(fn: Any) -> Any:
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception:
+            # EH-7 (#811 audit 0906): a telemetry bug must not crash a user
+            # command, but a perma-silent swallow hid dropped metrics. Warn
+            # ONCE per function (so a backend outage surfaces in the log),
+            # then debug-log subsequent failures to avoid flooding.
+            if _fn_name not in _telemetry_warned_fns:
+                _telemetry_warned_fns.add(_fn_name)
+                logger.warning(
+                    "Telemetry emit '%s' failed — metrics from this "
+                    "function will be dropped silently until process "
+                    "restart. Further failures logged at DEBUG.",
+                    _fn_name,
+                    exc_info=True,
+                )
+            else:
+                logger.debug(
+                    "Telemetry emit '%s' failed (suppressed).", _fn_name
+                )
             return
 
     return wrapper

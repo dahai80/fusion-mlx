@@ -153,6 +153,21 @@ class MCPCommandValidator:
         # Extract base command name (without path)
         base_command = Path(command).name
 
+        # Versioned-python alias: real interpreters ship as python3.12 /
+        # python3.13 etc. but the whitelist only carries the stable names
+        # python / python3. Treat python3.NN as python3 so a venv interpreter
+        # (sys.executable basename) is accepted without enumerating every
+        # CPython release in the whitelist.
+        if base_command not in self.allowed_commands and re.match(
+            r"^python3\.\d+$", base_command
+        ):
+            if "python3" in self.allowed_commands:
+                logger.debug(
+                    f"MCP server '{server_name}': accepting versioned "
+                    f"interpreter '{base_command}' as python3 alias"
+                )
+                base_command = "python3"
+
         # Check if command is in whitelist
         if base_command not in self.allowed_commands:
             # Check if it's an absolute path to an allowed command

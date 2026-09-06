@@ -10,6 +10,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# EH-7 (#811 audit 0906): tracks which metrics recorder has already logged a
+# WARNING on first failure, so a persistent recorder bug surfaces once in the
+# log instead of being perma-silent at DEBUG (invisible by default).
+_metrics_warned: set[str] = set()
+
 _KV_CACHE_DTYPE_KNOWN = ("bf16", "int8", "int4")
 _STATS_JSON = Path.home() / ".fusion-mlx" / "stats.json"
 _ALLTIME_SAVE_INTERVAL = 10.0
@@ -433,11 +438,30 @@ def record_llm_metrics(
             ttft_ms=ttft_ms,
         )
     except Exception as exc:
-        logger.debug("Failed to record LLM metrics for %s: %s", model_id, exc)
+        # EH-7 (#811 audit 0906): warn once so a persistent recorder bug is
+        # visible by default, then debug to avoid per-request flooding.
+        if "record_request_complete" not in _metrics_warned:
+            _metrics_warned.add("record_request_complete")
+            logger.warning(
+                "Failed to record LLM metrics for %s (further failures at "
+                "DEBUG): %s",
+                model_id,
+                exc,
+            )
+        else:
+            logger.debug("Failed to record LLM metrics for %s: %s", model_id, exc)
 
 
 def record_llm_disconnect_cancel() -> None:
     try:
         get_server_metrics().record_disconnect_cancel()
     except Exception as exc:
-        logger.debug("Failed to record disconnect cancel: %s", exc)
+        if "record_disconnect_cancel" not in _metrics_warned:
+            _metrics_warned.add("record_disconnect_cancel")
+            logger.warning(
+                "Failed to record disconnect cancel (further failures at "
+                "DEBUG): %s",
+                exc,
+            )
+        else:
+            logger.debug("Failed to record disconnect cancel: %s", exc)
