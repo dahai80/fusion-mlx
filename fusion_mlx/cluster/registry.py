@@ -114,6 +114,11 @@ class NodeRegistry:
 
     async def register(self, node: ClusterNode) -> None:
         async with self._lock:
+            # E-24: register() never set last_heartbeat, so a freshly-registered
+            # node kept the dataclass default 0.0 (epoch 0) and any future
+            # liveness calculation saw a ~57-year-old heartbeat. Stamp it now
+            # on both the new-node and re-register paths.
+            now = time.time()
             existing = self._nodes.get(node.node_id)
             if existing is not None:
                 # Re-register refreshes metadata but preserves liveness state
@@ -122,12 +127,14 @@ class NodeRegistry:
                 existing.host = node.host
                 existing.port = node.port
                 existing.platform = node.platform
+                existing.last_heartbeat = now
                 if existing.state == NodeState.EVICTED:
                     logger.info("cluster: re-adding evicted node %s", node.node_id)
                     existing.state = NodeState.ALIVE
                     existing.missed_beats = 0
                 logger.debug("cluster: refreshed peer %s", node.node_id)
                 return
+            node.last_heartbeat = now
             self._nodes[node.node_id] = node
             logger.info(
                 "cluster: registered peer %s (%s:%d)",

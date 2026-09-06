@@ -11,6 +11,12 @@ except ImportError:
 
 _SERVICE_TYPE = "_fusion-mlx._tcp.local."
 _TXT_REFRESH_INTERVAL = 60
+# E-23: explicit mDNS TTL. zeroconf's default is ~75s, so a SIGKILL/OOM that
+# skips the goodbye (unregister) leaves a stale service entry on the network
+# for over a minute — peers keep routing to a dead node. A short TTL makes
+# stale entries age out faster. Kept comfortably above the TXT refresh
+# interval so a live node's periodic refresh re-arms the TTL.
+_SERVICE_TTL_SECONDS = 15
 
 
 def _sanitize_name(node_id: str) -> str:
@@ -59,6 +65,10 @@ class MdnsAdvertiser:
                     for k, v in self._txt_records.items()
                 },
                 server=f"{service_name}.local.",
+                # E-23: short TTL so stale entries (SIGKILL/OOM, no goodbye)
+                # age out fast instead of lingering ~75s.
+                host_ttl=_SERVICE_TTL_SECONDS,
+                other_ttl=_SERVICE_TTL_SECONDS,
             )
             await self._zc.async_register_service(self._info)
             logger.info("mDNS: advertising %s on port %d", _SERVICE_TYPE, self._port)
