@@ -1422,16 +1422,16 @@ class EngineCore:
             else:
                 # E-10 (#811): the executor must stay alive (its worker thread
                 # holds a thread-local MLX Stream + CompilerCache that cannot
-                # be torn down without a GIL-free crash), but we CAN cancel
-                # queued-but-not-started futures — they are safe to drop
-                # (no MLX state yet). cancel_futures=True does that without
-                # blocking on the running (immortal) worker thread.
-                try:
-                    self._mlx_executor.shutdown(wait=False, cancel_futures=True)
-                except Exception:
-                    logger.debug(
-                        "immortal executor cancel_futures failed", exc_info=True
-                    )
+                # be torn down without a GIL-free crash). ThreadPoolExecutor
+                # has no API to cancel queued futures WITHOUT marking the
+                # executor shut down — shutdown(cancel_futures=True) sets
+                # _shutdown=True, which would reject future submits and
+                # contradict the "immortal, reusable" intent. So leave the
+                # executor fully alive. Queued-but-not-started futures carry
+                # no MLX state yet and are harmless to let drain on the
+                # worker thread; the executor is pinned in
+                # _immortal_mlx_executors and never re-submitted to after
+                # close (self._mlx_executor is nulled below).
                 _immortal_mlx_executors.append(self._mlx_executor)
                 if self._mlx_stream is not None:
                     _immortal_mlx_streams.append(self._mlx_stream)
