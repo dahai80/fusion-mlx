@@ -1738,6 +1738,13 @@ class EnginePool:
             else:
                 entry = self._entries.get(model_id)
                 if entry is not None:
+                    # E-21 (#811): the unload decrement races the load
+                    # increment at the end of _load_engine (phase 2, lockless).
+                    # We do NOT take self._lock here: with_settle=False callers
+                    # include _unload_pending_if_idle_locked (holds the lock)
+                    # and shutdown (holds the lock), and asyncio.Lock is not
+                    # reentrant. The is_unloading / is_loading markers already
+                    # serialize load-vs-unload for the same model.
                     self._current_model_memory -= entry.estimated_size
                 logger.debug(
                     f"Fast unload (no settle) for '{model_id}': "
@@ -1847,6 +1854,14 @@ class EnginePool:
             )
 
         # Release memory tracking AFTER barrier
+        # E-21 (#811): the unload decrement races the load increment at the
+        # end of _load_engine (phase 2, lockless). We do NOT take self._lock
+        # here because (a) the is_unloading / is_loading markers already
+        # serialize load-vs-unload for the same model (a settling model had
+        # entry.engine=None set by _detach_engine, so a concurrent get_engine
+        # starts a fresh load whose increment lands after this decrement —
+        # correct order), and (b) shutdown() calls this under self._lock, and
+        # asyncio.Lock is not reentrant — acquiring it here would deadlock.
         self._current_model_memory -= entry.estimated_size
 
         if settled:
@@ -2509,7 +2524,14 @@ class EnginePool:
             # P2-5: now that intermediate buffers are cleared, record the
             # resident footprint so the enforcer sees the true post-load
             # baseline rather than the ~2x peak.
-            self._current_model_memory += entry.estimated_size
+            # E-21 (#811): this += runs in _load_engine phase 2 (OUTSIDE the
+            # pool lock) while concurrent unload paths also -= this same
+            # field under the lock — a lost update skews the memory budget.
+            # Take the lock briefly so the read-modify-write is atomic vs
+            # unload. The enforcer callback below is a plain setter, not
+            # await-coupled, so it stays inside the critical section.
+            async with self._lock:
+                self._current_model_memory += entry.estimated_size
             if self._process_memory_enforcer is not None:
                 self._process_memory_enforcer.update_loaded_model_bytes(
                     int(entry.estimated_size)
@@ -2762,19 +2784,47 @@ class EnginePool:
         now = time.time()
         expired: list[str] = []
 
+        # E-22 (#811): settings_manager.get_settings() does disk I/O. Calling
+        # it inside the pool lock blocks ALL pool operations (get_engine,
+        # unload, serve) for the duration of every model's settings read on
+        # every TTL sweep. Two-pass instead: snapshot candidate model_ids and
+        # their last_access under the lock, read settings (I/O) OUTSIDE the
+        # lock, then re-acquire the lock for the decision pass (re-checking
+        # the entry is still loaded and not busy — it may have been unloaded
+        # or acquired while the lock was released).
+        candidates: list[tuple[str, float]] = []
         async with self._lock:
             for model_id, entry in self._entries.items():
                 if entry.engine is None or entry.is_loading or entry.is_pinned:
                     continue
+                candidates.append((model_id, entry.last_access))
 
-                settings = settings_manager.get_settings(model_id)
-                effective_ttl = settings.ttl_seconds
-                if effective_ttl is None:
-                    effective_ttl = global_idle_timeout_seconds
+        # Settings I/O outside the lock.
+        ttl_by_model: dict[str, int | None] = {}
+        for model_id, _last_access in candidates:
+            settings = settings_manager.get_settings(model_id)
+            effective_ttl = settings.ttl_seconds
+            if effective_ttl is None:
+                effective_ttl = global_idle_timeout_seconds
+            if effective_ttl is not None:
+                ttl_by_model[model_id] = effective_ttl
+
+        # Decision pass under the lock — cheap, no I/O.
+        async with self._lock:
+            for model_id, last_access in candidates:
+                effective_ttl = ttl_by_model.get(model_id)
                 if effective_ttl is None:
                     continue
+                entry = self._entries.get(model_id)
+                if (
+                    entry is None
+                    or entry.engine is None
+                    or entry.is_loading
+                    or entry.is_pinned
+                ):
+                    continue
 
-                idle_time = now - entry.last_access
+                idle_time = now - last_access
                 if idle_time < effective_ttl:
                     continue
 

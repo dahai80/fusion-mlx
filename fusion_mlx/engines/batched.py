@@ -5,6 +5,7 @@ import asyncio
 import copy
 import json
 import logging
+import os
 import time
 
 logger = logging.getLogger(__name__)
@@ -358,9 +359,15 @@ class BatchedEngine(BaseEngine):
 
         _immortal_mlx_executors.append(self._model_load_executor)
         try:
+            # E-20 (#811): model load timeout was hardcoded to 120s. Large
+            # models (70B 4-bit ~40GB) on a cold cache or slow disk can exceed
+            # this legitimately; a too-low fixed cap spuriously aborts them.
+            # Read FUSION_MLX_MODEL_LOAD_TIMEOUT (seconds), default 300s for
+            # headroom. Allowlist entry added in test_no_out_of_band_routing.
+            _load_timeout = float(os.getenv("FUSION_MLX_MODEL_LOAD_TIMEOUT", "300"))
             self._model, self._tokenizer = await asyncio.wait_for(
                 loop.run_in_executor(self._model_load_executor, _load_model_sync),
-                timeout=120.0,
+                timeout=_load_timeout,
             )
         except Exception:
             # P2-8: load failed. The executor is registered in

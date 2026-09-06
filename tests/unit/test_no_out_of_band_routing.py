@@ -451,6 +451,9 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # Cap on the in-memory agent-graph store (api/agent_routes.py:25).
         # Pure capacity knob — never selects model / parser / tier.
         "FUSION_MLX_MAX_AGENT_GRAPHS",
+        # Model-load timeout in seconds (engines/batched.py). Pure timing knob
+        # — never selects model / parser / tier.
+        "FUSION_MLX_MODEL_LOAD_TIMEOUT",
     }
 )
 
