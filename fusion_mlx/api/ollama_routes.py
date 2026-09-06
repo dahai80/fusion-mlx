@@ -522,18 +522,11 @@ async def api_show(
         or (resolved.split("-")[0] if "-" in resolved else resolved)
         or "llm"
     )
-    size = (
-        entry.last_observed_size
-        or entry.actual_size
-        or entry.estimated_size
-        or 0
-    )
+    size = entry.last_observed_size or entry.actual_size or entry.estimated_size or 0
     return JSONResponse(
         {
             "name": resolved,
-            "modified_at": time.strftime(
-                "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
-            ),
+            "modified_at": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
             "size": size,
             "digest": "sha256:" + uuid.uuid4().hex[:64],
             "details": {
@@ -573,9 +566,7 @@ async def api_ps(
     models = []
     for mid in loaded:
         entry = _pool.get_entry(mid) if hasattr(_pool, "get_entry") else None
-        size = (
-            (entry.last_observed_size or entry.estimated_size) if entry else 0
-        )
+        size = (entry.last_observed_size or entry.estimated_size) if entry else 0
         models.append(
             {
                 "name": mid,
@@ -644,10 +635,7 @@ async def api_pull(
             json.dumps({"status": "pulling model", "id": name, "created_at": now})
             + "\n"
         )
-        yield (
-            json.dumps({"status": "success", "total": 0, "completed": 0})
-            + "\n"
-        )
+        yield (json.dumps({"status": "success", "total": 0, "completed": 0}) + "\n")
         yield (json.dumps({"status": "success"}) + "\n")
 
     return StreamingResponse(_stream(), media_type="application/x-ndjson")

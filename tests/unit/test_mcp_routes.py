@@ -239,7 +239,7 @@ class TestExecuteMcpTool:
         mgr.execute_tool.assert_not_awaited()
 
     def test_sandbox_blocks_path_traversal_arg(self, app_client):
-        from fusion_mlx.mcp.security import get_sandbox, set_sandbox, ToolSandbox
+        from fusion_mlx.mcp.security import ToolSandbox, get_sandbox, set_sandbox
 
         original = get_sandbox()
         set_sandbox(ToolSandbox(enabled=True))
@@ -250,7 +250,10 @@ class TestExecuteMcpTool:
 
             r = app_client.post(
                 "/v1/mcp/execute",
-                json={"tool_name": "srv__read", "arguments": {"path": "../../etc/passwd"}},
+                json={
+                    "tool_name": "srv__read",
+                    "arguments": {"path": "../../etc/passwd"},
+                },
             )
             assert r.status_code == 403
             mgr.execute_tool.assert_not_awaited()
@@ -258,7 +261,7 @@ class TestExecuteMcpTool:
             set_sandbox(original)
 
     def test_sandbox_blocks_high_risk_tool(self, app_client):
-        from fusion_mlx.mcp.security import get_sandbox, set_sandbox, ToolSandbox
+        from fusion_mlx.mcp.security import ToolSandbox, get_sandbox, set_sandbox
 
         original = get_sandbox()
         set_sandbox(ToolSandbox(enabled=True))

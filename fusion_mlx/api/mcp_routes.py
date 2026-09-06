@@ -111,9 +111,7 @@ async def execute_mcp_tool(
         )
 
     tool_name = request.tool_name
-    server_name = (
-        tool_name.split("__")[0] if "__" in tool_name else "unknown"
-    )
+    server_name = tool_name.split("__")[0] if "__" in tool_name else "unknown"
     bare_tool = tool_name.split("__")[-1] if "__" in tool_name else tool_name
 
     sandbox = get_sandbox()

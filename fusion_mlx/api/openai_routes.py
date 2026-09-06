@@ -2168,4 +2168,3 @@ async def resume_completion(
         resume_prompt_cache=list(loaded.cache),
         resume_cached_tokens=int(loaded.token_offset),
     )
-
