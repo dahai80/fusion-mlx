@@ -126,6 +126,15 @@ class NodeRegistry:
     alive peers are suitable. Peers are added/removed by the discovery
     layer (gateway handshake, mDNS browse) and health-checked by
     ``ClusterHealthMonitor``.
+
+    P3 (#811): every mutator/accessor is ``async def`` and guards state with
+    ``asyncio.Lock``. This is correct for the current call sites (cluster
+    routes + health monitor, all awaited from the event loop) but is NOT
+    safe for a future synchronous caller — there is no running event loop
+    to acquire the lock from a sync context, and ``asyncio.Lock`` cannot be
+    used without ``await``. Do not add sync helpers that touch ``_nodes``
+    directly; if a sync read path is ever needed, expose a snapshot updated
+    by the async side instead of locking here.
     """
 
     def __init__(self) -> None:

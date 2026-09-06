@@ -611,6 +611,16 @@ class UnifiedMemoryPool:
             quotas:         Per-backend max pre-allocation in bytes
             frag_threshold: Fragmentation ratio at which to suggest compaction
         """
+        # P3 (#811): dead code — no production call site instantiates this
+        # pool. BackendQuota/KVCacheBridge use threading.Lock, which is only
+        # safe off the asyncio event loop (allocate()/release() block on a
+        # contended lock). If wired, route every method through the MLX
+        # executor thread, never call directly from an async handler.
+        logger.warning(
+            "UnifiedMemoryPool instantiated but has no production wiring; "
+            "its threading.Lock is executor-thread-only — do not call "
+            "allocate()/release() from the asyncio event loop"
+        )
         self._total_limit = total_bytes
         self.registry = MetalBufferRegistry()
         self.quotas: dict[str, BackendQuota] = {}

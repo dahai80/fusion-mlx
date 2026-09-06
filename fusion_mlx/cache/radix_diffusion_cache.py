@@ -198,8 +198,12 @@ class DiffusionRadixCache:
     def __del__(self) -> None:
         try:
             _REGISTRY.discard(self)
-        except Exception:
-            pass
+        except Exception as e:
+            # P3 (#811): bare pass hid teardown errors. __del__ runs at GC
+            # time so re-raising is uncatchable and just spams stderr; log
+            # at debug so a real bug stays traceable while benign shutdown
+            # noise stays quiet.
+            logger.debug("DiffusionRadixCache.__del__ deregister failed: %s", e)
 
     def _walk(self, key: str) -> _RadixNode | None:
         """Walk the radix tree for key lookup. Returns None if not found."""
@@ -287,6 +291,14 @@ class DiffusionRadixCache:
             self._stats.leaf_count -= 1
             self._stats.evictions += 1
             del parent.children[edge_key]
+            # P3 (#811): mark the evicted node so the LRU heap pop filter
+            # (line ~306: ``node.value is None``) rejects its stale tuples
+            # cheaply instead of re-walking the trie via _find_parent. The
+            # heap still carries one tuple per historical _touch(); without
+            # this mark those dead tuples accumulate unboundedly and each
+            # only falls out lazily on the next eviction scan.
+            lru_node.value = None
+            lru_node._heap_seq = -1
             self._cleanup_chains(self._root, None, "")
             logger.debug(
                 "radix cache evicted %d bytes (leaves=%d, evictions=%d)",

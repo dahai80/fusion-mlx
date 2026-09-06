@@ -112,11 +112,16 @@ class MLLMPrefixCacheEntry:
             if hasattr(self.vision_embeddings, "nbytes"):
                 size += self.vision_embeddings.nbytes
             else:
-                # P3 (#811): silently skipping a non-nbytes vision tensor
-                # understates memory and skews eviction math. Log it so the
-                # undercount is observable instead of invisible.
-                logger.debug(
-                    "mllm memory_size: vision_embeddings lacks nbytes — undercounting"
+                # P3 (#811): a tensor without nbytes is silently skipped,
+                # understating memory and skewing eviction math toward
+                # evicting too late (OOM risk). debug was invisible in
+                # production — escalate to warning so the undercount is
+                # observable. A true byte count needs shape*itemsize, but
+                # mlx arrays always expose nbytes, so hitting this path
+                # means an unexpected tensor type worth investigating.
+                logger.warning(
+                    "mllm memory_size: vision_embeddings lacks nbytes — "
+                    "undercounting memory (eviction may run late)"
                 )
         if self.kv_cache is not None:
             for layer_cache in self.kv_cache:
@@ -127,8 +132,10 @@ class MLLMPrefixCacheEntry:
                             if hasattr(tensor, "nbytes"):
                                 size += tensor.nbytes
                             else:
-                                logger.debug(
-                                    "mllm memory_size: kv tensor lacks nbytes — undercounting"
+                                logger.warning(
+                                    "mllm memory_size: kv tensor lacks "
+                                    "nbytes — undercounting memory "
+                                    "(eviction may run late)"
                                 )
         return size
 

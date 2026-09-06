@@ -41,6 +41,14 @@ from .types import (
 # or memory ceiling can never deadlock scheduling (#1684).
 _ADMISSION_STALL_TIMEOUT_S = 60.0
 
+# P3 (#811): reorder grace. Before the hard reject timeout, rotate a stalled
+# head to the back of the waiting queue so the requests behind it get an
+# admission attempt instead of head-of-line blocking the whole queue for
+# the full 60s. A small prompt behind a huge stalled one, or a per-request
+# store-cache stall, can then proceed. The stalled request keeps its turn
+# in rotation; only a stall exceeding the full timeout is hard-rejected.
+_ADMISSION_STALL_REORDER_GRACE_S = 10.0
+
 # R-21 (#811): prompts above this many tokens use chunked prefill even when
 # chunked_prefill=False, so an inline full-prefill can't block every running
 # decode request for tens of seconds. 4x the default prefill_step_size (2048)
@@ -251,6 +259,35 @@ def _schedule_waiting(
                 if mem_blocked_id is None:
                     self._memory_admission_blocked_request_id = _next.request_id
                     self._memory_admission_blocked_since = now
+                # P3 (#811): reorder before hard-blocking. Memory headroom
+                # is per-request: a huge prompt may not fit while a smaller
+                # one behind it will. Once the head has stalled past the
+                # reorder grace (but under the hard reject timeout), rotate
+                # it to the back and try admitting the next request instead
+                # of head-of-line blocking the whole queue for 60s. The
+                # blocker stays on the rotated request's id so the stall
+                # timer keeps accruing toward the reject threshold.
+                stalled_for = now - (mem_blocked_since or now)
+                if (
+                    len(self.waiting) > 1
+                    and stalled_for >= _ADMISSION_STALL_REORDER_GRACE_S
+                ):
+                    rotated = self.waiting.popleft()
+                    self.waiting.append(rotated)
+                    logger.debug(
+                        "Memory stall reorder: rotated %s to back after "
+                        "%.1fs (prefill=%s > headroom=%s), %d still waiting",
+                        rotated.request_id,
+                        stalled_for,
+                        estimated_prefill,
+                        self._memory_limit_bytes - current,
+                        len(self.waiting),
+                    )
+                    # break (not continue): advance the head by one position
+                    # this pass, retry on the next step(). Avoids a tight
+                    # rotate-everything spin that would re-run the memory
+                    # probe + cache clear for the whole queue each step.
+                    break
                 logger.debug(
                     "Generation memory guard: deferring scheduling "
                     "(current=%s + prefill=%s > limit=%s), %d running",

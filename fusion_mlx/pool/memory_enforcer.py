@@ -905,7 +905,24 @@ class ProcessMemoryEnforcer:
         return getattr(eng, "_prefill_guard", None)
 
     def _propagate_memory_limit(self) -> None:
-        """Propagate ceiling-derived watermarks to all schedulers."""
+        """Propagate ceiling-derived watermarks to all schedulers.
+
+        P3 (#811): this runs on the asyncio event-loop thread and writes
+        scheduler watermark attributes that ``step()`` reads on the MLX
+        executor thread — a cross-thread write with no lock. The fields are
+        independent scalar thresholds (soft/hard/abort/margin), each a
+        single GIL-atomic int/float/bool assignment, and the scheduler
+        treats them as separate sample-then-act guards (it snapshots each
+        into a local before comparing). A transient partial update — e.g.
+        a new soft limit visible before the matching hard limit — is
+        harmless: the next propagation and the next step() both converge,
+        and memory guards are approximate by design (current footprint is
+        itself a noisy sample). No lock is added: serializing every
+        step() memory check against the enforcer would cost throughput for
+        no correctness gain. If these ever become a co-dependent snapshot
+        (must be read atomically together), switch to swapping a single
+        immutable dataclass reference instead of per-field writes.
+        """
         breakdown = self._get_ceiling_breakdown()
         ceiling = breakdown["hard_limit"]
         abort_limit = self._get_abort_limit_bytes()

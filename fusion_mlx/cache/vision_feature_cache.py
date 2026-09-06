@@ -17,9 +17,11 @@ for consistency and bfloat16 support.
 
 import errno
 import hashlib
+import json
 import logging
 import os
 import queue
+import struct
 import threading
 import time
 from collections import OrderedDict
@@ -49,6 +51,42 @@ def _composite_hash(model_name: str, image_hash: str) -> str:
     and ensures uniform directory distribution.
     """
     return hashlib.sha256(f"{model_name}:{image_hash}".encode()).hexdigest()
+
+
+def _read_safetensors_metadata_only(path: str) -> dict[str, str] | None:
+    # P3 (#811): _scan_existing_files only needs the __metadata__ block
+    # (image_hash / model_name / num_tensors), not the tensor arrays.
+    # mx.load(..., return_metadata=True) STILL materializes every tensor
+    # into MLX memory, wasting the full vision-feature bytes on a startup
+    # index rebuild. Parse the safetensors header JSON directly: 8-byte
+    # LE u64 header length, then that many bytes of JSON. No tensor data
+    # is read. Returns the metadata dict, or None on any parse error.
+    try:
+        with open(path, "rb") as f:
+            raw_len = f.read(8)
+            if len(raw_len) < 8:
+                return None
+            header_len = struct.unpack("<Q", raw_len)[0]
+            # Sanity bound: a metadata-only header is small; a corrupt
+            # or non-safetensors file could report an absurd length.
+            if header_len < 1 or header_len > 100 * 1024 * 1024:
+                logger.debug(
+                    "safetensors header length out of bounds for %s: %d",
+                    path,
+                    header_len,
+                )
+                return None
+            header_json = f.read(header_len).decode("utf-8")
+            if len(header_json) < header_len:
+                return None
+            header = json.loads(header_json)
+            metadata = header.get("__metadata__", {})
+            if not isinstance(metadata, dict):
+                return None
+            return metadata
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        logger.debug("Failed to parse safetensors header for %s: %s", path, e)
+        return None
 
 
 @dataclass
@@ -469,7 +507,10 @@ class VisionFeatureSSDCache:
             for file_path in subdir_path.glob("*.safetensors"):
                 scanned += 1
                 try:
-                    _, metadata = mx.load(str(file_path), return_metadata=True)
+                    metadata = _read_safetensors_metadata_only(str(file_path))
+                    if metadata is None:
+                        errors += 1
+                        continue
                     image_hash = metadata.get("image_hash", "")
                     model_name = metadata.get("model_name", "")
                     num_tensors = int(metadata.get("num_tensors", "1"))

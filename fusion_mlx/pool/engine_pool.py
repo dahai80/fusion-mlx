@@ -18,6 +18,7 @@ import gc
 import json
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -168,6 +169,9 @@ class EnginePool:
         """
         self._entries: dict[str, EngineEntry] = {}
         self._lock = asyncio.Lock()
+        # P3 (#811): guards is_pinned writes from a sync/threadpool caller
+        # against in-flight unload reads on the event-loop thread.
+        self._pinned_lock = threading.Lock()
         self._current_model_memory = 0
         self._scheduler_config = scheduler_config or SchedulerConfig()
         self._process_memory_enforcer: object | None = None  # Set by server
@@ -618,12 +622,27 @@ class EnginePool:
 
         Returns:
             True if successful, False if model not found.
+
+        P3 (#811): this mutates ``entry.is_pinned`` without the pool's
+        ``asyncio.Lock`` that the unload/eviction paths hold when they
+        READ ``is_pinned`` (release_engine, unload_if_idle_unpinned). All
+        current callers run on the event-loop thread (async routes +
+        startup), so the bool write is GIL-atomic and cannot interleave
+        inside a locked unload block (no await between the is_pinned
+        check and the detach decision). The ``_pinned_lock`` guards the
+        write for a future threadpool/sync caller so a pin toggle from a
+        worker thread cannot tear against an in-flight unload on the
+        loop thread. The async readers do NOT take this lock (they hold
+        ``self._lock`` and run on the same thread); if a real second
+        thread is ever added, also take ``_pinned_lock`` around their
+        is_pinned reads.
         """
-        entry = self._entries.get(model_id)
-        if entry is None:
-            return False
-        entry.is_pinned = pinned
-        return True
+        with self._pinned_lock:
+            entry = self._entries.get(model_id)
+            if entry is None:
+                return False
+            entry.is_pinned = pinned
+            return True
 
     def _case_insensitive_entry_match(self, name: str) -> str | None:
         """Find a model entry matching *name* case-insensitively.
@@ -1313,6 +1332,8 @@ class EnginePool:
                     reason,
                 )
                 settle_pre = await self._detach_engine(entry_key)
+                # P3 (#811): adapter cleanup under the lock we already hold.
+                self._remove_stale_adapters_locked(entry_key)
         if settle_pre is not None:
             await self._settle_unloaded_engine(entry_key, settle_pre)
 
@@ -1337,6 +1358,8 @@ class EnginePool:
                 return False
 
             settle_pre = await self._detach_engine(model_id)
+            # P3 (#811): adapter cleanup under the lock we already hold.
+            self._remove_stale_adapters_locked(model_id)
         if settle_pre is not None:
             await self._settle_unloaded_engine(model_id, settle_pre)
         return True
@@ -1632,13 +1655,27 @@ class EnginePool:
         entry.abort_requested = False
         entry.pending_unload_reason = None
         entry.runtime_settings_signature = None
-        # #209-M1: remove LoRA adapter entries whose base model was just unloaded
+        # P3 (#811): the LoRA adapter-entry cleanup (#209-M1) used to live
+        # here, but _detach_engine is called by unload_engine_async OUTSIDE
+        # self._lock (the lock block ends before the await _detach_engine
+        # call). Deleting from self._entries lockless raced a concurrent
+        # get_engine (which holds self._lock and iterates _entries). Moved
+        # to _remove_stale_adapters_locked, invoked by each caller inside
+        # its own lock context. The two callers that already hold the lock
+        # (release_engine, unload_if_idle_unpinned) call it directly;
+        # unload_engine_async acquires the lock around it after detach.
+        return pre_unload_active
+
+    def _remove_stale_adapters_locked(self, model_id: str) -> None:
+        # #209-M1 + P3 (#811): remove LoRA adapter entries whose base model
+        # was just unloaded. MUST be called with self._lock held — every
+        # other _entries mutation takes it, and a concurrent get_engine
+        # iterating _entries would observe a half-deleted dict otherwise.
         adapter_prefix = f"{model_id}::lora::"
         stale_adapters = [k for k in self._entries if k.startswith(adapter_prefix)]
         for ak in stale_adapters:
             del self._entries[ak]
             logger.info("removed stale adapter entry: %s", ak)
-        return pre_unload_active
 
     async def unload_engine_async(
         self,
@@ -1733,6 +1770,19 @@ class EnginePool:
             pre_unload_active = await self._detach_engine(model_id)
             if pre_unload_active is None:
                 return
+            # P3 (#811): _detach_engine no longer deletes stale LoRA adapter
+            # entries (it ran lockless here — the lock block ended before
+            # the await above). Remove them now under the lock so a
+            # concurrent get_engine iterating _entries cannot observe a
+            # half-deleted dict. asyncio.Lock is not reentrant: a
+            # caller_holds_lock=True caller still holds self._lock through
+            # this whole call, so call the helper directly; the lockless
+            # callers acquire the lock here.
+            if caller_holds_lock:
+                self._remove_stale_adapters_locked(model_id)
+            else:
+                async with self._lock:
+                    self._remove_stale_adapters_locked(model_id)
             if with_settle:
                 await self._settle_unloaded_engine(model_id, pre_unload_active)
             else:

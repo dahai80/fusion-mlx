@@ -99,6 +99,17 @@ def _process_batch_responses(
         if request_id is None:
             continue
 
+        # P3 (#811): a deferred abort may be pending for this request while
+        # the in-flight step's _next() already produced a token for it. The
+        # engine's abort_request() has already pushed a finished "abort"
+        # marker into the output collector; emitting this stray token after
+        # it appends a post-abort token (overwriting finish_reason in
+        # aggregate mode, or leaking a dangling chunk in stream mode).
+        # Drop the response here — _do_abort_request runs at the next step
+        # start and reaps the running entry.
+        if request_id in self._pending_abort_ids:
+            continue
+
         request = self.running.get(request_id)
         if request is None:
             continue
