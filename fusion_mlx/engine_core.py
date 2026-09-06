@@ -54,10 +54,33 @@ _immortal_mlx_executors: list = []
 _immortal_mlx_streams: list = []
 
 
+def _resolve_video_max_workers() -> int:
+    # E-2 (#811): video max_workers=1 was the ONLY thing preventing
+    # concurrent diffusion OOM. It was implicit — a future "performance"
+    # PR bumping it to 2 would OOM with no warning. Make it an explicit,
+    # documented knob (env override for power users) so the serial-invariant
+    # is visible, not accidental. Default stays 1.
+    raw = os.environ.get("FUSION_MLX_MAX_CONCURRENT_VIDEO", "").strip()
+    if not raw:
+        return 1
+    try:
+        n = int(raw)
+        if n >= 1:
+            logger.warning(
+                "FUSION_MLX_MAX_CONCURRENT_VIDEO=%d: concurrent video "
+                "generation risks Metal OOM (stage-1 latent + 22B "
+                "transformer + VAE per concurrent job)", n
+            )
+            return n
+    except ValueError:
+        pass
+    return 1
+
+
 _executor_config: dict[str, dict[str, Any]] = {
     "llm": {"max_workers": 1, "prefix": "mlx-llm"},
     "image": {"max_workers": 1, "prefix": "mlx-image"},
-    "video": {"max_workers": 1, "prefix": "mlx-video"},
+    "video": {"max_workers": _resolve_video_max_workers(), "prefix": "mlx-video"},
     # audio must be max_workers=1: mlx-audio's Metal Stream is thread-local,
     # so load_model() and generate() must run on the same thread (else
     # "no Stream(gpu, N) in current thread").
