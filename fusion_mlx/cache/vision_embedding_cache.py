@@ -162,6 +162,7 @@ class VisionEmbeddingCache:
         max_pixel_entries: int = 100,
         max_encoding_entries: int = 50,
         enabled: bool = True,
+        max_pixel_cache_bytes: int = 0,
     ):
         """
         Initialize the vision embedding cache.
@@ -170,17 +171,53 @@ class VisionEmbeddingCache:
             max_pixel_entries: Max entries in pixel cache (LRU eviction)
             max_encoding_entries: Max entries in encoding cache
             enabled: Whether caching is enabled
+            max_pixel_cache_bytes: Max total bytes for pixel + pixel_only
+                caches (LRU eviction by memory). 0 = no memory cap (count
+                cap only). mx.array encodings can be hundreds of MB each,
+                so a count cap alone is unbounded by memory (E-36 #811).
         """
         self.max_pixel_entries = max_pixel_entries
         self.max_encoding_entries = max_encoding_entries
         self.enabled = enabled
+        self.max_pixel_cache_bytes = max_pixel_cache_bytes
 
         # LRU caches using OrderedDict
         self._pixel_cache: OrderedDict[str, PixelCacheEntry] = OrderedDict()
         self._pixel_only_cache: OrderedDict[str, PixelOnlyCacheEntry] = OrderedDict()
         self._encoding_cache: OrderedDict[str, EncodingCacheEntry] = OrderedDict()
 
+        # E-36 (#811): tracked memory for the pixel caches.
+        self._pixel_cache_bytes = 0
+        self._pixel_only_cache_bytes = 0
+
         self.stats = VisionCacheStats()
+
+    @staticmethod
+    def _array_nbytes(arr: Any) -> int:
+        # Best-effort byte size of a possibly-None mx.array / ndarray.
+        if arr is None:
+            return 0
+        nbytes = getattr(arr, "nbytes", None)
+        if isinstance(nbytes, int):
+            return nbytes
+        size = getattr(arr, "size", None)
+        itemsize = getattr(arr, "itemsize", None)
+        if isinstance(size, int) and isinstance(itemsize, int):
+            return size * itemsize
+        return 0
+
+    def _pixel_entry_bytes(self, entry: PixelCacheEntry) -> int:
+        return (
+            self._array_nbytes(entry.pixel_values)
+            + self._array_nbytes(entry.input_ids)
+            + self._array_nbytes(entry.attention_mask)
+            + self._array_nbytes(entry.image_grid_thw)
+        )
+
+    def _pixel_only_entry_bytes(self, entry: PixelOnlyCacheEntry) -> int:
+        return self._array_nbytes(entry.pixel_values) + self._array_nbytes(
+            entry.image_grid_thw
+        )
 
     def _make_key(self, images: list[str], prompt: str) -> str:
         """Create cache key from images and prompt."""
@@ -243,12 +280,6 @@ class VisionEmbeddingCache:
 
         key = self._make_key(images, prompt)
 
-        # Evict oldest if at capacity
-        while len(self._pixel_cache) >= self.max_pixel_entries:
-            oldest_key = next(iter(self._pixel_cache))
-            del self._pixel_cache[oldest_key]
-            logger.debug(f"Pixel cache evicted: {oldest_key[:20]}...")
-
         entry = PixelCacheEntry(
             pixel_values=pixel_values,
             input_ids=input_ids,
@@ -257,7 +288,33 @@ class VisionEmbeddingCache:
             extra_kwargs=extra_kwargs or {},
             processing_time=processing_time,
         )
+        entry_bytes = self._pixel_entry_bytes(entry)
+
+        # Subtract old entry if overwriting (avoid double-counting bytes).
+        old = self._pixel_cache.get(key)
+        if old is not None:
+            self._pixel_cache_bytes -= self._pixel_entry_bytes(old)
+            if self._pixel_cache_bytes < 0:
+                self._pixel_cache_bytes = 0
+
+        # Evict oldest if at count capacity OR over the memory cap (E-36).
+        # If the new entry alone exceeds the memory cap, still store it (a
+        # single huge image shouldn't be dropped on insert) but evict
+        # everything else first so the cap is re-respected on the next set.
+        while len(self._pixel_cache) >= self.max_pixel_entries or (
+            self.max_pixel_cache_bytes > 0
+            and self._pixel_cache_bytes + entry_bytes > self.max_pixel_cache_bytes
+            and len(self._pixel_cache) > 0
+        ):
+            oldest_key, oldest_entry = next(iter(self._pixel_cache.items()))
+            self._pixel_cache_bytes -= self._pixel_entry_bytes(oldest_entry)
+            if self._pixel_cache_bytes < 0:
+                self._pixel_cache_bytes = 0
+            del self._pixel_cache[oldest_key]
+            logger.debug(f"Pixel cache evicted: {oldest_key[:20]}...")
+
         self._pixel_cache[key] = entry
+        self._pixel_cache_bytes += entry_bytes
         self.stats.total_images_processed += len(images)
         logger.debug(f"Pixel cache stored: {key[:20]}...")
 
@@ -309,18 +366,35 @@ class VisionEmbeddingCache:
 
         key = self._make_image_only_key(images)
 
-        # Evict oldest if at capacity
-        while len(self._pixel_only_cache) >= self.max_pixel_entries:
-            oldest_key = next(iter(self._pixel_only_cache))
-            del self._pixel_only_cache[oldest_key]
-            logger.debug(f"Pixel-only cache evicted: {oldest_key[:16]}...")
-
         entry = PixelOnlyCacheEntry(
             pixel_values=pixel_values,
             image_grid_thw=image_grid_thw,
             processing_time=processing_time,
         )
+        entry_bytes = self._pixel_only_entry_bytes(entry)
+
+        # Subtract old entry if overwriting (avoid double-counting bytes).
+        old = self._pixel_only_cache.get(key)
+        if old is not None:
+            self._pixel_only_cache_bytes -= self._pixel_only_entry_bytes(old)
+            if self._pixel_only_cache_bytes < 0:
+                self._pixel_only_cache_bytes = 0
+
+        # Evict oldest if at count capacity OR over the memory cap (E-36).
+        while len(self._pixel_only_cache) >= self.max_pixel_entries or (
+            self.max_pixel_cache_bytes > 0
+            and self._pixel_only_cache_bytes + entry_bytes > self.max_pixel_cache_bytes
+            and len(self._pixel_only_cache) > 0
+        ):
+            oldest_key, oldest_entry = next(iter(self._pixel_only_cache.items()))
+            self._pixel_only_cache_bytes -= self._pixel_only_entry_bytes(oldest_entry)
+            if self._pixel_only_cache_bytes < 0:
+                self._pixel_only_cache_bytes = 0
+            del self._pixel_only_cache[oldest_key]
+            logger.debug(f"Pixel-only cache evicted: {oldest_key[:16]}...")
+
         self._pixel_only_cache[key] = entry
+        self._pixel_only_cache_bytes += entry_bytes
         logger.debug(f"Pixel-only cache stored: {key[:16]}...")
 
     # ========== Encoding Cache ==========
