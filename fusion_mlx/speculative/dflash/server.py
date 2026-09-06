@@ -90,6 +90,25 @@ def _shutdown_dflash_executor() -> None:
     _dflash_executor.shutdown(wait=False, cancel_futures=True)
 
 
+def reset_dflash_executor() -> None:
+    # E-14 (#811): the DFlash worker is process-lifetime by design, but a
+    # future reload path that swaps the drafter/weights would leave the
+    # old worker thread's thread-local Metal Stream referencing the freed
+    # weights — a use-after-free. A reload path that loads a NEW drafter
+    # must call this to recreate the executor (fresh thread → fresh
+    # Stream) BEFORE loading the new weights, so no stale Stream outlives
+    # them. Today DFlash is single-model (no reload), so this is a
+    # documented safety hook for the future reload PR.
+    global _dflash_executor
+    try:
+        _dflash_executor.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        logger.debug("DFlash executor reset: old shutdown raised", exc_info=True)
+    _dflash_executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="dflash-worker"
+    )
+
+
 def _build_app(
     *,
     model: Any,

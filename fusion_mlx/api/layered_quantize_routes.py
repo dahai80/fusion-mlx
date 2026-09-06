@@ -35,6 +35,29 @@ _layered_executor = ThreadPoolExecutor(
 )
 
 
+def shutdown_layered_quantize_executor(wait: bool = False) -> None:
+    # E-11 (#811): match convert_routes — the layered-quantize executor
+    # was never closed, leaving half-written output dirs + a lingering
+    # worker on SIGTERM. Mark in-flight jobs interrupted (visible to
+    # pollers) and shut the executor down. The running job has no cancel
+    # hook but queued jobs are dropped via cancel_futures=True.
+    with _layered_jobs_lock:
+        for job in _layered_jobs.values():
+            if job["status"] in ("queued", "running"):
+                job["status"] = "interrupted"
+                job["error"] = "server shutdown"
+                job["updated_at"] = time.time()
+    try:
+        _layered_executor.shutdown(wait=wait, cancel_futures=True)
+    except Exception:
+        logger.debug("layered-quantize executor shutdown raised", exc_info=True)
+
+
+import atexit
+
+atexit.register(shutdown_layered_quantize_executor)
+
+
 class LayerRule(BaseModel):
     pattern: str = Field(..., description="Regex pattern to match weight key names")
     bits: int = Field(

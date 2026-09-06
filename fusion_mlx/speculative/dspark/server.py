@@ -624,6 +624,17 @@ def run_dspark_server(
         sys.exit(1)
 
     global _dspark_executor
+    # E-14 (#811): if serve() is called again (model reload / multi-instance
+    # test), the old executor was orphaned — its worker thread kept a
+    # thread-local Metal Stream referencing the OLD target weights, which
+    # after the old weights are freed is a use-after-free. Shut the old
+    # executor down (drain + cancel queued) before binding a fresh one so
+    # no stale Stream outlives its weights.
+    if _dspark_executor is not None:
+        try:
+            _dspark_executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            logger.debug("old DSpark executor shutdown raised", exc_info=True)
     _dspark_executor = ThreadPoolExecutor(max_workers=1)
     # Load on the single worker so the generator's Metal stream lives on
     # the same thread that will serve requests (avoids cross-thread Metal
