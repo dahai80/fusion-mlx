@@ -477,6 +477,16 @@ def _estimate_prefill_peak(self, new_tokens: int) -> int:
 
     if not all([num_layers, num_kv_heads, head_dim]):
         return 0
+    # Defensive: with a mock/partial config these can be truthy non-ints
+    # (MagicMock) that crash the `head_dim > 128` and arithmetic below with
+    # TypeError. Require real ints so a bad config reports "no estimate"
+    # (return 0) instead of raising up the admission path.
+    if not (
+        isinstance(num_layers, int)
+        and isinstance(num_kv_heads, int)
+        and isinstance(head_dim, int)
+    ):
+        return 0
 
     dtype_bytes = 2
     try:

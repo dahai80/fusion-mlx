@@ -102,6 +102,18 @@ class DFlash2Generator:
 
         prompt = self._encode(prompt_tokens)
         emitted = 0
+        # E-18 (#811): EOS was never checked here — generation ran to
+        # max_new_tokens regardless of an emitted EOS, and callers could not
+        # inject stop tokens. Resolve the tokenizer's eos token id once and
+        # break on it so the stream terminates at end-of-sequence like every
+        # other decode path.
+        _eos_id = None
+        eos_attr = getattr(self.tokenizer, "eos_token_id", None)
+        if eos_attr is not None:
+            try:
+                _eos_id = int(eos_attr)
+            except (TypeError, ValueError):
+                _eos_id = None
         upstream = _dflash.stream_generate(
             self.target,
             self.draft,
@@ -117,8 +129,11 @@ class DFlash2Generator:
         try:
             for resp in upstream:
                 for tok in resp.tokens:
-                    yield int(tok)
+                    tok_id = int(tok)
+                    yield tok_id
                     emitted += 1
+                    if _eos_id is not None and tok_id == _eos_id:
+                        return
                     if emitted >= max_new_tokens:
                         return
         finally:

@@ -373,8 +373,14 @@ class TestSchedulerInitialization:
             def __init__(self, *args, **kwargs):
                 raise OSError("cache directory is not writable")
 
+        # sched_misc.py imports PagedSSDCacheManager as a module-local name
+        # and constructs it directly; patching the package re-export does not
+        # intercept that binding. Patch the construction module so the broken
+        # manager actually raises at the SSD-init site (line ~290).
+        import fusion_mlx.scheduler.sched_misc as _sched_misc
+
         monkeypatch.setattr(
-            scheduler_module,
+            _sched_misc,
             "PagedSSDCacheManager",
             BrokenPagedSSDCacheManager,
         )
@@ -1491,7 +1497,7 @@ class TestSchedulerReset:
             call_order.append("drain")
             original_drain()
 
-        def record_executor_shutdown(wait=True):
+        def record_executor_shutdown(wait=True, cancel_futures=False):
             call_order.append("executor_shutdown")
 
         fake_executor.shutdown.side_effect = record_executor_shutdown
@@ -1505,7 +1511,10 @@ class TestSchedulerReset:
             "executor_shutdown",
             "drain",
         ], f"Expected drain to bracket executor.shutdown, got: {call_order}"
-        fake_executor.shutdown.assert_called_once_with(wait=False)
+        # E-15 (#811): all futures done -> else branch -> shutdown(wait=False,
+        # cancel_futures=True) so queued-but-unstarted tasks cannot write
+        # after SSD close.
+        fake_executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
 
 
 class TestSchedulerStopTokens:

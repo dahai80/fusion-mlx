@@ -817,17 +817,36 @@ def shutdown(self) -> None:
     if self._store_cache_executor is not None:
         try:
             inflight = list(self._inflight_store_futures.values())
+            not_done: set = set()
             if inflight:
                 logger.info(
                     "Waiting for %d inflight async store_cache future(s)...",
                     len(inflight),
                 )
-                concurrent.futures.wait(inflight, timeout=30.0)
+                # E-15 (#811): capture not_done. A bare wait() followed by
+                # shutdown(wait=False) + paged_ssd_cache_manager.close() can
+                # close the SSD file descriptors while a still-running writer
+                # worker writes to them -> silent corruption (swallowed by the
+                # broad except below). We must know whether the writer is still
+                # active so we can join it before close.
+                _done, not_done = concurrent.futures.wait(inflight, timeout=30.0)
             self._drain_pending_async_removes()
-            # Fatal-exit after the bounded wait above: concurrent.futures.wait
-            # already capped blocking at 30s, so do not re-block on the
-            # executor's internal join (a stuck worker would hang shutdown).
-            self._store_cache_executor.shutdown(wait=False)
+            if not_done:
+                # Futures still running after the 30s budget. Give the writer
+                # a short final join window so it finishes its current block
+                # before we close the SSD layer; a stuck worker is bounded by
+                # this second cap rather than hanging shutdown indefinitely.
+                logger.warning(
+                    "store_cache: %d future(s) still running after 30s wait; "
+                    "joining executor (bounded) before SSD close",
+                    len(not_done),
+                )
+                self._store_cache_executor.shutdown(wait=True, cancel_futures=True)
+            else:
+                # All futures completed — no live writer, safe to skip the
+                # blocking join. cancel_futures clears any queued-but-unstarted
+                # tasks so they cannot start writing after SSD close.
+                self._store_cache_executor.shutdown(wait=False, cancel_futures=True)
             # Final drain after executor join. All workers are now done,
             # so any entries still in _pending_async_removes (skipped by
             # the first drain because their future hadn't completed yet)
