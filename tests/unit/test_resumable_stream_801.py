@@ -175,8 +175,63 @@ async def _consumer(session):
             idx += 1
         if session.complete:
             return
+        if session.producer_finished() and idx >= len(session.events):
+            return
         session._new_data.clear()
         await session._new_data.wait()
+
+
+def test_session_records_principal_for_idor_scope():
+    # #801 IDOR: a session must remember the principal that created it so a
+    # lookup by a different caller can be rejected.
+    store = reset_store_for_tests()
+    sess = store.create("s1", principal="alice")
+    assert sess.principal == "alice"
+    assert store.get("s1").principal == "alice"
+
+
+def test_count_for_principal_caps_concurrent_sessions():
+    # #801 DoS guard: the store counts live sessions per principal so the
+    # route can reject one caller spawning unbounded producers.
+    store = reset_store_for_tests()
+    for i in range(3):
+        store.create(f"a-{i}", principal="alice")
+    store.create("b-0", principal="bob")
+    assert store.count_for_principal("alice") == 3
+    assert store.count_for_principal("bob") == 1
+    assert store.count_for_principal("carol") == 0
+
+
+async def _done_task():
+    # A fake "producer" that is already finished (done).
+    await asyncio.sleep(0)
+
+
+async def _collect(sess):
+    out = []
+    async for chunk in _consumer(sess):
+        out.append(chunk)
+    return out
+
+
+def test_consumer_breaks_when_producer_finished_without_complete():
+    # #801 livelock fix: if the producer task is done but the session was
+    # never marked complete (defensive — the route's finally block should
+    # force it, but the consumer must not hang regardless), the consumer
+    # drains the buffer and returns instead of waiting forever.
+
+    async def main():
+        sess = StreamSession("s", principal="alice")
+        sess.append("data: only\n\n")
+        sess.producer_task = asyncio.create_task(_done_task())
+        # Drive the loop until the producer task is actually done.
+        await sess.producer_task
+        assert sess.producer_finished()
+        assert not sess.complete
+        return await _collect(sess)
+
+    out = asyncio.run(main())
+    assert out == ["data: only\n\n"]
 
 
 if __name__ == "__main__":

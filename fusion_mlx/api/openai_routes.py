@@ -1808,6 +1808,9 @@ def _get_settings() -> Any:
     return get_settings()
 
 
+_MAX_SESSIONS_PER_PRINCIPAL = 8
+
+
 @router.post("/stream")
 async def start_resumable_stream(
     request: ChatCompletionRequest,
@@ -1827,9 +1830,21 @@ async def start_resumable_stream(
     from ..stream_session import get_store
 
     principal = request_principal(http_request)
-    session_id = f"sess-{uuid.uuid4().hex[:16]}"
     store = get_store()
-    session = store.create(session_id)
+    # #801 DoS guard: cap concurrent live sessions per caller.
+    if store.count_for_principal(principal) >= _MAX_SESSIONS_PER_PRINCIPAL:
+        logger.warning(
+            "resumable stream: principal=%s at session cap (%d), rejecting",
+            principal,
+            _MAX_SESSIONS_PER_PRINCIPAL,
+        )
+        raise HTTPException(
+            429,
+            f"too many concurrent resumable streams (max "
+            f"{_MAX_SESSIONS_PER_PRINCIPAL})",
+        )
+    session_id = f"sess-{uuid.uuid4().hex[:16]}"
+    session = store.create(session_id, principal=principal)
     request.stream = True
 
     model_name, profile_overrides = resolve_model_with_profile(request.model)
@@ -1842,31 +1857,42 @@ async def start_resumable_stream(
         raise HTTPException(404, f"Model {model_name} not available")
 
     async def _producer():
+        # Outer try/finally GUARANTEES the session is marked terminal even if
+        # the inner arms raise before reaching mark_complete/mark_error —
+        # otherwise a consumer would hang forever on _new_data.wait().
         try:
-            async for chunk in _stream_chat_generator(
-                request,
-                engine,
-                model_name,
-                adapter_path,
-                principal=principal,
-                profile_overrides=profile_overrides,
-            ):
-                session.append(chunk)
-        except HTTPException as exc:
-            session.mark_error(f"http_{exc.status_code}: {exc.detail}")
-        except Exception as exc:
-            logger.exception("resumable stream producer failed: %s", exc)
-            session.mark_error(f"{type(exc).__name__}: {exc}")
-        else:
-            session.mark_complete(finish_reason="stop")
+            try:
+                async for chunk in _stream_chat_generator(
+                    request,
+                    engine,
+                    model_name,
+                    adapter_path,
+                    principal=principal,
+                    profile_overrides=profile_overrides,
+                ):
+                    session.append(chunk)
+            except HTTPException as exc:
+                session.mark_error(f"http_{exc.status_code}: {exc.detail}")
+            except Exception as exc:
+                logger.exception("resumable stream producer failed: %s", exc)
+                session.mark_error(f"{type(exc).__name__}: {exc}")
+            else:
+                session.mark_complete(finish_reason="stop")
         finally:
+            if not session.complete:
+                logger.error(
+                    "resumable stream producer ended without terminal mark: "
+                    "%s — forcing error to unblock consumers",
+                    session_id,
+                )
+                session.mark_error("producer ended without terminal mark")
             await _release_engine(model_name, adapter_path=adapter_path)
 
     # Kick the producer off in the background; it outlives this response.
     producer_task = asyncio.create_task(
         _producer(), name=f"stream-producer-{session_id}"
     )
-    session._producer_task = producer_task  # type: ignore[attr-defined]
+    session.producer_task = producer_task
 
     if not getattr(request, "return_session_only", False):
         # Serve the live SSE tail right here so a first-time caller streams
@@ -1884,6 +1910,7 @@ async def lookup_resumable_stream(
     session_id: str,
     http_request: Request,
     _auth: bool = Depends(verify_api_key),
+    _rate: bool = Depends(check_rate_limit),
 ) -> Any:
     # #801 resume/lookup an active resumable stream across a new connection.
     # Replay the full buffered SSE from index 0 then live-tail the producer
@@ -1892,6 +1919,7 @@ async def lookup_resumable_stream(
     # reconnects (until the session TTL of 1h elapses).
     from ..stream_session import get_store
 
+    principal = request_principal(http_request)
     store = get_store()
     session = store.get(session_id)
     if session is None:
@@ -1899,6 +1927,17 @@ async def lookup_resumable_stream(
             404,
             f"stream session {session_id} not found (expired or never started)",
         )
+    # #801 IDOR: only the principal that started the stream may resume it.
+    # A valid API key alone is not enough — it must be the SAME caller.
+    if session.principal is not None and session.principal != principal:
+        logger.warning(
+            "resumable stream lookup DENIED: principal mismatch on %s "
+            "(owner=%s caller=%s)",
+            session_id,
+            session.principal,
+            principal,
+        )
+        raise HTTPException(403, "stream session does not belong to this caller")
     return StreamingResponse(
         _resume_consumer(session),
         media_type="text/event-stream",
@@ -1908,13 +1947,25 @@ async def lookup_resumable_stream(
 
 async def _resume_consumer(session):
     # Replay buffered events then live-tail until the session is complete.
-    # Disconnecting the consumer does NOT cancel the producer.
+    # Disconnecting the consumer does NOT cancel the producer. Breaks out
+    # if the producer task is done AND the buffer is drained, so a producer
+    # that died without a terminal mark (shouldn't happen post-fix) cannot
+    # hang the consumer forever.
     idx = 0
     while True:
         while idx < len(session.events):
             yield session.events[idx]
             idx += 1
         if session.complete:
+            return
+        if session.producer_finished() and idx >= len(session.events):
+            # Producer is gone and nothing more will arrive — stop rather
+            # than block on _new_data.wait() indefinitely.
+            logger.warning(
+                "resumable consumer: producer finished without complete; "
+                "stopping at %d events",
+                idx,
+            )
             return
         session._new_data.clear()
         await session._new_data.wait()
