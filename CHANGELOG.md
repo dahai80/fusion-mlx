@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.9.1] — 2026-09-07
+
 ### Added
 - **#803: DSA shared-expert activation cache** — DeepSeek-V3.2/GLM-MoE-DSA
   and DeepSeek-V4 MoE layers run a shared-expert MLP on every token every
