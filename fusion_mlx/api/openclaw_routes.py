@@ -309,9 +309,17 @@ async def _execute_turn_auto(
             break
 
         # Execute each tool call and submit results
+        round_not_executed = 0
         for tc in result.tool_calls:
             all_tool_calls.append(tc)
             tool_result = _execute_local_tool(tc)
+            # FC-3 (#0907 audit): count not-executed tool results so the
+            # auto-loop can break early instead of burning tokens re-prompting
+            # an LLM that has no runnable tools — every tool returns
+            # not_executed (no local tool runtime), so looping to
+            # max_auto_iterations just wastes completion tokens.
+            if '"status": "not_executed"' in tool_result:
+                round_not_executed += 1
             session["messages"].append(
                 {
                     "role": "tool",
@@ -320,6 +328,27 @@ async def _execute_turn_auto(
                 }
             )
             _trim_session_messages(session)
+
+        # FC-3: if every tool in this round was not_executed, there is no
+        # local tool runtime — stop the loop and surface a visible note so
+        # the client knows no tools ran, instead of silently churning to
+        # max_auto_iterations.
+        if round_not_executed == len(result.tool_calls):
+            logger.warning(
+                "FC-3: all %d tool call(s) not_executed in session %s "
+                "(no local tool runtime) — stopping auto-loop early at "
+                "iteration %d/%d",
+                round_not_executed,
+                session_id,
+                iteration + 1,
+                req.max_auto_iterations,
+            )
+            final_content = (
+                result.content + "\n\n[openclaw: no local tool runtime — "
+                f"{round_not_executed} tool call(s) were not executed. "
+                "Wire a ToolRegistry/MCP dispatch to run tools.]"
+            )
+            break
 
         if iteration == req.max_auto_iterations - 1:
             final_content = result.content

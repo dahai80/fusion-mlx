@@ -304,6 +304,22 @@ def _load_embedding_model_or_exit(args, load_fn) -> None:
             "``mlx-community/embeddinggemma-300m-6bit``).\n"
         )
         sys.exit(1)
+    except NotImplementedError as exc:
+        # FC-1 / EF-10 (#0907 audit): server.load_embedding_model raises
+        # NotImplementedError to redirect to POST /v1/embeddings (CLI
+        # pre-load of embedding models is no longer the supported path).
+        # Without this handler the exception escaped _load_embedding_model_or_exit
+        # and crashed boot with a raw traceback. Exit cleanly with the guidance.
+        print(
+            f"\n  Error: --embedding-model pre-load is not supported "
+            f"({type(exc).__name__}: {exc})."
+        )
+        print(
+            "  Tip: load embedding models via POST /v1/embeddings (the "
+            "pool lazy-loads on first request) or the CLI "
+            "'fusion load <model>'. See GET /v1/models for available models.\n"
+        )
+        sys.exit(2)
     print(f"Embedding model loaded: {args.embedding_model}")
 
 

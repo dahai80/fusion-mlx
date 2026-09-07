@@ -61,6 +61,25 @@ async def health_ready():
         raise HTTPException(status_code=503, detail="model loading")
     if preloading:
         raise HTTPException(status_code=503, detail="preloading models")
+    # OP-7 (#0907 audit): a loaded-but-dead engine (EF-1 circuit-breaker
+    # trip) must make /readyz not-ready so a k8s readiness probe stops
+    # routing traffic to an instance whose engine loop has stopped.
+    try:
+        dead_models = [
+            mid
+            for mid, entry in (await pool.iter_entries())
+            if entry.engine is not None
+            and callable(getattr(entry.engine, "is_dead", None))
+            and entry.engine.is_dead()
+        ]
+    except Exception:
+        dead_models = []
+    if dead_models:
+        logger.warning("OP-7 /readyz: dead engine(s): %s", ", ".join(dead_models))
+        raise HTTPException(
+            status_code=503,
+            detail=f"engine dead: {', '.join(dead_models)}",
+        )
     return {"ready": True}
 
 

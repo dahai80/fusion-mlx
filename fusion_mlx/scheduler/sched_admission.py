@@ -690,12 +690,26 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
 
 
 def _refresh_generation_overflow_recovery_ids(self) -> None:
+    # PB-2 (#0907 audit): the old refresh rebuilt a 3-set active_ids from
+    # running + waiting + prefilling (O(n) per schedule step whenever an
+    # overflow recovery was active) just to drop stale ids. The overflow
+    # set is tiny (0-2 ids, only set when a sequence overflows its KV cap),
+    # so prune it incrementally: discard ids whose request has already left
+    # self.requests (the single source of truth all queues draw from) instead
+    # of constructing the full active set. O(len(overflow_set)), not O(n).
     if not self._generation_overflow_recovery_ids:
         return
-    active_ids = set(self.running)
-    active_ids.update(request.request_id for request in self.waiting)
-    active_ids.update(request.request_id for request in self.prefilling)
-    self._generation_overflow_recovery_ids.intersection_update(active_ids)
+    stale = [
+        rid
+        for rid in self._generation_overflow_recovery_ids
+        if rid not in self.requests
+    ]
+    for rid in stale:
+        self._generation_overflow_recovery_ids.discard(rid)
+        logger.debug(
+            "overflow recovery: pruned stale id %s (request finished/dropped)",
+            rid,
+        )
 
 
 def _effective_max_num_seqs(self) -> int:

@@ -141,6 +141,21 @@ class ServerMetrics:
     audio_requests: int = 0
     video_requests: int = 0
     image_generation_requests: int = 0
+    # OP-14 (#0907 audit): engine-pool eviction observability. Without these a
+    # production operator has no metric for how often LRU evictions fire or
+    # what reason, so memory-pressure churn is invisible until a 507 surfaces.
+    # engine_evictions_total counts every unload driven by memory pressure;
+    # engine_evictions_by_reason breaks it down (lru/admission/enforcer/ttl).
+    engine_evictions_total: int = 0
+    engine_evictions_by_reason: dict[str, int] = field(default_factory=dict)
+    # OP-18 (#0907 audit): preload failure observability. A pinned model
+    # failing to load at startup leaves the server running but missing a
+    # critical model with no metric surface — only an ERROR log line.
+    preload_failures_total: int = 0
+    preload_failures_by_model: dict[str, int] = field(default_factory=dict)
+    # Note: the loaded-models gauge is served directly from
+    # pool.loaded_model_count by _render_pool_metrics
+    # (fusion_mlx_models_loaded), so no separate gauge field is kept here.
 
     def __post_init__(self):
         self._lock = threading.Lock()
@@ -306,6 +321,28 @@ class ServerMetrics:
         with self._lock:
             self._shutdown_epoch = time.time()
 
+    def record_engine_eviction(self, reason: str = "lru") -> None:
+        # OP-14 (#0907 audit): pool eviction counter. Called by EnginePool on
+        # every memory-driven unload so /metrics surfaces eviction frequency +
+        # reason — a high rate signals the operator to raise MemoryConfig
+        # limits or reduce model churn rather than discovering it via 507s.
+        with self._lock:
+            self.engine_evictions_total += 1
+            self.engine_evictions_by_reason[reason] = (
+                self.engine_evictions_by_reason.get(reason, 0) + 1
+            )
+
+    def record_preload_failure(self, model_id: str) -> None:
+        # OP-18 (#0907 audit): preload failure counter. Called by
+        # EnginePool.preload_pinned_models when a pinned model fails to load
+        # at startup, so /metrics surfaces missing critical models rather
+        # than leaving them discoverable only via a buried ERROR log line.
+        with self._lock:
+            self.preload_failures_total += 1
+            self.preload_failures_by_model[model_id] = (
+                self.preload_failures_by_model.get(model_id, 0) + 1
+            )
+
     def get_ttft_histograms(self) -> dict[str, Histogram]:
         with self._lock:
             return dict(self._ttft_hist)
@@ -459,8 +496,7 @@ def record_llm_disconnect_cancel() -> None:
         if "record_disconnect_cancel" not in _metrics_warned:
             _metrics_warned.add("record_disconnect_cancel")
             logger.warning(
-                "Failed to record disconnect cancel (further failures at "
-                "DEBUG): %s",
+                "Failed to record disconnect cancel (further failures at " "DEBUG): %s",
                 exc,
             )
         else:

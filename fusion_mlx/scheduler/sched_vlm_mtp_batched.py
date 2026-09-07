@@ -400,6 +400,40 @@ def _step_vlm_mtp_batched(self) -> list[_VLMMTPResponse]:
             bs.active = False
             del batches[bid]
             continue
+        except Exception as e:
+            # EF-13 (#0907 audit): a generic exception from the batched
+            # generator (shape mismatch, Metal OOM on one row, etc.) used
+            # to propagate out of _step_vlm_mtp_batched into the engine
+            # loop, killing every in-flight request with no visible error.
+            # Isolate the failure: fail every still-active row in this
+            # batch visibly via _vlm_mtp_fail_queue so the client sees a
+            # terminal error, then drop the batch. Other batches and
+            # non-vlm_mtp requests keep running.
+            logger.error(
+                "vlm_mtp step: batch id=%d generator raised %s — failing "
+                "all %d active rows visibly and isolating batch",
+                bid,
+                e,
+                len(bs.rows),
+            )
+            still_active = [
+                {"request": row.request}
+                for row in bs.rows
+                if not row.finished and row.uid in self._vlm_mtp_active
+            ]
+            if still_active:
+                _vlm_mtp_fail_queue(
+                    self, still_active, f"vlm_mtp_step_generator_error: {e}"
+                )
+            for row in bs.rows:
+                if not row.finished:
+                    row.finished = True
+                # Drop from the single-request active map so the backward-
+                # compat loop below doesn't try to step a dead generator.
+                self._vlm_mtp_active.pop(row.uid, None)
+            bs.active = False
+            del batches[bid]
+            continue
 
         if not isinstance(token_val, list):
             token_val = [token_val]
@@ -568,29 +602,22 @@ class _BatchedCacheLayer:
     def write(self, tokens: mx.array, logits: mx.array, kv: tuple) -> None:
         B = len(self._layers)
         for b in range(B):
-            try:
-                k_b = kv[0][b] if isinstance(kv[0], (list, tuple)) else _slice(kv[0], b)
-                v_b = (
-                    kv[1][b]
-                    if isinstance(kv[1], (list, tuple))
-                    else _slice(kv[1], b) if len(kv) > 1 else None
-                )
-                tok_b = (
-                    tokens[b]
-                    if isinstance(tokens, (list, tuple))
-                    else _slice(tokens, b)
-                )
-                log_b = (
-                    logits[b]
-                    if isinstance(logits, (list, tuple))
-                    else _slice(logits, b)
-                )
-                if v_b is not None:
-                    self._layers[b].write(tok_b, log_b, (k_b, v_b))
-                else:
-                    self._layers[b].write(tok_b, log_b, k_b)
-            except Exception as e:
-                logger.debug("vlm_mtp batched write failed row %d: %s", b, e)
+            k_b = kv[0][b] if isinstance(kv[0], (list, tuple)) else _slice(kv[0], b)
+            v_b = (
+                kv[1][b]
+                if isinstance(kv[1], (list, tuple))
+                else _slice(kv[1], b) if len(kv) > 1 else None
+            )
+            tok_b = (
+                tokens[b] if isinstance(tokens, (list, tuple)) else _slice(tokens, b)
+            )
+            log_b = (
+                logits[b] if isinstance(logits, (list, tuple)) else _slice(logits, b)
+            )
+            if v_b is not None:
+                self._layers[b].write(tok_b, log_b, (k_b, v_b))
+            else:
+                self._layers[b].write(tok_b, log_b, k_b)
 
 
 def _slice(arr, idx: int):

@@ -1978,7 +1978,16 @@ async def completions(
     _auth: bool = Depends(verify_api_key),
     _rate: bool = Depends(check_rate_limit),
 ) -> Any:
-    """Handle legacy text completion requests."""
+    """Handle legacy text completion requests.
+
+    FC-4 (#0907 audit): the ``prompt`` is wrapped into a single user message
+    and run through the chat path (``apply_chat_template``), so raw-prompt
+    clients (Continue/Cody expecting bare model continuation) receive
+    chat-templated output with role/special-token scaffolding. A true
+    raw-prompt passthrough that bypasses the chat template needs an engine
+    sampling-layer change tracked separately; until then this endpoint is
+    documented as chat-wrapped only.
+    """
     # FIM suffix guard: no MLX engine implements fill-in-the-middle yet.
     # A non-empty suffix would be silently dropped (we only forward the
     # prompt), producing wrong completions on code-completion clients

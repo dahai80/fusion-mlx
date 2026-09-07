@@ -15,7 +15,7 @@ Wires together all API routes:
 
 import asyncio
 import logging
-import os
+import threading
 import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -147,6 +147,19 @@ class _ServerState(dict):
 
 _server_state = _ServerState()
 _server_instance: "Server | None" = None
+# AS-7 (#0907 audit): serialize read-modify-write on mutable _server_state
+# fields (notably api_key setup) so two concurrent admin requests cannot
+# both pass the "not yet configured" check and clobber each other. Startup
+# writes (single-threaded, pre-serve) and simple __setitem__ updates are
+# GIL-atomic and do not need this lock; only RMW admin paths take it.
+_server_state_lock = asyncio.Lock()
+# AS-11 (#0907 audit): serialize first-call Server() construction in
+# get_app(). Without this, two concurrent calls both observe
+# _server_instance is None, each builds a Server + FastAPI app, and the
+# second overwrites the globals while the first's lifespan keeps running —
+# two apps, one orphaned. threading.Lock (get_app is sync) with a
+# double-checked fast path so warm calls pay no lock cost.
+_app_init_lock = threading.Lock()
 
 app = None
 
@@ -190,10 +203,29 @@ def configure_logging(log_level: str) -> str:
     stderr output, request-id filter, admin-polling access-log suppression,
     third-party noise taming) while preserving the released
     ``-> str`` contract that cli_serve relies on when wiring uvicorn.
+
+    OP-1 (#0907 audit): ``FUSION_LOG_JSON=1`` switches the console formatter
+    to the JSON structured formatter so a log aggregator (Loki/ELK/Datadog)
+    can ingest records without regex parsing. Default stays the colored
+    human-readable formatter for local dev.
     """
+    import os
+
     from .logging_config import configure_logging as _configure_logging
 
-    _configure_logging(level=log_level)
+    _json = os.environ.get("FUSION_LOG_JSON", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    _configure_logging(
+        level=log_level,
+        format_style="json" if _json else "standard",
+        # Disable ANSI colors under JSON — color codes corrupt structured
+        # parsers. Keep colors for the default human-readable stream.
+        colored=not _json,
+    )
     return log_level.upper()
 
 
@@ -662,8 +694,13 @@ def get_embedding_max_length(model_id: str, max_length: int | None) -> int | Non
 
 def get_app():
     global _server_instance, app
+    # AS-11 (#0907 audit): double-checked lock so the first-call Server()
+    # construction is serialized — two concurrent callers cannot both
+    # build a Server/FastAPI app and orphan one. Warm calls skip the lock.
     if _server_instance is None:
-        _server_instance = Server()
+        with _app_init_lock:
+            if _server_instance is None:
+                _server_instance = Server()
     if app is None:
         app = _server_instance.app
     return app
@@ -905,10 +942,24 @@ class Server:
         # separately by ``configure_logging`` from cli_serve. Best-effort: a
         # filesystem failure here must not block server startup.
         try:
+            import os
+
             from .logging_config import configure_file_logging
 
             log_dir = Path(self.config.settings_dir) / "logs"
-            configure_file_logging(log_dir=log_dir, level="INFO")
+            _json = os.environ.get("FUSION_LOG_JSON", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            # OP-1: mirror the console JSON knob onto the file handler so the
+            # rotated server.log stays consistent with the stream format.
+            configure_file_logging(
+                log_dir=log_dir,
+                level="INFO",
+                format_style="json" if _json else "standard",
+            )
             logger.info("File logging enabled: %s", log_dir / "server.log")
         except Exception:
             logger.debug("configure_file_logging failed (non-fatal)", exc_info=True)
@@ -1419,8 +1470,28 @@ class Server:
             # P1-10: run _shutdown even when _startup raised partway, so MCP
             # manager / engines / mDNS partly initialized get torn down. The
             # method internally None-checks every subsystem it touches.
+            # OP-8 (#0907 audit): hard timeout so a slow teardown (engine
+            # stop() hanging, in-flight requests not draining) cannot block
+            # shutdown indefinitely. A rolling update / SIGTERM must let the
+            # old instance exit within a bounded window. Env-tunable; 0
+            # disables the guard (legacy behavior) for single-machine dev.
+            import asyncio as _asyncio
+            import os as _os
+
+            _shutdown_timeout = float(_os.environ.get("FUSION_SHUTDOWN_TIMEOUT", "30"))
             try:
-                await self._shutdown()
+                if _shutdown_timeout > 0:
+                    await _asyncio.wait_for(self._shutdown(), timeout=_shutdown_timeout)
+                else:
+                    await self._shutdown()
+            except TimeoutError:
+                logger.error(
+                    "OP-8: graceful shutdown exceeded hard timeout %.1fs — "
+                    "force-canceling remaining teardown (in-flight requests "
+                    "may be dropped). Raise FUSION_SHUTDOWN_TIMEOUT if a "
+                    "longer drain window is needed.",
+                    _shutdown_timeout,
+                )
             except Exception:
                 logger.debug("shutdown after partial startup failed", exc_info=True)
             # P2-9: remove pid file AFTER shutdown so start.sh status still

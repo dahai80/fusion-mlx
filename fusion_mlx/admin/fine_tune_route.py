@@ -398,7 +398,11 @@ async def list_finetunable_models(
         raise HTTPException(status_code=503, detail="Engine pool not initialized")
 
     models = []
-    for model_id, entry in pool._entries.items():
+    # AS-6 (#0907 audit): iterate a point-in-time snapshot under the
+    # EnginePool lock instead of reading `_entries` directly, which could
+    # raise "dictionary changed size during iteration" when a concurrent
+    # load/unload mutates the dict mid-loop.
+    for model_id, entry in await pool.iter_entries():
         if entry.model_type in ("llm", "vlm", None):
             models.append(
                 {

@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### 0907 product audit
+- **#0907 audit: 6-dimension enterprise-readiness audit** —
+  full report at `audit/fusion-mlx-audit-result-product-0907.md`
+  (verdict: v0.8.82 single-node Beta, not enterprise-publishable).
+  P1 19/19 + P2 33/33 fixed, P3 code-level fixes done, 46 unit tests.
+  - **FC-9 rerank `max_chunks_per_doc` now 400** — accepted for
+    Cohere/Jina compat but chunked rerank unimplemented; a request now
+    fails visibly instead of silently serving an unchunked single pass.
+  - **FC-10 transcription `response_format` limited to `json`** —
+    `srt`/`vtt`/`verbose_json`/`text` now 400 instead of silently
+    returning JSON to a subtitle/caption workflow.
+  - **OP-7 `/readyz` fails 503 on dead engine** — a loaded-but-dead
+    engine (circuit-breaker trip) now makes readiness not-ready so a
+    k8s readiness probe stops routing traffic to a broken instance.
+  - **OP-16 route-guard 403s now metric-tracked** —
+    `route_guard_rejected_total` + per-reason breakdown in
+    `/metrics` (`degradation_metrics.py`), so operators can alert on
+    reject rate (misconfigured gateway token / direct-port probe).
+  - Also closed as already-fixed (stale-audit): EF-6/EF-11/EF-12/OP-15/
+    AS-15/PB-8/EF-8/PB-9; accepted/doc-only: PB-11/PB-13/PB-14/
+    AS-8/9/10/AS-14/OP-11; deferred feature work: FC-11/FC-12/EF-7/
+    EF-16/OP-4/6/10/12/13 — see report appendix B.
+
 ### Security
 - **#811 audit: 0906 adversarial architecture audit, batch 3 + 4** —
   P0/P2/P3 fixes from the second-round audit

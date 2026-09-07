@@ -261,6 +261,15 @@ class SmartRouter:
                 with self._lock:
                     self._cloud_count += 1
                 self._record_route("cloud", False)
+                # OP-2 (#0907 audit): surface cloud-fallback routing as a
+                # Prometheus counter so an operator can alert when prompts are
+                # leaving the local engine for a third-party provider.
+                try:
+                    from ..middleware.degradation_metrics import record_cloud_fallback
+
+                    record_cloud_fallback("large_context")
+                except Exception:
+                    logger.debug("record_cloud_fallback() failed", exc_info=True)
                 return RouteDecision(
                     prefill_backend=EngineBackend.CLOUD,
                     decode_backend=EngineBackend.CLOUD,

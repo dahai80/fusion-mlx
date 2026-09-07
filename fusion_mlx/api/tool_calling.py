@@ -1235,6 +1235,12 @@ def convert_tools_for_template(tools: list | None) -> list[dict] | None:
         return None
 
     converted = []
+    # FC-6 (#0907 audit): track hosted/non-local tool types that this
+    # server cannot execute (web_search, file_search, code_interpreter,
+    # image_generation, mcp, local_shell, namespace tools). They were
+    # silently dropped; log a WARNING so the operator sees that a request's
+    # tools were partially ignored rather than serving "as if no tools".
+    dropped_types: list[str] = []
     for tool in tools:
         # Handle both Pydantic models and dicts
         if isinstance(tool, dict):
@@ -1297,6 +1303,19 @@ def convert_tools_for_template(tools: list | None) -> list[dict] | None:
                 }
             )
             continue
+
+        # FC-6: neither OpenAI function nor Anthropic schema format — a
+        # hosted/non-local tool type this server cannot execute. Record
+        # it instead of silently skipping.
+        dropped_types.append(str(tool_type or tool_name_direct or "unknown"))
+
+    if dropped_types:
+        logger.warning(
+            "FC-6: dropped %d non-local tool(s) local models cannot execute: %s. "
+            "Request served as if those tools were absent.",
+            len(dropped_types),
+            ", ".join(dropped_types),
+        )
     return converted if converted else None
 
 

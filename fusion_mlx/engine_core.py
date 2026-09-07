@@ -526,6 +526,19 @@ class EngineCore:
         self._steps_executed = 0
         # P2-7: consecutive-error counter for the engine-loop circuit breaker.
         self._consecutive_loop_errors = 0
+        # AS-13 (#0907 audit): signature of the last loop error. The counter
+        # only accumulates for the SAME repeating fault; a changed signature
+        # resets it to 1, so 20 independent one-shot transients (different
+        # prompts each OOMing once) cannot trip the breaker while a genuine
+        # persistent fault (same KV/model error each step) still crosses fast.
+        self._last_loop_error_sig: str | None = None
+        # EF-1 (#0907 audit): dead-engine flag. Set when the engine loop
+        # stops on repeated failures (circuit-breaker trip) or on an
+        # unrecoverable BaseException, so EnginePool can reject new
+        # requests and evict/reload instead of leaving the engine reported
+        # as "loaded" while every new request hangs on a dead loop.
+        self._engine_dead: bool = False
+        self._engine_dead_reason: str | None = None
         logger.debug("Engine %s initialized", self._engine_id)
 
     async def start(self) -> None:
@@ -534,6 +547,13 @@ class EngineCore:
         self._loop = asyncio.get_running_loop()
         self._wake_event = asyncio.Event()
         self._running = True
+        # EF-1: a fresh start clears any prior dead flag so a reloaded
+        # engine is treated as healthy until it faults again.
+        self._engine_dead = False
+        self._engine_dead_reason = None
+        # AS-13: clear the per-signature breaker state for a fresh loop.
+        self._consecutive_loop_errors = 0
+        self._last_loop_error_sig = None
         self._start_time = time.time()
         self._task = asyncio.create_task(self._engine_loop())
         logger.info("Engine started")
@@ -560,6 +580,16 @@ class EngineCore:
 
     def is_running(self) -> bool:
         return self._running
+
+    def is_dead(self) -> bool:
+        # EF-1 (#0907 audit): true once the engine loop has stopped on a
+        # circuit-breaker trip or unrecoverable BaseException. EnginePool
+        # consults this to reject new requests and trigger evict/reload.
+        return self._engine_dead
+
+    @property
+    def dead_reason(self) -> str | None:
+        return self._engine_dead_reason
 
     def _wake_engine_loop(self) -> None:
         """Wake the idle engine loop after scheduler-visible state changes."""
@@ -645,6 +675,7 @@ class EngineCore:
                     # P2-7: a successful step resets the circuit breaker.
                     if self._consecutive_loop_errors:
                         self._consecutive_loop_errors = 0
+                        self._last_loop_error_sig = None
 
                     contexts = self._active_contexts
                     eviction_request = None
@@ -748,15 +779,18 @@ class EngineCore:
                 # request re-triggers the same fault each iteration, burning
                 # CPU and flooding logs. After N consecutive errors, stop the
                 # loop loudly so the pool can evict and reload the engine.
-                # E-7 (#811): the counter is global (not per-fault-signature)
-                # so unrelated transient errors (e.g. 50 different prompts
-                # each OOMing once) can trip it. Mitigate by keeping the
-                # threshold modest — a genuine persistent fault repeats on
-                # the SAME re-submitted request and crosses quickly, while
-                # 20 independent one-shot transients are rare in practice.
-                # The counter resets on every successful step, so a healthy
-                # engine never accumulates.
-                self._consecutive_loop_errors += 1
+                # AS-13 (#0907 audit): the counter is now per-fault-signature
+                # (type+message), not global. A changed signature resets it to
+                # 1, so 20 independent one-shot transients (different prompts
+                # each OOMing once) cannot trip the breaker, while a genuine
+                # persistent fault (same error each step) still crosses fast.
+                # The counter also resets on every successful step.
+                sig = f"{type(e).__name__}:{e}"
+                if sig == self._last_loop_error_sig:
+                    self._consecutive_loop_errors += 1
+                else:
+                    self._last_loop_error_sig = sig
+                    self._consecutive_loop_errors = 1
                 if self._consecutive_loop_errors >= 20:
                     logger.critical(
                         "Engine loop hit %d consecutive errors — stopping "
@@ -764,6 +798,13 @@ class EngineCore:
                         self._consecutive_loop_errors,
                     )
                     self._running = False
+                    # EF-1 (#0907 audit): mark the engine dead so the pool
+                    # rejects new requests and evicts/reloads rather than
+                    # leaving a stopped loop reported as "loaded".
+                    self._engine_dead = True
+                    self._engine_dead_reason = (
+                        "engine loop stopped after 20 consecutive errors"
+                    )
                     try:
                         failed_ids = await loop.run_in_executor(
                             self._mlx_executor, self.scheduler.fail_all_requests
@@ -837,6 +878,10 @@ class EngineCore:
                 # process interrupt propagates normally.
                 logger.error("Engine loop terminating on %r", e)
                 self._running = False
+                # EF-1 (#0907 audit): mark dead on unrecoverable BaseException
+                # so the pool does not route new requests to a halted engine.
+                self._engine_dead = True
+                self._engine_dead_reason = f"engine loop terminated on {e!r}"
                 try:
                     failed_ids = await loop.run_in_executor(
                         self._mlx_executor, self.scheduler.fail_all_requests

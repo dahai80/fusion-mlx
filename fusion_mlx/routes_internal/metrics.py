@@ -298,6 +298,7 @@ def _render_queue_metrics() -> list[str]:
         pool = _server_state.get("engine_pool")
         running = 0
         waiting = 0
+        prefilling = 0  # OP-20 (#0907 audit): prefill queue depth
         if pool is not None:
             for _mid, entry in getattr(pool, "_entries", {}).items():
                 engine = getattr(entry, "engine", None)
@@ -308,6 +309,7 @@ def _render_queue_metrics() -> list[str]:
                     stats = get_stats() or {}
                     running += int(stats.get("num_running", 0))
                     waiting += int(stats.get("num_waiting", 0))
+                    prefilling += int(stats.get("num_prefilling", 0))
                 else:
                     sched = getattr(engine, "scheduler", None)
                     if sched is None:
@@ -327,9 +329,13 @@ def _render_queue_metrics() -> list[str]:
                         stats = gs() or {}
                         running += int(stats.get("num_running", 0))
                         waiting += int(stats.get("num_waiting", 0))
+                        prefilling += int(stats.get("num_prefilling", 0))
                     else:
                         running += len(getattr(sched, "running", []) or [])
                         waiting += len(getattr(sched, "waiting", []) or [])
+                        # OP-20: scheduler.prefilling is a deque of requests
+                        # mid-prefill (lazily initialized; absent pre-first-step)
+                        prefilling += len(getattr(sched, "prefilling", ()) or ())
         lines.extend(
             _fmt_metric(
                 "fusion_mlx_requests_running",
@@ -344,6 +350,17 @@ def _render_queue_metrics() -> list[str]:
                 "gauge",
                 "Requests waiting in scheduler queues.",
                 waiting,
+            )
+        )
+        # OP-20 (#0907 audit): prefill queue depth — the admission cap
+        # counts waiting+prefilling+running, so waiting alone hides
+        # prefill pressure that is already admitted and consuming KV.
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_requests_prefilling",
+                "gauge",
+                "Requests mid-prefill in scheduler queues.",
+                prefilling,
             )
         )
     except Exception:
@@ -536,6 +553,70 @@ def _render_radix_cache_metrics() -> list[str]:
     return lines
 
 
+def _render_prefix_cache_metrics() -> list[str]:
+    # OP-19 (#0907 audit): prefix/radix/response cache hit rates were not
+    # exposed for the block-aware prefix cache (the hottest layer for LLM
+    # inference). Response + diffusion-radix already render; this covers
+    # the per-engine block-aware prefix cache via scheduler.get_ssd_cache_stats.
+    lines: list[str] = []
+    try:
+        from ..server import _server_state
+
+        pool = _server_state.get("engine_pool")
+        if pool is not None:
+            seen = 0
+            for _mid, entry in getattr(pool, "_entries", {}).items():
+                engine = getattr(entry, "engine", None)
+                if engine is None:
+                    continue
+                sched = getattr(engine, "scheduler", None)
+                if sched is None:
+                    sched = getattr(getattr(engine, "_engine", None), "scheduler", None)
+                if sched is None:
+                    continue
+                get_cache_stats = getattr(sched, "get_ssd_cache_stats", None)
+                if not callable(get_cache_stats):
+                    continue
+                cstats = get_cache_stats() or {}
+                pc = cstats.get("prefix_cache")
+                if not isinstance(pc, dict):
+                    continue
+                seen += 1
+                labels = {"engine": str(_mid)}
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_prefix_cache_hits_total",
+                        "counter",
+                        "Block-aware prefix cache hits.",
+                        int(pc.get("hits", 0)),
+                        labels,
+                    )
+                )
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_prefix_cache_misses_total",
+                        "counter",
+                        "Block-aware prefix cache misses.",
+                        int(pc.get("misses", 0)),
+                        labels,
+                    )
+                )
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_prefix_cache_hit_rate",
+                        "gauge",
+                        "Block-aware prefix cache hit rate (0-1).",
+                        float(pc.get("hit_rate", 0.0)),
+                        labels,
+                    )
+                )
+            if seen:
+                logger.debug("prefix cache metrics rendered for %d engine(s)", seen)
+    except Exception:
+        logger.debug("prefix cache metrics render error", exc_info=True)
+    return lines
+
+
 def _render_multimodal_metrics() -> list[str]:
     lines: list[str] = []
     try:
@@ -708,12 +789,160 @@ def _render_lifespan_metrics() -> list[str]:
     return lines
 
 
+def _render_engine_eviction_metrics() -> list[str]:
+    # OP-14 (#0907 audit): expose engine-pool eviction frequency + reason so an
+    # operator sees memory-pressure churn on a dashboard instead of digging
+    # INFO logs. The loaded-models gauge is already emitted by
+    # _render_pool_metrics (fusion_mlx_models_loaded from pool.loaded_model_count),
+    # so this render only adds the eviction counter + by-reason breakdown.
+    lines: list[str] = []
+    try:
+        sm = get_server_metrics()
+        total = sm.engine_evictions_total
+        by_reason = sm.engine_evictions_by_reason
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_engine_evictions_total",
+                "counter",
+                "Engine-pool unloads driven by memory pressure / admission / TTL.",
+                int(total),
+            )
+        )
+        # Emit one series per observed reason so the by-reason breakdown is
+        # queryable (rate by reason). Reasons not yet seen are absent, which is
+        # correct Prometheus behavior for a sparse counter.
+        for reason, count in sorted(by_reason.items()):
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_engine_evictions_total",
+                    "counter",
+                    "Engine-pool unloads driven by memory pressure / admission / TTL.",
+                    int(count),
+                    {"reason": str(reason)},
+                )
+            )
+    except Exception:
+        logger.debug("engine eviction metrics render error", exc_info=True)
+    return lines
+
+
+def _render_preload_failure_metrics() -> list[str]:
+    # OP-18 (#0907 audit): expose pinned-model preload failures so an operator
+    # sees a missing critical model on the dashboard rather than a buried
+    # ERROR line. Total + per-model labeled series (sparse counter semantics).
+    lines: list[str] = []
+    try:
+        sm = get_server_metrics()
+        total = sm.preload_failures_total
+        by_model = sm.preload_failures_by_model
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_preload_failures_total",
+                "counter",
+                "Pinned models that failed to load at startup.",
+                int(total),
+            )
+        )
+        for model_id, count in sorted(by_model.items()):
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_preload_failures_total",
+                    "counter",
+                    "Pinned models that failed to load at startup.",
+                    int(count),
+                    {"model": str(model_id)},
+                )
+            )
+    except Exception:
+        logger.debug("preload failure metrics render error", exc_info=True)
+    return lines
+
+
+def _render_degradation_metrics() -> list[str]:
+    # OP-2 (#0907 audit): expose degradation events (SSRF rejection, enforcer
+    # lock timeout, cloud fallback, rate-limit 429) as Prometheus counters so
+    # an operator can alert on a non-zero rate instead of grepping logs. Each
+    # type gets a bare total plus a by-reason labeled series where reasons are
+    # tracked (SSRF + cloud fallback). The snapshot is point-in-time
+    # consistent under the module lock.
+    lines: list[str] = []
+    try:
+        from ..middleware.degradation_metrics import snapshot
+
+        snap = snapshot()
+        _HELP = "fusion-mlx degradation event counter (alert on non-zero rate)."
+        ssrf_total = int(snap.get("ssrf_rejected_total", 0))
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_degradation_total",
+                "counter",
+                _HELP,
+                ssrf_total,
+                {"type": "ssrf_rejected"},
+            )
+        )
+        for reason, count in sorted(snap.get("ssrf_rejected_by_reason", {}).items()):
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_degradation_total",
+                    "counter",
+                    _HELP,
+                    int(count),
+                    {"type": "ssrf_rejected", "reason": str(reason)},
+                )
+            )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_degradation_total",
+                "counter",
+                _HELP,
+                int(snap.get("enforcer_timeout_total", 0)),
+                {"type": "enforcer_timeout"},
+            )
+        )
+        cloud_total = int(snap.get("cloud_fallback_total", 0))
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_degradation_total",
+                "counter",
+                _HELP,
+                cloud_total,
+                {"type": "cloud_fallback"},
+            )
+        )
+        for reason, count in sorted(snap.get("cloud_fallback_by_reason", {}).items()):
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_degradation_total",
+                    "counter",
+                    _HELP,
+                    int(count),
+                    {"type": "cloud_fallback", "reason": str(reason)},
+                )
+            )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_degradation_total",
+                "counter",
+                _HELP,
+                int(snap.get("rate_limit_rejected_total", 0)),
+                {"type": "rate_limit_rejected"},
+            )
+        )
+    except Exception:
+        logger.debug("degradation metrics render error", exc_info=True)
+    return lines
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
     lines.extend(_render_engine_metrics())
     lines.extend(_render_disconnect_metrics())
     lines.extend(_render_pool_metrics())
+    lines.extend(_render_engine_eviction_metrics())
+    lines.extend(_render_preload_failure_metrics())
+    lines.extend(_render_degradation_metrics())
     lines.extend(_render_queue_metrics())
     lines.extend(_render_uptime_metal())
     lines.extend(_render_kv_cache_dtype_gauge())
@@ -722,6 +951,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_kv_checkpoint_metrics())
     lines.extend(_render_ubc_metrics())
     lines.extend(_render_radix_cache_metrics())
+    lines.extend(_render_prefix_cache_metrics())
     lines.extend(_render_multimodal_metrics())
     lines.extend(_render_paged_kv_metrics())
     lines.extend(_render_lifespan_metrics())

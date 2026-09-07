@@ -456,6 +456,19 @@ async def create_transcription(
     from fusion_mlx.engines.stt import STTEngine
     from fusion_mlx.exceptions import ModelNotFoundError
 
+    # FC-10 (#0907 audit): response_format is accepted for OpenAI
+    # compatibility but only ``json`` is implemented (srt/vtt/verbose_json
+    # are not). Failing visibly (400) here beats silently returning json to
+    # a client that requested subtitles and will feed the wrong shape into a
+    # downstream caption workflow.
+    if response_format not in ("json",):
+        raise HTTPException(
+            status_code=400,
+            detail=f"response_format='{response_format}' is not supported: "
+            "only 'json' is implemented. Convert to srt/vtt client-side from "
+            "the returned segments.",
+        )
+
     # #508: validate/resolve the model BEFORE touching the engine pool so
     # a malformed model id 404s cleanly even when the server has not
     # initialized a pool yet (was 503 "Server not initialized").

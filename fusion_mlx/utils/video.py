@@ -114,38 +114,17 @@ def decode_base64_image(
 
 
 def download_image(url: str, timeout: int = 30, max_size: int = MAX_IMAGE_SIZE) -> str:
-    # SSRF guard: reject private/internal URLs before making outbound request
-    from ..api._url_safety import is_safe_url_with_dns
+    # S-1/S-2 (#0907 audit): SSRF guard moved into safe_fetch — it pins the
+    # connect to a pre-validated IP (closes DNS-rebinding TOCTOU) and
+    # re-validates every redirect hop (closes redirect-to-private smuggle).
+    from ..api._url_safety import safe_fetch
 
-    if not is_safe_url_with_dns(url):
-        raise ValueError(f"URL targets a private/internal address: {url}")
-
-    import requests
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-    }
-    try:
-        head_response = requests.head(
-            url, timeout=timeout, headers=headers, allow_redirects=True, verify=True
-        )
-        content_length = head_response.headers.get("content-length")
-        if content_length and int(content_length) > max_size:
-            raise FileSizeExceededError(
-                f"Image at {url} exceeds maximum size: "
-                f"{int(content_length) / 1024 / 1024:.1f} MB > "
-                f"{max_size / 1024 / 1024:.1f} MB limit"
-            )
-    except requests.RequestException:
-        pass
-
-    response = requests.get(
-        url, timeout=timeout, headers=headers, stream=True, verify=True
-    )
+    response = safe_fetch(url, timeout=timeout, max_size=max_size, stream=True)
     response.raise_for_status()
 
     content_length = response.headers.get("content-length")
     if content_length and int(content_length) > max_size:
+        response.close()
         raise FileSizeExceededError(
             f"Image at {url} exceeds maximum size: "
             f"{int(content_length) / 1024 / 1024:.1f} MB > "
@@ -187,45 +166,25 @@ def download_image(url: str, timeout: int = 30, max_size: int = MAX_IMAGE_SIZE) 
         if os.path.exists(temp_file.name):
             os.unlink(temp_file.name)
         raise
+    finally:
+        response.close()
 
     return _temp_manager.register(temp_file.name)
 
 
 def download_video(url: str, timeout: int = 120, max_size: int = MAX_VIDEO_SIZE) -> str:
-    # SSRF guard: reject private/internal URLs before making outbound request
-    from ..api._url_safety import is_safe_url_with_dns
+    # S-1/S-2 (#0907 audit): SSRF guard moved into safe_fetch — pins connect
+    # to a pre-validated IP and re-validates every redirect hop.
+    from ..api._url_safety import safe_fetch
 
-    if not is_safe_url_with_dns(url):
-        raise ValueError(f"URL targets a private/internal address: {url}")
-
-    import requests
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
-    }
     logger.info("Downloading video from: %s", url)
 
-    try:
-        head_response = requests.head(
-            url, timeout=timeout, headers=headers, allow_redirects=True, verify=True
-        )
-        content_length = head_response.headers.get("content-length")
-        if content_length and int(content_length) > max_size:
-            raise FileSizeExceededError(
-                f"Video at {url} exceeds maximum size: "
-                f"{int(content_length) / 1024 / 1024:.1f} MB > "
-                f"{max_size / 1024 / 1024:.1f} MB limit"
-            )
-    except requests.RequestException:
-        pass
-
-    response = requests.get(
-        url, timeout=timeout, headers=headers, stream=True, verify=True
-    )
+    response = safe_fetch(url, timeout=timeout, max_size=max_size, stream=True)
     response.raise_for_status()
 
     content_length = response.headers.get("content-length")
     if content_length and int(content_length) > max_size:
+        response.close()
         raise FileSizeExceededError(
             f"Video at {url} exceeds maximum size: "
             f"{int(content_length) / 1024 / 1024:.1f} MB > "
@@ -269,6 +228,8 @@ def download_video(url: str, timeout: int = 120, max_size: int = MAX_VIDEO_SIZE)
         if os.path.exists(temp_file.name):
             os.unlink(temp_file.name)
         raise
+    finally:
+        response.close()
 
     file_size = Path(temp_file.name).stat().st_size
     logger.info(
