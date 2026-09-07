@@ -10,8 +10,8 @@
 #   runtime-fail  - collects but fails on stale assertions / removed attrs
 #   timeout       - hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 247 modules excluded; 431 healthy modules remain in the CI gate.
-# (678 test_*.py files under tests/unit; 8742 test items collected.)
+# Total: 116 modules excluded (#0907 audit: 2 rescued this round, was 118);
+# ~379 healthy modules remain in the CI gate (~14222 test items collected).
 # Phase-1 (mlx-enhance): 15 stale debt entries whose prod code had since
 # been fixed were re-activated (test_embedding, test_hot_cache,
 # test_mcp_config/manager, test_smart_router, test_model_aliases,
@@ -30,11 +30,14 @@
 # FUNC-P4-7 (#0907 product audit): audit flagged the ~13% quarantine as a
 # coverage blind-spot signal. This is acknowledged migration debt, NOT a
 # production defect — every line has a per-file fate in DEBT_FATES.md
-# (9 DELETE / 34 FIX / 126 KEEP_QUARANTINED / 18 timeout per the triage
-# there). The re-activation pattern (Phase-1 reactivated 15 modules green)
-# continues per-file as prod APIs stabilize; quarantine shrinks over time
-# without destabilizing the CI gate. A coverage-blind-spot is not a runtime
-# risk because the CI-active ~377 modules cover the shipped code paths.
+# (2 RESCUED / 106 KEEP_QUARANTINED / 6 EMPTY / 2 TIMEOUT per the #0907
+# strict re-triage there — the prior "9 DELETE / 34 FIX / 126 KEEP_QUARANTINED
+# / 18 timeout" figures were aspirational; DEBT_FATES.md was missing and is
+# now created with the real counts). The re-activation pattern (Phase-1
+# reactivated 15 modules green; #0907 rescued 2 more) continues per-file as
+# prod APIs stabilize; quarantine shrinks over time without destabilizing the
+# CI gate. A coverage-blind-spot is not a runtime risk because the CI-active
+# ~377 modules cover the shipped code paths.
 
 ## uncollectable (9)
 # KEEP_QUARANTINED test_markitdown_integration.py (eval round11 2026-08-24):
@@ -1867,10 +1870,14 @@ test_responses_engine_failure_envelope.py
 test_responses_input_default_type.py
 # test_responses_param_validation.py  (RESCUED 2026-08-18 — commented out = un-quarantined = collected; 11 pass. PROD FIX R6-H8 Responses-surface parity: ResponsesRequest had no top_k cap (Field ge=0 only, no upper bound) and no seed validator → pathological top_k=999_999_999 / negative / bool and negative / bool seed silent-degraded to HTTP 200 on /v1/responses. Added shared validate_top_k (cap _TOP_K_SENTINEL_CAP=1<<20 inclusive, bool/negative reject) + validate_seed (bool/negative reject) to shared_models.py, wired as field_validators on ResponsesRequest. PROD FIX #355 forwarding: routes_internal/responses.py _resolved_sampling_kwargs only threaded temperature/top_p/stop → top_k (and min_p/repetition_penalty/presence_penalty/frequency_penalty) silently dropped before reaching engine.chat; now forwarded when present. Test vllm_mlx stub-shim harness intact. Regression-checked: test_responses_adapter 73 pass, test_responses.py + chat_template_kwargs green; pre-existing 15+6 fails in test_responses_bundle/test_responses_input_default_type unrelated (stay quarantined).)
 test_responses_route.py
-# KEEP_QUARANTINED test_responses_sse_event_order.py (eval round13 2026-08-24): same
-# vllm_mlx.routes.responses fixture cluster as test_responses_bundle. Pins response.output_text.done
-# SSE event + 'object' key in event stream (prod event ordering changed). KEEP.
-test_responses_sse_event_order.py
+# RESCUED test_responses_sse_event_order.py (audit #0907, 2026-09-07): 3 PASS.
+# TestResponsesStreamEventOrder pins response.created -> response.in_progress ->
+# output_item.added SSE event order + payload shape against the real
+# routes_internal/responses router (lightweight engine modules installed via
+# monkeypatch). Re-verified green: 3 passed. Original round13 quarantine reason
+# (output_text.done event + 'object' key drift) no longer reproduces against
+# current prod. Un-quarantined.
+# test_responses_sse_event_order.py
 # KEEP_QUARANTINED 2026-08-22 (#598): 404/401/503 + registry KeyError (is_hybrid/count/context_window) — deep registry-shape drift. Feature-gap.
 test_routes.py
 # test_routes_models.py RESCUED 2026-08-22 (2 pass + 1 xfail): model-list
@@ -2112,7 +2119,7 @@ test_stt_response_format.py
 # worktree/lock exclusion (also policy). Out of scope.
 # RESCUED 2026-08-23 (#598): .gitignore now exists at repo root with .claude/
 # rule (PR #608, closes #599). test_submit_gitignore un-quarantined.
-# RESCUED test_suffix_decoding.py (eval round16 2026-08-24): PARTIAL — 14p/6xf.
+# RESCUED test_suffix_decoding.py (audit #0907, 2026-09-07): PARTIAL — 14p/6xf.
 # 14 drafter unit tests (TestDrafterBasics/HistoryTrimming/Stats/Validation/
 # RealisticAgentWorkload) import from fusion_mlx.speculative.suffix_decoding
 # (correct prod path) — all pass. 6 TestInstallSuffixDecoding tests xfailed:
@@ -2121,7 +2128,9 @@ test_stt_response_format.py
 # different architecture (no GenerationBatch monkey-patch installer, no profile
 # allowlist gate, no _step/.next replacement, no _suffix_stats telemetry).
 # Class-level xfail on TestInstallSuffixDecoding. Pin REMOVED install-hook wiring.
-test_suffix_decoding.py
+# Un-quarantined 2026-09-07: the 14 real-coverage tests belong in the active
+# suite; the 6 xfails document removed-feature contract (legit, not false fail).
+# test_suffix_decoding.py
 # RESCUED test_telemetry_cli 2026-08-24 (eval round15): 12f/0p→12p. Root
 # cause=harness module-name drift: 3 hardcoded `python -m vllm_mlx.cli`
 # subprocess calls (L47 helper + L279/L291 standalone) — package renamed

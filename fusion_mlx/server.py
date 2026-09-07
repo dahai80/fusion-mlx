@@ -177,7 +177,9 @@ def _install_sighup_reload() -> None:
             signal.signal(signum, _sync_handler)
             logger.info("SIGHUP hot-reload handler installed (fallback)")
         except (ValueError, OSError):
-            logger.warning("SIGHUP handler could not be installed — hot-reload unavailable")
+            logger.warning(
+                "SIGHUP handler could not be installed — hot-reload unavailable"
+            )
 
 
 class _ServerState(dict):

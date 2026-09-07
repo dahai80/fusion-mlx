@@ -37,6 +37,22 @@
   so idle-timeout reload takes effect in flat-Settings mode. Duplicate
   bare `except: pass` in `admin/models_route.py` `_read_settings_json`
   fixed to fail visibly.
+- **FUNC-P4-7 (#0907 audit): shrink Rapid-MLX test-debt quarantine.**
+  Strict re-triage of all 118 quarantined test modules (corrected a classifier
+  bug where `xfailed` was mistaken for `failed`): 2 modules un-quarantined
+  after confirming their passing tests exercise real prod code —
+  `test_suffix_decoding.py` (14 real Drafter/Stats/Validation tests against
+  `fusion_mlx.speculative.suffix_decoding`; 6 xfail document the removed
+  `_install_suffix_decoding` install-hook) and `test_responses_sse_event_order.py`
+  (3 real Responses SSE event-order tests against the live
+  `routes_internal/responses` router). CI-active collection rose ~14199 →
+  ~14222. The previously-referenced but missing `tests/unit/DEBT_FATES.md` is
+  created with the real per-file fates (2 RESCUED / 106 KEEP_QUARANTINED /
+  6 EMPTY / 2 TIMEOUT) and the false-coverage rule (a shim-driven green test
+  stays quarantined — `test_dense_sampler_fastpath.py` and
+  `test_request_time_alias_resolution.py` kept quarantined despite green runs).
+  Quarantine roster corrected from the stale aspirational "247 excluded" to
+  the real 116.
 
 ## [0.9.2] — 2026-09-07
 
