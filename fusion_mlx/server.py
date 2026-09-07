@@ -113,6 +113,7 @@ from .dispatch import CloudRouter, RequestRouter
 from .engine_core import AsyncEngineCore
 from .pool import EnginePool, ProcessMemoryEnforcer
 from .routes_internal.cache import router as cache_router
+from .routes_internal.config_reload import router as config_reload_router
 from .routes_internal.gc import router as gc_router
 from .routes_internal.health import admin_router as health_admin_router
 from .routes_internal.health import probe_router as health_probe_router
@@ -125,6 +126,58 @@ from .server_metrics import get_server_metrics
 from .settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def _install_sighup_reload() -> None:
+    # OPS-P4-6 (#0907 audit): SIGHUP hot-reload. Re-reads settings.json and
+    # applies the safe reloadable subset (log level, idle timeout, memory
+    # tier/ceiling, prefill guard, chunked prefill, route-guard toggles)
+    # without restart. Loaded models stay resident. Reload errors are logged
+    # but never crash the server (fail-visible, not fatal). Windows lacks
+    # SIGHUP — skip silently there.
+    import asyncio
+    import signal
+
+    try:
+        signum = signal.SIGHUP
+    except AttributeError:
+        logger.debug("SIGHUP not available on this platform — hot-reload disabled")
+        return
+
+    loop = asyncio.get_running_loop()
+
+    async def _on_sighup() -> None:
+        logger.info("SIGHUP received — hot-reloading settings.json")
+        try:
+            from .routes_internal.config_reload import reload_config
+
+            result = await reload_config(source="sighup")
+            if result.get("errors"):
+                logger.warning(
+                    "SIGHUP reload completed with errors: %s", result["errors"]
+                )
+        except Exception:
+            logger.error("SIGHUP reload failed — keeping live config", exc_info=True)
+
+    try:
+        loop.add_signal_handler(signum, lambda: asyncio.ensure_future(_on_sighup()))
+        logger.info("SIGHUP hot-reload handler installed")
+    except (NotImplementedError, RuntimeError):
+        # add_signal_handler unsupported (e.g. non-main thread) — fall back to
+        # a plain signal.signal handler that schedules the coroutine.
+        import threading
+
+        def _sync_handler(signum, frame):
+            if threading.main_thread() != threading.current_thread():
+                return
+            logger.info("SIGHUP received (fallback handler) — scheduling reload")
+            asyncio.ensure_future(_on_sighup())
+
+        try:
+            signal.signal(signum, _sync_handler)
+            logger.info("SIGHUP hot-reload handler installed (fallback)")
+        except (ValueError, OSError):
+            logger.warning("SIGHUP handler could not be installed — hot-reload unavailable")
 
 
 class _ServerState(dict):
@@ -1146,6 +1199,7 @@ class Server:
         app.include_router(metrics_router)
         app.include_router(cache_router)
         app.include_router(gc_router)
+        app.include_router(config_reload_router)
         app.include_router(admin_router)
         app.include_router(cluster_router)
 
@@ -1480,6 +1534,7 @@ class Server:
             await self._startup()
             write_status("running")
             clear_crash_counter()
+            _install_sighup_reload()
             yield
             _startup_ok = True
         except Exception as exc:

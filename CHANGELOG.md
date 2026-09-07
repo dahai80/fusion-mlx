@@ -23,6 +23,20 @@
   of O(n*m); distributed shard `sync_weights` documents inline-only with a
   clear error. P2 #13/#14 (MoE shared-cache materialization) remain
   env-gated OFF per the audit's "可后置" (deferrable) marking.
+- **OPS-P4-6 / OPS-P4-7 (#0907 audit): SIGHUP hot-reload + config schema.**
+  New `fusion_mlx/config_schema.py` provides a Pydantic `SettingsSchema`
+  validating the safe reloadable subset of `settings.json` (log level, idle
+  timeout, memory guard tier/ceiling, prefill guard, chunked prefill,
+  route-guard toggles); bad types/enums now raise instead of silently
+  falling back. `POST /v1/config/reload` (admin-auth-gated) and a SIGHUP
+  signal handler re-read `settings.json`, validate it, and apply the
+  reloadable subset at runtime via the existing `_apply_*_runtime` helpers
+  — no restart, no model reload. Restart-needed fields (host, port,
+  max_concurrent_requests, model_dirs) are logged as `not_applied`.
+  `ProcessMemoryEnforcer` gains a `set_reloaded_idle_timeout()` entry point
+  so idle-timeout reload takes effect in flat-Settings mode. Duplicate
+  bare `except: pass` in `admin/models_route.py` `_read_settings_json`
+  fixed to fail visibly.
 
 ## [0.9.2] — 2026-09-07
 
