@@ -2,7 +2,6 @@
 """Admin authentication helpers."""
 
 import hashlib
-import ipaddress
 import logging
 import secrets
 import threading
@@ -23,6 +22,13 @@ _api_key: str = ""
 _global_settings_getter: Any = None
 _last_session_sweep = 0.0
 _SESSION_SWEEP_INTERVAL = 300.0
+# SEC-P5-10 (#0907 audit): skip_api_key_verification grants full admin to
+# loopback requests with no credentials. It is a documented dev convenience,
+# but if an operator leaves it on in production (and a proxy forwards
+# incompletely — see SEC-P3-6), the process has unguarded admin. Emit a
+# WARNING every Nth bypassed request so it is unmissable in logs, mirroring
+# the FUSION_ALLOW_ANONYMOUS pattern in middleware/auth.py.
+_skip_admin_warn_count = 0
 
 
 def _cleanup_expired_sessions(now: float) -> None:
@@ -152,25 +158,15 @@ def _is_skip_api_key_verification(gs) -> bool:
     return gs_dict.get("skip_api_key_verification", False)
 
 
-_LOOPBACK_LITERALS = frozenset({"127.0.0.1", "::1", "localhost"})
-
-
 def _is_loopback_request(request: Request) -> bool:
-    client = getattr(request, "client", None)
-    if client is None:
-        return False
-    host = getattr(client, "host", None)
-    if not host:
-        return False
-    for h in ("x-forwarded-for", "x-forwarded-host", "forwarded", "via"):
-        if request.headers.get(h):
-            return False
-    if host in _LOOPBACK_LITERALS:
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
+    # SEC-P3-6 (#0907 audit): delegate to the hardened middleware helper so
+    # admin auth checks the same 7 forwarded headers as the rest of the
+    # server. The prior inline copy only checked 4, so a proxied request
+    # carrying x-forwarded-proto / cf-connecting-ip / true-client-ip could
+    # be mistaken for a direct loopback call.
+    from ..middleware.auth import _is_loopback_client
+
+    return _is_loopback_client(request)
 
 
 async def require_admin(request: Request) -> bool:
@@ -185,6 +181,17 @@ async def require_admin(request: Request) -> bool:
 
     if _is_skip_api_key_verification(gs):
         if _is_loopback_request(request):
+            global _skip_admin_warn_count
+            _skip_admin_warn_count += 1
+            if _skip_admin_warn_count == 1 or _skip_admin_warn_count % 1000 == 0:
+                logger.warning(
+                    "skip_api_key_verification is ON: loopback request %s "
+                    "granted admin with no credentials (occurrence #%d). "
+                    "Disable in production — a proxy that forwards headers "
+                    "incompletely could expose unguarded admin.",
+                    request.client.host if request.client else "?",
+                    _skip_admin_warn_count,
+                )
             return True
         logger.warning("skip_api_key_verification only applies to loopback requests")
 

@@ -125,7 +125,7 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **Paged KV cache** - SSD cold layer, block-aware prefix caching with COW sharing
 - **Fused sampler** - skip logsumexp, eliminate GPU sync, batched sampling
 - **SmartRouter** - phase-aware routing with benchmark-based backend selection and EMA smoothing
-- **Priority scheduling** - REALTIME / BATCH / BACKGROUND queues with Metal command queue priorities
+- **Priority scheduling** - `policy=PRIORITY` admits requests by `Request.priority` (lower int = higher priority), FIFO within the same priority; soft priority with anti-starvation rotation
 - **4-tier memory enforcer** - safe / balanced / aggressive / custom hard limits with deadlock-free eviction
 - **Multi-model concurrency** - EnginePool with LRU eviction, pinning, and TTL
 - **MCP tool support** - list, discover, and execute MCP tools via API; auto-discovers fusion-plugin-server on PATH via stdio transport
@@ -287,6 +287,8 @@ Managed background server control (macOS app / Homebrew):
 
 All accept `--timeout <seconds>` (default 60). `start`/`restart` also accept `--no-wait`.
 
+> **Configuration reload:** editing `~/.fusion-mlx/settings.json` by hand does **not** hot-reload — most fields (memory tier, scheduler caps, idle timeout, port/host) are read once at boot. Use the admin panel (`/admin` → Settings, `POST /api/settings`) for the subset of fields that apply at runtime (log level, model dirs, cache toggles), or run `fusion-mlx restart` to pick up everything else.
+
 ### Chat REPL
 
 ```bash
@@ -344,15 +346,16 @@ fusion-mlx bench qwen3.5-9b-4bit --num-prompts 10 --max-tokens 100
 fusion-mlx bench qwen3.5-9b-4bit --submit
 
 # Validation tiers: smoke / speed / harness / all
-fusion-mlx bench qwen3.5-9b-4bit --tier smoke
-fusion-mlx bench qwen3.5-9b-4bit --tier speed
-fusion-mlx bench qwen3.5-9b-4bit --tier all
+# NOTE: --tier is not yet implemented in this build; use --num-prompts / --submit.
+# fusion-mlx bench qwen3.5-9b-4bit --tier smoke
+# fusion-mlx bench qwen3.5-9b-4bit --tier speed
+# fusion-mlx bench qwen3.5-9b-4bit --tier all
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--submit` | Run standardized B=1 benchmark and submit to community leaderboard |
-| `--tier <tier>` | Validation tier: smoke / speed / harness / all |
+| `--tier <tier>` | Validation tier: smoke / speed / harness / all (not yet implemented — exits with a clear message) |
 | `--base-url <URL>` | Attach to already-running server (for --tier) |
 | `--num-prompts <N>` | Number of prompts (default: 10) |
 | `--max-tokens <N>` | Max tokens per prompt (default: 100) |
@@ -486,6 +489,8 @@ export HF_MIRROR=https://hf-mirror.com
 | TTS | `TTSEngine` | Kokoro, VibeVoice |
 | ImageGen | `ImageGenEngine` | Flux 2, SD3-Medium, SDXL, Stable Cascade |
 | VideoGen | `VideoGenEngine` | LTX-2, Wan2, SkyReels-V3 (pure-MLX ports) |
+
+> **Rerank note:** the `max_chunks_per_doc` field is accepted in the request schema for forward compatibility but is not yet honored at runtime — passing it returns HTTP 400 with a clear message. Chunking is fixed by the model's tokenizer window today.
 
 ## Quantization Formats
 
@@ -1636,7 +1641,7 @@ to the correct pure-MLX implementation. Supported backends:
 | Cosmos | `cosmos` | 7B T2V + Predict2 2B I2V | ✅ (Predict2) | ✅ #213 |
 | HunyuanVideo | `hunyuanvideo` | HunyuanVideo | ✅ | ✅ #214 |
 | MiniMax-H3 | `minimax_h3` | H3 33B (FL2VA/Ref2VA) | — | ✅ #588 native audio |
-| CogVideo | `cogvideo` | CogVideoX | — | stub (no MLX port) |
+| CogVideo | `cogvideo` | CogVideoX | ✅ | ✅ pure-MLX port |
 
 Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
 `video2world`, `hunyuan-video`, `hunyuan_video`, `cogvideox`, `ltx-video`, `wan`.

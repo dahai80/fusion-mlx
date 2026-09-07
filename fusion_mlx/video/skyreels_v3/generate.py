@@ -173,16 +173,24 @@ def _load_ref_imgs(paths: list[str]) -> list[Any]:
         if p.startswith("http"):
             # URL: 下载到临时文件
             import tempfile
-            import urllib.request
 
-            # SSRF guard: reject private/internal URLs
-            from ...api._url_safety import is_safe_url_with_dns
+            # SEC-P2-3 (#0907 audit): urllib.request.urlretrieve re-resolves
+            # DNS and auto-follows redirects without re-validation, enabling
+            # SSRF via 302 to a private address. safe_fetch pins each connect
+            # to a validated IP and re-validates every redirect hop. This runs
+            # in the video executor thread, so the sync requests-based path is
+            # correct (no event loop to block).
+            from ...api._url_safety import safe_fetch
 
-            if not is_safe_url_with_dns(p):
-                raise ValueError(f"URL targets a private/internal address: {p}")
+            try:
+                response = safe_fetch(p, max_size=512 * 1024 * 1024)
+                content = response.content
+            except Exception as e:
+                logger.warning("safe_fetch failed for ref image %s: %s", p, e)
+                raise ValueError(f"Failed to fetch reference image: {e}")
 
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
-                urllib.request.urlretrieve(p, tf.name)
+                tf.write(content)
                 images.append(Image.open(tf.name).convert("RGB"))
         else:
             images.append(Image.open(p).convert("RGB"))

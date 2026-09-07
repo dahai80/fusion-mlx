@@ -254,6 +254,25 @@ class EnginePool:
         try:
             return int(cb())
         except Exception:  # noqa: BLE001
+            # FT-P3-1 (#0907 audit): a 0 return is treated by callers as
+            # "no limit", so an exception here lets one model load slip past
+            # the memory guard. Surface it loudly + tick the degradation
+            # metric so an operator can alert on the bypass rate.
+            logger.warning(
+                "admission ceiling callback raised %s; preload admission "
+                "treats ceiling as 0 (no limit) for this check — memory "
+                "guard bypassed for one load",
+                type(cb).__name__,
+                exc_info=True,
+            )
+            try:
+                from ..middleware.degradation_metrics import (
+                    record_admission_ceiling_error,
+                )
+
+                record_admission_ceiling_error()
+            except Exception:  # noqa: BLE001
+                logger.debug("degradation metric record failed", exc_info=True)
             return 0
 
     def _kv_admission_headroom(self) -> int:
@@ -2908,8 +2927,18 @@ class EnginePool:
         the engine is stopped mid-response.
         """
         # Phase 1: abort in-flight requests so SSE generators can finish.
+        # ARCH-P2-1 (#0907 audit): the still-running ProcessMemoryEnforcer
+        # loop can del self._entries[mid] (via TTL unload) while we iterate
+        # and await — RuntimeError: dictionary changed size during iteration.
+        # Stop the enforcer first, then snapshot entries (mirrors the
+        # _find_lru_victim / preload_pinned_models pattern).
+        if self._process_memory_enforcer is not None:
+            try:
+                await self._process_memory_enforcer.stop()
+            except Exception as e:
+                logger.warning("memory enforcer stop failed during shutdown: %s", e)
         aborted = 0
-        for model_id, entry in self._entries.items():
+        for model_id, entry in list(self._entries.items()):
             engine = getattr(entry, "engine", None)
             if engine is None:
                 continue
@@ -2934,7 +2963,7 @@ class EnginePool:
             drain_deadline = time.monotonic() + drain_timeout
             while time.monotonic() < drain_deadline:
                 any_active = False
-                for entry in self._entries.values():
+                for entry in list(self._entries.values()):
                     if self._entry_has_active_requests(entry):
                         any_active = True
                         break
@@ -2944,7 +2973,7 @@ class EnginePool:
             else:
                 still_active = [
                     mid
-                    for mid, e in self._entries.items()
+                    for mid, e in list(self._entries.items())
                     if self._entry_has_active_requests(e)
                 ]
                 if still_active:

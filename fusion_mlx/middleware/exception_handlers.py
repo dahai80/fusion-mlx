@@ -617,6 +617,17 @@ def install_exception_handlers(app: FastAPI) -> None:
         request: Request,
         exc: StarletteHTTPException,
     ):
+        # OPS-P2-1 (#0907 audit): count 5xx server-failure responses so the
+        # error rate is observable from /metrics. 4xx are client errors (bad
+        # request, model not found, validation) — not server faults — so they
+        # are excluded to avoid masking real error rate under client noise.
+        if exc.status_code >= 500:
+            try:
+                from ..server_metrics import record_llm_failure
+
+                record_llm_failure()
+            except Exception:
+                logger.debug("failed to record 5xx request failure", exc_info=True)
         response = _http_error_response(exc)
         if _is_anthropic_path(request):
             response = _wrap_for_anthropic(response)
@@ -775,5 +786,13 @@ def install_exception_handlers(app: FastAPI) -> None:
             exc,
             exc_info=True,
         )
+        # OPS-P2-1 (#0907 audit): unhandled exceptions are the hardest server
+        # failures — count them so /metrics surfaces the error rate.
+        try:
+            from ..server_metrics import record_llm_failure
+
+            record_llm_failure()
+        except Exception:
+            logger.debug("failed to record generic request failure", exc_info=True)
         response = _generic_error_response()
         return _wrap_for_anthropic(response) if anthropic else response

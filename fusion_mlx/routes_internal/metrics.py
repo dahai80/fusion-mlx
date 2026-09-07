@@ -13,6 +13,16 @@ from ..server_metrics import get_server_metrics
 
 logger = logging.getLogger(__name__)
 
+# OPS-P5-9 (#0907 product audit): metric label cardinality is bounded by
+# design. Every label key used below (engine/model/dtype/reason/strategy/
+# type/version/cache) takes values from a closed, small set: `engine`/`model`
+# are pool model-ids (typ. <10, bounded by EnginePool LRU + loaded count),
+# `dtype`/`strategy`/`reason`/`type` are enum-like constants. No high-
+# cardinality identity (request_id/session_id/user_id) is ever attached, so a
+# Prometheus scrape cannot blow up the series count. For a future multi-tenant
+# deployment that loads many model aliases long-term, consider hashing or
+# bucketing `model` — not needed for the single-machine Beta target.
+
 router = APIRouter()
 
 _CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
@@ -104,6 +114,18 @@ def _render_engine_metrics() -> list[str]:
                 int(m.get("total_requests", 0)),
             )
         )
+        # OPS-P2-1 (#0907 audit): expose the failed-request counter so error
+        # rate is alertable from /metrics. record_request_failure bumps this
+        # from route error paths; previously failed_requests was collected
+        # but never incremented and never rendered.
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_requests_failed_total",
+                "counter",
+                "Inference requests that failed (error path).",
+                int(m.get("failed_requests", 0)),
+            )
+        )
         lines.extend(
             _fmt_metric(
                 "fusion_mlx_prompt_tokens_total",
@@ -163,7 +185,17 @@ def _render_pool_metrics() -> list[str]:
 
 
 def _render_kv_cache_dtype_gauge() -> list[str]:
-    dtype = "bf16"
+    # OPS-P3-3 (#0907 audit): previously hardcoded dtype="bf16", so the gauge
+    # always reported bf16=1 even when KV quantization (int8/int4) was active,
+    # misleading the operator about quantization status. Resolve from the same
+    # ServerConfig stash the rest of the server uses.
+    try:
+        from ..server_metrics import _resolve_kv_cache_dtype
+
+        dtype = _resolve_kv_cache_dtype()
+    except Exception:
+        logger.debug("kv cache dtype resolution failed; defaulting bf16", exc_info=True)
+        dtype = "bf16"
     lines: list[str] = [
         "# HELP fusion_mlx_kv_cache_dtype Effective KV cache dtype. One series per dtype label; the value is 1 for the active dtype and 0 for the others.",
         "# TYPE fusion_mlx_kv_cache_dtype gauge",
@@ -1105,6 +1137,29 @@ def _render_degradation_metrics() -> list[str]:
     return lines
 
 
+def _render_latency_histograms() -> list[str]:
+    # OPS-P2-2 (#0907 audit): TTFT/TPS histograms were collected in
+    # ServerMetrics.record_request_complete (fills _ttft_hist/_tps_hist) and
+    # get_ttft_histograms()/get_tps_histograms() existed, but no render path
+    # called them — /metrics emitted zero latency/throughput distribution,
+    # so an operator could not alert on a latency regression. Render per-model
+    # Histogram series (bucket/count/sum/max) via Histogram.render().
+    lines: list[str] = []
+    try:
+        sm = get_server_metrics()
+        ttft = sm.get_ttft_histograms()
+        for model_id, hist in sorted(ttft.items()):
+            labels = {"model": str(model_id)}
+            lines.extend(hist.render("fusion_mlx_ttft_seconds", labels))
+        tps = sm.get_tps_histograms()
+        for model_id, hist in sorted(tps.items()):
+            labels = {"model": str(model_id)}
+            lines.extend(hist.render("fusion_mlx_tps", labels))
+    except Exception:
+        logger.debug("latency histogram render error", exc_info=True)
+    return lines
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
@@ -1128,6 +1183,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_spec_decode_metrics())
     lines.extend(_render_moe_shared_cache_metrics())
     lines.extend(_render_lifespan_metrics())
+    lines.extend(_render_latency_histograms())
     return "\n".join(lines) + "\n"
 
 

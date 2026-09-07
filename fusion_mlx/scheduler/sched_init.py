@@ -94,15 +94,20 @@ def __init__(
     self.config = copy.copy(config) if config else SchedulerConfig()
     self._stream = stream if stream is not None else _default_generation_stream
 
-    # #818 (audit A-7): SchedulingPolicy.PRIORITY is dead code — the admission
-    # loop pops self.waiting FIFO and never consults Request.priority, so a
-    # PRIORITY config silently behaves as FCFS. Fail visibly so operators do
-    # not rely on priority ordering that never happens. The Request.priority
-    # field + __lt__ are retained for a future real implementation.
+    # FUNC-P2-2 (#0907 audit, was #818): SchedulingPolicy.PRIORITY now does
+    # priority-ordered insertion into self.waiting in _add_request
+    # (sched_admission) so Request.priority (lower int = higher priority)
+    # orders admission. FIFO is preserved within the same priority. The
+    # Request.priority field + __lt__ drive the ordering. Anti-starvation
+    # rotation in _schedule_waiting may briefly demote a head request, so
+    # this is a soft priority, not a strict head-of-line guarantee —
+    # acceptable for local single-node scheduling.
     if self.config.policy == SchedulingPolicy.PRIORITY:
-        logger.warning(
-            "Scheduler policy=PRIORITY is not implemented; falling back to "
-            "FCFS ordering. Request.priority is ignored. See issue #818."
+        logger.info(
+            "Scheduler policy=PRIORITY: requests admitted in priority order "
+            "(lower Request.priority int = higher priority); FIFO within the "
+            "same priority. Anti-starvation rotation may briefly demote a "
+            "head request under continuous high-priority load."
         )
 
     # Load additional EOS tokens from generation_config.json.

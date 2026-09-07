@@ -30,7 +30,11 @@ def latent_cache_enabled() -> bool:
 
 
 def session_tail_cache_enabled() -> bool:
-    return latent_cache_enabled() and os.getenv("FUSION_SESSION_TAIL_CACHE", "1") == "1"
+    # FUNC-P2-3 (#0907 audit): default OFF ("0") to match CLAUDE.md and
+    # LATENT_CACHE.md, which both document FUSION_SESSION_TAIL_CACHE as
+    # default OFF. The prior default "1" silently enabled a multi-frame
+    # tail-latent cache that extra memory against operator expectation.
+    return latent_cache_enabled() and os.getenv("FUSION_SESSION_TAIL_CACHE", "0") == "1"
 
 
 def latent_cache_max_mb() -> int:
@@ -131,18 +135,21 @@ def remove_session_tail_model(model_id: str) -> int:
     # *model_id*. Called on engine unload/reload so a re-pulled or quant-
     # swapped model under the same alias cannot serve a stale tail-frame
     # latent to the next multi-shot continuation (silent frame corruption).
+    # ARCH-P2-2 (#0907 audit): hold _CACHE_LOCK across the drop — releasing
+    # it before drop_prefix let a concurrent put_session_tail/get_session_tail
+    # (both under the lock) interleave and observe a half-dropped prefix.
     if not model_id:
         return 0
+    prefix = f"session_tail:{model_id}:"
     with _CACHE_LOCK:
         cache = _SESSION_TAIL_CACHE
-    if cache is None:
-        return 0
-    prefix = f"session_tail:{model_id}:"
-    try:
-        freed = cache.drop_prefix(prefix)
-    except Exception:
-        logger.debug("session tail drop_prefix('%s') failed", prefix, exc_info=True)
-        return 0
+        if cache is None:
+            return 0
+        try:
+            freed = cache.drop_prefix(prefix)
+        except Exception:
+            logger.debug("session tail drop_prefix('%s') failed", prefix, exc_info=True)
+            return 0
     if freed:
         logger.info(
             "session tail cache invalidated %d entr(y/ies) for model '%s'",

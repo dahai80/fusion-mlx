@@ -19,7 +19,7 @@ from .auth import (
 
 logger = logging.getLogger(__name__)
 
-PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/fusionmlx_preset.json"
+PRESET_REMOTE_URL = "https://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
 from .helpers import (
@@ -98,7 +98,15 @@ async def chat_page(request: Request, is_admin: bool = Depends(require_admin)):
 
 @_router.get("/static/{path:path}")
 async def admin_static(path: str):
-    """Serve static files for admin panel (CSS, JS, fonts, logos, etc.)."""
+    """Serve static files for admin panel (CSS, JS, fonts, logos, etc.).
+
+    SEC-P4-8 (#0907 audit): this route is intentionally unauthenticated.
+    Static assets (CSS/JS/fonts) must load before the operator logs in, so a
+    session dependency would break the login page. Path traversal is blocked
+    by the ``is_relative_to(static_dir)`` check above, and only public
+    static files are served — no data, no config. This is a documented
+    exemption, not an oversight.
+    """
     file_path = static_dir / path
     if not file_path.is_file() or not file_path.resolve().is_relative_to(
         static_dir.resolve()

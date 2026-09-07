@@ -20,7 +20,12 @@ from ..middleware.auth import verify_api_key
 
 logger = logging.getLogger(__name__)
 
-_NOT_IMPLEMENTED_MSG = "engine integration pending"
+_NOT_IMPLEMENTED_MSG = (
+    "cache export/import is not yet implemented in this build "
+    "(engine integration pending). The endpoint validates the request "
+    "schema and returns this 501 deliberately so a caller cannot mistake "
+    "a stub for success. Use /v1/cache/stats for live cache inspection."
+)
 
 _NOT_IMPLEMENTED_DETAIL = {
     "error": {

@@ -2,8 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """CLI serve and bench commands for fusion-mlx."""
 
+import logging
 import os
 import sys
+
+# OPS-P3-5 (#0907 audit): module-level logger so the diagnostic warnings in
+# _check_disk_space / _check_memory_capacity (defined below before the later
+# per-function ``logger = logging.getLogger(__name__)`` lines) resolve at
+# call time and route into server.log / stderr instead of stdout print().
+logger = logging.getLogger(__name__)
 
 from fusion_mlx._cli_base import (
     _apply_body_receive_timeout_env,
@@ -396,25 +403,22 @@ def _check_disk_space(model_name: str, force: bool = False) -> None:
         available_gb = available_bytes / (1024**3)
         need_to_free_gb = (required_bytes - available_bytes) / (1024**3)
 
-        print()
-        print("  Error: Insufficient disk space for download.")
-        print(f"    Model size:    {model_size_gb:>7.1f} GB")
-        print(f"    Free space:    {available_gb:>7.1f} GB  ({probe})")
-        print(f"    Need to free:  {need_to_free_gb:>7.1f} GB")
-        print()
-        print("  Suggestions:")
-        print("    - Free disk space, or set HF_HOME to a drive with more room")
-        print("    - Pick a smaller variant: fusion-mlx models")
+        logger.warning("Insufficient disk space for download:")
+        logger.warning("  Model size:    %7.1f GB", model_size_gb)
+        logger.warning("  Free space:    %7.1f GB  (%s)", available_gb, probe)
+        logger.warning("  Need to free:  %7.1f GB", need_to_free_gb)
+        logger.warning("  Suggestions:")
+        logger.warning(
+            "    - Free disk space, or set HF_HOME to a drive with more room"
+        )
+        logger.warning("    - Pick a smaller variant: fusion-mlx models")
         if not force:
-            print(
-                "    - Bypass this check (download will likely fail mid-way): "
-                "--force-disk-check"
+            logger.warning(
+                "    - Bypass this check (download will likely fail mid-way): --force-disk-check"
             )
-            print()
             sys.exit(1)
         # ``force=True``: warn loudly, let the user proceed at their own risk.
-        print("  --force-disk-check set — proceeding anyway.")
-        print()
+        logger.warning("--force-disk-check set — proceeding anyway.")
     except SystemExit:
         raise
     except Exception:
@@ -586,56 +590,38 @@ def _check_memory_capacity(model_name: str) -> None:
     used_gb = used_ram_bytes / (1024**3)
     total_gb = total_ram_bytes / (1024**3)
 
-    is_tty = sys.stdout.isatty() and "NO_COLOR" not in os.environ
-    YELLOW = "\x1b[33m" if is_tty else ""
-    RED = "\x1b[31m" if is_tty else ""
-    BOLD = "\x1b[1m" if is_tty else ""
-    DIM = "\x1b[2m" if is_tty else ""
-    RESET = "\x1b[0m" if is_tty else ""
-
-    print()
+    # OPS-P3-5 (#0907 audit): route through logger so the warning lands in
+    # server.log (stderr-captured) and is level-filterable, not just stdout.
     if ratio >= 0.85:
-        print(
-            f"  {RED}{BOLD}!! Memory pressure warning:{RESET} "
-            f"this model is likely too large for your hardware."
-        )
-        print(
-            f"  {DIM}Continuing may trigger a macOS kernel panic "
-            f"(see issue #324).{RESET}"
+        logger.warning(
+            "Memory pressure warning: this model is likely too large for your hardware. "
+            "Continuing may trigger a macOS kernel panic (see issue #324)."
         )
     else:
-        print(
-            f"  {YELLOW}{BOLD}Memory pressure note:{RESET} "
-            f"this model uses a large fraction of system RAM."
+        logger.warning(
+            "Memory pressure note: this model uses a large fraction of system RAM."
         )
-    print()
-    print(f"    Model on disk:           {model_gb:>6.1f} GB")
-    print(
-        f"    Est. working set:        {working_gb:>6.1f} GB  "
-        f"{DIM}(model x 1.5 — short-chat workload; long-context serving will use more){RESET}"
+    logger.warning(
+        "  Model on disk: %6.1f GB; Est. working set: %6.1f GB (model x 1.5); "
+        "OS used: %6.1f GB; Total RAM: %6.1f GB (%.0f%% projected utilization).",
+        model_gb,
+        working_gb,
+        used_gb,
+        total_gb,
+        ratio * 100,
     )
-    print(f"    Currently used by OS:    {used_gb:>6.1f} GB")
-    print(
-        f"    Total system RAM:        {total_gb:>6.1f} GB  "
-        f"({ratio * 100:.0f}% projected utilization)"
-    )
-    print()
     if ratio >= 0.85:
-        print("  Apple Silicon firmware can panic the whole system rather than")
-        print("  raise an OOM error when unified-memory pressure exceeds the")
-        print("  iBoot AMCC threshold. Recommended actions:")
-        print()
-        print("    - Close other apps to free RAM, or")
-        print("    - Pick a smaller model:    fusion-mlx models")
-        print(
-            "    - Or lower memory headroom: "
-            "fusion-mlx serve <model> --gpu-memory-utilization 0.75"
+        logger.warning(
+            "Apple Silicon firmware can panic the whole system rather than raise an "
+            "OOM error when unified-memory pressure exceeds the iBoot AMCC threshold. "
+            "Recommended: close other apps to free RAM, pick a smaller model "
+            "(fusion-mlx models), or lower memory headroom "
+            "(--gpu-memory-utilization 0.75)."
         )
     else:
-        print(
-            "  If you see crashes or kernel panics, try: --gpu-memory-utilization 0.85"
+        logger.warning(
+            "If you see crashes or kernel panics, try: --gpu-memory-utilization 0.85"
         )
-    print()
 
 
 def _try_mirror_prefetch(model_name: str) -> bool:
@@ -929,7 +915,7 @@ def _serve_from_model_dir(args):
         host,
         port,
     )
-    print(f"fusion-mlx: serving models from {args.model_dir} on {host}:{port}")
+    logger.info("serving models from %s on %s:%s", args.model_dir, host, port)
 
     app = create_app(config)
 
@@ -2399,16 +2385,20 @@ def _run_tier_submit_flow(args) -> int:
     # Phase 1: run the tier dispatcher to capture smoke/harness data.
     # Speed bucket is intentionally skipped (see docstring); ``run_tier``
     # only honours ``skip_speed`` when tier=='all'.
-    from .bench.tier_runner import run_tier
+    from .bench.tier_runner import TierRunnerUnavailable, run_tier
 
-    rc, tier_results = run_tier(
-        model=args.model,
-        tier=tier,
-        base_url=getattr(args, "base_url", None),
-        sampled=getattr(args, "sampled", False),
-        return_results=True,
-        skip_speed=True,
-    )
+    try:
+        rc, tier_results = run_tier(
+            model=args.model,
+            tier=tier,
+            base_url=getattr(args, "base_url", None),
+            sampled=getattr(args, "sampled", False),
+            return_results=True,
+            skip_speed=True,
+        )
+    except TierRunnerUnavailable as e:
+        print(f"\n  {e}", file=sys.stderr)
+        return 2
     smoke_result = tier_results.get("smoke_result")
     harness_result = tier_results.get("harness_result")
 
@@ -2781,16 +2771,20 @@ def bench_command(args):
         sys.exit(_run_tier_submit_flow(args))
 
     if getattr(args, "tier", None):
-        from .bench.tier_runner import run_tier
+        from .bench.tier_runner import TierRunnerUnavailable, run_tier
 
-        sys.exit(
-            run_tier(
-                model=args.model,
-                tier=args.tier,
-                base_url=getattr(args, "base_url", None),
-                sampled=getattr(args, "sampled", False),
+        try:
+            sys.exit(
+                run_tier(
+                    model=args.model,
+                    tier=args.tier,
+                    base_url=getattr(args, "base_url", None),
+                    sampled=getattr(args, "sampled", False),
+                )
             )
-        )
+        except TierRunnerUnavailable as e:
+            print(f"\n  {e}", file=sys.stderr)
+            sys.exit(2)
 
     # --submit routes through the standardized community-bench runner,
     # which locks the comparability knobs the freeform path exposes.
