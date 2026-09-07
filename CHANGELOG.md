@@ -63,6 +63,16 @@
   Full end-to-end verification requires a real tagged release through
   CI; the attestation path is staged but not yet exercised on a
   published artifact.
+- **#806: homebrew-core inclusion guide** — added
+  `homebrew-tap/CORE_SUBMISSION.md`: a maintainer playbook for the external
+  PR to `Homebrew/homebrew-core` (out of this repo's scope to file directly).
+  Includes a homebrew-core-ready formula template (PyPI sdist source, livecheck
+  for `brew bump-formula-pr`, Apple-Silicon-only `depends_on arch: :arm64`),
+  the acceptance-criteria checklist, the blocker list (needs the next tagged
+  release to mint a verifiable PEP 740 attestation per #804), and the
+  submission + post-acceptance bump steps. The existing tap formula
+  (`homebrew-tap/Formula/fusion-mlx.rb`) is unchanged and remains the
+  `brew tap dahai80/fusion-mlx` install path.
 
 ### 0907 product audit
 - **#0907 audit: 6-dimension enterprise-readiness audit** —
