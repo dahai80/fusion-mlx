@@ -125,6 +125,15 @@ print(resp.content[0].text)
 pip install fusion-mlx
 ```
 
+> **精简默认安装（v0.8.82+）：** 裸 `pip install fusion-mlx` 现在只安装
+> 文本大模型服务路径（mlx、mlx-lm、fastapi、uvicorn、pydantic、httpx），
+> 比之前少约 300 MB。视觉（VLM）、音频、图像生成、视频、嵌入、dflash、
+> 文档解析已移为**可选 extras**。安装全部模态用
+> `pip install "fusion-mlx[full]"`，或按需选单个模态：
+> `[vlm]` `[embeddings]` `[audio]` `[image]` `[video]` `[vision]` `[dflash]`
+> `[document]`。精简安装下服务器可正常启动；缺失模态的路由会显式报错并
+> 给出安装提示。
+
 ### 从源码安装
 
 ```bash

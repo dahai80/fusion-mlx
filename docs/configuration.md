@@ -2,6 +2,27 @@
 
 fusion-mlx is configured through CLI flags and the `ServerConfig` dataclass. All settings live in `fusion_mlx/config.py`.
 
+## Install Extras (Modality Packaging)
+
+Since v0.8.82 the default install is **slim** — only the text-LM serving path
+(`mlx`, `mlx-lm`, `fastapi`, `uvicorn`, `pydantic`, `httpx`). Modality deps are
+optional extras so a bare `pip install fusion-mlx` boots `fusion-mlx serve` for
+text LMs without pulling ~300 MB of vision/audio/video packages.
+
+```bash
+pip install "fusion-mlx[full]"        # every modality (pre-v0.8.82 behavior)
+pip install "fusion-mlx[vlm]"         # vision-language models only
+pip install "fusion-mlx[audio]"       # TTS / STT / STS
+pip install "fusion-mlx[image]"       # image generation (vendored wheel)
+pip install "fusion-mlx[video]"       # video generation
+pip install "fusion-mlx[embeddings]"  # embedding + reranker
+pip install "fusion-mlx[vision]"      # OCR / vision preprocessing
+```
+
+See the README "Optional Modality Extras" table for the full list. Heavy
+modality imports are all function-scope lazy, so the server starts on a slim
+install and absent-modality routes fail visibly with an install hint.
+
 ## Memory Tiers
 
 Control how much system RAM the server can use for model inference:
