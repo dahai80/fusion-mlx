@@ -26,6 +26,13 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+# Default install = slim text-LM serving path only (issue #805). Heavy
+# modality deps (mlx-vlm, dflash-mlx, transformers, markitdown, mlx-embeddings)
+# live in extras so a bare `pip install fusion-mlx` boots `fusion-mlx serve`
+# for text LMs without pulling ~300 MB of vision/audio/video deps. Install
+# `fusion-mlx[full]` for every modality, or a single extra like `[vision]`/
+# `[audio]`/`[image]`/`[video]` for just that modality. All heavy imports are
+# lazy (function-scope), verified by tests/unit/test_slim_boot_805.py.
 dependencies = [
     "mlx>=0.31.2",
     # PyPI-pinned deps: precise == version pins preserve reproducibility.
@@ -33,8 +40,6 @@ dependencies = [
     # (previous git-commit pins broke PyPI's no-direct-dependency policy, #348).
     "mlx-lm==0.31.3",
     "regex",
-    "mlx-embeddings==0.1.0",
-    "transformers>=5.0.0",
     "mistral-common>=1.10",
     "tokenizers>=0.19.0",
     "huggingface-hub>=0.23.0",
@@ -57,19 +62,16 @@ dependencies = [
     "python-multipart>=0.0.5",
     "jsonschema>=4.0.0",
     "openai-harmony>=0.0.8,<1.0.0",
-    "mlx-vlm==0.5.0",
     "Pillow>=9.0.0",
-    "dflash-mlx==0.1.7",
-     "sqlalchemy>=2.0.0",
-     "httpx>=0.24.0",
-     "aiofiles>=23.0.0",
-     "appdirs>=1.4.4",
-     "typer>=0.9.0",
-     "rich>=13.0.0",
-     "click>=8.0.0",
+    "sqlalchemy>=2.0.0",
+    "httpx>=0.24.0",
+    "aiofiles>=23.0.0",
+    "appdirs>=1.4.4",
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "click>=8.0.0",
     "argcomplete>=3.6",
     "websockets>=12.0",
-    "markitdown[pdf,docx,pptx]>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -126,6 +128,33 @@ vision = [
 chat = [
     "gradio>=4.0.0",
     "pytz>=2024.1",
+]
+# --- Modality extras moved out of core (issue #805) ---
+# These were core deps before #805. Now opt-in so a slim default install only
+# serves text LMs. Pulled in by `[full]` for the all-modalities install.
+# Vision-language model serving (VLM): mlx-vlm + transformers tokenizer deps.
+vlm = [
+    "mlx-vlm==0.5.0",
+    "transformers>=5.0.0",
+]
+# DFlash speculative-decode draft model (NOT the same as dflash2 block-diffusion).
+dflash = [
+    "dflash-mlx==0.1.7",
+]
+# Embedding + reranker serving.
+embeddings = [
+    "mlx-embeddings==0.1.0",
+]
+# Document ingestion (markitdown route: PDF/DOCX/PPTX parsing).
+document = [
+    "markitdown[pdf,docx,pptx]>=0.1.0",
+]
+# `[full]` = every modality extra. Mirrors the pre-#805 core dependency set so
+# `pip install "fusion-mlx[full]"` is a drop-in for the old all-deps install.
+# Self-reference (PEP 508 / pip 21+): each entry expands this project's own
+# optional-dependency group.
+full = [
+    "fusion-mlx[vlm,dflash,embeddings,document,audio,image,video,mfa,vision,grammar,llguidance,mcp,modelscope,paroquant,dflash2,chat]",
 ]
 dev = [
     "pytest>=7.0.0",

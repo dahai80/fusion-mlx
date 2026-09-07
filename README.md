@@ -154,6 +154,31 @@ uv tool install fusion-mlx
 pip install fusion-mlx
 ```
 
+> **Slim default install (v0.8.82+):** a bare `pip install fusion-mlx` installs
+> only the text-LM serving path (mlx, mlx-lm, fastapi, uvicorn, pydantic,
+> httpx) — about 300 MB lighter than before. Vision (VLM), audio, image-gen,
+> video, embeddings, dflash, and document ingestion are now **optional extras**.
+> Install everything with `pip install "fusion-mlx[full]"`, or pick one modality
+> (see the table below). The server boots on a slim install; modality routes
+> fail visibly with an install hint if their extra is absent.
+
+### Optional Modality Extras
+
+| Extra | What it enables | Install |
+|-------|-----------------|---------|
+| `[full]` | Every modality (pre-v0.8.82 behavior) | `pip install "fusion-mlx[full]"` |
+| `[vlm]` | Vision-language models (mlx-vlm, transformers) | `pip install "fusion-mlx[vlm]"` |
+| `[embeddings]` | Embedding + reranker serving (mlx-embeddings) | `pip install "fusion-mlx[embeddings]"` |
+| `[audio]` | TTS / STT / STS (mlx-audio) | `pip install "fusion-mlx[audio]"` |
+| `[image]` | Image generation (mflux-fusion, vendored wheel) | `pip install "fusion-mlx[image]"` |
+| `[video]` | Video generation (opencv, librosa, imageio) | `pip install "fusion-mlx[video]"` |
+| `[vision]` | OCR / vision preprocessing (opencv, torch, torchvision) | `pip install "fusion-mlx[vision]"` |
+| `[dflash]` | DFlash speculative-decode draft model | `pip install "fusion-mlx[dflash]"` |
+| `[dflash2]` | DFlash2 block-diffusion speculative decode | `pip install "fusion-mlx[dflash2]"` |
+| `[document]` | PDF/DOCX/PPTX ingestion (markitdown) | `pip install "fusion-mlx[document]"` |
+| `[grammar]` / `[llguidance]` | Grammar-constrained decoding backends | `pip install "fusion-mlx[grammar]"` |
+| `[mcp]` | MCP server routes | `pip install "fusion-mlx[mcp]"` |
+
 ### First Run
 
 ```bash

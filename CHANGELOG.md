@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Added
+- **#805: slim default install + `[full]` meta-extra** — a bare
+  `pip install fusion-mlx` now installs only the text-LM serving path (~300 MB
+  lighter): mlx, mlx-lm, fastapi, uvicorn, pydantic, httpx. Vision (VLM),
+  audio, image, video, embeddings, dflash, and document ingestion moved to
+  **optional extras**. `pip install "fusion-mlx[full]"` reproduces the
+  pre-v0.8.82 all-deps install; single modalities stay installable standalone
+  (`[vlm]`, `[embeddings]`, `[audio]`, `[image]`, `[video]`, `[vision]`,
+  `[dflash]`, `[document]`). The server boots on a slim install; absent
+  modality routes fail visibly with an install hint. All heavy imports were
+  already function-scope lazy (verified by `tests/unit/test_slim_boot_805.py`).
 - **#802: speculative-decoding accept-rate metrics** — `/metrics` now
   emits `fusion_mlx_spec_decode_accepted_total`,
   `fusion_mlx_spec_decode_drafted_total`, and
