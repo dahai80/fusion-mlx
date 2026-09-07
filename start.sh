@@ -676,6 +676,11 @@ do_install_launchd() {
     mkdir -p "$(dirname "${_LAUNCHD_PLIST}")"
     mkdir -p "${LOG_DIR}"
 
+    # EnvironmentVariables below must be pure XML (key/string pairs only).
+    # Do NOT put # comments inside the <dict> — XML has no # comment syntax
+    # and plutil/launchctl reject them. FUSION_TTS_TIMEOUT=600 raises the
+    # mlx-audio generate() ceiling (default 180s) so TTS under GPU contention
+    # with LLM/FLUX.2 does not return 503 on short text. Override via env.
     cat > "${_LAUNCHD_PLIST}" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -709,9 +714,6 @@ do_install_launchd() {
         <string>${HOME}/.fusion-mlx/models</string>
         <key>PRELOAD_MODELS</key>
         <string>${PRELOAD_MODELS:-}</string>
-        # TTS synthesize ceiling (秒). mlx-audio generate() 在 GPU 与 LLM/FLUX.2
-        # 争用时阻塞共享 Metal device, 默认 180s 上限不够 (短文本也能跑满), 返回 503.
-        # launchd daemon 拉高到 600s 让 TTS 在争用下也能跑完. 可被 env 覆盖.
         <key>FUSION_TTS_TIMEOUT</key>
         <string>${FUSION_TTS_TIMEOUT:-600}</string>
     </dict>
