@@ -334,6 +334,12 @@ class ProcessMemoryEnforcer:
         self._settings_manager = settings_manager
         self._prefill_memory_guard = prefill_memory_guard
         self._global_settings = global_settings
+        # OPS-P4-6 (#0907 audit): hot-reload target for idle_timeout_seconds.
+        # Flat-mode Settings (the released path) has no .idle_timeout attr, so
+        # the rich-settings getter below returns None and idle unload never
+        # fires. SIGHUP / /v1/config/reload sets this directly so the next
+        # _check_ttl tick honors the reloaded value without restart.
+        self._reloaded_idle_timeout_seconds: int | None = None
         self._soft_threshold = soft_threshold
         self._hard_threshold = hard_threshold
         self._prefill_safe_zone_ratio = prefill_safe_zone_ratio
@@ -1141,9 +1147,20 @@ class ProcessMemoryEnforcer:
         return self._unloaded_idle_poll_interval
 
     def get_global_idle_timeout_seconds(self) -> int | None:
+        # OPS-P4-6 (#0907 audit): hot-reloaded value takes precedence so flat
+        # mode (no rich .idle_timeout) can still honor a reloaded timeout.
+        if self._reloaded_idle_timeout_seconds is not None:
+            return self._reloaded_idle_timeout_seconds
         if self._global_settings is None:
             return None
         return getattr(self._global_settings.idle_timeout, "idle_timeout_seconds", None)
+
+    def set_reloaded_idle_timeout(self, seconds: int | None) -> None:
+        # OPS-P4-6 (#0907 audit): hot-reload entry point.
+        self._reloaded_idle_timeout_seconds = seconds
+        logger.info(
+            "idle_timeout_seconds reloaded to %s", seconds if seconds else "(disabled)"
+        )
 
     async def _check_ttl(self) -> None:
         """Check and unload models that exceeded their TTL."""

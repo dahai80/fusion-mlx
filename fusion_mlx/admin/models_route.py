@@ -800,9 +800,22 @@ def _read_settings_json() -> dict:
     path = Path.home() / ".fusion-mlx" / "settings.json"
     if path.exists():
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
-            pass
+            # OPS-P4-7 (#0907 audit): fail visibly — bare ``except: pass``
+            # made a malformed settings.json look like empty config.
+            logger.warning(
+                "settings.json is malformed JSON — using empty defaults",
+                exc_info=True,
+            )
+            return {}
+        try:
+            from .settings import _validate_settings_schema
+
+            _validate_settings_schema(data)
+        except Exception:
+            logger.debug("settings schema validation skipped", exc_info=True)
+        return data
     return {}
 
 
