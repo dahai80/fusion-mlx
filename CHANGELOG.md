@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Added
+- **#802: speculative-decoding accept-rate metrics** — `/metrics` now
+  emits `fusion_mlx_spec_decode_accepted_total`,
+  `fusion_mlx_spec_decode_drafted_total`, and
+  `fusion_mlx_spec_decode_accept_rate` per strategy (`dflash2`,
+  `dspark`) so an operator can tell whether `--enable-dspark` /
+  `--enable-dflash2` is actually helping. MTP surfaces round + park
+  counters (`fusion_mlx_spec_decode_rounds_total`,
+  `fusion_mlx_spec_decode_park_rounds_total`).
 - **#826/#827: LTX-2.5 / ltx2 per-request pipeline selection** — `POST
   /v1/videos/generate` now accepts a `pipeline` field (`"distilled"` default
   vs `"dev"` multi-step, non-distilled). The `dev` transformer weights

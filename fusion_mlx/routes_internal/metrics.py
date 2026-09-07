@@ -760,6 +760,120 @@ def _render_paged_kv_metrics() -> list[str]:
     return lines
 
 
+def _render_spec_decode_metrics() -> list[str]:
+    # #802: expose speculative-decoding draft accept rate per strategy so an
+    # operator can tell whether --enable-dspark / --enable-dflash2 is actually
+    # helping (a low accept rate means the draft model wastes compute).
+    # DFlash + DFly each keep a module-global accept counter with a
+    # snapshot() that yields accepted/drafted; MTP keeps a per-model
+    # DepthController but does not export a direct accept count, so it is
+    # surfaced via round_count + park_count (scale) only. Each strategy is
+    # guarded by a try/except so a strategy whose package is absent (extra
+    # not installed) degrades to absence rather than breaking /metrics.
+    lines: list[str] = []
+    _HELP = "Speculative-decoding draft tokens accepted (cumulative)."
+    _RATE_HELP = "Speculative-decoding draft accept rate (0-1, accepted/drafted)."
+    try:
+        try:
+            from ..speculative.dflash import get_global_counter as _dflash_ctr
+
+            snap = _dflash_ctr().snapshot()
+            # DFlash block-diffusion: attempts = draft blocks proposed,
+            # accepts = blocks whose draft was accepted, accept_ratio =
+            # accepts/attempts. tokens_saved is the wall-clock win.
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_spec_decode_accepted_total",
+                    "counter",
+                    _HELP,
+                    int(snap.accepts),
+                    {"strategy": "dflash2"},
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_spec_decode_drafted_total",
+                    "counter",
+                    "Speculative-decoding draft tokens proposed (cumulative).",
+                    int(snap.attempts),
+                    {"strategy": "dflash2"},
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_spec_decode_accept_rate",
+                    "gauge",
+                    _RATE_HELP,
+                    round(float(snap.accept_ratio), 6),
+                    {"strategy": "dflash2"},
+                )
+            )
+        except Exception:
+            logger.debug("dflash2 spec-decode metrics render error", exc_info=True)
+        try:
+            from ..speculative.dfly.accept_counter import (
+                get_global_counter as _dfly_ctr,
+            )
+
+            snap = _dfly_ctr().snapshot()
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_spec_decode_accepted_total",
+                    "counter",
+                    _HELP,
+                    int(snap.accepted),
+                    {"strategy": "dspark"},
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_spec_decode_drafted_total",
+                    "counter",
+                    "Speculative-decoding draft tokens proposed (cumulative).",
+                    int(snap.drafted),
+                    {"strategy": "dspark"},
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_spec_decode_accept_rate",
+                    "gauge",
+                    _RATE_HELP,
+                    round(float(snap.accept_rate), 6),
+                    {"strategy": "dspark"},
+                )
+            )
+        except Exception:
+            logger.debug("dspark spec-decode metrics render error", exc_info=True)
+        try:
+            from ..speculative.mtp.draft_k_controller_v2 import sum_across_controllers
+
+            round_total, park_total, _k_hist = sum_across_controllers()
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_spec_decode_rounds_total",
+                    "counter",
+                    "MTP speculative-decoding rounds (cumulative, all models).",
+                    int(round_total),
+                    {"strategy": "mtp"},
+                )
+            )
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_spec_decode_park_rounds_total",
+                    "counter",
+                    "MTP speculative-decoding rounds that parked (k=0, no draft).",
+                    int(park_total),
+                    {"strategy": "mtp"},
+                )
+            )
+        except Exception:
+            logger.debug("mtp spec-decode metrics render error", exc_info=True)
+    except Exception:
+        logger.debug("spec-decode metrics render error", exc_info=True)
+    return lines
+
+
 def _render_lifespan_metrics() -> list[str]:
     lines: list[str] = []
     try:
@@ -954,6 +1068,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_prefix_cache_metrics())
     lines.extend(_render_multimodal_metrics())
     lines.extend(_render_paged_kv_metrics())
+    lines.extend(_render_spec_decode_metrics())
     lines.extend(_render_lifespan_metrics())
     return "\n".join(lines) + "\n"
 
