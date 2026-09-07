@@ -11,8 +11,6 @@ fix only tightens the block conditions."""
 from collections import deque
 from unittest.mock import MagicMock
 
-import pytest
-
 from fusion_mlx.scheduler import Scheduler
 
 

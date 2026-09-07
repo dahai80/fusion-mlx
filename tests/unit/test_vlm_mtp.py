@@ -462,7 +462,7 @@ class TestVlmMtpFlushFailVisible:
     the consumer never hangs waiting on a request that vanished."""
 
     def _make_sched(self, request_ids):
-        from fusion_mlx.request import Request, RequestStatus, SamplingParams
+        from fusion_mlx.request import Request
 
         sched = MagicMock()
         sched._vlm_mtp_pending_queue = []
@@ -493,8 +493,6 @@ class TestVlmMtpFlushFailVisible:
         return sched, queue
 
     def test_fail_queue_pushes_terminal_error(self):
-        from fusion_mlx.request import RequestStatus
-
         from fusion_mlx.scheduler.sched_vlm_mtp_batched import (
             _vlm_mtp_fail_queue,
         )
@@ -560,6 +558,5 @@ class TestVlmMtpFlushFailVisible:
         assert len(sched._vlm_mtp_failed_outputs) == 2
         assert all(o.finished for o in sched._vlm_mtp_failed_outputs)
         assert all(
-            "generator setup OOM" in o.error
-            for o in sched._vlm_mtp_failed_outputs
+            "generator setup OOM" in o.error for o in sched._vlm_mtp_failed_outputs
         )

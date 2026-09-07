@@ -8,8 +8,6 @@ same path must change the cache key so stale KV/completions are never reused.
 import os
 import time
 
-import pytest
-
 from fusion_mlx.cache.model_fingerprint import (
     adapter_path_signature,
     model_path_signature,

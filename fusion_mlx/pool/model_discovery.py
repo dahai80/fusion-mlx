@@ -1420,6 +1420,29 @@ def _is_hf_cache_mlx_compatible(model_dir: Path, source_repo_id: str) -> bool:
         )
         return True
 
+    # #843: diffusers subdir layout (model_index.json + transformer/vae/...
+    # component subdirs). Weights live inside component subdirs, not as root
+    # model*.safetensors, so the LLM-centric glob gate below rejects the
+    # canonical HF-cache layout of black-forest-labs/FLUX.1-dev and similar
+    # raw diffusers repos. The mflux / mlx-video backends load this layout
+    # natively, so accept it when model_index.json declares a known
+    # DIFFUSERS_PIPELINE_TASKS pipeline class.
+    index_json = model_dir / "model_index.json"
+    if index_json.exists():
+        try:
+            with open(index_json) as f:
+                class_name = json.load(f).get("_class_name", "")
+            if class_name in DIFFUSERS_PIPELINE_TASKS:
+                logger.info(
+                    f"Accepting HF cache diffusers pipeline layout "
+                    f"({class_name}): {source_repo_id}"
+                )
+                return True
+        except (OSError, json.JSONDecodeError):
+            logger.debug(
+                f"unreadable model_index.json in HF cache entry: {source_repo_id}"
+            )
+
     # Audio models (STT/TTS/STS) are loaded by mlx_audio, which accepts MLX
     # safetensors, MLX .npz, and HF-format safetensors/bin natively. The
     # MLX-metadata / repo-name checks below are LLM-centric and wrongly reject
