@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- **#826/#827: LTX-2.5 / ltx2 per-request pipeline selection** — `POST
+  /v1/videos/generate` now accepts a `pipeline` field (`"distilled"` default
+  vs `"dev"` multi-step, non-distilled). The `dev` transformer weights
+  (`transformer-dev.safetensors`) must exist in the model repo. Lets a caller
+  A/B distilled vs dev without reloading; legacy `ltx2` backend gains the
+  same override for `PipelineType.DEV` / `DEV_TWO_STAGE_HQ`. Fixes broken
+  image-to-video quality on `dgrauet/ltx-2.5-mlx-q8`/`-q4`.
+
 ### 0907 product audit
 - **#0907 audit: 6-dimension enterprise-readiness audit** —
   full report at `audit/fusion-mlx-audit-result-product-0907.md`

@@ -119,11 +119,16 @@ class LTX2Backend(VideoBackend):
 
         def _generate():
             results: list[bytes] = []
+            # #826/#827: per-request pipeline override (DEV / DEV_TWO_STAGE_HQ
+            # vs default DISTILLED). params.pipeline flows from the HTTP route
+            # through VideoGenParams; fall back to the construction-time default
+            # when the caller omits it so existing requests are unaffected.
+            effective_pipeline = params.pipeline or self._pipeline
             for i in range(max(1, params.n)):
                 mp4_bytes = _generate_one(
                     self._model_name,
                     self._text_encoder_repo,
-                    self._pipeline,
+                    effective_pipeline,
                     prompt=params.prompt,
                     num_frames=params.num_frames,
                     width=params.width,
