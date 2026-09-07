@@ -21,6 +21,7 @@ from typing import Any
 from ..prefill_progress import get_prefill_tracker
 from ..request import Request, RequestOutput
 from ..speculative.vlm_mtp import VLMMTPDrafter
+from .config import SchedulingPolicy
 from .types import _CacheFreshnessWait, _InflightStoreInfo
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
@@ -217,7 +218,28 @@ def add_request(self, request: Request) -> None:
 
     # Add to tracking
     self.requests[request.request_id] = request
-    self.waiting.append(request)
+    # FUNC-P2-2 (#0907 audit, was #818): PRIORITY policy now does a
+    # priority-ordered insertion into self.waiting instead of FIFO append,
+    # so Request.priority (lower int = higher priority) actually orders
+    # admission. FIFO within the same priority is preserved by appending
+    # after the last equal-or-higher-priority request. The deque's many
+    # appendleft re-enqueue sites (sched_schedule) put a request back at the
+    # head for immediate re-check, which is compatible with priority order.
+    # Note: anti-starvation rotation (sched_schedule) may briefly demote a
+    # head request to the tail; this is acceptable for a local single-node
+    # scheduler and keeps the queue from permanently starving low-priority
+    # work under continuous high-priority load.
+    if self.config.policy == SchedulingPolicy.PRIORITY:
+        inserted = False
+        for i, existing in enumerate(self.waiting):
+            if request < existing:
+                self.waiting.insert(i, request)
+                inserted = True
+                break
+        if not inserted:
+            self.waiting.append(request)
+    else:
+        self.waiting.append(request)
 
     logger.debug(
         f"Added request {request.request_id} with {request.num_prompt_tokens} prompt tokens"

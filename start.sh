@@ -13,6 +13,27 @@ PORT=11434
 HOST="${FUSION_HOST:-127.0.0.1}"
 HF_MIRROR_DEFAULT="https://hf-mirror.com"
 
+# OPS-P3-4 (#0907 audit): start.sh hardcoded --log-level INFO, so the
+# settings.json server.log_level field (written by `tune` and the admin
+# panel) was dead — an operator who set log_level=DEBUG in settings got
+# reset to INFO on every start. Resolve it here so the settings value
+# takes effect (validated against the CLI's 4 allowed levels, default INFO).
+_resolve_log_level() {
+    local level="INFO"
+    if [[ -f "${SETTINGS}" ]]; then
+        local raw
+        raw=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('server',{}).get('log_level','INFO'))" 2>/dev/null || echo "INFO")
+        case "${raw}" in
+            DEBUG|debug) level="DEBUG" ;;
+            INFO|info) level="INFO" ;;
+            WARNING|warning) level="WARNING" ;;
+            ERROR|error) level="ERROR" ;;
+            *) level="INFO" ;;
+        esac
+    fi
+    echo "${level}"
+}
+
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -248,6 +269,12 @@ do_start() {
         model_dir="${md}"
     fi
 
+    # OPS-P3-4 (#0907 audit): honor settings.json server.log_level so the
+    # field written by `tune` and the admin panel is not dead on boot.
+    local log_level
+    log_level=$(_resolve_log_level)
+    log_info "Log level: ${log_level}"
+
     # Resolve preload models: CLI --preload > settings.json models.preload
     local preload_models="${START_PRELOAD}"
     if [[ -z "${preload_models}" && -f "${SETTINGS}" ]]; then
@@ -278,7 +305,7 @@ do_start() {
         : > "${LOG_DIR}/server.log"
         fusion-mlx serve \
             --model-dir "${model_dir}" \
-            --log-level INFO \
+            --log-level "${log_level}" \
             --enable-prefix-cache \
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
@@ -618,11 +645,14 @@ _run_with_watchdog() {
         if [[ -n "${API_KEY:-}" ]]; then
             api_key_arg="--api-key ${API_KEY}"
         fi
+        # OPS-P3-4 (#0907 audit): honor settings.json server.log_level here too.
+        local log_level
+        log_level=$(_resolve_log_level)
         # Redirect to server.log (same tty-detach fix as do_start, #501).
         : > "${LOG_DIR}/server.log"
         fusion-mlx serve \
             --model-dir "${model_dir}" \
-            --log-level INFO \
+            --log-level "${log_level}" \
             --enable-prefix-cache \
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
@@ -681,6 +711,8 @@ do_install_launchd() {
     # and plutil/launchctl reject them. FUSION_TTS_TIMEOUT=600 raises the
     # mlx-audio generate() ceiling (default 180s) so TTS under GPU contention
     # with LLM/FLUX.2 does not return 503 on short text. Override via env.
+    # FUSION_IMAGE_TIMEOUT=1800 raises the image-gen ceiling (default 600s)
+    # so Qwen-Image 2048x1152 30-step under contention does not time out.
     cat > "${_LAUNCHD_PLIST}" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -716,6 +748,8 @@ do_install_launchd() {
         <string>${PRELOAD_MODELS:-}</string>
         <key>FUSION_TTS_TIMEOUT</key>
         <string>${FUSION_TTS_TIMEOUT:-600}</string>
+        <key>FUSION_IMAGE_TIMEOUT</key>
+        <string>${FUSION_IMAGE_TIMEOUT:-1800}</string>
     </dict>
 </dict>
 </plist>

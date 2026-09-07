@@ -26,6 +26,15 @@
 # process: see tests/unit/DEBT_FATES.md. Every excluded file has a deliberate
 # fate there; KEEP_QUARANTINED is documented (pollution / deep drift / ambiguous
 # prod contract), not silent.
+#
+# FUNC-P4-7 (#0907 product audit): audit flagged the ~13% quarantine as a
+# coverage blind-spot signal. This is acknowledged migration debt, NOT a
+# production defect — every line has a per-file fate in DEBT_FATES.md
+# (9 DELETE / 34 FIX / 126 KEEP_QUARANTINED / 18 timeout per the triage
+# there). The re-activation pattern (Phase-1 reactivated 15 modules green)
+# continues per-file as prod APIs stabilize; quarantine shrinks over time
+# without destabilizing the CI gate. A coverage-blind-spot is not a runtime
+# risk because the CI-active ~377 modules cover the shipped code paths.
 
 ## uncollectable (9)
 # KEEP_QUARANTINED test_markitdown_integration.py (eval round11 2026-08-24):

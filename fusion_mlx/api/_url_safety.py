@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """URL safety helpers — block SSRF and path traversal for image/video params."""
 
+import asyncio
 import ipaddress
 import logging
 import os
@@ -65,6 +66,13 @@ def _is_private_addr(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> boo
 def is_safe_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
+        # SEC-P4-7 (#0907 audit): reject non-http(s) schemes so a
+        # ``gopher://``/``file://``/``data://`` URL can't pass the host
+        # check merely because its hostname is a public-looking domain.
+        # ``file://`` has an empty hostname (caught below), but ``gopher``
+        # and other schemes carry a hostname and would reach a fetcher.
+        if parsed.scheme.lower() not in ("http", "https"):
+            return False
         hostname = parsed.hostname
         if not hostname:
             return False
@@ -288,7 +296,10 @@ async def safe_fetch_async(
 
     current = url
     for hop in range(max_hops + 1):
-        ips = _resolve_safe_ips_or_raise(current)
+        # PERF-P1-2 (#0907 audit): socket.getaddrinfo blocks the event loop.
+        # Offload DNS resolution to a thread so concurrent requests are not
+        # stalled during remote-media fetch (videos_routes.py).
+        ips = await asyncio.to_thread(_resolve_safe_ips_or_raise, current)
         parsed = urlparse(current)
         host = parsed.hostname or ""
         safe_ip = ips[0]

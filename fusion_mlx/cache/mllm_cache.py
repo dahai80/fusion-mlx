@@ -323,8 +323,22 @@ class MLLMPrefixCacheManager:
                     "Evicted additional MLLM entry. mlx_cache=%d bytes",
                     mlx_used,
                 )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            # FT-P4-3 (#0907 audit): the prior bare ``except: pass`` hid both
+            # the headless-no-mlx case (normal in CI) and a genuine allocator
+            # error. Distinguish: missing mlx → DEBUG (expected headless);
+            # any other failure → WARNING (the pressure safety net is off).
+            import sys
+
+            if "mlx" in sys.modules and "mlx.core" in sys.modules:
+                logger.warning(
+                    "MLX allocator pressure check failed — second-layer "
+                    "eviction disabled for this call; logical-memory "
+                    "eviction above still ran",
+                    exc_info=True,
+                )
+            else:
+                logger.debug("MLX allocator pressure check skipped (mlx absent)")
 
     def _evict_by_count(self) -> None:
         """Evict entries until we're under max_size."""

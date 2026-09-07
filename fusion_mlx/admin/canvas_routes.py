@@ -16,8 +16,10 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
+
+from .auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,9 @@ def init_canvas(templates) -> None:
 
 
 @router.get("/canvas", response_class=HTMLResponse, include_in_schema=False)
-async def canvas_page(request: Request) -> HTMLResponse:
+async def canvas_page(
+    request: Request, is_admin: bool = Depends(require_admin)
+) -> HTMLResponse:
     """Render the agent graph canvas editor page."""
     if _templates is None:
         return HTMLResponse("<h1>Canvas not initialized</h1>", status_code=500)
@@ -54,7 +58,9 @@ async def canvas_page(request: Request) -> HTMLResponse:
 
 
 @router.get("/api/canvas/graphs")
-async def list_canvas_graphs() -> list[dict[str, Any]]:
+async def list_canvas_graphs(
+    is_admin: bool = Depends(require_admin),
+) -> list[dict[str, Any]]:
     """List all saved canvas graphs."""
     result = []
     for gid, g in _graphs.items():
@@ -73,7 +79,9 @@ async def list_canvas_graphs() -> list[dict[str, Any]]:
 
 
 @router.post("/api/canvas/graphs")
-async def save_canvas_graph(data: dict[str, Any]) -> dict[str, str]:
+async def save_canvas_graph(
+    data: dict[str, Any], is_admin: bool = Depends(require_admin)
+) -> dict[str, str]:
     """Save a new canvas graph."""
     graph_id = data.get("id") or uuid.uuid4().hex[:16]
     if graph_id in _graphs:
@@ -91,7 +99,9 @@ async def save_canvas_graph(data: dict[str, Any]) -> dict[str, str]:
 
 
 @router.get("/api/canvas/graphs/{graph_id}")
-async def load_canvas_graph(graph_id: str) -> dict[str, Any]:
+async def load_canvas_graph(
+    graph_id: str, is_admin: bool = Depends(require_admin)
+) -> dict[str, Any]:
     """Load a canvas graph by ID."""
     graph = _graphs.get(graph_id)
     if graph is None:
@@ -100,7 +110,9 @@ async def load_canvas_graph(graph_id: str) -> dict[str, Any]:
 
 
 @router.put("/api/canvas/graphs/{graph_id}")
-async def update_canvas_graph(graph_id: str, data: dict[str, Any]) -> dict[str, str]:
+async def update_canvas_graph(
+    graph_id: str, data: dict[str, Any], is_admin: bool = Depends(require_admin)
+) -> dict[str, str]:
     """Update an existing canvas graph."""
     if graph_id not in _graphs:
         raise HTTPException(404, detail=f"Graph '{graph_id}' not found")
@@ -115,7 +127,9 @@ async def update_canvas_graph(graph_id: str, data: dict[str, Any]) -> dict[str, 
 
 
 @router.delete("/api/canvas/graphs/{graph_id}")
-async def delete_canvas_graph(graph_id: str) -> dict[str, str]:
+async def delete_canvas_graph(
+    graph_id: str, is_admin: bool = Depends(require_admin)
+) -> dict[str, str]:
     """Delete a canvas graph."""
     if graph_id not in _graphs:
         raise HTTPException(404, detail=f"Graph '{graph_id}' not found")

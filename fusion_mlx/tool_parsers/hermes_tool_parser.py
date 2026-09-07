@@ -83,6 +83,15 @@ def _parse_param_value(val: str) -> Any:
         return val
 
 
+# PERF-P3-1 (#0907 audit): pre-compile the ``<function>`` opener once at
+# module load. The streaming parse loop probed for it with
+# ``re.compile(r"<function>").search(...)`` every iteration — recompiling a
+# regex per token batch on the hot path. A module-level pattern skips the
+# compile overhead (Python caches re.compile, but the lookup + object churn
+# still costs on a per-token loop).
+_FN_OPEN_RE = re.compile(r"<function>")
+
+
 @ToolParserManager.register_module(["hermes", "nous", "qwen3_coder"])
 class HermesToolParser(ToolParser):
     """
@@ -200,7 +209,7 @@ class HermesToolParser(ToolParser):
             # ``<function>`` (no ``=``) opens the named-XML shape (#4).
             # ``str.find`` would match ``<function=`` too, so guard with a
             # regex anchored on the closing ``>`` directly after.
-            fn_match = re.compile(r"<function>").search(text, cursor)
+            fn_match = _FN_OPEN_RE.search(text, cursor)
             if fn_match is not None:
                 candidates.append((fn_match.start(), "function_open"))
 

@@ -2,7 +2,27 @@
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+- **0907 product audit P1-P6 remediation** — 39 of 41 findings fixed across
+  six dimensions (security/architecture/performance/fault-tolerance/ops/
+  function). Highlights: admin canvas API routes now require admin auth
+  (SEC-P1-1); async video/SSRF routes no longer block the event loop
+  (PERF-P1-1/P1-2); failed-request counter + latency histograms now exposed
+  in `/metrics` (OPS-P2-1/P2-2); KV-cache dtype gauge resolves the active
+  quantization instead of hardcoding bf16 (OPS-P3-3); `start.sh` honors the
+  configured log level; diagnostic `print()`s in `cli_serve.py` route through
+  the logger so they land in `server.log`; `DiffusionRadixCache` detects
+  single-thread-contract violations loudly; silent `except: pass` blocks in
+  GUI shutdown / MLLM eviction / diffusion classification / `_clone_tensor`
+  now log at WARNING (fail-visible); `is_safe_url` rejects non-http(s)
+  schemes; admin preset URLs use HTTPS; `skip_api_key_verification` bypasses
+  emit an unmissable periodic WARNING; `settings.json` parse errors and
+  known type/enum mismatches now warn instead of falling back silently; file
+  log retention is configurable via `FUSION_LOG_RETENTION_DAYS` /
+  `logging.retention_days`; VLM MTP batch step is O(n) via a uid set instead
+  of O(n*m); distributed shard `sync_weights` documents inline-only with a
+  clear error. P2 #13/#14 (MoE shared-cache materialization) remain
+  env-gated OFF per the audit's "可后置" (deferrable) marking.
 
 ## [0.9.2] — 2026-09-07
 

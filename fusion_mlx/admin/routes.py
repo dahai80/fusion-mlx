@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 logger = logging.getLogger(__name__)
 
-PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/fusionmlx_preset.json"
+PRESET_REMOTE_URL = "https://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
 # =============================================================================

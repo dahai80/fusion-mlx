@@ -666,8 +666,23 @@ class ShardManager:
             if weights_b64 is None and manifest is None:
                 raise ShardError("sync_weights needs weights_b64 or manifest")
             if weights_b64 is None:
+                # FUNC-P4-6 (#0907 audit): manifest (path → pull URL) hot-fetch
+                # is accepted for forward-compat but not implemented — the
+                # distributed scheduler must inline weights_b64. Implementing
+                # remote pull safely needs an SSRF-validated, size-capped,
+                # streamed download to a temp file then mx.load; that is a
+                # future feature, not a one-line fix, so fail visibly with a
+                # clear message instead of silently swallowing manifest.
+                logger.warning(
+                    "sync_weights(shard=%s) received manifest only — manifest "
+                    "pull is not implemented in this build; the distributed "
+                    "scheduler must inline weights_b64. Drop manifest and pass "
+                    "weights_b64, or upgrade to a build with remote pull.",
+                    shard_id,
+                )
                 raise ShardError(
-                    "manifest pull not implemented in first version; inline weights_b64"
+                    "manifest pull not implemented in this build; inline "
+                    "weights_b64 (distributed is inline-only for now)"
                 )
             try:
                 raw = base64.b64decode(weights_b64, validate=True)

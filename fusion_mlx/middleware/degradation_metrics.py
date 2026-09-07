@@ -27,6 +27,10 @@ _enforcer_timeout_total: int = 0
 _cloud_fallback_total: int = 0
 _rate_limit_rejected_total: int = 0
 _route_guard_rejected_total: int = 0
+# FT-P3-1 (#0907 audit): preload admission ceiling callback raised, so the
+# caller treated the ceiling as 0 ("no limit") and admitted a model with no
+# memory guard. Tick so an operator sees admission was bypassed.
+_admission_ceiling_error_total: int = 0
 
 # Reason sub-breakdowns (dict[str, int]) so the dashboard can split a
 # counter by cause without a new metric per reason.
@@ -99,6 +103,21 @@ def record_route_guard_rejection(reason: str = "missing_token") -> None:
         )
 
 
+def record_admission_ceiling_error() -> None:
+    """Tick the admission-ceiling-callback-error counter.
+
+    FT-P3-1 (#0907 audit): called from ``fusion_mlx.pool.engine_pool``
+    ``_current_ceiling`` when the enforcer callback raises — callers treat
+    a 0 ceiling as "no limit", so one model load slips past the memory guard.
+    The enforcer's own enforcement loop is independent, so this is a
+    defense-in-depth gap, not a single-point failure; the metric + WARNING
+    make the bypass visible.
+    """
+    global _admission_ceiling_error_total
+    with _lock:
+        _admission_ceiling_error_total += 1
+
+
 def snapshot() -> dict[str, int | dict[str, int]]:
     """Return a consistent snapshot of all degradation counters for /metrics."""
     with _lock:
@@ -111,6 +130,7 @@ def snapshot() -> dict[str, int | dict[str, int]]:
             "rate_limit_rejected_total": _rate_limit_rejected_total,
             "route_guard_rejected_total": _route_guard_rejected_total,
             "route_guard_rejected_by_reason": dict(_route_guard_rejected_by_reason),
+            "admission_ceiling_error_total": _admission_ceiling_error_total,
         }
 
 
@@ -123,12 +143,14 @@ def reset_for_tests() -> None:
     global _ssrf_rejected_total, _enforcer_timeout_total
     global _cloud_fallback_total, _rate_limit_rejected_total
     global _route_guard_rejected_total
+    global _admission_ceiling_error_total
     with _lock:
         _ssrf_rejected_total = 0
         _enforcer_timeout_total = 0
         _cloud_fallback_total = 0
         _rate_limit_rejected_total = 0
         _route_guard_rejected_total = 0
+        _admission_ceiling_error_total = 0
         _ssrf_rejected_by_reason.clear()
         _cloud_fallback_by_reason.clear()
         _route_guard_rejected_by_reason.clear()

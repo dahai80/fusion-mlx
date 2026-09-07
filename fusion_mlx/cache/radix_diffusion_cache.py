@@ -13,6 +13,7 @@ Closes #178
 import heapq
 import logging
 import os
+import threading
 import time
 import weakref
 from dataclasses import dataclass
@@ -122,6 +123,16 @@ class DiffusionRadixCache:
         # frequent hits grows the heap unboundedly between evictions.
         self._heap_compact_every = 4096
         self._puts_since_compact = 0
+        # ARCH-P3-3 (#0907 audit): this cache has no internal lock — safety
+        # relies on a single-thread executor contract (image/video/audio are
+        # max_workers=1; see engine_core._executor_config). Retrofitting a
+        # lock around mx.array-returning ops would serialize the GPU, so we
+        # enforce the contract by recording the owning thread and warning
+        # loudly on cross-thread access instead of failing silently. A caller
+        # that bumps FUSION_MLX_MAX_CONCURRENT_VIDEO>1 (or a future
+        # multi-thread caller) hits this before racing the radix tree.
+        self._owner_thread = threading.get_ident()
+        self._thread_warned = False
         _REGISTRY.add(self)
         logger.debug(
             "radix cache created: name=%s max_mb=%d max_nodes=%d",
@@ -130,12 +141,31 @@ class DiffusionRadixCache:
             self.max_nodes,
         )
 
+    def _check_thread(self) -> None:
+        # ARCH-P3-3 (#0907 audit): warn once if a mutating op arrives on a
+        # different thread than the one that created the cache. The radix
+        # tree is not locked; concurrent access races the LRU heap and node
+        # refcounts. This is a detection aid, not a guard — the executor
+        # contract (max_workers=1) is the real invariant.
+        if self._owner_thread != threading.get_ident() and not self._thread_warned:
+            self._thread_warned = True
+            logger.error(
+                "DiffusionRadixCache(name=%s) accessed from thread %d but "
+                "created on thread %d — single-thread contract violated; "
+                "radix tree is unlocked and may race. Check "
+                "FUSION_MLX_MAX_CONCURRENT_VIDEO and executor max_workers.",
+                self.name,
+                threading.get_ident(),
+                self._owner_thread,
+            )
+
     def get(self, key: str) -> object | None:
         """Look up a key in the radix tree.
 
         Returns the cached value on hit, None on miss.
         Updates last_access on hit for LRU tracking.
         """
+        self._check_thread()
         self._clock = time.monotonic()
         node = self._walk(key)
         if node is not None and node.value is not None:
@@ -156,6 +186,7 @@ class DiffusionRadixCache:
             size_bytes: Optional size hint. If None, attempts to infer
                         from value.shape/value.nbytes for mx.array.
         """
+        self._check_thread()
         self._clock = time.monotonic()
         if size_bytes is None:
             size_bytes = self._infer_size(value)
@@ -224,6 +255,7 @@ class DiffusionRadixCache:
         self._puts_since_compact = 0
 
     def drop_prefix(self, prefix: str) -> int:
+        self._check_thread()
         # CS-2 (#811 audit 0906): remove every key that starts with *prefix*.
         # Used by per-model session-tail latent invalidation on engine unload:
         # a re-pull/quant swap under the same model_id would otherwise hand a

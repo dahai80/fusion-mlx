@@ -1352,20 +1352,26 @@ class BlockAwarePrefixCache(CacheManager):
         try:
             if hasattr(mx, "copy"):
                 return mx.copy(tensor)
-        except Exception:
-            logger.debug("swallowed exception at fusion_mlx/cache/prefix_cache.py:1236")
-
-            pass
+        except Exception:  # noqa: BLE001
+            # PERF-P5-1 (#0907 product audit): the prior DEBUG-only log made a
+            # real mx.copy failure invisible at the default INFO level even
+            # though it forces the slower tensor.copy / mx.array fallback
+            # (extra alloc + copy on a hot prefix-cache path). Surface it as
+            # WARNING so a recurring clone failure is visible in ops logs.
+            logger.warning(
+                "prefix_cache mx.copy failed — falling back to tensor.copy / "
+                "mx.array (extra alloc on hot path)",
+                exc_info=True,
+            )
 
         if hasattr(tensor, "copy"):
             try:
                 return tensor.copy()
-            except Exception:
-                logger.debug(
-                    "swallowed exception at fusion_mlx/cache/prefix_cache.py:1243"
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "prefix_cache tensor.copy failed — falling back to mx.array",
+                    exc_info=True,
                 )
-
-                pass
 
         return mx.array(tensor)
 

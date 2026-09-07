@@ -955,11 +955,43 @@ class Server:
                 "yes",
                 "on",
             )
+            # OPS-P4-8 (#0907 audit): retention was hard-coded to the 7-day
+            # default in configure_file_logging. Read it from env, then the
+            # settings.json logging.retention_days field, so a long-lived
+            # deployment can grow/shrink the rotation window without editing
+            # code. Invalid values fall back to 7 loudly.
+            _retention = 7
+            _raw_retention = os.environ.get("FUSION_LOG_RETENTION_DAYS", "").strip()
+            if not _raw_retention and isinstance(self.settings, object):
+                try:
+                    _cfg = getattr(self.settings, "as_dict", lambda: {})()
+                    _retention_cfg = (_cfg.get("logging", {}) or {}).get(
+                        "retention_days"
+                    )
+                    if _retention_cfg is not None:
+                        _raw_retention = str(_retention_cfg)
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "logging retention read from settings failed", exc_info=True
+                    )
+            if _raw_retention:
+                try:
+                    _retention = int(_raw_retention)
+                    if _retention < 1:
+                        raise ValueError
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "FUSION_LOG_RETENTION_DAYS/logging.retention_days=%r is "
+                        "not a positive int; falling back to 7-day retention",
+                        _raw_retention,
+                    )
+                    _retention = 7
             # OP-1: mirror the console JSON knob onto the file handler so the
             # rotated server.log stays consistent with the stream format.
             configure_file_logging(
                 log_dir=log_dir,
                 level="INFO",
+                retention_days=_retention,
                 format_style="json" if _json else "standard",
             )
             logger.info("File logging enabled: %s", log_dir / "server.log")
@@ -2094,8 +2126,21 @@ class Server:
                     cfg.get("model_type", "").lower().replace("-", "_")
                     == "diffusion_gemma"
                 )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            # FT-P4-4 (#0907 audit): silent pass here defaulted _is_diffusion
+            # to False on any config read/parse error, so a diffusion model
+            # whose config.json was corrupt/unreadable loaded via the wrong
+            # engine (BatchedEngine) and failed later with a cryptic shape
+            # error instead of a clear "could not classify" message. Log the
+            # real cause so the operator can fix the config or move the file.
+            logger.warning(
+                "Failed to read/parse %s/config.json for diffusion "
+                "classification — defaulting to non-diffusion (BatchedEngine). "
+                "If this model is diffusion_gemma, it will fail to load; "
+                "fix the config file or report the path.",
+                model_path,
+                exc_info=True,
+            )
 
         logger.info(
             "Loading single model: %s (diffusion=%s)", model_path, _is_diffusion

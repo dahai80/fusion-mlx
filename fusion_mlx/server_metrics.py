@@ -300,6 +300,18 @@ class ServerMetrics:
             self._startup_epoch = None
             self._shutdown_epoch = None
 
+    def record_request_failure(self, model_id: str | None = None) -> None:
+        # OPS-P2-1 (#0907 audit): failed_requests was declared (line 132) +
+        # reset (clear_metrics) + serialized (to_dict) but never incremented
+        # anywhere — total_requests and successful_requests both bumped in
+        # record_request_complete, so failed_requests stayed identically 0
+        # and /metrics could never alert on error rate. Wire the increment
+        # from route error paths (record_llm_failure wrapper) and expose it
+        # as fusion_mlx_requests_failed_total in the Prometheus render.
+        with self._lock:
+            self.total_requests += 1
+            self.failed_requests += 1
+
     def record_modality_request(self, modality: str) -> None:
         with self._lock:
             if modality == "vision":
@@ -501,3 +513,21 @@ def record_llm_disconnect_cancel() -> None:
             )
         else:
             logger.debug("Failed to record disconnect cancel: %s", exc)
+
+
+def record_llm_failure(model_id: str | None = None) -> None:
+    # OPS-P2-1 (#0907 audit): public wrapper used by route error handlers to
+    # increment failed_requests so error rate is observable from /metrics.
+    try:
+        get_server_metrics().record_request_failure(model_id=model_id)
+    except Exception as exc:
+        if "record_request_failure" not in _metrics_warned:
+            _metrics_warned.add("record_request_failure")
+            logger.warning(
+                "Failed to record request failure for %s (further failures at "
+                "DEBUG): %s",
+                model_id,
+                exc,
+            )
+        else:
+            logger.debug("Failed to record request failure for %s: %s", model_id, exc)

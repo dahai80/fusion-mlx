@@ -23,7 +23,7 @@ from .auth import (
 
 logger = logging.getLogger(__name__)
 
-PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/fusionmlx_preset.json"
+PRESET_REMOTE_URL = "https://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
 from ..middleware.auth import check_rate_limit
@@ -94,6 +94,7 @@ async def login(
         key="fusionmlx_admin_session",
         value=token,
         httponly=True,
+        secure=True,
         samesite="lax",
         max_age=cookie_max_age,
     )
@@ -189,6 +190,7 @@ async def setup_api_key(
         key="fusionmlx_admin_session",
         value=token,
         httponly=True,
+        secure=True,
         samesite="lax",
         max_age=86400,  # 24 hours
     )

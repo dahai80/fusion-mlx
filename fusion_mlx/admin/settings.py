@@ -32,7 +32,7 @@ def _mask_api_key(key: str | None) -> str:
     return "*" * (len(key) - 4) + key[-4:]
 
 
-PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/fusionmlx_preset.json"
+PRESET_REMOTE_URL = "https://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
 from .helpers import (
@@ -62,10 +62,80 @@ def _read_settings_json() -> dict:
     path = _get_settings_json_path()
     if path.exists():
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
-            pass
+            # OPS-P4-7 (#0907 audit): the prior bare ``except: pass`` silently
+            # returned {} on a malformed settings.json, so an operator's
+            # syntax error looked like an empty config. Fail visibly instead.
+            logger.warning(
+                "settings.json is malformed JSON — using empty defaults; "
+                "fix the file to restore configuration",
+                exc_info=True,
+            )
+            return {}
+        _validate_settings_schema(data)
+        return data
     return {}
+
+
+# OPS-P4-7 (#0907 audit): settings.json is parsed with bare json.loads +
+# .get(), so a typo (wrong-case enum, string-for-int) silently falls back to
+# the default with no signal. This is not a full Pydantic schema (the config
+# surface is large and evolves), but it warns on the known foot-guns the
+# audit cited. Extend _KNOWN_FIELDS as new typed fields are added.
+_KNOWN_FIELDS: dict[str, dict] = {
+    "memory_guard_tier": {
+        "type": str,
+        "values": {"safe", "balanced", "aggressive", "custom"},
+    },
+    "memory_guard_custom_ceiling_gb": {"type": (int, float)},
+    "prefill_memory_guard": {"type": bool},
+    "max_concurrent_requests": {"type": int},
+    "chunked_prefill": {"type": bool},
+    "log_level": {"type": str, "values": {"debug", "info", "warning", "error"}},
+    "idle_timeout_seconds": {"type": int},
+}
+
+
+def _validate_settings_schema(data: dict) -> None:
+    if not isinstance(data, dict):
+        logger.warning(
+            "settings.json top-level is not an object (got %s)", type(data).__name__
+        )
+        return
+    for section_name, section in data.items():
+        if not isinstance(section, dict):
+            continue
+        for key, val in section.items():
+            spec = _KNOWN_FIELDS.get(key)
+            if spec is None:
+                continue
+            expected = spec["type"]
+            if not isinstance(val, expected):
+                logger.warning(
+                    "settings.json %s.%s = %r is %s, expected %s — falling "
+                    "back to default silently; fix the type to take effect",
+                    section_name,
+                    key,
+                    val,
+                    type(val).__name__,
+                    getattr(expected, "__name__", str(expected)),
+                )
+                continue
+            allowed = spec.get("values")
+            if (
+                allowed is not None
+                and isinstance(val, str)
+                and val.lower() not in allowed
+            ):
+                logger.warning(
+                    "settings.json %s.%s = %r is not one of %s — falling "
+                    "back to default silently; check the spelling/case",
+                    section_name,
+                    key,
+                    val,
+                    sorted(allowed),
+                )
 
 
 def _write_settings_json(data: dict) -> None:

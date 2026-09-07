@@ -503,13 +503,16 @@ def _step_vlm_mtp_batched(self) -> list[_VLMMTPResponse]:
             del batches[bid]
 
     # Step remaining single-request states (backward compat)
+    # PERF-P4-1 (#0907 audit): the prior loop probed membership with
+    # ``any(r.uid == uid for r in bs.rows)`` across every batch for every
+    # uid — O(uids * batches * rows). Build a set of in-batch uids once so
+    # the membership test is O(1), making the whole block O(total rows).
+    _in_batch_uids = set()
+    for bs in batches.values():
+        for _r in bs.rows:
+            _in_batch_uids.add(_r.uid)
     for uid, state in list(getattr(self, "_vlm_mtp_active", {}).items()):
-        is_in_batch = False
-        for bs in batches.values():
-            if any(r.uid == uid for r in bs.rows):
-                is_in_batch = True
-                break
-        if is_in_batch:
+        if uid in _in_batch_uids:
             continue
 
         try:

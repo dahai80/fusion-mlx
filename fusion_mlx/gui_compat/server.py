@@ -1010,8 +1010,11 @@ async def _lifespan(app: FastAPI):
         shutdown_inference_manager()
         shutdown_model_manager()
         db.close()
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001
+        # FT-P4-2 (#0907 audit): the prior bare ``except: pass`` swallowed
+        # shutdown errors silently, so a leaked DB connection or hung worker
+        # left no trace. Log loudly so operator can see what failed on stop.
+        logger.error("GUI lifespan shutdown failed", exc_info=True)
 
 
 def create_gui_router() -> FastAPI:

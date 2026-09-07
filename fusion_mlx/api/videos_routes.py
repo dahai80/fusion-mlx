@@ -10,7 +10,6 @@ import mimetypes
 import os
 import tempfile
 import time
-import urllib.request
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -132,7 +131,32 @@ def _encode_video_output(vid_bytes: bytes, response_format: str) -> VideoOutput:
     return VideoOutput(url=f"data:video/mp4;base64,{b64}")
 
 
-def _resolve_image_to_path(image: str) -> tuple[str, bool]:
+async def _safe_fetch_to_file(url: str, prefix: str, ext: str) -> tuple[str, bool]:
+    # PERF-P1-1 + SEC-P2-2 (#0907 audit): replace blocking
+    # urllib.request.urlretrieve (which re-resolves DNS and auto-follows
+    # redirects without re-validation, enabling SSRF via 302 to 169.254.169.254)
+    # with safe_fetch_async — async (non-blocking) + IP-pinned per hop +
+    # redirect re-validated per hop. Returns (local_path, is_temp=True).
+    from ._url_safety import safe_fetch_async
+
+    fd, path = tempfile.mkstemp(prefix=prefix, suffix=ext)
+    os.close(fd)
+    try:
+        response = await safe_fetch_async(url, max_size=512 * 1024 * 1024)
+        content = response.content
+    except Exception as e:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        logger.warning("safe_fetch_async failed for %s: %s", url, e)
+        raise HTTPException(400, f"Failed to fetch remote media: {e}")
+    with open(path, "wb") as f:
+        f.write(content)
+    return path, True
+
+
+async def _resolve_image_to_path(image: str) -> tuple[str, bool]:
     # Normalize an image input to a local filesystem path mlx-video can load.
     # Returns (path, is_temp). Caller unlinks temp paths after generation.
     if image.startswith("data:"):
@@ -147,15 +171,8 @@ def _resolve_image_to_path(image: str) -> tuple[str, bool]:
             f.write(data)
         return path, True
     if image.startswith(("http://", "https://")):
-        from ._url_safety import is_safe_url_with_dns
-
-        if not is_safe_url_with_dns(image):
-            raise HTTPException(400, "Image URL targets a private/internal address")
         ext = os.path.splitext(urlparse(image).path)[1] or ".png"
-        fd, path = tempfile.mkstemp(prefix="fusion_i2v_", suffix=ext)
-        os.close(fd)
-        urllib.request.urlretrieve(image, path)
-        return path, True
+        return await _safe_fetch_to_file(image, "fusion_i2v_", ext)
     from ._url_safety import is_safe_local_path
 
     if not is_safe_local_path(image):
@@ -183,7 +200,7 @@ def _validate_path_param(value: str, label: str) -> str:
     return value
 
 
-def _resolve_media_to_path(value: str, label: str) -> tuple[str, bool]:
+async def _resolve_media_to_path(value: str, label: str) -> tuple[str, bool]:
     # Resolve a media URL/data-URI/path to a local filesystem path.
     # Handles: data: URIs (video or image), http(s) URLs, local paths.
     # Returns (local_path, is_temp). Caller unlinks temp paths after use.
@@ -199,15 +216,8 @@ def _resolve_media_to_path(value: str, label: str) -> tuple[str, bool]:
             f.write(data)
         return path, True
     if value.startswith(("http://", "https://")):
-        from ._url_safety import is_safe_url_with_dns
-
-        if not is_safe_url_with_dns(value):
-            raise HTTPException(400, f"{label} URL targets a private/internal address")
         ext = os.path.splitext(urlparse(value).path)[1] or ".mp4"
-        fd, path = tempfile.mkstemp(prefix=f"fusion_{label}_", suffix=ext)
-        os.close(fd)
-        urllib.request.urlretrieve(value, path)
-        return path, True
+        return await _safe_fetch_to_file(value, f"fusion_{label}_", ext)
     from ._url_safety import is_safe_local_path
 
     if not is_safe_local_path(value):
@@ -260,14 +270,14 @@ async def generate_video(
         cam_is_temp = False
         if request.image:
             try:
-                image_path, image_is_temp = _resolve_image_to_path(request.image)
+                image_path, image_is_temp = await _resolve_image_to_path(request.image)
             except HTTPException:
                 raise
             except Exception as exc:
                 raise HTTPException(400, "failed to resolve image input")
         if request.last_frame_image:
             try:
-                last_frame_path, last_frame_is_temp = _resolve_image_to_path(
+                last_frame_path, last_frame_is_temp = await _resolve_image_to_path(
                     request.last_frame_image
                 )
             except HTTPException:
@@ -321,12 +331,16 @@ async def generate_video(
             if request.session_id is not None:
                 gen_kwargs["session_id"] = request.session_id
             if request.ip_adapter_image is not None:
-                ip_path, ip_is_temp = _resolve_image_to_path(request.ip_adapter_image)
+                ip_path, ip_is_temp = await _resolve_image_to_path(
+                    request.ip_adapter_image
+                )
                 gen_kwargs["ip_adapter_image"] = ip_path
             if request.ip_adapter_scale != 1.0:
                 gen_kwargs["ip_adapter_scale"] = request.ip_adapter_scale
             if request.controlnet_image is not None:
-                cn_path, cn_is_temp = _resolve_image_to_path(request.controlnet_image)
+                cn_path, cn_is_temp = await _resolve_image_to_path(
+                    request.controlnet_image
+                )
                 gen_kwargs["controlnet_image"] = cn_path
             if request.controlnet_strength != 1.0:
                 gen_kwargs["controlnet_strength"] = request.controlnet_strength
@@ -335,25 +349,25 @@ async def generate_video(
             if request.animatediff_scale > 0:
                 gen_kwargs["animatediff_scale"] = request.animatediff_scale
             if request.control_video is not None:
-                cv_path, cv_is_temp = _resolve_media_to_path(
+                cv_path, cv_is_temp = await _resolve_media_to_path(
                     request.control_video, "ctrl_vid"
                 )
                 gen_kwargs["control_video"] = cv_path
             if request.control_mask is not None:
-                cm_path, cm_is_temp = _resolve_media_to_path(
+                cm_path, cm_is_temp = await _resolve_media_to_path(
                     request.control_mask, "ctrl_mask"
                 )
                 gen_kwargs["control_mask"] = cm_path
             if request.reference_images is not None:
                 ri_resolved = [
-                    _resolve_media_to_path(p, "ref_img")
+                    await _resolve_media_to_path(p, "ref_img")
                     for p in request.reference_images
                 ]
                 ri_paths = [r[0] for r in ri_resolved]
                 ri_is_temps = [r[1] for r in ri_resolved]
                 gen_kwargs["reference_images"] = ri_paths
             if request.camera_conditions is not None:
-                cam_path, cam_is_temp = _resolve_media_to_path(
+                cam_path, cam_is_temp = await _resolve_media_to_path(
                     request.camera_conditions, "camera"
                 )
                 gen_kwargs["camera_conditions"] = cam_path
