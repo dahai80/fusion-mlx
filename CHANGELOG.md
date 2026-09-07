@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.9.0] — 2026-09-07
+
 ### Added
 - **#801: resumable streaming** — `POST /v1/stream` starts a generation
   whose output survives the originating connection, and `GET
