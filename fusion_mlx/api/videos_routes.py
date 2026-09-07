@@ -100,6 +100,13 @@ class VideoGenerateRequest(BaseModel):
     reference_images: list[str] | None = None
     # Camera control: camera pose video path for Wan2.1-Fun-Camera models.
     camera_conditions: str | None = None
+    # Diffusion pipeline variant (issue #826/#827). LTX-2.5 / ltx2 only:
+    # "distilled" (default, fast) vs "dev" (multi-step, non-distilled). The
+    # dev transformer weights (transformer-dev.safetensors) must exist in the
+    # repo. Other backends ignore it. Exposed per-request so a caller can A/B
+    # without reloading; the backend falls back to its construction-time
+    # default when unset.
+    pipeline: str | None = None
     # Runtime quantize knob (issue #586). MiniMax-H3 only: "dit8_te4" (~61G)
     # vs default "none" (~144G, OOMs on 137G). Other backends ignore it.
     quantize: str | None = None
@@ -352,6 +359,8 @@ async def generate_video(
                 gen_kwargs["camera_conditions"] = cam_path
             if request.quantize is not None:
                 gen_kwargs["quantize"] = request.quantize
+            if request.pipeline is not None:
+                gen_kwargs["pipeline"] = request.pipeline
             if request.audio is not None:
                 gen_kwargs["audio"] = request.audio
 
