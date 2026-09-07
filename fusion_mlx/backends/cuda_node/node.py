@@ -207,9 +207,7 @@ def create_cuda_app(config: CudaNodeConfig):
             "(or FUSION_MLX_API_KEY) or bind 127.0.0.1. Refusing to start."
         )
     if _configured_key:
-        logger.info(
-            "cuda-node: API-key auth ENABLED (bind=%s)", config.host
-        )
+        logger.info("cuda-node: API-key auth ENABLED (bind=%s)", config.host)
     else:
         logger.warning(
             "cuda-node: no api_key configured on loopback bind — anonymous "
@@ -250,9 +248,7 @@ def create_cuda_app(config: CudaNodeConfig):
                 status_code=401,
                 content={"detail": "API key required"},
             )
-        if not all(
-            secrets.compare_digest(k, _configured_key) for k in provided
-        ):
+        if not all(secrets.compare_digest(k, _configured_key) for k in provided):
             logger.warning(
                 "cuda-node: 401 invalid api_key host=%s path=%s",
                 request.client.host if request.client else "?",

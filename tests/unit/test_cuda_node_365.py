@@ -148,9 +148,7 @@ def test_create_cuda_app_routes(stubbed_vllm, monkeypatch):
         assert body["platform"] == "windows-cuda"
         assert body["model"] == "Qwen/Qwen2.5-72B-Instruct"
 
-        r = client.get(
-            "/v1/models", headers={"Authorization": "Bearer k"}
-        )
+        r = client.get("/v1/models", headers={"Authorization": "Bearer k"})
         assert r.status_code == 200
         data = r.json()
         assert data["object"] == "list"

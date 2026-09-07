@@ -243,7 +243,9 @@ class TestLoginRejectsSubKey:
         try:
             request = auth_routes.LoginRequest(api_key="sub-key-1")
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(auth_routes.login(request, MagicMock(), _local_login_request()))
+                asyncio.run(
+                    auth_routes.login(request, MagicMock(), _local_login_request())
+                )
             assert exc_info.value.status_code == 401
         finally:
             _restore_auth_getter(original)
@@ -258,7 +260,9 @@ class TestLoginRejectsSubKey:
         original = _patch_auth_getter(mock_settings)
         try:
             request = auth_routes.LoginRequest(api_key="main-key")
-            result = asyncio.run(auth_routes.login(request, mock_response, _local_login_request()))
+            result = asyncio.run(
+                auth_routes.login(request, mock_response, _local_login_request())
+            )
             assert result["success"] is True
         finally:
             _restore_auth_getter(original)
@@ -340,7 +344,9 @@ class TestLoginEndpoint:
         try:
             request = auth_routes.LoginRequest(api_key="anykey")
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(auth_routes.login(request, MagicMock(), _local_login_request()))
+                asyncio.run(
+                    auth_routes.login(request, MagicMock(), _local_login_request())
+                )
             assert exc_info.value.status_code == 400
             assert "No API key configured" in exc_info.value.detail
         finally:
@@ -354,7 +360,9 @@ class TestLoginEndpoint:
         try:
             request = auth_routes.LoginRequest(api_key="wrong-key")
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(auth_routes.login(request, MagicMock(), _local_login_request()))
+                asyncio.run(
+                    auth_routes.login(request, MagicMock(), _local_login_request())
+                )
             assert exc_info.value.status_code == 401
         finally:
             _restore_auth_getter(original)
@@ -365,7 +373,9 @@ class TestLoginEndpoint:
         original = _patch_auth_getter(mock_settings)
         try:
             request = auth_routes.LoginRequest(api_key="correct-key")
-            result = asyncio.run(auth_routes.login(request, mock_response, _local_login_request()))
+            result = asyncio.run(
+                auth_routes.login(request, mock_response, _local_login_request())
+            )
             assert result["success"] is True
             mock_response.set_cookie.assert_called_once()
         finally:

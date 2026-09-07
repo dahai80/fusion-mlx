@@ -303,9 +303,7 @@ def _safe(fn: Any) -> Any:
                     exc_info=True,
                 )
             else:
-                logger.debug(
-                    "Telemetry emit '%s' failed (suppressed).", _fn_name
-                )
+                logger.debug("Telemetry emit '%s' failed (suppressed).", _fn_name)
             return
 
     return wrapper

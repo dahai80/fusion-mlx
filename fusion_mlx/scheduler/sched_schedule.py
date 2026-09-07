@@ -114,20 +114,24 @@ def _schedule_waiting(
         # scheduled, so 3 mid-prefill chunks (~8k tokens each) + a fresh admit
         # silently exceeded max_num_batched_tokens -> Metal OOM. Count the
         # remaining tokens of every in-flight prefill chunk against the budget.
-        batched_tokens = len(self.running) + sum(
-            len(
-                r.remaining_tokens
-                if r.remaining_tokens is not None
-                else r.prompt_token_ids
+        batched_tokens = (
+            len(self.running)
+            + sum(
+                len(
+                    r.remaining_tokens
+                    if r.remaining_tokens is not None
+                    else r.prompt_token_ids
+                )
+                for r in scheduled
             )
-            for r in scheduled
-        ) + sum(
-            len(
-                r.remaining_tokens
-                if r.remaining_tokens is not None
-                else r.prompt_token_ids
+            + sum(
+                len(
+                    r.remaining_tokens
+                    if r.remaining_tokens is not None
+                    else r.prompt_token_ids
+                )
+                for r in self.prefilling
             )
-            for r in self.prefilling
         )
         if batched_tokens >= self.config.max_num_batched_tokens:
             break
