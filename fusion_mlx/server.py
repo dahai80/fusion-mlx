@@ -2,6 +2,7 @@
 
 Wires together all API routes:
 - OpenAI-compatible: /v1/chat/completions, /v1/completions, /v1/models
+- Resumable streaming: /v1/stream, /v1/streams/lookup (#801)
 - Anthropic-compatible: /v1/messages, /v1/count_tokens
 - Audio: /v1/audio/transcriptions, /v1/audio/speech, /v1/audio/process
 - Images: /v1/images/generate
