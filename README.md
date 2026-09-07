@@ -1301,6 +1301,26 @@ For deployments running multiple fusion-mlx replicas behind a gateway (or a CLI 
 
 **Run mode:** multi-instance coordination is *each instance independent* — there is no leader election or shared request queue. The real HA primitive here is the drain flag (graceful failover) + persistent session state (context survival) + health richness (gateway routing). Client-side failover (retry the next replica on a 503/connection error) is handled by fusion-cli (#48); gateway routing rules live in fusion-gateway.
 
+### Multi-instance load balancing — single host, N ports (#811)
+
+For the case of **N fusion-mlx instances on one host, different ports** (the topology fusion-autotest and local dev need) — where spinning up a separate fusion-gateway is overkill — an OPT-IN config-driven load balancer activates the in-process cluster self-heal layer. It is **off by default**; a single instance behaves exactly as before.
+
+- **Enable.** In `~/.fusion-mlx/settings.json` (or the config you pass `serve`):
+
+  ```json
+  {
+    "cluster_lb_enabled": true,
+    "cluster_peers": ["127.0.0.1:11435", "http://127.0.0.1:11436"],
+    "cluster_lb_health_interval": 5.0,
+    "cluster_lb_health_max_missed": 3
+  }
+  ```
+
+  `cluster_peers` accepts bare `host:port` strings or full URLs; path/query components are stripped (peers are base endpoints). On startup the server parses each into a `ClusterNode`, registers it in the process-local `NodeRegistry`, and starts an HTTP `/health` heartbeat monitor.
+- **Health.** Every `cluster_lb_health_interval` seconds the monitor GETs `{peer}/health`. A peer that misses `cluster_lb_health_max_missed` consecutive beats is marked DEAD and evicted from the routing set; a later successful beat revives it. This fixes the audit finding that the cluster monitor existed but was never wired, so peers stayed "ALIVE forever."
+- **Routing.** The least-loaded balancer picks the alive peer with the lowest `load_score` (`active_requests * 1000 + (100 - available_percent)`); ties break round-robin. The `FailoverRouter` drives an httpx relay to the chosen peer: **non-streaming** requests retry on the next healthy peer on a `NodeUnavailableError`; **streaming** requests do **not** retry (a partial stream already left the server — retrying would duplicate output; the break surfaces as `PartialStreamError`).
+- **Scope.** This layer serves the single-host multi-port case only. For multi-host / cross-cluster topologies the gateway (fusion-gateway) remains the authoritative router — see the `cluster/registry.py` module docstring. Node-to-node prompt traffic is plaintext HTTP; deploy behind a TLS-terminating gateway (or set `FUSION_CLUSTER_TLS_ACK=1` to acknowledge the risk) if the subnet is shared.
+
 ### Code-sandbox reward endpoint (#743)
 
 For GRPO fine-tuning on coding tasks, the reward signal must come from **running** the model's generated code against a dataset test suite — but executing untrusted model output on the operator's machine is unsafe. This endpoint centralizes the isolation in fusion-mlx so the trainer stays a pure HTTP delegation layer.
