@@ -24,6 +24,11 @@ from .sparse_mla import (
 )
 from .switch_layers import SwitchGLU
 
+try:
+    from .._moe_shared_cache import make_layer_cache
+except Exception:  # pragma: no cover - patches import isolation
+    make_layer_cache = None
+
 
 def _use_load_fused_wk_weights_proj(args) -> bool:
     if getattr(args, "model_type", None) != "glm_moe_dsa":
@@ -611,6 +616,8 @@ class DeepseekV32MoE(nn.Module):
             )
 
         self.sharding_group = None
+        # #803 DSA shared-expert activation dedup (opt-in, default OFF).
+        self._shared_cache = make_layer_cache() if make_layer_cache else None
 
     def __call__(self, x):
         if self.sharding_group is not None:
@@ -631,7 +638,10 @@ class DeepseekV32MoE(nn.Module):
         if not use_weighted_sum:
             y = (y * scores[..., None]).sum(axis=-2).astype(y.dtype)
         if self.config.n_shared_experts is not None:
-            y = y + self.shared_experts(x)
+            if self._shared_cache is not None:
+                y = y + self._shared_cache.get_or_compute(x, self.shared_experts)
+            else:
+                y = y + self.shared_experts(x)
 
         if self.sharding_group is not None:
             y = mx.distributed.all_sum(y, group=self.sharding_group)

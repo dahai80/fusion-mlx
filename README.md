@@ -45,6 +45,14 @@ x86+CUDA stack structurally cannot match. These are **landed and running today**
   (0% acceptance, 0.42× slower, quality breaks). The machinery remains
   env-gated off for future research; the negative result is documented in
   `SPECULATIVE_DENOISE.md`.
+- **DSA shared-expert activation cache (#803)** — DeepSeek-V3.2/GLM-MoE-DSA and
+  DeepSeek-V4 MoE layers run a token-determined shared-expert MLP every layer;
+  a batch with duplicate input rows recomputes an identical activation. Opt-in
+  cache (`FUSION_MOE_SHARED_CACHE=1`, default OFF) dedups by exact input-row
+  content with zero output drift and exposes the per-layer hit rate at
+  `/metrics` (`fusion_mlx_moe_shared_cache_*`). Scope is intra-call only;
+  cross-layer/cross-forward reuse are semantically invalid. The MLA latent-KV
+  half of #803 is already satisfied (compressed latent stored, not expanded).
 - **Fusion-ComfyUI Stage API + `on_step` (#170-172)** - 10 stage methods across
   text-encoder / DiT / VAE plus a thread->async `on_step` bridge; native ComfyUI
   integration no other MLX server offers.

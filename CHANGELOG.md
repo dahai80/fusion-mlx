@@ -2,7 +2,27 @@
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **#803: DSA shared-expert activation cache** — DeepSeek-V3.2/GLM-MoE-DSA
+  and DeepSeek-V4 MoE layers run a shared-expert MLP on every token every
+  layer. The shared expert is token-determined (not routed), so within a
+  single layer call two identical input rows yield an identical activation;
+  recomputing the second is pure waste. A new opt-in cache
+  (`FUSION_MOE_SHARED_CACHE=1`, default OFF) dedups shared-expert
+  activations by exact input-row content and reuses the cached activation
+  for repeats, with zero output drift (exact keys → bit-identical reuse).
+  Per-layer hit rate is exposed at `/metrics` as
+  `fusion_mlx_moe_shared_cache_*`. Scope is deliberately intra-call
+  (one layer, one forward): cross-layer and cross-forward reuse are
+  semantically invalid (each layer has its own shared-expert weights;
+  hidden state evolves). The win is bounded to batches with duplicate
+  input rows; the logged hit rate makes the real benefit observable
+  rather than assumed. The MLA latent-KV half of #803 is already
+  satisfied — the `glm_moe_dsa` patch stores the compressed latent KV
+  (`[B,1,K,512]`), not the expanded head dims, via `cache[0].update_and_fetch`.
+  Real-model memory/throughput delta and a `memory` benchmark entry on
+  bench.dpdns.org remain deferred (need DeepSeek weights on disk). (13
+  headless tests; no real model.)
 
 ## [0.9.0] — 2026-09-07
 
