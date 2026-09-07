@@ -38,6 +38,20 @@
   A/B distilled vs dev without reloading; legacy `ltx2` backend gains the
   same override for `PipelineType.DEV` / `DEV_TWO_STAGE_HQ`. Fixes broken
   image-to-video quality on `dgrauet/ltx-2.5-mlx-q8`/`-q4`.
+- **#811: config-driven multi-instance load balancing** — OPT-IN. When
+  `cluster_lb_enabled` is set in `ServerConfig` (or via the config file),
+  the server bootstraps `cluster_peers` (a list of `host:port` or full
+  URLs) into the process-local `NodeRegistry` and starts an HTTP `/health`
+  heartbeat monitor — activating the previously-dormant cluster self-heal
+  layer (registry + health monitor + least-loaded load balancer + failover
+  router) for a single-host, multi-port deployment (N instances behind one
+  logical endpoint) without requiring a separate fusion-gateway process.
+  Dead peers are marked and evicted after `cluster_lb_health_max_missed`
+  consecutive heartbeat failures; a later successful beat revives them.
+  Non-streaming forwarded requests retry on the next healthy peer;
+  streaming requests do not retry (partial output is preserved, not
+  duplicated). Off by default — single-instance behavior is unchanged.
+  (16 tests, all headless; no real server needed.)
 
 ### 0907 product audit
 - **#0907 audit: 6-dimension enterprise-readiness audit** —

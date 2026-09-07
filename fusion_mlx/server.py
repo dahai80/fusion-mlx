@@ -924,6 +924,7 @@ class Server:
         self.engine_cores: dict[str, AsyncEngineCore] = {}
         self._load_lock = asyncio.Lock()
         self._mdns = None
+        self._cluster_lb_monitor = None  # #811 multi-instance LB health monitor
 
         warnings.filterwarnings(
             "ignore",
@@ -1921,6 +1922,37 @@ class Server:
                     "mDNS: advertising failed to start (non-fatal)", exc_info=True
                 )
 
+        # Multi-instance load balancing (#811) — OPT-IN. Bootstrap peers
+        # into the NodeRegistry and start a health monitor, activating the
+        # dormant cluster self-heal layer for single-host multi-port
+        # deployments. With cluster_lb_enabled off (default), this is a no-op
+        # and single-instance behavior is unchanged.
+        if getattr(self.config, "cluster_lb_enabled", False):
+            try:
+                from .cluster.peer_lb import bootstrap_peers, start_health_monitor
+
+                count = await bootstrap_peers(self.config)
+                if count > 0:
+                    self._cluster_lb_monitor = await start_health_monitor(
+                        interval=float(
+                            getattr(self.config, "cluster_lb_health_interval", 5.0)
+                        ),
+                        max_missed=int(
+                            getattr(self.config, "cluster_lb_health_max_missed", 3)
+                        ),
+                    )
+                    logger.info("cluster_lb (#811): activated with %d peer(s)", count)
+                else:
+                    logger.warning(
+                        "cluster_lb (#811): enabled but no valid peers "
+                        "configured — running in single-instance mode"
+                    )
+            except Exception:
+                logger.warning(
+                    "cluster_lb (#811): activation failed (non-fatal)",
+                    exc_info=True,
+                )
+
     async def _shutdown(self):
         """Graceful shutdown."""
         logger.info("fusion-mlx shutting down...")
@@ -1942,6 +1974,19 @@ class Server:
             except Exception:
                 logger.debug("mDNS: stop failed (non-fatal)", exc_info=True)
             self._mdns = None
+
+        # Multi-instance LB (#811): stop the health monitor
+        if self._cluster_lb_monitor is not None:
+            try:
+                from .cluster.peer_lb import stop_health_monitor
+
+                await stop_health_monitor(self._cluster_lb_monitor)
+                logger.info("cluster_lb (#811): health monitor stopped")
+            except Exception:
+                logger.debug(
+                    "cluster_lb: monitor stop failed (non-fatal)", exc_info=True
+                )
+            self._cluster_lb_monitor = None
 
         # Save prefix cache to disk (best-effort, budget-aware)
         try:

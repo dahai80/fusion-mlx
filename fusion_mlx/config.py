@@ -318,6 +318,15 @@ class ServerConfig:
     # mDNS/Bonjour cluster advertising
     cluster_advertise: bool = False
 
+    # Multi-instance load balancing (#811). OPT-IN: when enabled, the server
+    # bootstraps ``cluster_peers`` into the NodeRegistry and starts a health
+    # monitor, activating the dormant cluster self-heal layer for single-host
+    # multi-port deployments. Off by default — single-instance behavior unchanged.
+    cluster_lb_enabled: bool = False
+    cluster_peers: list[str] = field(default_factory=list)  # e.g. ["127.0.0.1:11435"]
+    cluster_lb_health_interval: float = 5.0
+    cluster_lb_health_max_missed: int = 3
+
     # Node platform tag for gateway routing (#365). Auto-detected when None
     # (darwin->mac, win32+CUDA->windows-cuda); override with FUSION_PLATFORM
     # or this field. Surfaced via mDNS TXT "platform".
