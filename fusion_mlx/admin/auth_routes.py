@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 PRESET_REMOTE_URL = "http://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
+from ..middleware.auth import check_rate_limit
 from .helpers import (
     _get_global_settings,
 )
@@ -33,7 +34,6 @@ from .models import (
     LoginRequest,
     SetupApiKeyRequest,
 )
-from ..middleware.auth import check_rate_limit
 
 _router = APIRouter()
 
@@ -124,7 +124,7 @@ async def setup_api_key(
                         or keys don't match.
     """
     from ..middleware.auth import _is_loopback_client
-    from ..server import _server_state
+    from ..server import _server_state, _server_state_lock
 
     # R-14 (#811): only allow from localhost to prevent remote takeover.
     # The prior inline `client.host in ("127.0.0.1", "::1", "localhost")`
@@ -141,35 +141,47 @@ async def setup_api_key(
             "localhost connection (no forwarded/proxy headers)",
         )
 
-    global_settings = _get_global_settings()
+    # AS-7 (#0907 audit): hold the server-state lock across the
+    # read-modify-write so two concurrent setup requests cannot both pass
+    # the "not yet configured" check and clobber each other's key.
+    async with _server_state_lock:
+        global_settings = _get_global_settings()
 
-    # Only allow setup if no API key is currently configured
-    if global_settings and global_settings.auth.api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="API key is already configured. Use settings to change it.",
+        # Only allow setup if no API key is currently configured
+        if global_settings and global_settings.auth.api_key:
+            raise HTTPException(
+                status_code=400,
+                detail="API key is already configured. Use settings to change it.",
+            )
+
+        # Validate confirmation match
+        if request.api_key != request.api_key_confirm:
+            raise HTTPException(status_code=400, detail="API keys do not match")
+
+        # Validate key format
+        is_valid, error_msg = validate_api_key(request.api_key)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+
+        # Apply to settings and runtime
+        global_settings.auth.api_key = request.api_key
+        _server_state["api_key"] = request.api_key
+
+        # Persist to file
+        try:
+            global_settings.save()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail="Failed to save settings")
+
+        logger.info("API key configured via initial setup")
+        # OP-9 (#0907 audit): record the admin write to the audit log.
+        from .helpers import _audit_admin_action
+
+        _audit_admin_action(
+            "api_key_setup",
+            actor=fastapi_request.client.host if fastapi_request.client else "unknown",
+            detail={"source": "initial_setup"},
         )
-
-    # Validate confirmation match
-    if request.api_key != request.api_key_confirm:
-        raise HTTPException(status_code=400, detail="API keys do not match")
-
-    # Validate key format
-    is_valid, error_msg = validate_api_key(request.api_key)
-    if not is_valid:
-        raise HTTPException(status_code=400, detail=error_msg)
-
-    # Apply to settings and runtime
-    global_settings.auth.api_key = request.api_key
-    _server_state["api_key"] = request.api_key
-
-    # Persist to file
-    try:
-        global_settings.save()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to save settings")
-
-    logger.info("API key configured via initial setup")
 
     # Create session token and set cookie (auto-login after setup)
     token = create_session_token()

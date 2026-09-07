@@ -172,6 +172,13 @@ class EnginePool:
         # P3 (#811): guards is_pinned writes from a sync/threadpool caller
         # against in-flight unload reads on the event-loop thread.
         self._pinned_lock = threading.Lock()
+        # AS-12 (#0907 audit): guards _merge_discovered on the SYNC discover
+        # path (discover_models) so a threadpool/admin caller mutating
+        # _entries cannot race the event-loop's async
+        # discover_models_async/get_engine/enforcer iteration of _entries.
+        # The async path is already serialized by self._lock (asyncio.Lock);
+        # this threading.Lock covers the remaining sync entry point.
+        self._discover_sync_lock = threading.Lock()
         self._current_model_memory = 0
         self._scheduler_config = scheduler_config or SchedulerConfig()
         self._process_memory_enforcer: object | None = None  # Set by server
@@ -479,6 +486,19 @@ class EnginePool:
         """Number of currently loaded models."""
         return sum(1 for e in self._entries.values() if e.engine is not None)
 
+    def _record_eviction(self, reason: str = "lru") -> None:
+        # OP-14 (#0907 audit): surface engine-pool unloads as a Prometheus
+        # counter so an operator sees eviction frequency + reason on a
+        # dashboard (fusion_mlx_engine_evictions_total{reason=...}) instead of
+        # digging INFO logs. Best-effort: a metrics recorder failure must never
+        # block the eviction path.
+        try:
+            from ..server_metrics import get_server_metrics
+
+            get_server_metrics().record_engine_eviction(reason)
+        except Exception:
+            logger.debug("record_engine_eviction('%s') failed", reason, exc_info=True)
+
     async def apply_embedding_batch_size(self, batch_size: int) -> None:
         """Apply embedding batch size to future and currently loaded embedding engines."""
         batch_size = int(batch_size)
@@ -514,54 +534,62 @@ class EnginePool:
         discovered: dict[str, DiscoveredModel],
         pinned_models: list[str] | None = None,
     ) -> None:
-        # Mutates self._entries from a scan result. Must run on the loop
-        # thread (or under the pool lock) since it touches shared state.
-        pinned_set = set(pinned_models or [])
+        # Mutates self._entries from a scan result. AS-12 (#0907 audit):
+        # hold the sync discover lock so a threadpool/admin sync discover
+        # cannot race the event-loop's async discover/get_engine/enforcer
+        # iterating _entries. The async path also enters here (under
+        # self._lock asyncio.Lock) and briefly takes this threading.Lock —
+        # ordering is lock-order-stable (asyncio then threading on the loop
+        # thread; threading-only on sync callers) so no deadlock.
+        with self._discover_sync_lock:
+            pinned_set = set(pinned_models or [])
 
-        for model_id, info in discovered.items():
-            existing = self._entries.get(model_id)
-            if existing is not None and existing.engine is not None:
-                # Loaded model: preserve runtime state, only update pinned flag
-                existing.is_pinned = model_id in pinned_set
-            else:
-                # New or unloaded model: create fresh entry
-                self._entries[model_id] = EngineEntry(
-                    model_id=model_id,
-                    model_path=info.model_path,
-                    model_type=info.model_type,
-                    engine_type=info.engine_type,
-                    estimated_size=info.estimated_size,
-                    config_model_type=getattr(info, "config_model_type", ""),
-                    thinking_default=getattr(info, "thinking_default", None),
-                    preserve_thinking_default=getattr(
-                        info, "preserve_thinking_default", None
-                    ),
-                    model_context_length=getattr(info, "model_context_length", None),
-                    source_type=getattr(info, "source_type", "local"),
-                    source_repo_id=getattr(info, "source_repo_id", None),
-                    is_pinned=model_id in pinned_set,
-                )
+            for model_id, info in discovered.items():
+                existing = self._entries.get(model_id)
+                if existing is not None and existing.engine is not None:
+                    # Loaded model: preserve runtime state, only update pinned flag
+                    existing.is_pinned = model_id in pinned_set
+                else:
+                    # New or unloaded model: create fresh entry
+                    self._entries[model_id] = EngineEntry(
+                        model_id=model_id,
+                        model_path=info.model_path,
+                        model_type=info.model_type,
+                        engine_type=info.engine_type,
+                        estimated_size=info.estimated_size,
+                        config_model_type=getattr(info, "config_model_type", ""),
+                        thinking_default=getattr(info, "thinking_default", None),
+                        preserve_thinking_default=getattr(
+                            info, "preserve_thinking_default", None
+                        ),
+                        model_context_length=getattr(
+                            info, "model_context_length", None
+                        ),
+                        source_type=getattr(info, "source_type", "local"),
+                        source_repo_id=getattr(info, "source_repo_id", None),
+                        is_pinned=model_id in pinned_set,
+                    )
 
-            if model_id in pinned_set:
-                logger.info(f"Pinned model: {model_id}")
+                if model_id in pinned_set:
+                    logger.info(f"Pinned model: {model_id}")
 
-        # Remove entries no longer discovered and not loaded
-        discovered_ids = set(discovered.keys())
-        stale = [
-            mid
-            for mid in self._entries
-            if mid not in discovered_ids and self._entries[mid].engine is None
-        ]
-        for mid in stale:
-            del self._entries[mid]
+            # Remove entries no longer discovered and not loaded
+            discovered_ids = set(discovered.keys())
+            stale = [
+                mid
+                for mid in self._entries
+                if mid not in discovered_ids and self._entries[mid].engine is None
+            ]
+            for mid in stale:
+                del self._entries[mid]
 
-        # Warn about pinned models not found
-        found_models = set(self._entries.keys())
-        for model_id in pinned_set:
-            if model_id not in found_models:
-                logger.warning(f"Pinned model not found: {model_id}")
+            # Warn about pinned models not found
+            found_models = set(self._entries.keys())
+            for model_id in pinned_set:
+                if model_id not in found_models:
+                    logger.warning(f"Pinned model not found: {model_id}")
 
-        logger.info(f"Discovered {len(self._entries)} models")
+            logger.info(f"Discovered {len(self._entries)} models")
 
     def discover_models(
         self, model_dirs: str | list[str], pinned_models: list[str] | None = None
@@ -569,6 +597,9 @@ class EnginePool:
         # Synchronous discover: scan + merge in one call (back-compat for
         # sync callers and tests). Async callers should use
         # discover_models_async to avoid blocking the event loop (#59).
+        # AS-12 (#0907 audit): _merge_discovered now takes
+        # _discover_sync_lock so this sync path is race-safe vs the
+        # event-loop's async mutations of _entries.
         discovered = self._scan_models(model_dirs)
         self._merge_discovered(discovered, pinned_models)
 
@@ -629,6 +660,28 @@ class EnginePool:
     def get_entry(self, model_id: str) -> EngineEntry | None:
         """Get entry for a specific model, or None if not found."""
         return self._entries.get(model_id)
+
+    async def remove_entry(self, model_id: str) -> EngineEntry | None:
+        # AS-6 (#0907 audit): admin modules (hf_download, fine_tune) reached
+        # into `engine_pool._entries.pop()` without the asyncio.Lock, racing
+        # concurrent get_engine/release_engine/enforcer iteration. Route
+        # destructive entry removal through this locked accessor so the
+        # dict mutation is serialized with the rest of the pool.
+        async with self._lock:
+            entry = self._entries.pop(model_id, None)
+        if entry is not None:
+            logger.info("remove_entry: removed '%s' from pool (AS-6)", model_id)
+        else:
+            logger.debug("remove_entry: '%s' not present", model_id)
+        return entry
+
+    async def iter_entries(self) -> list[tuple[str, EngineEntry]]:
+        # AS-6 (#0907 audit): admin modules iterated `pool._entries.items()`
+        # without the lock, racing mutation. Return a point-in-time snapshot
+        # copy under the lock so callers cannot hit
+        # `dictionary changed size during iteration`.
+        async with self._lock:
+            return list(self._entries.items())
 
     def set_pinned(self, model_id: str, pinned: bool) -> bool:
         """
@@ -806,6 +859,11 @@ class EnginePool:
             model_id,
             reason,
         )
+        # OP-14: classify the unload reason. Memory-enforcer / admission
+        # pressure reasons map to a coarse bucket so the dashboard sees
+        # pressure-driven vs adapter-cap vs LRU churn distinctly.
+        evict_bucket = "enforcer" if "enforcer" in reason else "pending"
+        self._record_eviction(evict_bucket)
         await self.unload_engine_async(
             model_id, with_settle=False, caller_holds_lock=True
         )
@@ -1115,12 +1173,27 @@ class EnginePool:
 
             # Already loaded - just update access time (fast path)
             if entry.engine is not None:
+                # EF-1 (#0907 audit): if the engine loop died (circuit-breaker
+                # trip or unrecoverable BaseException), do NOT hand it out —
+                # treat it as needing reload so the dead instance is torn down
+                # and a fresh engine is built. Without this a stopped loop is
+                # still reported as "loaded" and every new request hangs.
+                needs_reload = False
+                dead = getattr(entry.engine, "is_dead", None)
+                if callable(dead) and dead():
+                    logger.warning(
+                        "get_engine: engine for '%s' is dead (%s) — "
+                        "reloading (EF-1)",
+                        entry_key,
+                        getattr(entry.engine, "dead_reason", None),
+                    )
+                    needs_reload = True
                 # P1-4: an in-progress unload (unload_engine_async, called
                 # lockless from get_engine's eviction path) sets is_unloading
                 # before stopping the engine. Without this gate a concurrent
                 # get_engine for the victim hits the fast path and hands out
                 # an engine that _detach_engine is mid-stop() on.
-                if entry.is_unloading:
+                elif entry.is_unloading:
                     wait_event = entry.loading_event or asyncio.Event()
                     entry.loading_event = wait_event
                 else:
@@ -1225,6 +1298,7 @@ class EnginePool:
         # Evict derived adapter engines over the soft cap (victims selected
         # under the lock in Phase 1). unload_engine_async is slow, so do it here.
         for vk in adapter_victims:
+            self._record_eviction("adapter_cap")
             await self.unload_engine_async(vk)
 
         # Pre-load admission check (outside lock — memory state is approximate)
@@ -1258,6 +1332,7 @@ class EnginePool:
                         f"({format_size(projected)} > "
                         f"{format_size(ceiling)})"
                     )
+                    self._record_eviction("lru")
                     await self.unload_engine_async(victim)
                     continue
                 # Nothing to evict — clean up loading flag and raise
@@ -1330,14 +1405,17 @@ class EnginePool:
                 await self._release_inplace_adapter(model_id, adapter_path)
                 return
         entry_key = self._adapter_key(model_id, adapter_path)
-        # Detach under the lock (fast), settle outside it. Holding the pool
-        # lock across unload_engine_async's ~settle barrier (gc + synchronize +
-        # clear_cache x10) blocks every concurrent get_engine for seconds.
-        # _detach_engine stops the engine and sets entry.engine=None under the
-        # lock (so get_engine's fast-path won't return it), then the slow
-        # barrier runs unlocked - mirrors get_engine's "slow work outside lock"
-        # pattern. (code-review #74)
+        # Detach + settle both OUTSIDE the lock. _detach_engine awaits
+        # entry.engine.safe_evict() (30s timeout) / stop() — a slow op that
+        # must NOT run under self._lock, and the ~settle barrier (gc +
+        # synchronize + clear_cache x10) blocks every concurrent get_engine
+        # for seconds too. Set the is_unloading marker under the lock so
+        # get_engine's fast-path bails off and waits, release the lock, then
+        # detach + settle unlocked — mirrors unload_engine_async's lockless
+        # detach + get_engine's "slow work outside lock" pattern.
+        # (code-review #74, #0907 AS-4)
         settle_pre: int | None = None
+        unload_needed = False
         async with self._lock:
             e = self._entries.get(entry_key)
             if e is not None and e.in_use > 0:
@@ -1362,17 +1440,37 @@ class EnginePool:
                     entry_key,
                     reason,
                 )
-                settle_pre = await self._detach_engine(entry_key)
-                # P3 (#811): adapter cleanup under the lock we already hold.
-                self._remove_stale_adapters_locked(entry_key)
-        if settle_pre is not None:
-            await self._settle_unloaded_engine(entry_key, settle_pre)
+                # AS-4 (#0907 audit): marker under the lock, slow stop() +
+                # settle outside it (see header comment above).
+                e.is_unloading = True
+                unload_needed = True
+        if unload_needed:
+            settle_pre = await self._detach_engine(entry_key)
+            wake_event = None
+            async with self._lock:
+                e2 = self._entries.get(entry_key)
+                if e2 is not None:
+                    e2.is_unloading = False
+                    # Re-read the (possibly get_engine-created) wait event
+                    # AFTER detach, then wake it — same as unload_engine_async.
+                    wake_event = e2.loading_event
+                    e2.loading_event = None
+                    # P3 (#811): adapter cleanup under the lock we hold.
+                    self._remove_stale_adapters_locked(entry_key)
+            if wake_event is not None:
+                wake_event.set()
+            if settle_pre is not None:
+                await self._settle_unloaded_engine(entry_key, settle_pre)
 
     async def unload_if_idle_unpinned(self, model_id: str) -> bool:
         """Unload a loaded engine only when it is idle and not pinned."""
-        # Detach under the lock (fast), settle outside it so the ~settle
-        # barrier does not block all get_engine. (code-review #74)
-        settle_pre: int | None = None
+        # Detach + settle both OUTSIDE the lock. _detach_engine awaits
+        # entry.engine.safe_evict() (30s timeout) / stop() — a slow op that
+        # must NOT run under self._lock, and the ~settle barrier blocks every
+        # concurrent get_engine. Set the is_unloading marker under the lock
+        # (get_engine's fast-path bails off and waits), release it, then
+        # detach + settle unlocked. Mirrors release_engine + unload_engine_async.
+        # (code-review #74, #0907 AS-4)
         async with self._lock:
             entry = self._entries.get(model_id)
             if (
@@ -1388,9 +1486,19 @@ class EnginePool:
                 entry.last_access = time.time()
                 return False
 
-            settle_pre = await self._detach_engine(model_id)
-            # P3 (#811): adapter cleanup under the lock we already hold.
-            self._remove_stale_adapters_locked(model_id)
+            entry.is_unloading = True
+        settle_pre = await self._detach_engine(model_id)
+        wake_event = None
+        async with self._lock:
+            entry = self._entries.get(model_id)
+            if entry is not None:
+                entry.is_unloading = False
+                wake_event = entry.loading_event
+                entry.loading_event = None
+                # P3 (#811): adapter cleanup under the lock we hold.
+                self._remove_stale_adapters_locked(model_id)
+        if wake_event is not None:
+            wake_event.set()
         if settle_pre is not None:
             await self._settle_unloaded_engine(model_id, settle_pre)
         return True
@@ -1534,8 +1642,15 @@ class EnginePool:
         Returns:
             Model ID of the LRU victim, or None if no evictable model found
         """
+        # AS-1 (#0907 audit): _entries is mutated by concurrent load/unload.
+        # The admission loop calls this outside self._lock, so iterating the
+        # live dict can race with a dict-size change (RuntimeError on Py 3.12+).
+        # Take a shallow atomic snapshot (dict.copy() is atomic in CPython) and
+        # iterate that. Selection is advisory — the next admission iteration
+        # re-checks current usage — so a slightly stale snapshot is safe.
+        snapshot = list(self._entries.items())
         candidates = []
-        for mid, e in self._entries.items():
+        for mid, e in snapshot:
             if e.engine is None or e.is_pinned:
                 continue
             if e.in_use > 0:
@@ -1702,14 +1817,14 @@ class EnginePool:
         entry.pending_unload_reason = None
         entry.runtime_settings_signature = None
         # P3 (#811): the LoRA adapter-entry cleanup (#209-M1) used to live
-        # here, but _detach_engine is called by unload_engine_async OUTSIDE
-        # self._lock (the lock block ends before the await _detach_engine
-        # call). Deleting from self._entries lockless raced a concurrent
-        # get_engine (which holds self._lock and iterates _entries). Moved
-        # to _remove_stale_adapters_locked, invoked by each caller inside
-        # its own lock context. The two callers that already hold the lock
-        # (release_engine, unload_if_idle_unpinned) call it directly;
-        # unload_engine_async acquires the lock around it after detach.
+        # here, but _detach_engine is called OUTSIDE self._lock by all
+        # callers (the lock block ends before the await _detach_engine call;
+        # AS-4 (#0907 audit) moved release_engine / unload_if_idle_unpinned
+        # to the same lockless-detach pattern as unload_engine_async).
+        # Deleting from self._entries lockless raced a concurrent get_engine
+        # (which holds self._lock and iterates _entries). Moved to
+        # _remove_stale_adapters_locked, invoked by each caller inside its
+        # own lock context (re-acquired after detach).
         return pre_unload_active
 
     def _remove_stale_adapters_locked(self, model_id: str) -> None:
@@ -2191,6 +2306,7 @@ class EnginePool:
             # marker path is skipped (we set is_unloading above); pass
             # caller_holds_lock=False since we are not holding it here, and
             # signal the waiters when done.
+            self._record_eviction("prefill")
             await self.unload_engine_async(victim, _marker_already_set=True)
             evicted_any = True
 
@@ -2748,16 +2864,40 @@ class EnginePool:
 
         This ensures pinned models are always available.
         """
+        # AS-6 (#0907 audit): snapshot under the lock so a concurrent
+        # discover/unload cannot mutate _entries mid-iteration.
         pinned_models = [
-            model_id for model_id, e in self._entries.items() if e.is_pinned
+            model_id for model_id, e in (await self.iter_entries()) if e.is_pinned
         ]
 
+        preload_failures: list[str] = []
         for model_id in pinned_models:
             try:
                 logger.info(f"Preloading pinned model: {model_id}")
                 await self.get_engine(model_id)
             except Exception as e:
                 logger.error(f"Failed to preload pinned model {model_id}: {e}")
+                preload_failures.append(model_id)
+
+        # OP-18 (#0907 audit): surface preload failures as a startup
+        # WARNING + ServerMetrics counter so an operator is not left with
+        # a server that booted missing its critical pinned models and no
+        # signal beyond a single ERROR line buried in the log.
+        if preload_failures:
+            logger.warning(
+                "preload: %d pinned model(s) failed to load: %s (OP-18). "
+                "Check /metrics fusion_mlx_preload_failures_total and logs.",
+                len(preload_failures),
+                ", ".join(preload_failures),
+            )
+            try:
+                from .server_metrics import get_server_metrics
+
+                sm = get_server_metrics()
+                for mid in preload_failures:
+                    sm.record_preload_failure(mid)
+            except Exception:
+                logger.debug("preload_failure metric record skipped", exc_info=True)
 
     async def shutdown(self, drain_timeout: float = 10.0) -> None:
         """Shutdown all engines gracefully.

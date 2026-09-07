@@ -158,6 +158,10 @@ async def unload_model(
 
     await engine_pool.unload_engine_async(model_id)
     logger.info(f"Manually unloaded model: {model_id}")
+    # OP-9 (#0907 audit): audit admin model unload.
+    from .helpers import _audit_admin_action
+
+    _audit_admin_action("model_unload", detail={"model_id": model_id})
     return {"status": "ok", "model_id": model_id, "message": f"Unloaded {model_id}"}
 
 

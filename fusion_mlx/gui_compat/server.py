@@ -19,7 +19,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
-import httpx
 from fastapi import (
     APIRouter,
     Depends,
@@ -347,34 +346,49 @@ async def _process_image_urls(urls: list[str]) -> list[str]:
                     t.write(base64.b64decode(data))
                     result.append(t.name)
             elif u.startswith(("http://", "https://")):
-                from fusion_mlx.api._url_safety import is_safe_url_with_dns
+                # S-1/S-2 (#0907 audit): use safe_fetch_async which pins the
+                # connect to a pre-validated IP (closes DNS-rebinding TOCTOU)
+                # and re-validates every redirect hop (closes redirect
+                # smuggle). The old is_safe_url_with_dns + httpx.get path
+                # re-resolved at connect and followed redirects blindly.
+                from fusion_mlx.api._url_safety import safe_fetch_async
 
-                if not is_safe_url_with_dns(u):
-                    raise HTTPException(
-                        400, "Image URL targets a private/internal address"
+                # S-4 (#0907 audit): stream the body to a tempfile with a hard
+                # size cap instead of buffering r.content fully into RAM. A
+                # remote URL could serve a multi-GB body; the prior path
+                # loaded it entirely before writing the tempfile → memory
+                # exhaustion DoS on the GUI-compat image route.
+                _MAX_IMAGE_BYTES = 20 * 1024 * 1024
+                try:
+                    r = await safe_fetch_async(u, max_size=_MAX_IMAGE_BYTES)
+                except ValueError as e:
+                    raise HTTPException(400, str(e))
+                r.raise_for_status()
+                ct = r.headers.get("content-type", "")
+                ext = (
+                    ".png"
+                    if "png" in ct
+                    else (
+                        ".gif" if "gif" in ct else ".webp" if "webp" in ct else ".jpg"
                     )
-                from fusion_mlx._http_limits import bounded_limits
-
-                async with httpx.AsyncClient(limits=bounded_limits()) as c:
-                    r = await c.get(u)
-                    r.raise_for_status()
-                    ct = r.headers.get("content-type", "")
-                    ext = (
-                        ".png"
-                        if "png" in ct
-                        else (
-                            ".gif"
-                            if "gif" in ct
-                            else ".webp" if "webp" in ct else ".jpg"
-                        )
-                    )
-                    if not any(x in ct for x in ["png", "gif", "webp", "jpeg"]):
-                        pe = os.path.splitext(urlparse(u).path)[1].lower()
-                        if pe in [".jpg", ".jpeg", ".png", ".gif", ".webp"]:
-                            ext = pe
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as t:
-                        t.write(r.content)
-                        result.append(t.name)
+                )
+                if not any(x in ct for x in ["png", "gif", "webp", "jpeg"]):
+                    pe = os.path.splitext(urlparse(u).path)[1].lower()
+                    if pe in [".jpg", ".jpeg", ".png", ".gif", ".webp"]:
+                        ext = pe
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as t:
+                    written = 0
+                    async for chunk in r.aiter_bytes(64 * 1024):
+                        written += len(chunk)
+                        if written > _MAX_IMAGE_BYTES:
+                            t.close()
+                            os.unlink(t.name)
+                            raise HTTPException(
+                                413,
+                                f"image at {u} exceeds {_MAX_IMAGE_BYTES} bytes",
+                            )
+                        t.write(chunk)
+                    result.append(t.name)
             elif re.match(r"^[A-Za-z0-9+/]*={0,2}$", u) and len(u) > 100:
                 bd = base64.b64decode(u)
                 ext = (

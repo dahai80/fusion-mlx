@@ -14,6 +14,7 @@ import time
 import uuid
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..admin.auth import require_admin
@@ -29,6 +30,55 @@ router = APIRouter(prefix="/v1/agents", tags=["agents"])
 # evicted to make room. Env-configurable for power users.
 MAX_GRAPHS = max(8, int(os.environ.get("FUSION_MLX_MAX_AGENT_GRAPHS", "128") or 128))
 _graphs: dict[str, dict[str, Any]] = {}
+
+# FC-7 (#0907 audit): persist agent graphs to disk so a server restart
+# (or LRU eviction under memory pressure) does not silently evaporate
+# operator-built agent configurations. Atomic write (temp + os.replace);
+# loaded once at module import.
+_GRAPHS_FILE = os.path.expanduser("~/.fusion-mlx/agent_graphs.json")
+
+
+def _persist_graphs() -> None:
+    try:
+        os.makedirs(os.path.dirname(_GRAPHS_FILE), exist_ok=True)
+        tmp = _GRAPHS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_graphs, f, ensure_ascii=False)
+        os.replace(tmp, _GRAPHS_FILE)
+    except Exception as e:
+        logger.error("FC-7: failed to persist agent graphs to %s: %s", _GRAPHS_FILE, e)
+
+
+def _load_graphs() -> None:
+    try:
+        with open(_GRAPHS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            logger.warning(
+                "FC-7: agent graph file %s is not a JSON object; ignoring", _GRAPHS_FILE
+            )
+            return
+        loaded = 0
+        for gid, g in data.items():
+            if not isinstance(g, dict):
+                continue
+            if len(_graphs) >= MAX_GRAPHS:
+                logger.warning(
+                    "FC-7: loaded graphs exceed MAX_GRAPHS=%d; %d graph(s) dropped",
+                    MAX_GRAPHS,
+                    len(data) - loaded,
+                )
+                break
+            _graphs[gid] = g
+            loaded += 1
+        logger.info("FC-7: loaded %d agent graph(s) from %s", loaded, _GRAPHS_FILE)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning("FC-7: failed to load agent graphs from %s: %s", _GRAPHS_FILE, e)
+
+
+_load_graphs()
 
 # ── Helper ──
 
@@ -136,6 +186,7 @@ async def create_graph(
         "created_at": now,
         "updated_at": now,
     }
+    _persist_graphs()
     logger.info("Created agent graph %s: %s", graph_id, data.get("name", ""))
     return {"id": graph_id, "status": "created"}
 
@@ -173,6 +224,7 @@ async def update_graph(
         "id": graph_id,
         "updated_at": now,
     }
+    _persist_graphs()
     logger.info("Updated agent graph %s", graph_id)
     return {"id": graph_id, "status": "updated"}
 
@@ -186,6 +238,7 @@ async def delete_graph(
     if graph_id not in _graphs:
         raise HTTPException(404, detail=f"Graph '{graph_id}' not found")
     del _graphs[graph_id]
+    _persist_graphs()
     logger.info("Deleted agent graph %s", graph_id)
     return {"id": graph_id, "status": "deleted"}
 
@@ -215,6 +268,60 @@ async def export_graph(
         raise HTTPException(400, detail=f"Unsupported format: {fmt}")
 
 
+def _build_run_plan(
+    body: dict[str, Any], graph: dict[str, Any]
+) -> dict[str, Any] | None:
+    # Resolve graph + first LLM node into a chat-completions request plan.
+    graph_id = body.get("graph_id", "")
+    llm_node = _find_first_llm_node(graph)
+    if llm_node is None:
+        return None
+    model = body.get("model") or llm_node.get("model", "")
+    if not model:
+        return None
+    system_prompt = body.get("system_prompt") or llm_node.get("system_prompt", "")
+    messages: list[dict[str, str]] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": body.get("input", "")})
+    temperature = body.get("temperature", llm_node.get("temperature", 0.7))
+    try:
+        temperature = float(temperature)
+    except (TypeError, ValueError):
+        temperature = 0.7
+    max_tokens = body.get("max_tokens", llm_node.get("max_tokens", 4096))
+    return {
+        "graph_id": graph_id,
+        "graph_name": graph.get("name", ""),
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+
+@router.post("/plan")
+async def plan_graph(
+    body: dict[str, Any],
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
+    # FC-8 (#0907 audit): /plan honestly returns the chat-completions
+    # request the graph resolves to, without executing it. Use this when
+    # you want to inspect or replay the request yourself.
+    graph_id = body.get("graph_id", "")
+    graph = _graphs.get(graph_id)
+    if graph is None:
+        raise HTTPException(404, detail=f"Graph '{graph_id}' not found")
+    plan = _build_run_plan(body, graph)
+    if plan is None:
+        raise HTTPException(400, detail="Graph has no LLM node or model configured")
+    plan["status"] = "ready"
+    plan["note"] = (
+        "Execute by sending these messages to /v1/chat/completions, or POST /v1/agents/run"
+    )
+    return plan
+
+
 @router.post("/run")
 async def run_graph(
     body: dict[str, Any],
@@ -222,54 +329,56 @@ async def run_graph(
 ) -> dict[str, Any]:
     """Execute an agent graph against fusion-mlx's loaded model.
 
-    This endpoint reads the graph's first LLM node configuration and
-    calls /v1/chat/completions internally. It does NOT load or manage
-    models — that must be done separately via ``fusion-mlx serve``.
-
-    Request body:
-    ```json
-    {
-        "graph_id": "...",
-        "input": "User message",
-        "model": "optional-model-override",
-        "max_tokens": 4096,
-        "temperature": 0.7
-    }
-    ```
+    FC-8 (#0907 audit): this endpoint now actually executes the graph by
+    calling the local server's /v1/chat/completions (it previously only
+    returned a plan while the route name claimed execution). The graph's
+    first LLM node provides model/temperature/max_tokens; the request body
+    may override them. Models must already be loaded via ``fusion-mlx serve``.
     """
     graph_id = body.get("graph_id", "")
     graph = _graphs.get(graph_id)
     if graph is None:
         raise HTTPException(404, detail=f"Graph '{graph_id}' not found")
+    plan = _build_run_plan(body, graph)
+    if plan is None:
+        raise HTTPException(400, detail="Graph has no LLM node or model configured")
 
-    # Find the first LLM node to get model config
-    llm_node = _find_first_llm_node(graph)
-    if llm_node is None:
-        raise HTTPException(400, detail="Graph has no LLM node configured")
-
-    model = body.get("model") or llm_node.get("model", "")
-    if not model:
-        raise HTTPException(400, detail="No model specified and no model in graph")
-
-    # Build messages
-    system_prompt = body.get("system_prompt") or llm_node.get("system_prompt", "")
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": body.get("input", "")})
-
-    # We return the execution plan; actual execution requires a running
-    # fusion-mlx server. The client is expected to call /v1/chat/completions
-    # with the returned messages.
+    api_key = os.environ.get("FUSION_MLX_API_KEY", "")
+    base_url = os.environ.get("FUSION_HOST", "http://127.0.0.1:11434").rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    payload = {
+        "model": plan["model"],
+        "messages": plan["messages"],
+        "temperature": plan["temperature"],
+        "max_tokens": plan["max_tokens"],
+    }
+    try:
+        async with httpx.AsyncClient(base_url=base_url, timeout=120.0) as client:
+            resp = await client.post(
+                "/v1/chat/completions", json=payload, headers=headers
+            )
+    except httpx.RequestError as e:
+        logger.error(
+            "FC-8 /v1/agents/run: failed to reach local server %s: %s", base_url, e
+        )
+        raise HTTPException(503, detail=f"Local inference server unreachable: {e}")
+    if resp.status_code >= 400:
+        logger.error(
+            "FC-8 /v1/agents/run: chat completions returned %d: %s",
+            resp.status_code,
+            resp.text[:500],
+        )
+        raise HTTPException(resp.status_code, detail=resp.text[:500])
+    completion = resp.json()
+    logger.info("FC-8: executed agent graph %s via %s", graph_id, plan["model"])
     return {
         "graph_id": graph_id,
-        "graph_name": graph.get("name", ""),
-        "model": model,
-        "messages": messages,
-        "temperature": body.get("temperature", llm_node.get("temperature", 0.7)),
-        "max_tokens": body.get("max_tokens", llm_node.get("max_tokens", 4096)),
-        "status": "ready",
-        "note": "Execute by sending these messages to /v1/chat/completions",
+        "graph_name": plan["graph_name"],
+        "model": plan["model"],
+        "status": "completed",
+        "completion": completion,
     }
 
 

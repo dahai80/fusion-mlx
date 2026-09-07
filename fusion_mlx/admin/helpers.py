@@ -1,9 +1,11 @@
 import asyncio
+import json
 import logging
 import os
 import shutil
 import signal
 import subprocess
+import time
 from pathlib import Path
 
 from fastapi import HTTPException, Request
@@ -11,6 +13,37 @@ from fastapi import HTTPException, Request
 from .auth import verify_api_key, verify_session_from_request
 
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Admin audit log (OP-9 #0907 audit)
+# =============================================================================
+
+_AUDIT_LOG_PATH = Path(os.path.expanduser("~/.fusion-mlx/admin_audit.log"))
+
+
+def _audit_admin_action(
+    action: str,
+    actor: str = "unknown",
+    detail: dict | None = None,
+) -> None:
+    # OP-9: admin write operations (delete model, change settings, manage
+    # keys) had no audit trail — a misconfigured or malicious admin action
+    # was untraceable. Append one JSONL record per action (who/what/when)
+    # to ~/.fusion-mlx/admin_audit.log. Best-effort: a log failure must
+    # never block the audited operation.
+    record = {
+        "ts": time.time(),
+        "action": action,
+        "actor": actor,
+        "detail": detail or {},
+    }
+    try:
+        _AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(_AUDIT_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.error("OP-9: failed to write admin audit log: %s", e)
+
 
 # =============================================================================
 # Runtime Settings Application Functions

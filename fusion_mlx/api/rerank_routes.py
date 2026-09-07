@@ -76,6 +76,18 @@ async def create_rerank(request: RerankRequest) -> RerankResponse:
             detail="Server is busy with oQ quantization. Please try again after quantization completes.",
         )
 
+    # FC-9 (#0907 audit): max_chunks_per_doc is accepted for Cohere/Jina
+    # compatibility but chunked rerank is not implemented. Failing visibly
+    # (400) here beats silently serving an unchunked single pass whose
+    # long-document behavior diverges from what the client asked for.
+    if request.max_chunks_per_doc is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="max_chunks_per_doc is not supported: chunked rerank is "
+            "not implemented. Pre-chunk long documents client-side and "
+            "rerank the chunks individually.",
+        )
+
     await get_reranker_engine(request.model)
 
     documents_raw = request.documents

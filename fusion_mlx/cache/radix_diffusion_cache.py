@@ -12,6 +12,7 @@ Closes #178
 
 import heapq
 import logging
+import os
 import time
 import weakref
 from dataclasses import dataclass
@@ -100,6 +101,13 @@ class DiffusionRadixCache:
 
     def __init__(self, max_mb: int = 512, name: str | None = None):
         self.max_bytes = max_mb * 1024 * 1024
+        # PB-12 (#0907 audit): hard cap on live leaves as a backstop for
+        # max_bytes. A pathological key set (many tiny/zero-byte values, e.g.
+        # empty mx arrays or size-hinted 0) could slip past the byte budget
+        # while still leaking _RadixNode objects + heap tuples. The byte
+        # budget stays the primary eviction driver; this is a node-count
+        # ceiling so a leaky key pattern degrades to evictions, not OOM.
+        self.max_nodes = int(os.environ.get("FUSION_RADIX_MAX_NODES", "200000"))
         self._root = _RadixNode()
         self._stats = RadixCacheStats()
         self._clock = 0.0
@@ -107,8 +115,20 @@ class DiffusionRadixCache:
         self.name = name
         self._lru_heap: list[tuple[float, int, _RadixNode]] = []
         self._heap_seq = 0
+        # PB-12 (#0907 audit): compact the LRU heap (drop stale tuples whose
+        # node was already evicted or re-touched) every N insertions. Without
+        # this the heap accumulates one tuple per historical _touch() and only
+        # sheds them lazily during an eviction scan — a long-lived cache with
+        # frequent hits grows the heap unboundedly between evictions.
+        self._heap_compact_every = 4096
+        self._puts_since_compact = 0
         _REGISTRY.add(self)
-        logger.debug("radix cache created: name=%s max_mb=%d", name, max_mb)
+        logger.debug(
+            "radix cache created: name=%s max_mb=%d max_nodes=%d",
+            name,
+            max_mb,
+            self.max_nodes,
+        )
 
     def get(self, key: str) -> object | None:
         """Look up a key in the radix tree.
@@ -154,6 +174,16 @@ class DiffusionRadixCache:
         self._stats.total_bytes += size_bytes
 
         self._evict_if_needed()
+        # PB-12 (#0907 audit): node-count backstop (see max_nodes). The byte
+        # budget is primary; this catches zero-byte-value leaks that slip past
+        # it. Also compact the LRU heap periodically so stale _touch() tuples
+        # do not accumulate unboundedly between byte-driven evictions.
+        self._puts_since_compact += 1
+        if self._puts_since_compact >= self._heap_compact_every:
+            self._puts_since_compact = 0
+            self._compact_lru_heap()
+        if self._stats.leaf_count > self.max_nodes:
+            self._evict_to_node_cap()
 
     def pin(self, key: str) -> bool:
         """Increment ref count to prevent eviction."""
@@ -181,6 +211,8 @@ class DiffusionRadixCache:
             "leaf_count": s.leaf_count,
             "total_bytes": s.total_bytes,
             "max_bytes": self.max_bytes,
+            "max_nodes": self.max_nodes,
+            "lru_heap_size": len(self._lru_heap),
             "hit_rate": s.hits / max(s.hits + s.misses, 1),
         }
 
@@ -189,6 +221,7 @@ class DiffusionRadixCache:
         self._stats = RadixCacheStats()
         self._lru_heap.clear()
         self._heap_seq = 0
+        self._puts_since_compact = 0
 
     def drop_prefix(self, prefix: str) -> int:
         # CS-2 (#811 audit 0906): remove every key that starts with *prefix*.
@@ -231,7 +264,7 @@ class DiffusionRadixCache:
             if common == prefix:
                 # full edge consumed; descend if prefix still has chars,
                 # else this child is the subtree root
-                return self._walk_prefix(child, remainder[len(common):], node, prefix)
+                return self._walk_prefix(child, remainder[len(common) :], node, prefix)
             # common < prefix → prefix ends mid-edge; child's whole subtree
             # matches (every key under this edge starts with *common* == the
             # remainder we had, which is the trailing part of the prefix).
@@ -379,6 +412,71 @@ class DiffusionRadixCache:
         self._heap_seq += 1
         node._heap_seq = self._heap_seq
         heapq.heappush(self._lru_heap, (node.last_access, self._heap_seq, node))
+
+    def _compact_lru_heap(self) -> None:
+        # PB-12 (#0907 audit): rebuild the LRU heap keeping only live tuples
+        # — a node with a non-None value whose _heap_seq matches the tuple's
+        # seq is the current canonical entry; everything else is stale (the
+        # node was evicted, or re-touched and a newer tuple supersedes it).
+        # Without periodic compaction the heap grows one tuple per _touch()
+        # and only sheds lazily during eviction, so a hot cache with frequent
+        # hits leaks heap memory between evictions.
+        live = [
+            (ts, seq, node)
+            for ts, seq, node in self._lru_heap
+            if node.value is not None and node._heap_seq == seq
+        ]
+        before = len(self._lru_heap)
+        self._lru_heap = live
+        heapq.heapify(self._lru_heap)
+        dropped = before - len(self._lru_heap)
+        if dropped:
+            logger.debug(
+                "radix cache: compacted LRU heap (%d -> %d, dropped %d stale)",
+                before,
+                len(self._lru_heap),
+                dropped,
+            )
+
+    def _evict_to_node_cap(self) -> None:
+        # PB-12 (#0907 audit): max_nodes backstop. Evict LRU leaves until
+        # leaf_count <= max_nodes. Reuses the same pinned-skip loop as
+        # _evict_if_needed (ref_count > 0 leaves are skipped, not evicted)
+        # so a pinned hot leaf never gets dropped to satisfy a count cap.
+        skipped = 0
+        while self._stats.leaf_count > self.max_nodes and self._stats.leaf_count > 1:
+            if skipped >= self._stats.leaf_count:
+                logger.warning(
+                    "radix cache: all %d leaves pinned; cannot evict to "
+                    "max_nodes=%d (leaf_count=%d)",
+                    self._stats.leaf_count,
+                    self.max_nodes,
+                    self._stats.leaf_count,
+                )
+                break
+            victim = self._pop_lru_leaf()
+            if victim is None:
+                break
+            parent, edge_key, lru_node = victim
+            if lru_node.ref_count > 0:
+                skipped += 1
+                continue
+            skipped = 0
+            self._stats.total_bytes -= lru_node.size_bytes
+            self._stats.leaf_count -= 1
+            self._stats.evictions += 1
+            del parent.children[edge_key]
+            lru_node.value = None
+            lru_node._heap_seq = -1
+            self._cleanup_chains(self._root, None, "")
+        if self._stats.leaf_count > self.max_nodes:
+            logger.warning(
+                "radix cache: node cap enforced, leaf_count now %d "
+                "(max_nodes=%d, evictions=%d)",
+                self._stats.leaf_count,
+                self.max_nodes,
+                self._stats.evictions,
+            )
 
     def _pop_lru_leaf(self):
         while self._lru_heap:

@@ -54,6 +54,19 @@ class CloudRouter:
         self._circuit_open_at: float | None = None
         self._half_open_timeout: float = 30.0
 
+        # EF-4 (#0907 audit): CLOUD-side circuit breaker. The existing
+        # breaker above opens on LOCAL failures (route traffic to cloud).
+        # This one opens on CLOUD failures so a cloud outage stops every
+        # request from retrying cloud for 3s+ of backoff × 3 attempts.
+        # When open, route_chat should skip cloud and fail back to local
+        # (or fail-visible) instead of burning client time on a dead
+        # upstream. Closed on the first cloud success after cooldown.
+        self._cloud_circuit_open = False
+        self._cloud_failure_count = 0
+        self._cloud_failure_threshold = 5
+        self._cloud_open_at: float | None = None
+        self._cloud_cooldown: float = 60.0
+
     def _get_litellm(self):
         """Lazy import of litellm."""
         if self._litellm is None:
@@ -81,13 +94,61 @@ class CloudRouter:
     def is_circuit_open(self) -> bool:
         return self._circuit_open
 
+    # EF-4 (#0907 audit): cloud-side breaker reporting.
+    def report_cloud_failure(self) -> None:
+        self._cloud_failure_count += 1
+        if (
+            not self._cloud_circuit_open
+            and self._cloud_failure_count >= self._cloud_failure_threshold
+        ):
+            self._cloud_circuit_open = True
+            self._cloud_open_at = time.time()
+            logger.warning(
+                "[CLOUD] CLOUD-side circuit breaker OPENED after %d "
+                "consecutive cloud failures — cloud routing disabled "
+                "for %.0fs (EF-4)",
+                self._cloud_failure_count,
+                self._cloud_cooldown,
+            )
+
+    def report_cloud_success(self) -> None:
+        if self._cloud_circuit_open:
+            logger.info("[CLOUD] CLOUD-side circuit breaker CLOSED — cloud recovered")
+        self._cloud_circuit_open = False
+        self._cloud_failure_count = 0
+        self._cloud_open_at = None
+
+    def is_cloud_circuit_open(self) -> bool:
+        # Half-open: after cooldown elapses, allow one probe through.
+        if self._cloud_circuit_open and self._cloud_open_at is not None:
+            elapsed = time.time() - self._cloud_open_at
+            if elapsed > self._cloud_cooldown:
+                self._cloud_circuit_open = False
+                logger.info(
+                    "[CLOUD] CLOUD-side breaker HALF-OPEN after %.0fs — "
+                    "allowing one probe",
+                    elapsed,
+                )
+        return self._cloud_circuit_open
+
     def should_route_to_cloud(self, new_tokens: int) -> bool:
         """Return True if new_tokens exceeds threshold OR circuit breaker is open.
 
         Half-open: after _half_open_timeout seconds in OPEN, allow one probe
         request through to local. The caller (route_chat) must report success/failure
         back via report_local_success() / report_local_failure().
+
+        EF-4 (#0907 audit): returns False (refuse cloud routing) when the
+        cloud-side breaker is open — the caller should fall back to local
+        or fail visibly rather than burning client time retrying a dead
+        upstream.
         """
+        if self.is_cloud_circuit_open():
+            logger.warning(
+                "[CLOUD] refusing cloud routing — cloud-side breaker open "
+                "(EF-4); falling back to local"
+            )
+            return False
         if self._circuit_open and self._circuit_open_at is not None:
             elapsed = time.time() - self._circuit_open_at
             if elapsed > self._half_open_timeout:
@@ -264,9 +325,13 @@ class CloudRouter:
         last_error = None
         for attempt in range(3):
             try:
-                return await asyncio.wait_for(
+                resp = await asyncio.wait_for(
                     litellm.acompletion(**call_kwargs), timeout=30.0
                 )
+                # EF-4 (#0907 audit): a successful cloud call closes the
+                # cloud-side breaker (or keeps it closed).
+                self.report_cloud_success()
+                return resp
             except (TimeoutError, Exception) as e:
                 last_error = e
                 if not self._is_retryable_cloud_error(e):
@@ -275,6 +340,9 @@ class CloudRouter:
                         f"status={getattr(e, 'status_code', '?')}, "
                         f"{self.cloud_model}) — failing fast"
                     )
+                    # EF-4 (#0907 audit): a non-retryable client error
+                    # (auth/400/content-policy) is not a cloud-outage
+                    # signal — do NOT tick the cloud breaker for it.
                     raise
                 if attempt < 2:
                     wait = 1.0 * (2**attempt)
@@ -283,6 +351,10 @@ class CloudRouter:
                         f"{self.cloud_model}) — retrying in {wait:.0f}s"
                     )
                     await asyncio.sleep(wait)
+        # EF-4 (#0907 audit): exhausted retries on a transient fault →
+        # tick the cloud-side breaker so subsequent requests skip cloud
+        # for the cooldown window instead of all retrying a dead upstream.
+        self.report_cloud_failure()
         raise last_error
 
     def _build_call_kwargs(

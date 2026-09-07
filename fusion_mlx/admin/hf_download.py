@@ -401,7 +401,10 @@ async def delete_hf_model(
         if settings_manager:
             pinned_models = settings_manager.get_pinned_model_ids()
 
-        engine_pool._entries.pop(model_name, None)
+        # AS-6 (#0907 audit): route entry removal through the locked
+        # EnginePool accessor instead of mutating `_entries` directly,
+        # which raced concurrent get_engine/enforcer iteration.
+        await engine_pool.remove_entry(model_name)
         # Release the deleted model's persisted settings (including its alias)
         # so they can be reused by another model.
         if settings_manager:

@@ -10,6 +10,25 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
+
+def _tick_ssrf_reject(reason: str = "private_ip") -> None:
+    # OP-2 (#0907 audit): surface SSRF denials as a Prometheus counter so an
+    # operator can alert on a non-zero reject rate instead of grepping logs.
+    try:
+        from ..middleware.degradation_metrics import record_ssrf_rejection
+
+        record_ssrf_rejection(reason)
+    except Exception:
+        logger.debug("record_ssrf_rejection('%s') failed", reason, exc_info=True)
+
+
+# requests is an optional dependency for the safe-fetch helpers; imported
+# lazily inside the functions so this module stays importable without it.
+try:
+    import requests
+except ImportError:  # pragma: no cover - requests is a core dep in practice
+    requests = None  # type: ignore[assignment]
+
 _PRIVATE_NETWORKS = [
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
@@ -119,6 +138,213 @@ def resolve_safe_ips(url: str) -> list[str] | None:
 
 def is_safe_url_with_dns(url: str) -> bool:
     return resolve_safe_ips(url) is not None
+
+
+def _resolve_safe_ips_or_raise(url: str) -> list[str]:
+    # S-1/S-2 (#0907 audit): SSRF DNS-rebinding TOCTOU. is_safe_url_with_dns
+    # validates once and the real connect re-resolves; a public DNS answer
+    # can flip to a private/loopback IP between the two. Resolve to concrete
+    # IPs here, validate them, and have the caller pin the connection to one
+    # of these IPs so the on-the-wire connect goes where we checked.
+    ips = resolve_safe_ips(url)
+    if not ips:
+        _tick_ssrf_reject("private_ip")
+        raise ValueError(
+            f"URL targets a private/internal or unresolvable address: {url}"
+        )
+    return ips
+
+
+def make_safe_session(url: str, timeout: int) -> "requests.Session":
+    # S-1 + S-2 (#0907 audit): build a requests.Session that (a) pins the
+    # connect to a pre-validated IP and (b) refuses to follow redirects
+    # automatically — redirects are re-validated per hop by the caller via
+    # _resolve_safe_ips_or_raise, so a 302 to http://169.254.169.254/ cannot
+    # smuggle a private target past the guard.
+    if requests is None:
+        raise RuntimeError(
+            "requests is required for safe outbound fetch but is not installed"
+        )
+
+    class _PinnedHTTPAdapter(requests.adapters.HTTPAdapter):
+        # S-1 (#0907 audit): override DNS at connect time. Connect to a
+        # pre-validated IP instead of re-resolving the hostname, closing the
+        # DNS-rebinding TOCTOU (A record flips to 127.0.0.1 after our check).
+
+        def __init__(
+            self, *args, pinned_hosts: dict[str, list[str]] | None = None, **kwargs
+        ):
+            self._pinned_hosts = pinned_hosts or {}
+            super().__init__(*args, **kwargs)
+
+        def get_connection(self, url, proxies=None):
+            pinned = self._pinned_hosts
+            if pinned:
+                parsed = urlparse(url)
+                host = parsed.hostname or ""
+                if host in pinned:
+                    safe_ip = pinned[host][0]
+                    scheme = parsed.scheme or "https"
+                    port = parsed.port
+                    netloc = safe_ip if port is None else f"{safe_ip}:{port}"
+                    pinned_url = f"{scheme}://{netloc}{parsed.path}"
+                    if parsed.query:
+                        pinned_url += f"?{parsed.query}"
+                    logger.debug(
+                        "SSRF pin: connecting %s -> %s (pinned IP for host %s)",
+                        url,
+                        pinned_url,
+                        host,
+                    )
+                    return super().get_connection(pinned_url, proxies)
+            return super().get_connection(url, proxies)
+
+    ips = _resolve_safe_ips_or_raise(url)
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    session = requests.Session()
+    adapter = _PinnedHTTPAdapter(pinned_hosts={host: ips})
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    session.max_redirects = 0
+    # Preserve the original virtual-host Host header despite the IP-literal
+    # connect URL the pinned adapter builds.
+    if host:
+        if parsed.port:
+            session.headers["Host"] = f"{host}:{parsed.port}"
+        else:
+            session.headers["Host"] = host
+    session.headers.setdefault(
+        "User-Agent",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    )
+    logger.info(
+        "SSRF safe session: host=%s pinned_ips=%s timeout=%d",
+        host,
+        ips,
+        timeout,
+    )
+    return session
+
+
+def safe_fetch(
+    url: str,
+    *,
+    timeout: int = 30,
+    max_size: int,
+    stream: bool = True,
+    max_hops: int = 5,
+):
+    # S-1/S-2 (#0907 audit): single safe entry point for outbound media fetch.
+    # Re-validates the target on every redirect hop (S-2) and pins each connect
+    # to a validated IP (S-1). Returns the final streaming requests.Response;
+    # caller is responsible for reading + size-capping the body.
+    if requests is None:
+        raise RuntimeError(
+            "requests is required for safe outbound fetch but is not installed"
+        )
+
+    current = url
+    for hop in range(max_hops + 1):
+        session = make_safe_session(current, timeout)
+        try:
+            response = session.get(current, timeout=timeout, stream=stream, verify=True)
+        except requests.RequestException as e:
+            logger.warning("SSRF safe_fetch: request failed for %s: %s", current, e)
+            raise
+        if response.is_redirect:
+            location = response.headers.get("location", "")
+            if not location:
+                response.close()
+                _tick_ssrf_reject("redirect_no_location")
+                raise ValueError(f"redirect with no Location from {current}")
+            # S-2: re-resolve + re-check the redirect target before following.
+            logger.info(
+                "SSRF safe_fetch: redirect hop %d %s -> %s (re-validating)",
+                hop,
+                current,
+                location,
+            )
+            response.close()
+            current = location
+            # Re-validate will raise if the new target is unsafe.
+            _resolve_safe_ips_or_raise(current)
+            continue
+        return response
+    raise ValueError(f"too many redirects (>{max_hops}) for {url}")
+
+
+async def safe_fetch_async(
+    url: str,
+    *,
+    timeout: int = 30,
+    max_hops: int = 5,
+    max_size: int | None = None,
+):
+    # S-1/S-2 (#0907 audit): httpx counterpart of safe_fetch. Resolves+pins
+    # each hop to a validated IP (S-1) and re-validates redirect targets
+    # per hop (S-2). follow_redirects=False so no hop is followed blindly.
+    import httpx
+
+    current = url
+    for hop in range(max_hops + 1):
+        ips = _resolve_safe_ips_or_raise(current)
+        parsed = urlparse(current)
+        host = parsed.hostname or ""
+        safe_ip = ips[0]
+        port = parsed.port
+        scheme = parsed.scheme or "https"
+        netloc = safe_ip if port is None else f"{safe_ip}:{port}"
+        connect_url = f"{scheme}://{netloc}{parsed.path}"
+        if parsed.query:
+            connect_url += f"?{parsed.query}"
+        # Preserve the original virtual host: Host header for HTTP, SNI for
+        # TLS. httpx AsyncHTTPTransport uses the connect_url's host for SNI,
+        # so for https we must carry the original host via an extension /
+        # ssl context server_hostname. Simplest robust: use the original
+        # URL for SNI by pinning via a custom transport that swaps the
+        # network address only. httpx lacks a clean per-call address pin,
+        # so we fall back to Host-header pinning for http and, for https,
+        # rely on the resolved IP being the same host we validated (the
+        # re-resolution at each hop keeps the validated set fresh).
+        headers = {"Host": f"{host}:{port}" if port else host}
+        logger.info(
+            "SSRF safe_fetch_async: host=%s pinned_ip=%s hop=%d",
+            host,
+            safe_ip,
+            hop,
+        )
+        async with httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=timeout,
+            headers=headers,
+        ) as client:
+            try:
+                response = await client.get(connect_url)
+            except httpx.RequestError as e:
+                logger.warning(
+                    "SSRF safe_fetch_async: request failed for %s: %s", current, e
+                )
+                raise
+        if response.is_redirect:
+            location = response.headers.get("location", "")
+            if not location:
+                raise ValueError(f"redirect with no Location from {current}")
+            logger.info(
+                "SSRF safe_fetch_async: redirect hop %d %s -> %s (re-validating)",
+                hop,
+                current,
+                location,
+            )
+            current = location
+            _resolve_safe_ips_or_raise(current)
+            continue
+        if max_size is not None:
+            cl = response.headers.get("content-length")
+            if cl and int(cl) > max_size:
+                raise ValueError(f"resource at {url} exceeds max size {max_size} bytes")
+        return response
+    raise ValueError(f"too many redirects (>{max_hops}) for {url}")
 
 
 _ALLOWED_READ_DIRS: list[str] = [

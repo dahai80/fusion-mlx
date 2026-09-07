@@ -10,7 +10,15 @@ from typing import Any
 
 from PIL import Image, ImageOps
 
+from ..api._url_safety import is_safe_local_path
+
 logger = logging.getLogger(__name__)
+
+# Decompression-bomb guard: PIL raises DecompressionBombError above this.
+# Keep the PIL default (89_478_485 px) explicit so a crafted huge image
+# fails visibly instead of exhausting memory.
+if Image.MAX_IMAGE_PIXELS is None:
+    Image.MAX_IMAGE_PIXELS = 89_478_485
 
 
 def load_image(url_or_base64: str) -> Image.Image:
@@ -33,6 +41,22 @@ def load_image(url_or_base64: str) -> Image.Image:
             "Remote image URLs are not supported; use a data: URI or a local file path"
         )
     else:
+        # S-3 (#0907 audit): the else branch previously called
+        # Image.open on any non-data/non-http string, letting a client
+        # image_url.url read arbitrary local files (/etc/passwd,
+        # ~/.fusion-mlx/settings.json, ...) and probe file existence.
+        # Mirror the video path's is_safe_local_path guard: only allow
+        # paths inside the configured read allow-list.
+        if not is_safe_local_path(url_or_base64):
+            logger.warning(
+                "load_image: refused local path %r outside allowed read dirs "
+                "(path traversal / arbitrary file read protection)",
+                url_or_base64[:100],
+            )
+            raise ValueError(
+                "Local image path is outside allowed directories; "
+                "use a data: URI or a path under the model/data allow-list"
+            )
         img = Image.open(url_or_base64)
 
     img = ImageOps.exif_transpose(img)

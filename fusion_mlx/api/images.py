@@ -86,8 +86,16 @@ class ImageGenerateResponse(BaseModel):
 @router.post(
     "/generate", dependencies=[Depends(verify_api_key), Depends(check_rate_limit)]
 )
+@router.post(
+    "/generations",
+    dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
+)
 async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse:
-    """Generate images from a text prompt using Flux variants."""
+    """Generate images from a text prompt using Flux variants.
+
+    Mounted on both /v1/images/generate (legacy) and /v1/images/generations
+    (OpenAI-compatible path — FC-2 #0907 audit).
+    """
     try:
         if _pool is None:
             raise HTTPException(450, "Engine pool not initialized")
@@ -216,6 +224,18 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
     except ValueError as exc:
         logger.warning("Image generation validation error: %s", exc)
         raise HTTPException(422, "Invalid request parameters")
+    except (ImportError, ModuleNotFoundError) as exc:
+        # OP-17 (#0907 audit): the image extra is not installed — a bare
+        # 500 "Internal server error" misled operators into thinking the
+        # server was broken rather than missing an optional dependency.
+        # Surface a 503 with the install hint so the cause is actionable.
+        logger.error("Image generation dependency missing: %s", exc)
+        raise HTTPException(
+            503,
+            "Image generation is not available: the optional image extra is "
+            "not installed. Install it with: pip install -e '.[image]' "
+            "--find-links packaging/_wheels",
+        )
     except Exception as exc:
         logger.exception("Image generation failed")
         raise HTTPException(500, "Internal server error")

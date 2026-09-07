@@ -31,6 +31,19 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def _record_reject(reason: str) -> None:
+    # OP-16 (#0907 audit): route-guard 403s were log-only. Tick a metric so
+    # an operator can alert on reject rate (misconfigured gateway token or a
+    # direct-port probe pattern). Imported lazily to avoid a hard dep cycle.
+    try:
+        from .degradation_metrics import record_route_guard_rejection
+
+        record_route_guard_rejection(reason)
+    except Exception:
+        pass
+
+
 # #756: tenant-isolation contract. Imported lazily inside helpers to keep
 # the module importable standalone (no FastAPI Request dep at import time).
 _GATEWAY_DECISION_ROUTE = "gateway-decision"
@@ -142,6 +155,7 @@ class RouteGuardMiddleware:
                     _client_host(scope),
                     path.decode("ascii", "replace"),
                 )
+                _record_reject("invalid_route_token")
                 body = json.dumps(
                     {
                         "error": {
@@ -186,6 +200,7 @@ class RouteGuardMiddleware:
                     path.decode("ascii", "replace"),
                     route,
                 )
+                _record_reject("invalid_route_origin")
                 body = json.dumps(
                     {
                         "error": {
@@ -227,6 +242,7 @@ class RouteGuardMiddleware:
                         _client_host(scope),
                         path.decode("ascii", "replace"),
                     )
+                    _record_reject("missing_tenant")
                     body = json.dumps(
                         {
                             "error": {
@@ -266,6 +282,7 @@ class RouteGuardMiddleware:
                 _client_host(scope),
                 path.decode("ascii", "replace"),
             )
+            _record_reject("missing_route")
             body = json.dumps(
                 {
                     "error": {

@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -108,6 +109,16 @@ _EVICT_COOLDOWN_SECONDS = 30.0
 # /health/ready returns 503, downstream load balancers stop sending new
 # requests, and the operator sees a CRITICAL line instead of a silent kill.
 _UNRECOVERABLE_POLL_THRESHOLD = 3
+# AS-3 (#0907 audit): after draining flips, give the system this many
+# additional unrecoverable polls to recover before forcing a fatal exit.
+# Draining-then-waiting-for-jetsam is silent rot: in-flight requests keep
+# running, physical footprint can cross the kernel jetsam limit, and macOS
+# SIGKILLs the process with no drain, no client responses (TCP RST), no
+# failover signal. A supervisor-managed deployment wants a clean restart
+# instead. Env-tunable so single-machine dev can disable (0 = never fatal).
+_UNRECOVERABLE_FATAL_THRESHOLD = int(
+    os.environ.get("FUSION_UNRECOVERABLE_FATAL_POLLS", "6")
+)
 
 
 def _format_gb(b: int) -> str:
@@ -1237,6 +1248,28 @@ class ProcessMemoryEnforcer:
             # abort_loading flag is a cooperative signal the loading path
             # reads under the lock, so an unlocked write is benign as long
             # as it is to a real entry object (the .get() guards None).
+            # AS-2 (#0907 audit): fail visibly. The enforcer is the memory
+            # relief valve; being blocked by lock contention for 2s under
+            # hard pressure means eviction is skipped this poll and OOM
+            # pressure is NOT relieved until the next poll. Surface this as
+            # ERROR so an operator sees the enforcer was effectively
+            # disabled by lock contention, not a silent continue.
+            logger.error(
+                "Memory enforcer: pool lock acquire timed out after 2s "
+                "(pressure=%s) — running unsynchronized fallback; eviction "
+                "may be skipped this poll, OOM pressure not relieved until "
+                "next poll. Sustained lock contention disables the enforcer.",
+                new_level,
+            )
+            # OP-2 (#0907 audit): surface lock-contention relief-valve
+            # failures as a Prometheus counter so an operator can alert when
+            # the enforcer is effectively disabled by contention.
+            try:
+                from ..middleware.degradation_metrics import record_enforcer_timeout
+
+                record_enforcer_timeout()
+            except Exception:
+                logger.debug("record_enforcer_timeout() failed", exc_info=True)
             victim = self._engine_pool._find_lru_victim()
             if victim:
                 self._eviction_marked.add(victim)
@@ -1463,6 +1496,33 @@ class ProcessMemoryEnforcer:
                                             _format_gb(emergency_current),
                                             _format_gb(ceiling),
                                             self._unrecoverable_polls,
+                                        )
+                                    # AS-3 (#0907 audit): draining is a
+                                    # signal, not a recovery mechanism. If
+                                    # pressure stays unrecoverable well past
+                                    # the drain flip, force a fatal exit so
+                                    # an external supervisor restarts
+                                    # cleanly — instead of waiting for macOS
+                                    # jetsam to SIGKILL mid-request with no
+                                    # drain, no client response, no failover.
+                                    # FUSION_UNRECOVERABLE_FATAL_POLLS=0
+                                    # disables (single-machine dev).
+                                    if (
+                                        self._drain_flipped
+                                        and _UNRECOVERABLE_FATAL_THRESHOLD > 0
+                                        and self._unrecoverable_polls
+                                        >= _UNRECOVERABLE_POLL_THRESHOLD
+                                        + _UNRECOVERABLE_FATAL_THRESHOLD
+                                    ):
+                                        from ..utils.fatal import fatal_exit
+
+                                        fatal_exit(
+                                            f"unrecoverable memory pressure: "
+                                            f"current={_format_gb(emergency_current)} "
+                                            f"over ceiling={_format_gb(ceiling)} for "
+                                            f"{self._unrecoverable_polls} consecutive "
+                                            f"polls after drain flip; restarting so the "
+                                            f"supervisor recovers a clean state"
                                         )
                             else:
                                 logger.warning(

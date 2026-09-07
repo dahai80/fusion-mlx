@@ -20,6 +20,23 @@ security = HTTPBearer(auto_error=False)
 
 _RATE_LIMIT_HMAC_KEY = secrets.token_bytes(32)
 
+
+def _tick_rate_limit_reject() -> None:
+    # OP-2 (#0907 audit): surface rate-limit 429s as a Prometheus counter so
+    # an operator can alert on abuse/a throttle storm instead of grepping logs.
+    try:
+        from .degradation_metrics import record_rate_limit_rejection
+
+        record_rate_limit_rejection()
+    except Exception:
+        logger.debug("record_rate_limit_rejection() failed", exc_info=True)
+
+
+# OP-5 (#0907 audit): counter for rate-limited anonymous-access warnings so a
+# production operator who left FUSION_ALLOW_ANONYMOUS=true sees a loud,
+# recurring signal instead of a single startup line that scrolls off.
+_ANONYMOUS_WARN_COUNT = 0
+
 # P3-4: behind a reverse proxy, request.client.host is the proxy, so the /24
 # subnet bucket collapses every co-located client into one rate-limit bucket
 # and a single abuser starves them all. When FUSION_TRUSTED_PROXIES is set
@@ -195,6 +212,7 @@ async def check_rate_limit(request: Request):
             client_id[:8],
             retry_after,
         )
+        _tick_rate_limit_reject()
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Retry after {retry_after} seconds.",
@@ -211,6 +229,7 @@ async def check_rate_limit_or_x_api_key(request: Request):
             client_id[:8],
             retry_after,
         )
+        _tick_rate_limit_reject()
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded. Retry after {retry_after} seconds.",
@@ -229,9 +248,24 @@ def _get_configured_api_key() -> str | None:
                 key = getattr(auth, "api_key", None)
                 if key:
                     return key
-    except Exception:
+    except (ImportError, AttributeError):
+        # Module/attribute missing during partial startup — not a config
+        # fault; fall through to the config-layer read below.
         logger.debug(
-            "Failed to read configured API key from global settings", exc_info=True
+            "admin.helpers not available for API key read; falling back to config",
+            exc_info=True,
+        )
+    except Exception:
+        # OP-5 (#0907 audit): a real settings read failure (corrupt
+        # settings.json, schema mismatch) previously logged at DEBUG and
+        # silently fell back to anonymous. Surface it at ERROR so the
+        # operator sees auth was bypassed due to a settings fault, not a
+        # silent degradation.
+        logger.error(
+            "Failed to read configured API key from global settings — "
+            "auth may fall back to anonymous if FUSION_ALLOW_ANONYMOUS is set; "
+            "investigate settings.json (OP-5 fail-visible)",
+            exc_info=True,
         )
     try:
         from ..config import get_config
@@ -319,8 +353,22 @@ async def verify_scoped_api_key(
             )
         configured_key = _get_configured_api_key()
         if configured_key is None:
-            logger.debug("No API key configured — scoped key accepted (dev mode)")
-            return role
+            # S-11 (#0907 audit): scoped-key dev-mode bypass was independent
+            # of the anonymous-access gate — a client could send
+            # `Authorization: Bearer fsb_garbage` on a no-key deployment
+            # (even without FUSION_ALLOW_ANONYMOUS) and gain the
+            # model_manager role. Mirror the inference path: require
+            # FUSION_ALLOW_ANONYMOUS=true to accept scoped keys in dev
+            # mode; otherwise fail closed with 401.
+            if _anonymous_access_allowed(request):
+                logger.debug("No API key configured — scoped key accepted (dev mode)")
+                return role
+            logger.warning(
+                "Scoped key rejected in no-key deploy without "
+                "FUSION_ALLOW_ANONYMOUS host=%s (S-11 fail-closed)",
+                _client_host(request),
+            )
+            raise HTTPException(status_code=401, detail="API key required")
         key_body = api_key
         for prefix in _SCOPED_KEY_PREFIXES:
             if api_key.startswith(prefix):
@@ -380,7 +428,20 @@ def _client_host(request: Request | None) -> str:
 
 def _anonymous_access_allowed(request: Request | None) -> bool:
     if _env_truthy("FUSION_ALLOW_ANONYMOUS"):
-        logger.debug("Anonymous access allowed via FUSION_ALLOW_ANONYMOUS env")
+        # OP-5 (#0907 audit): anonymous access disables auth across ALL routes.
+        # A production operator who left FUSION_ALLOW_ANONYMOUS=true would serve
+        # every endpoint unauthenticated with no loud signal. Emit a WARNING
+        # every Nth anonymous request so it is unmissable in logs, not a single
+        # startup line that scrolls off. Rate-limited so high-QPS doesn't flood.
+        global _ANONYMOUS_WARN_COUNT
+        _ANONYMOUS_WARN_COUNT += 1
+        if _ANONYMOUS_WARN_COUNT == 1 or _ANONYMOUS_WARN_COUNT % 1000 == 0:
+            logger.warning(
+                "AUTH DISABLED: FUSION_ALLOW_ANONYMOUS=true — all routes serve "
+                "unauthenticated (request #%d). This is a dev/test override; "
+                "unset it in production.",
+                _ANONYMOUS_WARN_COUNT,
+            )
         return True
     # #350: loopback no longer grants anonymous access. A same-host client
     # (including a co-located gateway) must present a valid api_key, or the

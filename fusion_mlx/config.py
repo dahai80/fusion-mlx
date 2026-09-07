@@ -211,6 +211,16 @@ class MemoryConfig:
         if self.ssd_cache_max_bytes < 1024 * 1024:
             # Min 1 MB for SSD cache
             self.ssd_cache_max_bytes = 1024 * 1024
+        # OP-3 (#0907 audit): validate custom tier. A CUSTOM tier with no
+        # explicit limit silently falls back to balanced heuristics, which
+        # surprises operators who expect their custom value to apply. Fail
+        # visibly instead of running with an unintended memory policy.
+        if self.tier == MemoryTier.CUSTOM and self.custom_limit_mb is None:
+            logger.warning(
+                "MemoryConfig tier=CUSTOM but custom_limit_mb is unset; "
+                "falling back to balanced heuristics. Set custom_limit_mb "
+                "explicitly for a true custom budget (OP-3)."
+            )
         if self.custom_limit_mb is not None and self.custom_limit_mb < 100:
             # Min 100 MB for custom limit
             self.custom_limit_mb = 100

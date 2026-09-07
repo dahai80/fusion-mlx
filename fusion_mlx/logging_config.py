@@ -192,12 +192,18 @@ def configure_file_logging(
     level: str = "INFO",
     include_request_id: bool = True,
     retention_days: int = 7,
+    format_style: str = "standard",
 ) -> Path:
     """Add a daily-rotated file handler writing to {log_dir}/server.log.
 
     Returns the resolved log directory path. Old rotated files are deleted
     after ``retention_days``. Safe to call after ``configure_logging`` —
     appends to the root logger without disturbing the console handler.
+
+    OP-1 (#0907 audit): ``format_style="json"`` writes structured JSON
+    records (one per line) so a log aggregator can ingest the rotated file
+    without regex parsing. Default ``"standard"`` keeps the human-readable
+    format for local ``./start.sh log`` tailing.
     """
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -226,7 +232,10 @@ def configure_file_logging(
     file_handler.suffix = "%Y-%m-%d"
     file_handler.setLevel(log_level)
 
-    formatter = logging.Formatter(format_str)
+    if format_style == "json":
+        formatter = JsonFormatter(format_str)
+    else:
+        formatter = logging.Formatter(format_str)
     file_handler.setFormatter(formatter)
 
     if include_request_id:

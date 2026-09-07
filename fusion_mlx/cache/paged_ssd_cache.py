@@ -1376,6 +1376,23 @@ class PagedSSDCacheManager:
                     data_len = data_offsets[1] - data_offsets[0]
                     f.seek(data_base + data_offsets[0])
                     raw = f.read(data_len)
+                    # EF-3 (#0907 audit): a truncated/half-written SSD cold
+                    # layer block (crash mid-write) returns fewer bytes than
+                    # data_len. Without this check the short buffer is fed
+                    # to _restore_tensor_from_bytes and silently produces a
+                    # corrupt KV block — recovery loads garbage instead of
+                    # failing visibly and dropping the block. Reject short
+                    # reads so the caller falls through to block recovery.
+                    if len(raw) != data_len:
+                        logger.warning(
+                            "SSD safetensors %s truncated: tensor %s "
+                            "expected %d bytes, got %d — dropping block (EF-3)",
+                            path,
+                            name,
+                            data_len,
+                            len(raw),
+                        )
+                        return None
                     tensors_raw[name] = (raw, dtype_str, shape)
             return tensors_raw, file_metadata
         except FileNotFoundError:
