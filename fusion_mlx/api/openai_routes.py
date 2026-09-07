@@ -1808,6 +1808,118 @@ def _get_settings() -> Any:
     return get_settings()
 
 
+@router.post("/stream")
+async def start_resumable_stream(
+    request: ChatCompletionRequest,
+    http_request: Request,
+    _auth: bool = Depends(verify_api_key),
+    _rate: bool = Depends(check_rate_limit),
+) -> Any:
+    # #801 resumable streaming. Starts a generation whose output survives
+    # the originating connection so a dropped client can reconnect via
+    # GET /v1/streams/lookup and receive the full text. A background task
+    # drives _stream_chat_generator (same formatting path as the normal
+    # SSE stream) and appends each chunk to a StreamSession; this route
+    # either returns the session id as JSON (return_session_only=true) or
+    # itself serves the live SSE tail so a first-time caller sees output
+    # immediately and may disconnect/reconnect at will.
+    from ..server import resolve_model_with_profile
+    from ..stream_session import get_store
+
+    principal = request_principal(http_request)
+    session_id = f"sess-{uuid.uuid4().hex[:16]}"
+    store = get_store()
+    session = store.create(session_id)
+    request.stream = True
+
+    model_name, profile_overrides = resolve_model_with_profile(request.model)
+    adapter_path = getattr(request, "adapters", None)
+    # Resolve engine up front so 404/503 surface as HTTP errors, not ASGI 500s.
+    engine = await _resolve_engine(model_name, adapter_path=adapter_path)
+    if engine is None:
+        await _release_engine(model_name, adapter_path=adapter_path)
+        store.drop(session_id)
+        raise HTTPException(404, f"Model {model_name} not available")
+
+    async def _producer():
+        try:
+            async for chunk in _stream_chat_generator(
+                request,
+                engine,
+                model_name,
+                adapter_path,
+                principal=principal,
+                profile_overrides=profile_overrides,
+            ):
+                session.append(chunk)
+        except HTTPException as exc:
+            session.mark_error(f"http_{exc.status_code}: {exc.detail}")
+        except Exception as exc:
+            logger.exception("resumable stream producer failed: %s", exc)
+            session.mark_error(f"{type(exc).__name__}: {exc}")
+        else:
+            session.mark_complete(finish_reason="stop")
+        finally:
+            await _release_engine(model_name, adapter_path=adapter_path)
+
+    # Kick the producer off in the background; it outlives this response.
+    producer_task = asyncio.create_task(
+        _producer(), name=f"stream-producer-{session_id}"
+    )
+    session._producer_task = producer_task  # type: ignore[attr-defined]
+
+    if not getattr(request, "return_session_only", False):
+        # Serve the live SSE tail right here so a first-time caller streams
+        # immediately; disconnecting does NOT abort the producer.
+        return StreamingResponse(
+            _resume_consumer(session),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    return {"stream_session_id": session_id, "status": "started"}
+
+
+@router.get("/streams/lookup")
+async def lookup_resumable_stream(
+    session_id: str,
+    http_request: Request,
+    _auth: bool = Depends(verify_api_key),
+) -> Any:
+    # #801 resume/lookup an active resumable stream across a new connection.
+    # Replay the full buffered SSE from index 0 then live-tail the producer
+    # until the session completes. The client receives the same SSE sequence
+    # it would have on the original connection, regardless of when it
+    # reconnects (until the session TTL of 1h elapses).
+    from ..stream_session import get_store
+
+    store = get_store()
+    session = store.get(session_id)
+    if session is None:
+        raise HTTPException(
+            404,
+            f"stream session {session_id} not found (expired or never started)",
+        )
+    return StreamingResponse(
+        _resume_consumer(session),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _resume_consumer(session):
+    # Replay buffered events then live-tail until the session is complete.
+    # Disconnecting the consumer does NOT cancel the producer.
+    idx = 0
+    while True:
+        while idx < len(session.events):
+            yield session.events[idx]
+            idx += 1
+        if session.complete:
+            return
+        session._new_data.clear()
+        await session._new_data.wait()
+
+
 @router.post("/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,

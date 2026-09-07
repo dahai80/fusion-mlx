@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Added
+- **#801: resumable streaming** — `POST /v1/stream` starts a generation
+  whose output survives the originating connection, and `GET
+  /v1/streams/lookup?session_id=...` resumes it across a new connection.
+  A background producer task drives the same SSE formatting path as the
+  normal `/v1/chat/completions` stream and appends chunks to a
+  process-local `StreamSession`; a dropped client (crash, network drop,
+  proxy timeout) reconnects via lookup and receives the full generated
+  text. Sessions expire after 1h. Intended for long-form generation
+  (code, reports) where a dropped connection should not lose minutes of
+  output. (8 tests; no real model.)
 - **#805: slim default install + `[full]` meta-extra** — a bare
   `pip install fusion-mlx` now installs only the text-LM serving path (~300 MB
   lighter): mlx, mlx-lm, fastapi, uvicorn, pydantic, httpx. Vision (VLM),
