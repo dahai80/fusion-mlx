@@ -69,13 +69,13 @@ jobs:
           # id-token: write (granted above). A downstream user verifies with
           # `pip install fusion-mlx --require-hashes` + `sigstore verify` (see
           # README "Supply-chain verification"). No secrets needed — keyless.
-          attest: true
+          attestations: true
       - name: Publish to PyPI (trusted publisher - OIDC)
         if: env.HAS_API_TOKEN != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           # #804: same keyless PEP 740 attestation on the trusted-publisher path.
-          attest: true
+          attestations: true
 
   update-homebrew:
     needs: build
