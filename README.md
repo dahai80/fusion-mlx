@@ -53,6 +53,12 @@ x86+CUDA stack structurally cannot match. These are **landed and running today**
   `/metrics` (`fusion_mlx_moe_shared_cache_*`). Scope is intra-call only;
   cross-layer/cross-forward reuse are semantically invalid. The MLA latent-KV
   half of #803 is already satisfied (compressed latent stored, not expanded).
+- **Raw-diffusers HF-cache discovery (#843)** — `fusion-mlx pull`-cached repos
+  with the canonical diffusers layout (`model_index.json` + `transformer/` /
+  `vae/` subdirs, e.g. `black-forest-labs/FLUX.1-dev`) were wrongly rejected
+  as unloadable by the LLM-centric discovery heuristic. The heuristic now
+  reads `model_index.json` and accepts entries whose `_class_name` is a known
+  diffusers pipeline class loadable natively by the image/video backends.
 - **Fusion-ComfyUI Stage API + `on_step` (#170-172)** - 10 stage methods across
   text-encoder / DiT / VAE plus a thread->async `on_step` bridge; native ComfyUI
   integration no other MLX server offers.

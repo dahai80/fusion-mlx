@@ -469,3 +469,48 @@ class TestComfySingleFileLayout:
         root.mkdir()
         (root / "split_model.json").write_text('{"recipe": "ltx-2.5"}')
         assert not _is_flat_ltx2_5_layout(root)
+
+    def test_hf_cache_accepts_diffusers_subdir_layout(self, tmp_path):
+        # Issue #843: black-forest-labs/FLUX.1-dev canonical HF-cache layout
+        # is a raw diffusers repo: model_index.json + transformer/vae/
+        # component subdirs. Weights live inside subdirs (not root
+        # model*.safetensors), so the LLM glob gate wrongly rejected it.
+        from fusion_mlx.pool.model_discovery import _is_hf_cache_mlx_compatible
+
+        root = tmp_path / "FLUX.1-dev"
+        root.mkdir()
+        (root / "model_index.json").write_text(
+            '{"_class_name": "FluxPipeline", "_diffusers_version": "0.27.0"}'
+        )
+        (root / "transformer").mkdir()
+        (root / "vae").mkdir()
+        (
+            root / "transformer" / "diffusion_pytorch_model-00001-of-00003.safetensors"
+        ).write_bytes(b"x")
+        (root / "vae" / "diffusion_pytorch_model.safetensors").write_bytes(b"x")
+        assert _is_hf_cache_mlx_compatible(root, "black-forest-labs/FLUX.1-dev")
+
+    def test_hf_cache_rejects_diffusers_layout_unknown_pipeline(self, tmp_path):
+        # model_index.json present but _class_name not in
+        # DIFFUSERS_PIPELINE_TASKS must fall through to the glob gate and
+        # be rejected (no root model*.safetensors).
+        from fusion_mlx.pool.model_discovery import _is_hf_cache_mlx_compatible
+
+        root = tmp_path / "unknown-diffusers"
+        root.mkdir()
+        (root / "model_index.json").write_text('{"_class_name": "SomeUnknownPipeline"}')
+        (root / "transformer").mkdir()
+        (root / "transformer" / "diffusion_pytorch_model.safetensors").write_bytes(b"x")
+        assert not _is_hf_cache_mlx_compatible(root, "fake/unknown-pipeline")
+
+    def test_hf_cache_rejects_unreadable_model_index(self, tmp_path):
+        # Corrupt model_index.json must not crash discovery — falls through
+        # to the glob gate, rejected (no root model*.safetensors).
+        from fusion_mlx.pool.model_discovery import _is_hf_cache_mlx_compatible
+
+        root = tmp_path / "corrupt"
+        root.mkdir()
+        (root / "model_index.json").write_text("{not valid json")
+        (root / "transformer").mkdir()
+        (root / "transformer" / "diffusion_pytorch_model.safetensors").write_bytes(b"x")
+        assert not _is_hf_cache_mlx_compatible(root, "fake/corrupt")

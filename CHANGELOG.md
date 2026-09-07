@@ -4,6 +4,20 @@
 
 _Nothing yet._
 
+## [0.9.2] — 2026-09-07
+
+### Fixed
+- **#843: FLUX.1-dev model discovery** — the HF-cache compatibility
+  heuristic `_is_hf_cache_mlx_compatible` rejected the canonical layout of
+  raw diffusers repos (`black-forest-labs/FLUX.1-dev` and similar), because
+  weights live in `transformer/`, `vae/` component subdirs, not as root
+  `model*.safetensors`. The LLM-centric glob gate treated the repo as
+  unloadable. A new accept block reads `model_index.json` and accepts the
+  entry when `_class_name` is a known `DIFFUSERS_PIPELINE_TASKS` pipeline
+  (e.g. `FluxPipeline`), which the mflux / mlx-video backends load natively.
+  Corrupt or unknown-pipeline `model_index.json` falls through safely to the
+  existing glob gate. (3 headless tests; no real model.)
+
 ## [0.9.1] — 2026-09-07
 
 ### Added
