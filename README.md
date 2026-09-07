@@ -1471,6 +1471,26 @@ FUSION_HOST=unix:/run/fusion-mlx.sock ./start.sh start
 
 > UDS is orthogonal to the #349/#350 auth chain: even over the socket, a valid API key is still required when one is configured. UDS removes the *transport* reachability; auth removes *request* authorization. Use both for defense in depth.
 
+### Supply-chain verification (#804)
+
+Published wheels carry **PEP 740 build provenance attestations** signed with keyless Sigstore (OIDC-backed, no long-lived signing key). The `publish` GitHub Actions workflow (`attest: true` on `pypa/gh-action-pypi-publish`) signs every distribution at publish time and attaches the attestation to the PyPI release. A downstream user can verify a wheel was built from a specific commit on this repo, not tampered in transit.
+
+```bash
+# 1. Verify the PEP 740 attestation against the repo's identity
+pip install pip-audit
+pip-audit --require-hashes -r <(pip index versions fusion-mlx)
+
+# 2. Verify a downloaded wheel's Sigstore attestation directly
+pip install sigstore
+sigstore verify python fusion_mlx-<version>-py3-none-any.whl \
+  --certificate-identity https://github.com/dahai80/fusion-mlx/.github/workflows/publish.yml@refs/tags/v* \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+- **What is signed.** Each `.whl` and `.tar.gz` uploaded to PyPI gets a PEP 740 attestation (in-toto statement) binding the artifact's SHA256 to the workflow run (repo, ref, commit) that built it.
+- **What is NOT signed.** The Homebrew tap distributes a formula referencing a PyPI wheel URL + SHA256 — it inherits PyPI's provenance rather than carrying its own signature. The `update-homebrew` job stamps the SHA256 into the formula; `brew install` verifies that SHA on fetch.
+- **Verification status.** The `attest: true` flag is wired into `publish.yml`. Full end-to-end verification requires a real tagged release run through CI (which mints the keyless signature); until the next release ships, the attestation path is staged but not yet exercised on a published artifact. The homebrew tap path remains SHA256-only.
+
 ## Performance
 
 Benchmarks on Apple M5 Max (128 GB RAM, 40 GPU cores), MLX 0.32.0.dev - 2026-07-04.

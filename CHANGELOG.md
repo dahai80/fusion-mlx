@@ -52,6 +52,17 @@
   streaming requests do not retry (partial output is preserved, not
   duplicated). Off by default — single-instance behavior is unchanged.
   (16 tests, all headless; no real server needed.)
+- **#804: PEP 740 build provenance attestation (scaffold)** — the
+  `publish` GitHub Actions workflow now sets `attest: true` on
+  `pypa/gh-action-pypi-publish`, so each wheel/sdist uploaded to PyPI is
+  signed with keyless Sigstore (OIDC-backed, no long-lived key) and gets
+  a PEP 740 attestation binding the artifact's SHA256 to the workflow
+  run that built it. A downstream user can verify provenance with
+  `sigstore verify` (documented in README "Supply-chain verification").
+  The homebrew-tap path stays SHA256-only (it references a PyPI wheel).
+  Full end-to-end verification requires a real tagged release through
+  CI; the attestation path is staged but not yet exercised on a
+  published artifact.
 
 ### 0907 product audit
 - **#0907 audit: 6-dimension enterprise-readiness audit** —
