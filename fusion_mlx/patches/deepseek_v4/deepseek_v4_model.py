@@ -16,6 +16,11 @@ from .mla import MultiLinear
 from .pipeline import PipelineMixin
 from .switch_layers import SwitchGLU
 
+try:
+    from .._moe_shared_cache import make_layer_cache
+except Exception:  # pragma: no cover - patches import isolation
+    make_layer_cache = None
+
 
 def _materialize_cache_arrays(cache: Any | None) -> None:
     """Detach DeepSeek-V4 cache update graphs from prior decode steps."""
@@ -479,6 +484,8 @@ class DeepseekV4MoE(nn.Module):
             intermediate_size=config.moe_intermediate_size * config.n_shared_experts,
         )
         self.sharding_group = None
+        # #803 DSA shared-expert activation dedup (opt-in, default OFF).
+        self._shared_cache = make_layer_cache(layer_idx) if make_layer_cache else None
 
     def __call__(self, x: mx.array, input_ids: mx.array) -> mx.array:
         if self.sharding_group is not None:
@@ -487,7 +494,10 @@ class DeepseekV4MoE(nn.Module):
         inds, scores = self.gate(x, input_ids)
         y = self.switch_mlp(x, inds)
         y = (y * scores[..., None].astype(y.dtype)).sum(-2)
-        y = y + self.shared_experts(x)
+        if self._shared_cache is not None:
+            y = y + self._shared_cache.get_or_compute(x, self.shared_experts)
+        else:
+            y = y + self.shared_experts(x)
 
         if self.sharding_group is not None:
             y = mx.distributed.all_sum(y, group=self.sharding_group)

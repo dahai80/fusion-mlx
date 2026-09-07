@@ -874,6 +874,63 @@ def _render_spec_decode_metrics() -> list[str]:
     return lines
 
 
+def _render_moe_shared_cache_metrics() -> list[str]:
+    # #803: expose DSA shared-expert activation cache hit rate so an operator
+    # can see the real dedup benefit (opt-in via FUSION_MOE_SHARED_CACHE=1).
+    # Zero stats when disabled or no MoE model loaded — absent series, not a
+    # misleading 0 gauge, matching the sparse-counter convention.
+    lines: list[str] = []
+    try:
+        from ..patches._moe_shared_cache import get_stats_flat
+
+        snap = get_stats_flat()
+        if int(snap.get("moe_shared_cache_requests", 0)) == 0:
+            return lines
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_moe_shared_cache_requests_total",
+                "counter",
+                "DSA shared-expert activation cache lookups (cumulative).",
+                int(snap["moe_shared_cache_requests"]),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_moe_shared_cache_hits_total",
+                "counter",
+                "DSA shared-expert activation cache hits (cumulative).",
+                int(snap["moe_shared_cache_hits"]),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_moe_shared_cache_misses_total",
+                "counter",
+                "DSA shared-expert activation cache misses (cumulative).",
+                int(snap["moe_shared_cache_misses"]),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_moe_shared_cache_hit_rate",
+                "gauge",
+                "DSA shared-expert activation cache hit rate (0-1).",
+                float(snap["moe_shared_cache_hit_rate"]),
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_moe_shared_cache_layers_tracked",
+                "gauge",
+                "MoE layers with a shared-expert activation cache.",
+                int(snap["moe_shared_cache_layers_tracked"]),
+            )
+        )
+    except Exception:
+        logger.debug("moe shared-cache metrics render error", exc_info=True)
+    return lines
+
+
 def _render_lifespan_metrics() -> list[str]:
     lines: list[str] = []
     try:
@@ -1069,6 +1126,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_multimodal_metrics())
     lines.extend(_render_paged_kv_metrics())
     lines.extend(_render_spec_decode_metrics())
+    lines.extend(_render_moe_shared_cache_metrics())
     lines.extend(_render_lifespan_metrics())
     return "\n".join(lines) + "\n"
 
