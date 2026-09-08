@@ -80,6 +80,7 @@ class ModelSettings:
 
     dflash2_drafter_path: str | None = None
     dflash2_block_size: int | None = None
+    dflash2_draft_bits: int | None = None
 
     mtp_enabled: bool = False
 

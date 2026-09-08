@@ -1078,12 +1078,14 @@ def dflash2_spec_step(
             # thread-local stream owned by whichever thread imported it
             # first. Running the session on the scheduler step thread then
             # hits "There is no Stream(gpu, N) in current thread" (same
-            # class as #KV-0). Rebind to the scheduler's stream (created on
-            # the step thread) so dflash forwards evaluate on a stream this
-            # thread owns. Idempotent; no-op when already correct.
+            # class as #KV-0). scheduler._stream itself may also be a
+            # foreign thread's stream (captured at monkeypatches import,
+            # boot-order dependent), so bind to THIS thread's default
+            # stream - always valid wherever the step runs. Idempotent.
             import dflash.model_mlx as _dflash_mm
+            import mlx.core as _mx
 
-            _dflash_mm.generation_stream = scheduler._stream
+            _dflash_mm.generation_stream = _mx.default_stream(_mx.default_device())
             token_iter = generator.stream_from_tokens(
                 prompt_tokens,
                 max_new_tokens=max_tokens,
@@ -1133,6 +1135,6 @@ def dflash2_spec_step(
         return _emit_spec_tokens(scheduler, request_id, accepted_tokens)
 
     except Exception as e:
-        logger.warning("dflash2_spec: session error: %s", e)
+        logger.warning("dflash2_spec: session error: %s", e, exc_info=True)
         dflash2_state.remove_session(request_id)
         return []

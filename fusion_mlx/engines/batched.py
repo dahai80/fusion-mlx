@@ -605,20 +605,37 @@ class BatchedEngine(BaseEngine):
                     or getattr(scheduler_config, "dflash2_block_size", 5)
                     or 5
                 )
+                draft_bits = (
+                    getattr(self._model_settings, "dflash2_draft_bits", None)
+                    if self._model_settings
+                    else None
+                )
+                if draft_bits is None:
+                    draft_bits = getattr(scheduler_config, "dflash2_draft_bits", 4)
+                # Load on the engine's single-worker mlx executor (the SAME
+                # thread that runs scheduler steps). The dflash2 runtime
+                # carries its own target+draft weight copies; MLX binds
+                # arrays to the loading thread's stream, so loading on
+                # get_executor("io") bound them to an io-worker's
+                # thread-local stream and every spec step raised
+                # "There is no Stream(gpu, N) in current thread" (#411
+                # pattern). Same executor as self._engine (line ~422).
                 dflash2_rt = await loop.run_in_executor(
-                    get_executor("io"),
+                    self._model_load_executor,
                     lambda: load_dflash2_runtime(
                         target_repo,
                         dflash2_path,
                         block_size=block_size,
+                        draft_bits=draft_bits,
                     ),
                 )
                 self._engine.engine.scheduler._dflash2_runtime = dflash2_rt
                 logger.info(
-                    "DFlash2 spec-decode enabled for %s (draft=%s, block_size=%d)",
+                    "DFlash2 spec-decode enabled for %s (draft=%s, block_size=%d, draft_bits=%s)",
                     self._model_name,
                     dflash2_path,
                     block_size,
+                    draft_bits,
                 )
             except Exception as e:
                 logger.error(

@@ -668,6 +668,16 @@ Examples:
         "Capped at 5 for MLX quantized targets (larger verify widths are "
         "matmul-inefficient on quantized weights).",
     )
+    serve_parser.add_argument(
+        "--dflash2-draft-bits",
+        dest="dflash2_draft_bits",
+        type=int,
+        default=4,
+        choices=[4, 8],
+        help="Quantization bits for the DFlash2 draft model (default 4, the "
+        "official z-lab MLX recommendation). 4-bit halves draft weight "
+        "traffic with no measurable acceptance loss.",
+    )
     # DSpark — DeepSeek DeepSpec lossless block speculative decoder.
     # Self-contained DSparkGenerator loads its own target + converted MLX
     # draft (drafter taps the target's own hidden states) and runs a

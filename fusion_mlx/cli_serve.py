@@ -1855,6 +1855,7 @@ def serve_command(args):
         # In-place load via BatchedEngine (no forked server, unlike dflash v1).
         dflash2_drafter_path=getattr(args, "dflash2_drafter_path", "") or "",
         dflash2_block_size=getattr(args, "dflash2_block_size", 5) or 5,
+        dflash2_draft_bits=getattr(args, "dflash2_draft_bits", 4),
         # SuffixDecoding
         enable_suffix_decoding=args.suffix_decoding,
         suffix_max_draft=args.suffix_max_draft,

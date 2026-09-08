@@ -23,11 +23,11 @@ class TestRunBenchmark:
 
 class TestRunTier:
     def test_raises_not_implemented(self):
-        with pytest.raises(NotImplementedError, match="not available"):
+        with pytest.raises(tier_runner.TierRunnerUnavailable, match="not implemented"):
             tier_runner.run_tier()
 
     def test_raises_with_args(self):
-        with pytest.raises(NotImplementedError):
+        with pytest.raises(tier_runner.TierRunnerUnavailable):
             tier_runner.run_tier("arg", kw="val")
 
     def test_logger_defined(self):

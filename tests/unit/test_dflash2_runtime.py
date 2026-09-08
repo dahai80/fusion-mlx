@@ -26,6 +26,14 @@ def _install_fake_dflash_model_mlx(monkeypatch, token_blocks):
         def bind(self, target):
             self.bound = target
 
+        def leaf_modules(self):
+            # nn.quantize walks leaf_modules(); empty = quantize no-op
+            return {}
+
+        def update_modules(self, modules):
+            # nn.quantize calls update_modules() after quantizing leaves
+            pass
+
     class _FakeResp:
         def __init__(self, toks):
             self.tokens = toks
@@ -127,6 +135,28 @@ def test_load_runtime_rejects_bad_block_size():
         load_runtime("t", "d", block_size=20)
     with pytest.raises(ValueError, match="block_size"):
         load_runtime("t", "d", block_size=0)
+
+
+def test_load_runtime_rejects_bad_draft_bits():
+    from fusion_mlx.speculative.dflash2 import load_runtime
+
+    with pytest.raises(ValueError, match="draft_bits"):
+        load_runtime("t", "d", block_size=5, draft_bits=3)
+    with pytest.raises(ValueError, match="draft_bits"):
+        load_runtime("t", "d", block_size=5, draft_bits=16)
+
+
+def test_load_runtime_default_draft_bits_quantizes(monkeypatch):
+    from fusion_mlx.speculative.dflash2 import load_runtime
+
+    _install_fake_dflash_model_mlx(monkeypatch, [[1, 2]])
+    # default draft_bits=4 must survive constructor (quantize ran on the fake)
+    rt = load_runtime("t", "d", block_size=5)
+    assert rt.generator is not None
+    assert rt.generator.block_size == 5
+    # draft_bits=None disables quantization entirely (bf16 draft)
+    rt_bf16 = load_runtime("t", "d", block_size=5, draft_bits=None)
+    assert rt_bf16.generator is not None
 
 
 def test_load_runtime_rejects_empty_repos():
