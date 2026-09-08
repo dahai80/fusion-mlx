@@ -839,3 +839,34 @@ def test_readyz_ready_when_all_engines_alive(monkeypatch):
     monkeypatch.setitem(server._server_state, "preloading", False)
     result = asyncio.run(health.health_ready())
     assert result == {"ready": True}
+
+
+def test_readyz_ready_with_zero_models_in_multimodel_mode(monkeypatch):
+    # Multi-model (--model-dir) lazy-load: zero loaded engines is a normal
+    # steady state. Requiring loaded_model_count > 0 made a fresh boot 503
+    # forever and start.sh R-16 killed the healthy server.
+    import asyncio
+
+    import fusion_mlx.routes_internal.health as health
+    import fusion_mlx.server as server
+
+    pool = _FakePool({})
+    monkeypatch.setitem(server._server_state, "engine_pool", pool)
+    monkeypatch.setitem(server._server_state, "preloading", False)
+    result = asyncio.run(health.health_ready())
+    assert result == {"ready": True}
+
+
+def test_readyz_not_ready_when_pool_missing(monkeypatch):
+    import asyncio
+
+    from fastapi import HTTPException
+
+    import fusion_mlx.routes_internal.health as health
+    import fusion_mlx.server as server
+
+    monkeypatch.setitem(server._server_state, "engine_pool", None)
+    monkeypatch.setitem(server._server_state, "preloading", False)
+    with pytest.raises(HTTPException) as ei:
+        asyncio.run(health.health_ready())
+    assert ei.value.status_code == 503

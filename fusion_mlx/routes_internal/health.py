@@ -57,7 +57,13 @@ async def health_ready():
 
     pool = _server_state.get("engine_pool")
     preloading = _server_state.get("preloading", False)
-    if pool is None or pool.loaded_model_count == 0:
+    # Multi-model (``--model-dir``) mode lazy-loads engines on first request:
+    # zero loaded models is a NORMAL steady state there, not "loading".
+    # Requiring loaded_model_count > 0 made /health/ready 503 forever on a
+    # fresh multi-model boot, so start.sh wait_healthy timed out and R-16
+    # killed the healthy main program. Single-model serve is still gated by
+    # the preloading flag (set until its model finishes loading).
+    if pool is None:
         raise HTTPException(status_code=503, detail="model loading")
     if preloading:
         raise HTTPException(status_code=503, detail="preloading models")

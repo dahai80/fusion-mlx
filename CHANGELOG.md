@@ -11,6 +11,14 @@
   without double-emitting scheduler tokens.
 
 ### Fixed
+- **`/health/ready` regression killed multi-model boots** — R-17 (#811)
+  required `loaded_model_count > 0` for readiness, but multi-model
+  (`--model-dir`) mode lazy-loads engines on first request, so zero loaded
+  models at boot is a normal steady state. The check made `/health/ready`
+  return 503 forever on a fresh multi-model boot, so `start.sh`
+  `wait_healthy` timed out and R-16 killed the healthy main program.
+  Readiness now gates on pool existence + preloading flag + dead-engine
+  (OP-7) status only.
 - **0907 product audit P1-P6 remediation** — 39 of 41 findings fixed across
   six dimensions (security/architecture/performance/fault-tolerance/ops/
   function). Highlights: admin canvas API routes now require admin auth
