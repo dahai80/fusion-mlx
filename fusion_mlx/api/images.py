@@ -54,6 +54,10 @@ class ImageGenerateRequest(BaseModel):
     # Optional diffusion knobs
     scheduler: str | None = None
     negative_prompt: str | None = None
+    # #846: stop denoise after this fraction of steps (0-1). Only applies to
+    # staged denoise() path (Qwen-Image multi-stage variants); ignored on
+    # single-call generate_image variants with a warning.
+    denoising_end: float | None = Field(default=None, ge=0.01, le=1.0)
     # ControlNet: input image path for canny/upscaler
     control_image: str | None = None
     controlnet_strength: float | None = Field(default=None, ge=0.0, le=2.0)
@@ -156,6 +160,8 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
         )
         if request.scheduler is not None:
             gen_kwargs["scheduler"] = request.scheduler
+        if request.denoising_end is not None:
+            gen_kwargs["denoising_end"] = request.denoising_end
         if request.negative_prompt is not None:
             gen_kwargs["negative_prompt"] = request.negative_prompt
         # Variant-specific image inputs
