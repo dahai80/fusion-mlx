@@ -191,10 +191,17 @@ preflight() {
     log_step "Preflight checks"
     ensure_venv
 
-    # Check port conflict
-    if lsof -iTCP:"${PORT}" -sTCP:LISTEN -P -n 2>/dev/null | /usr/bin/grep -qv "fusion-mlx\|python"; then
+    # Check port conflict: only block if a NON-fusion/python process holds the
+    # port. 旧逻辑 grep -qv "fusion-mlx\|python" 既不跳 lsof 表头, 又区分大小写
+    # (进程名 "Python" 大写, 模式 "python" 小写), 导致只要端口被占用就误判为冲突,
+    # 把已运行的 fusion-mlx 自己当外来者挡掉, 进不到 line 256 的 "already running"
+    # 短路。改取监听行 (tail -n +2 去表头), 大小写不敏感匹配本服务进程, 全部命中
+    # 才放行。
+    local _occupants
+    _occupants=$(lsof -iTCP:"${PORT}" -sTCP:LISTEN -P -n 2>/dev/null | tail -n +2 || true)
+    if [[ -n "${_occupants}" ]] && ! echo "${_occupants}" | /usr/bin/grep -qiE "fusion-mlx|python"; then
         log_warn "Port ${PORT} occupied by another process:"
-        lsof -iTCP:"${PORT}" -sTCP:LISTEN -P -n 2>/dev/null | head -3
+        echo "${_occupants}" | head -3
         log_error "Free port ${PORT} first, or change PORT in this script"
         exit 1
     fi
@@ -307,6 +314,8 @@ do_start() {
             --model-dir "${model_dir}" \
             --log-level "${log_level}" \
             --enable-prefix-cache \
+            --enable-dflash2 \
+            --dflash2-drafter-path "${model_dir}/Qwen3.8-27B-DFlash2" \
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
             $(host_port_args) \
@@ -654,6 +663,8 @@ _run_with_watchdog() {
             --model-dir "${model_dir}" \
             --log-level "${log_level}" \
             --enable-prefix-cache \
+            --enable-dflash2 \
+            --dflash2-drafter-path "${model_dir}/Qwen3.8-27B-DFlash2" \
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
             $(host_port_args) \
