@@ -83,6 +83,7 @@ class TunnelClient:
         self._send_queue: asyncio.Queue[str] | None = None
         self._closed = asyncio.Event()
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._ws: Any = None
         self.error: BaseException | None = None
         self.closed_event = threading.Event()
 
@@ -96,6 +97,7 @@ class TunnelClient:
         uri = f"{self.relay_url}?id={self.tunnel_id}"
         try:
             async with websockets.connect(uri, max_size=None) as ws:
+                self._ws = ws
                 await ws.send(json.dumps({"t": "ready", "v": 1}))
                 self.ready_event.set()
                 sender = asyncio.create_task(self._sender_loop(ws))
@@ -136,11 +138,18 @@ class TunnelClient:
         return t
 
     def stop(self) -> None:
+        # M-P3-4 (#0908 audit): stop() only set _closed event but never closed
+        # the websocket — `async for raw in ws` blocked indefinitely, leaving
+        # the tunnel thread alive after stop(). Schedule ws.close() on the
+        # loop to break the recv loop.
         loop = self._loop
         if loop is None or loop.is_closed():
             return
+        ws = self._ws
         try:
             loop.call_soon_threadsafe(self._closed.set)
+            if ws is not None:
+                asyncio.run_coroutine_threadsafe(ws.close(), loop)
         except RuntimeError:
             pass
 

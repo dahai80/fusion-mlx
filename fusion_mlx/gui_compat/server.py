@@ -717,9 +717,20 @@ def get_gui_compat_router() -> APIRouter:
 
     @router.post("/v1/system/restart")
     async def sys_restart(is_admin: bool = Depends(require_admin)):
-        asyncio.get_event_loop().call_later(
-            1.0, lambda: (subprocess.Popen([sys.executable] + sys.argv), os._exit(0))
-        )
+        # M-P3-5 (#0908 audit): Popen ref discarded — child could receive
+        # SIGPIPE or be orphaned unpredictably across os._exit. Detach via
+        # start_new_session so the new server survives the hard exit cleanly.
+        def _do_restart():
+            subprocess.Popen(
+                [sys.executable] + sys.argv,
+                start_new_session=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            os._exit(0)
+
+        asyncio.get_event_loop().call_later(1.0, _do_restart)
         return {"message": "Server restarting"}
 
     @router.get("/v1/settings")

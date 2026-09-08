@@ -259,12 +259,31 @@ class TestRoutes:
 
 class TestCommunityBenchDestubbed:
     def test_run_benchmark_returns_local_data(self):
-        from fusion_mlx.community_bench.runner import run_benchmark
+        from fusion_mlx.community_bench.runner import BenchResult, run_standardized_bench
 
-        result = run_benchmark(model="test-model", num_prompts=2)
-        assert result["source"] == "local"
-        assert result["model"] == "test-model"
-        assert "tokens_per_second" in result
+        # New API: async run_standardized_bench(engine, tokenizer) → BenchResult.
+        # Mock engine + tokenizer to verify the bench loop produces real stats.
+        class _MockOutput:
+            completion_tokens = 10
+            output_text = "test output"
+
+        class _MockEngine:
+            async def generate(self, prompt, sampling_params=None):
+                return _MockOutput()
+
+        class _MockTokenizer:
+            def encode(self, text):
+                return [1, 2, 3, 4, 5]
+
+        import asyncio
+
+        result = asyncio.run(
+            run_standardized_bench(_MockEngine(), _MockTokenizer())
+        )
+        assert isinstance(result, BenchResult)
+        assert len(result.short.decode_stat.values) == 5
+        assert len(result.long.decode_stat.values) == 5
+        assert result.short.decode_stat.median >= 0
 
     def test_submit_is_noop(self):
         from fusion_mlx.community_bench.submission import submit_benchmark

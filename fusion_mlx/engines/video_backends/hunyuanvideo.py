@@ -121,7 +121,11 @@ class HunyuanVideoBackend(VideoBackend):
                         ),
                         timeout=timeout,
                     )
-                    handle.release()
+                    # M-P2-1 (#0908 audit): handle.release() set _released=True
+                    # which made the managed_tempfile_path finally-block SKIP
+                    # os.unlink — leaking one .mp4 per generation. The bytes
+                    # are read below; the context manager unlinks after the
+                    # `with` exits. SVD backend already does it this way.
                     with open(output_path, "rb") as f:
                         results.append(f.read())
                 except TimeoutError:

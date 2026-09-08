@@ -396,13 +396,19 @@ async def drain_start():
     # a gateway/CLI doing health-driven failover routes new requests away
     # while in-flight requests finish. Idempotent: re-entering drain is a
     # no-op. Does NOT unload models (let in-flight work complete).
+    # A-P0-2 (#0908 audit): cfg.draining is a bool on the shared get_config()
+    # singleton, read by probe_fastpath.py middleware from a thread and by
+    # /healthz handlers. Serialize the RMW through _server_state_lock so a
+    # concurrent drain_start/drain_stop pair can't tear the bool.
     from ..config import get_config
     from ..instance import get_instance_id
+    from ..server import _server_state_lock
 
     cfg = get_config()
-    if not cfg.draining:
-        cfg.draining = True
-        logger.info("drain started on instance %s", get_instance_id())
+    async with _server_state_lock:
+        if not cfg.draining:
+            cfg.draining = True
+            logger.info("drain started on instance %s", get_instance_id())
     return {"status": "draining", "instance_id": get_instance_id()}
 
 
@@ -410,11 +416,14 @@ async def drain_start():
 async def drain_stop():
     # #754: clear the drain flag, returning the instance to serving. Use
     # after maintenance/failover completes. Idempotent.
+    # A-P0-2: serialized via _server_state_lock (see drain_start).
     from ..config import get_config
     from ..instance import get_instance_id
+    from ..server import _server_state_lock
 
     cfg = get_config()
-    if cfg.draining:
-        cfg.draining = False
-        logger.info("drain cleared on instance %s", get_instance_id())
+    async with _server_state_lock:
+        if cfg.draining:
+            cfg.draining = False
+            logger.info("drain cleared on instance %s", get_instance_id())
     return {"status": "healthy", "instance_id": get_instance_id()}

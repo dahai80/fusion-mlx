@@ -321,10 +321,14 @@ def generate_video(
     del video_np, frames_np_raw
 
     if output_path is None:
+        # M-P2-2 (#0908 audit): was tempfile.TemporaryDirectory() with no
+        # cleanup — relied on __del__ GC, and the returned output_path lived
+        # inside it (deleted when GC ran). Use mkstemp so the file persists
+        # for the caller; the caller owns cleanup.
         import tempfile
 
-        tmpdir = tempfile.TemporaryDirectory()
-        output_path = os.path.join(tmpdir.name, "hunyuan_output.mp4")
+        fd, output_path = tempfile.mkstemp(prefix="hunyuan_", suffix=".mp4")
+        os.close(fd)
     _write_mp4(frames_np, output_path, fps)
     logger.info("hunyuan: output saved to %s", output_path)
     return output_path

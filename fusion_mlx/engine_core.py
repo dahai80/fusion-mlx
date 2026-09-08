@@ -2,6 +2,7 @@
 """Engine Core for fusion-mlx continuous batching."""
 
 import asyncio
+import atexit
 import concurrent.futures
 import logging
 import os
@@ -89,6 +90,23 @@ _executor_config: dict[str, dict[str, Any]] = {
     "io": {"max_workers": 2, "prefix": "mlx-io"},
 }
 _global_executors: dict[str, concurrent.futures.ThreadPoolExecutor] = {}
+
+
+def _shutdown_global_executors() -> None:
+    # M-P3-2 (#0908 audit): global ThreadPoolExecutors were never shutdown at
+    # process exit — worker threads (mlx-llm, mlx-video, mlx-io, mlx-audio)
+    # lingered as non-daemon threads blocking clean interpreter exit. Registered
+    # as atexit backstop; cancel_futures=True abandons pending work (process
+    # is dying anyway), wait=False avoids blocking the exit path.
+    for pool_type, exec_ in list(_global_executors.items()):
+        try:
+            exec_.shutdown(wait=False, cancel_futures=True)
+            logger.debug("executor shutdown: %s", pool_type)
+        except Exception:
+            logger.debug("executor shutdown failed: %s", pool_type, exc_info=True)
+
+
+atexit.register(_shutdown_global_executors)
 
 
 def _init_mlx_step_thread() -> None:

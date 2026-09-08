@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -155,6 +156,15 @@ class SchedulerConfig:
         # Validate ranges
         if self.max_num_seqs < 1:
             self.max_num_seqs = 1
+        # A-P3-1 (#0908 audit): clamp gpu_memory_utilization — env override
+        # (FUSION_GPU_MEMORY_UTILIZATION) had no bounds; 0/1.5 silently
+        # distorted the memory projection. Clamp to (0, 0.98].
+        if self.gpu_memory_utilization <= 0 or self.gpu_memory_utilization > 0.98:
+            logger.warning(
+                "gpu_memory_utilization=%s out of (0, 0.98] — clamped to 0.90",
+                self.gpu_memory_utilization,
+            )
+            self.gpu_memory_utilization = 0.90
         if self.max_num_batched_tokens < self.max_num_seqs:
             self.max_num_batched_tokens = self.max_num_seqs
         if self.cache_memory_percent < 0 or self.cache_memory_percent > 1:
@@ -401,16 +411,25 @@ DEFAULT_ALIASES: dict[str, str] = _model_config.get("aliases", {})
 
 # Global config singleton
 _config: ServerConfig | None = None
+# A-P0-3 (#0908 audit): get_config() did check-then-set _config with no lock.
+# Two threads (uvicorn worker + probe_fastpath middleware thread) hitting it
+# during early startup could both construct a ServerConfig and hand the loser
+# to a route while _sync_config() wrote api_key onto the winner. Mirror the
+# _app_init_lock pattern (server.py:218) — threading.Lock + double-check.
+_config_lock = threading.Lock()
 
 
 def get_config() -> ServerConfig:
     global _config
     if _config is None:
-        _config = ServerConfig()
+        with _config_lock:
+            if _config is None:
+                _config = ServerConfig()
     return _config
 
 
 def reset_config() -> ServerConfig:
     global _config
-    _config = ServerConfig()
+    with _config_lock:
+        _config = ServerConfig()
     return _config

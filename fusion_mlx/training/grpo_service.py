@@ -81,6 +81,7 @@ class GRPOService:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._engine_pool = None
         self._running = False
+        self._pending_tasks: set = set()
         self._load_jobs()
 
     def set_engine_pool(self, pool):
@@ -217,7 +218,9 @@ class GRPOService:
             self._current_job_id = None
             return
 
-        asyncio.ensure_future(self._run_job(job), loop=self._loop)
+        _t = asyncio.ensure_future(self._run_job(job), loop=self._loop)
+        self._pending_tasks.add(_t)
+        _t.add_done_callback(self._pending_tasks.discard)
 
     async def _run_job(self, job: GRPOJob):
         try:

@@ -2077,14 +2077,6 @@ class Server:
                 )
             self._cluster_lb_monitor = None
 
-        # Save prefix cache to disk (best-effort, budget-aware)
-        try:
-            from .runtime.cache import save_prefix_cache_to_disk
-
-            await save_prefix_cache_to_disk()
-        except Exception as e:
-            logger.debug("prefix cache save failed (non-fatal): %s", e)
-
         # Telemetry: fire the session_end hook registered by cli.py.
         # SIGTERM from systemd/Docker/K8s triggers FastAPI lifespan
         # shutdown, NOT atexit, so without this the session_end event
@@ -2113,6 +2105,17 @@ class Server:
                 logger.warning(f"GUI cleanup warning: {e}")
         if self.pool:
             await self.pool.shutdown()
+
+        # A-P1-5 (#0908 audit): save prefix cache AFTER pool.shutdown Phase 1
+        # (abort+drain) completes — no in-flight requests mutating the cache
+        # during save → consistent snapshot. The prefix cache is process-level
+        # (survives engine unload), so saving post-shutdown is safe.
+        try:
+            from .runtime.cache import save_prefix_cache_to_disk
+
+            await save_prefix_cache_to_disk()
+        except Exception as e:
+            logger.debug("prefix cache save failed (non-fatal): %s", e)
         try:
             from .utils.video import cleanup_all_temp_files
 

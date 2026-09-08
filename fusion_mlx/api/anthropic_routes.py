@@ -418,18 +418,11 @@ async def _run_anthropic_messages(
             detail={"error": {"message": str(exc), "type": "server_busy"}},
             headers={"Retry-After": "5"},
         ) from exc
-    except InsufficientMemoryError as exc:
-        logger.warning("Anthropic: insufficient memory: %s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail={"error": {"message": str(exc), "type": "resource_exhausted"}},
-            headers={"Retry-After": "10"},
-        ) from exc
-    except ModelTooLargeError as exc:
-        raise HTTPException(
-            status_code=413,
-            detail={"error": {"message": str(exc), "type": "model_too_large"}},
-        ) from exc
+    except (InsufficientMemoryError, ModelTooLargeError) as exc:
+        logger.warning("Anthropic: model error: %s", exc)
+        from ._guards import build_model_error_response
+
+        raise build_model_error_response(exc, adapter="anthropic") from exc
     except Exception as exc:
         err_msg = str(exc)
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:

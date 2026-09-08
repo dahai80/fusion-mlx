@@ -16,10 +16,12 @@
 # Gemma4 config.json 不在 checkpoint 内, 从 google/gemma-4-12b-it (hf-mirror) 获取。
 from __future__ import annotations
 
+import atexit
 import dataclasses
 import json
 import logging
 import math
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -702,11 +704,18 @@ def load_text_encoder(
 
     # tokenizer: 内嵌 (canon) 或仓根 standalone (flat #762)。
     tokenizer = None
+    _tok_is_temp = not tokenizer_cache_dir
     cache_dir = (
         Path(tokenizer_cache_dir)
         if tokenizer_cache_dir
         else Path(tempfile.mkdtemp(prefix="ltx2_5_tok_"))
     )
+    # M-P2-5 (#0908 audit): temp tokenizer extraction dir was never rmtree'd —
+    # one leak per generate_video call. Register atexit cleanup as backstop;
+    # generate_video dels the encoder right after encode(), so __del__ is
+    # unreliable. atexit ensures cleanup even on clean interpreter exit.
+    if _tok_is_temp:
+        atexit.register(shutil.rmtree, cache_dir, ignore_errors=True)
     cache_dir.mkdir(parents=True, exist_ok=True)
     try:
         if TOKENIZER_ASSET in raw:

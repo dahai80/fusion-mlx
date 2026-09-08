@@ -1,8 +1,11 @@
 """Shared route-level guard helpers for OpenAI and Anthropic API routes."""
 
 import logging
+from typing import Any
 
 from fastapi import HTTPException
+
+from ..exceptions import InsufficientMemoryError, ModelTooLargeError
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,63 @@ MULTIMODAL_CONTENT_TYPES = (
     "audio",
     "input_audio",
 )
+
+
+def _build_insufficient_memory_detail(exc: InsufficientMemoryError) -> dict[str, Any]:
+    # R-P0-1 / R-P1-2 (#0908 audit): single source for the memory-error
+    # detail dict. Previously openai_routes built {model_unavailable,
+    # required_memory_mb, available_memory_mb} while anthropic_routes
+    # returned only str(exc) — divergent contract for the same error.
+    required_mb = exc.required // (1024 * 1024) if exc.required else 0
+    return {
+        "message": f"Model {exc.model_id} not loaded and insufficient memory",
+        "type": "model_unavailable",
+        "status": 503,
+        "required_memory_mb": required_mb,
+    }
+
+
+def build_model_error_response(
+    exc: Exception, *, adapter: str = "openai"
+) -> HTTPException:
+    # R-P0-1 (#0908 audit): unified model-error → HTTPException mapping.
+    # adapter="openai" → 503 model_unavailable with structured detail.
+    # adapter="anthropic" → 503 resource_exhausted with Retry-After header.
+    if isinstance(exc, InsufficientMemoryError):
+        detail = _build_insufficient_memory_detail(exc)
+        if adapter == "anthropic":
+            return HTTPException(
+                status_code=503,
+                detail={
+                    "error": {
+                        "message": detail["message"],
+                        "type": "resource_exhausted",
+                    }
+                },
+                headers={"Retry-After": "10"},
+            )
+        return HTTPException(status_code=503, detail={"error": detail})
+    if isinstance(exc, ModelTooLargeError):
+        if adapter == "anthropic":
+            return HTTPException(
+                status_code=413,
+                detail={
+                    "error": {
+                        "message": str(exc),
+                        "type": "model_too_large",
+                    }
+                },
+            )
+        return HTTPException(
+            status_code=413,
+            detail={
+                "error": {
+                    "type": "model_too_large",
+                    "message": str(exc),
+                }
+            },
+        )
+    raise exc
 
 
 def check_chat_capability(engine, method_name: str, model_name: str) -> None:

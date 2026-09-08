@@ -385,6 +385,9 @@ class FineTuneService:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._engine_pool = None
         self._running = False
+        # M-P3-3 (#0908 audit): hold strong refs to ensure_future tasks —
+        # asyncio only weak-references Tasks; GC can cancel mid-training.
+        self._pending_tasks: set = set()
         self._load_jobs()
 
     def set_engine_pool(self, pool):
@@ -514,7 +517,10 @@ class FineTuneService:
             self._current_job_id = None
             return
 
-        asyncio.ensure_future(self._run_job(job), loop=self._loop)
+        # M-P3-3: store strong ref so GC doesn't cancel the training task.
+        _t = asyncio.ensure_future(self._run_job(job), loop=self._loop)
+        self._pending_tasks.add(_t)
+        _t.add_done_callback(self._pending_tasks.discard)
 
     async def _run_job(self, job: FineTuneJob):
         try:
