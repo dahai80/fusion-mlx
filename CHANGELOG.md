@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+- **DFlash2 default-on via per-model settings** — `model_settings.json` now
+  supports `dflash2_drafter_path` and `dflash2_block_size`. VLMBatchedEngine
+  loads the DFlash2 block-diffusion drafter automatically (matching the
+  existing BatchedEngine path), and the scheduler pure-decode fast path is
+  fixed so self-contained spec generators (DFlash2/DSpark) drive the step
+  without double-emitting scheduler tokens.
+
 ### Fixed
 - **0907 product audit P1-P6 remediation** — 39 of 41 findings fixed across
   six dimensions (security/architecture/performance/fault-tolerance/ops/

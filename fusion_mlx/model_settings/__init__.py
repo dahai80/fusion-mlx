@@ -78,6 +78,9 @@ class ModelSettings:
     dflash_draft_sink_size: int | None = None
     dflash_verify_mode: str | None = None
 
+    dflash2_drafter_path: str | None = None
+    dflash2_block_size: int | None = None
+
     mtp_enabled: bool = False
 
     vlm_mtp_enabled: bool = False

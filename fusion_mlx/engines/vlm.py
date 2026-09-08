@@ -490,6 +490,13 @@ class VLMBatchedEngine(BaseEngine):
         # identical to text. No drafter path configured -> no-op.
         await self._apply_dflash()
 
+        # DFlash2 block-diffusion speculative decode (per-model settings or
+        # scheduler config). Ported from batched.py dflash2 block. Same
+        # VLM-safety argument as DFlash above: dflash2 drafts and verifies
+        # from generated text tokens + gen.model/gen.prompt_cache, which
+        # already hold prefill vision features. No drafter path -> no-op.
+        await self._apply_dflash2()
+
         # DSpark DeepSpec speculative decode is NOT ported to VLM (unlike
         # DFlash above). Verified reason: dspark_spec_step is self-contained -
         # it calls DSparkGenerator.stream_from_tokens(prompt_tokens, ...),
@@ -634,6 +641,59 @@ class VLMBatchedEngine(BaseEngine):
         except Exception as e:
             logger.error(
                 "DFlash drafter load failed for VLM %s: %s", self._model_name, e
+            )
+
+    async def _apply_dflash2(self) -> None:
+        # Mirror the dflash2 block in engines/batched.py. Loads the DFlash2
+        # block-diffusion drafter (IO-bound, run in the executor) and stores it
+        # on the VLM scheduler as _dflash2_runtime. Once set, the per-request
+        # router assigns METHOD_DFLASH2 and _try_spec_decode runs the dflash2
+        # step. VLM-safe for the same reason as DFlash: decode-phase verify
+        # goes through gen.model + gen.prompt_cache, which already carry the
+        # vision features computed at prefill. No drafter path configured ->
+        # no-op (default VLM load untouched).
+        dflash2_path = (
+            getattr(self._model_settings, "dflash2_drafter_path", None)
+            if self._model_settings
+            else None
+        ) or getattr(self._scheduler_config, "dflash2_drafter_path", "")
+        if not dflash2_path:
+            return
+        try:
+            from ..speculative.dflash2 import load_runtime as load_dflash2_runtime
+
+            # target_repo = the loaded VLM's HF id or local path
+            target_repo = (
+                getattr(self._vlm_model, "requested_model", None) or self._model_name
+            )
+            block_size = (
+                (
+                    getattr(self._model_settings, "dflash2_block_size", None)
+                    if self._model_settings
+                    else None
+                )
+                or getattr(self._scheduler_config, "dflash2_block_size", 5)
+                or 5
+            )
+            loop = asyncio.get_running_loop()
+            dflash2_rt = await loop.run_in_executor(
+                get_executor("io"),
+                lambda: load_dflash2_runtime(
+                    target_repo,
+                    dflash2_path,
+                    block_size=block_size,
+                ),
+            )
+            self._engine.engine.scheduler._dflash2_runtime = dflash2_rt
+            logger.info(
+                "DFlash2 spec-decode enabled for VLM %s (draft=%s, block_size=%d)",
+                self._model_name,
+                dflash2_path,
+                block_size,
+            )
+        except Exception as e:
+            logger.error(
+                "DFlash2 drafter load failed for VLM %s: %s", self._model_name, e
             )
 
     async def stop(self) -> None:

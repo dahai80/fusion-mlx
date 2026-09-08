@@ -667,3 +667,49 @@ class TestSettingsPerfRegression:
                 f"(n={self._SNAP_ITERS})"
             )
             assert per_call_ms < self._PER_CALL_CEIL_MS
+
+
+class TestDFlash2ModelSettings:
+    """Per-model DFlash2 defaults (#909): model_settings.json entry loads
+    DFlash2 drafter at engine start without CLI flags."""
+
+    def test_dflash2_fields_roundtrip(self):
+        settings = ModelSettings(
+            dflash2_drafter_path="z-lab/Qwen3.8-27B-DFlash2",
+            dflash2_block_size=5,
+        )
+        data = settings.to_dict()
+        assert data["dflash2_drafter_path"] == "z-lab/Qwen3.8-27B-DFlash2"
+        assert data["dflash2_block_size"] == 5
+        restored = ModelSettings.from_dict(data)
+        assert restored.dflash2_drafter_path == "z-lab/Qwen3.8-27B-DFlash2"
+        assert restored.dflash2_block_size == 5
+
+    def test_dflash2_defaults_off(self):
+        settings = ModelSettings()
+        assert settings.dflash2_drafter_path is None
+        assert settings.dflash2_block_size is None
+        assert "dflash2_drafter_path" not in settings.to_dict()
+
+    def test_dflash2_persisted_and_loaded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = ModelSettingsManager(Path(tmpdir))
+            manager.set_settings(
+                "mlx-community--Qwen3.8-27B-8bit",
+                ModelSettings(
+                    dflash2_drafter_path="Qwen3.8-27B-DFlash2",
+                    dflash2_block_size=5,
+                ),
+            )
+            settings_file = Path(tmpdir) / "model_settings.json"
+            assert settings_file.exists()
+            with open(settings_file) as f:
+                raw = json.load(f)
+            assert (
+                raw["models"]["mlx-community--Qwen3.8-27B-8bit"]["dflash2_drafter_path"]
+                == "Qwen3.8-27B-DFlash2"
+            )
+            reloaded = ModelSettingsManager(Path(tmpdir))
+            got = reloaded.get_settings("mlx-community--Qwen3.8-27B-8bit")
+            assert got.dflash2_drafter_path == ("Qwen3.8-27B-DFlash2")
+            assert got.dflash2_block_size == 5
