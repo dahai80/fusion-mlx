@@ -5,6 +5,7 @@ import asyncio
 import gc
 import io
 import logging
+import os
 import time
 from collections.abc import Callable
 from typing import Any
@@ -519,6 +520,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         output_format: str = "PNG",
         scheduler: str | None = None,
         negative_prompt: str | None = None,
+        denoising_end: float | None = None,
         on_step: StepCallback | None = None,
         # Variant-specific image inputs
         control_image: str | None = None,
@@ -541,6 +543,20 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         flux = self._flux
         base_seed = seed if seed is not None else 0
+        # #848: attention/vae slicing — upstream-blocked. mflux-fusion has no
+        # slicing API (no chunked attention, no VAE tile decode). Env
+        # FUSION_IMAGE_SLICING=1 would enable it, but the capability is absent,
+        # so we warn and proceed without slicing. Upstream issue required:
+        # https://github.com/somewhere/mflux-fusion  (file before PR per workflow).
+        if os.environ.get("FUSION_IMAGE_SLICING", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            logger.warning(
+                "FUSION_IMAGE_SLICING=1 but mflux-fusion has no attention/vae "
+                "slicing API; proceeding without slicing (upstream-blocked, #848)"
+            )
         # Use variant default guidance when caller doesn't specify
         if guidance is None:
             _, _, _, default_guidance = VARIANT_MAP[self._variant]
@@ -582,6 +598,18 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 )
                 if scheduler is not None:
                     gen_kwargs["scheduler"] = scheduler
+                # #846: denoising_end only applies to the staged denoise() path
+                # (Qwen-Image multi-stage). mflux's single-call generate_image has
+                # no partial-denoise knob, so warn-and-ignore here rather than
+                # pass an unsupported kwarg (would TypeError).
+                if denoising_end is not None:
+                    logger.warning(
+                        "denoising_end=%.2f ignored: variant '%s' uses single-call "
+                        "generate_image (no staged denoise); use a Qwen-Image "
+                        "multi-stage variant for partial denoise",
+                        denoising_end,
+                        self._variant,
+                    )
                 # Variant-specific generate_image kwargs
                 variant = self._variant
                 if variant == "controlnet_canny" or variant == "controlnet_upscaler":
@@ -846,11 +874,23 @@ class ImageGenEngine(BaseNonStreamingEngine):
         steps: int,
         cfg: float,
         seed: int,
+        scheduler: str | None = None,
+        denoising_end: float | None = None,
     ) -> mx.array:
         # Latents/embeds must be engine-native: created by encode_text or another
         # stage running in the single image-executor thread (max_workers=1,
         # _init_mlx_thread). Caller-cross-thread arrays hit MLX "no Stream(gpu,0)
         # in current thread" on the per-step mx.eval below (issue #170 constraint).
+        # #845: scheduler defaults to flow_match_euler_discrete (mflux standard)
+        # but callers can now override (dpmpp_2m / euler_a etc.).
+        # #846: denoising_end (0-1) truncates the sigma schedule — stop after the
+        # given fraction of steps (character sheets don't need final refine).
+        if denoising_end is not None and not 0.0 < denoising_end <= 1.0:
+            raise ValueError(f"denoising_end must be in (0, 1]; got {denoising_end}")
+        if latent.ndim != 4:
+            raise ValueError(
+                f"denoise expects unpacked latent (batch,c,h,w); got {tuple(latent.shape)}"
+            )
         flux = self._require_flux()
         if flux.transformer is None:
             raise RuntimeError("transformer (DiT) is unloaded; call load_dit().")
@@ -862,14 +902,13 @@ class ImageGenEngine(BaseNonStreamingEngine):
             Flux2PromptEncoder,
         )
 
-        if latent.ndim != 4:
-            raise ValueError(
-                f"denoise expects unpacked latent (batch,c,h,w); got {tuple(latent.shape)}"
-            )
         batch, _c, h, w = latent.shape
         pixel_h = h * 16
         pixel_w = w * 16
         use_cfg = cfg is not None and cfg > 1.0 and neg_embed is not None
+        sched_name = scheduler or "flow_match_euler_discrete"
+        if scheduler is not None:
+            logger.info("stage:dit denoise scheduler override=%s", sched_name)
 
         def _denoise():
             config = Config(
@@ -878,16 +917,49 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 height=pixel_h,
                 width=pixel_w,
                 guidance=cfg,
-                scheduler="flow_match_euler_discrete",
+                scheduler=sched_name,
             )
             predict = flux._predict(flux.transformer)
+            # #847: opt-in mx.compile on the transformer forward. First call
+            # traces the Metal graph; subsequent steps reuse it (20-35% speedup
+            # on sustained inference). Disabled by default — compile is unsafe
+            # if the MMDiT forward has data-dependent control flow, and varies
+            # by resolution. Env FUSION_IMAGE_COMPILE=1 to enable.
+            if os.environ.get("FUSION_IMAGE_COMPILE", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            ):
+                try:
+                    predict = mx.compile(predict)
+                    logger.info(
+                        "stage:dit denoise mx.compile=on (FUSION_IMAGE_COMPILE)"
+                    )
+                except Exception:
+                    logger.warning(
+                        "mx.compile(predict) failed; falling back to uncompiled",
+                        exc_info=True,
+                    )
             latent_ids = Flux2LatentCreator.prepare_grid_ids(latent, t_coord=0)
             text_ids = Flux2PromptEncoder.prepare_text_ids(pos_embed)
             neg_text_ids = (
                 Flux2PromptEncoder.prepare_text_ids(neg_embed) if use_cfg else None
             )
             latents = Flux2LatentCreator.pack_latents(latent)
-            for t in config.time_steps:
+            time_steps = config.time_steps
+            total = len(time_steps)
+            # #846: denoising_end truncates the step loop. Stop index = ceil(fraction
+            # * total). Default None runs all steps (current behavior).
+            stop_at = total
+            if denoising_end is not None:
+                stop_at = max(1, int(total * denoising_end + 0.5))
+                logger.info(
+                    "stage:dit denoise denoising_end=%.2f -> %d/%d steps",
+                    denoising_end,
+                    stop_at,
+                    total,
+                )
+            for t in time_steps[:stop_at]:
                 noise = predict(
                     latents=latents,
                     latent_ids=latent_ids,
