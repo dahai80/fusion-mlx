@@ -41,6 +41,7 @@ def load_runtime(
     target_repo: str,
     draft_repo: str,
     block_size: int = 5,
+    draft_bits: int | None = 4,
 ) -> DFlash2Runtime:
     if not target_repo:
         raise ValueError("target_repo must be a non-empty string")
@@ -50,24 +51,29 @@ def load_runtime(
         raise ValueError(
             f"block_size must be in [1, 5] for MLX quantized targets; got {block_size}"
         )
+    if draft_bits is not None and draft_bits not in (4, 8):
+        raise ValueError(f"draft_bits must be 4 or 8; got {draft_bits}")
     from .engine import DFlash2Generator
 
     logger.info(
-        "loading DFlash2Generator target=%s draft=%s block_size=%d",
+        "loading DFlash2Generator target=%s draft=%s block_size=%d draft_bits=%s",
         target_repo,
         draft_repo,
         block_size,
+        draft_bits,
     )
     gen = DFlash2Generator(
         target_repo=target_repo,
         draft_repo=draft_repo,
         block_size=block_size,
+        draft_bits=draft_bits,
     )
     logger.info(
-        "DFlash2Generator ready target=%s draft=%s block_size=%d",
+        "DFlash2Generator ready target=%s draft=%s block_size=%d draft_bits=%s",
         target_repo,
         draft_repo,
         block_size,
+        draft_bits,
     )
     return DFlash2Runtime(
         generator=gen,

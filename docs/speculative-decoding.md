@@ -83,6 +83,7 @@ misuse never silently falls back.
 | `--dflash-drafter-path` | empty | Override the per-alias DFlash drafter HF path; empty = use the registry binding. |
 | `--dflash2-drafter-path` | empty | Path/HF-id to the DFlash2 draft model (e.g. `z-lab/Qwen3.8-27B-DFlash2` or a local dir). Required with `--enable-dflash2` / `--spec-decode dflash2`. |
 | `--dflash2-block-size` | 5 | Block size (draft tokens per verify step). **Must be ≤ 5** for MLX quantized targets — larger verify widths are matmul-inefficient on quantized weights. The official draft config uses 8; we cap at 5. |
+| `--dflash2-draft-bits` | 4 | Draft quantization (4 or 8; `none` via model_settings = bf16 draft). The draft is bandwidth-bound in propose — 4-bit halves its weight traffic with no measurable acceptance loss (official z-lab MLX quickstart default). Measured on M5 Max / Qwen3.8-27B-4bit: draft step 18.4ms → 7.7ms, acceptance 2.58 → 2.63. |
 | `--dspark-drafter-path` | — | Path to a converted MLX DSpark draft (from `dspark-metal-convert`). Required with `--enable-dspark`. |
 | `--dspark-draft-quant-bits` | 8 | Draft quantization bits; lower = faster drafter, lower acceptance. |
 | `--vlm-dev` | off | [.dev/experimental] Enable multimodal (image) input on the DSpark server's `/v1/chat/completions`. Only takes effect under `--enable-dspark` with a `qwen3_vl` target; images are dropped (with a warning) otherwise. Also set via `DSPARK_VLM_DEV=1`. |
@@ -98,7 +99,8 @@ In per-model settings (`docs/configuration.md` → Per-Model Settings):
     "specprefill_enabled": false,   # speculative prefill
     "dflash_enabled": false,        # DFlash speculative decoding
     "mtp_enabled": false,           # native MTP (Qwen3.5/3.6, DeepSeek-V4)
-    "vlm_mtp_enabled": false        # VLM MTP with gemma4_assistant drafter
+    "vlm_mtp_enabled": false,       # VLM MTP with gemma4_assistant drafter
+    "dflash2_draft_bits": 4         # 4/8 quantized draft; null = bf16 draft
 }
 ```
 

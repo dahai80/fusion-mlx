@@ -35,6 +35,7 @@ class DFlash2Generator:
         draft_repo: str,
         block_size: int = 5,
         prefill_step_size: int = 2048,
+        draft_bits: int | None = None,
     ) -> None:
         if not target_repo:
             raise ValueError("target_repo must be a non-empty string")
@@ -44,6 +45,8 @@ class DFlash2Generator:
             raise ValueError(
                 f"block_size must be in [1, 5] for MLX quantized targets; got {block_size}"
             )
+        if draft_bits is not None and draft_bits not in (4, 8):
+            raise ValueError(f"draft_bits must be 4 or 8; got {draft_bits}")
         from dflash import model_mlx as _dflash
 
         logger.info("[dflash2] loading target=%s via mlx-lm", target_repo)
@@ -64,15 +67,26 @@ class DFlash2Generator:
         else:
             self.draft = _dflash.load_draft(draft_repo)
         self.draft.bind(self.target)
+        if draft_bits is not None:
+            # Official z-lab MLX quickstart quantizes the draft (--draft-bits 4)
+            # — the draft is bandwidth-bound in propose and 4-bit halves its
+            # weight traffic with no measurable acceptance loss.
+            import mlx.nn as nn
+
+            nn.quantize(self.draft, group_size=64, bits=draft_bits)
+            logger.info(
+                "[dflash2] draft quantized to %d bits (group_size=64)", draft_bits
+            )
         self.target_repo = target_repo
         self.draft_repo = draft_repo
         self.block_size = block_size
         self.prefill_step_size = prefill_step_size
         logger.info(
-            "[dflash2] ready target=%s draft=%s block_size=%d",
+            "[dflash2] ready target=%s draft=%s block_size=%d draft_bits=%s",
             target_repo,
             draft_repo,
             block_size,
+            draft_bits,
         )
 
     def _encode(self, prompt_tokens) -> mx.array:

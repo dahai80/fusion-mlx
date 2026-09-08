@@ -675,21 +675,36 @@ class VLMBatchedEngine(BaseEngine):
                 or getattr(self._scheduler_config, "dflash2_block_size", 5)
                 or 5
             )
+            draft_bits = (
+                getattr(self._model_settings, "dflash2_draft_bits", None)
+                if self._model_settings
+                else None
+            )
+            if draft_bits is None:
+                draft_bits = getattr(self._scheduler_config, "dflash2_draft_bits", 4)
             loop = asyncio.get_running_loop()
+            # Load on the VLM single-worker mlx executor (the SAME thread
+            # that runs scheduler steps — it is AsyncEngineCore's executor).
+            # The dflash2 runtime carries its own target+draft weight
+            # copies; loading on get_executor("io") bound them to an
+            # io-worker's thread-local stream and every spec step raised
+            # "There is no Stream(gpu, N) in current thread" (#411 pattern).
             dflash2_rt = await loop.run_in_executor(
-                get_executor("io"),
+                self._vlm_load_executor,
                 lambda: load_dflash2_runtime(
                     target_repo,
                     dflash2_path,
                     block_size=block_size,
+                    draft_bits=draft_bits,
                 ),
             )
             self._engine.engine.scheduler._dflash2_runtime = dflash2_rt
             logger.info(
-                "DFlash2 spec-decode enabled for VLM %s (draft=%s, block_size=%d)",
+                "DFlash2 spec-decode enabled for VLM %s (draft=%s, block_size=%d, draft_bits=%s)",
                 self._model_name,
                 dflash2_path,
                 block_size,
+                draft_bits,
             )
         except Exception as e:
             logger.error(

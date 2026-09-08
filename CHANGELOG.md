@@ -9,8 +9,33 @@
   existing BatchedEngine path), and the scheduler pure-decode fast path is
   fixed so self-contained spec generators (DFlash2/DSpark) drive the step
   without double-emitting scheduler tokens.
+- **DFlash2 quantized draft (`dflash2_draft_bits`)** — the DFlash2 drafter is
+  now quantized to 4 bits by default (official z-lab MLX quickstart config),
+  configurable via `--dflash2-draft-bits {4,8}` or per-model
+  `dflash2_draft_bits` (null = bf16 draft). The draft is bandwidth-bound in
+  propose; 4-bit halves its weight traffic with no measurable acceptance
+  loss. Measured on M5 Max / Qwen3.8-27B-4bit: draft step 18.4ms → 7.7ms,
+  standalone decode 42.6 → 48.2 tok/s, server benchmark 42.31 (8bit target)
+  → 46.86 (4bit target + 4bit draft) tok/s.
 
 ### Fixed
+- **DFlash2 spec sessions crashed with "There is no Stream(gpu, N) in
+  current thread"** — the DFlash2 runtime (which carries its own target +
+  draft weight copies) was loaded on the shared io executor; MLX binds
+  arrays to the loading thread's stream, so weights landed on an io-worker's
+  thread-local stream while spec steps run on the engine's mlx executor
+  thread, and every spec step failed back to baseline decode (#411 pattern).
+  The runtime now loads on the engine's single-worker mlx executor — the
+  same thread that runs scheduler steps. Fixes spec decode silently
+  degrading to ~24 tok/s after boot-order-dependent stream mismatches.
+- **`/health/ready` regression killed multi-model boots** — R-17 (#811)
+  required `loaded_model_count > 0` for readiness, but multi-model
+  (`--model-dir`) mode lazy-loads engines on first request, so zero loaded
+  models at boot is a normal steady state. The check made `/health/ready`
+  return 503 forever on a fresh multi-model boot, so `start.sh`
+  `wait_healthy` timed out and R-16 killed the healthy main program.
+  Readiness now gates on pool existence + preloading flag + dead-engine
+  (OP-7) status only.
 - **0907 product audit P1-P6 remediation** — 39 of 41 findings fixed across
   six dimensions (security/architecture/performance/fault-tolerance/ops/
   function). Highlights: admin canvas API routes now require admin auth
