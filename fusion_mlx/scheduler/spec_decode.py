@@ -1073,6 +1073,17 @@ def dflash2_spec_step(
         try:
             max_tokens = request.max_tokens or 4096
             temperature = getattr(request, "temperature", 0.0) or 0.0
+            # dflash.model_mlx binds a module-local copy of
+            # mlx_lm.generate.generation_stream at import time - a
+            # thread-local stream owned by whichever thread imported it
+            # first. Running the session on the scheduler step thread then
+            # hits "There is no Stream(gpu, N) in current thread" (same
+            # class as #KV-0). Rebind to the scheduler's stream (created on
+            # the step thread) so dflash forwards evaluate on a stream this
+            # thread owns. Idempotent; no-op when already correct.
+            import dflash.model_mlx as _dflash_mm
+
+            _dflash_mm.generation_stream = scheduler._stream
             token_iter = generator.stream_from_tokens(
                 prompt_tokens,
                 max_new_tokens=max_tokens,

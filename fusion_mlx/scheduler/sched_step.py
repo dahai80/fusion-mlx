@@ -490,7 +490,35 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     request = next(iter(self.running.values()))
     if request._active_spec_method is None:
         request._active_spec_method = self._decide_spec_method(request)
-    from ..speculative.auto_router import METHOD_MTP
+    from ..speculative.auto_router import METHOD_DFLASH2, METHOD_DSPARK, METHOD_MTP
+
+    if request._active_spec_method in (METHOD_DFLASH2, METHOD_DSPARK):
+        # Self-contained spec generators (dflash2/dspark) load their own
+        # target copy and produce the full token stream themselves. Running
+        # the scheduler's own forward alongside them would double-emit
+        # tokens (scheduler token interleaved with session tokens ->
+        # garbled output) and double compute. Skip the forward entirely and
+        # pull this step's tokens from the session. Falls back to normal
+        # decode below when the session yields nothing (start failure or
+        # exhausted mid-request).
+        spec_outputs = self._selfcontained_spec_step(output, request)
+        if spec_outputs:
+            return output
+        # Session dead: normal decode for the rest of this request. The
+        # scheduler KV only holds the prompt, so regenerated tokens may
+        # duplicate already-emitted session tokens - loud warning, not a
+        # silent fallback.
+        logger.warning(
+            "step(%d): selfcontained spec session empty for %s - "
+            "falling back to normal decode (output may duplicate)",
+            self._step_counter,
+            request.request_id[:8],
+        )
+        # Sentinel, not "": "" is falsy so _try_spec_decode would re-run
+        # _decide_spec_method and could re-route back to dflash2, recreating
+        # the session and regenerating from the prompt. A truthy non-method
+        # value matches no dispatch branch and sticks for the request.
+        request._active_spec_method = "spec-disabled"
 
     suppress_mtp = request._active_spec_method not in (METHOD_MTP, "")
     self.model._fusion_mlx_mtp_suppressed = suppress_mtp
@@ -558,6 +586,42 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
             self._tokens_since_clear_cache = 0
 
     return output
+
+
+def _selfcontained_spec_step(self, output: SchedulerOutput, request) -> list:
+    """Pure-decode step driven entirely by a self-contained spec generator
+    (dflash2/dspark). The generator owns propose+verify against its own
+    target copy; this pulls accepted tokens and emits them WITHOUT running
+    the scheduler forward (which would double-emit + double-compute).
+    Returns [] when the session yielded nothing - caller falls back to the
+    normal decode path for the rest of the request."""
+    from ..speculative.auto_router import METHOD_DFLASH2
+    from .spec_decode import dflash2_spec_step, dspark_spec_step
+
+    request_id = request.request_id
+    try:
+        if request._active_spec_method == METHOD_DFLASH2:
+            result = dflash2_spec_step(self, output, None, request_id)
+        else:
+            result = dspark_spec_step(self, output, None, request_id)
+    except Exception as e:
+        logger.warning(
+            "selfcontained spec step failed for %s: %s; falling back to "
+            "normal decode for the rest of this request",
+            request_id[:8],
+            e,
+        )
+        return []
+    if not result:
+        return []
+    output.has_work = True
+    output.outputs.extend(result)
+    finished_ids = {so.request_id for so in result if so.finished}
+    if finished_ids:
+        output.finished_request_ids = finished_ids
+        self._cleanup_finished(finished_ids)
+        logger.info("step(%d): spec_finished=%s", self._step_counter, finished_ids)
+    return result
 
 
 def _loaded_spec_methods(self) -> dict[str, bool]:

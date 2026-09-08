@@ -596,7 +596,15 @@ class BatchedEngine(BaseEngine):
                 target_repo = (
                     getattr(self._model, "requested_model", None) or self._model_name
                 )
-                block_size = getattr(scheduler_config, "dflash2_block_size", 5) or 5
+                block_size = (
+                    (
+                        getattr(self._model_settings, "dflash2_block_size", None)
+                        if self._model_settings
+                        else None
+                    )
+                    or getattr(scheduler_config, "dflash2_block_size", 5)
+                    or 5
+                )
                 dflash2_rt = await loop.run_in_executor(
                     get_executor("io"),
                     lambda: load_dflash2_runtime(
