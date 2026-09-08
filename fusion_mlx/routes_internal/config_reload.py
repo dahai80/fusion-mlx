@@ -15,6 +15,7 @@ the next boot.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -29,6 +30,17 @@ from ..middleware.auth import verify_api_key_or_x_api_key
 logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_api_key_or_x_api_key)])
+
+# A-P0-1 (#0908 audit): serialize concurrent reloads. A rapid double-SIGHUP
+# (or SIGHUP during POST /v1/config/reload) ran two reload_config() bodies
+# concurrently — both mutating enforcer.prefill_memory_guard,
+# scheduler.config.chunked_prefill, os.environ[...] interleaved, with a
+# TOCTOU between the schema read and the _apply_*_runtime await that could
+# apply a stale tier on top of a newer one. One module-level Lock guards
+# the whole body; a reentrant reload awaits the in-flight one and returns
+# its result instead of racing.
+_reload_lock = asyncio.Lock()
+_in_flight: asyncio.Future | None = None
 
 
 def _settings_json_path() -> Path:
@@ -55,7 +67,34 @@ async def reload_config(source: str = "manual") -> dict[str, Any]:
 
     Returns a dict with ``applied``, ``not_applied``, ``errors`` lists so the
     HTTP route and the SIGHUP handler both report the same shape.
+
+    A-P0-1: serialized by _reload_lock — concurrent callers await the
+    in-flight reload and receive its result (no double-apply race).
     """
+    global _in_flight
+    # If a reload is already running, piggyback on its result rather than
+    # queueing a second one that would mutate the same singletons.
+    if _in_flight is not None and not _in_flight.done():
+        logger.info("config reload (%s): awaiting in-flight reload", source)
+        try:
+            return await asyncio.shield(_in_flight)
+        except Exception:
+            pass  # fall through and run a fresh reload
+    async with _reload_lock:
+        loop = asyncio.get_running_loop()
+        _in_flight = loop.create_future()
+        try:
+            result = await _reload_config_impl(source)
+            _in_flight.set_result(result)
+            return result
+        except Exception as e:
+            _in_flight.set_exception(e)
+            raise
+        finally:
+            _in_flight = None
+
+
+async def _reload_config_impl(source: str) -> dict[str, Any]:
     from ..config_schema import SettingsSchema
 
     raw = _read_raw_settings()

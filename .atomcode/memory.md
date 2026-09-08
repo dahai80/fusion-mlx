@@ -1,0 +1,1 @@
+- start.sh 已配置 DFlash2 投机解码加速，drafter 路径 ~/.fusion-mlx/models/Qwen3.8-27B-DFlash2

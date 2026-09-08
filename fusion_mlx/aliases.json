@@ -840,5 +840,17 @@
     "is_hybrid": false,
     "supports_spec_decode": false,
     "description": "BGE-M3 multilingual embedding model (1024d), 8-bit quantized MLX conversion."
+  },
+  "qwen3.8-27b-8bit": {
+    "hf_path": "mlx-community/Qwen3.8-27B-8bit",
+    "modality": "text",
+    "tool_call_parser": "hermes",
+    "reasoning_parser": "qwen3",
+    "is_hybrid": false,
+    "is_hybrid_explicit": true,
+    "is_moe": false,
+    "supports_spec_decode": true,
+    "supports_dflash2": true,
+    "model_family": "qwen3_8"
   }
 }

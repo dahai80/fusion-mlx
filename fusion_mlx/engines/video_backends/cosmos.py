@@ -136,7 +136,8 @@ class CosmosBackend(VideoBackend):
                         ),
                         timeout=timeout,
                     )
-                    handle.release()
+                    # M-P2-1 (#0908 audit): removed handle.release() — it
+                    # skipped the context manager's os.unlink, leaking .mp4.
                     with open(output_path, "rb") as f:
                         results.append(f.read())
                 except TimeoutError:

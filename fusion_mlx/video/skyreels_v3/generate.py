@@ -172,6 +172,7 @@ def _load_ref_imgs(paths: list[str]) -> list[Any]:
     for p in paths:
         if p.startswith("http"):
             # URL: 下载到临时文件
+            import os
             import tempfile
 
             # SEC-P2-3 (#0907 audit): urllib.request.urlretrieve re-resolves
@@ -189,9 +190,19 @@ def _load_ref_imgs(paths: list[str]) -> list[Any]:
                 logger.warning("safe_fetch failed for ref image %s: %s", p, e)
                 raise ValueError(f"Failed to fetch reference image: {e}")
 
+            # M-P2-4 (#0908 audit): NamedTemporaryFile(delete=False) was
+            # never unlinked — one .png leak per ref-image fetch. Read the
+            # image, then unlink immediately.
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
                 tf.write(content)
-                images.append(Image.open(tf.name).convert("RGB"))
+                ref_path = tf.name
+            try:
+                images.append(Image.open(ref_path).convert("RGB"))
+            finally:
+                try:
+                    os.unlink(ref_path)
+                except OSError:
+                    pass
         else:
             images.append(Image.open(p).convert("RGB"))
     return images

@@ -128,6 +128,44 @@ def fail_all_requests(self) -> list[str]:
     _unregister_uid_rows_for_model(self.model)
     self.batch_generator = None
     self._current_sampler_params = None
+    # M-P0-1 (#0908 audit): fail_all_requests popped self.requests and
+    # nullled req._extracted_cache/prompt_cache, but never released the
+    # paged-cache block_table / block_aware_cache entry for each failed id.
+    # Under repeated step errors (OOM/recovery) those blocks stayed pinned
+    # (refcount never zeroed) → paged cache fully pinned → OOM. Mirror the
+    # cache-release tail of _do_abort_request (sched_trim.py:193-210) without
+    # re-doing the queue/uid work already done above.
+    for rid in failed_ids:
+        if self.paged_cache_manager is not None:
+            block_table = self.paged_cache_manager.get_block_table(rid)
+            if block_table:
+                try:
+                    self.paged_cache_manager.release_for_eviction(
+                        block_table.block_ids
+                    )
+                except Exception:
+                    logger.debug(
+                        "fail_all_requests: paged release failed for %s",
+                        rid,
+                        exc_info=True,
+                    )
+            try:
+                self.paged_cache_manager.delete_block_table(rid)
+            except Exception:
+                logger.debug(
+                    "fail_all_requests: delete_block_table failed for %s",
+                    rid,
+                    exc_info=True,
+                )
+        if self.block_aware_cache is not None:
+            try:
+                self.block_aware_cache.clear_request_entry(rid)
+            except Exception:
+                logger.debug(
+                    "fail_all_requests: block_aware clear failed for %s",
+                    rid,
+                    exc_info=True,
+                )
     # Reclaim fragmented Metal buffers after generation failure.
     # Without this, subsequent requests may hit the same resource
     # limit even though Python references have been cleared.

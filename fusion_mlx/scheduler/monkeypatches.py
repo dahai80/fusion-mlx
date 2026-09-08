@@ -339,8 +339,14 @@ def _patched_generation_batch_step(self):
     return _optimized_generation_batch_step(self)
 
 
-GenerationBatch._realign_rows = _realign_generation_batch_rows
-GenerationBatch._step = _patched_generation_batch_step
+# A-P1-3 (#0908 audit): idempotency guard — if module re-imported, _original_*
+# would capture the already-patched method → infinite recursion on call.
+if not getattr(GenerationBatch._step, "_fusion_patched", False):
+    _patched_generation_batch_step._fusion_patched = True
+    GenerationBatch._realign_rows = _realign_generation_batch_rows
+    GenerationBatch._step = _patched_generation_batch_step
+else:
+    logger.debug("GenerationBatch._step already fusion-patched, skipping")
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +374,11 @@ def _patched_generation_batch_filter(self, keep):
         self.logits_processors = [[] for _ in keep]
 
 
-GenerationBatch.filter = _patched_generation_batch_filter
+if not getattr(GenerationBatch.filter, "_fusion_patched", False):
+    _patched_generation_batch_filter._fusion_patched = True
+    GenerationBatch.filter = _patched_generation_batch_filter
+else:
+    logger.debug("GenerationBatch.filter already fusion-patched, skipping")
 
 
 # ---------------------------------------------------------------------------
@@ -396,8 +406,12 @@ try:
             self._steps_counter += 1  # skip past the modulo trigger
         return _original_batch_generator_next(self)
 
-    _BatchGenerator._next = _patched_batch_generator_next
-    logger.debug("Patched BatchGenerator._next to skip stock clear_cache")
+    if not getattr(_BatchGenerator._next, "_fusion_patched", False):
+        _patched_batch_generator_next._fusion_patched = True
+        _BatchGenerator._next = _patched_batch_generator_next
+        logger.debug("Patched BatchGenerator._next to skip stock clear_cache")
+    else:
+        logger.debug("BatchGenerator._next already fusion-patched, skipping")
 
     # -----------------------------------------------------------------------
     # Monkey-patch BatchGenerator.next_generated() to skip the
@@ -598,4 +612,8 @@ def _patched_ppb_prompt(self, tokens):
     return _original_ppb_prompt(self, tokens)
 
 
-PromptProcessingBatch.prompt = _patched_ppb_prompt
+if not getattr(PromptProcessingBatch.prompt, "_fusion_patched", False):
+    _patched_ppb_prompt._fusion_patched = True
+    PromptProcessingBatch.prompt = _patched_ppb_prompt
+else:
+    logger.debug("PromptProcessingBatch.prompt already fusion-patched, skipping")

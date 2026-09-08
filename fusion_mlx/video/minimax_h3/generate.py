@@ -833,8 +833,10 @@ def generate_video(
     vae = MiniMaxH3VideoVAE.from_pretrained(vae_path, config=H3VAEConfig())
 
     if output_path is None:
-        tmp = tempfile.mkdtemp(prefix="fusion_h3_")
-        output_path = os.path.join(tmp, "h3_output.mp4")
+        # M-P2-3 (#0908 audit): was mkdtemp with no rmtree — leaked a dir
+        # per call. Use mkstemp so caller owns the single file.
+        fd, output_path = tempfile.mkstemp(prefix="fusion_h3_", suffix=".mp4")
+        os.close(fd)
 
     if image is not None and audio:
         raise ValueError(
