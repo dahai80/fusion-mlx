@@ -28,6 +28,18 @@ from .utils.fatal import FATAL_TEARDOWN_TIMEOUT_S, fatal_exit
 
 logger = logging.getLogger(__name__)
 
+# Heartbeat interval for stream_outputs. During long prefills (e.g. 144K-token
+# Claude Code prompts on head_dim=256 VLMs) the collector produces no output for
+# minutes. Without heartbeats the SSE keepalive in the route layer never fires
+# (it sits inside the ``async for gen`` loop body, which is blocked awaiting the
+# first output), so the client times out before the first token. We yield an
+# empty-text RequestOutput on this interval so the route emits an SSE ping.
+_STREAM_HEARTBEAT_INTERVAL_S = 5.0
+
+
+def _make_heartbeat(request_id: str) -> RequestOutput:
+    return RequestOutput(request_id=request_id, new_text="", finished=False)
+
 
 def _raise_request_output_error(output: RequestOutput) -> None:
     if output.error_code == "prefill_memory_exceeded":
@@ -1219,22 +1231,29 @@ class EngineCore:
         try:
             logger.info("stream_outputs start: %s", request_id)
             while True:
-                try:
-                    if timeout:
-                        output = collector.get_nowait()
-                        if output is None:
-                            output = await asyncio.wait_for(
-                                collector.get(), timeout=timeout
-                            )
-                            # E-5 (#811): closed collector returns None.
-                            if output is None:
-                                logger.info(
-                                    "stream_outputs collector closed for %s, stopping",
-                                    request_id,
-                                )
-                                break
-                    else:
-                        output = collector.get_nowait() or await collector.get()
+                output = collector.get_nowait()
+                if output is None:
+                    # Heartbeat wait: cap the blocking get() at the heartbeat
+                    # interval so the route layer can emit SSE keepalive pings
+                    # during long prefills. Without this, a 144K-token prefill
+                    # blocks here for minutes, the route's keepalive (inside the
+                    # ``async for gen`` body) never fires, and the client
+                    # (Claude Code) disconnects before the first token.
+                    hb_timeout = (
+                        min(timeout, _STREAM_HEARTBEAT_INTERVAL_S)
+                        if timeout
+                        else _STREAM_HEARTBEAT_INTERVAL_S
+                    )
+                    try:
+                        output = await asyncio.wait_for(
+                            collector.get(), timeout=hb_timeout
+                        )
+                    except TimeoutError:
+                        if timeout and hb_timeout >= timeout:
+                            logger.warning("Timeout waiting for request %s", request_id)
+                            break
+                        yield _make_heartbeat(request_id)
+                        continue
                     # E-5 (#811): a reaped/closed collector returns None from
                     # get() — stop the stream instead of yielding None.
                     if output is None:
@@ -1243,19 +1262,16 @@ class EngineCore:
                             request_id,
                         )
                         break
-                    yield output
-                    if output.error:
-                        _raise_request_output_error(output)
-                    if output.finished:
-                        logger.info(
-                            "stream_outputs done: %s, finish=%s, tokens=%d",
-                            request_id,
-                            output.finish_reason,
-                            output.completion_tokens,
-                        )
-                        break
-                except TimeoutError:
-                    logger.warning("Timeout waiting for request %s", request_id)
+                yield output
+                if output.error:
+                    _raise_request_output_error(output)
+                if output.finished:
+                    logger.info(
+                        "stream_outputs done: %s, finish=%s, tokens=%d",
+                        request_id,
+                        output.finish_reason,
+                        output.completion_tokens,
+                    )
                     break
         finally:
             # P2-4: if the consumer disconnected before the request finished
