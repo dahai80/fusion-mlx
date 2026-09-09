@@ -41,9 +41,9 @@ class DFlash2Generator:
             raise ValueError("target_repo must be a non-empty string")
         if not draft_repo:
             raise ValueError("draft_repo must be a non-empty string")
-        if block_size <= 0 or block_size > 5:
+        if block_size <= 0 or block_size > 8:
             raise ValueError(
-                f"block_size must be in [1, 5] for MLX quantized targets; got {block_size}"
+                f"block_size must be in [1, 8]; got {block_size}"
             )
         if draft_bits is not None and draft_bits not in (4, 8):
             raise ValueError(f"draft_bits must be 4 or 8; got {draft_bits}")
@@ -107,7 +107,7 @@ class DFlash2Generator:
         temperature: float = 0.0,
         top_p: float = 1.0,
         top_k: int = 0,
-    ) -> Generator[int, None, None]:
+    ) -> Generator[list[int], None, None]:
         if max_new_tokens < 1:
             raise ValueError(f"max_new_tokens must be >= 1; got {max_new_tokens}")
         if temperature < 0.0:
@@ -116,11 +116,6 @@ class DFlash2Generator:
 
         prompt = self._encode(prompt_tokens)
         emitted = 0
-        # E-18 (#811): EOS was never checked here — generation ran to
-        # max_new_tokens regardless of an emitted EOS, and callers could not
-        # inject stop tokens. Resolve the tokenizer's eos token id once and
-        # break on it so the stream terminates at end-of-sequence like every
-        # other decode path.
         _eos_id = None
         eos_attr = getattr(self.tokenizer, "eos_token_id", None)
         if eos_attr is not None:
@@ -142,14 +137,20 @@ class DFlash2Generator:
         )
         try:
             for resp in upstream:
-                for tok in resp.tokens:
-                    tok_id = int(tok)
-                    yield tok_id
-                    emitted += 1
-                    if _eos_id is not None and tok_id == _eos_id:
-                        return
-                    if emitted >= max_new_tokens:
-                        return
+                batch = resp.tokens
+                if not batch:
+                    continue
+                if emitted + len(batch) > max_new_tokens:
+                    batch = batch[: max_new_tokens - emitted]
+                if _eos_id is not None and _eos_id in batch:
+                    idx = batch.index(_eos_id)
+                    batch = batch[: idx + 1]
+                    yield batch
+                    return
+                yield batch
+                emitted += len(batch)
+                if emitted >= max_new_tokens:
+                    return
         finally:
             close = getattr(upstream, "close", None)
             if callable(close):
@@ -157,3 +158,9 @@ class DFlash2Generator:
                     close()
                 except RuntimeError:
                     pass
+            try:
+                import mlx.core as _mx
+
+                _mx.clear_cache()
+            except Exception:
+                pass

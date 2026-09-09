@@ -47,9 +47,9 @@ def load_runtime(
         raise ValueError("target_repo must be a non-empty string")
     if not draft_repo:
         raise ValueError("draft_repo must be a non-empty string")
-    if block_size <= 0 or block_size > 5:
+    if block_size <= 0 or block_size > 8:
         raise ValueError(
-            f"block_size must be in [1, 5] for MLX quantized targets; got {block_size}"
+            f"block_size must be in [1, 8]; got {block_size}"
         )
     if draft_bits is not None and draft_bits not in (4, 8):
         raise ValueError(f"draft_bits must be 4 or 8; got {draft_bits}")

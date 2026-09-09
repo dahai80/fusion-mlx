@@ -604,6 +604,21 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     return output
 
 
+def _close_spec_session(scheduler, request_id: str):
+    """Close dflash2/dspark spec session for a finished request.
+
+    The self-contained generators hold Metal buffers (draft/target caches,
+    hidden states, attention intermediates) that are NOT freed until the
+    generator's finally block runs. Without explicit close, stale sessions
+    accumulate in _sessions and their buffers persist across requests,
+    causing progressive throughput degradation.
+    """
+    for state_attr in ("_dflash2_spec_state", "_dspark_spec_state"):
+        state = getattr(scheduler, state_attr, None)
+        if state is not None:
+            state.remove_session(request_id)
+
+
 def _selfcontained_spec_step(self, output: SchedulerOutput, request) -> list:
     """Pure-decode step driven entirely by a self-contained spec generator
     (dflash2/dspark). The generator owns propose+verify against its own
@@ -635,6 +650,8 @@ def _selfcontained_spec_step(self, output: SchedulerOutput, request) -> list:
     finished_ids = {so.request_id for so in result if so.finished}
     if finished_ids:
         output.finished_request_ids = finished_ids
+        for fid in finished_ids:
+            _close_spec_session(self, fid)
         self._cleanup_finished(finished_ids)
         logger.info("step(%d): spec_finished=%s", self._step_counter, finished_ids)
     return result

@@ -805,7 +805,13 @@ def _emit_spec_tokens(
     request_id: str,
     tokens: list[int],
 ) -> list[RequestOutput]:
-    """Build RequestOutputs for spec-decode accepted tokens."""
+    """Build RequestOutputs for spec-decode accepted tokens.
+
+    Batch-optimized: appends all tokens to the request, detokenizes in one
+    pass, and emits a single RequestOutput for the whole batch when no
+    finishing token is present. Falls back to per-token split only when
+    EOS or length cap falls mid-batch.
+    """
     if not tokens:
         return []
 
@@ -824,52 +830,88 @@ def _emit_spec_tokens(
     if isinstance(eos_ids, int):
         eos_ids = [eos_ids]
 
-    outputs = []
     step_now = time.monotonic()
+    detokenizer = scheduler._get_detokenizer(request_id)
 
-    for token in tokens:
+    finish_idx = -1
+    finish_reason = None
+    for i, token in enumerate(tokens):
         request.append_output_token(token)
-        request.last_activity_at = step_now
+        if token in eos_ids:
+            finish_idx = i
+            finish_reason = "stop"
+            break
+        if request.num_output_tokens >= request.max_tokens:
+            finish_idx = i
+            finish_reason = "length"
+            break
 
-        detokenizer = scheduler._get_detokenizer(request_id)
-        if detokenizer is not None:
+    request.last_activity_at = step_now
+
+    if detokenizer is not None:
+        for token in tokens[: finish_idx + 1 if finish_idx >= 0 else len(tokens)]:
             detokenizer.add_token(token)
-            new_text = detokenizer.last_segment
-        else:
-            new_text = scheduler.tokenizer.decode([token])
+        if finish_idx >= 0 and finish_reason == "stop":
+            detokenizer.finalize()
+        batch_text = detokenizer.last_segment if detokenizer else ""
+    else:
+        batch_text = scheduler.tokenizer.decode(
+            tokens[: finish_idx + 1 if finish_idx >= 0 else len(tokens)]
+        )
 
-        is_eos = token in eos_ids
-        is_length = request.num_output_tokens >= request.max_tokens
-        is_finished = is_eos or is_length
+    if finish_idx >= 0:
+        pre_tokens = tokens[:finish_idx]
+        fin_token = tokens[finish_idx]
+        outputs = []
 
-        out = RequestOutput(
+        if pre_tokens:
+            out = RequestOutput(
+                request_id=request_id,
+                new_token_ids=pre_tokens,
+                new_text=batch_text,
+                completion_tokens=request.num_output_tokens,
+                prompt_tokens=request.num_prompt_tokens,
+                cached_tokens=request.cached_tokens,
+                finished=False,
+                finish_reason=None,
+            )
+            outputs.append(out)
+
+        from ..request import RequestStatus
+
+        request.set_finished(
+            RequestStatus.FINISHED_STOPPED
+            if finish_reason == "stop"
+            else RequestStatus.FINISHED_LENGTH_CAPPED
+        )
+        fin_out = RequestOutput(
             request_id=request_id,
-            new_token_ids=[token],
-            new_text="" if is_eos else new_text,
+            new_token_ids=[fin_token],
+            new_text="",
             completion_tokens=request.num_output_tokens,
             prompt_tokens=request.num_prompt_tokens,
             cached_tokens=request.cached_tokens,
-            finished=is_finished,
-            finish_reason="stop" if is_eos else ("length" if is_length else None),
+            finished=True,
+            finish_reason=finish_reason,
         )
-
-        if is_finished:
-            from ..request import RequestStatus
-
-            request.set_finished(
-                RequestStatus.FINISHED_STOPPED
-                if is_eos
-                else RequestStatus.FINISHED_LENGTH_CAPPED
+        fin_out.output_token_ids = list(request.output_token_ids)
+        fin_out.output_text = scheduler.tokenizer.decode(request.output_token_ids)
+        request.output_text = fin_out.output_text
+        outputs.append(fin_out)
+    else:
+        outputs = [
+            RequestOutput(
+                request_id=request_id,
+                new_token_ids=list(tokens),
+                new_text=batch_text,
+                completion_tokens=request.num_output_tokens,
+                prompt_tokens=request.num_prompt_tokens,
+                cached_tokens=request.cached_tokens,
+                finished=False,
+                finish_reason=None,
             )
-            out.output_token_ids = list(request.output_token_ids)
-            out.output_text = scheduler.tokenizer.decode(request.output_token_ids)
-            request.output_text = out.output_text
+        ]
 
-        outputs.append(out)
-        if is_finished:
-            break
-
-    # Update gen._next_tokens so the regular step picks up the last token
     if gen is not None and tokens:
         gen._next_tokens = mx.array([tokens[-1]], mx.uint32)
         if gen.tokens and len(gen.tokens) > 0:
@@ -998,8 +1040,21 @@ class DFlash2SpecState:
 
     def on_new_request(self, request_id: str):
         if self._last_request_id != request_id:
+            self._close_stale_sessions(request_id)
             self._last_request_id = request_id
             self.total_spec_steps = 0
+
+    def _close_stale_sessions(self, keep_id: str):
+        stale = [k for k in self._sessions if k != keep_id]
+        for k in stale:
+            sess = self._sessions.pop(k, None)
+            if sess is not None:
+                close = getattr(sess, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        pass
 
     def get_session(self, request_id: str):
         return self._sessions.get(request_id)
@@ -1008,7 +1063,14 @@ class DFlash2SpecState:
         self._sessions[request_id] = session
 
     def remove_session(self, request_id: str):
-        self._sessions.pop(request_id, None)
+        sess = self._sessions.pop(request_id, None)
+        if sess is not None:
+            close = getattr(sess, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
 
     def record_result(self, n_accepted: int, n_total: int):
         self.total_spec_steps += 1
@@ -1106,15 +1168,11 @@ def dflash2_spec_step(
             return []
 
     try:
-        accepted_tokens = []
-        block_size = getattr(dflash2_state.runtime, "block_size", 5)
         _is_first_spec_step = dflash2_state.total_spec_steps == 0
-        for _ in range(block_size):
-            try:
-                tok = next(session)
-                accepted_tokens.append(int(tok))
-            except StopIteration:
-                break
+        try:
+            accepted_tokens = next(session)
+        except StopIteration:
+            accepted_tokens = []
 
         if not accepted_tokens:
             dflash2_state.remove_session(request_id)
@@ -1124,7 +1182,6 @@ def dflash2_spec_step(
             try:
                 import mlx.core as _mx
 
-                _mx.synchronize()
                 _mx.clear_cache()
                 scheduler._last_mlx_active_memory_bytes = int(_mx.get_active_memory())
                 if request.prompt_cache is not None:
@@ -1145,8 +1202,7 @@ def dflash2_spec_step(
                     request.cached_tokens = 0
                     logger.info(
                         "dflash2_spec: released scheduler KV cache for %s "
-                        "(dflash2 self-contained, ~%.1fGB freed); cleared "
-                        "MLX buffer cache after prefill",
+                        "(dflash2 self-contained, ~%.1fGB freed)",
                         request_id[:8],
                         _kv_gb,
                     )
@@ -1155,35 +1211,6 @@ def dflash2_spec_step(
 
         n_accepted = len(accepted_tokens)
         dflash2_state.record_result(n_accepted, n_accepted)
-
-        # Periodic MLX buffer-cache clear during dflash2 generation. The
-        # first-step clear (above) releases the scheduler KV cache, but
-        # dflash2's self-contained propose→verify→rollback loop allocates
-        # fresh attention/activation buffers every block that accumulate in
-        # the Metal buffer pool. For 8bit targets (27.5GB) these buffers are
-        # 2x larger than 4bit, so the pool grows past 90GB and either OOMs
-        # or deadlocks on Metal allocation. Clear every 8 spec steps (each
-        # step yields block_size tokens, so ~40 tokens between clears).
-        if (
-            dflash2_state.total_spec_steps > 0
-            and dflash2_state.total_spec_steps % 8 == 0
-        ):
-            try:
-                import mlx.core as _mx
-
-                _cache_mem = _mx.get_cache_memory()
-                _threshold = getattr(
-                    scheduler, "_periodic_clear_threshold_bytes", lambda: 0
-                )
-                _threshold_val = _threshold() if callable(_threshold) else 0
-                if _threshold_val and _cache_mem > _threshold_val:
-                    _mx.synchronize()
-                    _mx.clear_cache()
-                    scheduler._last_mlx_active_memory_bytes = int(
-                        _mx.get_active_memory()
-                    )
-            except Exception as exc:
-                logger.debug("dflash2 periodic cache clear failed: %s", exc)
 
         if dflash2_state.total_spec_steps % DFLASH2_SPEC_LOG_INTERVAL == 1:
             stats = dflash2_state.get_stats()

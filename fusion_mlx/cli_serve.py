@@ -947,12 +947,16 @@ def _serve_from_model_dir(args):
     )
     logger.info("serving models from %s on %s:%s", args.model_dir, host, port)
 
-    app = create_app(config)
-
     log_level = getattr(args, "log_level", "INFO")
     if not isinstance(log_level, str):
         log_level = "INFO"
     uvicorn_log_level = log_level.lower()
+
+    from .server import configure_logging as _configure_logging
+
+    _configure_logging(log_level)
+
+    app = create_app(config)
 
     # #569: route --model-dir through the same UDS-aware dispatch the
     # single-model serve path uses (_run_uvicorn → Server.run()), instead

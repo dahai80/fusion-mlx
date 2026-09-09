@@ -225,10 +225,9 @@ class TestDSparkSpecStep:
         sched = FakeScheduler(running={"req-001": req})
         sched._dspark_runtime = rt
         result = dspark_spec_step(sched, _make_output(), 42, "req-001")
-        assert len(result) == 3
-        for r in result:
-            assert r.request_id == "req-001"
-            assert len(r.new_token_ids) == 1
+        assert len(result) == 1
+        assert result[0].request_id == "req-001"
+        assert result[0].new_token_ids == [50, 51, 52]
 
     def test_session_cleanup_on_stop_iteration(self):
         rt = MagicMock()
@@ -269,15 +268,14 @@ class TestEmitSpecTokens:
         sched = FakeScheduler()
         assert _emit_spec_tokens(sched, "req-999", [1, 2, 3]) == []
 
-    def test_emits_output_per_token(self):
+    def test_emits_output_batch(self):
         req = FakeRequest()
         sched = FakeScheduler(running={"req-001": req})
         tokens = [50, 51, 52]
         result = _emit_spec_tokens(sched, "req-001", tokens)
-        assert len(result) == 3
-        assert result[0].new_token_ids == [50]
-        assert result[1].new_token_ids == [51]
-        assert result[2].new_token_ids == [52]
+        assert len(result) == 1
+        assert result[0].new_token_ids == [50, 51, 52]
+        assert result[0].finished is False
 
     def test_eos_terminates_early(self):
         req = FakeRequest(rid="req-001")

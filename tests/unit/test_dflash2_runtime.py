@@ -66,8 +66,9 @@ def test_generator_stream_yields_all_tokens(monkeypatch):
         draft_repo="z-lab/Qwen3.8-27B-DFlash2",
         block_size=5,
     )
-    out = list(gen.stream_from_tokens([10, 11], max_new_tokens=100))
-    assert out == [1, 2, 3, 4, 5, 6]
+    batches = list(gen.stream_from_tokens([10, 11], max_new_tokens=100))
+    flat = [t for batch in batches for t in batch]
+    assert flat == [1, 2, 3, 4, 5, 6]
 
 
 def test_generator_respects_max_new_tokens(monkeypatch):
@@ -75,8 +76,9 @@ def test_generator_respects_max_new_tokens(monkeypatch):
 
     _install_fake_dflash_model_mlx(monkeypatch, [[1, 2, 3, 4, 5], [6, 7, 8]])
     gen = DFlash2Generator("t", "d", block_size=5)
-    out = list(gen.stream_from_tokens([0], max_new_tokens=4))
-    assert out == [1, 2, 3, 4]
+    batches = list(gen.stream_from_tokens([0], max_new_tokens=4))
+    flat = [t for batch in batches for t in batch]
+    assert flat == [1, 2, 3, 4]
 
 
 def test_generator_binds_draft_to_target(monkeypatch):
@@ -93,7 +95,7 @@ def test_generator_rejects_invalid_block_size():
     with pytest.raises(ValueError, match="block_size"):
         DFlash2Generator("t", "d", block_size=0)
     with pytest.raises(ValueError, match="block_size"):
-        DFlash2Generator("t", "d", block_size=6)
+        DFlash2Generator("t", "d", block_size=9)
 
 
 def test_generator_rejects_empty_repos():
