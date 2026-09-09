@@ -368,9 +368,7 @@ def _preflight_safety_rejection(
 
     floor_chunk = min(max(1, self._prefill_min_chunk_tokens), new_tokens)
     kv_len = max(int(num_prompt_tokens) - 1, 1)
-    new_kv, _cached_kv = self.memory_monitor.estimate_prompt_kv_bytes(
-        new_tokens, cached_tokens
-    )
+    new_kv = self.memory_monitor.estimate_prompt_kv_bytes(new_tokens, cached_tokens)
     min_transient = self._predicted_chunk_transient(floor_chunk, kv_len)
     if new_kv <= 0 and min_transient <= 0:
         return None
