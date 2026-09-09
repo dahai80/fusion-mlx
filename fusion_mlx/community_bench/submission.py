@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import uuid
 from pathlib import Path
@@ -24,10 +23,13 @@ def _compute_owner_hash(io_uuid: str, chip: str, gpu_cores: int, ram_gb: float) 
 
 def _get_io_uuid() -> str | None:
     import subprocess
+
     try:
         result = subprocess.run(
             ["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         for line in result.stdout.splitlines():
             if "IOPlatformUUID" in line:
@@ -77,7 +79,8 @@ def build_submission_payload(
     owner_hash = None
     if io_uuid:
         owner_hash = _compute_owner_hash(
-            io_uuid, chip_name,
+            io_uuid,
+            chip_name,
             getattr(hardware, "gpu_cores", 0),
             getattr(hardware, "ram_gb", 0),
         )
@@ -133,15 +136,20 @@ def submit_interactive(payloads: list[dict[str, Any]], repo_root: Path) -> int:
     print(f"  Chip:       {p.get('chip_name')} {p.get('chip_variant')}")
     print(f"  RAM:        {p.get('memory_gb')} GB")
     print(f"  GPU cores:  {p.get('gpu_cores')}")
-    print(f"  Short pp128:  decode={p.get('tg_tps')} tok/s, prefill={p.get('pp_tps')} tok/s, ttft={p.get('ttft_ms')} ms")
+    print(
+        f"  Short pp128:  decode={p.get('tg_tps')} tok/s, prefill={p.get('pp_tps')} tok/s, ttft={p.get('ttft_ms')} ms"
+    )
     if len(payloads) > 1:
         p2 = payloads[1]
-        print(f"  Long pp1024:  decode={p2.get('tg_tps')} tok/s, prefill={p2.get('pp_tps')} tok/s, ttft={p2.get('ttft_ms')} ms")
+        print(
+            f"  Long pp1024:  decode={p2.get('tg_tps')} tok/s, prefill={p2.get('pp_tps')} tok/s, ttft={p2.get('ttft_ms')} ms"
+        )
     if p.get("notes"):
         print(f"  Notes:      {p.get('notes')}")
     print()
 
     import sys
+
     if sys.stdin.isatty():
         answer = input("  Submit to bench.dpdns.org? [y/N] ").strip().lower()
         if answer not in ("y", "yes"):

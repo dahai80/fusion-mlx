@@ -35,6 +35,7 @@ def _base_entry(model_id: str = "base", path: str = "/m") -> EngineEntry:
 def _stub_engine() -> MagicMock:
     eng = MagicMock()
     eng.start = AsyncMock()
+    eng.is_dead = MagicMock(return_value=False)
     return eng
 
 

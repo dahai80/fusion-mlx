@@ -140,9 +140,7 @@ def fail_all_requests(self) -> list[str]:
             block_table = self.paged_cache_manager.get_block_table(rid)
             if block_table:
                 try:
-                    self.paged_cache_manager.release_for_eviction(
-                        block_table.block_ids
-                    )
+                    self.paged_cache_manager.release_for_eviction(block_table.block_ids)
                 except Exception:
                     logger.debug(
                         "fail_all_requests: paged release failed for %s",

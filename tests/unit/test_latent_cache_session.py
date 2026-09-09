@@ -27,10 +27,13 @@ class TestSessionTailKey:
 
 
 class TestSessionTailCacheEnabled:
-    def test_enabled_by_default(self, monkeypatch):
+    def test_disabled_by_default(self, monkeypatch):
+        # FUNC-P2-3 (#0907 audit): default OFF to match CLAUDE.md and
+        # LATENT_CACHE.md — multi-frame tail-latent cache must not
+        # silently consume extra memory against operator expectation.
         monkeypatch.delenv("FUSION_SESSION_TAIL_CACHE", raising=False)
         monkeypatch.setenv("FUSION_LATENT_CACHE", "1")
-        assert session_tail_cache_enabled()
+        assert not session_tail_cache_enabled()
 
     def test_explicit_disable(self, monkeypatch):
         monkeypatch.setenv("FUSION_LATENT_CACHE", "1")

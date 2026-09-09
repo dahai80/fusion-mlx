@@ -15,17 +15,19 @@ compare against the same prompts after wiring up prompt lookup.
 
 import asyncio
 import json
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+import os
 import time
 from dataclasses import dataclass
 
 import aiohttp
 import pytest
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-BASE_URL = "http://localhost:8000"
+_TEST_PORT = os.environ.get("FUSION_MLX_TEST_PORT", "11434")
+BASE_URL = f"http://localhost:{_TEST_PORT}"
 MAX_TOKENS = 1024
 TEMPERATURE = 0.0  # deterministic for reproducibility
 
@@ -100,15 +102,21 @@ BENCH_PROMPTS: list[tuple[str, str]] = [
 
 
 async def check_server_health() -> bool:
-    """Return True if the server is reachable."""
+    """Return True if a fusion-mlx server is reachable and unauthenticated."""
     try:
-        async with (
-            aiohttp.ClientSession() as session,
-            session.get(
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{BASE_URL}/health/ready", timeout=aiohttp.ClientTimeout(total=5)
+            ) as hresp:
+                if hresp.status != 200:
+                    return False
+                body = await hresp.json()
+                if "status" not in body:
+                    return False
+            async with session.get(
                 f"{BASE_URL}/v1/models", timeout=aiohttp.ClientTimeout(total=5)
-            ) as resp,
-        ):
-            return resp.status == 200
+            ) as resp:
+                return resp.status == 200
     except Exception:
         return False
 
@@ -220,7 +228,7 @@ async def test_server_reachable():
     """Verify the server is running before benchmarking."""
     healthy = await check_server_health()
     if not healthy:
-        pytest.skip("Server not reachable at localhost:8000 -- start the server first")
+        pytest.skip(f"fusion-mlx not reachable at {BASE_URL} -- start the server first")
 
 
 @pytest.mark.asyncio
@@ -233,7 +241,7 @@ async def test_prompt_lookup_baseline():
     """
     healthy = await check_server_health()
     if not healthy:
-        pytest.skip("Server not reachable at localhost:8000")
+        pytest.skip(f"fusion-mlx not reachable at {BASE_URL}")
 
     results: list[BenchResult] = []
 

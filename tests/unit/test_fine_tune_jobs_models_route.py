@@ -41,6 +41,9 @@ class _FakePool:
     def __init__(self, entries):
         self._entries = entries
 
+    async def iter_entries(self):
+        return list(self._entries.items())
+
 
 def test_jobs_models_route_returns_list():
     pool = _FakePool(

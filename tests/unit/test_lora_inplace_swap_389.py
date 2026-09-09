@@ -31,6 +31,7 @@ def _base_entry(model_id: str = "qwen-base") -> EngineEntry:
     engine.stop = AsyncMock()
     engine.safe_evict = AsyncMock()
     engine.has_active_requests = MagicMock(return_value=False)
+    engine.is_dead = MagicMock(return_value=False)
     entry.engine = engine
     return entry
 

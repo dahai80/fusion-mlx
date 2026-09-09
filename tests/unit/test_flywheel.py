@@ -259,7 +259,10 @@ class TestRoutes:
 
 class TestCommunityBenchDestubbed:
     def test_run_benchmark_returns_local_data(self):
-        from fusion_mlx.community_bench.runner import BenchResult, run_standardized_bench
+        from fusion_mlx.community_bench.runner import (
+            BenchResult,
+            run_standardized_bench,
+        )
 
         # New API: async run_standardized_bench(engine, tokenizer) → BenchResult.
         # Mock engine + tokenizer to verify the bench loop produces real stats.
@@ -277,9 +280,7 @@ class TestCommunityBenchDestubbed:
 
         import asyncio
 
-        result = asyncio.run(
-            run_standardized_bench(_MockEngine(), _MockTokenizer())
-        )
+        result = asyncio.run(run_standardized_bench(_MockEngine(), _MockTokenizer()))
         assert isinstance(result, BenchResult)
         assert len(result.short.decode_stat.values) == 5
         assert len(result.long.decode_stat.values) == 5

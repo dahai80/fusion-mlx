@@ -5,6 +5,6 @@
 # import EnginePool` silently returned the stub (no-op) instead of the real
 # pool — dangerous if any code path used the short import. Re-export the
 # real class so both import paths resolve to the same object.
-from .pool.engine_pool import EnginePool, EngineEntry
+from .pool.engine_pool import EngineEntry, EnginePool
 
 __all__ = ["EnginePool", "EngineEntry"]

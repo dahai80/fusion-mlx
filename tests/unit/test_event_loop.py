@@ -20,28 +20,49 @@ Usage:
 
 import argparse
 import asyncio
+import os
 import sys
 import time
 
 import aiohttp
 import pytest
 
-BASE = "http://127.0.0.1:8000"
+_TEST_PORT = int(os.environ.get("FUSION_MLX_TEST_PORT", "11434"))
+BASE = f"http://127.0.0.1:{_TEST_PORT}"
 
 
-def _server_alive(host="127.0.0.1", port=8000, timeout=0.25):
+def _server_alive(host="127.0.0.1", port=None, timeout=0.25):
     import socket
 
+    if port is None:
+        port = _TEST_PORT
     try:
         with socket.create_connection((host, port), timeout=timeout):
-            return True
+            pass
     except OSError:
+        return False
+    # Verify it's actually fusion-mlx, not some other app on the port.
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(
+            f"http://{host}:{port}/health/ready", headers={"Connection": "close"}
+        )
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            if resp.status != 200:
+                return False
+            body = resp.read()
+            import json
+
+            data = json.loads(body)
+            return "status" in data
+    except Exception:
         return False
 
 
 pytestmark = pytest.mark.skipif(
     not _server_alive(),
-    reason="requires a running fusion-mlx server on 127.0.0.1:8000 (integration)",
+    reason=f"requires a running fusion-mlx server on 127.0.0.1:{_TEST_PORT} (integration)",
 )
 
 

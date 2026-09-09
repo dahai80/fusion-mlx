@@ -454,6 +454,18 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # Model-load timeout in seconds (engines/batched.py). Pure timing knob
         # — never selects model / parser / tier.
         "FUSION_MLX_MODEL_LOAD_TIMEOUT",
+        # Smart-router performance-model knobs (dispatch/smart_router.py).
+        # Peak GFLOPS estimates per tier, efficiency factors, and base
+        # overhead in ms — used for cost/time estimation, not routing
+        # bypass. The actual routing decision is made by the CLI/config,
+        # these only parameterize the latency model.
+        "FUSION_MLX_PEAK_GFLOPS_MLX",
+        "FUSION_MLX_PEAK_GFLOPS_RAPID",
+        "FUSION_MLX_PEAK_GFLOPS_FALLBACK",
+        "FUSION_MLX_EFFICIENCY_MLX",
+        "FUSION_MLX_EFFICIENCY_RAPID",
+        "FUSION_MLX_BASE_OVERHEAD_MS_MLX",
+        "FUSION_MLX_BASE_OVERHEAD_MS_RAPID",
     }
 )
 

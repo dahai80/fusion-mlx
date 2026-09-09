@@ -55,9 +55,9 @@ class TestDenoisingEndValidation:
         with pytest.raises(ValueError, match="denoising_end"):
             import asyncio
 
-            asyncio.get_event_loop().run_until_complete(
-                eng.denoise(latent, pos, None, 4, 1.0, 0, denoising_end=1.5)
-            )
+            # asyncio.run creates a fresh loop — the module-level default
+            # loop may be closed by earlier tests in a full-suite run.
+            asyncio.run(eng.denoise(latent, pos, None, 4, 1.0, 0, denoising_end=1.5))
 
 
 class TestCompileEnvGate:
