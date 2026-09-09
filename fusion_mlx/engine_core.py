@@ -1114,6 +1114,26 @@ class EngineCore:
                 "Aborted %d requests due to memory pressure", len(request_ids)
             )
             self._wake_engine_loop()
+            # MLX buffer cache leak fix: after aborting requests the Metal
+            # buffer pool still holds temporary tensors from the aborted
+            # prefill/decode (attention matrices, intermediate activations).
+            # These are NOT freed by the scheduler's deferred abort (which
+            # only runs on the next step() — blocked if the current step is
+            # stuck in a long MLX op). mx.clear_cache() releases unused
+            # buffers immediately, breaking the deadlock where memory stays
+            # at 100+ GB after abort and the engine can't process new
+            # requests.
+            try:
+                import mlx.core as _mx
+
+                _mx.synchronize()
+                _mx.clear_cache()
+                logger.info(
+                    "Cleared MLX buffer cache after memory-pressure abort "
+                    "(freed unused Metal buffers)"
+                )
+            except Exception as exc:
+                logger.debug("mx.clear_cache() after abort failed: %s", exc)
         return len(request_ids)
 
     def _cleanup_request(self, request_id: str) -> None:

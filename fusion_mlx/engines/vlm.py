@@ -652,11 +652,31 @@ class VLMBatchedEngine(BaseEngine):
         # goes through gen.model + gen.prompt_cache, which already carry the
         # vision features computed at prefill. No drafter path configured ->
         # no-op (default VLM load untouched).
-        dflash2_path = (
+        # model_settings may carry a relative alias (e.g. "Qwen3.8-27B-DFlash2")
+        # from the registry; the CLI passes the resolved absolute path via
+        # --dflash2-drafter-path into scheduler_config. Prefer the absolute
+        # path so load_runtime gets a real filesystem location. Without this,
+        # the relative alias won and load_runtime silently failed (no dflash2
+        # target loaded, no error surfaced).
+        _ms_path = (
             getattr(self._model_settings, "dflash2_drafter_path", None)
             if self._model_settings
             else None
-        ) or getattr(self._scheduler_config, "dflash2_drafter_path", "")
+        )
+        _sc_path = getattr(self._scheduler_config, "dflash2_drafter_path", "")
+        import os as _os
+
+        if _ms_path and _os.path.isabs(_ms_path):
+            dflash2_path = _ms_path
+        else:
+            dflash2_path = _sc_path or (_ms_path or "")
+        logger.info(
+            "DFlash2 VLM apply: model=%s ms_path=%r sc_path=%r resolved=%r",
+            self._model_name,
+            _ms_path,
+            _sc_path,
+            dflash2_path,
+        )
         if not dflash2_path:
             return
         try:

@@ -1043,9 +1043,18 @@ class Server:
                     _retention = 7
             # OP-1: mirror the console JSON knob onto the file handler so the
             # rotated server.log stays consistent with the stream format.
+            # OPS-FIX: level was hardcoded "INFO", ignoring --log-level DEBUG
+            # set via cli_serve/settings.json. Read the root logger's effective
+            # level so the file handler matches the console handler.
+            import logging as _stdlib_logging
+
+            _root_level = _stdlib_logging.getLogger().getEffectiveLevel()
+            _file_level = (
+                _stdlib_logging.getLevelName(_root_level) if _root_level > 0 else "INFO"
+            )
             configure_file_logging(
                 log_dir=log_dir,
-                level="INFO",
+                level=_file_level,
                 retention_days=_retention,
                 format_style="json" if _json else "standard",
             )
@@ -1472,11 +1481,16 @@ class Server:
         return app
 
     def _convert_scheduler_config(self):
-        """Convert ServerConfig.scheduler to scheduler SchedulerConfig."""
+        """Convert ServerConfig.scheduler to scheduler SchedulerConfig.
+
+        Carries every spec-decode field (dflash2/dspark/suffix) through to
+        the engine pool. Previously this dropped dflash2_drafter_path etc,
+        so --enable-dflash2 was silently ignored in --model-dir mode.
+        """
         from .scheduler.config import SchedulerConfig as SchedConfig
 
         src = self.config.scheduler
-        return SchedConfig(
+        kw = dict(
             max_num_seqs=src.max_num_seqs,
             max_num_batched_tokens=src.max_num_batched_tokens,
             completion_batch_size=src.completion_batch_size,
@@ -1484,6 +1498,23 @@ class Server:
             chunked_prefill=src.chunked_prefill_tokens > 0,
             model_name="",
         )
+        for _f in (
+            "spec_decode",
+            "dflash_drafter_path",
+            "dflash2_drafter_path",
+            "dflash2_block_size",
+            "dflash2_draft_bits",
+            "dspark_drafter_path",
+            "dspark_draft_quant_bits",
+            "enable_suffix_decoding",
+            "suffix_max_draft",
+            "suffix_max_suffix_len",
+            "suffix_min_confidence",
+            "suffix_min_draft_len",
+        ):
+            if hasattr(src, _f):
+                kw[_f] = getattr(src, _f)
+        return SchedConfig(**kw)
 
     def run(self):
         """Start the server using uvicorn."""

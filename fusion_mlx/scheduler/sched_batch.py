@@ -679,22 +679,19 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
                 f"{self._memory_hard_limit_bytes / 1024**3:.1f}GB)"
             )
 
-    # Only sync+clear at boundary snapshot points or on the final
-    # chunk.  Calling mx.synchronize() + mx.clear_cache() on every
-    # chunk stalls the GPU pipeline — a 128k prompt at 2048-step
-    # size would produce 64 full syncs.  Intermediate chunks already
-    # have mx.eval(c.state) above to ensure states are materialized.
-    # Note: the memory-monitoring block above may have already cleared
-    # the cache if memory pressure was detected; this clear handles
-    # the non-pressure path at boundaries.
+    # MEMFIX: clear MLX buffer cache after EVERY chunk, not just at
+    # boundary/final.  The prior "defer to boundaries" design let
+    # intermediate Metal buffers (attention matrices, activation
+    # intermediates) accumulate across chunks, inflating phys_footprint
+    # to 113GB+ for a 40K-token prefill on a 27B hybrid-attention VLM —
+    # far above the ~25GB the model+KV actually need.  The GPU stall
+    # from mx.synchronize()+clear_cache() is ~1-5ms per chunk, negligible
+    # vs multi-second chunk processing time.  The memory-monitoring block
+    # above may have already cleared under pressure; this is the
+    # unconditional non-pressure-path clear.
     is_final = state.tokens_remaining.shape[1] == 0
-    had_boundary_snapshot = (
-        state.boundary_enabled
-        and state.base_size + state.tokens_processed > 0
-        and (state.base_size + state.tokens_processed) % state.block_size == 0
-    )
-    if is_final or had_boundary_snapshot:
-        _sync_and_clear_cache(self._stream)
+    _sync_and_clear_cache(self._stream)
+    self._last_mlx_active_memory_bytes = int(mx.get_active_memory())
     return is_final
 
 

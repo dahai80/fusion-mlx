@@ -153,4 +153,7 @@ class DFlash2Generator:
         finally:
             close = getattr(upstream, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except RuntimeError:
+                    pass

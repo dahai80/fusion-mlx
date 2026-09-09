@@ -584,11 +584,21 @@ class BatchedEngine(BaseEngine):
         # DFlash2 block-diffusion speculative decode (official dflash pip
         # pkg, z-lab DFlash2DraftModel). Self-contained generator loads its
         # own target copy + draft, runs propose->verify->rollback internally.
-        dflash2_path = (
+        # model_settings may carry a relative alias; prefer the absolute path
+        # from scheduler_config (CLI --dflash2-drafter-path). See vlm.py
+        # _apply_dflash2 for the full rationale.
+        _ms_path = (
             getattr(self._model_settings, "dflash2_drafter_path", None)
             if self._model_settings
             else None
-        ) or getattr(scheduler_config, "dflash2_drafter_path", "")
+        )
+        _sc_path = getattr(scheduler_config, "dflash2_drafter_path", "")
+        import os as _os
+
+        if _ms_path and _os.path.isabs(_ms_path):
+            dflash2_path = _ms_path
+        else:
+            dflash2_path = _sc_path or (_ms_path or "")
         if dflash2_path:
             try:
                 from ..speculative.dflash2 import load_runtime as load_dflash2_runtime

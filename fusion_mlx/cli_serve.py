@@ -909,6 +909,36 @@ def _serve_from_model_dir(args):
     port = 11434 if port_raw is None else int(port_raw)
     config = ServerConfig(host=host, port=port, model_dir=args.model_dir)
 
+    # Pass spec-decode / dflash2 / dspark CLI flags through to the engine
+    # pool's scheduler_config. Without this, --enable-dflash2 +
+    # --dflash2-drafter-path are silently dropped in --model-dir mode:
+    # _convert_scheduler_config reads ServerConfig.scheduler, which defaults
+    # to an empty SchedulerConfig, so VLMBatchedEngine._apply_dflash2 /
+    # BatchedEngine._apply_dflash2 see an empty drafter path and skip
+    # loading. The single-model serve_command path builds scheduler_config
+    # at line ~1856; this mirrors the dflash2/dspark/suffix fields for the
+    # multi-model path.
+    from .scheduler.config import SchedulerConfig as _SchedCfg
+
+    _sched = _SchedCfg(
+        model_name="",
+        spec_decode=getattr(args, "spec_decode", "none"),
+        dflash_drafter_path=getattr(args, "dflash_drafter_path", "") or "",
+        dflash2_drafter_path=getattr(args, "dflash2_drafter_path", "") or "",
+        dflash2_block_size=getattr(args, "dflash2_block_size", 5) or 5,
+        dflash2_draft_bits=getattr(args, "dflash2_draft_bits", 4),
+        dspark_drafter_path=getattr(args, "dspark_drafter_path", "") or "",
+        dspark_draft_quant_bits=getattr(args, "dspark_draft_quant_bits", 8),
+        enable_suffix_decoding=getattr(args, "suffix_decoding", False),
+        suffix_max_draft=getattr(args, "suffix_max_draft", 0),
+        suffix_max_suffix_len=getattr(args, "suffix_max_suffix_len", 0),
+        suffix_min_confidence=getattr(args, "suffix_min_confidence", 0.0),
+        suffix_min_draft_len=getattr(args, "suffix_min_draft_len", 0),
+        chunked_prefill=(getattr(args, "chunked_prefill_tokens", 0) or 0) > 0,
+        prefill_step_size=getattr(args, "chunked_prefill_tokens", 4096) or 4096,
+    )
+    config.scheduler = _sched
+
     logger.info(
         "serve --model-dir=%s host=%s port=%d (multi-model engine-pool server)",
         args.model_dir,

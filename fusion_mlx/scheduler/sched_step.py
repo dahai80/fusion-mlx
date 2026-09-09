@@ -288,8 +288,11 @@ def step(self) -> SchedulerOutput:
                     cache_mem = mx.get_cache_memory()
                     cache_threshold = self._periodic_clear_threshold_bytes()
                     if (
-                        _should_clear_on_fragmentation(frag)
-                        and cache_mem > cache_threshold
+                        cache_mem > cache_threshold * 2
+                        or (
+                            _should_clear_on_fragmentation(frag)
+                            and cache_mem > cache_threshold
+                        )
                     ):
                         _sync_and_clear_cache(self._stream)
                     else:
@@ -578,12 +581,25 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
                     "step(%d): spec_finished=%s", self._step_counter, finished_ids
                 )
 
-    # Decode-phase cache clear (same interval as full path)
+    # Decode-phase cache clear. The MLX buffer pool accumulates freed
+    # intermediates (attention scores, MLP activations) that are not
+    # released to the OS until mx.clear_cache() runs. For large models
+    # (27B+), the pool grows >70GB before the old 16384-token interval
+    # fired, causing jetsam OOM kills. Two triggers:
+    #  1. Token-count interval (decode_clear_interval, default 256)
+    #  2. Memory-pressure early clear: if cache_memory exceeds the
+    #     periodic threshold, clear immediately regardless of count.
     if self._tokens_since_clear_cache is not None:
         self._tokens_since_clear_cache += len(responses)
-        if self._tokens_since_clear_cache >= self.config.decode_clear_interval:
+        _cache_mem = mx.get_cache_memory()
+        _cache_threshold = self._periodic_clear_threshold_bytes()
+        if (
+            self._tokens_since_clear_cache >= self.config.decode_clear_interval
+            or _cache_mem > _cache_threshold
+        ):
             _sync_and_clear_cache(self._stream)
             self._tokens_since_clear_cache = 0
+            self._last_mlx_active_memory_bytes = int(mx.get_active_memory())
 
     return output
 

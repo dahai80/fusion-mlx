@@ -142,10 +142,10 @@ class SchedulerConfig:
     boundary_prefix_max_bytes: int = 0  # bytes; 0 = store default (20 GiB)
     # GC / cache-clear cadence (steps between calls).
     gc_cleanup_interval: int = 0  # 0 = disabled
-    mlx_cache_cleanup_interval: int = 8192
+    mlx_cache_cleanup_interval: int = 256
     memory_check_interval: int = 64
     admin_snapshot_interval: int = 32
-    decode_clear_interval: int = 16384
+    decode_clear_interval: int = 256
 
     def __post_init__(self):
         # NOTE: chunked_prefill_tokens and use_paged_cache historically conflicted,

@@ -1108,6 +1108,7 @@ def dflash2_spec_step(
     try:
         accepted_tokens = []
         block_size = getattr(dflash2_state.runtime, "block_size", 5)
+        _is_first_spec_step = dflash2_state.total_spec_steps == 0
         for _ in range(block_size):
             try:
                 tok = next(session)
@@ -1119,8 +1120,70 @@ def dflash2_spec_step(
             dflash2_state.remove_session(request_id)
             return []
 
+        if _is_first_spec_step:
+            try:
+                import mlx.core as _mx
+
+                _mx.synchronize()
+                _mx.clear_cache()
+                scheduler._last_mlx_active_memory_bytes = int(_mx.get_active_memory())
+                if request.prompt_cache is not None:
+                    _kv_gb = (
+                        sum(
+                            (
+                                int(getattr(c, "shape", (0,))[0])
+                                * int(getattr(c, "shape", (0,))[1])
+                                if hasattr(c, "shape")
+                                and len(getattr(c, "shape", ())) >= 2
+                                else 0
+                            )
+                            for c in request.prompt_cache
+                        )
+                        / 1024**3
+                    )
+                    request.prompt_cache = None
+                    request.cached_tokens = 0
+                    logger.info(
+                        "dflash2_spec: released scheduler KV cache for %s "
+                        "(dflash2 self-contained, ~%.1fGB freed); cleared "
+                        "MLX buffer cache after prefill",
+                        request_id[:8],
+                        _kv_gb,
+                    )
+            except Exception as exc:
+                logger.debug("dflash2 first-step cache clear failed: %s", exc)
+
         n_accepted = len(accepted_tokens)
         dflash2_state.record_result(n_accepted, n_accepted)
+
+        # Periodic MLX buffer-cache clear during dflash2 generation. The
+        # first-step clear (above) releases the scheduler KV cache, but
+        # dflash2's self-contained propose→verify→rollback loop allocates
+        # fresh attention/activation buffers every block that accumulate in
+        # the Metal buffer pool. For 8bit targets (27.5GB) these buffers are
+        # 2x larger than 4bit, so the pool grows past 90GB and either OOMs
+        # or deadlocks on Metal allocation. Clear every 8 spec steps (each
+        # step yields block_size tokens, so ~40 tokens between clears).
+        if (
+            dflash2_state.total_spec_steps > 0
+            and dflash2_state.total_spec_steps % 8 == 0
+        ):
+            try:
+                import mlx.core as _mx
+
+                _cache_mem = _mx.get_cache_memory()
+                _threshold = getattr(
+                    scheduler, "_periodic_clear_threshold_bytes", lambda: 0
+                )
+                _threshold_val = _threshold() if callable(_threshold) else 0
+                if _threshold_val and _cache_mem > _threshold_val:
+                    _mx.synchronize()
+                    _mx.clear_cache()
+                    scheduler._last_mlx_active_memory_bytes = int(
+                        _mx.get_active_memory()
+                    )
+            except Exception as exc:
+                logger.debug("dflash2 periodic cache clear failed: %s", exc)
 
         if dflash2_state.total_spec_steps % DFLASH2_SPEC_LOG_INTERVAL == 1:
             stats = dflash2_state.get_stats()
