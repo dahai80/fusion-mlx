@@ -613,9 +613,14 @@ class MemoryMonitor:
         else:
             kv_bytes = int(2 * layers * new_tokens * kv_heads * hd * self._dtype_size)
 
-        # SDPA activation: peak occurs at the last chunk where the KV
-        # length spans the full prompt (new + cached prefix).
-        full_kv_len = new_tokens + max(cached_tokens, 0)
+        # SDPA activation: use the per-chunk kv_len (eff_chunk + cached
+        # prefix), not the full prompt length. The admission guard needs a
+        # practical estimate — the score matrix is transient (freed per
+        # layer) and MLX reuses Metal buffers, so the theoretical worst-case
+        # (last chunk, kv_len=new_tokens) vastly overestimates resident
+        # peak and rejects valid long-context requests (e.g. 144K-token
+        # Claude Code prompts on head_dim=256 models).
+        full_kv_len = eff_chunk + max(cached_tokens, 0)
         sdpa_bytes = self._estimate_sdpa_activation_bytes(eff_chunk, full_kv_len)
 
         return kv_bytes + sdpa_bytes
