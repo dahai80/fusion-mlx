@@ -599,6 +599,18 @@ class BatchedEngine(BaseEngine):
             dflash2_path = _ms_path
         else:
             dflash2_path = _sc_path or (_ms_path or "")
+        _dflash2_disabled = bool(
+            getattr(self._model_settings, "dflash2_disabled", False)
+            if self._model_settings
+            else False
+        )
+        if _dflash2_disabled and dflash2_path:
+            logger.info(
+                "DFlash2 disabled for %s via model_settings.dflash2_disabled "
+                "(CLI flag ignored)",
+                self._model_name,
+            )
+            dflash2_path = ""
         if dflash2_path:
             try:
                 from ..speculative.dflash2 import load_runtime as load_dflash2_runtime

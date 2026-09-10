@@ -662,6 +662,18 @@ class VLMBatchedEngine(BaseEngine):
             dflash2_path = _ms_path
         else:
             dflash2_path = _sc_path or (_ms_path or "")
+        _dflash2_disabled = bool(
+            getattr(self._model_settings, "dflash2_disabled", False)
+            if self._model_settings
+            else False
+        )
+        if _dflash2_disabled and dflash2_path:
+            logger.info(
+                "DFlash2 disabled for VLM %s via model_settings.dflash2_disabled "
+                "(CLI flag ignored)",
+                self._model_name,
+            )
+            dflash2_path = ""
         logger.info(
             "DFlash2 VLM apply: model=%s ms_path=%r sc_path=%r resolved=%r",
             self._model_name,
