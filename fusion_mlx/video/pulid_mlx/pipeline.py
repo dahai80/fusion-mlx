@@ -12,9 +12,15 @@ Pure MLX port of pulid/pipeline_flux.py.
 import logging
 from pathlib import Path
 
-import cv2
 import mlx.core as mx
 import numpy as np
+
+# cv2 is a runtime-only dep for face crop I/O. Guard the import so the
+# module loads without [video] extra (CI installs only [dev]).
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
 from .attention import IDAttnProcessor
 from .encoders import IDFormer

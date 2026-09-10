@@ -13,9 +13,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import cv2
 import mlx.core as mx
 import numpy as np
+
+# cv2 is a runtime-only dep for face crop/blend I/O. Guard the import
+# so the module loads without [video] extra (CI installs only [dev]).
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
 from .config import RESIZED_IMG, UNET_TIMESTEP
 from .models.unet import UNet2DConditionModel

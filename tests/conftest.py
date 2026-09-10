@@ -150,34 +150,57 @@ except ImportError:
     # mlx_vlm must be a real package (ModuleType with __path__ + __spec__)
     # so Python's import system can resolve submodules via sys.modules.
     # A bare MagicMock triggers "'mlx_vlm' is not a package" for any
-    # `from mlx_vlm.X import Y` — affecting 15+ tests.
-    _vlm_pkg = types.ModuleType("mlx_vlm")
-    _vlm_pkg.__path__ = []
-    _vlm_pkg.__spec__ = _ilu.spec_from_loader("mlx_vlm", loader=None)
-    sys.modules["mlx_vlm"] = _vlm_pkg
-    # Mock every submodule imported by fusion_mlx code + tests.
-    for _sub in (
+    # `from mlx_vlm.X import Y` — affecting 15+ tests. Intermediate
+    # packages also need __path__ so nested imports resolve.
+
+    def _mock_vlm_pkg(name):
+        if name not in sys.modules:
+            mod = types.ModuleType(name)
+            mod.__path__ = []
+            mod.__spec__ = _ilu.spec_from_loader(name, loader=None)
+            sys.modules[name] = mod
+
+    def _mock_vlm_leaf(name):
+        parts = name.split(".")
+        for i in range(1, len(parts)):
+            _mock_vlm_pkg(".".join(parts[:i]))
+        if name not in sys.modules:
+            sys.modules[name] = MagicMock()
+
+    _mock_vlm_pkg("mlx_vlm")
+    for _leaf in (
         "generate",
+        "generate.diffusion",
         "utils",
         "prompt_utils",
-        "speculative",
         "turboquant",
         "vision_cache",
+        "video_generate",
+        "lora",
+        "tool_parsers",
+        "tool_parsers.minimax_m3",
+        "trainer.sft_trainer",
+        "trainer.utils",
+        "speculative",
+        "speculative.drafters",
+        "speculative.drafters.qwen3_5_mtp.config",
+        "speculative.drafters.qwen3_dflash.dflash",
+        "speculative.utils",
+        "models.base",
+        "models.cache",
+        "models.gemma3.config",
+        "models.gemma3.language",
+        "models.gemma4.config",
+        "models.gemma4.language",
+        "models.minimax_m3",
+        "models.minimax_m3_vl.language",
+        "models.qwen3_5",
+        "models.qwen3_5.language",
+        "models.qwen3_5.qwen3_5",
+        "models.qwen3_5_moe",
+        "models.qwen3_vl.processing_qwen3_vl",
     ):
-        sys.modules[f"mlx_vlm.{_sub}"] = MagicMock()
-    # mlx_vlm.models subpackage + its submodules.
-    _vlm_models = types.ModuleType("mlx_vlm.models")
-    _vlm_models.__path__ = []
-    sys.modules["mlx_vlm.models"] = _vlm_models
-    for _msub in (
-        "gemma3",
-        "gemma3.config",
-        "gemma3.language",
-        "gemma4",
-        "base",
-        "minimax_m3",
-    ):
-        sys.modules[f"mlx_vlm.models.{_msub}"] = MagicMock()
+        _mock_vlm_leaf(f"mlx_vlm.{_leaf}")
 
 
 # Other MLX ecosystem mocks. Give each a real ModuleSpec so
