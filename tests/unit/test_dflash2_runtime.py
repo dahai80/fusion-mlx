@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for DFlash2 runtime + generator bridge (mocked dflash pkg).
+"""Unit tests for DFlash2 in-target drafter + runtime (mocked dflash pkg).
 
-No real model load: monkeypatches ``dflash.model_mlx`` so the generator
-constructs from fakes and stream_from_tokens yields scripted tokens.
+No real model load: monkeypatches ``dflash.model_mlx`` so the drafter
+constructs from fakes. The drafter loads ONLY the draft (no target) and
+binds to an external target via bind().
 """
 
 from __future__ import annotations
@@ -15,159 +16,173 @@ import pytest
 logger = logging.getLogger(__name__)
 
 
-def _install_fake_dflash_model_mlx(monkeypatch, token_blocks):
+def _install_fake_dflash_model_mlx(monkeypatch):
     fake = types.ModuleType("dflash.model_mlx")
 
     class _FakeDraft:
         def __init__(self, repo):
             self.repo = repo
             self.bound = None
+            self.config = types.SimpleNamespace(
+                mask_token_id=999,
+                target_layer_ids=[5, 19, 33, 47, 61],
+                layer_types=("full_attention",) * 6,
+                sliding_window=None,
+                hidden_size=5120,
+                block_size=5,
+            )
 
         def bind(self, target):
             self.bound = target
+            return self
+
+        def make_cache(self):
+            return [types.SimpleNamespace(offset=0)]
 
         def leaf_modules(self):
-            # nn.quantize walks leaf_modules(); empty = quantize no-op
             return {}
 
         def update_modules(self, modules):
-            # nn.quantize calls update_modules() after quantizing leaves
             pass
 
-    class _FakeResp:
-        def __init__(self, toks):
-            self.tokens = toks
-            self.accepted = len(toks)
+        def propose(self, block, hidden, cache, temperature, logits_start=0):
+            import mlx.core as mx
 
-    def _fake_load(repo):
-        return (types.SimpleNamespace(repo=repo), types.SimpleNamespace(repo=repo))
+            bs = block.shape[1] - logits_start
+            tokens = mx.array([[100 + i for i in range(bs)]], dtype=mx.uint32)
+            indices = None
+            probs = None
+            return tokens, indices, probs
 
     def _fake_load_draft(repo):
         return _FakeDraft(repo)
 
-    def _fake_stream_generate(target, draft, tokenizer, prompt, **kw):
-        for block in token_blocks:
-            yield _FakeResp(block)
+    def _fake_patch_model(model, layer_ids):
+        model._hidden_states = [None] * len(layer_ids)
 
-    fake.load = _fake_load
+    def _fake_trim_recent_cache(cache, n):
+        for c in cache:
+            if hasattr(c, "offset"):
+                c.offset = max(0, c.offset - n)
+
     fake.load_draft = _fake_load_draft
-    fake.stream_generate = _fake_stream_generate
+    fake._patch_model = _fake_patch_model
+    fake._trim_recent_cache = _fake_trim_recent_cache
     fake.DFlash2DraftModel = _FakeDraft
+    fake.snapshot_download = lambda _id, **_kw: "/fake/path"
     monkeypatch.setitem(__import__("sys").modules, "dflash.model_mlx", fake)
     return fake
 
 
-def test_generator_stream_yields_all_tokens(monkeypatch):
-    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2Generator
+def test_drafter_loads_only_draft(monkeypatch):
+    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2InTargetDrafter
 
-    _install_fake_dflash_model_mlx(monkeypatch, [[1, 2, 3], [4, 5], [6]])
-    gen = DFlash2Generator(
-        target_repo="mlx-community/Qwen3.8-27B-4bit",
+    _install_fake_dflash_model_mlx(monkeypatch)
+    drafter = DFlash2InTargetDrafter(
         draft_repo="z-lab/Qwen3.8-27B-DFlash2",
         block_size=5,
     )
-    batches = list(gen.stream_from_tokens([10, 11], max_new_tokens=100))
-    flat = [t for batch in batches for t in batch]
-    assert flat == [1, 2, 3, 4, 5, 6]
+    assert drafter.loaded
+    assert drafter.block_size == 5
+    assert drafter.mask_id == 999
+    assert drafter._bound is False
+    assert drafter._target is None
 
 
-def test_generator_respects_max_new_tokens(monkeypatch):
-    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2Generator
+def test_drafter_bind_installs_hooks(monkeypatch):
+    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2InTargetDrafter
 
-    _install_fake_dflash_model_mlx(monkeypatch, [[1, 2, 3, 4, 5], [6, 7, 8]])
-    gen = DFlash2Generator("t", "d", block_size=5)
-    batches = list(gen.stream_from_tokens([0], max_new_tokens=4))
-    flat = [t for batch in batches for t in batch]
-    assert flat == [1, 2, 3, 4]
-
-
-def test_generator_binds_draft_to_target(monkeypatch):
-    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2Generator
-
-    _install_fake_dflash_model_mlx(monkeypatch, [[1]])
-    gen = DFlash2Generator("t", "d", block_size=5)
-    assert gen.draft.bound is gen.target
+    _install_fake_dflash_model_mlx(monkeypatch)
+    drafter = DFlash2InTargetDrafter("d", block_size=5)
+    target = types.SimpleNamespace()
+    drafter.bind(target)
+    assert drafter._bound is True
+    assert drafter._target is target
+    assert drafter.draft.bound is target
+    assert hasattr(target, "_hidden_states")
 
 
-def test_generator_rejects_invalid_block_size():
-    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2Generator
+def test_drafter_reset_creates_cache(monkeypatch):
+    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2InTargetDrafter
+
+    _install_fake_dflash_model_mlx(monkeypatch)
+    drafter = DFlash2InTargetDrafter("d", block_size=5)
+    assert drafter._draft_cache is None
+    drafter.reset()
+    assert drafter._draft_cache is not None
+    assert drafter._last_hidden is None
+
+
+def test_drafter_rejects_invalid_block_size():
+    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2InTargetDrafter
 
     with pytest.raises(ValueError, match="block_size"):
-        DFlash2Generator("t", "d", block_size=0)
+        DFlash2InTargetDrafter("d", block_size=0)
     with pytest.raises(ValueError, match="block_size"):
-        DFlash2Generator("t", "d", block_size=9)
+        DFlash2InTargetDrafter("d", block_size=9)
 
 
-def test_generator_rejects_empty_repos():
-    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2Generator
+def test_drafter_rejects_empty_repo():
+    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2InTargetDrafter
 
-    with pytest.raises(ValueError, match="target_repo"):
-        DFlash2Generator("", "d")
     with pytest.raises(ValueError, match="draft_repo"):
-        DFlash2Generator("t", "")
+        DFlash2InTargetDrafter("", block_size=5)
 
 
-def test_generator_stream_validates_args(monkeypatch):
-    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2Generator
+def test_drafter_rejects_bad_draft_bits():
+    from fusion_mlx.speculative.dflash2.engine.generator import DFlash2InTargetDrafter
 
-    _install_fake_dflash_model_mlx(monkeypatch, [[1]])
-    gen = DFlash2Generator("t", "d", block_size=5)
-    with pytest.raises(ValueError, match="max_new_tokens"):
-        list(gen.stream_from_tokens([0], max_new_tokens=0))
-    with pytest.raises(ValueError, match="temperature"):
-        list(gen.stream_from_tokens([0], temperature=-0.1))
+    with pytest.raises(ValueError, match="draft_bits"):
+        DFlash2InTargetDrafter("d", block_size=5, draft_bits=3)
+    with pytest.raises(ValueError, match="draft_bits"):
+        DFlash2InTargetDrafter("d", block_size=5, draft_bits=16)
 
 
 def test_load_runtime_builds_runtime(monkeypatch):
     from fusion_mlx.speculative.dflash2 import DFlash2Runtime, load_runtime
 
-    _install_fake_dflash_model_mlx(monkeypatch, [[1, 2]])
-    rt = load_runtime("t", "d", block_size=5)
+    _install_fake_dflash_model_mlx(monkeypatch)
+    rt = load_runtime("d", block_size=5)
     assert isinstance(rt, DFlash2Runtime)
-    assert rt.target_repo == "t"
     assert rt.draft_repo == "d"
     assert rt.block_size == 5
-    assert rt.generator is not None
+    assert rt.drafter is not None
+    assert rt.drafter.block_size == 5
 
 
 def test_load_runtime_rejects_bad_block_size():
     from fusion_mlx.speculative.dflash2 import load_runtime
 
     with pytest.raises(ValueError, match="block_size"):
-        load_runtime("t", "d", block_size=20)
+        load_runtime("d", block_size=20)
     with pytest.raises(ValueError, match="block_size"):
-        load_runtime("t", "d", block_size=0)
+        load_runtime("d", block_size=0)
 
 
 def test_load_runtime_rejects_bad_draft_bits():
     from fusion_mlx.speculative.dflash2 import load_runtime
 
     with pytest.raises(ValueError, match="draft_bits"):
-        load_runtime("t", "d", block_size=5, draft_bits=3)
+        load_runtime("d", block_size=5, draft_bits=3)
     with pytest.raises(ValueError, match="draft_bits"):
-        load_runtime("t", "d", block_size=5, draft_bits=16)
+        load_runtime("d", block_size=5, draft_bits=16)
 
 
-def test_load_runtime_default_draft_bits_quantizes(monkeypatch):
+def test_load_runtime_default_draft_bits(monkeypatch):
     from fusion_mlx.speculative.dflash2 import load_runtime
 
-    _install_fake_dflash_model_mlx(monkeypatch, [[1, 2]])
-    # default draft_bits=4 must survive constructor (quantize ran on the fake)
-    rt = load_runtime("t", "d", block_size=5)
-    assert rt.generator is not None
-    assert rt.generator.block_size == 5
-    # draft_bits=None disables quantization entirely (bf16 draft)
-    rt_bf16 = load_runtime("t", "d", block_size=5, draft_bits=None)
-    assert rt_bf16.generator is not None
+    _install_fake_dflash_model_mlx(monkeypatch)
+    rt = load_runtime("d", block_size=5)
+    assert rt.drafter is not None
+    rt_bf16 = load_runtime("d", block_size=5, draft_bits=None)
+    assert rt_bf16.drafter is not None
 
 
-def test_load_runtime_rejects_empty_repos():
+def test_load_runtime_rejects_empty_repo():
     from fusion_mlx.speculative.dflash2 import load_runtime
 
-    with pytest.raises(ValueError, match="target_repo"):
-        load_runtime("", "d")
     with pytest.raises(ValueError, match="draft_repo"):
-        load_runtime("t", "")
+        load_runtime("", block_size=5)
 
 
 def test_runtime_accept_lens_telemetry():

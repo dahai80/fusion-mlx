@@ -103,7 +103,7 @@ def check(profile: AliasProfile, alias: str | None = None) -> None:
 def have_runtime() -> bool:
     # The official dflash pkg is an external pip dependency (not vendored,
     # unlike DSpark). Probe importability cheaply without importing the
-    # heavy mlx stack. DFlash2Generator existence is checked at load time.
+    # heavy mlx stack. DFlash2InTargetDrafter existence is checked at load time.
     try:
         import importlib
 

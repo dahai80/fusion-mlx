@@ -287,12 +287,9 @@ def step(self) -> SchedulerOutput:
                     frag = getattr(self, "_fragmentation_ratio", 0.0)
                     cache_mem = mx.get_cache_memory()
                     cache_threshold = self._periodic_clear_threshold_bytes()
-                    if (
-                        cache_mem > cache_threshold * 2
-                        or (
-                            _should_clear_on_fragmentation(frag)
-                            and cache_mem > cache_threshold
-                        )
+                    if cache_mem > cache_threshold * 2 or (
+                        _should_clear_on_fragmentation(frag)
+                        and cache_mem > cache_threshold
                     ):
                         _sync_and_clear_cache(self._stream)
                     else:
@@ -493,17 +490,15 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     request = next(iter(self.running.values()))
     if request._active_spec_method is None:
         request._active_spec_method = self._decide_spec_method(request)
-    from ..speculative.auto_router import METHOD_DFLASH2, METHOD_DSPARK, METHOD_MTP
+    from ..speculative.auto_router import METHOD_DSPARK, METHOD_MTP
 
-    if request._active_spec_method in (METHOD_DFLASH2, METHOD_DSPARK):
-        # Self-contained spec generators (dflash2/dspark) load their own
-        # target copy and produce the full token stream themselves. Running
-        # the scheduler's own forward alongside them would double-emit
-        # tokens (scheduler token interleaved with session tokens ->
-        # garbled output) and double compute. Skip the forward entirely and
-        # pull this step's tokens from the session. Falls back to normal
-        # decode below when the session yields nothing (start failure or
-        # exhausted mid-request).
+    if request._active_spec_method == METHOD_DSPARK:
+        # DSpark is self-contained: loads its own target copy and produces
+        # the full token stream itself. Running the scheduler's own forward
+        # alongside it would double-emit tokens and double compute. Skip
+        # the forward entirely and pull this step's tokens from the session.
+        # DFlash2 is now in-target (runs propose->verify via the normal
+        # forward + _try_spec_decode path, same as DFlash-v1/ngram).
         spec_outputs = self._selfcontained_spec_step(output, request)
         if spec_outputs:
             return output
@@ -605,36 +600,33 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
 
 
 def _close_spec_session(scheduler, request_id: str):
-    """Close dflash2/dspark spec session for a finished request.
+    """Close dspark spec session for a finished request.
 
-    The self-contained generators hold Metal buffers (draft/target caches,
-    hidden states, attention intermediates) that are NOT freed until the
-    generator's finally block runs. Without explicit close, stale sessions
-    accumulate in _sessions and their buffers persist across requests,
-    causing progressive throughput degradation.
+    DSpark's self-contained generator holds Metal buffers (draft/target
+    caches, hidden states, attention intermediates) that are NOT freed
+    until the generator's finally block runs. Without explicit close,
+    stale sessions accumulate in _sessions and their buffers persist
+    across requests, causing progressive throughput degradation.
+    DFlash2 is now in-target (no sessions) — its drafter state is
+    per-scheduler, reset on new request, no cleanup needed here.
     """
-    for state_attr in ("_dflash2_spec_state", "_dspark_spec_state"):
-        state = getattr(scheduler, state_attr, None)
-        if state is not None:
-            state.remove_session(request_id)
+    dspark_state = getattr(scheduler, "_dspark_spec_state", None)
+    if dspark_state is not None:
+        dspark_state.remove_session(request_id)
 
 
 def _selfcontained_spec_step(self, output: SchedulerOutput, request) -> list:
     """Pure-decode step driven entirely by a self-contained spec generator
-    (dflash2/dspark). The generator owns propose+verify against its own
+    (dspark only). The generator owns propose+verify against its own
     target copy; this pulls accepted tokens and emits them WITHOUT running
     the scheduler forward (which would double-emit + double-compute).
     Returns [] when the session yielded nothing - caller falls back to the
     normal decode path for the rest of the request."""
-    from ..speculative.auto_router import METHOD_DFLASH2
-    from .spec_decode import dflash2_spec_step, dspark_spec_step
+    from .spec_decode import dspark_spec_step
 
     request_id = request.request_id
     try:
-        if request._active_spec_method == METHOD_DFLASH2:
-            result = dflash2_spec_step(self, output, None, request_id)
-        else:
-            result = dspark_spec_step(self, output, None, request_id)
+        result = dspark_spec_step(self, output, None, request_id)
     except Exception as e:
         logger.warning(
             "selfcontained spec step failed for %s: %s; falling back to "

@@ -86,6 +86,10 @@ class SpecRouteEntry:
                 threshold = int(c.split(":")[1])
                 if signals.quant_bits is not None and signals.quant_bits < threshold:
                     return False
+            if c.startswith("max_prompt:"):
+                threshold = int(c.split(":")[1])
+                if signals.prompt_token_count > threshold:
+                    return False
         return True
 
 
@@ -125,10 +129,13 @@ _SPEC_ROUTING_TABLE: list[SpecRouteEntry] = [
     # targets (z-lab DFlash2DraftModel, official dflash pip pkg). MoE
     # excluded — the draft reads target hidden states through a dense
     # GroupedDynamicCausalConv that assumes single-expert activation.
+    # max_prompt:32768 — in-target verify replays the block through the
+    # scheduler's model; very long prompts leave little KV headroom for
+    # the verify forward, and the draft's hidden-state context degrades.
     SpecRouteEntry(
         family="qwen3_8",
         methods=(METHOD_DFLASH2,),
-        constraints=("not_moe",),
+        constraints=("not_moe", "max_prompt:32768"),
     ),
     SpecRouteEntry(
         family="qwen3_8",

@@ -644,20 +644,12 @@ class VLMBatchedEngine(BaseEngine):
             )
 
     async def _apply_dflash2(self) -> None:
-        # Mirror the dflash2 block in engines/batched.py. Loads the DFlash2
-        # block-diffusion drafter (IO-bound, run in the executor) and stores it
-        # on the VLM scheduler as _dflash2_runtime. Once set, the per-request
-        # router assigns METHOD_DFLASH2 and _try_spec_decode runs the dflash2
-        # step. VLM-safe for the same reason as DFlash: decode-phase verify
-        # goes through gen.model + gen.prompt_cache, which already carry the
-        # vision features computed at prefill. No drafter path configured ->
-        # no-op (default VLM load untouched).
-        # model_settings may carry a relative alias (e.g. "Qwen3.8-27B-DFlash2")
-        # from the registry; the CLI passes the resolved absolute path via
-        # --dflash2-drafter-path into scheduler_config. Prefer the absolute
-        # path so load_runtime gets a real filesystem location. Without this,
-        # the relative alias won and load_runtime silently failed (no dflash2
-        # target loaded, no error surfaced).
+        # Mirror the dflash2 block in engines/batched.py. In-target pattern:
+        # loads ONLY the draft, binds to the scheduler's already-loaded VLM
+        # target. No duplicate weight load. VLM-safe: drafter.bind() finds
+        # embed_tokens via model.language_model.model path; decode-phase
+        # verify goes through gen.model + gen.prompt_cache which already
+        # carry vision features from prefill.
         _ms_path = (
             getattr(self._model_settings, "dflash2_drafter_path", None)
             if self._model_settings
@@ -682,10 +674,6 @@ class VLMBatchedEngine(BaseEngine):
         try:
             from ..speculative.dflash2 import load_runtime as load_dflash2_runtime
 
-            # target_repo = the loaded VLM's HF id or local path
-            target_repo = (
-                getattr(self._vlm_model, "requested_model", None) or self._model_name
-            )
             block_size = (
                 (
                     getattr(self._model_settings, "dflash2_block_size", None)
@@ -703,22 +691,20 @@ class VLMBatchedEngine(BaseEngine):
             if draft_bits is None:
                 draft_bits = getattr(self._scheduler_config, "dflash2_draft_bits", 4)
             loop = asyncio.get_running_loop()
-            # Load on the VLM single-worker mlx executor (the SAME thread
-            # that runs scheduler steps — it is AsyncEngineCore's executor).
-            # The dflash2 runtime carries its own target+draft weight
-            # copies; loading on get_executor("io") bound them to an
-            # io-worker's thread-local stream and every spec step raised
-            # "There is no Stream(gpu, N) in current thread" (#411 pattern).
+            # Load ONLY the draft on the VLM single-worker mlx executor
+            # (the SAME thread that runs scheduler steps).
             dflash2_rt = await loop.run_in_executor(
                 self._vlm_load_executor,
                 lambda: load_dflash2_runtime(
-                    target_repo,
                     dflash2_path,
                     block_size=block_size,
                     draft_bits=draft_bits,
                 ),
             )
-            self._engine.engine.scheduler._dflash2_runtime = dflash2_rt
+            # Bind drafter to the scheduler's already-loaded VLM target.
+            sched = self._engine.engine.scheduler
+            dflash2_rt.drafter.bind(sched.model)
+            sched._dflash2_runtime = dflash2_rt
             logger.info(
                 "DFlash2 spec-decode enabled for VLM %s (draft=%s, block_size=%d, draft_bits=%s)",
                 self._model_name,

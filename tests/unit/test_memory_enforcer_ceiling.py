@@ -15,10 +15,15 @@ from fusion_mlx.pool.memory_enforcer import (
     _EMERGENCY_OVER_CEILING_MARGIN_BYTES,
     _EMERGENCY_OVER_CEILING_POLLS,
     _HOT_CACHE_RESERVATION_SLACK_BYTES,
+    _LARGE_SYSTEM_CEILING_FRACTION,
+    _LARGE_SYSTEM_THRESHOLD,
+    _MLX_CACHE_LIMIT_BYTES,
+    _PHYSICAL_RAM_WIRED_CAP_FRACTION,
     _PREFILL_ABORT_MARGIN,
     _SMALL_SYSTEM_RESERVE,
     _SMALL_SYSTEM_THRESHOLD,
     _STATIC_RESERVE_LARGE,
+    _WIRED_LIMIT_BUFFER_BYTES,
     _format_gb,
 )
 
@@ -118,3 +123,101 @@ class TestFormatGb:
     def test_format_gb_large(self):
         result = _format_gb(256 * 1024**3)
         assert result == "256.0GB"
+
+
+class TestLargeSystemCeilingFraction:
+    """Ceiling fraction cap for large-memory systems (>= 64GB).
+
+    On a 128GB machine, balanced without the cap gives 122GB ceiling —
+    too close to jetsam. The fraction cap brings it down to 60% = 76.8GB.
+    """
+
+    def test_threshold_is_64gb(self):
+        assert _LARGE_SYSTEM_THRESHOLD == 64 * 1024**3
+
+    def test_balanced_fraction_is_60_percent(self):
+        assert _LARGE_SYSTEM_CEILING_FRACTION["balanced"] == 0.60
+
+    def test_safe_fraction_is_50_percent(self):
+        assert _LARGE_SYSTEM_CEILING_FRACTION["safe"] == 0.50
+
+    def test_aggressive_fraction_is_75_percent(self):
+        assert _LARGE_SYSTEM_CEILING_FRACTION["aggressive"] == 0.75
+
+    def test_custom_fraction_is_80_percent(self):
+        assert _LARGE_SYSTEM_CEILING_FRACTION["custom"] == 0.80
+
+    def test_all_tiers_covered(self):
+        for tier in _STATIC_RESERVE_LARGE:
+            assert tier in _LARGE_SYSTEM_CEILING_FRACTION
+
+    def test_balanced_128gb_ceiling_capped(self):
+        """128GB balanced: reserve=6GB → base=122GB, but capped at 60%=76.8GB."""
+        from unittest.mock import patch
+
+        from fusion_mlx.pool.memory_enforcer import ProcessMemoryEnforcer
+
+        enforcer = ProcessMemoryEnforcer.__new__(ProcessMemoryEnforcer)
+        enforcer._memory_guard_tier = "balanced"
+        enforcer._prefill_memory_guard = True
+        with patch(
+            "fusion_mlx.pool.settings.get_system_memory",
+            return_value=128 * 1024**3,
+        ):
+            ceiling = enforcer._get_static_ceiling()
+        expected = int(128 * 1024**3 * 0.60)
+        assert (
+            ceiling == expected
+        ), f"128GB balanced ceiling should be capped at {expected}, got {ceiling}"
+
+    def test_balanced_32gb_ceiling_not_capped(self):
+        """32GB balanced: below 64GB threshold, no fraction cap applied."""
+        from unittest.mock import patch
+
+        from fusion_mlx.pool.memory_enforcer import ProcessMemoryEnforcer
+
+        enforcer = ProcessMemoryEnforcer.__new__(ProcessMemoryEnforcer)
+        enforcer._memory_guard_tier = "balanced"
+        enforcer._prefill_memory_guard = True
+        with patch(
+            "fusion_mlx.pool.settings.get_system_memory",
+            return_value=32 * 1024**3,
+        ):
+            ceiling = enforcer._get_static_ceiling()
+        expected = 32 * 1024**3 - 6 * 1024**3
+        assert (
+            ceiling == expected
+        ), f"32GB balanced ceiling should be {expected} (no cap), got {ceiling}"
+
+
+class TestWiredLimitTarget:
+    """Metal wired limit target = ceiling + buffer, capped at 80% RAM."""
+
+    def test_buffer_is_25gb(self):
+        assert _WIRED_LIMIT_BUFFER_BYTES == 25 * 1024**3
+
+    def test_physical_cap_fraction_is_80_percent(self):
+        assert _PHYSICAL_RAM_WIRED_CAP_FRACTION == 0.80
+
+    def test_mlx_cache_limit_is_1gb(self):
+        assert _MLX_CACHE_LIMIT_BYTES == 1 * 1024**3
+
+    def test_128gb_balanced_wired_target(self):
+        """128GB balanced: ceiling=76.8GB, target=min(76.8+25, 102.4)=101.8GB."""
+        from unittest.mock import patch
+
+        from fusion_mlx.pool.memory_enforcer import ProcessMemoryEnforcer
+
+        enforcer = ProcessMemoryEnforcer.__new__(ProcessMemoryEnforcer)
+        with patch(
+            "fusion_mlx.pool.settings.get_system_memory",
+            return_value=128 * 1024**3,
+        ):
+            target = enforcer._get_wired_limit_target(int(128 * 1024**3 * 0.60))
+        physical_cap = int(128 * 1024**3 * 0.80)
+        expected = min(int(128 * 1024**3 * 0.60) + 25 * 1024**3, physical_cap)
+        assert target == expected
+        assert target < physical_cap, "Wired target must be below 80% RAM"
+        assert target > int(
+            128 * 1024**3 * 0.60
+        ), "Wired target must be above enforcer ceiling (buffer zone)"

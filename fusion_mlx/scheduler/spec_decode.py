@@ -1018,65 +1018,71 @@ def dspark_spec_step(
 
 
 DFLASH2_SPEC_LOG_INTERVAL = 50
+DFLASH2_SPEC_WARMUP_STEPS = 3
+DFLASH2_CIRCUIT_BREAKER_WINDOW = 10
+DFLASH2_CIRCUIT_BREAKER_THRESHOLD = 0.20
 
 
 class DFlash2SpecState:
-    """Per-scheduler DFlash2 speculative decode state.
+    """Per-scheduler DFlash2 in-target speculative decode state.
 
-    DFlash2Generator is self-contained (loads its own target + draft via
-    the official dflash pip pkg), so the per-step integration pulls tokens
-    from its internal propose->verify->rollback loop rather than running
-    our own verify. Mirrors DSparkSpecState; dflash.stream_generate owns
-    all hidden-state capture, verify, and cache rollback internally.
+    In-target pattern: the drafter binds to the scheduler's already-loaded
+    target model. The per-step integration runs propose->verify->rollback
+    using gen.model + gen.prompt_cache — no duplicate target load, no
+    prefill replay. Mirrors DFlashSpecState (v1).
     """
 
     def __init__(self, runtime):
         self.runtime = runtime
+        self.steps_since_start = 0
         self.total_spec_steps = 0
         self.total_draft_proposed = 0
         self.total_draft_accepted = 0
         self._last_request_id = None
-        self._sessions: dict = {}
+        self._recent_rates: list[float] = []
+        self._circuit_tripped = False
 
     def on_new_request(self, request_id: str):
         if self._last_request_id != request_id:
-            self._close_stale_sessions(request_id)
             self._last_request_id = request_id
+            self.steps_since_start = 0
             self.total_spec_steps = 0
+            self._recent_rates = []
+            self._circuit_tripped = False
+            drafter = getattr(self.runtime, "drafter", None)
+            if drafter is not None:
+                drafter.reset()
 
-    def _close_stale_sessions(self, keep_id: str):
-        stale = [k for k in self._sessions if k != keep_id]
-        for k in stale:
-            sess = self._sessions.pop(k, None)
-            if sess is not None:
-                close = getattr(sess, "close", None)
-                if callable(close):
-                    try:
-                        close()
-                    except Exception:
-                        pass
+    def add_token(self, token: int):
+        self.steps_since_start += 1
 
-    def get_session(self, request_id: str):
-        return self._sessions.get(request_id)
-
-    def set_session(self, request_id: str, session):
-        self._sessions[request_id] = session
-
-    def remove_session(self, request_id: str):
-        sess = self._sessions.pop(request_id, None)
-        if sess is not None:
-            close = getattr(sess, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except Exception:
-                    pass
+    def should_speculate(self) -> bool:
+        if self._circuit_tripped:
+            return False
+        return self.steps_since_start >= DFLASH2_SPEC_WARMUP_STEPS
 
     def record_result(self, n_accepted: int, n_total: int):
         self.total_spec_steps += 1
         self.total_draft_proposed += n_total
         self.total_draft_accepted += n_accepted
         self.runtime.record_accept(n_accepted)
+        if n_total > 0:
+            rate = n_accepted / n_total
+            self._recent_rates.append(rate)
+            if len(self._recent_rates) > DFLASH2_CIRCUIT_BREAKER_WINDOW:
+                self._recent_rates.pop(0)
+            if len(self._recent_rates) >= DFLASH2_CIRCUIT_BREAKER_WINDOW:
+                avg = sum(self._recent_rates) / len(self._recent_rates)
+                if avg < DFLASH2_CIRCUIT_BREAKER_THRESHOLD:
+                    self._circuit_tripped = True
+                    logger.warning(
+                        "dflash2_spec: circuit breaker tripped "
+                        "(avg accept %.1f%% < %.1f%% over %d steps) — "
+                        "disabling spec for rest of request",
+                        avg * 100,
+                        DFLASH2_CIRCUIT_BREAKER_THRESHOLD * 100,
+                        len(self._recent_rates),
+                    )
 
     def get_stats(self) -> dict:
         rate = (
@@ -1089,7 +1095,7 @@ class DFlash2SpecState:
             "draft_proposed": self.total_draft_proposed,
             "draft_accepted": self.total_draft_accepted,
             "acceptance_rate": rate,
-            "active_sessions": len(self._sessions),
+            "circuit_tripped": self._circuit_tripped,
         }
 
 
@@ -1099,13 +1105,13 @@ def dflash2_spec_step(
     current_token: int,
     request_id: str,
 ) -> list[RequestOutput]:
-    """DFlash2 speculative decode step.
+    """DFlash2 in-target speculative decode step.
 
-    DFlash2Generator delegates the entire propose->verify->rollback loop to
-    dflash.stream_generate (official z-lab pkg). This step pulls accepted
-    tokens from the generator session and emits them as RequestOutputs.
-    Self-contained — does NOT use the scheduler's model or cache for the
-    propose-verify loop (the generator loads its own target copy).
+    Uses the DFlash2 drafter to propose a draft block, then verifies
+    against the scheduler's already-loaded target model using the
+    scheduler's prompt_cache. Mirrors dflash_spec_step (v1) pattern:
+    drafter.propose_block -> model verify -> cache rollback -> emit.
+    No duplicate target load, no prefill replay.
     """
     dflash2_state = getattr(scheduler, "_dflash2_spec_state", None)
     if dflash2_state is None:
@@ -1122,109 +1128,131 @@ def dflash2_spec_step(
     if dflash2_state._last_request_id != request_id:
         dflash2_state.on_new_request(request_id)
 
-    session = dflash2_state.get_session(request_id)
-    if session is None:
-        prompt_tokens = getattr(request, "prompt_token_ids", None)
-        if not prompt_tokens:
-            return []
+    dflash2_state.add_token(current_token)
 
-        generator = dflash2_state.runtime.generator
-        if generator is None:
-            return []
-
-        try:
-            max_tokens = request.max_tokens or 4096
-            temperature = getattr(request, "temperature", 0.0) or 0.0
-            # dflash.model_mlx binds a module-local copy of
-            # mlx_lm.generate.generation_stream at import time - a
-            # thread-local stream owned by whichever thread imported it
-            # first. Running the session on the scheduler step thread then
-            # hits "There is no Stream(gpu, N) in current thread" (same
-            # class as #KV-0). scheduler._stream itself may also be a
-            # foreign thread's stream (captured at monkeypatches import,
-            # boot-order dependent), so bind to THIS thread's default
-            # stream - always valid wherever the step runs. Idempotent.
-            import dflash.model_mlx as _dflash_mm
-            import mlx.core as _mx
-
-            _dflash_mm.generation_stream = _mx.default_stream(_mx.default_device())
-            token_iter = generator.stream_from_tokens(
-                prompt_tokens,
-                max_new_tokens=max_tokens,
-                temperature=temperature,
+    if not dflash2_state.should_speculate():
+        if dflash2_state.steps_since_start <= DFLASH2_SPEC_WARMUP_STEPS:
+            logger.debug(
+                "dflash2_spec: warming up step=%d/%d",
+                dflash2_state.steps_since_start,
+                DFLASH2_SPEC_WARMUP_STEPS,
             )
-            dflash2_state.set_session(request_id, token_iter)
-            session = token_iter
-            logger.info(
-                "dflash2_spec: started session for request=%s, "
-                "prompt_len=%d, max_tokens=%d, temp=%.2f",
-                request_id[:8],
-                len(prompt_tokens),
-                max_tokens,
-                temperature,
-            )
-        except Exception as e:
-            logger.warning("dflash2_spec: failed to start session: %s", e)
-            return []
+        return []
+
+    bg = scheduler.batch_generator
+    if bg is None:
+        return []
+    gen = bg._generation_batch
+    if gen is None:
+        return []
+
+    prompt_cache = gen.prompt_cache
+    model = gen.model
+    drafter = dflash2_state.runtime.drafter
+    if drafter is None or not drafter._bound:
+        return []
+
+    temperature = getattr(request, "temperature", 0.0) or 0.0
+
+    current_offset = 0
+    for c in prompt_cache:
+        if hasattr(c, "offset"):
+            current_offset = max(current_offset, c.offset)
+
+    if drafter._last_hidden is None:
+        drafter.align_draft_cache(current_offset)
+
+    hidden = drafter.get_hidden(model)
 
     try:
-        _is_first_spec_step = dflash2_state.total_spec_steps == 0
-        try:
-            accepted_tokens = next(session)
-        except StopIteration:
-            accepted_tokens = []
-
-        if not accepted_tokens:
-            dflash2_state.remove_session(request_id)
-            return []
-
-        if _is_first_spec_step:
-            try:
-                import mlx.core as _mx
-
-                _mx.clear_cache()
-                scheduler._last_mlx_active_memory_bytes = int(_mx.get_active_memory())
-                if request.prompt_cache is not None:
-                    _kv_gb = (
-                        sum(
-                            (
-                                int(getattr(c, "shape", (0,))[0])
-                                * int(getattr(c, "shape", (0,))[1])
-                                if hasattr(c, "shape")
-                                and len(getattr(c, "shape", ())) >= 2
-                                else 0
-                            )
-                            for c in request.prompt_cache
-                        )
-                        / 1024**3
-                    )
-                    request.prompt_cache = None
-                    request.cached_tokens = 0
-                    logger.info(
-                        "dflash2_spec: released scheduler KV cache for %s "
-                        "(dflash2 self-contained, ~%.1fGB freed)",
-                        request_id[:8],
-                        _kv_gb,
-                    )
-            except Exception as exc:
-                logger.debug("dflash2 first-step cache clear failed: %s", exc)
-
-        n_accepted = len(accepted_tokens)
-        dflash2_state.record_result(n_accepted, n_accepted)
-
-        if dflash2_state.total_spec_steps % DFLASH2_SPEC_LOG_INTERVAL == 1:
-            stats = dflash2_state.get_stats()
-            logger.info(
-                "dflash2_spec: step=%d, accepted=%d, rate=%.1f%%, sessions=%d",
-                dflash2_state.total_spec_steps,
-                n_accepted,
-                stats["acceptance_rate"] * 100,
-                stats["active_sessions"],
-            )
-
-        return _emit_spec_tokens(scheduler, request_id, accepted_tokens)
-
-    except Exception as e:
-        logger.warning("dflash2_spec: session error: %s", e, exc_info=True)
-        dflash2_state.remove_session(request_id)
+        with mx.stream(scheduler._stream):
+            draft_tokens = drafter.propose_block(current_token, hidden, temperature)
+        mx.async_eval(draft_tokens)
+    except (IndexError, RuntimeError) as e:
+        logger.debug("dflash2_spec: propose failed: %s", e)
         return []
+
+    draft_list = draft_tokens[0].tolist()
+    K = len(draft_list)
+    if K == 0:
+        return []
+
+    verify_input = mx.concatenate(
+        [mx.array([[current_token]], dtype=mx.uint32), draft_tokens], axis=1
+    )
+
+    non_trimmable_snapshots = _snapshot_non_trimmable_caches(prompt_cache)
+
+    with mx.stream(scheduler._stream):
+        t0 = time.perf_counter()
+        logits = model(verify_input, cache=prompt_cache)
+        logits = logits.squeeze(0)
+        drafter.store_verify_hidden(model)
+        if temperature > 0:
+            from dflash.model_mlx import _sampling_probs
+
+            target_probs = _sampling_probs(logits, temperature)
+            mx.eval(target_probs)
+        else:
+            target_tokens = mx.argmax(logits, axis=-1)
+            mx.eval(target_tokens)
+    dt = time.perf_counter() - t0
+
+    if temperature > 0:
+        from dflash.model_mlx import _rejection_sample
+
+        _dp = getattr(drafter, "_last_draft_probs", None)
+        _di = getattr(drafter, "_last_draft_indices", None)
+        if _dp is not None:
+            accepted, bonus = _rejection_sample(draft_tokens, target_probs, _dp, _di)
+        else:
+            t_list = mx.argmax(logits, axis=-1).tolist()
+            accepted = next(
+                (i for i in range(K) if draft_list[i] != t_list[i]),
+                K,
+            )
+            bonus = t_list[accepted]
+    else:
+        t_list = target_tokens.tolist()
+        accepted = next(
+            (i for i in range(K) if draft_list[i] != t_list[i]),
+            K,
+        )
+        bonus = t_list[accepted]
+
+    new_tokens = draft_list[:accepted] + [bonus]
+
+    if accepted < K:
+        if non_trimmable_snapshots is not None:
+            _restore_non_trimmable_caches(prompt_cache, non_trimmable_snapshots)
+            replay = mx.array([current_token] + draft_list[:accepted], dtype=mx.uint32)
+            with mx.stream(scheduler._stream):
+                replay_logits = model(replay[None], cache=prompt_cache)
+                mx.eval(replay_logits)
+            trim_count = K + 1
+        else:
+            trim_count = K - accepted
+        if trim_count > 0:
+            _trim_trimmable(prompt_cache, trim_count)
+
+    expected_draft_offset = current_offset + accepted + 1
+    drafter.trim_draft_cache(expected_draft_offset)
+
+    dflash2_state.record_result(accepted, K)
+
+    if dflash2_state.total_spec_steps % DFLASH2_SPEC_LOG_INTERVAL == 1:
+        stats = dflash2_state.get_stats()
+        logger.info(
+            "dflash2_spec: step=%d, block=%d, accepted=%d/%d (%.1f%%), "
+            "verify=%.1fms, rate=%.1f%%, circuit=%s",
+            dflash2_state.total_spec_steps,
+            drafter.block_size,
+            accepted,
+            K,
+            100.0 * accepted / K if K else 0,
+            dt * 1000,
+            stats["acceptance_rate"] * 100,
+            stats["circuit_tripped"],
+        )
+
+    return _emit_spec_tokens(scheduler, request_id, new_tokens)

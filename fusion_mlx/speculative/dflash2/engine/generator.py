@@ -1,6 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
+# DFlash2 in-target drafter — proposes draft blocks using the SCHEDULER's
+# already-loaded target model. No duplicate 27B load, no prefill replay.
+#
+# The official dflash pkg (PyPI, z-lab) provides DFlash2DraftModel.propose
+# which reads target hidden states (captured via _LayerHook on
+# target_layer_ids) and produces a draft block. The verify+rollback loop
+# runs in the scheduler's dflash2_spec_step (spec_decode.py), reusing
+# _run_spec_verify / _trim_trimmable — same in-target pattern as DFlash-v1.
+
 import logging
-from collections.abc import Generator
 
 import mlx.core as mx
 
@@ -8,9 +16,6 @@ logger = logging.getLogger(__name__)
 
 
 def _local_draft_path(draft_repo: str):
-    # Resolve a draft repo id to a local directory if it is one. Returns
-    # the Path if draft_repo points to an existing dir (absolute or under
-    # the standard model-dir), else None (let dflash download from HF).
     import os
     from pathlib import Path
 
@@ -28,34 +33,22 @@ def _local_draft_path(draft_repo: str):
     return None
 
 
-class DFlash2Generator:
+class DFlash2InTargetDrafter:
     def __init__(
         self,
-        target_repo: str,
         draft_repo: str,
         block_size: int = 5,
-        prefill_step_size: int = 2048,
         draft_bits: int | None = None,
     ) -> None:
-        if not target_repo:
-            raise ValueError("target_repo must be a non-empty string")
         if not draft_repo:
             raise ValueError("draft_repo must be a non-empty string")
         if block_size <= 0 or block_size > 8:
-            raise ValueError(
-                f"block_size must be in [1, 8]; got {block_size}"
-            )
+            raise ValueError(f"block_size must be in [1, 8]; got {block_size}")
         if draft_bits is not None and draft_bits not in (4, 8):
             raise ValueError(f"draft_bits must be 4 or 8; got {draft_bits}")
         from dflash import model_mlx as _dflash
 
-        logger.info("[dflash2] loading target=%s via mlx-lm", target_repo)
-        self.target, self.tokenizer = _dflash.load(target_repo)
         logger.info("[dflash2] loading draft=%s (DFlash2DraftModel)", draft_repo)
-        # dflash.load_draft calls huggingface_hub.snapshot_download, which
-        # rejects local directory paths (HFValidationError). Short-circuit
-        # it when draft_repo is an existing local dir so the draft loads
-        # from disk (no re-download, honors CLAUDE.md hf-mirror workflow).
         draft_path = _local_draft_path(draft_repo)
         if draft_path is not None:
             _orig_download = _dflash.snapshot_download
@@ -66,101 +59,115 @@ class DFlash2Generator:
                 _dflash.snapshot_download = _orig_download
         else:
             self.draft = _dflash.load_draft(draft_repo)
-        self.draft.bind(self.target)
         if draft_bits is not None:
-            # Official z-lab MLX quickstart quantizes the draft (--draft-bits 4)
-            # — the draft is bandwidth-bound in propose and 4-bit halves its
-            # weight traffic with no measurable acceptance loss.
             import mlx.nn as nn
 
             nn.quantize(self.draft, group_size=64, bits=draft_bits)
             logger.info(
                 "[dflash2] draft quantized to %d bits (group_size=64)", draft_bits
             )
-        self.target_repo = target_repo
         self.draft_repo = draft_repo
         self.block_size = block_size
-        self.prefill_step_size = prefill_step_size
+        self.mask_id = int(self.draft.config.mask_token_id)
+        self.layer_ids = tuple(self.draft.config.target_layer_ids)
+        self._all_sliding = all(
+            t == "sliding_attention" for t in (self.draft.config.layer_types or ())
+        )
+        self._hidden_limit = (
+            self.draft.config.sliding_window - 1 if self._all_sliding else None
+        )
+        self._target = None
+        self._bound = False
+        self._draft_cache = None
+        self._last_hidden = None
+        self._last_draft_indices = None
+        self._last_draft_probs = None
         logger.info(
-            "[dflash2] ready target=%s draft=%s block_size=%d draft_bits=%s",
-            target_repo,
+            "[dflash2] drafter ready draft=%s block_size=%d draft_bits=%s "
+            "layer_ids=%s hidden_limit=%s",
             draft_repo,
             block_size,
             draft_bits,
+            self.layer_ids,
+            self._hidden_limit,
         )
 
-    def _encode(self, prompt_tokens) -> mx.array:
-        if isinstance(prompt_tokens, mx.array):
-            return prompt_tokens
-        if isinstance(prompt_tokens, str):
-            enc = getattr(self.tokenizer, "encode", None)
-            if enc is None:
-                raise TypeError("tokenizer has no encode(); pass token ids")
-            ids = enc(prompt_tokens)
-            return mx.array(ids)
-        return mx.array(list(prompt_tokens))
+    @property
+    def loaded(self) -> bool:
+        return self.draft is not None
 
-    def stream_from_tokens(
+    def bind(self, target_model) -> None:
+        if self._bound:
+            logger.warning("[dflash2] drafter already bound — skipping")
+            return
+        from dflash.model_mlx import _patch_model
+
+        self.draft.bind(target_model)
+        _patch_model(target_model, list(self.layer_ids))
+        self._target = target_model
+        self._bound = True
+        logger.info(
+            "[dflash2] drafter bound to target=%s (hooks on layers %s)",
+            type(target_model).__name__,
+            self.layer_ids,
+        )
+
+    def reset(self) -> None:
+        self._draft_cache = self.draft.make_cache()
+        self._last_hidden = None
+
+    def align_draft_cache(self, target_offset: int) -> None:
+        if self._draft_cache is None:
+            self.reset()
+        for c in self._draft_cache:
+            c.offset = target_offset
+
+    def get_hidden(self, model) -> mx.array:
+        if self._last_hidden is not None:
+            return self._last_hidden
+        hs = getattr(model, "_hidden_states", None)
+        if not hs or any(h is None for h in hs):
+            return mx.zeros((1, 1, self.draft.config.hidden_size * len(self.layer_ids)))
+        hidden = mx.concatenate(hs, axis=-1)
+        if self._hidden_limit is not None:
+            hidden = hidden[:, -self._hidden_limit :]
+        return hidden
+
+    def propose_block(
         self,
-        prompt_tokens,
-        max_new_tokens: int = 4096,
-        temperature: float = 0.0,
-        top_p: float = 1.0,
-        top_k: int = 0,
-    ) -> Generator[list[int], None, None]:
-        if max_new_tokens < 1:
-            raise ValueError(f"max_new_tokens must be >= 1; got {max_new_tokens}")
-        if temperature < 0.0:
-            raise ValueError(f"temperature must be >= 0.0; got {temperature}")
-        from dflash import model_mlx as _dflash
-
-        prompt = self._encode(prompt_tokens)
-        emitted = 0
-        _eos_id = None
-        eos_attr = getattr(self.tokenizer, "eos_token_id", None)
-        if eos_attr is not None:
-            try:
-                _eos_id = int(eos_attr)
-            except (TypeError, ValueError):
-                _eos_id = None
-        upstream = _dflash.stream_generate(
-            self.target,
-            self.draft,
-            self.tokenizer,
-            prompt,
-            block_size=self.block_size,
-            max_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            prefill_step_size=self.prefill_step_size,
+        current_token: int,
+        hidden: mx.array,
+        temperature: float,
+    ) -> mx.array:
+        bs = self.block_size
+        block = mx.array([[current_token] + [self.mask_id] * (bs - 1)], dtype=mx.uint32)
+        draft_tokens, draft_indices, draft_probs = self.draft.propose(
+            block,
+            hidden,
+            self._draft_cache,
+            temperature,
+            logits_start=1,
         )
-        try:
-            for resp in upstream:
-                batch = resp.tokens
-                if not batch:
-                    continue
-                if emitted + len(batch) > max_new_tokens:
-                    batch = batch[: max_new_tokens - emitted]
-                if _eos_id is not None and _eos_id in batch:
-                    idx = batch.index(_eos_id)
-                    batch = batch[: idx + 1]
-                    yield batch
-                    return
-                yield batch
-                emitted += len(batch)
-                if emitted >= max_new_tokens:
-                    return
-        finally:
-            close = getattr(upstream, "close", None)
-            if callable(close):
-                try:
-                    close()
-                except RuntimeError:
-                    pass
-            try:
-                import mlx.core as _mx
+        self._last_draft_indices = draft_indices
+        self._last_draft_probs = draft_probs
+        return draft_tokens
 
-                _mx.clear_cache()
-            except Exception:
-                pass
+    def store_verify_hidden(self, model) -> None:
+        hs = getattr(model, "_hidden_states", None)
+        if not hs or any(h is None for h in hs):
+            return
+        hidden = mx.concatenate(hs, axis=-1)
+        if self._hidden_limit is not None:
+            hidden = hidden[:, -self._hidden_limit :]
+        self._last_hidden = hidden
+
+    def trim_draft_cache(self, expected_offset: int) -> None:
+        if self._draft_cache is None:
+            return
+        actual = self._draft_cache[0].offset
+        trim_n = actual - expected_offset
+        if trim_n <= 0:
+            return
+        from dflash.model_mlx import _trim_recent_cache
+
+        _trim_recent_cache(self._draft_cache, trim_n)

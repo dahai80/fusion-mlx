@@ -3,21 +3,19 @@
 
 Bridges the official ``dflash`` PyPI package (0.1.0, MLX-native,
 DFlash2DraftModel + CandidateSelector + GroupedDynamicCausalConv) into
-fusion-mlx. Mirrors the DSpark self-contained-generator pattern: a
-``DFlash2Generator`` loads its own target + draft and runs the full
-propose->verify->rollback loop via ``dflash.stream_generate`` (hidden-state
-capture/trim handled internally, lossless). The scheduler step pulls
-tokens from the generator session and emits RequestOutputs — it does NOT
-reuse ``dflash_spec_step`` (whose ``draft_block`` contract passes no
-target hidden states, incompatible with DFlash2's propose). See
-architecture/fusion-mlx-dflash2.md §5.3 for the design rationale.
+fusion-mlx. In-target pattern: ``DFlash2InTargetDrafter`` loads ONLY the
+draft model and binds to the scheduler's already-loaded target (via
+``draft.bind`` + ``_patch_model`` hooks). The propose->verify->rollback
+loop runs in ``dflash2_spec_step`` (spec_decode.py), reusing the
+scheduler's model + prompt_cache — no duplicate 27B load, no prefill
+replay. Mirrors the DFlash-v1 in-target pattern (dflash/drafter.py).
 
 Public API:
 - ``DFlash2Unavailable``: raised by ``eligibility.check`` on gate failure
 - ``check``: AliasProfile-based eligibility gate
 - ``have_runtime``: probe whether the ``dflash`` pkg is importable
-- ``DFlash2Runtime``: handle owning the generator + telemetry
-- ``load_runtime``: lazy build of DFlash2Generator
+- ``DFlash2Runtime``: handle owning the drafter + telemetry
+- ``load_runtime``: lazy build of DFlash2InTargetDrafter
 """
 
 from .eligibility import DFlash2Unavailable, check, have_runtime

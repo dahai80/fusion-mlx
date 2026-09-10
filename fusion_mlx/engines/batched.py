@@ -582,11 +582,11 @@ class BatchedEngine(BaseEngine):
                 )
 
         # DFlash2 block-diffusion speculative decode (official dflash pip
-        # pkg, z-lab DFlash2DraftModel). Self-contained generator loads its
-        # own target copy + draft, runs propose->verify->rollback internally.
-        # model_settings may carry a relative alias; prefer the absolute path
-        # from scheduler_config (CLI --dflash2-drafter-path). See vlm.py
-        # _apply_dflash2 for the full rationale.
+        # pkg, z-lab DFlash2DraftModel). In-target pattern: loads ONLY the
+        # draft, binds to the scheduler's already-loaded target model.
+        # No duplicate 27B load, no prefill replay. model_settings may
+        # carry a relative alias; prefer the absolute path from
+        # scheduler_config (CLI --dflash2-drafter-path).
         _ms_path = (
             getattr(self._model_settings, "dflash2_drafter_path", None)
             if self._model_settings
@@ -603,9 +603,6 @@ class BatchedEngine(BaseEngine):
             try:
                 from ..speculative.dflash2 import load_runtime as load_dflash2_runtime
 
-                target_repo = (
-                    getattr(self._model, "requested_model", None) or self._model_name
-                )
                 block_size = (
                     (
                         getattr(self._model_settings, "dflash2_block_size", None)
@@ -622,24 +619,27 @@ class BatchedEngine(BaseEngine):
                 )
                 if draft_bits is None:
                     draft_bits = getattr(scheduler_config, "dflash2_draft_bits", 4)
-                # Load on the engine's single-worker mlx executor (the SAME
-                # thread that runs scheduler steps). The dflash2 runtime
-                # carries its own target+draft weight copies; MLX binds
-                # arrays to the loading thread's stream, so loading on
-                # get_executor("io") bound them to an io-worker's
-                # thread-local stream and every spec step raised
-                # "There is no Stream(gpu, N) in current thread" (#411
-                # pattern). Same executor as self._engine (line ~422).
+                # Load ONLY the draft on the engine's single-worker mlx
+                # executor (the SAME thread that runs scheduler steps).
+                # MLX binds arrays to the loading thread's stream, so
+                # loading on get_executor("io") bound them to an
+                # io-worker's thread-local stream and every spec step
+                # raised "There is no Stream(gpu, N) in current thread"
+                # (#411 pattern). Same executor as self._engine (line ~422).
                 dflash2_rt = await loop.run_in_executor(
                     self._model_load_executor,
                     lambda: load_dflash2_runtime(
-                        target_repo,
                         dflash2_path,
                         block_size=block_size,
                         draft_bits=draft_bits,
                     ),
                 )
-                self._engine.engine.scheduler._dflash2_runtime = dflash2_rt
+                # Bind drafter to the scheduler's already-loaded target.
+                # drafter.bind() borrows embed_tokens/lm_head (zero weight
+                # copy) + installs _LayerHook on target_layer_ids.
+                sched = self._engine.engine.scheduler
+                dflash2_rt.drafter.bind(sched.model)
+                sched._dflash2_runtime = dflash2_rt
                 logger.info(
                     "DFlash2 spec-decode enabled for %s (draft=%s, block_size=%d, draft_bits=%s)",
                     self._model_name,
