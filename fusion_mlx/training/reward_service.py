@@ -90,6 +90,20 @@ class RewardService:
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
 
+    async def shutdown(self):
+        # ENG-02 (#0909 audit): cancel pending tasks on server shutdown.
+        cancelled = 0
+        for task in list(self._pending_tasks):
+            if not task.done():
+                task.cancel()
+                cancelled += 1
+        if self._pending_tasks:
+            await asyncio.gather(*self._pending_tasks, return_exceptions=True)
+        self._pending_tasks.clear()
+        self._running = False
+        if cancelled:
+            logger.info("RewardService shutdown: cancelled %d pending task(s)", cancelled)
+
     def _resolve_model_path(self, model_id: str) -> str | None:
         if self._engine_pool is None:
             return model_id

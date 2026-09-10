@@ -18,49 +18,29 @@ Gates derived from PoC bench data (see issue #264):
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from fusion_mlx.model_aliases import AliasProfile
+from fusion_mlx.quant_detect import looks_like_4bit as _looks_like_4bit
+
+logger = logging.getLogger(__name__)
 
 
 class DFlashUnavailable(RuntimeError):  # noqa: N818 — domain-specific error name
-    """Raised when an alias fails a DFlash eligibility gate.
-
-    The message is end-user-facing: it explains *which* gate failed and
-    *what* the user can do (switch alias, change quantization, etc.).
-    """
+    """Raised when an alias fails a DFlash eligibility gate."""
 
 
 @dataclass(frozen=True)
 class EligibilityReport:
-    """Structured eligibility result. Used by ``rapid-mlx info <alias>``
-    to render a per-gate status table without re-checking each gate."""
+    """Structured eligibility result."""
 
     alias: str | None
     supports_dflash: bool
     is_moe: bool
     is_4bit: bool
     has_drafter: bool
-    reasons: tuple[str, ...]  # all failing-gate reasons (empty if eligible)
-
-
-def _looks_like_4bit(hf_path: str) -> bool:
-    """Heuristic: detect 4-bit quantization from the HF repo name.
-
-    mlx-community publishes quants as ``-4bit``, ``-mxfp4``, ``-nvfp4``
-    suffixes/segments. Mirrors the contract test's detection so a CLI
-    error and a unit-test guard share one rule.
-    """
-    lowered = hf_path.lower()
-    # Anchor the 4-bit infix on a leading hyphen so a model name like
-    # "Foo-4bit-attention" (where "4bit-" is part of the architecture
-    # tag rather than the quant suffix) doesn't get falsely flagged.
-    # "-4bit" handles both the trailing form and any mid-name segment.
-    if "-4bit" in lowered:
-        return True
-    if "mxfp4" in lowered or "nvfp4" in lowered:
-        return True
-    return False
+    reasons: tuple[str, ...]
 
 
 def report(profile: AliasProfile, alias: str | None = None) -> EligibilityReport:
@@ -114,12 +94,9 @@ def eligible_aliases() -> list[str]:
     try:
         from fusion_mlx.model_aliases import list_profiles
 
-        return sorted(
-            name
-            for name, profile in list_profiles().items()
-            if not report(profile).reasons
-        )
-    except Exception:  # noqa: BLE001 — diagnostic helper, never fatal
+        return sorted(p.name for p in list_profiles().values() if not report(p).reasons)
+    except Exception as e:  # noqa: BLE001 — diagnostic helper, never fatal
+        logger.debug("eligible_aliases failed: %s", e)
         return []
 
 

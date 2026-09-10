@@ -114,13 +114,56 @@ def verify_block(
 
 
 def _rewind_cache_to(cache: list[Any], target_offset: int) -> None:
-    for c in cache:
+    # P3-10 (#0909 audit): previously only rewound cache layers that had
+    # an `offset` attribute, silently skipping others. This left some
+    # layers with stale KV state from rejected tokens while others were
+    # rewound → inter-layer KV inconsistency → garbage output.
+    # Now handles multiple cache types: KVCache (offset + keys/values),
+    # and any cache with step/trim methods.
+    for i, c in enumerate(cache):
+        if c is None:
+            continue
+        rewound = False
+        # Method 1: offset attribute (mlx-lm KVCache)
         if hasattr(c, "offset"):
             try:
                 if c.offset > target_offset:
                     c.offset = target_offset
+                    # Also trim keys/values arrays so stale data beyond
+                    # target_offset is not retained. mlx-lm KVCache stores
+                    # keys/values as growable arrays; setting offset alone
+                    # changes the read pointer but leaves stale data.
+                    keys = getattr(c, "keys", None)
+                    values = getattr(c, "values", None)
+                    if keys is not None and hasattr(keys, "shape"):
+                        try:
+                            if keys.shape[2] > target_offset:
+                                c.keys = keys[:, :, :target_offset, :]
+                                c.values = values[:, :, :target_offset, :]
+                        except (IndexError, TypeError):
+                            pass
+                    rewound = True
             except AttributeError:
-                logger.warning(
-                    "[dflash.verifier] cache %s has read-only offset; skipping rewind.",
+                logger.debug(
+                    "[dflash.verifier] cache[%d] %s offset is read-only",
+                    i,
                     type(c).__name__,
                 )
+        # Method 2: step/trim method (custom cache implementations)
+        if not rewound and hasattr(c, "trim"):
+            try:
+                c.trim(target_offset)
+                rewound = True
+            except Exception:
+                logger.debug(
+                    "[dflash.verifier] cache[%d] %s trim() failed",
+                    i,
+                    type(c).__name__,
+                )
+        if not rewound:
+            logger.warning(
+                "[dflash.verifier] cache[%d] %s has no rewind mechanism; "
+                "KV state may be inconsistent (P3-10)",
+                i,
+                type(c).__name__,
+            )

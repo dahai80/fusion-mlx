@@ -28,6 +28,18 @@ from .utils.fatal import FATAL_TEARDOWN_TIMEOUT_S, fatal_exit
 
 logger = logging.getLogger(__name__)
 
+# Heartbeat interval for stream_outputs. During long prefills (e.g. 144K-token
+# Claude Code prompts on head_dim=256 VLMs) the collector produces no output for
+# minutes. Without heartbeats the SSE keepalive in the route layer never fires
+# (it sits inside the ``async for gen`` loop body, which is blocked awaiting the
+# first output), so the client times out before the first token. We yield an
+# empty-text RequestOutput on this interval so the route emits an SSE ping.
+_STREAM_HEARTBEAT_INTERVAL_S = 5.0
+
+
+def _make_heartbeat(request_id: str) -> RequestOutput:
+    return RequestOutput(request_id=request_id, new_text="", finished=False)
+
 
 def _raise_request_output_error(output: RequestOutput) -> None:
     if output.error_code == "prefill_memory_exceeded":
@@ -208,10 +220,53 @@ def get_video_gen_timeout() -> float:
 # on the old executor from being mistaken for live work.
 _video_executor_poisoned = False
 _video_executor_poison_lock = threading.Lock()
+# S5 (audit 0910 §6.3-5): image executor poison — same pattern as video.
+# A hung image generation (mflux 30-step DiT) cannot be cancelled from
+# Python; without poison, every subsequent image request queues behind
+# the dead worker and times out after FUSION_IMAGE_TIMEOUT (600s).
+_image_executor_poisoned = False
+_image_executor_poison_lock = threading.Lock()
+
+# G2/R-2 (audit 0910): llm executor poison + watchdog. A Metal assertion
+# or OOM on the single llm worker thread kills the continuous-batching
+# loop — all requests hang indefinitely with no log, no error, no recovery
+# short of process restart. The poison flag fast-fails new requests with
+# a loud 503; the watchdog detects a hung worker via heartbeat staleness
+# and triggers poison automatically.
+_llm_executor_poisoned = False
+_llm_executor_poison_lock = threading.Lock()
+# Heartbeat updated by the llm worker thread inside _step_burst; the
+# watchdog checks staleness against this timestamp.
+_llm_heartbeat: float = 0.0
+_llm_heartbeat_lock = threading.Lock()
+# Deadline of the current in-flight step_burst (set before run_in_executor,
+# cleared after it returns). The watchdog uses this to know a step is
+# pending and how long it has been pending.
+_llm_step_deadline: float = 0.0
+# Watchdog thread handle (single, daemon).
+_llm_watchdog_thread: threading.Thread | None = None
+_llm_watchdog_stop = threading.Event()
+# Default: 120s without a heartbeat while a step is pending = hung worker.
+# Override via FUSION_LLM_WATCHDOG_TIMEOUT.
+_LLM_WATCHDOG_TIMEOUT_S = float(os.environ.get("FUSION_LLM_WATCHDOG_TIMEOUT", "120"))
 
 
 def is_video_executor_poisoned() -> bool:
     return _video_executor_poisoned
+
+
+def is_image_executor_poisoned() -> bool:
+    return _image_executor_poisoned
+
+
+def is_llm_executor_poisoned() -> bool:
+    return _llm_executor_poisoned
+
+
+def reset_image_executor_poison() -> None:
+    global _image_executor_poisoned
+    with _image_executor_poison_lock:
+        _image_executor_poisoned = False
 
 
 def reset_video_executor_poison() -> None:
@@ -221,6 +276,61 @@ def reset_video_executor_poison() -> None:
         _video_executor_poisoned = False
 
 
+def reset_llm_executor_poison() -> None:
+    global _llm_executor_poisoned
+    with _llm_executor_poison_lock:
+        _llm_executor_poisoned = False
+
+
+def update_llm_heartbeat() -> None:
+    global _llm_heartbeat
+    with _llm_heartbeat_lock:
+        _llm_heartbeat = time.monotonic()
+
+
+def _llm_watchdog_tick() -> None:
+    global _llm_executor_poisoned
+    while not _llm_watchdog_stop.is_set():
+        _llm_watchdog_stop.wait(10.0)
+        if _llm_watchdog_stop.is_set():
+            break
+        with _llm_heartbeat_lock:
+            hb = _llm_heartbeat
+            deadline = _llm_step_deadline
+        if deadline == 0.0 or hb == 0.0:
+            continue
+        now = time.monotonic()
+        # A step is pending (deadline != 0) and the heartbeat has not
+        # advanced within the watchdog window — the worker is hung.
+        if now - hb > _LLM_WATCHDOG_TIMEOUT_S:
+            with _llm_executor_poison_lock:
+                if _llm_executor_poisoned:
+                    continue
+            logger.error(
+                "G2 llm watchdog: worker thread hung for %.0fs (heartbeat "
+                "stale). Poisoning llm executor — new requests will 503. "
+                "RESTART fusion-mlx to recover.",
+                now - hb,
+            )
+            poison_executor("llm")
+
+
+def start_llm_watchdog() -> None:
+    global _llm_watchdog_thread
+    if _llm_watchdog_thread is not None and _llm_watchdog_thread.is_alive():
+        return
+    _llm_watchdog_stop.clear()
+    _llm_watchdog_thread = threading.Thread(
+        target=_llm_watchdog_tick, name="mlx-llm-watchdog", daemon=True
+    )
+    _llm_watchdog_thread.start()
+    logger.info("G2 llm watchdog started (timeout=%.0fs)", _LLM_WATCHDOG_TIMEOUT_S)
+
+
+def stop_llm_watchdog() -> None:
+    _llm_watchdog_stop.set()
+
+
 def poison_executor(pool_type: str = "video") -> None:
     # Mark a pool's executor poisoned and swap in a replacement so new work
     # is not queued behind a stuck worker (#811 R-3). The old executor is
@@ -228,11 +338,56 @@ def poison_executor(pool_type: str = "video") -> None:
     # abandoned to the process lifetime. MLX weights are thread-local, so
     # the replacement worker reloads on first use.
     global _video_executor_poisoned
+    global _image_executor_poisoned
+    global _llm_executor_poisoned
     with _video_executor_poison_lock:
         if pool_type == "video" and _video_executor_poisoned:
             return
+        if pool_type == "image" and _image_executor_poisoned:
+            return
+    with _llm_executor_poison_lock:
+        if pool_type == "llm" and _llm_executor_poisoned:
+            return
+        # Set poisoned flag BEFORE the exec_ None check — the flag marks the
+        # subsystem poisoned regardless of whether the executor was ever
+        # initialized (a backend TimeoutError can fire before get_executor
+        # is called, leaving _global_executors without the pool entry).
+        if pool_type == "video":
+            with _video_executor_poison_lock:
+                _video_executor_poisoned = True
+        elif pool_type == "image":
+            with _image_executor_poison_lock:
+                _image_executor_poisoned = True
+        elif pool_type == "llm":
+            _llm_executor_poisoned = True
         exec_ = _global_executors.get(pool_type)
         if exec_ is None:
+            if pool_type == "video":
+                logger.error(
+                    "video executor POISONED (#811 R-3): a generation hung and "
+                    "could not be cancelled. No executor was registered yet. "
+                    "RESTART fusion-mlx to recover. Subsequent video requests "
+                    "will be rejected."
+                )
+            elif pool_type == "image":
+                logger.error(
+                    "image executor POISONED (S5): a generation hung and could "
+                    "not be cancelled. No executor was registered yet. "
+                    "RESTART fusion-mlx to recover. Subsequent image requests "
+                    "will be rejected."
+                )
+            elif pool_type == "llm":
+                logger.error(
+                    "llm executor POISONED (G2): worker thread hung and could "
+                    "not be cancelled. No executor was registered yet. "
+                    "RESTART fusion-mlx to recover. Subsequent LLM requests "
+                    "will be rejected with 503."
+                )
+            else:
+                logger.error(
+                    "%s executor poisoned but not registered (#811 R-3).",
+                    pool_type,
+                )
             return
         cfg = _executor_config.get(
             pool_type, {"max_workers": 1, "prefix": f"mlx-{pool_type}"}
@@ -244,12 +399,25 @@ def poison_executor(pool_type: str = "video") -> None:
         )
         _global_executors[pool_type] = new_exec
         if pool_type == "video":
-            _video_executor_poisoned = True
             logger.error(
                 "video executor POISONED (#811 R-3): a generation hung and could "
                 "not be cancelled. New worker spawned; the stuck thread is "
                 "abandoned. RESTART fusion-mlx to reclaim its memory. "
                 "Subsequent video requests will reload on the fresh worker."
+            )
+        elif pool_type == "image":
+            logger.error(
+                "image executor POISONED (S5): a generation hung and could "
+                "not be cancelled. New worker spawned; the stuck thread is "
+                "abandoned. RESTART fusion-mlx to reclaim its memory. "
+                "Subsequent image requests will reload on the fresh worker."
+            )
+        elif pool_type == "llm":
+            logger.error(
+                "llm executor POISONED (G2): worker thread hung (Metal "
+                "assertion/OOM). New worker spawned; the stuck thread is "
+                "abandoned. RESTART fusion-mlx to reclaim its memory. "
+                "Subsequent LLM requests will reload on the fresh worker."
             )
         else:
             logger.error("%s executor replaced after a hung job (#811 R-3).", pool_type)
@@ -309,7 +477,6 @@ class EngineCore:
         self._engine_id = engine_id or str(uuid.uuid4())
         self._owns_model = False
         self._closed = False
-        self._idle_event = None
 
         registry = get_registry()
         registry.acquire(
@@ -470,6 +637,15 @@ class EngineCore:
                         target_embed = getattr(model.model, "embed_tokens", None)
                         if target_embed is not None:
                             draft.bind_target_embed_from_model(target_embed)
+                        # P3-08 (#0909 audit): set target model layer count
+                        # so capture_layers scales to the actual depth
+                        # instead of hardcoded 32-layer [8, 16, 31].
+                        _target_layers = getattr(model.model, "layers", None)
+                        _num_layers = (
+                            len(_target_layers) if _target_layers is not None else 0
+                        )
+                        if _num_layers > 0 and hasattr(draft, "set_target_num_layers"):
+                            draft.set_target_num_layers(_num_layers)
                         capture_layers = getattr(draft, "capture_layers", [8, 16, 31])
                         from .speculative.hidden_capture import HiddenStateCapture
 
@@ -574,24 +750,44 @@ class EngineCore:
         self._last_loop_error_sig = None
         self._start_time = time.time()
         self._task = asyncio.create_task(self._engine_loop())
+        # G2: start llm worker watchdog (detects hung Metal thread).
+        start_llm_watchdog()
         logger.info("Engine started")
 
     async def stop(self) -> None:
         self._running = False
+        # G2: stop watchdog on engine stop.
+        stop_llm_watchdog()
         if self._wake_event is not None:
             self._wake_event.set()
         if self._task:
             self._task.cancel()
-            with suppress(asyncio.CancelledError, asyncio.TimeoutError):
-                # E-6 (#811): bound the wait for the cancelled engine loop.
-                # A long prefill/video step on the executor keeps _task alive
-                # past cancellation; an unbounded await here blocks close()'s
-                # scheduler.shutdown submit behind it, which then hits its own
-                # 60s timeout and fatal-exits, skipping the rest of teardown.
-                # Bounded wait lets close() proceed to teardown instead of
-                # stalling the whole shutdown.
+            # P2-08 (#0909 audit): don't lose the task reference on
+            # timeout. If the engine loop doesn't finish in 5s, keeping
+            # _task=None makes it fire-and-forget — the coroutine keeps
+            # running with no reference, touching freed state. Retain
+            # the ref so close() or a subsequent stop() can re-cancel.
+            timed_out = False
+            try:
                 await asyncio.wait_for(self._task, timeout=5.0)
-            self._task = None
+            except asyncio.CancelledError:
+                pass
+            except TimeoutError:
+                timed_out = True
+                logger.warning(
+                    "stop(): engine loop did not finish in 5s, "
+                    "keeping task ref for cleanup"
+                )
+            if not timed_out:
+                self._task = None
+        # P1-02 (#0910 audit): fail all in-flight requests BEFORE nulling
+        # the loop. generate()/stream_outputs() await ctx.finished_event;
+        # without a terminal error the event is never set and consumers
+        # hang forever, exhausting HTTP connection pools.
+        try:
+            self._fail_unfinished_contexts("engine stopped")
+        except Exception:
+            logger.debug("fail_unfinished_contexts on stop failed", exc_info=True)
         self._wake_event = None
         self._loop = None
         logger.info("Engine stopped")
@@ -609,11 +805,21 @@ class EngineCore:
     def dead_reason(self) -> str | None:
         return self._engine_dead_reason
 
+    def mark_dead(self, reason: str) -> None:
+        # RT-07 (#0910 audit): external callers (LoRA swap failure) can
+        # mark the engine dead so the pool evicts + reloads rather than
+        # serving with corrupt weights.
+        self._engine_dead = True
+        self._engine_dead_reason = reason
+        logger.error("Engine marked dead: %s", reason)
+
     def _wake_engine_loop(self) -> None:
         """Wake the idle engine loop after scheduler-visible state changes."""
         event = getattr(self, "_wake_event", None)
         loop = getattr(self, "_loop", None)
-        if event is None or loop is None or loop.is_closed():
+        if event is None or loop is None:
+            return
+        if loop.is_closed():
             return
         try:
             running_loop = asyncio.get_running_loop()
@@ -622,7 +828,13 @@ class EngineCore:
         if running_loop is loop:
             event.set()
         else:
-            loop.call_soon_threadsafe(event.set)
+            try:
+                loop.call_soon_threadsafe(event.set)
+            except RuntimeError:
+                # P3-03: TOCTOU — loop may have closed between the is_closed()
+                # check above and this call. Swallow to avoid spurious errors
+                # during shutdown races.
+                pass
 
     def _step_burst(self) -> list:
         """Run scheduler.step() several times in one executor hand-off.
@@ -638,6 +850,8 @@ class EngineCore:
 
         Runs on the MLX executor thread. Returns the SchedulerOutputs in order.
         """
+        # G2: heartbeat so the watchdog knows the worker is alive.
+        update_llm_heartbeat()
         max_steps = self.config.decode_burst_max_steps
         outputs = [self.scheduler.step()]
         if max_steps <= 1:
@@ -661,7 +875,22 @@ class EngineCore:
                 or time.monotonic() >= deadline
             ):
                 break
-            outputs.append(self.scheduler.step())
+            # P2-03 (#0909 audit): if the Nth step raises, deliver the
+            # N-1 already-generated outputs instead of losing them.
+            # The engine_loop will process the partial results, and the
+            # next _step_burst call will re-trigger the error so the
+            # circuit breaker can handle it normally.
+            try:
+                outputs.append(self.scheduler.step())
+            except Exception:
+                logger.warning(
+                    "_step_burst: step %d failed, returning %d partial " "outputs",
+                    len(outputs),
+                    len(outputs),
+                    exc_info=True,
+                )
+                break
+            update_llm_heartbeat()
         return outputs
 
     async def _engine_loop(self) -> None:
@@ -677,6 +906,15 @@ class EngineCore:
 
         while self._running:
             try:
+                # G2: if llm executor is poisoned, fast-fail all active
+                # requests with a loud error instead of hanging forever.
+                if is_llm_executor_poisoned():
+                    self._fail_unfinished_contexts(
+                        "llm executor poisoned (G2): worker thread hung. "
+                        "RESTART fusion-mlx to recover."
+                    )
+                    await asyncio.sleep(1.0)
+                    continue
                 # Sweep collectors orphaned by client disconnects (throttled).
                 # M4: reduced throttle from 1s to 0.2s; hard cap for burst.
                 now = time.monotonic()
@@ -686,9 +924,16 @@ class EngineCore:
                     self._reap_orphaned_collectors(now)
 
                 if self.scheduler.has_requests():
+                    # G2: set step deadline so the watchdog knows a step is
+                    # pending. Cleared after run_in_executor returns.
+                    global _llm_step_deadline
+                    with _llm_heartbeat_lock:
+                        _llm_step_deadline = time.monotonic() + _LLM_WATCHDOG_TIMEOUT_S
                     step_outputs = await loop.run_in_executor(
                         self._mlx_executor, self._step_burst
                     )
+                    with _llm_heartbeat_lock:
+                        _llm_step_deadline = 0.0
                     self._steps_executed += len(step_outputs)
                     # P2-7: a successful step resets the circuit breaker.
                     if self._consecutive_loop_errors:
@@ -743,7 +988,23 @@ class EngineCore:
                                 "Running prefill LRU eviction for request %s",
                                 eviction_request.request_id,
                             )
-                            evicted = await callback(eviction_request)
+                            # P2-09 (#0909 audit): a non-critical callback
+                            # failure must not kill all in-flight requests.
+                            # Without this catch, the exception propagates
+                            # to the outer except Exception handler which
+                            # calls fail_all_requests, destroying every
+                            # active request for one eviction miss.
+                            try:
+                                evicted = await callback(eviction_request)
+                            except Exception as cb_exc:
+                                logger.warning(
+                                    "Prefill eviction callback failed for "
+                                    "%s: %s — scheduler will fall back to "
+                                    "throttling",
+                                    eviction_request.request_id,
+                                    cb_exc,
+                                )
+                                evicted = False
                             if evicted:
                                 logger.info(
                                     "Prefill LRU eviction completed for request %s",
@@ -894,41 +1155,21 @@ class EngineCore:
                 # _active_contexts entries are never cleaned and finished_event
                 # is never set. Fail everything loudly, then re-raise so the
                 # process interrupt propagates normally.
+                # P3-02: do NOT await executor here — Ctrl+C must propagate
+                # immediately. _fail_unfinished_contexts handles cleanup
+                # synchronously; fail_all_requests on the executor can hang.
                 logger.error("Engine loop terminating on %r", e)
                 self._running = False
-                # EF-1 (#0907 audit): mark dead on unrecoverable BaseException
-                # so the pool does not route new requests to a halted engine.
                 self._engine_dead = True
                 self._engine_dead_reason = f"engine loop terminated on {e!r}"
-                try:
-                    failed_ids = await loop.run_in_executor(
-                        self._mlx_executor, self.scheduler.fail_all_requests
-                    )
-                except Exception:
-                    failed_ids = []
-                for rid in failed_ids:
-                    ctx = self._active_contexts.get(rid)
-                    if ctx is not None:
-                        try:
-                            ctx.collector.put(
-                                RequestOutput(
-                                    request_id=rid,
-                                    finished=True,
-                                    finish_reason="error",
-                                    error=f"engine loop terminated: {e!r}",
-                                )
-                            )
-                        except Exception:
-                            pass
-                    self._mark_request_finished(rid)
-                # R-23 (#811): sweep any context fail_all_requests missed.
                 leaked = self._fail_unfinished_contexts(
                     f"engine loop terminated: {e!r}"
                 )
                 if leaked:
                     logger.critical(
-                        "R-23: %d active context(s) missed by "
-                        "fail_all_requests — force-finished to avoid hang",
+                        "R-23: %d active context(s) force-finished on "
+                        "BaseException — fail_all_requests skipped for fast "
+                        "Ctrl+C propagation",
                         leaked,
                     )
                 raise
@@ -1114,6 +1355,26 @@ class EngineCore:
                 "Aborted %d requests due to memory pressure", len(request_ids)
             )
             self._wake_engine_loop()
+            # MLX buffer cache leak fix: after aborting requests the Metal
+            # buffer pool still holds temporary tensors from the aborted
+            # prefill/decode (attention matrices, intermediate activations).
+            # These are NOT freed by the scheduler's deferred abort (which
+            # only runs on the next step() — blocked if the current step is
+            # stuck in a long MLX op). mx.clear_cache() releases unused
+            # buffers immediately, breaking the deadlock where memory stays
+            # at 100+ GB after abort and the engine can't process new
+            # requests.
+            try:
+                import mlx.core as _mx
+
+                _mx.synchronize()
+                _mx.clear_cache()
+                logger.info(
+                    "Cleared MLX buffer cache after memory-pressure abort "
+                    "(freed unused Metal buffers)"
+                )
+            except Exception as exc:
+                logger.debug("mx.clear_cache() after abort failed: %s", exc)
         return len(request_ids)
 
     def _cleanup_request(self, request_id: str) -> None:
@@ -1199,22 +1460,29 @@ class EngineCore:
         try:
             logger.info("stream_outputs start: %s", request_id)
             while True:
-                try:
-                    if timeout:
-                        output = collector.get_nowait()
-                        if output is None:
-                            output = await asyncio.wait_for(
-                                collector.get(), timeout=timeout
-                            )
-                            # E-5 (#811): closed collector returns None.
-                            if output is None:
-                                logger.info(
-                                    "stream_outputs collector closed for %s, stopping",
-                                    request_id,
-                                )
-                                break
-                    else:
-                        output = collector.get_nowait() or await collector.get()
+                output = collector.get_nowait()
+                if output is None:
+                    # Heartbeat wait: cap the blocking get() at the heartbeat
+                    # interval so the route layer can emit SSE keepalive pings
+                    # during long prefills. Without this, a 144K-token prefill
+                    # blocks here for minutes, the route's keepalive (inside the
+                    # ``async for gen`` body) never fires, and the client
+                    # (Claude Code) disconnects before the first token.
+                    hb_timeout = (
+                        min(timeout, _STREAM_HEARTBEAT_INTERVAL_S)
+                        if timeout
+                        else _STREAM_HEARTBEAT_INTERVAL_S
+                    )
+                    try:
+                        output = await asyncio.wait_for(
+                            collector.get(), timeout=hb_timeout
+                        )
+                    except TimeoutError:
+                        if timeout and hb_timeout >= timeout:
+                            logger.warning("Timeout waiting for request %s", request_id)
+                            break
+                        yield _make_heartbeat(request_id)
+                        continue
                     # E-5 (#811): a reaped/closed collector returns None from
                     # get() — stop the stream instead of yielding None.
                     if output is None:
@@ -1223,19 +1491,16 @@ class EngineCore:
                             request_id,
                         )
                         break
-                    yield output
-                    if output.error:
-                        _raise_request_output_error(output)
-                    if output.finished:
-                        logger.info(
-                            "stream_outputs done: %s, finish=%s, tokens=%d",
-                            request_id,
-                            output.finish_reason,
-                            output.completion_tokens,
-                        )
-                        break
-                except TimeoutError:
-                    logger.warning("Timeout waiting for request %s", request_id)
+                yield output
+                if output.error:
+                    _raise_request_output_error(output)
+                if output.finished:
+                    logger.info(
+                        "stream_outputs done: %s, finish=%s, tokens=%d",
+                        request_id,
+                        output.finish_reason,
+                        output.completion_tokens,
+                    )
                     break
         finally:
             # P2-4: if the consumer disconnected before the request finished
@@ -1256,7 +1521,16 @@ class EngineCore:
                         request_id,
                         e,
                     )
-            self._cleanup_request(request_id)
+                # P2-02 (#0909 audit): abort_request just put a terminal
+                # error output + set finished_event. Don't clear the
+                # collector — a concurrent consumer (generate() awaiting
+                # finished_event) may not have drained the abort signal
+                # yet. Pop the dict entry only; the reaper will clear
+                # the collector after the grace period.
+                self._active_contexts.pop(request_id, None)
+                self._finished_at.pop(request_id, None)
+            else:
+                self._cleanup_request(request_id)
 
     async def generate(
         self,
@@ -1350,7 +1624,19 @@ class EngineCore:
             if isinstance(r, RequestOutput):
                 outputs.append(r)
             else:
-                logger.warning(f"generate_batch_async: prompt {i} failed: {r}")
+                # P2-04 (#0909 audit): log each failure with prompt index
+                # and error, and return a placeholder RequestOutput so the
+                # caller gets a same-length list and can identify which
+                # prompt failed instead of silently dropping it.
+                logger.error("generate_batch_async: prompt %d failed: %s", i, r)
+                outputs.append(
+                    RequestOutput(
+                        request_id="",
+                        finished=True,
+                        finish_reason="error",
+                        error=str(r),
+                    )
+                )
         return outputs
 
     async def prefill(
@@ -1369,8 +1655,6 @@ class EngineCore:
             raise RuntimeError("No scheduler for prefill")
 
         def _prefill_loop():
-            # VLM: mlx_vlm.generation_stream 是模块级单例 (import 时绑主线程),
-            # executor 线程跑 prefill 前需显式注入线程局部 stream 避 "There is no Stream(gpu,1)" 报错
             import sys as _sys
 
             _vlm_gen = _sys.modules.get("mlx_vlm.generate")
@@ -1387,25 +1671,56 @@ class EngineCore:
                 if len(remaining) == 0:
                     break
 
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(self._mlx_executor, _prefill_loop)
-        kv_state = sched.export_kv_state(request_id)
-        if kv_state is None:
-            logger.warning("prefill %s: export_kv_state returned None", request_id)
-        ctx = self._active_contexts.get(request_id)
-        collector = ctx.collector if ctx else None
-        final_output = None
-        if collector:
-            while True:
-                output = collector.get_nowait()
-                if output is None:
-                    break
-                final_output = output
-        self._cleanup_request(request_id)
-        return {
-            "output": final_output,
-            "kv_state": kv_state or {},
-        }
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(self._mlx_executor, _prefill_loop)
+            # P2-01 (#0909 audit): export_kv_state mutates scheduler
+            # internals (removes request from running set). Running it
+            # on the event loop thread races with scheduler.step() on
+            # the MLX executor. Route through the same executor.
+            kv_state = await loop.run_in_executor(
+                self._mlx_executor, sched.export_kv_state, request_id
+            )
+            if kv_state is None:
+                # P2-05 (#0909 audit): a None return means the request
+                # was not found or prefill is incomplete (e.g. super long
+                # prompt exceeding the 1000-step loop budget). Returning
+                # an empty dict silently would cause unpredictable decode
+                # behavior. Fail loudly instead.
+                logger.error(
+                    "prefill %s: export_kv_state returned None — prefill "
+                    "incomplete (prompt may exceed step budget)",
+                    request_id,
+                )
+                raise RuntimeError(
+                    f"prefill {request_id}: export_kv_state returned None "
+                    "— prefill incomplete, kv_state unavailable"
+                )
+            ctx = self._active_contexts.get(request_id)
+            collector = ctx.collector if ctx else None
+            final_output = None
+            if collector:
+                while True:
+                    output = collector.get_nowait()
+                    if output is None:
+                        break
+                    final_output = output
+            self._cleanup_request(request_id)
+            return {
+                "output": final_output,
+                "kv_state": kv_state or {},
+            }
+        except Exception:
+            # P1-03 (#0910 audit): on prefill exception, abort the request
+            # and clean up scheduler state. Without this the request stays
+            # in the scheduler queue and _active_contexts leaks.
+            logger.warning("prefill %s failed, aborting", request_id, exc_info=True)
+            try:
+                sched.abort_request(request_id)
+            except Exception:
+                logger.debug("prefill abort failed for %s", request_id, exc_info=True)
+            self._cleanup_request(request_id)
+            raise
 
     async def decode_with_handoff(
         self,
@@ -1425,6 +1740,13 @@ class EngineCore:
             sched.import_kv_state(request_id, kv_state)
         ctx = self._active_contexts.get(request_id)
         if ctx is None:
+            # P1-04 (#0910 audit): import_kv_state already incremented ref
+            # counts. Without a ctx we can't wait — abort to release them.
+            try:
+                sched.abort_request(request_id)
+            except Exception:
+                pass
+            self._cleanup_request(request_id)
             raise RuntimeError(f"No event for request {request_id}")
         collector = ctx.collector
         try:
@@ -1440,11 +1762,22 @@ class EngineCore:
             if output is None:
                 break
             final_output = output
-        self._cleanup_request(request_id)
         if final_output is None:
+            # P1-04: abort to release KV ref counts incremented by import_kv_state
+            try:
+                sched.abort_request(request_id)
+            except Exception:
+                pass
+            self._cleanup_request(request_id)
             raise RuntimeError(f"No decode output for request {request_id}")
         if final_output.error:
+            try:
+                sched.abort_request(request_id)
+            except Exception:
+                pass
+            self._cleanup_request(request_id)
             _raise_request_output_error(final_output)
+        self._cleanup_request(request_id)
         return final_output
 
     def get_stats(self) -> dict[str, Any]:
@@ -1464,9 +1797,36 @@ class EngineCore:
             return self.scheduler.get_cache_stats()
         return None
 
+    async def aclose(self) -> None:
+        # P2-06 (#0909 audit): close() is synchronous and blocks the event
+        # loop (executor .result(timeout=) calls). Async callers (e.g.
+        # BatchedEngine.stop, VLMBatchedEngine.stop) should use aclose()
+        # to offload the blocking teardown to a thread, keeping the event
+        # loop responsive for in-flight HTTP connections during shutdown.
+        if self._closed:
+            return
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.close)
+
     def close(self) -> None:
         if self._closed:
             return
+        # P1-01/RT-01 (#0910 audit): stop the engine loop BEFORE teardown.
+        # Without this the engine loop keeps running and touches scheduler/
+        # executor state that close() is about to null, causing ghost
+        # coroutine leaks and crashes. close() is sync (called from
+        # EnginePool eviction, __del__, sync contexts) so we can't await
+        # stop() — but setting _running=False + cancelling _task breaks the
+        # loop on its next scheduler step.
+        self._running = False
+        if self._wake_event is not None:
+            try:
+                self._wake_event.set()
+            except Exception:
+                pass
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
         if self._owns_model:
             get_registry().release(self.model, self._engine_id)
             self._owns_model = False
@@ -1545,6 +1905,14 @@ class EngineCore:
                 return
             self._mlx_executor.shutdown(wait=True)
             self._mlx_executor = None
+            # P2-07 (#0909 audit): the compile_cache_clear path shuts
+            # down the executor but never releases _mlx_stream, leaking
+            # a Metal Stream per reload. Pin it in the immortal list so
+            # it stays alive (can't be torn down without a GIL-free crash)
+            # but is tracked instead of orphaned.
+            if self._mlx_stream is not None:
+                _immortal_mlx_streams.append(self._mlx_stream)
+                self._mlx_stream = None
         self.model = None
         self.tokenizer = None
         self.scheduler = None

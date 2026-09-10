@@ -27,6 +27,7 @@ CORE_BEHAVIORAL_PROMPT = (
 )
 
 
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -111,40 +112,7 @@ def _normalize_tools_to_dicts(tools: list[dict] | None) -> list[dict] | None:
     return converted if converted else tools
 
 
-def _fallback_parse_tool_calls(
-    gen: GenerationOutput, tokenizer: Any, tools: list[dict]
-) -> GenerationOutput:
-    """Fallback tool call extraction when the scheduler has no parser session.
-
-    Qwen, GLM, and other models that emit XML-based tool call markers
-    (e.g. \u241d...\u241e) don't get parsed by the mllm scheduler.
-    This runs parse_tool_calls on the final text as a safety net.
-    """
-    try:
-        from ..api.tool_calling import parse_tool_calls
-
-        dict_tools = _normalize_tools_to_dicts(tools)
-        cleaned, tc_list = parse_tool_calls(gen.text, tokenizer, dict_tools)
-        if tc_list:
-            tc_dicts = []
-            for tc in tc_list:
-                tc_dicts.append(
-                    {
-                        "id": tc.id,
-                        "type": tc.type,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                )
-            gen = copy.deepcopy(gen)
-            gen.tool_calls = tc_dicts
-            if cleaned.strip() and cleaned.strip() != gen.text.strip():
-                gen.text = cleaned
-    except Exception as e:
-        logger.debug(f"_fallback_parse_tool_calls failed: {e}")
-    return gen
+# _fallback_parse_tool_calls lives in base.py (shared with VLMBatchedEngine).
 
 
 # _apply_reasoning_parser lives in base.py (shared with VLMBatchedEngine).
@@ -171,8 +139,10 @@ class BatchedEngine(BaseEngine):
         self._stream_interval = stream_interval
         self._enable_thinking = enable_thinking
         # AtomCode 专题优化: 模板渲染缓存初始化 (2026-07-19)
-        # _apply_chat_template 用此 dict 缓存, 命中跳 Jinja 重渲染
-        self._template_cache: dict = {}
+        # _apply_chat_template 用此 OrderedDict 缓存, 命中跳 Jinja 重渲染
+        # P3-05: OrderedDict with maxlen for LRU eviction — long-running
+        # servers with many unique templates would grow unbounded.
+        self._template_cache: OrderedDict = OrderedDict()
         # AtomCode 专题优化: memory tier 透传 (2026-07-19)
         # TurboQuant KV cache 判定 claude 场景禁用 (balanced tier 用显存换速度)
         # __init__ 无 memory_tier 入参, 用 model_settings 兜底 (ServerConfig.memory.tier 透到 model_settings)
@@ -582,20 +552,39 @@ class BatchedEngine(BaseEngine):
                 )
 
         # DFlash2 block-diffusion speculative decode (official dflash pip
-        # pkg, z-lab DFlash2DraftModel). Self-contained generator loads its
-        # own target copy + draft, runs propose->verify->rollback internally.
-        dflash2_path = (
+        # pkg, z-lab DFlash2DraftModel). In-target pattern: loads ONLY the
+        # draft, binds to the scheduler's already-loaded target model.
+        # No duplicate 27B load, no prefill replay. model_settings may
+        # carry a relative alias; prefer the absolute path from
+        # scheduler_config (CLI --dflash2-drafter-path).
+        _ms_path = (
             getattr(self._model_settings, "dflash2_drafter_path", None)
             if self._model_settings
             else None
-        ) or getattr(scheduler_config, "dflash2_drafter_path", "")
+        )
+        _sc_path = getattr(scheduler_config, "dflash2_drafter_path", "")
+        import os as _os
+
+        if _ms_path and _os.path.isabs(_ms_path):
+            dflash2_path = _ms_path
+        else:
+            dflash2_path = _sc_path or (_ms_path or "")
+        _dflash2_disabled = bool(
+            getattr(self._model_settings, "dflash2_disabled", False)
+            if self._model_settings
+            else False
+        )
+        if _dflash2_disabled and dflash2_path:
+            logger.info(
+                "DFlash2 disabled for %s via model_settings.dflash2_disabled "
+                "(CLI flag ignored)",
+                self._model_name,
+            )
+            dflash2_path = ""
         if dflash2_path:
             try:
                 from ..speculative.dflash2 import load_runtime as load_dflash2_runtime
 
-                target_repo = (
-                    getattr(self._model, "requested_model", None) or self._model_name
-                )
                 block_size = (
                     (
                         getattr(self._model_settings, "dflash2_block_size", None)
@@ -612,24 +601,27 @@ class BatchedEngine(BaseEngine):
                 )
                 if draft_bits is None:
                     draft_bits = getattr(scheduler_config, "dflash2_draft_bits", 4)
-                # Load on the engine's single-worker mlx executor (the SAME
-                # thread that runs scheduler steps). The dflash2 runtime
-                # carries its own target+draft weight copies; MLX binds
-                # arrays to the loading thread's stream, so loading on
-                # get_executor("io") bound them to an io-worker's
-                # thread-local stream and every spec step raised
-                # "There is no Stream(gpu, N) in current thread" (#411
-                # pattern). Same executor as self._engine (line ~422).
+                # Load ONLY the draft on the engine's single-worker mlx
+                # executor (the SAME thread that runs scheduler steps).
+                # MLX binds arrays to the loading thread's stream, so
+                # loading on get_executor("io") bound them to an
+                # io-worker's thread-local stream and every spec step
+                # raised "There is no Stream(gpu, N) in current thread"
+                # (#411 pattern). Same executor as self._engine (line ~422).
                 dflash2_rt = await loop.run_in_executor(
                     self._model_load_executor,
                     lambda: load_dflash2_runtime(
-                        target_repo,
                         dflash2_path,
                         block_size=block_size,
                         draft_bits=draft_bits,
                     ),
                 )
-                self._engine.engine.scheduler._dflash2_runtime = dflash2_rt
+                # Bind drafter to the scheduler's already-loaded target.
+                # drafter.bind() borrows embed_tokens/lm_head (zero weight
+                # copy) + installs _LayerHook on target_layer_ids.
+                sched = self._engine.engine.scheduler
+                dflash2_rt.drafter.bind(sched.model)
+                sched._dflash2_runtime = dflash2_rt
                 logger.info(
                     "DFlash2 spec-decode enabled for %s (draft=%s, block_size=%d, draft_bits=%s)",
                     self._model_name,
@@ -662,7 +654,14 @@ class BatchedEngine(BaseEngine):
                     getattr(self._model, "requested_model", None) or self._model_name
                 )
                 dspark_rt = await loop.run_in_executor(
-                    get_executor("io"),
+                    # P2-10 (#0909 audit): use _model_load_executor (same as
+                    # DFlash2) instead of get_executor("io"). MLX binds arrays
+                    # to the loading thread's stream; loading on an io-worker
+                    # thread binds to that thread's stream, causing "There is
+                    # no Stream(gpu, N) in current thread" errors during spec
+                    # steps (#411 pattern). _model_load_executor is the same
+                    # single-worker executor that runs scheduler steps.
+                    self._model_load_executor,
                     lambda: load_dspark_runtime(
                         target_repo,
                         dspark_path,
@@ -688,11 +687,15 @@ class BatchedEngine(BaseEngine):
         logger.info(f"BatchedEngine loaded: {self._model_name}")
 
     async def stop(self) -> None:
+        # P2-12 (#0909 audit): set _loaded=False first to close the window
+        # where new requests see _loaded=True but _engine is already None.
+        had_loaded = self._loaded
+        self._loaded = False
         if self._engine:
             await self._engine.stop()
             if hasattr(self._engine, "engine") and self._engine.engine is not None:
                 try:
-                    self._engine.engine.close()
+                    await self._engine.engine.aclose()
                 except Exception as e:
                     logger.warning(f"Error closing engine: {e}")
         # R-22 (#811): shut down the dedicated load executor on stop. start()
@@ -719,11 +722,22 @@ class BatchedEngine(BaseEngine):
         self._engine = None
         self._model = None
         self._tokenizer = None
-        if self._loaded:
+        # P2-12: _loaded already set False at top of stop(); unregister
+        # if it was True before we cleared it.
+        if had_loaded:
             from ..scheduler.helpers import unregister_llm_engine
 
             unregister_llm_engine()
-        self._loaded = False
+
+    def mark_dead(self, reason: str) -> None:
+        # RT-07 (#0910 audit): delegate to inner EngineCore so the pool
+        # evicts + reloads instead of serving with corrupt weights.
+        if self._engine is not None and hasattr(self._engine, "engine"):
+            inner = getattr(self._engine, "engine", None)
+            if inner is not None and hasattr(inner, "mark_dead"):
+                inner.mark_dead(reason)
+                return
+        logger.error("BatchedEngine mark_dead: no inner engine to mark: %s", reason)
 
     def _apply_chat_template(
         self,
@@ -748,10 +762,15 @@ class BatchedEngine(BaseEngine):
                 )
                 cached = self._template_cache.get(cache_key)
                 if cached is not None:
+                    self._template_cache.move_to_end(cache_key)
                     return cached
             except Exception:
                 cache_key = None
         if hasattr(self._tokenizer, "apply_chat_template"):
+            # P2-11 (#0909 audit): copy messages before template rendering
+            # to prevent in-place mutation (insert system msg, pop partial key)
+            # from accumulating duplicate system messages across multi-turn.
+            messages = [dict(m) for m in messages]
             if is_partial is None:
                 from ..api.utils import detect_and_strip_partial
 
@@ -789,10 +808,14 @@ class BatchedEngine(BaseEngine):
                 result = self._tokenizer.apply_chat_template(
                     messages, **template_kwargs
                 )
-                # AtomCode: 命中缓存写入 (限 64 条 避显存膨胀)
+                # P3-05: OrderedDict LRU — move to end on insert, evict
+                # oldest when at capacity (64) instead of silently dropping
+                # new entries when full.
                 if cache_key is not None and hasattr(self, "_template_cache"):
-                    if len(self._template_cache) < 64:
-                        self._template_cache[cache_key] = result
+                    self._template_cache[cache_key] = result
+                    self._template_cache.move_to_end(cache_key)
+                    if len(self._template_cache) > 64:
+                        self._template_cache.popitem(last=False)
                 return result
             except Exception as e:
                 if "system message" in str(e).lower():
@@ -1267,41 +1290,8 @@ class BatchedEngine(BaseEngine):
                 output = _fallback_parse_tool_calls(output, self._tokenizer, tools)
             yield output
 
-    def has_active_requests(self) -> bool:
-        # P0-5: the EngineCore tracks in-flight requests in _active_contexts,
-        # not _output_collectors (that attr does not exist on EngineCore).
-        # Reading the wrong name made this always return False, so shutdown
-        # drains and eviction checks skipped live SSE streams.
-        ec = getattr(self, "_engine", None)
-        if ec is not None:
-            inner = getattr(ec, "engine", None)
-            if inner is not None:
-                active = getattr(inner, "_active_contexts", None)
-                if active is not None:
-                    return len(active) > 0
-                # fallback for non-EngineCore cores that track collectors
-                collectors = getattr(inner, "_output_collectors", None)
-                if collectors is not None:
-                    return len(collectors) > 0
-        return False
-
     def get_stats(self) -> dict[str, Any]:
-        stats = {
-            "engine_type": "batched",
-            "model_name": self._model_name,
-            "loaded": self._loaded,
-            "stream_interval": self._stream_interval,
-        }
-        if self._engine:
-            stats.update(self._engine.get_stats())
-        return stats
+        return self.get_enginecore_stats("batched")
 
     def get_cache_stats(self) -> dict[str, Any] | None:
-        if self._engine:
-            return self._engine.get_cache_stats()
-        return None
-
-    async def abort_all_requests(self) -> int:
-        if self._engine and self._engine.engine:
-            return await self._engine.engine.abort_all_requests()
-        return 0
+        return self.get_enginecore_cache_stats()

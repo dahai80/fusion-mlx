@@ -51,6 +51,9 @@ from ..pool import EnginePool
 from ..request import SamplingParams
 from ..server_metrics import record_llm_disconnect_cancel, record_llm_metrics
 from ..sessions import record_chat_session
+from ._disconnect_guard import handle_disconnect
+from ._engine_helpers import release_engine as _shared_release
+from ._engine_helpers import resolve_engine as _shared_resolve
 from ._guards import (
     check_chat_capability,
     check_multimodal_content,
@@ -59,10 +62,6 @@ from ._guards import (
 from .grammar import GrammarBackend, resolve_grammar_backend
 
 logger = logging.getLogger(__name__)
-
-# Strong refs for fire-and-forget abort tasks so they are not GC'd before
-# completion; entries self-remove via the done-callback.
-_pending_abort_tasks: set[asyncio.Task] = set()
 
 router = APIRouter(prefix="/v1", tags=["openai"])
 
@@ -137,20 +136,11 @@ def set_openai_context(pool: EnginePool, req_router: RequestRouter) -> None:
 
 
 async def _resolve_engine(model_name: str, adapter_path=None):
-    if _pool is not None:
-        engine = await _pool.get_engine(
-            model_name, _lease=True, adapter_path=adapter_path
-        )
-        return engine
-    from ..service.helpers import get_engine
-
-    log.debug("_pool None, falling back to cfg.engine for %s", model_name)
-    return get_engine(model_name)
+    return await _shared_resolve(model_name, _pool, adapter_path=adapter_path)
 
 
 async def _release_engine(model_name: str, adapter_path=None):
-    if _pool is not None:
-        await _pool.release_engine(model_name, adapter_path=adapter_path)
+    await _shared_release(model_name, _pool, adapter_path=adapter_path)
 
 
 def _extract_text(msg: Any) -> str:
@@ -872,34 +862,16 @@ async def _run_chat(
         ) from exc
     except InsufficientMemoryError as exc:
         logger.warning("Insufficient memory: %s", exc)
-        detail = {
-            "error": {
-                "type": "model_unavailable",
-                "message": f"Model {exc.model_id} not loaded and insufficient memory",
-                "required_memory_mb": (
-                    exc.required // (1024 * 1024) if exc.required else 0
-                ),
-                "used_memory_mb": (exc.current // (1024 * 1024) if exc.current else 0),
-                "ceiling_memory_mb": (
-                    exc.ceiling // (1024 * 1024) if exc.ceiling else 0
-                ),
-                "available_memory_mb": (
-                    (exc.ceiling - exc.current) // (1024 * 1024)
-                    if exc.ceiling and exc.ceiling > exc.current
-                    else 0
-                ),
-                "loaded_models": exc.loaded_models,
-            }
-        }
+        err = exc.to_error_detail()
         if exc.loaded_models:
             unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
             if unloadable:
                 victim = unloadable[0]
-                detail["error"]["suggestion"] = (
+                err["suggestion"] = (
                     f"Unload model {victim['model_id']} "
                     f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
                 )
-        raise HTTPException(status_code=503, detail=detail) from exc
+        raise HTTPException(status_code=503, detail={"error": err}) from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,
@@ -1493,23 +1465,7 @@ async def _stream_chat_generator(
         logger.info("Client disconnected during streaming: %s", request_id)
         record_llm_disconnect_cancel()
         if engine:
-            try:
-                _t = asyncio.create_task(engine.abort_request(request_id))
-                _pending_abort_tasks.add(_t)
-                _t.add_done_callback(_pending_abort_tasks.discard)
-                _t.add_done_callback(
-                    lambda t: (
-                        logger.warning(
-                            "abort_request failed for %s: %s",
-                            request_id,
-                            t.exception(),
-                        )
-                        if not t.cancelled() and t.exception()
-                        else None
-                    )
-                )
-            except Exception:
-                pass
+            handle_disconnect(request_id, engine)
         raise
     except AdapterPathError as exc:
         yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 400}}}}\n\n'
@@ -1522,20 +1478,8 @@ async def _stream_chat_generator(
         logger.warning("Stream: insufficient memory: %s", exc)
         import json as _json
 
-        err_detail = {
-            "message": f"Model {exc.model_id} not loaded and insufficient memory",
-            "status": 503,
-            "type": "model_unavailable",
-            "required_memory_mb": exc.required // (1024 * 1024) if exc.required else 0,
-            "used_memory_mb": exc.current // (1024 * 1024) if exc.current else 0,
-            "ceiling_memory_mb": exc.ceiling // (1024 * 1024) if exc.ceiling else 0,
-            "available_memory_mb": (
-                (exc.ceiling - exc.current) // (1024 * 1024)
-                if exc.ceiling and exc.ceiling > exc.current
-                else 0
-            ),
-            "loaded_models": exc.loaded_models,
-        }
+        err_detail = exc.to_error_detail()
+        err_detail["status"] = 503
         if exc.loaded_models:
             unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
             if unloadable:
@@ -2096,34 +2040,16 @@ async def chat_completions(
             headers={"Retry-After": "5"},
         ) from exc
     except InsufficientMemoryError as exc:
-        detail = {
-            "error": {
-                "type": "model_unavailable",
-                "message": f"Model {exc.model_id} not loaded and insufficient memory",
-                "required_memory_mb": (
-                    exc.required // (1024 * 1024) if exc.required else 0
-                ),
-                "used_memory_mb": (exc.current // (1024 * 1024) if exc.current else 0),
-                "ceiling_memory_mb": (
-                    exc.ceiling // (1024 * 1024) if exc.ceiling else 0
-                ),
-                "available_memory_mb": (
-                    (exc.ceiling - exc.current) // (1024 * 1024)
-                    if exc.ceiling and exc.ceiling > exc.current
-                    else 0
-                ),
-                "loaded_models": exc.loaded_models,
-            }
-        }
+        err = exc.to_error_detail()
         if exc.loaded_models:
             unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
             if unloadable:
                 victim = unloadable[0]
-                detail["error"]["suggestion"] = (
+                err["suggestion"] = (
                     f"Unload model {victim['model_id']} "
                     f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
                 )
-        raise HTTPException(status_code=503, detail=detail) from exc
+        raise HTTPException(status_code=503, detail={"error": err}) from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,
@@ -2193,34 +2119,16 @@ async def completions(
             headers={"Retry-After": "5"},
         ) from exc
     except InsufficientMemoryError as exc:
-        detail = {
-            "error": {
-                "type": "model_unavailable",
-                "message": f"Model {exc.model_id} not loaded and insufficient memory",
-                "required_memory_mb": (
-                    exc.required // (1024 * 1024) if exc.required else 0
-                ),
-                "used_memory_mb": (exc.current // (1024 * 1024) if exc.current else 0),
-                "ceiling_memory_mb": (
-                    exc.ceiling // (1024 * 1024) if exc.ceiling else 0
-                ),
-                "available_memory_mb": (
-                    (exc.ceiling - exc.current) // (1024 * 1024)
-                    if exc.ceiling and exc.ceiling > exc.current
-                    else 0
-                ),
-                "loaded_models": exc.loaded_models,
-            }
-        }
+        err = exc.to_error_detail()
         if exc.loaded_models:
             unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
             if unloadable:
                 victim = unloadable[0]
-                detail["error"]["suggestion"] = (
+                err["suggestion"] = (
                     f"Unload model {victim['model_id']} "
                     f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
                 )
-        raise HTTPException(status_code=503, detail=detail) from exc
+        raise HTTPException(status_code=503, detail={"error": err}) from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,

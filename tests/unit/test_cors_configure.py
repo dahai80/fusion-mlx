@@ -105,7 +105,10 @@ class TestConfigureCorsFromEnv:
 
 
 class TestCreateAppCorsWiring:
-    def test_default_wildcard_when_unset(self, monkeypatch):
+    def test_default_localhost_when_unset(self, monkeypatch):
+        # P2-25 (#0909 audit): default CORS origins are localhost-only,
+        # not ["*"], to prevent cross-origin access from arbitrary web
+        # origins.
         monkeypatch.delenv("FUSION_MLX_CORS_ALLOW_ORIGINS", raising=False)
         prev_cors = server._cors_origins
         prev_inst = server._server_instance
@@ -116,7 +119,11 @@ class TestCreateAppCorsWiring:
             app = server.get_app()
             kwargs = _cors_middleware_kwargs(app)
             assert kwargs is not None, "CORSMiddleware not registered"
-            assert kwargs["allow_origins"] == ["*"]
+            # P2-25: default uses regex for localhost, not explicit origins
+            regex = kwargs.get("allow_origin_regex")
+            assert regex is not None, "localhost regex not set"
+            assert "localhost" in regex
+            assert "127" in regex
         finally:
             server._cors_origins = prev_cors
             server._server_instance = prev_inst

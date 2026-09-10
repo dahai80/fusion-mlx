@@ -462,9 +462,12 @@ class TestSdpaDispatchEstimate:
         hd = 256
         chunk = 512
         new_tokens = 327872
-        full_kv_len = new_tokens
 
         eff_chunk = min(chunk, new_tokens)
+        # SDPA kv_len uses eff_chunk (per-chunk), not new_tokens — the
+        # admission guard needs a practical estimate, not the theoretical
+        # worst-case last-chunk peak (which would reject valid requests).
+        full_kv_len = eff_chunk
         output_only = n_q * eff_chunk * hd * 4
         expected_attn = n_q * eff_chunk * full_kv_len * _SDPA_FALLBACK_SCORE_DTYPE_SIZE
         expected_attn += output_only

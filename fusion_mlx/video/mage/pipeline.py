@@ -156,10 +156,10 @@ class MageFlowPipeline:
         return image
 
     def _encode_text(self, prompt: str) -> mx.array:
-        logger.info("mage_flow: text encoding stub for prompt=%r", prompt[:60])
-        return mx.zeros(
-            (1, 64, self.transformer.dim if self.transformer else 3072),
-            dtype=mx.float32,
+        raise NotImplementedError(
+            "mage_flow: text encoder not implemented in this build. "
+            "MageFlow video generation requires a text encoder (T5/CLIP) "
+            "which is not yet wired. Use a different video backend."
         )
 
     def _build_img_ids(self, h: int, w: int) -> mx.array:

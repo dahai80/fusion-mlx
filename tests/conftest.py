@@ -145,10 +145,63 @@ try:
         except ImportError:
             sys.modules[_full] = MagicMock()
 except ImportError:
-    sys.modules["mlx_vlm"] = MagicMock()
-    sys.modules["mlx_vlm.generate"] = MagicMock()
-    sys.modules["mlx_vlm.models"] = MagicMock()
-    sys.modules["mlx_vlm.utils"] = MagicMock()
+    import importlib.util as _ilu
+
+    # mlx_vlm mock: MagicMock with __path__ = [] + __spec__ set.
+    # This dual nature lets `from mlx_vlm.X import Y` resolve (Python
+    # sees __path__ → treats as package → checks sys.modules for X)
+    # AND `mlx_vlm.stream_generate(...)` work (MagicMock auto-creates
+    # attributes). ALL modules (even leaves) get __path__ + __spec__
+    # because importlib.util.find_spec raises ValueError if __spec__
+    # is unset (MagicMock doesn't auto-create __spec__ — it raises
+    # AttributeError).
+
+    def _mock_vlm_pkg(name):
+        if name not in sys.modules:
+            mod = MagicMock()
+            mod.__path__ = []
+            mod.__spec__ = _ilu.spec_from_loader(name, loader=None)
+            sys.modules[name] = mod
+
+    def _mock_vlm_leaf(name):
+        parts = name.split(".")
+        for i in range(1, len(parts)):
+            _mock_vlm_pkg(".".join(parts[:i]))
+        _mock_vlm_pkg(name)
+
+    _mock_vlm_pkg("mlx_vlm")
+    for _leaf in (
+        "generate",
+        "generate.diffusion",
+        "utils",
+        "prompt_utils",
+        "turboquant",
+        "vision_cache",
+        "video_generate",
+        "lora",
+        "tool_parsers",
+        "tool_parsers.minimax_m3",
+        "trainer.sft_trainer",
+        "trainer.utils",
+        "speculative.drafters",
+        "speculative.drafters.qwen3_5_mtp.config",
+        "speculative.drafters.qwen3_dflash.dflash",
+        "speculative.utils",
+        "models.base",
+        "models.cache",
+        "models.gemma3.config",
+        "models.gemma3.language",
+        "models.gemma4.config",
+        "models.gemma4.language",
+        "models.minimax_m3",
+        "models.minimax_m3_vl.language",
+        "models.qwen3_5",
+        "models.qwen3_5.language",
+        "models.qwen3_5.qwen3_5",
+        "models.qwen3_5_moe",
+        "models.qwen3_vl.processing_qwen3_vl",
+    ):
+        _mock_vlm_leaf(f"mlx_vlm.{_leaf}")
 
 
 # Other MLX ecosystem mocks. Give each a real ModuleSpec so
@@ -159,7 +212,7 @@ except ImportError:
 # patch("mlx_embeddings.generate") fail with "module has no attribute
 # 'generate'" in test_embedding.py even though the installed pkg exposes
 # generate. Collateral found during #537 rescue.
-def _inject_mock_pkg(name: str) -> None:
+def _inject_mock_pkg(name: str, use_magic: bool = False) -> None:
     import importlib.util
 
     try:
@@ -168,15 +221,33 @@ def _inject_mock_pkg(name: str) -> None:
     except ImportError:
         pass
 
-    mod = types.ModuleType(name)
+    if use_magic:
+        mod = MagicMock()
+    else:
+        mod = types.ModuleType(name)
     mod.__spec__ = importlib.util.spec_from_loader(name, loader=None)
     sys.modules[name] = mod
 
 
-_inject_mock_pkg("mlx_embeddings")
+# mlx_embeddings: use MagicMock so attributes like `generate` resolve
+# (test_embedding.py patches mlx_embeddings.generate).
+_inject_mock_pkg("mlx_embeddings", use_magic=True)
 _inject_mock_pkg("mlx_audio")
 _inject_mock_pkg("dflash_mlx")
 _inject_mock_pkg("dflash")
+
+# cv2 (opencv): heavy optional dep pulled by video backends
+# (latentsync_mlx, musetalk_mlx). CI installs only [dev] extras, not
+# [video], so cv2 is absent on macOS CI runners. Without this mock,
+# the entire fusion_mlx.engines package fails to import (VideoGenEngine
+# → video_backends → latentsync_mlx → cv2), cascading 215+ collection
+# errors to tests that never touch video. Preserve real cv2 when present.
+try:
+    import cv2 as _real_cv2
+
+    sys.modules["cv2"] = _real_cv2
+except ImportError:
+    sys.modules["cv2"] = MagicMock()
 
 # Mock heavy/optional dependencies
 # transformers: preserve real package if available (mlx_lm depends on it)
@@ -211,6 +282,15 @@ _mock_module("mistral_common.tokens.tokenizers")
 _mock_module("sentencepiece")
 _mock_module("tiktoken")
 _mock_module("socksio")
+# aiohttp: optional HTTP client used by a few tests. CI [dev] extra
+# does not include it. Mock to prevent collection errors. Use
+# MagicMock so attributes like ClientSession resolve.
+try:
+    import aiohttp as _real_aiohttp
+
+    sys.modules["aiohttp"] = _real_aiohttp
+except ImportError:
+    sys.modules["aiohttp"] = MagicMock()
 # openai_harmony: preserve real package if available (tests import HarmonyEncodingName)
 try:
     import openai_harmony as _real_openai_harmony
@@ -242,6 +322,7 @@ def mock_tokenizer():
     tok.decode = MagicMock(return_value="test output")
     tok.apply_chat_template = MagicMock(return_value="<s>test prompt</s>")
     tok.eos_token_id = 2
+    tok.eos_token_ids = {2}
     tok.bos_token_id = 1
     tok.pad_token_id = 0
     return tok

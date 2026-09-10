@@ -44,6 +44,7 @@ from ..engines.video import VideoGenEngine
 from ..engines.vlm import VLMBatchedEngine
 from ..exceptions import (
     AdapterPathError,
+    EngineDisabledError,
     InsufficientMemoryError,
     ModelBusyError,
     ModelLoadingError,
@@ -155,12 +156,14 @@ class EnginePool:
     def __init__(
         self,
         scheduler_config: SchedulerConfig | None = None,
+        profile: object | None = None,
     ):
         """
         Initialize the engine pool.
 
         Args:
             scheduler_config: Configuration for BatchedEngine schedulers
+            profile: ServerProfile (R-7) gating modalities at load time
 
         Note:
             Pre-load admission consults `enforcer.get_final_ceiling()` via
@@ -220,6 +223,9 @@ class EnginePool:
             1, int(os.getenv("FUSION_MAX_CONCURRENT_LOADS", "1"))
         )
         self._load_semaphore = asyncio.Semaphore(self._max_concurrent_loads)
+        # R-7: profile gate — disabled modalities raise EngineDisabledError
+        # at load time (loud 503, not silent skip).
+        self._profile = profile
         self.configure_hot_cache_budget()
 
     @property
@@ -592,11 +598,15 @@ class EnginePool:
                 if model_id in pinned_set:
                     logger.info(f"Pinned model: {model_id}")
 
-            # Remove entries no longer discovered and not loaded
+            # Remove entries no longer discovered and not loaded.
+            # P1-10/RT-04 (#0910 audit): snapshot _entries with list()
+            # before iterating — the async path can insert new entries
+            # under a different lock, causing "dict changed size during
+            # iteration" RuntimeError.
             discovered_ids = set(discovered.keys())
             stale = [
                 mid
-                for mid in self._entries
+                for mid in list(self._entries)
                 if mid not in discovered_ids and self._entries[mid].engine is None
             ]
             for mid in stale:
@@ -701,6 +711,39 @@ class EnginePool:
         # `dictionary changed size during iteration`.
         async with self._lock:
             return list(self._entries.items())
+
+    # ENG-03 (#0909 audit): public accessors for private attributes that
+    # server.py previously reached into directly. Exposing typed setters
+    # keeps the wiring contract explicit and lets the pool validate inputs.
+    @property
+    def process_memory_enforcer(self):
+        return self._process_memory_enforcer
+
+    def set_process_memory_enforcer(self, enforcer) -> None:
+        self._process_memory_enforcer = enforcer
+
+    def set_final_ceiling_callback(self, cb) -> None:
+        self._get_final_ceiling = cb
+
+    def set_engine_detached_callback(self, cb) -> None:
+        self._on_engine_detached = cb
+
+    @property
+    def settings_manager(self):
+        return self._settings_manager
+
+    def set_settings_manager(self, manager) -> None:
+        self._settings_manager = manager
+
+    @property
+    def loading_count(self) -> int:
+        # ENG-03: replaces server.py's direct iteration over _entries to
+        # count is_loading entries. Snapshot under the discover lock to
+        # avoid racing discover_models.
+        with self._discover_sync_lock:
+            return sum(
+                1 for e in self._entries.values() if getattr(e, "is_loading", False)
+            )
 
     def set_pinned(self, model_id: str, pinned: bool) -> bool:
         """
@@ -962,7 +1005,40 @@ class EnginePool:
                     f"in-place swap: base engine {base_model_id} has no _model"
                 )
             swap = InPlaceLoRASwap(model, adapter_path)
-            swap.apply()
+            try:
+                swap.apply()
+            except Exception as apply_err:
+                # RT-07 (#0910 audit): apply() failed mid-swap — base engine
+                # may be in a half-replaced state. Attempt rollback, then
+                # mark the engine as dead so it gets evicted and reloaded
+                # rather than serving corrupt weights.
+                logger.error(
+                    "inplace_swap: apply failed for %s on %s: %s — "
+                    "attempting rollback",
+                    adapter_path,
+                    base_model_id,
+                    apply_err,
+                )
+                restore_err = None
+                try:
+                    swap.restore()
+                except Exception as restore_err:
+                    logger.error(
+                        "inplace_swap: rollback also failed for %s on %s: %s "
+                        "— base engine may be corrupt",
+                        adapter_path,
+                        base_model_id,
+                        restore_err,
+                    )
+                engine.mark_dead(
+                    f"LoRA apply failed: {apply_err}; "
+                    f"rollback: {'ok' if not restore_err else 'failed'}"
+                )
+                lock.release()
+                raise RuntimeError(
+                    f"LoRA apply failed for {adapter_path} on "
+                    f"{base_model_id}: {apply_err}"
+                ) from apply_err
             self._active_swap[base_model_id] = swap
             base_entry.in_use += 1
             logger.info(
@@ -987,12 +1063,20 @@ class EnginePool:
             if swap is not None:
                 swap.restore()
         except Exception as e:
-            logger.warning(
-                "inplace_swap: restore failed for %s on %s: %s",
+            # RT-07 (#0910 audit): restore failed — base engine is now
+            # serving with adapter weights instead of base weights. Mark
+            # it dead so it gets evicted and reloaded, rather than silently
+            # serving wrong weights to subsequent non-adapter requests.
+            logger.error(
+                "inplace_swap: restore failed for %s on %s: %s — "
+                "marking engine as corrupt for eviction",
                 adapter_path,
                 base_model_id,
                 e,
             )
+            engine = getattr(base_entry, "engine", None)
+            if engine is not None and hasattr(engine, "mark_dead"):
+                engine.mark_dead(f"LoRA restore failed: {e}")
         finally:
             if base_entry is not None and base_entry.in_use > 0:
                 base_entry.in_use -= 1
@@ -2388,6 +2472,28 @@ class EnginePool:
             else:
                 logger.info(f"Loading model: {model_id}")
 
+            # R-7 profile gate: reject disabled modalities loudly (503),
+            # not silent skip. engine_type maps to a profile modality.
+            if self._profile is not None:
+                _modality_map = {
+                    "batched": "llm",
+                    "vlm": "vlm",
+                    "embedding": "embedding",
+                    "reranker": "reranker",
+                    "ner": "ner",
+                    "audio_stt": "audio",
+                    "audio_tts": "audio",
+                    "audio_sts": "audio",
+                    "image_gen": "image",
+                    "video_gen": "video",
+                    "diffusion": "video",
+                }
+                _mod = _modality_map.get(
+                    effective_type, _modality_map.get(entry.engine_type)
+                )
+                if _mod and not self._profile.engine_allowed(_mod):
+                    raise EngineDisabledError(_mod, self._profile.name)
+
             # Retrieve per-model settings for post-load transforms.
             # Derived adapter entries reuse the base model's settings so that
             # per-profile defaults (quant, context, etc.) still apply; the
@@ -2700,6 +2806,24 @@ class EnginePool:
                         f"Successfully loaded {model_id} as LLM (fallback from VLM)"
                     )
                 else:
+                    # P1-11/RT-06 (#0910 audit): engine.start() failed and
+                    # no fallback applies. Stop the engine and clear MLX
+                    # memory before re-raising — without this, loaded MLX
+                    # weights linger in Metal memory until GC (minutes).
+                    try:
+                        await engine.stop()
+                    except Exception:
+                        logger.warning(
+                            "engine.stop() failed after start failure for %s",
+                            model_id,
+                            exc_info=True,
+                        )
+                    gc.collect()
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        get_mlx_executor(),
+                        lambda: (mx.synchronize(), mx.clear_cache()),
+                    )
                     raise
 
             # Check if memory enforcer requested abort during loading

@@ -114,7 +114,6 @@ class BlockAwarePrefixCache(CacheManager):
         self._request_tables: dict[str, BlockCacheEntry] = {}
 
         # Callback for restoring cold blocks (deprecated in paged SSD-only mode)
-        # Kept for API compatibility
         self._cold_restore_callback: Callable[[int, bytes], bool] | None = None
 
         # Statistics
@@ -131,7 +130,7 @@ class BlockAwarePrefixCache(CacheManager):
         # engine thread, the block-freed callback fires from a different thread
         # (PagedCacheManager caller). The prior asyncio.Lock was never acquired
         # anywhere, leaving _prefix_index unprotected under concurrent access.
-        self._cache_lock = threading.Lock()
+        self._cache_lock = threading.RLock()
         # Register self-invalidation so a freed block_id is stripped from the
         # prefix index before reallocation, regardless of construction site.
         try:
@@ -380,48 +379,65 @@ class BlockAwarePrefixCache(CacheManager):
 
             return block_table, remaining
 
-        # Try prefix index for longer matches
-        best_match = self._find_best_prefix_match(tokens, extra_keys=extra_keys)
-        if best_match:
-            prefix_len, matched_block_ids, num_blocks = best_match
+        # Try prefix index for longer matches.
+        # P1-07/RT-05 (#0910 audit): hold _cache_lock through the entire
+        # index-lookup + block-fetch sequence to prevent TOCTOU. Without
+        # this, a block can be freed + reallocated to different content in
+        # the window between _find_best_prefix_match (which releases the
+        # lock) and the allocated_blocks.get() call below, causing silent
+        # KV mismatch → garbage decode.
+        with self._cache_lock:
+            best_match = self._find_best_prefix_match(tokens, extra_keys=extra_keys)
+            if best_match:
+                prefix_len, matched_block_ids, num_blocks = best_match
 
-            # Fork the matched blocks. P1-2: a cached block may have been
-            # evicted since the index entry was written, leaving a dead id in
-            # matched_block_ids. Stop at the first dead block and recompute the
-            # matched prefix length from the surviving blocks — otherwise the
-            # engine is told prefix_len tokens are cached but the block table
-            # covers fewer, producing a silent KV gap (garbage decode).
-            block_table = self.paged_cache.create_block_table(request_id)
-            live_prefix_len = 0
-            live_count = 0
-            for block_id in matched_block_ids[:num_blocks]:
-                block = self.paged_cache.allocated_blocks.get(block_id)
-                if block is None:
-                    break
-                self.paged_cache.increment_ref(block_id)
-                block_table.block_ids.append(block_id)
-                block_table.num_tokens += block.token_count
-                live_prefix_len += block.token_count
-                live_count += 1
+                # Fork the matched blocks. P1-2: a cached block may have been
+                # evicted since the index entry was written, leaving a dead id in
+                # matched_block_ids. Stop at the first dead block and recompute the
+                # matched prefix length from the surviving blocks — otherwise the
+                # engine is told prefix_len tokens are cached but the block table
+                # covers fewer, producing a silent KV gap (garbage decode).
+                block_table = self.paged_cache.create_block_table(request_id)
+                live_prefix_len = 0
+                live_count = 0
+                for block_id in matched_block_ids[:num_blocks]:
+                    block = self.paged_cache.allocated_blocks.get(block_id)
+                    if block is None:
+                        break
+                    # P1-07: verify block_hash is not None (freed blocks
+                    # have hash cleared before reallocation).
+                    if block.block_hash is None:
+                        logger.warning(
+                            "fetch_cache: block %d has null hash (freed), "
+                            "stopping prefix match at %d tokens",
+                            block_id,
+                            live_prefix_len,
+                        )
+                        break
+                    self.paged_cache.increment_ref(block_id)
+                    block_table.block_ids.append(block_id)
+                    block_table.num_tokens += block.token_count
+                    live_prefix_len += block.token_count
+                    live_count += 1
 
-            if live_count == 0:
-                # entire match evicted — treat as miss
-                self._misses += 1
+                if live_count == 0:
+                    # entire match evicted — treat as miss
+                    self._misses += 1
+                    self._tokens_requested_total += len(tokens)
+                    return None, tokens
+
+                remaining = tokens[live_prefix_len:]
+                self._hits += 1
+                self._tokens_saved += live_prefix_len
+                self._tokens_matched_total += live_prefix_len
                 self._tokens_requested_total += len(tokens)
-                return None, tokens
 
-            remaining = tokens[live_prefix_len:]
-            self._hits += 1
-            self._tokens_saved += live_prefix_len
-            self._tokens_matched_total += live_prefix_len
-            self._tokens_requested_total += len(tokens)
+                logger.debug(
+                    f"Prefix index hit for {request_id}: {live_prefix_len} tokens matched"
+                    f" (index claimed {prefix_len}, {num_blocks - live_count} evicted)"
+                )
 
-            logger.debug(
-                f"Prefix index hit for {request_id}: {live_prefix_len} tokens matched"
-                f" (index claimed {prefix_len}, {num_blocks - live_count} evicted)"
-            )
-
-            return block_table, remaining
+                return block_table, remaining
 
         # No cache hit
         self._misses += 1
@@ -466,6 +482,39 @@ class BlockAwarePrefixCache(CacheManager):
         if not tokens:
             return None
 
+        # P2-19 (#0909 audit): hold _cache_lock for the entire store_cache
+        # operation so block allocation, hash registration, prefix index
+        # update, and request tracking are atomic. Without this, concurrent
+        # store_cache calls (from different worker threads) can race on
+        # find_cached_block + allocate_block, corrupt the prefix index, or
+        # double-register the same block hash. RLock allows reentrant
+        # acquisition from fetch_cache on the same thread.
+        self._cache_lock.acquire()
+        try:
+            return self._store_cache_locked(
+                request_id,
+                tokens,
+                cache_data,
+                model_cache_config,
+                boundary_snapshots,
+                extra_keys,
+                extra_key_token_start,
+                extra_key_ranges,
+            )
+        finally:
+            self._cache_lock.release()
+
+    def _store_cache_locked(
+        self,
+        request_id: str,
+        tokens: list[int],
+        cache_data: list[Any],
+        model_cache_config: ModelCacheConfig | None = None,
+        boundary_snapshots: dict[int, list[Any]] | None = None,
+        extra_keys: tuple[Any, ...] | None = None,
+        extra_key_token_start: int | None = None,
+        extra_key_ranges: list[tuple[int, tuple[Any, ...]]] | None = None,
+    ) -> BlockTable | None:
         # Check if cache_data contains extracted tensor states
         is_tensor_data = (
             cache_data
@@ -2820,16 +2869,6 @@ class BlockAwarePrefixCache(CacheManager):
         self,
         callback: Callable[[int, bytes], bool] | None,
     ) -> None:
-        """
-        Set callback for restoring cold blocks.
-
-        The callback is invoked when reconstruct_cache() encounters a cold block
-        that needs to be restored from paged SSD.
-
-        Args:
-            callback: Function with signature (block_id: int, block_hash: bytes) -> bool
-                        Returns True if restoration was successful.
-        """
         self._cold_restore_callback = callback
 
     def __len__(self) -> int:

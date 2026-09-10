@@ -429,6 +429,19 @@ def _edit_distance(a: str, b: str) -> int:
     return prev[m]
 
 
+class EngineDisabledError(EnginePoolError):
+    """Raised when a modality is disabled by the active server profile (R-7)."""
+
+    def __init__(self, modality: str, profile_name: str):
+        self.modality = modality
+        self.profile_name = profile_name
+        super().__init__(
+            f"Modality '{modality}' is not enabled in profile '{profile_name}'. "
+            f"Enable it via settings.json (profile='standard'/'full') or "
+            f"--profile flag."
+        )
+
+
 class ModelNotFoundError(EnginePoolError):
     """Raised when a requested model is not found."""
 
@@ -496,6 +509,23 @@ class InsufficientMemoryError(EnginePoolError):
         if message is None:
             message = f"Insufficient memory: required {required}, current {current}"
         super().__init__(message)
+
+    def to_error_detail(self) -> dict:
+        mb = 1024 * 1024
+        avail = (
+            (self.ceiling - self.current) // mb
+            if self.ceiling and self.ceiling > self.current
+            else 0
+        )
+        return {
+            "type": "model_unavailable",
+            "message": f"Model {self.model_id} not loaded and insufficient memory",
+            "required_memory_mb": self.required // mb if self.required else 0,
+            "used_memory_mb": self.current // mb if self.current else 0,
+            "ceiling_memory_mb": self.ceiling // mb if self.ceiling else 0,
+            "available_memory_mb": avail,
+            "loaded_models": self.loaded_models,
+        }
 
 
 class ModelLoadingError(EnginePoolError):

@@ -369,6 +369,45 @@ def section_system() -> Section:
                 detail=f"cache_gb={cache_size_gb:.1f} path={cache}",
             )
 
+    # G1 (#0909 audit): check iogpu.wired_limit_mb sysctl. When unset (0),
+    # MLX uses Apple's default Metal cap, which may be too low for large
+    # models. When set too high (> 100GB on 128GB), jetsam risk increases.
+    if platform.system() == "Darwin":
+        try:
+            result = subprocess.run(
+                ["/usr/sbin/sysctl", "-n", "iogpu.wired_limit_mb"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            wired_mb = int(result.stdout.strip()) if result.returncode == 0 else 0
+            if wired_mb == 0:
+                s.add(
+                    "iogpu.wired_limit_mb: unset (Apple default Metal cap active)",
+                    CheckStatus.WARN,
+                    detail="wired_limit_mb=0 — raise with: "
+                    "sudo sysctl iogpu.wired_limit_mb=<MB> for large models",
+                )
+            elif wired_mb > 102400 and ram_gb and ram_gb >= 128:
+                s.add(
+                    f"iogpu.wired_limit_mb: {wired_mb} MB "
+                    "(high — consider lowering to 102400 for 128GB RAM)",
+                    CheckStatus.WARN,
+                    detail=f"wired_limit_mb={wired_mb} ram_gb={ram_gb}",
+                )
+            else:
+                s.add(
+                    f"iogpu.wired_limit_mb: {wired_mb} MB",
+                    CheckStatus.OK,
+                    detail=f"wired_limit_mb={wired_mb}",
+                )
+        except Exception:
+            s.add(
+                "iogpu.wired_limit_mb: unknown (sysctl read failed)",
+                CheckStatus.WARN,
+                detail="sysctl iogpu.wired_limit_mb failed",
+            )
+
     return s
 
 
@@ -822,6 +861,66 @@ def section_optional_tools(
 
 
 # ---------------------------------------------------------------------------
+# Section: Integrity (G5)
+# ---------------------------------------------------------------------------
+
+
+def section_integrity() -> Section:
+    """G5 (#0910 audit): vendor checksum + public API integrity checks."""
+    s = Section("Integrity")
+
+    # Vendor checksums: verify patches/ files match the committed manifest.
+    try:
+        from ..dependency_lock import verify_manifest
+
+        errors = verify_manifest()
+        if not errors:
+            s.add(
+                "Vendor checksums: OK",
+                CheckStatus.OK,
+                detail="patches/ files match committed manifest",
+            )
+        else:
+            s.add(
+                f"Vendor checksums: {len(errors)} mismatch(es)",
+                CheckStatus.FAIL,
+                detail="; ".join(errors[:3]),
+            )
+    except Exception as e:
+        s.add(
+            f"Vendor checksums: probe failed ({type(e).__name__})",
+            CheckStatus.FAIL,
+            detail=str(e)[:200],
+        )
+
+    # Public API: verify all __all__ symbols are importable.
+    try:
+        from ..public_api import validate_public_api
+
+        missing = validate_public_api()
+        if not missing:
+            s.add(
+                "Public API: OK",
+                CheckStatus.OK,
+                detail="all __all__ symbols importable",
+            )
+        else:
+            s.add(
+                f"Public API: {len(missing)} broken export(s)",
+                CheckStatus.FAIL,
+                detail=f"missing: {', '.join(missing[:5])}",
+            )
+    except Exception as e:
+        s.add(
+            f"Public API: probe failed ({type(e).__name__})",
+            CheckStatus.FAIL,
+            detail=str(e)[:200],
+        )
+
+    return s
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -838,6 +937,7 @@ _SECTION_BUILDERS = (
     section_network,
     section_shell_integration,
     section_optional_tools,
+    section_integrity,
 )
 
 

@@ -305,6 +305,14 @@ async def verify_api_key(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
+    """Verify Bearer token only (OpenAI-compat convention).
+
+    A-P3-5: Use verify_api_key for OpenAI-compat routes that accept only
+    ``Authorization: Bearer <key>``. Use verify_api_key_or_x_api_key for
+    Anthropic-compat routes that also accept ``x-api-key`` header.
+    Both are intentionally per-protocol; do NOT mix them within a single
+    route group without documenting the reason.
+    """
     bearer_key = credentials.credentials if credentials is not None else None
     return _verify_api_key_values(bearer_key, request=request)
 
@@ -313,6 +321,7 @@ async def verify_api_key_or_x_api_key(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
+    """Verify Bearer token OR x-api-key header (Anthropic-compat convention)."""
     bearer_key = credentials.credentials if credentials is not None else None
     return _verify_api_key_values(
         bearer_key, request.headers.get("x-api-key"), request=request
@@ -481,9 +490,15 @@ async def require_model_hub_source(request: Request) -> bool:
     source = request.headers.get("x-fusion-source", "").strip().lower()
     if source == "model-hub":
         return True
-    if _is_loopback_client(request):
+    # ENG-18 (#0909 audit): loopback no longer bypasses the
+    # X-Fusion-Source check unconditionally — a compromised same-host
+    # process could unload/load models without the header. Require
+    # FUSION_ALLOW_ANONYMOUS=true (the documented dev/test override)
+    # for the loopback bypass, mirroring the auth system's policy.
+    if _is_loopback_client(request) and _anonymous_access_allowed(request):
         logger.warning(
-            "Model management from loopback without X-Fusion-Source (dev mode) host=%s",
+            "Model management from loopback without X-Fusion-Source "
+            "(dev mode, FUSION_ALLOW_ANONYMOUS=true) host=%s",
             _client_host(request),
         )
         return True

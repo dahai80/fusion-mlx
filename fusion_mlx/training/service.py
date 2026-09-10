@@ -396,6 +396,21 @@ class FineTuneService:
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
 
+    async def shutdown(self):
+        # ENG-02 (#0909 audit): cancel pending training tasks on server
+        # shutdown so in-flight jobs don't outlive the event loop.
+        cancelled = 0
+        for task in list(self._pending_tasks):
+            if not task.done():
+                task.cancel()
+                cancelled += 1
+        if self._pending_tasks:
+            await asyncio.gather(*self._pending_tasks, return_exceptions=True)
+        self._pending_tasks.clear()
+        self._running = False
+        if cancelled:
+            logger.info("FineTuneService shutdown: cancelled %d pending task(s)", cancelled)
+
     # =========================================================================
     # Job CRUD
     # =========================================================================

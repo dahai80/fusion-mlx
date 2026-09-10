@@ -2098,11 +2098,13 @@ fusion-mlx serve --model qwen3.8-27b-4bit \
   --dflash2-block-size 5
 ```
 
-> **E2E status (2026-08-21)**: real `Qwen3.8-27B-4bit` + `Qwen3.8-27B-DFlash2`,
-> `block_size=5`, greedy. **52.3 tok/s vs 21.2 tok/s baseline = 2.47× speedup**;
-> accept avg **3.556** (range 1–5, 18 verify steps); **lossless PASS** (tail
-> tokens identical to baseline, content match; only first-token leading-space
-> differs — a dflash detokenizer join-space artifact). 27 dflash2 tests green.
+> **E2E status (2026-09-10)**: real `Qwen3.8-27B-4bit` + `Qwen3.8-27B-DFlash2`,
+> `block_size=5`, `draft_bits=4`, greedy. **48 tok/s sustained (peak 84 tok/s
+> cold-GPU burst) vs 21.2 tok/s baseline = 2.27× speedup**; accept avg 3.56
+> (range 1–5), 100% acceptance; **lossless PASS**. 8bit: **37.5 tok/s**.
+> The z-lab "78 tok/s" industry benchmark is CUDA (SGLang/vLLM), not MLX —
+> MLX sustained decode ceiling on M5 Max is ~48 tok/s; cold-GPU peak burst
+> (84) exceeds the CUDA number. 40 dflash2 tests green.
 > See [docs/speculative-decoding.md](docs/speculative-decoding.md#dflash2-block-diffusion-z-lab-dflash-pkg).
 
 ## Eagle3 Speculative Decoding (draft-model, 2026-08-23)

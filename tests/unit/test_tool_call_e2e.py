@@ -8,16 +8,18 @@ the server correctly parses tool calls (including text-format fallback)
 and returns structured SSE responses.
 
 Usage:
-    # Requires a running vllm-mlx server on localhost:8000
+    # Requires a running fusion-mlx server on localhost:11434
     python3.12 -m pytest tests/test_tool_call_e2e.py -v -s
 
     # Or run directly as a script for interactive debugging:
     python3.12 tests/test_tool_call_e2e.py ["custom prompt"]
 
-Skip condition: Tests are skipped if no server is running on localhost:8000.
+Skip condition: Tests are skipped if no fusion-mlx server is running on
+localhost:11434 (or FUSION_MLX_TEST_PORT).
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -31,7 +33,8 @@ try:
 except ImportError:
     _HTTPX = False
 
-BASE_URL = "http://localhost:8000/v1/chat/completions"
+_TEST_PORT = os.environ.get("FUSION_MLX_TEST_PORT", "11434")
+BASE_URL = f"http://localhost:{_TEST_PORT}/v1/chat/completions"
 
 SYSTEM_PROMPT = """You are Claw, a helpful AI assistant running on the user's local machine.
 
@@ -246,29 +249,25 @@ MAX_ROUNDS = 8
 
 
 def _server_available() -> bool:
-    """Check if a vllm-mlx server on :8000 is reachable AND unauthenticated.
+    """Check if a fusion-mlx server is reachable AND unauthenticated.
 
-    The tests POST to ``/v1/chat/completions`` without any Authorization
-    header. A server with an API key configured will respond 401 there,
-    but its ``/health`` endpoint stays 200 (intentionally — health probes
-    must not require auth). Probing ``/health`` alone therefore reports
-    "available" against an auth-protected server, the tests then run,
-    each request bounces off auth, ``run_agent_loop`` returns
-    ``content=None``, and every test fails with ``AssertionError:
-    Expected text response``.
-
-    We additionally probe ``/v1/models`` — the surface the tests
-    actually use — and require it to answer 200 unauthenticated. Any
-    non-200 (401, 503, connection error) is treated as "no usable
-    server" and the suite skips cleanly.
+    Probes the fusion-mlx default port (11434, or FUSION_MLX_TEST_PORT).
+    A non-fusion-mlx server on a stale port (e.g. LinguaKids on :8000)
+    must NOT be mistaken for fusion-mlx — we verify the /health/ready
+    endpoint returns a fusion-mlx-specific JSON shape.
     """
     if not _HTTPX:
         return False
+    base = f"http://localhost:{_TEST_PORT}"
     try:
-        h = httpx.get("http://localhost:8000/health", timeout=2.0)
+        h = httpx.get(f"{base}/health/ready", timeout=2.0)
         if h.status_code != 200:
             return False
-        m = httpx.get("http://localhost:8000/v1/models", timeout=2.0)
+        # Verify it's actually fusion-mlx (not some other app on the port)
+        body = h.json()
+        if "status" not in body:
+            return False
+        m = httpx.get(f"{base}/v1/models", timeout=2.0)
         return m.status_code == 200
     except Exception:
         return False
@@ -426,7 +425,7 @@ def run_agent_loop(user_msg, max_rounds=MAX_ROUNDS):
 
 server_required = pytest.mark.skipif(
     not _server_available(),
-    reason="vllm-mlx server not running on localhost:8000",
+    reason="fusion-mlx server not running on localhost:11434",
 )
 
 

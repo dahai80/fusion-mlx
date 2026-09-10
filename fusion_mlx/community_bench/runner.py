@@ -102,7 +102,9 @@ async def run_standardized_bench(
             logger.warning("bench warmup failed: %s", e)
 
         for _ in range(_ROUNDS):
-            prompt_ids = tokenizer.encode(prompt) if hasattr(tokenizer, "encode") else []
+            prompt_ids = (
+                tokenizer.encode(prompt) if hasattr(tokenizer, "encode") else []
+            )
             prefill_tokens = len(prompt_ids)
 
             t0 = time.perf_counter()
@@ -129,7 +131,11 @@ async def run_standardized_bench(
 
             # TTFT (ms) — approximate as time to first output token
             # For a simple bench, approximate as wall_time * (prefill_ratio)
-            ttft_ms = wall_time * 1000 * min(prefill_tokens / max(prefill_tokens + output_tokens, 1), 0.5)
+            ttft_ms = (
+                wall_time
+                * 1000
+                * min(prefill_tokens / max(prefill_tokens + output_tokens, 1), 0.5)
+            )
             bucket.ttft_stat.values.append(ttft_ms)
 
     logger.info(

@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """NER engine wrapping GLiNER for named entity recognition."""
 
-import asyncio
-import gc
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -19,12 +17,9 @@ class NEROutput:
 
 
 class MLXNERModel:
-    _NER_ARCHITECTURES = frozenset(
-        {
-            "SpaModel",
-            "GLiNERModel",
-        }
-    )
+    # R-P1-6 (#0908 audit): single source of truth for NER architectures.
+    # Lazy import avoids circular: pool/__init__ -> engine_pool -> engines.ner.
+    _NER_ARCHITECTURES: frozenset | None = None
 
     def __init__(self, model_name: str, trust_remote_code: bool = False):
         self._model_name = model_name
@@ -39,6 +34,11 @@ class MLXNERModel:
     def _validate_architecture(self) -> None:
         import json
         from pathlib import Path
+
+        if self._NER_ARCHITECTURES is None:
+            from ..pool.model_discovery import NER_ARCHITECTURES
+
+            type(self)._NER_ARCHITECTURES = frozenset(NER_ARCHITECTURES)
 
         model_path = Path(self._model_name)
         config_path = model_path / "config.json"
@@ -136,27 +136,15 @@ class NEREngine(BaseNonStreamingEngine):
         self._model = MLXNERModel(
             self._model_name, trust_remote_code=self._trust_remote_code
         )
-        loop = asyncio.get_running_loop()
-        from ..engine_core import get_executor
-
-        await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), self._model.load),
-            timeout=120.0,
+        await self._run_via_executor(
+            self._model.load, executor_name="llm", timeout=120.0
         )
 
     async def stop(self) -> None:
         if self._model is None:
             return
         self._model = None
-        gc.collect()
-        loop = asyncio.get_running_loop()
-        from ..engine_core import get_executor
-        from ..scheduler.helpers import _safe_clear_cache_for_non_llm
-
-        await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), _safe_clear_cache_for_non_llm),
-            timeout=5.0,
-        )
+        await self._teardown_cache(executor_name="llm", timeout=5.0)
 
     async def ner(
         self,
@@ -174,8 +162,6 @@ class NEREngine(BaseNonStreamingEngine):
             "ner", detail="NER extraction", total_items=len(texts)
         )
         try:
-            loop = asyncio.get_running_loop()
-            from ..engine_core import get_executor
 
             def _ner_sync():
                 if len(texts) == 1:
@@ -195,9 +181,8 @@ class NEREngine(BaseNonStreamingEngine):
                     multi_label=multi_label,
                 )
 
-            entities = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("llm"), _ner_sync),
-                timeout=60.0,
+            entities = await self._run_via_executor(
+                _ner_sync, executor_name="llm", timeout=60.0
             )
             total_tokens = sum(len(text.split()) + len(labels) for text in texts)
             return NEROutput(entities=entities, total_tokens=total_tokens)

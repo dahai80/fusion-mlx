@@ -140,16 +140,28 @@ def _set_model_info_for_monitor(self) -> None:
             or num_kv_heads
         )
 
-        # Count KVCache layers for hybrid models
+        # Count KVCache layers for hybrid models (unwrap CacheList for
+        # MLA-style compressed caches that bundle K/V in a container).
+        kv_cache_count = 0
         num_kv_cache_layers = num_layers
+        cache_list = None
         if hasattr(self.model, "make_cache"):
             try:
                 cache_list = self.model.make_cache()
-                from mlx_lm.models.cache import KVCache
+                from mlx_lm.models.cache import CacheList, KVCache
 
-                num_kv_cache_layers = sum(1 for c in cache_list if type(c) is KVCache)
-                if num_kv_cache_layers == 0:
+                def _count_kv(c):
+                    if type(c) is KVCache:
+                        return 1
+                    if isinstance(c, CacheList):
+                        return sum(_count_kv(inner) for inner in c.caches)
+                    return 0
+
+                kv_cache_count = sum(_count_kv(c) for c in cache_list)
+                if kv_cache_count == 0:
                     num_kv_cache_layers = num_layers  # fallback
+                else:
+                    num_kv_cache_layers = kv_cache_count
             except Exception:
                 logger.debug(
                     "swallowed exception at fusion_mlx/scheduler/sched_misc.py:181"
@@ -157,14 +169,60 @@ def _set_model_info_for_monitor(self) -> None:
 
                 pass
 
+        # MLA compressed-cache override: resident KV bytes per token differ
+        # from the standard 2 * kv_heads * head_dim * dtype formula.
+        kv_bytes_per_token = None
+        try:
+            from ..memory_monitor import estimate_mla_kv_bytes_per_token
+
+            kv_bytes_per_token = estimate_mla_kv_bytes_per_token(
+                config, cache_list, dtype_size
+            )
+        except Exception:
+            pass
+
+        # TurboQuant KV cache dtype adjustment — quantized layers occupy
+        # bits/8 bytes per element plus a float16 scale per 64-element group
+        # (2/128 bytes/element). skip_last keeps one KVCache layer at full
+        # dtype so the final decode step has unquantized state.
+        turboquant_bits = getattr(self, "_turboquant_kv_bits", None)
+        if (
+            turboquant_bits is not None
+            and kv_cache_count > 0
+            and getattr(config, "kv_lora_rank", None) is None
+        ):
+            has_sinks = False
+            if hasattr(self.model, "modules"):
+                try:
+                    for mod in self.model.modules():
+                        if isinstance(mod, dict) and "sinks" in mod:
+                            has_sinks = True
+                            break
+                        if hasattr(mod, "sinks"):
+                            has_sinks = True
+                            break
+                except Exception:
+                    pass
+            if not has_sinks:
+                quantized = float(turboquant_bits) / 8.0 + 2.0 / 128.0
+                skip_last = getattr(self, "_turboquant_skip_last", True)
+                if skip_last and kv_cache_count > 1:
+                    dtype_size = (
+                        (kv_cache_count - 1) * quantized + 2.0
+                    ) / kv_cache_count
+                else:
+                    dtype_size = quantized
+
         if num_layers and num_kv_heads and head_dim:
             self.memory_monitor.set_model_info(
                 num_layers=num_layers,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
-                dtype_bytes=dtype_size,
-                num_query_heads=num_attention_heads,
+                dtype_size=dtype_size,
+                num_attention_heads=num_attention_heads,
                 num_kv_cache_layers=num_kv_cache_layers,
+                compute_dtype_size=dtype_size,
+                kv_bytes_per_token=kv_bytes_per_token,
             )
             logger.debug(
                 f"Model info for memory estimation: "

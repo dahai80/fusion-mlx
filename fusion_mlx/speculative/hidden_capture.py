@@ -12,6 +12,7 @@ no-op.
 """
 
 import logging
+import threading
 import time
 from typing import Any
 
@@ -19,6 +20,17 @@ import mlx.core as mx
 import mlx.nn as nn
 
 logger = logging.getLogger(__name__)
+
+# P3-09/ENG-10 (#0909 audit): install/uninstall mutate the model's
+# layer list. Without a lock, a concurrent forward pass on another
+# thread can iterate a partially-mutated layer list — reading a layer
+# mid-detach or a hook mid-install → non-deterministic crash or
+# corrupted hidden state. The lock serializes install/uninstall against
+# the forward pass. Note: the forward pass itself does NOT take this
+# lock (that would serialize all inference); instead, install/uninstall
+# is called only between batches when no forward pass is active, and
+# the lock prevents double-install races.
+_capture_lock = threading.Lock()
 
 
 class _CapturedLayer(nn.Module):
@@ -107,64 +119,66 @@ class HiddenStateCapture:
         return inner
 
     def install(self) -> None:
-        if self._installed:
-            logger.debug("hidden_capture: already installed, skipping")
-            return
+        with _capture_lock:
+            if self._installed:
+                logger.debug("hidden_capture: already installed, skipping")
+                return
 
-        if not self._layer_ids:
-            logger.debug("hidden_capture: no layer_ids, nothing to install")
-            return
+            if not self._layer_ids:
+                logger.debug("hidden_capture: no layer_ids, nothing to install")
+                return
 
-        t0 = time.perf_counter()
-        layers = self._get_layers()
-        inner = self._get_inner_model()
+            t0 = time.perf_counter()
+            layers = self._get_layers()
+            inner = self._get_inner_model()
 
-        installed_count = 0
-        for idx in self._layer_ids:
-            if idx < len(layers):
-                self._original_layers[idx] = layers[idx]
-                wrapped = _CapturedLayer(
-                    layers[idx],
-                    idx,
-                    self._captured,
-                    self._prefill_captured,
-                )
-                inner.layers[idx] = wrapped
-                installed_count += 1
-            else:
-                logger.warning(
-                    "hidden_capture: layer_idx=%d exceeds model layers=%d, skipping",
-                    idx,
-                    len(layers),
-                )
+            installed_count = 0
+            for idx in self._layer_ids:
+                if idx < len(layers):
+                    self._original_layers[idx] = layers[idx]
+                    wrapped = _CapturedLayer(
+                        layers[idx],
+                        idx,
+                        self._captured,
+                        self._prefill_captured,
+                    )
+                    inner.layers[idx] = wrapped
+                    installed_count += 1
+                else:
+                    logger.warning(
+                        "hidden_capture: layer_idx=%d exceeds model layers=%d, skipping",
+                        idx,
+                        len(layers),
+                    )
 
-        dt = (time.perf_counter() - t0) * 1000
-        self._install_overhead_ms = dt
-        self._installed = True
-        logger.info(
-            "hidden_capture: installed %d/%d wrappers in %.1fms (layers=%s, ps_id=%s, captured_id=%s)",
-            installed_count,
-            len(self._layer_ids),
-            dt,
-            self._layer_ids,
-            id(self._prefill_captured),
-            id(self._captured),
-        )
+            dt = (time.perf_counter() - t0) * 1000
+            self._install_overhead_ms = dt
+            self._installed = True
+            logger.info(
+                "hidden_capture: installed %d/%d wrappers in %.1fms (layers=%s, ps_id=%s, captured_id=%s)",
+                installed_count,
+                len(self._layer_ids),
+                dt,
+                self._layer_ids,
+                id(self._prefill_captured),
+                id(self._captured),
+            )
 
     def uninstall(self) -> None:
-        if not self._installed:
-            return
+        with _capture_lock:
+            if not self._installed:
+                return
 
-        inner = self._get_inner_model()
-        for idx, original in self._original_layers.items():
-            inner.layers[idx] = original
+            inner = self._get_inner_model()
+            for idx, original in self._original_layers.items():
+                inner.layers[idx] = original
 
-        self._original_layers.clear()
-        self._captured.clear()
-        self._prefill_captured.clear()
-        self._installed = False
-        self._capture_count = 0
-        logger.info("hidden_capture: uninstalled, restored original layers")
+            self._original_layers.clear()
+            self._captured.clear()
+            self._prefill_captured.clear()
+            self._installed = False
+            self._capture_count = 0
+            logger.info("hidden_capture: uninstalled, restored original layers")
 
     def get_captured(self) -> dict[int, mx.array]:
         return dict(self._captured)

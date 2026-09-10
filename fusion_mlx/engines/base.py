@@ -3,6 +3,7 @@
 
 import asyncio
 import copy
+import gc
 import logging
 import threading
 import time
@@ -293,8 +294,45 @@ class BaseEngine(ABC):
             self._active_streams_count -= 1
 
     def has_active_requests(self) -> bool:
-        with self._stream_lock:
-            return self._active_streams_count > 0
+        ec = getattr(self, "_engine", None)
+        if ec is not None:
+            inner = getattr(ec, "engine", None)
+            if inner is not None:
+                active = getattr(inner, "_active_contexts", None)
+                if active is not None:
+                    return len(active) > 0
+                collectors = getattr(inner, "_output_collectors", None)
+                if collectors is not None:
+                    return len(collectors) > 0
+        lock = getattr(self, "_stream_lock", None)
+        if lock is not None:
+            with lock:
+                return self._active_streams_count > 0
+        return False
+
+    def get_enginecore_stats(self, engine_type: str) -> dict[str, Any]:
+        stats: dict[str, Any] = {
+            "engine_type": engine_type,
+            "model_name": getattr(self, "_model_name", ""),
+            "loaded": getattr(self, "_loaded", False),
+            "stream_interval": getattr(self, "_stream_interval", 0),
+        }
+        ec = getattr(self, "_engine", None)
+        if ec:
+            stats.update(ec.get_stats())
+        return stats
+
+    def get_enginecore_cache_stats(self) -> dict[str, Any] | None:
+        ec = getattr(self, "_engine", None)
+        if ec:
+            return ec.get_cache_stats()
+        return None
+
+    async def abort_all_requests(self) -> int:
+        ec = getattr(self, "_engine", None)
+        if ec and getattr(ec, "engine", None):
+            return await ec.engine.abort_all_requests()
+        return 0
 
     @property
     def status(self) -> EngineStatus:
@@ -328,13 +366,11 @@ class BaseEngine(ABC):
                     break
             await asyncio.sleep(0.05)
 
-    @abstractmethod
     def get_stats(self) -> dict[str, Any]:
-        pass
+        return {}
 
-    @abstractmethod
     def get_cache_stats(self) -> dict[str, Any] | None:
-        pass
+        return None
 
 
 class BaseNonStreamingEngine(ABC):
@@ -344,6 +380,25 @@ class BaseNonStreamingEngine(ABC):
         self._active_count = 0
         self._active_lock = threading.Lock()
         self._activities: dict[str, dict[str, Any]] = {}
+
+    async def _run_via_executor(
+        self, fn, executor_name: str = "llm", timeout: float = 120.0
+    ):
+        loop = asyncio.get_running_loop()
+        from ..engine_core import get_executor
+
+        return await asyncio.wait_for(
+            loop.run_in_executor(get_executor(executor_name), fn),
+            timeout=timeout,
+        )
+
+    async def _teardown_cache(self, executor_name: str = "llm", timeout: float = 5.0):
+        gc.collect()
+        from ..scheduler.helpers import _safe_clear_cache_for_non_llm
+
+        await self._run_via_executor(
+            _safe_clear_cache_for_non_llm, executor_name=executor_name, timeout=timeout
+        )
 
     def has_active_requests(self) -> bool:
         with self._active_lock:

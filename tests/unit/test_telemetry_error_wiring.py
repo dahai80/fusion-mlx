@@ -57,12 +57,13 @@ def _patch_watchdog(monkeypatch):
     import fusion_mlx._parent_watchdog as wd
 
     monkeypatch.setattr(wd, "install_signal_handlers", lambda: None)
-    monkeypatch.setattr(wd, "write_pid_file", lambda: None)
+    monkeypatch.setattr(wd, "write_pid_file", lambda port=None: None)
     monkeypatch.setattr(wd, "write_status", lambda status: None)
     monkeypatch.setattr(wd, "record_crash", lambda: 1)
     monkeypatch.setattr(wd, "clear_crash_counter", lambda: None)
     monkeypatch.setattr(wd, "remove_pid_file", lambda: None)
     monkeypatch.setattr(wd, "write_exit_status", lambda status: None)
+    monkeypatch.setattr(wd, "stop_watchdog", lambda: None)
 
 
 def _patch_metrics(monkeypatch):
@@ -76,6 +77,7 @@ def _make_lifespan_server(monkeypatch, *, startup_raises):
     import fusion_mlx.server as server_mod
 
     srv = server_mod.Server.__new__(server_mod.Server)
+    srv.config = MagicMock(port=11434)
 
     async def _boom():
         raise RuntimeError("boom")

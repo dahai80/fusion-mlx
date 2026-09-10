@@ -9,7 +9,7 @@ from typing import Optional
 
 import mlx.core as mx
 
-from ..mfa_bridge import flash_attention
+from .. import flash_attention
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +32,13 @@ def ring_attention(
     if num_ranks <= 1:
         return flash_attention(q, k, v, scale=scale, causal=causal)
 
-    logger.warning(
-        "Ring attention with %d ranks: using local chunk only. "
-        "Full ring communication not yet implemented.",
-        num_ranks,
+    raise NotImplementedError(
+        f"Ring attention with num_ranks={num_ranks} requires inter-process "
+        f"communication (send/recv KV chunks across ranks) which is not "
+        f"implemented in this build. Single-rank (num_ranks=1) works. "
+        f"Returning local-only output would silently produce incorrect "
+        f"attention results — refusing instead."
     )
-
-    local_out = flash_attention(q, k, v, scale=scale, causal=causal)
-
-    return local_out
 
 
 def ulysses_attention(
@@ -58,13 +56,12 @@ def ulysses_attention(
     if num_ranks <= 1:
         return flash_attention(q, k, v, scale=scale, causal=causal)
 
-    logger.warning(
-        "Ulysses attention with %d ranks: local only. "
-        "All-to-all gather not yet implemented.",
-        num_ranks,
+    raise NotImplementedError(
+        f"Ulysses attention with num_ranks={num_ranks} requires all-to-all "
+        f"gather/scatter across ranks which is not implemented in this build. "
+        f"Single-rank (num_ranks=1) works. Returning local-only output would "
+        f"silently produce incorrect attention results — refusing instead."
     )
-
-    return flash_attention(q, k, v, scale=scale, causal=causal)
 
 
 def split_attention(

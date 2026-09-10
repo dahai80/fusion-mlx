@@ -139,6 +139,18 @@ Examples:
         help="The model name used in the API. If not specified, the model argument is used.",
     )
     serve_parser.add_argument(
+        "--profile",
+        type=str,
+        default=None,
+        choices=["lite", "standard", "full"],
+        help=(
+            "Server profile: lite (LLM text only), standard (LLM + audio + "
+            "embeddings + ner + rerank + ocr + spec + mcp), full (everything "
+            "including image/video/agent). Default: standard (or settings.json "
+            "profile field). Controls which routes/engines are mounted."
+        ),
+    )
+    serve_parser.add_argument(
         "--force-disk-check",
         action="store_true",
         help=(
@@ -665,8 +677,8 @@ Examples:
         type=int,
         default=5,
         help="DFlash2 block size — candidates per draft forward (default 5). "
-        "Capped at 5 for MLX quantized targets (larger verify widths are "
-        "matmul-inefficient on quantized weights).",
+        "Capped at 8 (dflash_config.block_size); larger verify widths are "
+        "matmul-inefficient on MLX quantized weights.",
     )
     serve_parser.add_argument(
         "--dflash2-draft-bits",

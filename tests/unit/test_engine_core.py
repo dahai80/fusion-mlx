@@ -425,6 +425,46 @@ class TestEngineCoreAbortRequest:
                 engine.close()
 
     @pytest.mark.asyncio
+    async def test_stream_outputs_emits_heartbeat_during_long_prefill(
+        self, mock_model, mock_tokenizer
+    ):
+        # During a long prefill the collector produces no output for minutes.
+        # stream_outputs must yield periodic empty-text heartbeats so the
+        # route layer's SSE keepalive fires — otherwise Claude Code times
+        # out before the first token (#0908).
+        with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
+            mock_registry.return_value.acquire.return_value = True
+            with patch("fusion_mlx.engine_core._STREAM_HEARTBEAT_INTERVAL_S", 0.05):
+                engine = EngineCore(model=mock_model, tokenizer=mock_tokenizer)
+                try:
+                    await engine.start()
+                    engine.scheduler.has_requests = lambda: False
+                    request_id = await engine.add_request(prompt="Hello")
+                    ctx = engine._active_contexts[request_id]
+                    outputs = []
+
+                    async def consume():
+                        async for output in engine.stream_outputs(request_id):
+                            outputs.append(output)
+                            if len(outputs) >= 2:
+                                break
+
+                    task = asyncio.create_task(consume())
+                    await asyncio.sleep(0.2)
+                    ctx.collector.clear()
+                    await asyncio.wait_for(task, timeout=2.0)
+                    heartbeats = [
+                        o for o in outputs if o.new_text == "" and not o.finished
+                    ]
+                    assert len(heartbeats) >= 2, (
+                        f"expected >=2 heartbeats during long prefill, "
+                        f"got {len(heartbeats)} (outputs={len(outputs)})"
+                    )
+                finally:
+                    await engine.stop()
+                    engine.close()
+
+    @pytest.mark.asyncio
     async def test_abort_request_wakes_blocked_stream_outputs(
         self, mock_model, mock_tokenizer
     ):
@@ -1213,7 +1253,8 @@ class TestStepBurst:
             )
             engine.scheduler.has_requests = MagicMock(return_value=True)
             with patch(
-                "fusion_mlx.engine_core.time.monotonic", side_effect=[100.0, 200.0]
+                "fusion_mlx.engine_core.time.monotonic",
+                side_effect=[100.0, 100.0, 200.0],
             ):
                 outs = engine._step_burst()
             assert len(outs) == 1

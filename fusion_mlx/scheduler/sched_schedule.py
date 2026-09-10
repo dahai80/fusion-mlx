@@ -28,6 +28,7 @@ from .helpers import (
 )
 from .monkeypatches import _register_uid_rows
 from .sched_cache import _turboquant_eligible
+from .config import SchedulingPolicy
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
@@ -48,6 +49,12 @@ _ADMISSION_STALL_TIMEOUT_S = 60.0
 # store-cache stall, can then proceed. The stalled request keeps its turn
 # in rotation; only a stall exceeding the full timeout is hard-rejected.
 _ADMISSION_STALL_REORDER_GRACE_S = 10.0
+
+# RT-10 (#0909 audit): anti-starvation aging threshold for PRIORITY policy.
+# A low-priority request waiting longer than this is temporarily promoted to
+# the head so it cannot be starved forever by continuous high-priority arrivals.
+# Promoted request reverts to its original priority once admitted.
+_PRIORITY_AGING_PROMOTE_S = 30.0
 
 # R-21 (#811): prompts above this many tokens use chunked prefill even when
 # chunked_prefill=False, so an inline full-prefill can't block every running
@@ -256,7 +263,20 @@ def _schedule_waiting(
                 mem_blocked_id is not None
                 and now - mem_blocked_since >= _ADMISSION_STALL_TIMEOUT_S
             ):
-                stalled_req = self.waiting.popleft()
+                # Find the actual stalled request by ID — it may have been
+                # rotated to the back of the queue, so popleft() would
+                # reject an innocent request instead (P1-13).
+                stalled_req = None
+                for i, req in enumerate(self.waiting):
+                    if req.request_id == mem_blocked_id:
+                        stalled_req = self.waiting[i]
+                        del self.waiting[i]
+                        break
+                if stalled_req is None:
+                    # Stalled request was already removed (aborted/expired).
+                    self._memory_admission_blocked_request_id = None
+                    self._memory_admission_blocked_since = 0.0
+                    continue
                 self.requests.pop(stalled_req.request_id, None)
                 self._memory_admission_blocked_request_id = None
                 self._memory_admission_blocked_since = 0.0
@@ -333,6 +353,40 @@ def _schedule_waiting(
                 self._memory_admission_blocked_request_id = None
                 self._memory_admission_blocked_since = 0.0
 
+        # RT-10 (#0909 audit): anti-starvation aging for PRIORITY policy.
+        # If the head request has been waiting longer than the aging threshold,
+        # scan for the oldest waiting request and promote it to the head so
+        # low-priority work cannot starve forever under continuous
+        # high-priority load. The promoted request keeps its original
+        # priority field — only queue position is temporarily adjusted.
+        if (
+            self.config.policy == SchedulingPolicy.PRIORITY
+            and len(self.waiting) > 1
+        ):
+            now_mono = time.monotonic()
+            head = self.waiting[0]
+            head_wait = now_mono - getattr(head, "_admit_time", now_mono)
+            if head_wait < _PRIORITY_AGING_PROMOTE_S:
+                # Head hasn't aged enough — check if any lower-priority
+                # request behind it has aged past the threshold.
+                oldest_idx = 0
+                oldest_wait = head_wait
+                for i in range(1, len(self.waiting)):
+                    req = self.waiting[i]
+                    req_wait = now_mono - getattr(req, "_admit_time", now_mono)
+                    if req_wait > oldest_wait:
+                        oldest_wait = req_wait
+                        oldest_idx = i
+                if oldest_idx > 0 and oldest_wait >= _PRIORITY_AGING_PROMOTE_S:
+                    aged = self.waiting[oldest_idx]
+                    del self.waiting[oldest_idx]
+                    self.waiting.appendleft(aged)
+                    logger.debug(
+                        "PRIORITY aging: promoted %s to head after %.1fs wait",
+                        aged.request_id,
+                        oldest_wait,
+                    )
+
         request = self.waiting.popleft()
 
         # Cache freshness deferral: add_request registered a wait when a
@@ -360,6 +414,27 @@ def _schedule_waiting(
             # Put back and try again later
             self.waiting.appendleft(request)
             break
+
+        # P2-17 (#0909 audit): guard against empty prompt (seq_len=0).
+        # An empty tokens_to_process flows into BatchGenerator with
+        # undefined behavior (MLX array shape mismatch / crash).
+        # Reject the request with an error instead.
+        if not request.prompt_token_ids:
+            logger.warning(
+                "Rejecting %s: empty prompt_token_ids (seq_len=0)",
+                request.request_id,
+            )
+            self.requests.pop(request.request_id, None)
+            rejected_outputs.append(
+                RequestOutput(
+                    request_id=request.request_id,
+                    finished=True,
+                    finish_reason="error",
+                    error="empty_prompt",
+                    error_code="empty_prompt",
+                )
+            )
+            continue
 
         # Determine tokens to process and cache to use
         # Note: Don't use `remaining_tokens or prompt_token_ids` because empty list

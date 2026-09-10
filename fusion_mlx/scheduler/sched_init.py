@@ -375,11 +375,7 @@ def __init__(
         # Initialize paged SSD cache
         self._init_tiered_cache()
 
-        # Set cold restore callback for prefix cache
         if self.paged_ssd_cache_manager is not None:
-            self.block_aware_cache.set_cold_restore_callback(
-                self._restore_block_from_cold
-            )
             logger.info(
                 f"paged SSD cache enabled: {self.config.paged_ssd_cache_dir}, "
                 f"block_size={self.config.paged_cache_block_size}, "
@@ -566,10 +562,18 @@ def _should_periodic_clear_cache(self) -> bool:
 
     Returns False unless ``mlx_cache_cleanup_interval`` is configured,
     the step counter just landed on the interval boundary, AND the
-    MLX buffer pool exceeds the threshold. See #978 / #1040 for the
-    kernel panic class this gating is meant to mitigate.
+    MLX buffer pool exceeds the threshold. An emergency override
+    triggers when cache memory exceeds 2x the threshold regardless
+    of the interval boundary — prevents OOM on large models (27B+)
+    where the buffer pool grows faster than the interval can catch.
+    See #978 / #1040 for the kernel panic class this gating is meant
+    to mitigate.
     """
+    cache_mem = mx.get_cache_memory()
+    threshold = self._periodic_clear_threshold_bytes()
+    if cache_mem > threshold * 2:
+        return True
     interval = self.config.mlx_cache_cleanup_interval
     if interval <= 0 or self._step_counter % interval != 0:
         return False
-    return mx.get_cache_memory() > self._periodic_clear_threshold_bytes()
+    return cache_mem > threshold

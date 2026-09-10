@@ -91,19 +91,20 @@ def _check_pending_aborts_for_uids(self, uids: list[int]) -> list[int]:
 
 
 def abort_request(self, request_id: str) -> bool:
-    """
-    Enqueue a request for deferred abort.
+    """Enqueue a request for deferred abort.
 
     The actual abort is processed at the start of the next step() call,
     ensuring thread safety with the hybrid executor pattern. CPython GIL
     guarantees set.add() is atomic.
 
-    Args:
-        request_id: The request ID to abort
-
-    Returns:
-        True (abort is always enqueued)
+    Returns False if the request ID is unknown (never admitted or already
+    finished) so the /v1/requests/{id}/cancel route can 404. Returns True
+    for known requests, including ones already in _pending_abort_ids
+    (idempotent double-cancel does not 404 the second caller).
     """
+    if request_id not in self.requests and request_id not in self.finished_req_ids:
+        logger.debug(f"abort_request: unknown request {request_id}")
+        return False
     self._pending_abort_ids.add(request_id)
     logger.debug(f"Enqueued deferred abort for request {request_id}")
     return True
@@ -225,6 +226,22 @@ def _do_abort_request(self, request_id: str) -> bool:
     self._boundary_cache_snapshots.pop(request_id, None)
     if self._boundary_snapshot_store is not None:
         self._boundary_snapshot_store.cleanup_request(request_id)
+
+    # F3 (#0910 audit): close DSpark spec-decode session to prevent
+    # generator leak. The session holds a DSpark generator iterator with
+    # target+draft model state; without cleanup it leaks on abort.
+    dspark_state = getattr(self, "_dspark_spec_state", None)
+    if dspark_state is not None:
+        dspark_state.cleanup_request(request_id)
+    dflash_state = getattr(self, "_dflash_spec_state", None)
+    if dflash_state is not None and hasattr(dflash_state, "cleanup_request"):
+        dflash_state.cleanup_request(request_id)
+    dflash2_state = getattr(self, "_dflash2_spec_state", None)
+    if dflash2_state is not None and hasattr(dflash2_state, "cleanup_request"):
+        dflash2_state.cleanup_request(request_id)
+    ngram_state = getattr(self, "_ngram_spec_state", None)
+    if ngram_state is not None and hasattr(ngram_state, "cleanup_request"):
+        ngram_state.cleanup_request(request_id)
 
     # Remove from prefill progress tracker.
     get_prefill_tracker().remove(request_id)

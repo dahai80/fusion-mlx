@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass
 
 from fusion_mlx.model_aliases import AliasProfile
+from fusion_mlx.quant_detect import looks_like_4bit as _looks_like_4bit
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +36,6 @@ class EligibilityReport:
     is_moe: bool
     is_4bit: bool
     reasons: tuple[str, ...]
-
-
-def _looks_like_4bit(hf_path: str) -> bool:
-    lowered = hf_path.lower()
-    if "-4bit" in lowered:
-        return True
-    if "mxfp4" in lowered or "nvfp4" in lowered:
-        return True
-    return False
 
 
 def report(profile: AliasProfile, alias: str | None = None) -> EligibilityReport:
@@ -103,7 +95,7 @@ def check(profile: AliasProfile, alias: str | None = None) -> None:
 def have_runtime() -> bool:
     # The official dflash pkg is an external pip dependency (not vendored,
     # unlike DSpark). Probe importability cheaply without importing the
-    # heavy mlx stack. DFlash2Generator existence is checked at load time.
+    # heavy mlx stack. DFlash2InTargetDrafter existence is checked at load time.
     try:
         import importlib
 

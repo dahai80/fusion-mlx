@@ -6,7 +6,15 @@ from .stats import BaseCacheStats
 
 
 class CacheManager(ABC):
-    """Abstract interface for all cache implementations."""
+    """Abstract interface for cache implementations that adopt it.
+
+    R-P2-1: Adoption is OPTIONAL. PagedCacheManager, BlockAwarePrefixCache,
+    and TieredCacheManager implement this ABC. RadixPrefixCache,
+    DiffusionRadixCache, ResponseCache, MLLMPromptCacheManager, and
+    PagedSSDCacheManager do NOT — they predate the ABC or have incompatible
+    semantics. Do not assume all caches subclass CacheManager; check with
+    isinstance before calling ABC methods on an arbitrary cache.
+    """
 
     @abstractmethod
     def fetch(self, key: Any) -> tuple[Any | None, bool]:

@@ -23,8 +23,38 @@ DRAFT_MODEL_PATH = __import__("os").environ.get(
         "~/.fusion-mlx/models/mlx-community/Qwen3-0.6B-4bit"
     ),
 )
-DRAFT_NUM_TOKENS = int(__import__("os").environ.get("FUSION_SPEC_DRAFT_TOKENS", "3"))
-DRAFT_TEMPERATURE = float(__import__("os").environ.get("FUSION_SPEC_DRAFT_TEMP", "0.0"))
+
+
+def _safe_int_env(name: str, default: int) -> int:
+    # P3-06/ENG-06 (#0909 audit): module-level int(os.environ.get(...))
+    # crashes on non-numeric strings at import time, making the entire
+    # module un-importable and crashing server boot. Parse safely.
+    raw = __import__("os").environ.get(name, str(default))
+    try:
+        val = int(raw)
+        if val > 0:
+            return val
+    except (ValueError, TypeError):
+        pass
+    logger.warning(
+        "Invalid %s=%r, using default %d (P3-06 safe parse)", name, raw, default
+    )
+    return default
+
+
+def _safe_float_env(name: str, default: float) -> float:
+    raw = __import__("os").environ.get(name, str(default))
+    try:
+        return float(raw)
+    except (ValueError, TypeError):
+        logger.warning(
+            "Invalid %s=%r, using default %s (P3-06 safe parse)", name, raw, default
+        )
+        return default
+
+
+DRAFT_NUM_TOKENS = _safe_int_env("FUSION_SPEC_DRAFT_TOKENS", 3)
+DRAFT_TEMPERATURE = _safe_float_env("FUSION_SPEC_DRAFT_TEMP", 0.0)
 
 
 @dataclass
@@ -51,6 +81,7 @@ class DraftModelDecoder:
         self._draft_tokens = []
         self._total_drafts = 0
         self._total_accepted = 0
+        self._sampler = None  # P3-07: cached sampler
         self._loaded = False
 
     def load(self) -> bool:
@@ -132,10 +163,15 @@ class DraftModelDecoder:
                     logits = logits.squeeze(0).squeeze(0)
 
                     if DRAFT_TEMPERATURE > 0:
-                        from mlx_lm.sample_utils import make_sampler
+                        # P3-07 (#0909 audit): cache the sampler instead
+                        # of re-importing + re-creating every iteration.
+                        # The sampler is stateless across calls with the
+                        # same temperature.
+                        if self._sampler is None:
+                            from mlx_lm.sample_utils import make_sampler
 
-                        sampler = make_sampler(temp=DRAFT_TEMPERATURE)
-                        next_token = sampler(logits)
+                            self._sampler = make_sampler(temp=DRAFT_TEMPERATURE)
+                        next_token = self._sampler(logits)
                     else:
                         next_token = mx.argmax(logits)
 

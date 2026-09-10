@@ -83,7 +83,7 @@ class TestSchedulerConfig:
         assert config.paged_ssd_cache_max_size == 100 * 1024 * 1024 * 1024  # 100GB
         assert config.model_name == ""
         assert config.gc_cleanup_interval == 0
-        assert config.mlx_cache_cleanup_interval == 8192
+        assert config.mlx_cache_cleanup_interval == 256
 
     def test_custom_values(self):
         """Test SchedulerConfig with custom values."""
@@ -1022,14 +1022,12 @@ class TestSchedulerAbortRequest:
         assert "test-001" in scheduler.finished_req_ids
 
     def test_abort_nonexistent_request(self, mock_model, mock_tokenizer):
-        """Test aborting a non-existent request is silently ignored."""
+        """Test aborting a non-existent request returns False (F-151 hardening)."""
         scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
 
         result = scheduler.abort_request("nonexistent")
-        # Enqueue always succeeds
-        assert result is True
-        # Processing a non-existent abort is a no-op
-        scheduler._process_pending_aborts()
+        # F-151: unknown requests return False so the cancel route can 404
+        assert result is False
 
     def test_abort_sets_finish_reason(self, mock_model, mock_tokenizer):
         """Test aborting sets correct finish reason."""
@@ -2272,9 +2270,11 @@ class TestSchedulerBoundarySnapshots:
         scheduler._on_prefill_boundary_snapshot(request.request_id, snapshot_cache, 4)
 
         assert 4 in scheduler._boundary_cache_snapshots[request.request_id]
-        assert (
-            scheduler._boundary_cache_snapshots[request.request_id][4] == snapshot_cache
-        )
+        # P2-18: snapshot is deep-copied to prevent mutation by later prefill.
+        # Check length and type match rather than identity.
+        stored = scheduler._boundary_cache_snapshots[request.request_id][4]
+        assert len(stored) == len(snapshot_cache)
+        assert type(stored[0]) is type(snapshot_cache[0])
         assert scheduler._boundary_snapshot_required is True
 
     def test_prefill_boundary_snapshot_ignores_non_boundary_token_count(

@@ -18,6 +18,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..admin.auth import require_admin
+from ..agents.governance import GovernorLimitExceeded, get_governor
 
 logger = logging.getLogger(__name__)
 
@@ -334,6 +335,10 @@ async def run_graph(
     returned a plan while the route name claimed execution). The graph's
     first LLM node provides model/temperature/max_tokens; the request body
     may override them. Models must already be loaded via ``fusion-mlx serve``.
+
+    G4 (#0910 audit): graph execution is now bounded by the agent governor
+    — step-count cap, wall-clock timeout, token budget, and kill switch.
+    Each run gets a run_id that can be cancelled via /v1/agents/runs/{id}/cancel.
     """
     graph_id = body.get("graph_id", "")
     graph = _graphs.get(graph_id)
@@ -342,6 +347,9 @@ async def run_graph(
     plan = _build_run_plan(body, graph)
     if plan is None:
         raise HTTPException(400, detail="Graph has no LLM node or model configured")
+
+    gov = get_governor()
+    run = gov.start_run(graph_id)
 
     api_key = os.environ.get("FUSION_MLX_API_KEY", "")
     base_url = os.environ.get("FUSION_HOST", "http://127.0.0.1:11434").rstrip("/")
@@ -354,32 +362,75 @@ async def run_graph(
         "temperature": plan["temperature"],
         "max_tokens": plan["max_tokens"],
     }
+
     try:
+        gov.check_step(run)
         async with httpx.AsyncClient(base_url=base_url, timeout=120.0) as client:
             resp = await client.post(
                 "/v1/chat/completions", json=payload, headers=headers
             )
+    except GovernorLimitExceeded as e:
+        logger.warning("G4: graph run %s aborted: %s", run.run_id, e.reason)
+        return {
+            "run_id": run.run_id,
+            "graph_id": graph_id,
+            "status": e.status.value,
+            "error": e.reason,
+        }
     except httpx.RequestError as e:
+        gov.finish(run, error=str(e))
         logger.error(
             "FC-8 /v1/agents/run: failed to reach local server %s: %s", base_url, e
         )
         raise HTTPException(503, detail=f"Local inference server unreachable: {e}")
     if resp.status_code >= 400:
+        gov.finish(run, error=f"HTTP {resp.status_code}")
         logger.error(
             "FC-8 /v1/agents/run: chat completions returned %d: %s",
             resp.status_code,
             resp.text[:500],
         )
         raise HTTPException(resp.status_code, detail=resp.text[:500])
+
     completion = resp.json()
-    logger.info("FC-8: executed agent graph %s via %s", graph_id, plan["model"])
+    gov.record_usage(run, completion.get("usage"))
+    gov.finish(run)
+    logger.info(
+        "FC-8: executed agent graph %s via %s (run=%s steps=%d tokens=%d)",
+        graph_id,
+        plan["model"],
+        run.run_id,
+        run.steps,
+        run.tokens_used,
+    )
     return {
+        "run_id": run.run_id,
         "graph_id": graph_id,
         "graph_name": plan["graph_name"],
         "model": plan["model"],
         "status": "completed",
         "completion": completion,
     }
+
+
+@router.get("/runs")
+async def list_runs(
+    _is_admin: bool = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    """G4: list active and recent graph executions."""
+    return get_governor().list_runs()
+
+
+@router.post("/runs/{run_id}/cancel")
+async def cancel_run(
+    run_id: str,
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
+    """G4: kill switch — cancel a running graph execution."""
+    ok = get_governor().cancel(run_id)
+    if not ok:
+        raise HTTPException(404, detail=f"Run '{run_id}' not found or not running")
+    return {"run_id": run_id, "status": "cancelled"}
 
 
 def _find_first_llm_node(graph: dict) -> dict[str, Any] | None:

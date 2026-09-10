@@ -201,15 +201,9 @@ class TestSchedulerConfig:
 class TestSchedulerBasic:
     """Basic tests for Scheduler (without real model)."""
 
-    @pytest.fixture
-    def mock_tokenizer(self):
-        """Create a mock tokenizer."""
-        tokenizer = MagicMock()
-        tokenizer.encode = lambda x: list(range(len(x.split())))
-        tokenizer.decode = lambda x: " ".join(str(t) for t in x)
-        tokenizer.eos_token_id = 0
-        tokenizer.eos_token_ids = {0}
-        return tokenizer
+    # R-P2-3: local mock_tokenizer fixture removed — was shadowing the
+    # global conftest.py fixture with different semantics. The global
+    # fixture now includes eos_token_ids for scheduler compatibility.
 
     @pytest.fixture
     def mock_model(self):

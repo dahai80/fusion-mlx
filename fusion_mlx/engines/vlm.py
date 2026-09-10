@@ -644,28 +644,48 @@ class VLMBatchedEngine(BaseEngine):
             )
 
     async def _apply_dflash2(self) -> None:
-        # Mirror the dflash2 block in engines/batched.py. Loads the DFlash2
-        # block-diffusion drafter (IO-bound, run in the executor) and stores it
-        # on the VLM scheduler as _dflash2_runtime. Once set, the per-request
-        # router assigns METHOD_DFLASH2 and _try_spec_decode runs the dflash2
-        # step. VLM-safe for the same reason as DFlash: decode-phase verify
-        # goes through gen.model + gen.prompt_cache, which already carry the
-        # vision features computed at prefill. No drafter path configured ->
-        # no-op (default VLM load untouched).
-        dflash2_path = (
+        # Mirror the dflash2 block in engines/batched.py. In-target pattern:
+        # loads ONLY the draft, binds to the scheduler's already-loaded VLM
+        # target. No duplicate weight load. VLM-safe: drafter.bind() finds
+        # embed_tokens via model.language_model.model path; decode-phase
+        # verify goes through gen.model + gen.prompt_cache which already
+        # carry vision features from prefill.
+        _ms_path = (
             getattr(self._model_settings, "dflash2_drafter_path", None)
             if self._model_settings
             else None
-        ) or getattr(self._scheduler_config, "dflash2_drafter_path", "")
+        )
+        _sc_path = getattr(self._scheduler_config, "dflash2_drafter_path", "")
+        import os as _os
+
+        if _ms_path and _os.path.isabs(_ms_path):
+            dflash2_path = _ms_path
+        else:
+            dflash2_path = _sc_path or (_ms_path or "")
+        _dflash2_disabled = bool(
+            getattr(self._model_settings, "dflash2_disabled", False)
+            if self._model_settings
+            else False
+        )
+        if _dflash2_disabled and dflash2_path:
+            logger.info(
+                "DFlash2 disabled for VLM %s via model_settings.dflash2_disabled "
+                "(CLI flag ignored)",
+                self._model_name,
+            )
+            dflash2_path = ""
+        logger.info(
+            "DFlash2 VLM apply: model=%s ms_path=%r sc_path=%r resolved=%r",
+            self._model_name,
+            _ms_path,
+            _sc_path,
+            dflash2_path,
+        )
         if not dflash2_path:
             return
         try:
             from ..speculative.dflash2 import load_runtime as load_dflash2_runtime
 
-            # target_repo = the loaded VLM's HF id or local path
-            target_repo = (
-                getattr(self._vlm_model, "requested_model", None) or self._model_name
-            )
             block_size = (
                 (
                     getattr(self._model_settings, "dflash2_block_size", None)
@@ -683,22 +703,27 @@ class VLMBatchedEngine(BaseEngine):
             if draft_bits is None:
                 draft_bits = getattr(self._scheduler_config, "dflash2_draft_bits", 4)
             loop = asyncio.get_running_loop()
-            # Load on the VLM single-worker mlx executor (the SAME thread
-            # that runs scheduler steps — it is AsyncEngineCore's executor).
-            # The dflash2 runtime carries its own target+draft weight
-            # copies; loading on get_executor("io") bound them to an
-            # io-worker's thread-local stream and every spec step raised
-            # "There is no Stream(gpu, N) in current thread" (#411 pattern).
+            # Load ONLY the draft on the VLM single-worker mlx executor
+            # (the SAME thread that runs scheduler steps).
             dflash2_rt = await loop.run_in_executor(
                 self._vlm_load_executor,
                 lambda: load_dflash2_runtime(
-                    target_repo,
                     dflash2_path,
                     block_size=block_size,
                     draft_bits=draft_bits,
                 ),
             )
-            self._engine.engine.scheduler._dflash2_runtime = dflash2_rt
+            # Bind drafter to the scheduler's already-loaded VLM target.
+            # VLMModelAdapter wraps the language model as _language_model;
+            # dflash bind()/ _patch_model need the inner module to find
+            # embed_tokens + layers.
+            sched = self._engine.engine.scheduler
+            target = sched.model
+            inner_lm = getattr(target, "_language_model", None)
+            if inner_lm is not None:
+                target = inner_lm
+            dflash2_rt.drafter.bind(target)
+            sched._dflash2_runtime = dflash2_rt
             logger.info(
                 "DFlash2 spec-decode enabled for VLM %s (draft=%s, block_size=%d, draft_bits=%s)",
                 self._model_name,
@@ -716,7 +741,7 @@ class VLMBatchedEngine(BaseEngine):
             await self._engine.stop()
             if hasattr(self._engine, "engine") and self._engine.engine is not None:
                 try:
-                    self._engine.engine.close()
+                    await self._engine.engine.aclose()
                 except Exception as e:
                     logger.warning("Error closing engine: %s", e)
         # EngineCore.close() preserves the reused _mlx_executor in
@@ -1756,39 +1781,11 @@ class VLMBatchedEngine(BaseEngine):
         )
         return len(self._tokenizer.encode(prompt))
 
-    def has_active_requests(self) -> bool:
-        # P0-5: EngineCore tracks in-flight requests in _active_contexts, not
-        # _output_collectors (which does not exist on EngineCore).
-        ec = getattr(self, "_engine", None)
-        if ec is not None:
-            inner = getattr(ec, "engine", None)
-            if inner is not None:
-                active = getattr(inner, "_active_contexts", None)
-                if active is not None:
-                    return len(active) > 0
-                collectors = getattr(inner, "_output_collectors", None)
-                if collectors is not None:
-                    return len(collectors) > 0
-        return False
-
     def get_stats(self) -> dict[str, Any]:
-        stats = {
-            "engine_type": "vlm",
-            "model_name": self._model_name,
-            "loaded": self._loaded,
-            "stream_interval": self._stream_interval,
-        }
-        if self._engine:
-            stats.update(self._engine.get_stats())
-        return stats
+        return self.get_enginecore_stats("vlm")
 
     def get_cache_stats(self) -> dict[str, Any] | None:
-        return self._engine.get_cache_stats() if self._engine else None
-
-    async def abort_all_requests(self) -> int:
-        if self._engine and self._engine.engine:
-            return await self._engine.engine.abort_all_requests()
-        return 0
+        return self.get_enginecore_cache_stats()
 
     def __repr__(self) -> str:
         status = "running" if self._loaded else "stopped"

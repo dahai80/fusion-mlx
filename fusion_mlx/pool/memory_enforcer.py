@@ -66,6 +66,33 @@ _STATIC_RESERVE_LARGE: dict[str, int] = {
     "custom": 2 * 1024**3,
 }
 
+# Ceiling fraction cap for large-memory systems (>= _LARGE_SYSTEM_THRESHOLD).
+# Without this, a 128GB machine on "balanced" gets static_ceiling = 122GB
+# (128 - 6 reserve), and the enforcer only acts at 0.90*122 = 110GB — far
+# too close to jetsam. Capping at 0.5625 gives a 72GB ceiling (G1
+# commercial condition), leaving 56GB for OS, prefill activation spikes,
+# and MLX compile cache.
+_LARGE_SYSTEM_THRESHOLD = 64 * 1024**3
+_LARGE_SYSTEM_CEILING_FRACTION: dict[str, float] = {
+    "safe": 0.50,
+    "balanced": 0.5625,
+    "aggressive": 0.75,
+    "custom": 0.80,
+}
+
+# Buffer between the enforcer ceiling and the Metal wired limit. The wired
+# limit is the hard Metal allocation cap — if a spike jumps past the
+# enforcer's hard watermark between polls (1s), Metal won't panic until
+# ceiling + this buffer, giving the enforcer time to react. Capped at 80%
+# of physical RAM so the OS always has headroom.
+_WIRED_LIMIT_BUFFER_BYTES = 25 * 1024**3
+_PHYSICAL_RAM_WIRED_CAP_FRACTION = 0.80
+
+# MLX compile cache / buffer pool hard top. Without this, mx.get_cache_memory()
+# grows monotonically — only released by explicit mx.clear_cache(). Set once
+# at startup so the pool never exceeds this size.
+_MLX_CACHE_LIMIT_BYTES = 1 * 1024**3
+
 # Fraction of "active" pages we count as reclaimable via macOS
 # compression / swap. macOS's compressor averages 2-3x so ~60-67% of
 # active is realistically reclaimable; 0.8 pushes into swap territory.
@@ -437,6 +464,38 @@ class ProcessMemoryEnforcer:
         """Whether the enforcement loop is active."""
         return self._running
 
+    def _get_wired_limit_target(self, static_ceiling: int) -> int:
+        """Metal wired limit target = enforcer ceiling + buffer, capped at 80% RAM.
+
+        The wired limit is the hard Metal allocation cap. Setting it above
+        the enforcer ceiling creates a buffer zone: if a spike jumps past
+        the enforcer's hard watermark between polls (1s), Metal won't panic
+        until ceiling + buffer, giving the enforcer time to react. Capped at
+        80% of physical RAM so the OS always has headroom and jetsam is not
+        triggered.
+        """
+        from .settings import get_system_memory
+
+        system_bytes = get_system_memory()
+        physical_cap = int(system_bytes * _PHYSICAL_RAM_WIRED_CAP_FRACTION)
+        return min(static_ceiling + _WIRED_LIMIT_BUFFER_BYTES, physical_cap)
+
+    def _apply_mlx_cache_limit(self) -> None:
+        """Set MLX compile cache / buffer pool hard top to 1GB.
+
+        Without this, mx.get_cache_memory() grows monotonically — only
+        released by explicit mx.clear_cache(). A 1GB cap (matching
+        flyto-mlx's subprocess setting) prevents unbounded growth while
+        keeping enough compiled kernels hot for performance.
+        """
+        try:
+            mx.metal.set_cache_limit(_MLX_CACHE_LIMIT_BYTES)
+            logger.info(
+                "MLX metal cache limit set to %s", _format_gb(_MLX_CACHE_LIMIT_BYTES)
+            )
+        except Exception as exc:
+            logger.warning("mx.metal.set_cache_limit failed: %s", exc)
+
     def start(self) -> None:
         """Start the background enforcement loop.
 
@@ -455,19 +514,24 @@ class ProcessMemoryEnforcer:
 
         if self._prefill_memory_guard:
             static_ceiling = self._get_static_ceiling()
-            applied, previous = _apply_metal_wired_limit(static_ceiling)
-            self._metal_wired_limit_request = static_ceiling
+            wired_target = self._get_wired_limit_target(static_ceiling)
+            applied, previous = _apply_metal_wired_limit(wired_target)
+            self._metal_wired_limit_request = wired_target
             if applied > 0:
                 logger.info(
                     "Metal wired limit raised: %s -> %s "
-                    "(target=%s, iogpu sysctl cap=%s)",
+                    "(target=%s, enforcer_ceiling=%s, iogpu sysctl cap=%s)",
                     _format_gb(previous or 0),
                     _format_gb(applied),
+                    _format_gb(wired_target),
                     _format_gb(static_ceiling),
                     _format_gb(get_iogpu_wired_limit_bytes()),
                 )
 
         self._task = asyncio.create_task(self._enforcement_loop())
+
+        self._apply_mlx_cache_limit()
+
         logger.info(
             f"Process memory enforcer started "
             f"(tier={self._memory_guard_tier}, "
@@ -502,17 +566,31 @@ class ProcessMemoryEnforcer:
             loop.call_soon_threadsafe(event.set)
 
     def _get_static_ceiling(self) -> int:
-        """Total RAM minus tier-scaled static reserve."""
+        """Total RAM minus tier-scaled static reserve, capped by ceiling fraction.
+
+        On large systems (>= 64GB) the simple total_ram - reserve formula
+        yields a ceiling too close to physical RAM (e.g. 122GB on 128GB
+        balanced), leaving no room for OS, prefill spikes, or MLX cache. The
+        fraction cap (_LARGE_SYSTEM_CEILING_FRACTION) brings it down to a
+        safe level (e.g. 76.8GB on 128GB balanced).
+        """
         from .settings import get_system_memory
 
         system_bytes = get_system_memory()
         if self._memory_guard_tier == "custom":
-            return max(0, system_bytes - _STATIC_RESERVE_LARGE["custom"])
-        if system_bytes < _SMALL_SYSTEM_THRESHOLD:
+            base = max(0, system_bytes - _STATIC_RESERVE_LARGE["custom"])
+        elif system_bytes < _SMALL_SYSTEM_THRESHOLD:
             reserve = _SMALL_SYSTEM_RESERVE
+            base = max(0, system_bytes - reserve)
         else:
             reserve = _STATIC_RESERVE_LARGE[self._memory_guard_tier]
-        return max(0, system_bytes - reserve)
+            base = max(0, system_bytes - reserve)
+
+        if system_bytes >= _LARGE_SYSTEM_THRESHOLD:
+            fraction = _LARGE_SYSTEM_CEILING_FRACTION.get(self._memory_guard_tier, 0.60)
+            fraction_cap = int(system_bytes * fraction)
+            return min(base, fraction_cap)
+        return base
 
     def _get_dynamic_ceiling(self) -> int:
         """Tier-aware reclaimable-memory ceiling.
@@ -546,7 +624,8 @@ class ProcessMemoryEnforcer:
             return max(0, fusion_usage + available)
         ratio = _ACTIVE_RECLAIM_RATIO[self._memory_guard_tier]
         reclaimable = stats["free"] + stats["inactive"] + int(stats["active"] * ratio)
-        return max(0, fusion_usage + reclaimable)
+        raw = max(0, fusion_usage + reclaimable)
+        return min(raw, self._get_static_ceiling())
 
     def _get_hard_limit_bytes(self) -> int:
         """Final hard ceiling = min(static, dynamic, metal_cap)."""
@@ -576,10 +655,16 @@ class ProcessMemoryEnforcer:
         # (30GB loaded + 10GB floor = 40GB > 36GB Metal cap), so the
         # soft/hard watermarks never trigger while MLX is already at its
         # limit → enforcer does nothing and the process OOMs. Cap the floor
-        # at the Metal cap so it never exceeds the physical ceiling. When
-        # there is no metal_cap (0/unknown) leave the floor unconstrained.
+        # at the Metal cap so it never exceeds the physical ceiling.
+        # P1-12 (#0909 audit): when metal_cap == 0 (unknown), constrain the
+        # floor to static_ceiling instead of leaving it unconstrained —
+        # otherwise a large loaded model lifts the hard limit past the
+        # actual safe ceiling, the enforcer sees phantom headroom and never
+        # reclaims, and macOS jetsam SIGKILLs the process.
         if metal_cap > 0:
             floor = min(floor, metal_cap)
+        else:
+            floor = min(floor, static_ceiling)
         hard = max(hard, floor)
         return {
             "static": static_ceiling,

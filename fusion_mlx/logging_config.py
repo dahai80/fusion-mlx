@@ -143,8 +143,22 @@ def configure_logging(
 
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
+    # Preserve file handlers (added by configure_file_logging in Server.__init__)
+    # while replacing the console handler. root_logger.handlers.clear() would
+    # destroy the TimedRotatingFileHandler, so server.log gets no fusion_mlx
+    # logs after configure_logging runs.
+    from logging.handlers import BaseRotatingHandler
+
+    _file_handlers = [
+        h
+        for h in root_logger.handlers
+        if isinstance(h, (BaseRotatingHandler, logging.FileHandler))
+    ]
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
+    for fh in _file_handlers:
+        fh.setLevel(log_level)
+        root_logger.addHandler(fh)
 
     # fusion-mlx logger hierarchy
     logging.getLogger("fusion_mlx").setLevel(log_level)

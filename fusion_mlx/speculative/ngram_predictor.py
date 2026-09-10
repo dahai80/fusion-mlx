@@ -15,10 +15,26 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
-NGRAM_ORDER = int(os.environ.get("FUSION_NGRAM_ORDER", "5"))
-NGRAM_NUM_DRAFT = int(os.environ.get("FUSION_NGRAM_NUM_DRAFT", "3"))
-NGRAM_MAX_ENTRIES = int(os.environ.get("FUSION_NGRAM_MAX_ENTRIES", "65536"))
-NGRAM_MIN_HITS = int(os.environ.get("FUSION_NGRAM_MIN_HITS", "2"))
+def _safe_int_env(name: str, default: int) -> int:
+    # P3-06/ENG-06 (#0909 audit): module-level int(os.environ.get(...))
+    # crashes on non-numeric strings at import time.
+    raw = os.environ.get(name, str(default))
+    try:
+        val = int(raw)
+        if val > 0:
+            return val
+    except (ValueError, TypeError):
+        pass
+    logger.warning(
+        "Invalid %s=%r, using default %d (P3-06 safe parse)", name, raw, default
+    )
+    return default
+
+
+NGRAM_ORDER = _safe_int_env("FUSION_NGRAM_ORDER", 5)
+NGRAM_NUM_DRAFT = _safe_int_env("FUSION_NGRAM_NUM_DRAFT", 3)
+NGRAM_MAX_ENTRIES = _safe_int_env("FUSION_NGRAM_MAX_ENTRIES", 65536)
+NGRAM_MIN_HITS = _safe_int_env("FUSION_NGRAM_MIN_HITS", 2)
 
 
 class NGramPredictor:

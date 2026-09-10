@@ -240,6 +240,8 @@ class ResponseCache:
         if entry:
             self._stats.size_bytes -= entry.size_bytes
             self._stats.evictions += 1
+            # P2-23 (#0910 audit): update entry_count on eviction
+            self._stats.entry_count = len(self._store)
 
     def invalidate(self, key: str) -> bool:
         with self._lock:

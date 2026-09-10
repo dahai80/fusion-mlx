@@ -39,7 +39,11 @@ async def _run_synthesize_capturing_timeout(eng):
 
     async def _spy_wait_for(coro, timeout):
         captured["timeout"] = timeout
-        return await real_wait_for(coro, timeout)
+        # Cancel the pending coro immediately and raise TimeoutError
+        # without waiting for the real timeout duration (which could be
+        # 180s for the default/fallback tests — would exceed pytest timeout).
+        coro.close() if hasattr(coro, "close") else None
+        raise TimeoutError()
 
     with (
         patch("fusion_mlx.engines.tts.get_executor", lambda _name: None),

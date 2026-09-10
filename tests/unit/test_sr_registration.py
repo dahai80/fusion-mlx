@@ -26,8 +26,12 @@ def _walk_routes(app):
 
 def test_sr_route_registered():
     from fusion_mlx.server import create_app
+    from fusion_mlx.config import ServerConfig
 
-    app = create_app()
+    # R-7: SR route requires image modality — use full profile.
+    cfg = ServerConfig()
+    cfg.profile = "full"
+    app = create_app(cfg)
     paths = {getattr(r, "path", None) for r in _walk_routes(app)}
     assert "/v1/images/super-resolution" in paths
     logger.info("SR route registered in create_app() OK")

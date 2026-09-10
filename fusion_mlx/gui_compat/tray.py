@@ -566,11 +566,8 @@ def run_tray_app(port: int = 11434, host: str = "127.0.0.1"):
             print(f"Import error: {e}")
             raise
     except Exception as e:
-        logger.error(f"Tray app error: {e}")
+        logger.error(f"Tray app error: {e}", exc_info=True)
         print(f"Tray app error: {e}")
-        import traceback
-
-        traceback.print_exc()
         return False
     finally:
         # Always release the lock when exiting

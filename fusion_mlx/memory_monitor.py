@@ -272,8 +272,10 @@ class MemoryMonitor:
         num_layers: int,
         head_dim: int,
         num_kv_heads: int,
+        num_attention_heads: int | None = None,
         num_query_heads: int | None = None,
-        dtype_bytes: float = 2,
+        dtype_size: float | None = None,
+        dtype_bytes: float | None = None,
         num_kv_cache_layers: int | None = None,
         compute_dtype_size: float | None = None,
         kv_bytes_per_token: float | None = None,
@@ -284,10 +286,12 @@ class MemoryMonitor:
             num_layers: Number of transformer layers.
             head_dim: Dimension per attention head.
             num_kv_heads: Number of KV attention heads.
-            num_query_heads: Number of query attention heads (for SDPA
-                peak estimation). Defaults to num_kv_heads.
-            dtype_bytes: Bytes per element of the stored KV cache. May be
+            num_attention_heads: Number of query heads (for SDPA peak
+                estimation). Defaults to num_kv_heads.
+                (num_query_heads is a deprecated alias.)
+            dtype_size: Bytes per element of the stored KV cache. May be
                 fractional for quantized (e.g. TurboQuant) KV layouts.
+                (dtype_bytes is a deprecated alias.)
             num_kv_cache_layers: Number of layers that use KVCache
                 (full attention). For hybrid models this may be less than
                 num_layers. Defaults to num_layers.
@@ -296,10 +300,14 @@ class MemoryMonitor:
             kv_bytes_per_token: Optional exact resident KV-cache bytes added
                 per token. Use for compressed-cache architectures such as MLA.
         """
+        if dtype_size is None:
+            dtype_size = dtype_bytes if dtype_bytes is not None else 2
+        if num_attention_heads is None:
+            num_attention_heads = num_query_heads
         self._num_layers = num_layers
         self._num_kv_heads = num_kv_heads
         self._head_dim = head_dim
-        self._dtype_size = float(dtype_bytes)
+        self._dtype_size = float(dtype_size)
         self._score_dtype_size = (
             compute_dtype_size
             if compute_dtype_size and compute_dtype_size > 0
@@ -310,14 +318,14 @@ class MemoryMonitor:
             if kv_bytes_per_token is not None and kv_bytes_per_token > 0
             else None
         )
-        self._num_attention_heads = num_query_heads or num_kv_heads
+        self._num_attention_heads = num_attention_heads or num_kv_heads
         self._num_kv_cache_layers = num_kv_cache_layers or num_layers
 
         logger.info(
             f"Model info set: {num_layers} layers "
             f"({self._num_kv_cache_layers} KVCache), "
             f"{num_kv_heads} KV heads, {self._num_attention_heads} Q heads, "
-            f"{head_dim} head_dim, dtype={dtype_bytes}"
+            f"{head_dim} head_dim, dtype={dtype_size}"
         )
 
     def get_memory_usage(self) -> dict[str, Any]:
@@ -605,7 +613,13 @@ class MemoryMonitor:
         else:
             kv_bytes = int(2 * layers * new_tokens * kv_heads * hd * self._dtype_size)
 
-        # SDPA activation: kv_len includes cached prefix positions
+        # SDPA activation: use the per-chunk kv_len (eff_chunk + cached
+        # prefix), not the full prompt length. The admission guard needs a
+        # practical estimate — the score matrix is transient (freed per
+        # layer) and MLX reuses Metal buffers, so the theoretical worst-case
+        # (last chunk, kv_len=new_tokens) vastly overestimates resident
+        # peak and rejects valid long-context requests (e.g. 144K-token
+        # Claude Code prompts on head_dim=256 models).
         full_kv_len = eff_chunk + max(cached_tokens, 0)
         sdpa_bytes = self._estimate_sdpa_activation_bytes(eff_chunk, full_kv_len)
 
@@ -615,39 +629,20 @@ class MemoryMonitor:
         self,
         new_tokens: int,
         cached_tokens: int = 0,
-    ) -> tuple[int, int]:
-        """Estimate KV cache growth for new_tokens prompt tokens.
-
-        Returns (new_kv_bytes, cached_kv_bytes).
-        """
+    ) -> int:
+        """Estimate KV cache growth for new_tokens prompt tokens."""
         if not self.has_model_info():
-            return (0, 0)
+            return 0
+        if new_tokens <= 0:
+            return 0
         layers = self._num_kv_cache_layers or self._num_layers or 0
         hd = self._head_dim or 0
         kv_heads = self._num_kv_heads or 0
 
         if self._kv_bytes_per_token_override is not None:
-            new_kv = (
-                int(new_tokens * self._kv_bytes_per_token_override)
-                if new_tokens > 0
-                else 0
-            )
-            cached_kv = (
-                int(cached_tokens * self._kv_bytes_per_token_override)
-                if cached_tokens > 0
-                else 0
-            )
-            return (new_kv, cached_kv)
+            return int(new_tokens * self._kv_bytes_per_token_override)
 
-        new_kv = 0
-        if new_tokens > 0:
-            new_kv = int(2 * layers * new_tokens * kv_heads * hd * self._dtype_size)
-        cached_kv = 0
-        if cached_tokens > 0:
-            cached_kv = int(
-                2 * layers * cached_tokens * kv_heads * hd * self._dtype_size
-            )
-        return (new_kv, cached_kv)
+        return int(2 * layers * new_tokens * kv_heads * hd * self._dtype_size)
 
     def estimate_decode_kv_bytes(self, total_tokens: int) -> int:
         """Estimate KV cache memory for total_tokens across all running requests."""
@@ -856,8 +851,8 @@ def set_model_info_from_model(monitor: MemoryMonitor, model: Any) -> None:
                 num_layers=num_layers,
                 head_dim=head_dim,
                 num_kv_heads=num_kv_heads,
-                num_query_heads=num_attention_heads,
-                dtype_bytes=dtype_size,
+                num_attention_heads=num_attention_heads,
+                dtype_size=dtype_size,
                 num_kv_cache_layers=num_kv_cache_layers,
                 compute_dtype_size=dtype_size,
                 kv_bytes_per_token=kv_bytes_per_token,

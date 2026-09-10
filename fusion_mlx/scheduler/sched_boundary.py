@@ -11,6 +11,7 @@ The scheduler follows vLLM's design with:
 - Continuous batching via BatchGenerator
 """
 
+import copy
 import logging
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,8 @@ def _on_prefill_boundary_snapshot(
     # Offload snapshot to SSD if store is available, keeping only a
     # None marker in the dict.  Falls back to in-memory storage when
     # the SSD store is unavailable or the write fails.
+    # P2-18 (#0909 audit): deep copy snapshot_cache for in-memory fallback
+    # to prevent later prefill chunks from mutating the stored cache objects.
     if self._boundary_snapshot_store is not None:
         saved = self._boundary_snapshot_store.save(
             request_id,
@@ -94,9 +97,13 @@ def _on_prefill_boundary_snapshot(
         if saved:
             self._boundary_cache_snapshots[request_id][token_count] = None
         else:
-            self._boundary_cache_snapshots[request_id][token_count] = snapshot_cache
+            self._boundary_cache_snapshots[request_id][token_count] = copy.deepcopy(
+                snapshot_cache
+            )
     else:
-        self._boundary_cache_snapshots[request_id][token_count] = snapshot_cache
+        self._boundary_cache_snapshots[request_id][token_count] = copy.deepcopy(
+            snapshot_cache
+        )
 
     self._boundary_snapshot_required = True
     logger.debug(
@@ -223,9 +230,10 @@ def _maybe_capture_boundary_snapshot(self, request: Request, uid: int) -> None:
         if saved:
             self._boundary_cache_snapshots[request.request_id][total_tokens] = None
         else:
-            self._boundary_cache_snapshots[request.request_id][
-                total_tokens
-            ] = snapshot_cache
+            # P2-18 (#0909 audit): deep copy to prevent mutation by later prefill.
+            self._boundary_cache_snapshots[request.request_id][total_tokens] = (
+                copy.deepcopy(snapshot_cache)
+            )
         # Cross-restart prefix persistence (issue #257): persist a prefix-keyed
         # snapshot so a future request or a restart with the same prompt prefix
         # can warm-start without re-prefilling. VLM image requests are skipped
@@ -254,9 +262,10 @@ def _maybe_capture_boundary_snapshot(self, request: Request, uid: int) -> None:
                     self.config.model_name,
                 )
     else:
-        self._boundary_cache_snapshots[request.request_id][
-            total_tokens
-        ] = snapshot_cache
+        # P2-18 (#0909 audit): deep copy to prevent mutation by later prefill.
+        self._boundary_cache_snapshots[request.request_id][total_tokens] = (
+            copy.deepcopy(snapshot_cache)
+        )
 
     logger.debug(
         f"Captured boundary cache snapshot for {request.request_id} at "

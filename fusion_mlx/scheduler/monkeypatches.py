@@ -11,6 +11,13 @@ from mlx_lm.generate import (
     generation_stream,
 )
 
+# P-P2-1: hoisted from per-step function-local import to module level.
+# Used only for isinstance checks in _optimized_generation_batch_step.
+try:
+    from ..api.grammar import GrammarConstraintProcessor
+except ImportError:
+    GrammarConstraintProcessor = None  # type: ignore[assignment, misc]
+
 logger = logging.getLogger(__name__)
 
 
@@ -224,9 +231,7 @@ def _optimized_generation_batch_step(self):
     needs_logprob_norm = True
     token_context = []
     if has_logits_processors:
-        from ..api.grammar import GrammarConstraintProcessor
-
-        has_grammar = any(
+        has_grammar = GrammarConstraintProcessor is not None and any(
             isinstance(p, GrammarConstraintProcessor)
             for procs in self.logits_processors
             for p in procs
@@ -329,7 +334,9 @@ def _optimized_generation_batch_step(self):
         sampled_list = self._next_tokens.tolist()
         for e in range(len(self.uids)):
             for proc in self.logits_processors[e]:
-                if isinstance(proc, GrammarConstraintProcessor):
+                if GrammarConstraintProcessor is not None and isinstance(
+                    proc, GrammarConstraintProcessor
+                ):
                     proc.accept_token(sampled_list[e])
 
     return input_list, self._current_logprobs

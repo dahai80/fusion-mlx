@@ -31,7 +31,7 @@ from .helpers import (
     _should_clear_on_fragmentation,
     _sync_and_clear_cache,
 )
-from .monkeypatches import _unregister_uid_rows_for_model
+from .monkeypatches import _unregister_uid_row, _unregister_uid_rows_for_model
 from .types import (
     _PrefillAbortedError,
 )
@@ -246,7 +246,50 @@ def step(self) -> SchedulerOutput:
                     old_uid = self.request_id_to_uid.pop(rid, None)
                     if old_uid is not None:
                         self.uid_to_request_id.pop(old_uid, None)
-                    # Reset output state to prevent duplicate tokens on re-prefill
+                    # P2-13 (#0909 audit): if the request already generated
+                    # output tokens, do NOT wipe them and re-prefill from
+                    # scratch — that would send duplicate content to the
+                    # client. Instead, finalize the request with whatever
+                    # output it has. Only reset+reschedule requests that
+                    # have produced zero output tokens (genuinely stale).
+                    if req.output_token_ids:
+                        # Already has output — finalize instead of reschedule
+                        max_tok = 0
+                        try:
+                            max_tok = int(req.max_tokens) if req.max_tokens else 0
+                        except (TypeError, ValueError):
+                            max_tok = 0
+                        finish_reason = (
+                            "length"
+                            if max_tok and len(req.output_token_ids) >= max_tok
+                            else "stop"
+                        )
+                        req.status = (
+                            RequestStatus.FINISHED_LENGTH_CAPPED
+                            if finish_reason == "length"
+                            else RequestStatus.FINISHED_STOPPED
+                        )
+                        req.batch_uid = None
+                        self.finished_req_ids.add(rid)
+                        self.requests.pop(rid, None)
+                        logger.info(
+                            "step(%d): finalizing %s with %d output tokens "
+                            "(empty batch response, avoiding duplicate reschedule)",
+                            self._step_counter,
+                            rid,
+                            len(req.output_token_ids),
+                        )
+                        output.outputs.append(
+                            RequestOutput(
+                                request_id=rid,
+                                finished=True,
+                                finish_reason=finish_reason,
+                                output_token_ids=req.output_token_ids,
+                                output_text=req.output_text,
+                            )
+                        )
+                        continue
+                    # No output yet — safe to reschedule from scratch
                     req.output_token_ids = []
                     req.output_text = ""
                     req.num_computed_tokens = 0
@@ -287,7 +330,7 @@ def step(self) -> SchedulerOutput:
                     frag = getattr(self, "_fragmentation_ratio", 0.0)
                     cache_mem = mx.get_cache_memory()
                     cache_threshold = self._periodic_clear_threshold_bytes()
-                    if (
+                    if cache_mem > cache_threshold * 2 or (
                         _should_clear_on_fragmentation(frag)
                         and cache_mem > cache_threshold
                     ):
@@ -307,7 +350,14 @@ def step(self) -> SchedulerOutput:
         # BatchGenerator is in an inconsistent state (partial
         # prefill), so reset it entirely. Pending aborts will
         # be processed at the start of the next step().
-        _unregister_uid_rows_for_model(self.model)
+        # Only unregister the aborted UIDs — clearing ALL model
+        # rows would leave other running requests with no UID
+        # mapping, causing permanent hangs (P0-03).
+        if e.aborted_uids:
+            for uid in e.aborted_uids:
+                _unregister_uid_row(self.model, uid)
+        else:
+            _unregister_uid_rows_for_model(self.model)
         self.batch_generator = None
         self._current_sampler_params = None
         self._boundary_cache_snapshots.clear()
@@ -317,6 +367,7 @@ def step(self) -> SchedulerOutput:
         # Only reschedule the aborted requests, not the entire
         # batch — innocent requests should keep decoding.
         if e.aborted_uids:
+            rescheduled_any = False
             for uid in e.aborted_uids:
                 rid = self.uid_to_request_id.get(uid)
                 if rid and rid in self.running:
@@ -325,6 +376,9 @@ def step(self) -> SchedulerOutput:
                     req.batch_uid = None
                     self.waiting.append(req)
                     logger.debug("Rescheduled aborted uid=%d rid=%s", uid, rid)
+                    rescheduled_any = True
+            if not rescheduled_any:
+                self._reschedule_running_requests()
         else:
             self._reschedule_running_requests()
 
@@ -490,17 +544,15 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     request = next(iter(self.running.values()))
     if request._active_spec_method is None:
         request._active_spec_method = self._decide_spec_method(request)
-    from ..speculative.auto_router import METHOD_DFLASH2, METHOD_DSPARK, METHOD_MTP
+    from ..speculative.auto_router import METHOD_DSPARK, METHOD_MTP
 
-    if request._active_spec_method in (METHOD_DFLASH2, METHOD_DSPARK):
-        # Self-contained spec generators (dflash2/dspark) load their own
-        # target copy and produce the full token stream themselves. Running
-        # the scheduler's own forward alongside them would double-emit
-        # tokens (scheduler token interleaved with session tokens ->
-        # garbled output) and double compute. Skip the forward entirely and
-        # pull this step's tokens from the session. Falls back to normal
-        # decode below when the session yields nothing (start failure or
-        # exhausted mid-request).
+    if request._active_spec_method == METHOD_DSPARK:
+        # DSpark is self-contained: loads its own target copy and produces
+        # the full token stream itself. Running the scheduler's own forward
+        # alongside it would double-emit tokens and double compute. Skip
+        # the forward entirely and pull this step's tokens from the session.
+        # DFlash2 is now in-target (runs propose->verify via the normal
+        # forward + _try_spec_decode path, same as DFlash-v1/ngram).
         spec_outputs = self._selfcontained_spec_step(output, request)
         if spec_outputs:
             return output
@@ -529,18 +581,37 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     try:
         with mx.stream(self._stream):
             _, responses = bg._next()
-    except _PrefillAbortedError:
+    except _PrefillAbortedError as e:
         # Abort during a pending-prefill step: tear down the inconsistent
         # BatchGenerator and reschedule running requests for re-prefill.
         # Mirrors the full step() _PrefillAbortedError handler.
-        _unregister_uid_rows_for_model(self.model)
+        # Only unregister aborted UIDs (P0-03).
+        if e.aborted_uids:
+            for uid in e.aborted_uids:
+                _unregister_uid_row(self.model, uid)
+        else:
+            _unregister_uid_rows_for_model(self.model)
         self.batch_generator = None
         self._current_sampler_params = None
         self._boundary_cache_snapshots.clear()
         if self._boundary_snapshot_store is not None:
             self._boundary_snapshot_store.cleanup_all()
         self._boundary_snapshot_required = None
-        self._reschedule_running_requests()
+        if e.aborted_uids:
+            rescheduled_any = False
+            for uid in e.aborted_uids:
+                rid = self.uid_to_request_id.get(uid)
+                if rid and rid in self.running:
+                    req = self.running.pop(rid)
+                    req.status = RequestStatus.WAITING
+                    req.batch_uid = None
+                    self.waiting.append(req)
+                    logger.debug("Rescheduled aborted uid=%d rid=%s", uid, rid)
+                    rescheduled_any = True
+            if not rescheduled_any:
+                self._reschedule_running_requests()
+        else:
+            self._reschedule_running_requests()
         return output
     except OverflowError as e:
         if self._is_generation_overflow_error(e):
@@ -578,32 +649,57 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
                     "step(%d): spec_finished=%s", self._step_counter, finished_ids
                 )
 
-    # Decode-phase cache clear (same interval as full path)
+    # Decode-phase cache clear. The MLX buffer pool accumulates freed
+    # intermediates (attention scores, MLP activations) that are not
+    # released to the OS until mx.clear_cache() runs. For large models
+    # (27B+), the pool grows >70GB before the old 16384-token interval
+    # fired, causing jetsam OOM kills. Two triggers:
+    #  1. Token-count interval (decode_clear_interval, default 256)
+    #  2. Memory-pressure early clear: if cache_memory exceeds the
+    #     periodic threshold, clear immediately regardless of count.
     if self._tokens_since_clear_cache is not None:
         self._tokens_since_clear_cache += len(responses)
-        if self._tokens_since_clear_cache >= self.config.decode_clear_interval:
+        _cache_mem = mx.get_cache_memory()
+        _cache_threshold = self._periodic_clear_threshold_bytes()
+        if (
+            self._tokens_since_clear_cache >= self.config.decode_clear_interval
+            or _cache_mem > _cache_threshold
+        ):
             _sync_and_clear_cache(self._stream)
             self._tokens_since_clear_cache = 0
+            self._last_mlx_active_memory_bytes = int(mx.get_active_memory())
 
     return output
 
 
+def _close_spec_session(scheduler, request_id: str):
+    """Close dspark spec session for a finished request.
+
+    DSpark's self-contained generator holds Metal buffers (draft/target
+    caches, hidden states, attention intermediates) that are NOT freed
+    until the generator's finally block runs. Without explicit close,
+    stale sessions accumulate in _sessions and their buffers persist
+    across requests, causing progressive throughput degradation.
+    DFlash2 is now in-target (no sessions) — its drafter state is
+    per-scheduler, reset on new request, no cleanup needed here.
+    """
+    dspark_state = getattr(scheduler, "_dspark_spec_state", None)
+    if dspark_state is not None:
+        dspark_state.remove_session(request_id)
+
+
 def _selfcontained_spec_step(self, output: SchedulerOutput, request) -> list:
     """Pure-decode step driven entirely by a self-contained spec generator
-    (dflash2/dspark). The generator owns propose+verify against its own
+    (dspark only). The generator owns propose+verify against its own
     target copy; this pulls accepted tokens and emits them WITHOUT running
     the scheduler forward (which would double-emit + double-compute).
     Returns [] when the session yielded nothing - caller falls back to the
     normal decode path for the rest of the request."""
-    from ..speculative.auto_router import METHOD_DFLASH2
-    from .spec_decode import dflash2_spec_step, dspark_spec_step
+    from .spec_decode import dspark_spec_step
 
     request_id = request.request_id
     try:
-        if request._active_spec_method == METHOD_DFLASH2:
-            result = dflash2_spec_step(self, output, None, request_id)
-        else:
-            result = dspark_spec_step(self, output, None, request_id)
+        result = dspark_spec_step(self, output, None, request_id)
     except Exception as e:
         logger.warning(
             "selfcontained spec step failed for %s: %s; falling back to "
@@ -619,6 +715,8 @@ def _selfcontained_spec_step(self, output: SchedulerOutput, request) -> list:
     finished_ids = {so.request_id for so in result if so.finished}
     if finished_ids:
         output.finished_request_ids = finished_ids
+        for fid in finished_ids:
+            _close_spec_session(self, fid)
         self._cleanup_finished(finished_ids)
         logger.info("step(%d): spec_finished=%s", self._step_counter, finished_ids)
     return result

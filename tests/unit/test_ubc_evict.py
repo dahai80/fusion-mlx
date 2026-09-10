@@ -84,11 +84,18 @@ def _page_size() -> int:
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="UBC eviction is macOS-only")
-def test_ubc_evict_darwin_releases_pages(tmp_path):
-    """On Darwin, ubc_evict releases UBC-resident pages back to the free pool."""
+def test_ubc_evict_darwin_releases_pages(monkeypatch, tmp_path):
+    """On Darwin, ubc_evict purges UBC-resident pages via msync(MS_INVALIDATE).
+
+    The mechanism is asserted deterministically by spying on libc.msync:
+    one call, full file length, MS_INVALIDATE flag, rc==0. The physical
+    page reclamation itself is NOT asserted via system-wide vm_stat —
+    measured deltas on a busy dev machine range from -331MB to +3083MB
+    around a 100MB eviction, i.e. system noise swamps the signal, making
+    that assertion flaky rather than meaningful.
+    """
     pg = _page_size()
     size = 100 * 1024 * 1024  # 100 MB
-    expected_pages = size // pg
 
     payload = tmp_path / "ubc_payload.bin"
     subprocess.run(
@@ -117,16 +124,38 @@ def test_ubc_evict_darwin_releases_pages(tmp_path):
     finally:
         os.close(fd)
 
+    # Spy on libc.msync — the actual eviction mechanism. Replacing the
+    # module-level cached libc handle makes _get_libc() return the spy.
+    real_libc = ubc_module._get_libc()
+    assert real_libc is not None, "libc must be loadable on Darwin"
+    msync_calls: list[tuple[object, int, int]] = []
+
+    class _SpyLibc:
+        def __getattr__(self, name):
+            return getattr(real_libc, name)
+
+        def msync(self, addr, length, flags):
+            rc = real_libc.msync(addr, length, flags)
+            msync_calls.append((addr, length, flags, rc))
+            return rc
+
+    monkeypatch.setattr(ubc_module, "_libc", _SpyLibc())
+
     pre_evict = _vm_stat_reclaimable_pages()
     bytes_evicted = ubc_evict(str(payload))
     post_evict = _vm_stat_reclaimable_pages()
+    logger.info(
+        "ubc_evict vm_stat (free+inactive+speculative) delta: %d pages "
+        "(informational only; system noise swamps the 100MB signal)",
+        post_evict - pre_evict,
+    )
 
     assert bytes_evicted == size
-    reclaim_delta_pages = post_evict - pre_evict
-    assert reclaim_delta_pages >= expected_pages // 2, (
-        f"Expected at least {expected_pages // 2} pages reclaimed to "
-        f"(free+inactive+speculative), got delta={reclaim_delta_pages}"
-    )
+    assert len(msync_calls) == 1, f"expected 1 msync call, got {msync_calls}"
+    _addr, length, flags, rc = msync_calls[0]
+    assert length == size
+    assert flags == ubc_module._MS_INVALIDATE
+    assert rc == 0
     snap = snapshot()
     assert snap["ubc_evicted_bytes_total"] == size
     assert snap["ubc_evict_calls_total"] == 1

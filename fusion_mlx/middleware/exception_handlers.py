@@ -421,6 +421,11 @@ def _validation_error_response(
         raw_loc = tuple(err.get("loc", ()))
         loc, last_field = _render_loc_for_envelope(exc, raw_loc, request)
         msg = err.get("msg", "validation error")
+        # P3-11 (#0909 audit): strip Pydantic type annotations from the
+        # error message. Pydantic v2 appends "[type=int_type, input_value=...,
+        # input_type=str]" which leaks internal type system info to clients.
+        if "[" in msg and "type=" in msg:
+            msg = msg.split("[")[0].strip() or "validation error"
         if last_field is None and not loc and err.get("type") == "value_error":
             root_cls = _resolve_root_model(exc, raw_loc, request)
             recovered = _extract_field_from_value_error_msg(msg, root_cls)

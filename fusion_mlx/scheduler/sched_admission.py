@@ -85,10 +85,12 @@ def add_request(self, request: Request) -> None:
             len(request.remaining_tokens),
         )
     # Cache freshness: if a store_cache is in flight, defer the prefix
-    # lookup to _schedule_waiting (executor thread) so add_request (FastAPI
-    # event loop) never races an in-flight store_cache and reads stale KV.
-    # _should_defer registers a freshness wait for relevant stores (above
-    # thresholds); either way prep is deferred to _schedule_waiting.
+    # lookup to _schedule_waiting so add_request never races an in-flight
+    # store_cache and reads stale KV. add_request runs on the same MLX
+    # executor thread as step() (max_workers=1), so they cannot run
+    # concurrently (RT-03). _should_defer registers a freshness wait for
+    # relevant stores (above thresholds); either way prep is deferred to
+    # _schedule_waiting.
     elif self._inflight_store_futures:
         self._should_defer_for_cache_freshness(request)
         request.remaining_tokens = request.prompt_token_ids
@@ -218,6 +220,8 @@ def add_request(self, request: Request) -> None:
 
     # Add to tracking
     self.requests[request.request_id] = request
+    # RT-10 (#0909 audit): record enqueue time for anti-starvation aging.
+    request._admit_time = time.monotonic()
     # FUNC-P2-2 (#0907 audit, was #818): PRIORITY policy now does a
     # priority-ordered insertion into self.waiting instead of FIFO append,
     # so Request.priority (lower int = higher priority) actually orders
@@ -276,9 +280,6 @@ def set_specprefill_draft_model(
                 model=draft_model,
                 paged_cache_manager=draft_paged,
                 paged_ssd_cache_manager=self.paged_ssd_cache_manager,
-            )
-            self._draft_prefix_cache.set_cold_restore_callback(
-                self._restore_block_from_cold
             )
             logger.info(
                 f"SpecPrefill: draft model set with SSD cache (model_name={name})"

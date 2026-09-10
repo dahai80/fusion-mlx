@@ -310,9 +310,15 @@ def test_export_default_destination_returns_501(cache_client):
     # Catches any future change that reintroduces an extra field
     # (resolved path, manifest excerpt, issue URL) which would slip past
     # a soft string-denylist.
+    _EXPECTED_MSG = (
+        "cache export/import is not yet implemented in this build "
+        "(engine integration pending). The endpoint validates the request "
+        "schema and returns this 501 deliberately so a caller cannot mistake "
+        "a stub for success. Use /v1/cache/stats for live cache inspection."
+    )
     assert body["detail"] == {
         "error": {
-            "message": "engine integration pending",
+            "message": _EXPECTED_MSG,
             "type": "not_implemented_error",
             "code": None,
         }
@@ -503,9 +509,15 @@ def test_import_validated_request_returns_501(cache_client):
     assert resp.status_code == 501
     body = resp.json()
     # Codex r2 #3: exact envelope shape (not just message + type).
+    _EXPECTED_MSG = (
+        "cache export/import is not yet implemented in this build "
+        "(engine integration pending). The endpoint validates the request "
+        "schema and returns this 501 deliberately so a caller cannot mistake "
+        "a stub for success. Use /v1/cache/stats for live cache inspection."
+    )
     assert body["detail"] == {
         "error": {
-            "message": "engine integration pending",
+            "message": _EXPECTED_MSG,
             "type": "not_implemented_error",
             "code": None,
         }

@@ -148,25 +148,32 @@ def _async_store_cache_worker(
     threading.RLock so concurrent access from main and worker is safe.
     """
     try:
-        # Hold _mx_buffer_access_lock across the worker's mx-buffer
-        # access. store_cache eventually drives _extract_tensor_bytes,
-        # which reads raw bytes via the buffer protocol; serializing
-        # against inference-thread mx.clear_cache / mx.synchronize calls
-        # prevents a SIGABRT when those reclaim the underlying Metal
-        # buffer pool mid-read (#1106).
+        # P2-16 (#0909 audit): hold _mx_buffer_access_lock only for the
+        # stream sync, not across the entire store_cache call. store_cache
+        # interleaves tensor byte extraction (buffer protocol access) with
+        # SSD file writes; holding the lock across SSD IO blocked the
+        # inference thread's _sync_and_clear_cache from running during
+        # multi-second SSD writes, stalling step().
+        #
+        # The sync ensures all Metal commands are completed before we read
+        # tensor bytes. Arrays were pre-evaluated (mx.eval) by the caller
+        # (_cleanup_finished), so buffer data is materialized and safe to
+        # read via memoryview without holding the lock — mx.clear_cache only
+        # frees unreferenced allocator pool buffers, not the mx.array-backed
+        # buffers we are reading.
         with _mx_buffer_access_lock:
             with self._phase_timer("store_cache_worker_sync"):
                 _safe_sync_stream(self._stream)
-            block_table = self.block_aware_cache.store_cache(
-                request_id,
-                token_sequence_to_store,
-                cache_to_store,
-                model_cache_config=model_cache_config,
-                boundary_snapshots=intermediate_snapshots,
-                extra_keys=extra_keys,
-                extra_key_token_start=extra_key_token_start,
-                extra_key_ranges=extra_key_ranges,
-            )
+        block_table = self.block_aware_cache.store_cache(
+            request_id,
+            token_sequence_to_store,
+            cache_to_store,
+            model_cache_config=model_cache_config,
+            boundary_snapshots=intermediate_snapshots,
+            extra_keys=extra_keys,
+            extra_key_token_start=extra_key_token_start,
+            extra_key_ranges=extra_key_ranges,
+        )
         if block_table is None and self.paged_cache_manager is not None:
             block_table = self.paged_cache_manager.get_block_table(request_id)
         if block_table and self.paged_cache_manager is not None:

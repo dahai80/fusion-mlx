@@ -25,6 +25,14 @@ from fusion_mlx._cli_base import (
 )
 
 
+def _display_host(host: str) -> tuple[str, str | None]:
+    # R-P1-12 (#0908 audit): consolidated host_display + UDS computation
+    # previously duplicated 3× in cli_serve.py.
+    host_display = "localhost" if host == "0.0.0.0" else host
+    uds_path = _uds_path_from_host(host)
+    return host_display, uds_path
+
+
 def _serve_audio_mode(args, entry) -> None:
     """Bind the audio-only serve path for a resolved registry entry.
 
@@ -185,9 +193,8 @@ def _serve_audio_mode(args, entry) -> None:
 
     # Stamp the bind source-of-truth so the lifespan "Ready:" banner
     # prints the right URL. Mirrors the text-path block.
-    host_display = "localhost" if args.host == "0.0.0.0" else args.host
+    host_display, uds_path = _display_host(args.host)
     listen_fd = getattr(args, "listen_fd", None)
-    uds_path = _uds_path_from_host(args.host)
 
     # Port preflight — same friendly "port already in use" probe the
     # text path runs. Skip in --listen-fd mode (the supervisor owns
@@ -908,6 +915,40 @@ def _serve_from_model_dir(args):
     port_raw = getattr(args, "port", None)
     port = 11434 if port_raw is None else int(port_raw)
     config = ServerConfig(host=host, port=port, model_dir=args.model_dir)
+    # R-7: pass --profile into ServerConfig
+    _profile = getattr(args, "profile", None)
+    if _profile:
+        config.profile = _profile
+
+    # Pass spec-decode / dflash2 / dspark CLI flags through to the engine
+    # pool's scheduler_config. Without this, --enable-dflash2 +
+    # --dflash2-drafter-path are silently dropped in --model-dir mode:
+    # _convert_scheduler_config reads ServerConfig.scheduler, which defaults
+    # to an empty SchedulerConfig, so VLMBatchedEngine._apply_dflash2 /
+    # BatchedEngine._apply_dflash2 see an empty drafter path and skip
+    # loading. The single-model serve_command path builds scheduler_config
+    # at line ~1856; this mirrors the dflash2/dspark/suffix fields for the
+    # multi-model path.
+    from .scheduler.config import SchedulerConfig as _SchedCfg
+
+    _sched = _SchedCfg(
+        model_name="",
+        spec_decode=getattr(args, "spec_decode", "none"),
+        dflash_drafter_path=getattr(args, "dflash_drafter_path", "") or "",
+        dflash2_drafter_path=getattr(args, "dflash2_drafter_path", "") or "",
+        dflash2_block_size=getattr(args, "dflash2_block_size", 5) or 5,
+        dflash2_draft_bits=getattr(args, "dflash2_draft_bits", 4),
+        dspark_drafter_path=getattr(args, "dspark_drafter_path", "") or "",
+        dspark_draft_quant_bits=getattr(args, "dspark_draft_quant_bits", 8),
+        enable_suffix_decoding=getattr(args, "suffix_decoding", False),
+        suffix_max_draft=getattr(args, "suffix_max_draft", 0),
+        suffix_max_suffix_len=getattr(args, "suffix_max_suffix_len", 0),
+        suffix_min_confidence=getattr(args, "suffix_min_confidence", 0.0),
+        suffix_min_draft_len=getattr(args, "suffix_min_draft_len", 0),
+        chunked_prefill=(getattr(args, "chunked_prefill_tokens", 0) or 0) > 0,
+        prefill_step_size=getattr(args, "chunked_prefill_tokens", 4096) or 4096,
+    )
+    config.scheduler = _sched
 
     logger.info(
         "serve --model-dir=%s host=%s port=%d (multi-model engine-pool server)",
@@ -917,12 +958,16 @@ def _serve_from_model_dir(args):
     )
     logger.info("serving models from %s on %s:%s", args.model_dir, host, port)
 
-    app = create_app(config)
-
     log_level = getattr(args, "log_level", "INFO")
     if not isinstance(log_level, str):
         log_level = "INFO"
     uvicorn_log_level = log_level.lower()
+
+    from .server import configure_logging as _configure_logging
+
+    _configure_logging(log_level)
+
+    app = create_app(config)
 
     # #569: route --model-dir through the same UDS-aware dispatch the
     # single-model serve path uses (_run_uvicorn → Server.run()), instead
@@ -930,8 +975,7 @@ def _serve_from_model_dir(args):
     # fails with Errno 8. Mirror the bind-config stamp so the lifespan
     # "Ready:" banner reports the real listener (uds/host/fd).
     listen_fd = getattr(args, "listen_fd", None)
-    uds_path = _uds_path_from_host(args.host)
-    host_display = "localhost" if args.host == "0.0.0.0" else args.host
+    host_display, uds_path = _display_host(args.host)
 
     if uds_path is not None:
         print(
@@ -1196,6 +1240,12 @@ def _stage_server_config(args, server, logger):
     # Alias info for /v1/models
     _get_config().model_alias = getattr(args, "_original_alias", None)
 
+    # R-7: profile gate
+    _profile_arg = getattr(args, "profile", None)
+    if _profile_arg:
+        _get_config().profile = _profile_arg
+        logger.info("profile from --profile flag: %s", _profile_arg)
+
     # API key
     server._api_key = server._resolve_api_key(args.api_key)
     _get_config().default_timeout = args.timeout
@@ -1336,6 +1386,8 @@ def _print_startup_banner(args, cors_origins, gc_control, logger):
         features.append("dflash: single-user")
     if getattr(args, "enable_dflash2", False):
         features.append("dflash2: single-user")
+    _profile = getattr(args, "profile", None) or "standard"
+    features.append(f"profile: {_profile}")
     print()
     print("  🐆 Fusion-MLX")
     print("  ─────────")
@@ -2222,9 +2274,8 @@ def serve_command(args):
     # the port is actually bound — printing it here would lie to users who
     # curl immediately and get connection-refused while shaders compile.
     print()
-    host_display = "localhost" if args.host == "0.0.0.0" else args.host
+    host_display, uds_path = _display_host(args.host)
     listen_fd = getattr(args, "listen_fd", None)
-    uds_path = _uds_path_from_host(args.host)
     if uds_path is not None:
         print(
             f"  Starting server on unix socket: {uds_path} "

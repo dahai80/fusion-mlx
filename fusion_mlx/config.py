@@ -142,10 +142,10 @@ class SchedulerConfig:
     boundary_prefix_max_bytes: int = 0  # bytes; 0 = store default (20 GiB)
     # GC / cache-clear cadence (steps between calls).
     gc_cleanup_interval: int = 0  # 0 = disabled
-    mlx_cache_cleanup_interval: int = 8192
+    mlx_cache_cleanup_interval: int = 256
     memory_check_interval: int = 64
     admin_snapshot_interval: int = 32
-    decode_clear_interval: int = 16384
+    decode_clear_interval: int = 256
 
     def __post_init__(self):
         # NOTE: chunked_prefill_tokens and use_paged_cache historically conflicted,
@@ -259,6 +259,10 @@ class ServerConfig:
     cloud_router_model: str | None = None
     cloud_router_api_key: str | None = None
     cloud_router_threshold: int = 32768
+    # RT-12 (#0909 audit): consent gate for cloud fallback. Default OFF
+    # — prompts must NOT silently leave the local process for a
+    # third-party cloud without explicit operator consent.
+    cloud_fallback_consent: bool = False
 
     # --- Rapid-MLX runtime state fields ---
     engine: Any = None
@@ -352,6 +356,10 @@ class ServerConfig:
 
     # Multi-model
     model_registry: Any = None
+
+    # R-7 profile gate: lite / standard / full
+    profile: str | None = None
+    disabled_modules: list[str] = field(default_factory=list)
 
     # KV cache dtype (pre-load fallback for metrics)
     kv_cache_dtype: str | None = None

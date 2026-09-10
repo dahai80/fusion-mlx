@@ -187,6 +187,9 @@ def _run_bench_once(
             ttft_ms=float(raw.get("ttft_ms", 0.0)),
             notes=raw.get("notes", ""),
         )
+    # Fall back to the module-level run_benchmark so tests that
+    # monkeypatch fusion_mlx.bench.run_benchmark still work. In
+    # production this raises BenchmarkRunnerUnavailable (use CLI).
     from . import run_benchmark
 
     raw = run_benchmark(config_id) or {}
@@ -198,7 +201,7 @@ def _run_bench_once(
         tok_per_sec=float(raw.get("tokens_per_second", 0.0)),
         vram_used_gb=float(raw.get("vram_used_gb", 0.0)),
         ttft_ms=float(raw.get("ttft_ms", 0.0)),
-        notes="local-stub-runner",
+        notes=raw.get("notes", "fallback-runner"),
     )
 
 
