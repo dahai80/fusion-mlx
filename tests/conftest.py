@@ -147,7 +147,17 @@ try:
 except ImportError:
     sys.modules["mlx_vlm"] = MagicMock()
     sys.modules["mlx_vlm.generate"] = MagicMock()
-    sys.modules["mlx_vlm.models"] = MagicMock()
+    # mlx_vlm.models must be a real package (with __path__) so that
+    # `from mlx_vlm.models.gemma3.config import TextConfig` can resolve
+    # the submodule via sys.modules. A bare MagicMock has no __path__
+    # → "is not a package" → collection crash.
+    _vlm_models = types.ModuleType("mlx_vlm.models")
+    _vlm_models.__path__ = []
+    sys.modules["mlx_vlm.models"] = _vlm_models
+    # Mock the specific submodules imported by fusion_mlx video backends.
+    sys.modules["mlx_vlm.models.gemma3"] = MagicMock()
+    sys.modules["mlx_vlm.models.gemma3.config"] = MagicMock()
+    sys.modules["mlx_vlm.models.gemma3.language"] = MagicMock()
     sys.modules["mlx_vlm.utils"] = MagicMock()
 
 
@@ -224,6 +234,14 @@ _mock_module("mistral_common.tokens.tokenizers")
 _mock_module("sentencepiece")
 _mock_module("tiktoken")
 _mock_module("socksio")
+# aiohttp: optional HTTP client used by a few tests. CI [dev] extra
+# does not include it. Mock to prevent collection errors.
+try:
+    import aiohttp as _real_aiohttp
+
+    sys.modules["aiohttp"] = _real_aiohttp
+except ImportError:
+    _mock_module("aiohttp")
 # openai_harmony: preserve real package if available (tests import HarmonyEncodingName)
 try:
     import openai_harmony as _real_openai_harmony
