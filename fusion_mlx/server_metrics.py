@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 # WARNING on first failure, so a persistent recorder bug surfaces once in the
 # log instead of being perma-silent at DEBUG (invisible by default).
 # A-P2-4: moved onto ServerMetrics instance (under self._lock) — see below.
+# Fallback: if get_server_metrics() itself raises, we can't access the
+# instance-level set, so use this module-level set to still dedup.
+_metrics_warned_fallback: set[str] = set()
 
 _KV_CACHE_DTYPE_KNOWN = ("bf16", "int8", "int4")
 _STATS_JSON = Path.home() / ".fusion-mlx" / "stats.json"
@@ -493,11 +496,18 @@ def record_llm_metrics(
     except Exception as exc:
         # EH-7 (#811 audit 0906): warn once so a persistent recorder bug is
         # visible by default, then debug to avoid per-request flooding.
-        metrics = get_server_metrics()
-        with metrics._lock:
-            already = "record_request_complete" in metrics._metrics_warned
+        # A-P2-4: dedup via instance-level set under lock. Fallback to
+        # module-level set if get_server_metrics() itself is broken.
+        try:
+            metrics = get_server_metrics()
+            with metrics._lock:
+                already = "record_request_complete" in metrics._metrics_warned
+                if not already:
+                    metrics._metrics_warned.add("record_request_complete")
+        except Exception:
+            already = "record_request_complete" in _metrics_warned_fallback
             if not already:
-                metrics._metrics_warned.add("record_request_complete")
+                _metrics_warned_fallback.add("record_request_complete")
         if not already:
             logger.warning(
                 "Failed to record LLM metrics for %s (further failures at "
@@ -513,11 +523,16 @@ def record_llm_disconnect_cancel() -> None:
     try:
         get_server_metrics().record_disconnect_cancel()
     except Exception as exc:
-        metrics = get_server_metrics()
-        with metrics._lock:
-            already = "record_disconnect_cancel" in metrics._metrics_warned
+        try:
+            metrics = get_server_metrics()
+            with metrics._lock:
+                already = "record_disconnect_cancel" in metrics._metrics_warned
+                if not already:
+                    metrics._metrics_warned.add("record_disconnect_cancel")
+        except Exception:
+            already = "record_disconnect_cancel" in _metrics_warned_fallback
             if not already:
-                metrics._metrics_warned.add("record_disconnect_cancel")
+                _metrics_warned_fallback.add("record_disconnect_cancel")
         if not already:
             logger.warning(
                 "Failed to record disconnect cancel (further failures at " "DEBUG): %s",
@@ -533,11 +548,16 @@ def record_llm_failure(model_id: str | None = None) -> None:
     try:
         get_server_metrics().record_request_failure(model_id=model_id)
     except Exception as exc:
-        metrics = get_server_metrics()
-        with metrics._lock:
-            already = "record_request_failure" in metrics._metrics_warned
+        try:
+            metrics = get_server_metrics()
+            with metrics._lock:
+                already = "record_request_failure" in metrics._metrics_warned
+                if not already:
+                    metrics._metrics_warned.add("record_request_failure")
+        except Exception:
+            already = "record_request_failure" in _metrics_warned_fallback
             if not already:
-                metrics._metrics_warned.add("record_request_failure")
+                _metrics_warned_fallback.add("record_request_failure")
         if not already:
             logger.warning(
                 "Failed to record request failure for %s (further failures at "

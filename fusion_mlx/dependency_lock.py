@@ -28,9 +28,13 @@ _BLOCKSIZE = 65536
 def _iter_vendor_files(root: Path) -> list[Path]:
     files: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        dirnames[:] = [
+            d for d in dirnames if not d.startswith(".") and d != "__pycache__"
+        ]
         for fname in sorted(filenames):
             if fname.startswith("."):
+                continue
+            if fname.endswith((".pyc", ".pyo")):
                 continue
             fp = Path(dirpath) / fname
             if fp.is_file():
