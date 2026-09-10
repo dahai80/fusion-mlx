@@ -150,7 +150,8 @@ def configure_logging(
     from logging.handlers import BaseRotatingHandler
 
     _file_handlers = [
-        h for h in root_logger.handlers
+        h
+        for h in root_logger.handlers
         if isinstance(h, (BaseRotatingHandler, logging.FileHandler))
     ]
     root_logger.handlers.clear()

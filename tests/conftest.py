@@ -178,6 +178,19 @@ _inject_mock_pkg("mlx_audio")
 _inject_mock_pkg("dflash_mlx")
 _inject_mock_pkg("dflash")
 
+# cv2 (opencv): heavy optional dep pulled by video backends
+# (latentsync_mlx, musetalk_mlx). CI installs only [dev] extras, not
+# [video], so cv2 is absent on macOS CI runners. Without this mock,
+# the entire fusion_mlx.engines package fails to import (VideoGenEngine
+# → video_backends → latentsync_mlx → cv2), cascading 215+ collection
+# errors to tests that never touch video. Preserve real cv2 when present.
+try:
+    import cv2 as _real_cv2
+
+    sys.modules["cv2"] = _real_cv2
+except ImportError:
+    sys.modules["cv2"] = MagicMock()
+
 # Mock heavy/optional dependencies
 # transformers: preserve real package if available (mlx_lm depends on it)
 try:
