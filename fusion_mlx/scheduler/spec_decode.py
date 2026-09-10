@@ -1148,6 +1148,9 @@ def dflash2_spec_step(
 
     prompt_cache = gen.prompt_cache
     model = gen.model
+    # VLM: gen.model is VLMModelAdapter — _hidden_states installed on inner
+    # _language_model. Unwrap for get_hidden / store_verify_hidden.
+    inner_model = getattr(model, "_language_model", None) or model
     drafter = dflash2_state.runtime.drafter
     if drafter is None or not drafter._bound:
         return []
@@ -1159,17 +1162,27 @@ def dflash2_spec_step(
         if hasattr(c, "offset"):
             current_offset = max(current_offset, c.offset)
 
-    if drafter._last_hidden is None:
+    current_offset = int(current_offset)
+
+    first_step = drafter._last_hidden is None
+    # Clear stale verify hidden — the regular step's forward refreshed
+    # model._hidden_states to the current 1-token position. Without this,
+    # get_hidden returns the 5-token hidden from the previous verify
+    # forward, causing the draft to propose with wrong context.
+    drafter._last_hidden = None
+    if first_step:
         drafter.align_draft_cache(current_offset)
 
-    hidden = drafter.get_hidden(model)
+    hidden = drafter.get_hidden(inner_model)
 
     try:
         with mx.stream(scheduler._stream):
             draft_tokens = drafter.propose_block(current_token, hidden, temperature)
         mx.async_eval(draft_tokens)
-    except (IndexError, RuntimeError) as e:
-        logger.debug("dflash2_spec: propose failed: %s", e)
+    except (IndexError, RuntimeError, ValueError, TypeError) as e:
+        logger.warning(
+            "dflash2_spec: propose failed: %s (type=%s)", e, type(e).__name__
+        )
         return []
 
     draft_list = draft_tokens[0].tolist()
@@ -1177,68 +1190,65 @@ def dflash2_spec_step(
     if K == 0:
         return []
 
-    verify_input = mx.concatenate(
-        [mx.array([[current_token]], dtype=mx.uint32), draft_tokens], axis=1
-    )
+    sampled_from_regular = None
+    if gen._next_tokens is not None:
+        try:
+            sampled_from_regular = int(gen._next_tokens.item())
+        except Exception:
+            pass
+
+    # D1 gate: draft[0] must match the regular step's sampled prediction.
+    # No GPU sync needed — sampled_from_regular is already on device.
+    if sampled_from_regular is not None and draft_list[0] != sampled_from_regular:
+        dflash2_state.record_result(0, K)
+        return []
 
     non_trimmable_snapshots = _snapshot_non_trimmable_caches(prompt_cache)
 
+    # Feed [D1, ..., DK] — NOT [current_token, D1, ...]. The cache is
+    # already past current_token; re-feeding it would double-count and
+    # corrupt the KV state. logits[0]=pred after D1 → verify D2, etc.
+    # D1 is verified above via sampled_from_regular (no GPU sync needed).
     with mx.stream(scheduler._stream):
         t0 = time.perf_counter()
-        logits = model(verify_input, cache=prompt_cache)
-        logits = logits.squeeze(0)
-        drafter.store_verify_hidden(model)
-        if temperature > 0:
-            from dflash.model_mlx import _sampling_probs
-
-            target_probs = _sampling_probs(logits, temperature)
-            mx.eval(target_probs)
-        else:
-            target_tokens = mx.argmax(logits, axis=-1)
-            mx.eval(target_tokens)
+        verified, n_accepted, cache_tokens_processed = _run_spec_verify(
+            model,
+            current_token,
+            draft_list,
+            prompt_cache,
+            sampled_from_regular=sampled_from_regular,
+        )
     dt = time.perf_counter() - t0
 
-    if temperature > 0:
-        from dflash.model_mlx import _rejection_sample
-
-        _dp = getattr(drafter, "_last_draft_probs", None)
-        _di = getattr(drafter, "_last_draft_indices", None)
-        if _dp is not None:
-            accepted, bonus = _rejection_sample(draft_tokens, target_probs, _dp, _di)
-        else:
-            t_list = mx.argmax(logits, axis=-1).tolist()
-            accepted = next(
-                (i for i in range(K) if draft_list[i] != t_list[i]),
-                K,
-            )
-            bonus = t_list[accepted]
-    else:
-        t_list = target_tokens.tolist()
-        accepted = next(
-            (i for i in range(K) if draft_list[i] != t_list[i]),
-            K,
-        )
-        bonus = t_list[accepted]
-
-    new_tokens = draft_list[:accepted] + [bonus]
-
-    if accepted < K:
+    # Cache rollback for rejected tokens. Mirrors dflash_spec_step line 639+.
+    if cache_tokens_processed > 0 and n_accepted < K:
+        n_rejected = cache_tokens_processed - n_accepted
         if non_trimmable_snapshots is not None:
             _restore_non_trimmable_caches(prompt_cache, non_trimmable_snapshots)
-            replay = mx.array([current_token] + draft_list[:accepted], dtype=mx.uint32)
-            with mx.stream(scheduler._stream):
-                replay_logits = model(replay[None], cache=prompt_cache)
-                mx.eval(replay_logits)
-            trim_count = K + 1
+            if n_accepted > 0:
+                replay = mx.array(draft_list[:n_accepted], dtype=mx.uint32)
+                with mx.stream(scheduler._stream):
+                    replay_logits = model(replay[None], cache=prompt_cache)
+                    mx.eval(replay_logits)
+            trim_count = cache_tokens_processed
         else:
-            trim_count = K - accepted
+            trim_count = n_rejected
         if trim_count > 0:
             _trim_trimmable(prompt_cache, trim_count)
 
-    expected_draft_offset = current_offset + accepted + 1
+    # Draft cache: after propose the draft advanced by block_size. Trim
+    # to match the target's post-step offset (current_offset + n_accepted).
+    expected_draft_offset = current_offset + n_accepted
     drafter.trim_draft_cache(expected_draft_offset)
 
-    dflash2_state.record_result(accepted, K)
+    dflash2_state.record_result(n_accepted, K)
+
+    # verified = [D1..D_n_accepted, bonus]. The bonus (verified[-1]) will
+    # be returned by the next regular _step() via gen._next_tokens —
+    # _step() returns the INPUT token as the Response, so emitting it here
+    # would double-count. Emit only accepted drafts. Mirrors eagle3 line 417.
+    bonus = verified[-1]
+    accepted_drafts = verified[:-1]
 
     if dflash2_state.total_spec_steps % DFLASH2_SPEC_LOG_INTERVAL == 1:
         stats = dflash2_state.get_stats()
@@ -1247,12 +1257,24 @@ def dflash2_spec_step(
             "verify=%.1fms, rate=%.1f%%, circuit=%s",
             dflash2_state.total_spec_steps,
             drafter.block_size,
-            accepted,
+            n_accepted,
             K,
-            100.0 * accepted / K if K else 0,
+            100.0 * n_accepted / K if K else 0,
             dt * 1000,
             stats["acceptance_rate"] * 100,
             stats["circuit_tripped"],
         )
 
-    return _emit_spec_tokens(scheduler, request_id, new_tokens)
+    outputs = _emit_spec_tokens(scheduler, request_id, accepted_drafts)
+
+    # _emit_spec_tokens set gen._next_tokens = accepted_drafts[-1] and
+    # appended accepted_drafts[:-1] to gen.tokens[0] (it assumes tokens[-1]
+    # is the next feed token). Override: the BONUS is the next feed token,
+    # and ALL accepted drafts belong in gen.tokens. Append the last
+    # accepted draft that _emit_spec_tokens skipped, then set _next_tokens
+    # to the bonus. Mirrors eagle3/ngram manual emission + gen state.
+    gen._next_tokens = mx.array([bonus], dtype=mx.uint32)
+    if gen.tokens and len(gen.tokens) > 0 and accepted_drafts:
+        gen.tokens[0].append(accepted_drafts[-1])
+
+    return outputs

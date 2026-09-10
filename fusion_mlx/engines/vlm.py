@@ -702,8 +702,15 @@ class VLMBatchedEngine(BaseEngine):
                 ),
             )
             # Bind drafter to the scheduler's already-loaded VLM target.
+            # VLMModelAdapter wraps the language model as _language_model;
+            # dflash bind()/ _patch_model need the inner module to find
+            # embed_tokens + layers.
             sched = self._engine.engine.scheduler
-            dflash2_rt.drafter.bind(sched.model)
+            target = sched.model
+            inner_lm = getattr(target, "_language_model", None)
+            if inner_lm is not None:
+                target = inner_lm
+            dflash2_rt.drafter.bind(target)
             sched._dflash2_runtime = dflash2_rt
             logger.info(
                 "DFlash2 spec-decode enabled for VLM %s (draft=%s, block_size=%d, draft_bits=%s)",

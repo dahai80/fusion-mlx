@@ -119,6 +119,7 @@ class DFlash2InTargetDrafter:
     def align_draft_cache(self, target_offset: int) -> None:
         if self._draft_cache is None:
             self.reset()
+        target_offset = int(target_offset)
         for c in self._draft_cache:
             c.offset = target_offset
 
