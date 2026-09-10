@@ -72,9 +72,9 @@ async def test_engine_core_creates_idle_event_in_loop():
         return
 
     assert hasattr(
-        engine, "_idle_event"
-    ), "EngineCore must declare the _idle_event slot — see issue #265"
-    assert engine._idle_event is None, (
-        "_idle_event must start as None and be created inside _engine_loop "
+        engine, "_wake_event"
+    ), "EngineCore must declare the _wake_event slot — see issue #265"
+    assert engine._wake_event is None, (
+        "_wake_event must start as None and be created inside _engine_loop "
         "to bind to the right asyncio loop"
     )
