@@ -1253,7 +1253,8 @@ class TestStepBurst:
             )
             engine.scheduler.has_requests = MagicMock(return_value=True)
             with patch(
-                "fusion_mlx.engine_core.time.monotonic", side_effect=[100.0, 200.0]
+                "fusion_mlx.engine_core.time.monotonic",
+                side_effect=[100.0, 100.0, 200.0],
             ):
                 outs = engine._step_burst()
             assert len(outs) == 1

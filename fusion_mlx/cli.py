@@ -139,6 +139,18 @@ Examples:
         help="The model name used in the API. If not specified, the model argument is used.",
     )
     serve_parser.add_argument(
+        "--profile",
+        type=str,
+        default=None,
+        choices=["lite", "standard", "full"],
+        help=(
+            "Server profile: lite (LLM text only), standard (LLM + audio + "
+            "embeddings + ner + rerank + ocr + spec + mcp), full (everything "
+            "including image/video/agent). Default: standard (or settings.json "
+            "profile field). Controls which routes/engines are mounted."
+        ),
+    )
+    serve_parser.add_argument(
         "--force-disk-check",
         action="store_true",
         help=(

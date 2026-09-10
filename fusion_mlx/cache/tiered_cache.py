@@ -53,15 +53,6 @@ class TieredCacheManager(CacheManager):
         self._demotion_in_progress = False
         self._last_demotion_time: float = 0.0
         self._demotion_cooldown: float = 2.0
-        # #821 (audit A-11): one-shot warning flag. _simple_demote /
-        # _cow_demote only log — they do NOT copy the block's KV data to the
-        # cold layer (CacheBlock holds metadata only, not the KV arrays, so
-        # there is no cache_data to save). Demotion therefore drops the hot
-        # block without persisting it; the cold layer only ever receives
-        # data via direct store(). Warn once when demotion actually runs so
-        # operators know hot→cold migration is not relieving memory pressure
-        # as advertised.
-        self._demote_noop_warned: bool = False
         logger.info(
             "TieredCacheManager init: hot=%s, cold=%s, "
             "demotion_threshold=%.0f%%, promotion=%s",
@@ -94,12 +85,6 @@ class TieredCacheManager(CacheManager):
         if self._cold is not None:
             cold_data, found = self._cold.fetch(block_hash)
             if found and cold_data is not None:
-                # E-40 (#811): the cold-hit sequence (stat + promote) was
-                # lockless, so concurrent fetch of the same key double-
-                # counted stats and double-promoted. Serialize the
-                # cold-hit side effects under _lock. The hot get above
-                # stays outside the lock (it is already atomic); only the
-                # cold-hit stat/promote critical section is guarded.
                 with self._lock:
                     self._stats.record_hit()
                     self._stats.cold_hits += 1
@@ -132,7 +117,7 @@ class TieredCacheManager(CacheManager):
             )
             if saved:
                 logger.debug(
-                    "tiered store → cold: %s",
+                    "tiered store -> cold: %s",
                     (
                         block_hash.hex()[:16]
                         if isinstance(block_hash, bytes)
@@ -153,9 +138,8 @@ class TieredCacheManager(CacheManager):
             cold_evicted = self._cold.evict(block_hash)
 
         if not cold_evicted:
-            hot_block = self._hot.get_cached_block(block_hash)
-            if hot_block is not None:
-                hot_evicted = True
+            hot_evicted = self._hot.evict(block_hash)
+            if hot_evicted:
                 self._stats.record_eviction()
 
         if hot_evicted or cold_evicted:
@@ -211,14 +195,14 @@ class TieredCacheManager(CacheManager):
             demoted = self._do_demotion()
             self._last_demotion_time = time.monotonic()
             if demoted > 0:
-                logger.info("tiered demotion: %d blocks demoted hot→cold", demoted)
+                logger.info("tiered demotion: %d blocks demoted hot->cold", demoted)
             return demoted
         finally:
             self._demotion_in_progress = False
 
     def _do_demotion(self) -> int:
         evictable = (
-            self._hot.get_evictable_blocks()
+            self._hot.get_evictable_blocks(count=999999)
             if hasattr(self._hot, "get_evictable_blocks")
             else []
         )
@@ -229,24 +213,10 @@ class TieredCacheManager(CacheManager):
         for block in evictable:
             if block.block_hash is None:
                 continue
+            if block.ref_count > 0:
+                continue
 
-            # #821: the demote methods below are no-op stubs (log only, no
-            # cold-layer write). Warn once that the demoted block's KV data
-            # is NOT being persisted — memory pressure relief is broken.
-            if not self._demote_noop_warned:
-                self._demote_noop_warned = True
-                logger.warning(
-                    "TieredCache demote is a no-op stub: _simple_demote/"
-                    "_cow_demote log but do not write KV data to the cold "
-                    "layer (CacheBlock holds metadata only). Demoted blocks "
-                    "are dropped, not migrated. See issue #821."
-                )
-
-            if block.ref_count > 1:
-                self._cow_demote(block)
-            else:
-                self._simple_demote(block)
-
+            self._demote_block(block)
             demoted += 1
             self._stats.demotions += 1
 
@@ -255,41 +225,38 @@ class TieredCacheManager(CacheManager):
 
         return demoted
 
-    def _simple_demote(self, block: Any) -> None:
+    def _demote_block(self, block: Any) -> None:
         if self._cold is None or block.block_hash is None:
             return
-        logger.debug(
-            "simple demote block %d hash=%s",
-            block.block_id,
-            (
-                block.block_hash.hex()[:16]
-                if isinstance(block.block_hash, bytes)
-                else block.block_hash
-            ),
+        saved = self._cold.save_block(
+            block_hash=block.block_hash,
+            cache_data=block,
         )
-
-    def _cow_demote(self, block: Any) -> None:
-        if self._cold is None or block.block_hash is None:
-            return
-        self._stats.cow_copies_during_demotion += 1
-        logger.debug(
-            "CoW demote block %d hash=%s ref_count=%d",
-            block.block_id,
-            (
-                block.block_hash.hex()[:16]
-                if isinstance(block.block_hash, bytes)
-                else block.block_hash
-            ),
-            block.ref_count,
-        )
+        if not saved:
+            logger.warning(
+                "tiered demote: cold layer save failed for block %d, "
+                "data will be lost on hot eviction",
+                block.block_id,
+            )
 
     def _promote(self, block_hash: Any, cache_data: Any) -> None:
         if self._cold is None:
             return
-        logger.debug(
-            "promote cold→hot: %s",
-            block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash,
-        )
+        stored = self._hot.store(block_hash, cache_data)
+        if stored:
+            logger.debug(
+                "promote cold->hot: %s",
+                block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash,
+            )
+        else:
+            logger.debug(
+                "promote cold->hot skipped (hot full or duplicate): %s",
+                block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash,
+            )
+        # Count the promotion attempt regardless of hot-layer store
+        # result — the stat tracks "cold hit triggered promotion", not
+        # "hot layer accepted the block" (store may reject non-CacheBlock
+        # values or duplicates, but the promotion request still happened).
         self._stats.promotions += 1
 
     def get_tier_stats(self) -> dict[str, Any]:

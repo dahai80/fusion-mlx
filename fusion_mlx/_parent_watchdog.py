@@ -30,10 +30,27 @@ _SHUTDOWN_EVENT = threading.Event()
 _MAX_SHUTDOWN_WAIT = 20.0
 _STATUS_DIR = Path.home() / ".fusion-mlx" / "runtime"
 _STATUS_FILE = _STATUS_DIR / "server.status"
+# ENG-04 (#0909 audit): port-suffixed PID file so multi-instance
+# deployments don't overwrite each other's PID. The legacy fixed
+# "server.pid" caused the second instance to clobber the first; the
+# supervisor then SIGTERMs the wrong PID, killing a running instance.
+# _active_pid_file tracks which file this instance wrote so
+# remove_pid_file() cleans up the correct one.
 _PID_FILE = _STATUS_DIR / "server.pid"
+_active_pid_file: Path | None = None
 _CRASH_COUNTER_FILE = _STATUS_DIR / "crash.counter"
 _MAX_CRASH_COUNT = 5
 _CRASH_WINDOW = 300  # 5 minutes
+
+# ENG-05: track the watchdog thread so stop_watchdog() can signal it.
+_active_watchdog_thread: threading.Thread | None = None
+_active_watchdog_stop_event: threading.Event | None = None
+
+
+def _resolve_pid_file(port: int | None = None) -> Path:
+    if port and port > 0:
+        return _STATUS_DIR / f"server.{port}.pid"
+    return _PID_FILE
 
 
 def ensure_status_dir() -> None:
@@ -43,19 +60,31 @@ def ensure_status_dir() -> None:
         logger.debug("status dir creation failed (non-fatal)")
 
 
-def write_pid_file() -> None:
+def write_pid_file(port: int | None = None) -> None:
+    global _active_pid_file
     ensure_status_dir()
+    pid_file = _resolve_pid_file(port)
     try:
-        _PID_FILE.write_text(str(os.getpid()))
+        # ENG-04: atomic write via temp + rename. Path.write_text()
+        # truncates then writes — a concurrent reader (supervisor
+        # checking PID) can see a truncated/empty file. os.rename is
+        # atomic on POSIX.
+        tmp = pid_file.with_suffix(".pid.tmp")
+        tmp.write_text(str(os.getpid()))
+        os.rename(tmp, pid_file)
+        _active_pid_file = pid_file
     except OSError as exc:
         logger.debug("pid file write failed: %s", exc)
 
 
 def remove_pid_file() -> None:
+    global _active_pid_file
+    target = _active_pid_file or _PID_FILE
     try:
-        _PID_FILE.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
     except OSError:
         pass
+    _active_pid_file = None
 
 
 def write_status(status: str) -> None:
@@ -177,9 +206,33 @@ def install_parent_watchdog(
 
     t = threading.Thread(target=_watch, name="parent-watchdog", daemon=True)
     t._rapid_mlx_stop_event = stop_event  # type: ignore[attr-defined]
+    # ENG-05 (#0909 audit): track the thread + stop_event at module
+    # level so stop_watchdog() can signal it without callers needing
+    # to hold a reference to the thread.
+    global _active_watchdog_thread, _active_watchdog_stop_event
+    _active_watchdog_thread = t
+    _active_watchdog_stop_event = stop_event
     t.start()
     logger.info("parent watchdog installed, monitoring ppid=%d", ppid)
     return t
+
+
+def stop_watchdog() -> None:
+    """Signal the parent watchdog thread to stop.
+
+    ENG-05 (#0909 audit): the watchdog had no public stop API — the
+    stop_event was only on a non-standard thread attribute. During
+    graceful shutdown, if stop_event was not set, the watchdog could
+    detect PPID change (reparenting during shutdown) and fire SIGKILL,
+    interrupting in-flight request draining. This must be called early
+    in the shutdown sequence.
+    """
+    global _active_watchdog_thread, _active_watchdog_stop_event
+    if _active_watchdog_stop_event is not None:
+        _active_watchdog_stop_event.set()
+    _active_watchdog_thread = None
+    _active_watchdog_stop_event = None
+    logger.debug("parent watchdog stop signaled")
 
 
 def install_signal_handlers() -> None:

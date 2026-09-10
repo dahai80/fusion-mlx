@@ -14,7 +14,11 @@ fail=0
 
 # Each line: <package> <version> <expected_wheel_sha256> <expected_sdist_sha256>
 # Expected values captured 2026-08-05 from https://pypi.org/pypi/<pkg>/<ver>/json
+# G5 (#0910 audit): added mlx (wheel-only, no sdist). mflux-fusion==0.18.0 is
+# pinned in pyproject.toml but not published on PyPI (custom fork); it is
+# version-locked at install time, not hash-verified here.
 PINS=(
+    "mlx 0.32.0 c6feb17e32160b70c7634aab925cf3f8c5c7bebbf99f227c48450478e1008af2 "
     "mlx-lm 0.31.3 758cfddf1180053b7613db76fad3d246a331a2a905808e1164a275621fc983b8 61eb0e3ba09444f77f874aff295401d7ccd20b39495cbbce0c782a15474ce733"
     "mlx-embeddings 0.1.0 3fe1feaa786d3b546ccd8909f6b4c22bd3bcce097616fce83173ededd30e6630 f80c1e1be26ff7bd22b15c1fba4cc03afd44c86e00a431b5fa75ffd7500affb1"
     "mlx-vlm 0.5.0 3351d6ccf609cbf57a4c8cd8308e9a1ce469883d8679d9968c6c6f77af016419 24563cd1b3a399fd941b2359100628306e2754db1b48780516d1283138258793"
@@ -45,12 +49,16 @@ check_pin() {
         echo "FAIL  ${pkg}==${ver} wheel: expected ${exp_wheel}, got ${got_wheel}"
         bad=1
     fi
-    if [ -z "$got_sdist" ]; then
-        echo "FAIL  ${pkg}==${ver}: no sdist on PyPI"
-        bad=1
-    elif [ "$got_sdist" != "$exp_sdist" ]; then
-        echo "FAIL  ${pkg}==${ver} sdist: expected ${exp_sdist}, got ${got_sdist}"
-        bad=1
+    # G5: empty exp_sdist = wheel-only package (e.g. mlx on macOS). Skip
+    # sdist check rather than failing on "no sdist".
+    if [ -n "$exp_sdist" ]; then
+        if [ -z "$got_sdist" ]; then
+            echo "FAIL  ${pkg}==${ver}: no sdist on PyPI"
+            bad=1
+        elif [ "$got_sdist" != "$exp_sdist" ]; then
+            echo "FAIL  ${pkg}==${ver} sdist: expected ${exp_sdist}, got ${got_sdist}"
+            bad=1
+        fi
     fi
     if [ "$bad" -eq 0 ]; then
         echo "OK    ${pkg}==${ver}  wheel=${got_wheel:0:12}...  sdist=${got_sdist:0:12}..."

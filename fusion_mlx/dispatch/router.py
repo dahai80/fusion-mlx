@@ -35,6 +35,7 @@ class RequestRouter:
         embedding_engine: Any = None,
         reranker_engine: Any = None,
         cloud_router: Any = None,
+        cloud_fallback_consent: bool = False,
     ):
         self.llm_engine = llm_engine
         self.vlm_engine = vlm_engine
@@ -45,6 +46,12 @@ class RequestRouter:
         self.embedding_engine = embedding_engine
         self.reranker_engine = reranker_engine
         self.cloud_router = cloud_router
+        # RT-12 (#0909 audit): consent gate for cloud fallback. Mirrors
+        # SmartRouter's cloud_fallback_consent (default OFF). Without
+        # explicit consent, prompts must NOT silently leave the local
+        # process for a third-party cloud — fall through to local.
+        self.cloud_fallback_consent = cloud_fallback_consent
+        self._cloud_consent_warned = False
 
     def _has_images(self, messages: list[dict[str, Any]]) -> bool:
         """Check if any message contains image content."""
@@ -117,6 +124,26 @@ class RequestRouter:
 
         raise RuntimeError("No suitable engine available for request")
 
+    def _check_cloud_consent(self, new_tokens: int) -> bool:
+        """Return True if cloud routing is consented and should proceed."""
+        if not self.cloud_router:
+            return False
+        if not self.cloud_fallback_consent:
+            # RT-12 (#0909 audit): consent gate. Without explicit
+            # operator consent, prompts must NOT silently leave the
+            # local process for a third-party cloud provider.
+            if not self._cloud_consent_warned:
+                self._cloud_consent_warned = True
+                logger.warning(
+                    "Cloud routing suppressed (uncached_tokens=%d): "
+                    "cloud_fallback_consent is OFF. Set "
+                    "cloud_fallback_consent=True to enable sending "
+                    "prompts to the cloud provider. See issue #822.",
+                    new_tokens,
+                )
+            return False
+        return True
+
     async def route_chat(
         self,
         messages: list[dict],
@@ -136,10 +163,12 @@ class RequestRouter:
                 messages
             )
             if self.cloud_router.should_route_to_cloud(new_tokens):
-                logger.info(
-                    f"Routing {new_tokens}-token request to cloud ({self.cloud_router.cloud_model})"
-                )
-                return await self.cloud_router.completion(messages, **kwargs)
+                if self._check_cloud_consent(new_tokens):
+                    logger.info(
+                        f"Routing {new_tokens}-token request to cloud "
+                        f"({self.cloud_router.cloud_model})"
+                    )
+                    return await self.cloud_router.completion(messages, **kwargs)
 
         # Execute local inference with circuit breaker tracking
         try:
@@ -171,11 +200,12 @@ class RequestRouter:
                 messages
             )
             if self.cloud_router.should_route_to_cloud(new_tokens):
-                logger.info(
-                    f"Routing streaming {new_tokens}-token request to cloud "
-                    f"({self.cloud_router.cloud_model})"
-                )
-                return self.cloud_router.stream_completion(messages, **kwargs)
+                if self._check_cloud_consent(new_tokens):
+                    logger.info(
+                        f"Routing streaming {new_tokens}-token request to cloud "
+                        f"({self.cloud_router.cloud_model})"
+                    )
+                    return self.cloud_router.stream_completion(messages, **kwargs)
 
         return engine.stream_chat(messages, **kwargs)
 

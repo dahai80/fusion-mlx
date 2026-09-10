@@ -757,14 +757,16 @@ class DSparkSpecState:
     propose-verify loop rather than running our own verify.
     """
 
+    _MAX_SESSIONS = 32
+
     def __init__(self, runtime):
         self.runtime = runtime
         self.total_spec_steps = 0
         self.total_draft_proposed = 0
         self.total_draft_accepted = 0
         self._last_request_id = None
-        # Active generator sessions: request_id -> token iterator
         self._sessions: dict = {}
+        self._session_order: list[str] = []
 
     def on_new_request(self, request_id: str):
         if self._last_request_id != request_id:
@@ -775,10 +777,39 @@ class DSparkSpecState:
         return self._sessions.get(request_id)
 
     def set_session(self, request_id: str, session):
+        if request_id in self._sessions:
+            self._close_session(request_id)
+        while len(self._sessions) >= self._MAX_SESSIONS:
+            oldest = self._session_order[0]
+            self._close_session(oldest)
+            logger.warning(
+                "dspark_spec: session pool full (%d), evicted oldest=%s",
+                self._MAX_SESSIONS,
+                oldest[:8],
+            )
         self._sessions[request_id] = session
+        self._session_order.append(request_id)
+
+    def _close_session(self, request_id: str):
+        session = self._sessions.pop(request_id, None)
+        if request_id in self._session_order:
+            self._session_order.remove(request_id)
+        if session is not None:
+            close_fn = getattr(session, "close", None)
+            if callable(close_fn):
+                try:
+                    close_fn()
+                except Exception:
+                    logger.debug(
+                        "dspark_spec: session close failed for %s",
+                        request_id[:8],
+                    )
 
     def remove_session(self, request_id: str):
-        self._sessions.pop(request_id, None)
+        self._close_session(request_id)
+
+    def cleanup_request(self, request_id: str):
+        self._close_session(request_id)
 
     def record_result(self, n_accepted: int, n_total: int):
         self.total_spec_steps += 1

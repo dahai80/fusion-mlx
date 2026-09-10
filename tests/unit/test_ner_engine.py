@@ -64,12 +64,15 @@ class TestNERModels:
 
 
 class TestMLXNERModel:
-    def test_ner_architectures_frozenset(self):
+    def test_ner_architectures_frozenset(self, tmp_path):
         from fusion_mlx.engines.ner import MLXNERModel
 
-        assert isinstance(MLXNERModel._NER_ARCHITECTURES, frozenset)
-        assert "GLiNERModel" in MLXNERModel._NER_ARCHITECTURES
-        assert "SpaModel" in MLXNERModel._NER_ARCHITECTURES
+        if MLXNERModel._NER_ARCHITECTURES is None:
+            MLXNERModel(str(tmp_path))._validate_architecture()
+        archs = MLXNERModel._NER_ARCHITECTURES
+        assert isinstance(archs, frozenset)
+        assert "GLiNERModel" in archs
+        assert "SpaModel" in archs
 
     def test_validate_architecture_gliner(self, tmp_path):
         from fusion_mlx.engines.ner import MLXNERModel

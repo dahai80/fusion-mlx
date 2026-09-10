@@ -7,6 +7,7 @@ Provides FastAPI routes for:
 - POST /v1/count_tokens     - Token counting
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -63,6 +64,9 @@ from ..middleware.auth import check_rate_limit_or_x_api_key, verify_api_key_or_x
 from ..pool import EnginePool
 from ..request import SamplingParams
 from ..server_metrics import record_llm_metrics
+from ._disconnect_guard import handle_disconnect
+from ._engine_helpers import release_engine as _shared_release
+from ._engine_helpers import resolve_engine as _shared_resolve
 from ._guards import check_chat_capability, check_multimodal_content
 
 logger = logging.getLogger(__name__)
@@ -80,19 +84,11 @@ def set_anthropic_context(pool: EnginePool) -> None:
 
 
 async def _resolve_engine(model_name: str, adapter_path=None):
-    if _pool is not None:
-        engine = await _pool.get_engine(
-            model_name, _lease=True, adapter_path=adapter_path
-        )
-        return engine
-    from ..service.helpers import get_engine
-
-    return get_engine(model_name)
+    return await _shared_resolve(model_name, _pool, adapter_path=adapter_path)
 
 
 async def _release_engine(model_name: str, adapter_path=None):
-    if _pool is not None:
-        await _pool.release_engine(model_name, adapter_path=adapter_path)
+    await _shared_release(model_name, _pool, adapter_path=adapter_path)
 
 
 def _extract_anthropic_text(msg: Any) -> str:
@@ -723,6 +719,10 @@ async def _stream_anthropic_generator(
             yield f'event: error\ndata: {{"error": {json.dumps(err_msg)}, "status": 400}}\n\n'
         else:
             yield f'event: error\ndata: {{"error": {json.dumps(f"{type(exc).__name__}: {exc}")}}}\n\n'
+    except asyncio.CancelledError:
+        logger.info("Anthropic client disconnected during streaming: %s", request_id)
+        handle_disconnect(request_id, engine)
+        raise
     finally:
         await _release()
 

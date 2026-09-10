@@ -47,8 +47,8 @@ class TestStatusEndpoint:
                 "loaded_model_count",
                 "get_loaded_model_ids",
                 "current_model_memory",
-                "_process_memory_enforcer",
-                "_entries",
+                "process_memory_enforcer",
+                "loading_count",
             ]
         )
         pool.model_count = 5
@@ -57,15 +57,8 @@ class TestStatusEndpoint:
         pool.current_model_memory = 16 * 1024**3
         enforcer = MagicMock(spec=["get_final_ceiling"])
         enforcer.get_final_ceiling.return_value = 32 * 1024**3
-        pool._process_memory_enforcer = enforcer
-
-        entry_a = MagicMock(spec=["is_loading", "engine"])
-        entry_a.is_loading = False
-        entry_a.engine = None
-        entry_b = MagicMock(spec=["is_loading", "engine"])
-        entry_b.is_loading = True
-        entry_b.engine = None
-        pool._entries = {"model-a": entry_a, "model-b": entry_b}
+        pool.process_memory_enforcer = enforcer
+        pool.loading_count = 1
 
         server.pool = pool
 
@@ -88,20 +81,20 @@ class TestStatusEndpoint:
                 "loaded_model_count",
                 "get_loaded_model_ids",
                 "current_model_memory",
-                "_process_memory_enforcer",
-                "_entries",
+                "process_memory_enforcer",
+                "loading_count",
             ]
         )
         pool.model_count = 1
         pool.loaded_model_count = 1
         pool.get_loaded_model_ids.return_value = ["model-a"]
         pool.current_model_memory = 16 * 1024**3
-        pool._entries = {}
+        pool.loading_count = 0
         enforcer = MagicMock(spec=["get_final_ceiling"])
         enforcer.get_final_ceiling.side_effect = RuntimeError(
             "host_statistics64 failed"
         )
-        pool._process_memory_enforcer = enforcer
+        pool.process_memory_enforcer = enforcer
         server.pool = pool
 
         resp = client.get("/api/status")
@@ -237,16 +230,16 @@ class TestStatusEndpoint:
                 "loaded_model_count",
                 "get_loaded_model_ids",
                 "current_model_memory",
-                "_process_memory_enforcer",
-                "_entries",
+                "process_memory_enforcer",
+                "loading_count",
             ]
         )
         pool.model_count = 0
         pool.loaded_model_count = 0
         pool.get_loaded_model_ids.return_value = []
         pool.current_model_memory = 0
-        pool._entries = {}
-        pool._process_memory_enforcer = None
+        pool.loading_count = 0
+        pool.process_memory_enforcer = None
 
         server.pool = pool
 

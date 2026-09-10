@@ -62,6 +62,12 @@ class RadixCacheStats:
 
 
 class _RadixNode:
+    # R-P3-1: This _RadixNode uses str keys for diffusion prompt sharing.
+    # A separate _RadixNode in radix_prefix_cache.py uses int token-id
+    # keys for KV prefix sharing. Different semantics, shared structure
+    # name — consolidating to one generic definition would require
+    # unifying str-keyed and int-keyed child dicts, which adds complexity
+    # for no runtime benefit. Left as-is deliberately.
     __slots__ = (
         "children",
         "value",

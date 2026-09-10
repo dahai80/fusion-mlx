@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass
 
 from fusion_mlx.model_aliases import AliasProfile
+from fusion_mlx.quant_detect import looks_like_4bit as _looks_like_4bit
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +33,6 @@ class EligibilityReport:
     is_4bit: bool
     has_drafter: bool
     reasons: tuple[str, ...]
-
-
-def _looks_like_4bit(hf_path: str) -> bool:
-    lowered = hf_path.lower()
-    if "-4bit" in lowered:
-        return True
-    if "mxfp4" in lowered or "nvfp4" in lowered:
-        return True
-    return False
 
 
 def _detect_model_family(profile: AliasProfile) -> str:
@@ -92,12 +84,9 @@ def eligible_aliases() -> list[str]:
     try:
         from fusion_mlx.model_aliases import list_profiles
 
-        return sorted(
-            name
-            for name, profile in list_profiles().items()
-            if not report(profile).reasons
-        )
-    except Exception:  # noqa: BLE001
+        return sorted(p.name for p in list_profiles().values() if not report(p).reasons)
+    except Exception as e:  # noqa: BLE001 — diagnostic helper, never fatal
+        logger.debug("eligible_aliases failed: %s", e)
         return []
 
 

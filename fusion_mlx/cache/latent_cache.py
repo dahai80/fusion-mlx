@@ -13,6 +13,7 @@ import hashlib
 import logging
 import os
 import threading
+from collections import OrderedDict
 
 from fusion_mlx.cache.radix_diffusion_cache import DiffusionRadixCache
 
@@ -20,7 +21,32 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_MB = 2048
 
-_IMAGE_LATENT_CACHES: "dict[str, DiffusionRadixCache]" = {}
+# P2-20 (#0909 audit): LRU eviction for _IMAGE_LATENT_CACHES.
+# Each DiffusionRadixCache can hold up to 2GB of latents. Without
+# eviction, serving N different image-gen models leaks 2GB*N.
+# Default cap: 4 entries (configurable via env). LRU order tracked
+# by OrderedDict — get_image_latent_cache moves hit to end (most
+# recently used); eviction pops from front (least recently used).
+_DEFAULT_MAX_IMAGE_CACHES = 4
+
+
+def _max_image_cache_entries() -> int:
+    raw = os.getenv("FUSION_LATENT_CACHE_MAX_ENTRIES", str(_DEFAULT_MAX_IMAGE_CACHES))
+    try:
+        val = int(raw)
+    except ValueError:
+        logger.warning(
+            "invalid FUSION_LATENT_CACHE_MAX_ENTRIES=%r, using %d",
+            raw,
+            _DEFAULT_MAX_IMAGE_CACHES,
+        )
+        return _DEFAULT_MAX_IMAGE_CACHES
+    if val <= 0:
+        return _DEFAULT_MAX_IMAGE_CACHES
+    return val
+
+
+_IMAGE_LATENT_CACHES: "OrderedDict[str, DiffusionRadixCache]" = OrderedDict()
 _SESSION_TAIL_CACHE: DiffusionRadixCache | None = None
 _CACHE_LOCK = threading.Lock()
 
@@ -69,11 +95,29 @@ def get_image_latent_cache(model_id, max_mb=None):
     with _CACHE_LOCK:
         cached = _IMAGE_LATENT_CACHES.get(model_id)
         if cached is not None:
+            # P2-20: move to end (most recently used)
+            _IMAGE_LATENT_CACHES.move_to_end(model_id)
             return cached
         mb = max_mb if max_mb is not None else latent_cache_max_mb()
         cache = DiffusionRadixCache(max_mb=mb, name=f"latent:{model_id}")
         _IMAGE_LATENT_CACHES[model_id] = cache
-        logger.info("latent cache created: model=%s max_mb=%d", model_id, mb)
+        # P2-20: evict LRU entries exceeding the cap
+        max_entries = _max_image_cache_entries()
+        while len(_IMAGE_LATENT_CACHES) > max_entries:
+            evicted_id, evicted_cache = _IMAGE_LATENT_CACHES.popitem(last=False)
+            logger.info(
+                "latent cache LRU evicted: model=%s (entries=%d, cap=%d)",
+                evicted_id,
+                len(_IMAGE_LATENT_CACHES),
+                max_entries,
+            )
+        logger.info(
+            "latent cache created: model=%s max_mb=%d (entries=%d, cap=%d)",
+            model_id,
+            mb,
+            len(_IMAGE_LATENT_CACHES),
+            max_entries,
+        )
         return cache
 
 

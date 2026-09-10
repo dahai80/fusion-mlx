@@ -15,6 +15,11 @@ First-version surface for fusion-multi-node Pipeline Parallelism:
 Activation tensors travel base64-encoded (.npy, bit-exact per mlx dtype).
 Transport-level framing/compression/encryption is the scheduler's job —
 these endpoints only expose the forward step. See docs/distributed-pipeline.md.
+
+A-P2-5: SINGLE-NODE-ONLY. ShardManager performs layer-slicing + activation
+transfer over .npy/base64, but there is NO transport layer — these routes
+work locally but /distributed/pipeline_step can never receive remote
+activations. Half-built feature; not ready for multi-node production use.
 """
 
 from __future__ import annotations

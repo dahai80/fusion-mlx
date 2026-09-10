@@ -87,41 +87,41 @@ def _server_mod():
 
 
 def test_default_wildcard_cors_registered(fresh_app: FastAPI) -> None:
-    """No env, no CLI flag → CORSMiddleware with ``*``. Cross-origin POST
-    returns 200 + ``Access-Control-Allow-Origin: *`` so a local browser
-    frontend (e.g. ``http://localhost:3000``) can call the API without
-    extra config."""
+    """No env, no CLI flag → CORSMiddleware with localhost-only origins
+    (P2-25 #0909 audit). A localhost browser frontend can call the API;
+    a cross-origin request from an arbitrary web origin does NOT get
+    an ACAO header."""
     origins = _server_mod().configure_cors_from_env(cli_origins=None)
-    # #641 three-state contract: unset returns None; wildcard ``*`` is the
-    # mount-internal default (_mount_cors_middleware falls back when origins
-    # is None/empty), NOT the configured return value.
+    # #641 three-state contract: unset returns None; the mount-internal
+    # default falls back to localhost-only origins (not ["*"]).
     assert origins is None
 
     client = TestClient(fresh_app)
+    # localhost origin IS in the allowlist → ACAO echoed
     r = client.post(
         "/v1/chat/completions",
         json={"messages": []},
-        headers={"Origin": "https://anywhere.example"},
+        headers={"Origin": "http://localhost:3000"},
     )
     assert r.status_code == 200
-    assert r.headers.get("access-control-allow-origin") == "*"
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
 
-def test_default_preflight_returns_200_with_wildcard(fresh_app: FastAPI) -> None:
-    """Default-wildcard preflight returns 200 with ``ACAO: *`` so the
-    browser proceeds to the real POST."""
+def test_default_preflight_returns_200_for_localhost(fresh_app: FastAPI) -> None:
+    """Default localhost-only preflight returns 200 with ACAO matching
+    the localhost origin so the browser proceeds to the real POST."""
     _server_mod().configure_cors_from_env(cli_origins=None)
 
     client = TestClient(fresh_app)
     r = client.options(
         "/v1/chat/completions",
         headers={
-            "Origin": "https://anywhere.example",
+            "Origin": "http://localhost:3000",
             "Access-Control-Request-Method": "POST",
         },
     )
     assert r.status_code == 200
-    assert r.headers.get("access-control-allow-origin") == "*"
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
 
 def test_default_wildcard_forces_credentials_false(fresh_app: FastAPI) -> None:

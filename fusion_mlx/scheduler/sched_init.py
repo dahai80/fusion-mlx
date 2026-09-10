@@ -375,11 +375,7 @@ def __init__(
         # Initialize paged SSD cache
         self._init_tiered_cache()
 
-        # Set cold restore callback for prefix cache
         if self.paged_ssd_cache_manager is not None:
-            self.block_aware_cache.set_cold_restore_callback(
-                self._restore_block_from_cold
-            )
             logger.info(
                 f"paged SSD cache enabled: {self.config.paged_ssd_cache_dir}, "
                 f"block_size={self.config.paged_cache_block_size}, "

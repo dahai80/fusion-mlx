@@ -1083,9 +1083,13 @@ class PagedCacheManager(CacheManager):
                             block.block_hash = block_hash
                             block.parent_hash = parent_hash
                             block.token_count = self.block_size
-                            # Cold-registered blocks are metadata-only until a
-                            # request claims them via increment_ref().
-                            block.ref_count = 0
+                            # P2-22 (#0909 audit): pin block with ref_count=1
+                            # during lazy restore so it cannot be immediately
+                            # LRU-evicted before the caller claims it via
+                            # increment_ref(). _allocate_block_internal already
+                            # sets ref_count=1; the old override to 0 created a
+                            # window where handle_memory_pressure could evict
+                            # the block, turning a cache hit into a miss.
                             self.cached_block_hash_to_block.insert(block_hash, block)
                             cached_block = block
 

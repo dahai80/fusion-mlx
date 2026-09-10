@@ -11,6 +11,7 @@ import struct
 import threading
 import time
 from collections import OrderedDict
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -1093,6 +1094,20 @@ class PagedSSDCacheManager:
                     self._stats["hits"] += 1
                     self._index.touch(block_hash)
                     return loaded
+                # P2-24 (#0910 audit): raw data loaded but reconstruction
+                # failed — file is corrupt. Don't retry with
+                # _load_safetensors_file (second full read = IO storm in
+                # corruption scenario). Drop the block and recover.
+                logger.warning(
+                    "SSD block %s reconstruct failed (corrupt), dropping",
+                    block_hash.hex()[:16],
+                )
+                self._recover_from_block_error(block_hash)
+                self._stats["errors"] += 1
+                self._stats["misses"] += 1
+                return None
+            # raw_result is None: file missing or header unreadable.
+            # Fall through to _load_safetensors_file as last resort.
             loaded = self._load_safetensors_file(str(file_path))
             if loaded is not None:
                 self._stats["loads"] += 1
@@ -1353,6 +1368,29 @@ class PagedSSDCacheManager:
                 elif len(items) == 1:
                     layers.append((items[0],))
         return layers if layers else None
+
+    def _load_safetensors_header_only(self, path: str) -> dict | None:
+        """Read only the safetensors header metadata, skip tensor data.
+
+        P1-08 (#0910 audit): _scan_disk_index only needs file_metadata
+        (block_hash, token_count, etc.) — reading all tensor data into
+        memory for a 10GB cache causes a massive startup memory spike.
+        """
+        try:
+            with open(path, "rb") as f:
+                header_size = struct.unpack("<Q", f.read(8))[0]
+                if header_size < 1 or header_size > 100 * 1024 * 1024:
+                    return None
+                header_json = f.read(header_size).decode("utf-8")
+                header = json.loads(header_json)
+                file_metadata = header.pop("__metadata__", {})
+                return file_metadata
+        except FileNotFoundError:
+            logger.debug("SSD safetensors vanished mid-read (evicted?): %s", path)
+            return None
+        except Exception as e:
+            logger.debug("Failed to read header %s: %s", path, e)
+            return None
 
     def _load_safetensors_raw(self, path: str) -> tuple[dict, dict] | None:
         # E-38 (#811): read header AND all tensor data from a single open
@@ -1651,7 +1689,9 @@ class PagedSSDCacheManager:
     def _hot_cache_available_bytes(self) -> int:
         if self._hot_cache_budget is not None:
             return self._hot_cache_budget.remaining_bytes
-        return max(0, self._hot_cache_max_bytes - self._hot_cache_total_bytes)
+        # P2-21 (#0910 audit): read _hot_cache_total_bytes under lock
+        with self._hot_cache_lock:
+            return max(0, self._hot_cache_max_bytes - self._hot_cache_total_bytes)
 
     def _hot_cache_entry_size(self, entry: dict) -> int:
         return entry.get("_estimated_bytes", 0)
@@ -1815,6 +1855,9 @@ class PagedSSDCacheManager:
                         block_hash.hex()[:16],
                         e,
                     )
+                # P1-09 (#0910 audit): clean up residual .tmp file
+                with suppress(FileNotFoundError, OSError):
+                    temp_path.unlink(missing_ok=True)
                 with self._state_lock:
                     self._index.remove(block_hash)
                 self._stats["errors"] += 1
@@ -1822,6 +1865,9 @@ class PagedSSDCacheManager:
                 logger.error(
                     "Background write error for block %s: %s", block_hash.hex()[:16], e
                 )
+                # P1-09: clean up residual .tmp file
+                with suppress(FileNotFoundError, OSError):
+                    temp_path.unlink(missing_ok=True)
                 with self._state_lock:
                     self._index.remove(block_hash)
                 self._stats["errors"] += 1
@@ -1843,10 +1889,9 @@ class PagedSSDCacheManager:
                     continue
                 scanned += 1
                 try:
-                    result = self._load_safetensors_raw(str(f))
-                    if result is None:
+                    file_metadata = self._load_safetensors_header_only(str(f))
+                    if file_metadata is None:
                         continue
-                    tensors_raw, file_metadata = result
                     fmt_ver = file_metadata.get("fusion_cache_format_version")
                     if fmt_ver is None:
                         self._add_to_incompatible_index(f, file_metadata)
@@ -2124,7 +2169,9 @@ class PagedSSDCacheManager:
             cold_hashes.append(bh)
         if len(cold_hashes) < 4:
             return 0
-        remaining = self._hot_cache_max_bytes - self._hot_cache_total_bytes
+        # P2-21: read under lock
+        with self._hot_cache_lock:
+            remaining = self._hot_cache_max_bytes - self._hot_cache_total_bytes
         if remaining <= 0:
             return 0
         loaded = 0
@@ -2133,7 +2180,10 @@ class PagedSSDCacheManager:
             meta = self._index.get(bh)
             if meta is None:
                 continue
-            if self._hot_cache_total_bytes + meta.file_size > self._hot_cache_max_bytes:
+            # P2-21: read under lock
+            with self._hot_cache_lock:
+                current_total = self._hot_cache_total_bytes
+            if current_total + meta.file_size > self._hot_cache_max_bytes:
                 break
             if self._hot_cache_budget is not None:
                 if self._hot_cache_budget.remaining_bytes < meta.file_size:

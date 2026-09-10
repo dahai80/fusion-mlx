@@ -9,7 +9,7 @@ import logging
 import mlx.core as mx
 import mlx.nn as nn
 
-from ..mfa_bridge import flash_attention
+from . import flash_attention
 
 logger = logging.getLogger(__name__)
 

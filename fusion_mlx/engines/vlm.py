@@ -741,7 +741,7 @@ class VLMBatchedEngine(BaseEngine):
             await self._engine.stop()
             if hasattr(self._engine, "engine") and self._engine.engine is not None:
                 try:
-                    self._engine.engine.close()
+                    await self._engine.engine.aclose()
                 except Exception as e:
                     logger.warning("Error closing engine: %s", e)
         # EngineCore.close() preserves the reused _mlx_executor in
@@ -1781,39 +1781,11 @@ class VLMBatchedEngine(BaseEngine):
         )
         return len(self._tokenizer.encode(prompt))
 
-    def has_active_requests(self) -> bool:
-        # P0-5: EngineCore tracks in-flight requests in _active_contexts, not
-        # _output_collectors (which does not exist on EngineCore).
-        ec = getattr(self, "_engine", None)
-        if ec is not None:
-            inner = getattr(ec, "engine", None)
-            if inner is not None:
-                active = getattr(inner, "_active_contexts", None)
-                if active is not None:
-                    return len(active) > 0
-                collectors = getattr(inner, "_output_collectors", None)
-                if collectors is not None:
-                    return len(collectors) > 0
-        return False
-
     def get_stats(self) -> dict[str, Any]:
-        stats = {
-            "engine_type": "vlm",
-            "model_name": self._model_name,
-            "loaded": self._loaded,
-            "stream_interval": self._stream_interval,
-        }
-        if self._engine:
-            stats.update(self._engine.get_stats())
-        return stats
+        return self.get_enginecore_stats("vlm")
 
     def get_cache_stats(self) -> dict[str, Any] | None:
-        return self._engine.get_cache_stats() if self._engine else None
-
-    async def abort_all_requests(self) -> int:
-        if self._engine and self._engine.engine:
-            return await self._engine.engine.abort_all_requests()
-        return 0
+        return self.get_enginecore_cache_stats()
 
     def __repr__(self) -> str:
         status = "running" if self._loaded else "stopped"

@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ..middleware.auth import check_rate_limit, verify_api_key
 from ..server_metrics import get_server_metrics
+from ._typed_engine import get_typed_engine
+from ._typed_engine import set_pool as _set_typed_pool
 from .ner_models import NEREntity, NERRequest, NERResponse, NERUsage
 
 logger = logging.getLogger(__name__)
@@ -23,23 +25,11 @@ def set_ner_context(pool: Any, server_state: Any) -> None:
     global _pool, _server_state
     _pool = pool
     _server_state = server_state
+    _set_typed_pool(pool)
 
 
 async def get_ner_engine(model_id: str) -> Any:
-    """Resolve, load, and type-check a NER engine."""
-    if _pool is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
-    engine = await _pool.get_engine(model_id)
-    if engine is None:
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
-    from ..engines.ner import NEREngine
-
-    if not isinstance(engine, NEREngine):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Model '{model_id}' is not a NER model",
-        )
-    return engine
+    return await get_typed_engine(model_id, "fusion_mlx.engines.ner.NEREngine", "NER")
 
 
 @router.post(

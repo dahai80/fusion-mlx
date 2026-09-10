@@ -69,12 +69,13 @@ _STATIC_RESERVE_LARGE: dict[str, int] = {
 # Ceiling fraction cap for large-memory systems (>= _LARGE_SYSTEM_THRESHOLD).
 # Without this, a 128GB machine on "balanced" gets static_ceiling = 122GB
 # (128 - 6 reserve), and the enforcer only acts at 0.90*122 = 110GB — far
-# too close to jetsam. Capping at 0.60 gives a 76.8GB ceiling, leaving 51GB
-# for OS, prefill activation spikes, and MLX compile cache.
+# too close to jetsam. Capping at 0.5625 gives a 72GB ceiling (G1
+# commercial condition), leaving 56GB for OS, prefill activation spikes,
+# and MLX compile cache.
 _LARGE_SYSTEM_THRESHOLD = 64 * 1024**3
 _LARGE_SYSTEM_CEILING_FRACTION: dict[str, float] = {
     "safe": 0.50,
-    "balanced": 0.60,
+    "balanced": 0.5625,
     "aggressive": 0.75,
     "custom": 0.80,
 }
@@ -654,10 +655,16 @@ class ProcessMemoryEnforcer:
         # (30GB loaded + 10GB floor = 40GB > 36GB Metal cap), so the
         # soft/hard watermarks never trigger while MLX is already at its
         # limit → enforcer does nothing and the process OOMs. Cap the floor
-        # at the Metal cap so it never exceeds the physical ceiling. When
-        # there is no metal_cap (0/unknown) leave the floor unconstrained.
+        # at the Metal cap so it never exceeds the physical ceiling.
+        # P1-12 (#0909 audit): when metal_cap == 0 (unknown), constrain the
+        # floor to static_ceiling instead of leaving it unconstrained —
+        # otherwise a large loaded model lifts the hard limit past the
+        # actual safe ceiling, the enforcer sees phantom headroom and never
+        # reclaims, and macOS jetsam SIGKILLs the process.
         if metal_cap > 0:
             floor = min(floor, metal_cap)
+        else:
+            floor = min(floor, static_ceiling)
         hard = max(hard, floor)
         return {
             "static": static_ceiling,

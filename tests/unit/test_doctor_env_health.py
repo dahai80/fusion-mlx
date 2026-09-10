@@ -450,8 +450,8 @@ def test_overall_exit_code_zero_with_only_warnings():
 # ---------------------------------------------------------------------------
 
 
-def test_run_all_returns_all_eight_sections():
-    """run_all() must emit exactly the eight sections the spec mandates,
+def test_run_all_returns_all_sections():
+    """run_all() must emit exactly the sections the spec mandates,
     in the spec order. Test pins the order so future drift is loud."""
     report = eh.run_all()
     titles = [s.title for s in report.sections]
@@ -464,6 +464,7 @@ def test_run_all_returns_all_eight_sections():
         "Network",
         "Shell Integration",
         "Optional Tools",
+        "Integrity",
     ]
     assert (
         titles == expected

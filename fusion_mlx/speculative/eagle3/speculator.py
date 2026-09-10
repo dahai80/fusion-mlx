@@ -175,14 +175,41 @@ class Eagle3Speculator:
             return True
         except Exception as e:
             logger.warning("eagle3: failed to load %s: %s", self.model_path, e)
-            import traceback
-
-            traceback.print_exc()
+            logger.debug("eagle3: load traceback", exc_info=True)
             return False
 
     @property
     def capture_layers(self):
+        # P3-08 (#0909 audit): previously hardcoded [8, 16, 31] for a
+        # 32-layer model. Models with different layer counts (24, 28,
+        # 40, 64) would get out-of-bounds or misaligned capture points.
+        # If _target_num_layers is set, compute proportional indices;
+        # otherwise fall back to the legacy 32-layer default.
+        n = getattr(self, "_target_num_layers", 0)
+        if n and n > 0:
+            return self._compute_capture_layers(n)
         return [8, 16, 31]
+
+    @staticmethod
+    def _compute_capture_layers(num_layers: int) -> list[int]:
+        # Capture at ~25%, ~50%, and the last layer — mirrors the
+        # [8, 16, 31] pattern for 32 layers but scales to any depth.
+        if num_layers <= 4:
+            return [num_layers - 1]
+        c1 = max(0, num_layers // 4)
+        c2 = max(0, num_layers // 2)
+        c_last = num_layers - 1
+        # Deduplicate (small models may collide)
+        seen = set()
+        result = []
+        for idx in (c1, c2, c_last):
+            if idx not in seen:
+                seen.add(idx)
+                result.append(idx)
+        return result
+
+    def set_target_num_layers(self, n: int) -> None:
+        self._target_num_layers = n
 
     def set_hidden_capture(self, hidden_capture):
         self._hidden_capture = hidden_capture
@@ -341,9 +368,7 @@ class Eagle3Speculator:
                     )
             except Exception as e:
                 logger.warning("eagle3: prefill failed: %s", e)
-                import traceback
-
-                traceback.print_exc()
+                logger.debug("eagle3: prefill traceback", exc_info=True)
                 self._draft_cache = None
 
     def generate_draft_tokens(self, current_token: int) -> list[int]:
@@ -382,9 +407,7 @@ class Eagle3Speculator:
             return drafts
         except Exception as e:
             logger.warning("eagle3: generate failed: %s", e)
-            import traceback
-
-            traceback.print_exc()
+            logger.debug("eagle3: generate traceback", exc_info=True)
             self.reset()
             return []
 

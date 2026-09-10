@@ -25,6 +25,14 @@ from fusion_mlx._cli_base import (
 )
 
 
+def _display_host(host: str) -> tuple[str, str | None]:
+    # R-P1-12 (#0908 audit): consolidated host_display + UDS computation
+    # previously duplicated 3× in cli_serve.py.
+    host_display = "localhost" if host == "0.0.0.0" else host
+    uds_path = _uds_path_from_host(host)
+    return host_display, uds_path
+
+
 def _serve_audio_mode(args, entry) -> None:
     """Bind the audio-only serve path for a resolved registry entry.
 
@@ -185,9 +193,8 @@ def _serve_audio_mode(args, entry) -> None:
 
     # Stamp the bind source-of-truth so the lifespan "Ready:" banner
     # prints the right URL. Mirrors the text-path block.
-    host_display = "localhost" if args.host == "0.0.0.0" else args.host
+    host_display, uds_path = _display_host(args.host)
     listen_fd = getattr(args, "listen_fd", None)
-    uds_path = _uds_path_from_host(args.host)
 
     # Port preflight — same friendly "port already in use" probe the
     # text path runs. Skip in --listen-fd mode (the supervisor owns
@@ -908,6 +915,10 @@ def _serve_from_model_dir(args):
     port_raw = getattr(args, "port", None)
     port = 11434 if port_raw is None else int(port_raw)
     config = ServerConfig(host=host, port=port, model_dir=args.model_dir)
+    # R-7: pass --profile into ServerConfig
+    _profile = getattr(args, "profile", None)
+    if _profile:
+        config.profile = _profile
 
     # Pass spec-decode / dflash2 / dspark CLI flags through to the engine
     # pool's scheduler_config. Without this, --enable-dflash2 +
@@ -964,8 +975,7 @@ def _serve_from_model_dir(args):
     # fails with Errno 8. Mirror the bind-config stamp so the lifespan
     # "Ready:" banner reports the real listener (uds/host/fd).
     listen_fd = getattr(args, "listen_fd", None)
-    uds_path = _uds_path_from_host(args.host)
-    host_display = "localhost" if args.host == "0.0.0.0" else args.host
+    host_display, uds_path = _display_host(args.host)
 
     if uds_path is not None:
         print(
@@ -1230,6 +1240,12 @@ def _stage_server_config(args, server, logger):
     # Alias info for /v1/models
     _get_config().model_alias = getattr(args, "_original_alias", None)
 
+    # R-7: profile gate
+    _profile_arg = getattr(args, "profile", None)
+    if _profile_arg:
+        _get_config().profile = _profile_arg
+        logger.info("profile from --profile flag: %s", _profile_arg)
+
     # API key
     server._api_key = server._resolve_api_key(args.api_key)
     _get_config().default_timeout = args.timeout
@@ -1370,6 +1386,8 @@ def _print_startup_banner(args, cors_origins, gc_control, logger):
         features.append("dflash: single-user")
     if getattr(args, "enable_dflash2", False):
         features.append("dflash2: single-user")
+    _profile = getattr(args, "profile", None) or "standard"
+    features.append(f"profile: {_profile}")
     print()
     print("  🐆 Fusion-MLX")
     print("  ─────────")
@@ -2256,9 +2274,8 @@ def serve_command(args):
     # the port is actually bound — printing it here would lie to users who
     # curl immediately and get connection-refused while shaders compile.
     print()
-    host_display = "localhost" if args.host == "0.0.0.0" else args.host
+    host_display, uds_path = _display_host(args.host)
     listen_fd = getattr(args, "listen_fd", None)
-    uds_path = _uds_path_from_host(args.host)
     if uds_path is not None:
         print(
             f"  Starting server on unix socket: {uds_path} "

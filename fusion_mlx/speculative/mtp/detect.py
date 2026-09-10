@@ -12,13 +12,17 @@ class MTPEligibility(Enum):
     TREE = "tree"
 
 
+# P1-14/ENG-11 (#0909 audit): detect and dispatch must stay in sync.
+# Previously hunyuan/hy3 were in detect but NOT in dispatch.py —
+# detect returned CHAIN, dispatch returned False, MTP injection
+# silently failed (auto mode) or crashed (explicit --enable-mtp).
+# Only list model types that have a corresponding inject module in
+# dispatch.py's _MTP_INJECT_DISPATCH. See check_detect_dispatch_consistency().
 _SUPPORTED_MODEL_TYPES: frozenset[str] = frozenset(
     {
         "qwen3_5",
         "qwen3_5_moe",
         "gemma4_unified",
-        "hunyuan",
-        "hy3",
     }
 )
 
@@ -108,3 +112,27 @@ def _detect_mtp_eligibility_verbose(
         num_mtp_layers=num_layers,
         reason=f"{model_type} with {num_layers} MTP layer(s)",
     )
+
+
+def check_detect_dispatch_consistency() -> list[str]:
+    """Verify detect's _SUPPORTED_MODEL_TYPES matches dispatch's inject table.
+
+    P1-14/ENG-11 (#0909 audit): detect and dispatch are two manually-
+    maintained dicts. If they drift, detect returns CHAIN for a model
+    that dispatch can't inject → silent MTP failure. This function
+    returns a list of mismatch descriptions (empty = consistent).
+    """
+    from .dispatch import _MTP_INJECT_DISPATCH
+
+    mismatches: list[str] = []
+    for mt in _SUPPORTED_MODEL_TYPES:
+        if mt not in _MTP_INJECT_DISPATCH:
+            mismatches.append(
+                f"detect supports '{mt}' but dispatch has no inject entry"
+            )
+    for mt in _MTP_INJECT_DISPATCH:
+        if mt not in _SUPPORTED_MODEL_TYPES:
+            mismatches.append(
+                f"dispatch has inject for '{mt}' but detect does not list it"
+            )
+    return mismatches

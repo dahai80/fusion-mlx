@@ -52,6 +52,7 @@ from .exceptions import (
     ModelTooLargeError,
 )
 from .middleware import (
+    install_auth_precheck_middleware,
     install_exception_handlers,
     install_probe_fastpath_middleware,
     install_request_body_depth_middleware,
@@ -183,7 +184,18 @@ def _install_sighup_reload() -> None:
 
 
 class _ServerState(dict):
-    """Dict subclass that also supports attribute access for admin helpers."""
+    """Dict subclass that also supports attribute access for admin helpers.
+
+    A-P2-3: Thread-safety contract — startup writes are single-threaded
+    (pre-serve, safe). At runtime, simple __setitem__/__getitem__ are
+    GIL-atomic. Read-modify-write sequences on mutable fields (api_key,
+    engine_pool) MUST take _server_state_lock. Concurrent iteration over
+    engine_pool._entries from request threads while pool.shutdown() runs
+    is NOT protected by _server_state_lock — callers must snapshot via
+    list() before iterating. This is a known limitation; a typed singleton
+    with __slots__ would be stronger but would break existing attribute
+    access patterns in admin helpers.
+    """
 
     def __getattr__(self, name):
         try:
@@ -545,7 +557,20 @@ def _mount_cors_middleware(env_path: bool = False):
     if _cors_origins == []:
         _cors_mounted = True
         return
-    cors_origins = _cors_origins if _cors_origins else ["*"]
+    # P2-25 (#0909 audit): default CORS origins to localhost only — not
+    # ["*"]. fusion-mlx is local-first on 127.0.0.1; wildcard origins allow
+    # any website to cross-origin call the API (DNS rebinding, malicious
+    # browser tab). Override via FUSION_MLX_CORS_ALLOW_ORIGINS env or
+    # --cors-origins CLI when remote access is needed.
+    if _cors_origins:
+        cors_origins = _cors_origins
+        cors_origin_regex = None
+    else:
+        cors_origins = []
+        # Starlette does exact-string matching on allow_origins, so
+        # http://localhost:3000 would not match. Use a regex to cover
+        # any localhost/loopback port.
+        cors_origin_regex = r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
     cors_methods = _resolve_cors_methods()
     cors_headers = _resolve_cors_headers(env_path=env_path)
     cors_credentials = _resolve_cors_credentials(_cors_origins)
@@ -553,6 +578,7 @@ def _mount_cors_middleware(env_path: bool = False):
     app.add_middleware(
         _SpecAlignedCORSMiddleware,
         allow_origins=cors_origins,
+        allow_origin_regex=cors_origin_regex,
         allow_methods=cors_methods,
         allow_headers=cors_headers,
         allow_credentials=cors_credentials,
@@ -980,6 +1006,19 @@ class Server:
         self._load_lock = asyncio.Lock()
         self._mdns = None
         self._cluster_lb_monitor = None  # #811 multi-instance LB health monitor
+        self._training_services: list = []  # ENG-02: cleanup on shutdown
+        self._startup_failures: list[str] = []  # ENG-01: track broken subsystems
+
+        # R-7: resolve profile early — route registration in __init__ needs it.
+        # Sync from global config singleton (set by _stage_server_config via
+        # --profile flag) into self.config so profile_from_config sees it.
+        from .config import get_config as _get_global_config
+        from .profile import profile_from_config
+
+        _gc = _get_global_config()
+        if getattr(_gc, "profile", None) and not self.config.profile:
+            self.config.profile = _gc.profile
+        self._profile = profile_from_config(self.config)
 
         warnings.filterwarnings(
             "ignore",
@@ -1131,7 +1170,14 @@ class Server:
                 # Fail-closed: empty-CSV origins → mount nothing.
                 _cors_mounted = True
             else:
-                cors_origins = _cors_origins if _cors_origins else ["*"]
+                if _cors_origins:
+                    cors_origins = _cors_origins
+                    cors_origin_regex = None
+                else:
+                    # P2-25: localhost-only via regex (Starlette exact-match
+                    # can't handle port wildcards).
+                    cors_origins = []
+                    cors_origin_regex = r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
                 cors_methods = _resolve_cors_methods()
                 # P2-6: route credentials through _resolve_cors_credentials
                 # so wildcard ["*"] origins force credentials=False per the
@@ -1140,8 +1186,9 @@ class Server:
                 app.add_middleware(
                     _SpecAlignedCORSMiddleware,
                     allow_origins=cors_origins,
+                    allow_origin_regex=cors_origin_regex,
                     allow_methods=cors_methods,
-                    allow_headers=["*"],
+                    allow_headers=_resolve_cors_headers(env_path=True),
                     allow_credentials=_resolve_cors_credentials(cors_origins),
                 )
                 _cors_mounted = True
@@ -1161,6 +1208,16 @@ class Server:
         install_request_body_depth_middleware(app)
         install_request_body_limit_middleware(app)
 
+        # ENG-08 (#0909 audit): auth pre-check runs BEFORE body_limit
+        # reads the body. Installed after body_limit (outer to it) but
+        # before request_id (inner to it) — so execution order is
+        # request_id → auth_precheck → body_limit → body_depth. This
+        # means a 401 carries a request-id, and the body is never
+        # buffered for unauthenticated requests (closes the memory DoS
+        # vector where a bad key + 7.9 MiB body is buffered before the
+        # Depends() auth fires).
+        install_auth_precheck_middleware(app)
+
         # Request-ID correlation — stamps the logging ContextVar per request
         # and echoes X-Request-Id on the response. Pure ASGI so the ContextVar
         # propagates into the handler's task.
@@ -1177,42 +1234,72 @@ class Server:
         # Unified exception handlers (OpenAI/Anthropic envelope shapes)
         install_exception_handlers(app)
 
-        # Register all route modules
-        app.include_router(ollama_router)
-        app.include_router(openai_router)
-        app.include_router(anthropic_router)
-        app.include_router(audio_router)
-        app.include_router(images_router)
-        app.include_router(images_sr_router)
-        app.include_router(videos_router)
-        app.include_router(mcp_router)
-        app.include_router(openclaw_router)
-        app.include_router(agent_router)
-        app.include_router(convert_router)
-        app.include_router(watermark_router)
-        app.include_router(layered_quantize_router)
-        app.include_router(distributed_router)
-        app.include_router(recommend_router)
-        app.include_router(bench_router)
-        app.include_router(recommend_batch_router)
-        app.include_router(flywheel_router)
-        app.include_router(spec_router)
-        app.include_router(embeddings_router)
-        app.include_router(rerank_router)
-        app.include_router(ner_router)
-        app.include_router(ocr_router)
-        app.include_router(reasoning_router)
-        app.include_router(sessions_router)
-        app.include_router(responses_router)
-        app.include_router(health_probe_router)
-        app.include_router(health_router)
-        app.include_router(health_admin_router)
-        app.include_router(metrics_router)
-        app.include_router(cache_router)
-        app.include_router(gc_router)
-        app.include_router(config_reload_router)
-        app.include_router(admin_router)
-        app.include_router(cluster_router)
+        # R-7: profile-gated route registration. Each route maps to the
+        # modality it requires; disabled modalities' routes are NOT mounted
+        # (unreachable = no attack surface). Routes with modality=None always
+        # mount (health, metrics, admin infra).
+        _profile = self._profile
+        _FORBIDDEN_UNTIL_FIXED: set[str] = set()
+        # H2 stub: flywheel routes a fake runner. Until fixed, hard-ban even
+        # in full profile — code-level prohibition, stronger than profile gate.
+        _FORBIDDEN_UNTIL_FIXED.add("flywheel")
+
+        _ROUTE_REGISTRY: list[tuple[str, Any, str | None]] = [
+            ("ollama", ollama_router, "llm"),
+            ("openai", openai_router, "llm"),
+            ("anthropic", anthropic_router, "llm"),
+            ("responses", responses_router, "llm"),
+            ("audio", audio_router, "audio"),
+            ("images", images_router, "image"),
+            ("images_sr", images_sr_router, "image"),
+            ("videos", videos_router, "video"),
+            ("mcp", mcp_router, "mcp"),
+            ("openclaw", openclaw_router, "agent"),
+            ("agent", agent_router, "agent"),
+            ("convert", convert_router, "tools"),
+            ("watermark", watermark_router, "tools"),
+            ("layered_quantize", layered_quantize_router, "llm"),
+            ("distributed", distributed_router, "multitenant"),
+            ("recommend", recommend_router, "llm"),
+            ("bench", bench_router, "bench"),
+            ("recommend_batch", recommend_batch_router, "llm"),
+            ("flywheel", flywheel_router, "bench"),
+            ("spec", spec_router, "llm"),
+            ("embeddings", embeddings_router, "embedding"),
+            ("rerank", rerank_router, "reranker"),
+            ("ner", ner_router, "ner"),
+            ("ocr", ocr_router, "ocr"),
+            ("reasoning", reasoning_router, "llm"),
+            ("sessions", sessions_router, "llm"),
+            ("health_probe", health_probe_router, None),
+            ("health", health_router, None),
+            ("health_admin", health_admin_router, None),
+            ("metrics", metrics_router, None),
+            ("cache", cache_router, None),
+            ("gc", gc_router, None),
+            ("config_reload", config_reload_router, None),
+            ("admin", admin_router, None),
+            ("cluster", cluster_router, None),
+        ]
+        _mounted: list[str] = []
+        _skipped: list[str] = []
+        for _name, _router, _mod in _ROUTE_REGISTRY:
+            if _name in _FORBIDDEN_UNTIL_FIXED:
+                _skipped.append(f"{_name}(forbidden-stub)")
+                continue
+            if _mod is not None and not _profile.engine_allowed(_mod):
+                _skipped.append(f"{_name}(modality={_mod})")
+                continue
+            app.include_router(_router)
+            _mounted.append(_name)
+        logger.info(
+            "R-7 profile '%s': mounted %d routes [%s], skipped %d [%s]",
+            _profile.name,
+            len(_mounted),
+            ",".join(_mounted),
+            len(_skipped),
+            ",".join(_skipped),
+        )
 
         # #357: /v1/models/status MUST be registered before the gui_compat
         # router's /v1/models/{model_name} catch-all. Starlette matches routes
@@ -1262,7 +1349,7 @@ class Server:
                 models_loaded = self.pool.loaded_model_count
                 loaded_models = self.pool.get_loaded_model_ids()
                 model_memory_used = self.pool.current_model_memory
-                enforcer = self.pool._process_memory_enforcer
+                enforcer = self.pool.process_memory_enforcer
                 if enforcer:
                     try:
                         model_memory_max = enforcer.get_final_ceiling()
@@ -1270,9 +1357,9 @@ class Server:
                         # #82: was a silent pass; log so a broken enforcer
                         # surfaces in debug instead of hiding wrong stats.
                         logger.debug("stats: get_final_ceiling failed", exc_info=True)
-                for entry in self.pool._entries.values():
-                    if getattr(entry, "is_loading", False):
-                        models_loading += 1
+                # ENG-03 (#0909 audit): use public loading_count instead of
+                # iterating pool._entries directly.
+                models_loading = self.pool.loading_count
             return {
                 "status": "ok",
                 "version": __version__,
@@ -1553,13 +1640,16 @@ class Server:
             install_signal_handlers,
             record_crash,
             remove_pid_file,
+            stop_watchdog,
             write_exit_status,
             write_pid_file,
             write_status,
         )
 
         install_signal_handlers()
-        write_pid_file()
+        # ENG-04: pass the port so the PID file is port-suffixed
+        # (server.{port}.pid) for multi-instance safety.
+        write_pid_file(port=self.config.port)
         write_status("starting")
         logger.info("fusion-mlx starting up...")
         _startup_ok = False
@@ -1588,7 +1678,21 @@ class Server:
         finally:
             from .server_metrics import get_server_metrics
 
-            get_server_metrics().flush_alltime()
+            # ENG-12 (#0909 audit): wrap flush_alltime in try/except so a
+            # flush failure (disk full, serialization error) does NOT skip
+            # the entire _shutdown() chain — MCP manager, EnginePool, mDNS,
+            # prefix cache save, temp file cleanup would all be skipped.
+            try:
+                get_server_metrics().flush_alltime()
+            except Exception:
+                logger.error(
+                    "flush_alltime() failed — continuing shutdown anyway "
+                    "(ENG-12 fail-visible)",
+                    exc_info=True,
+                )
+            # ENG-05 (#0909 audit): stop the watchdog before shutdown so it
+            # does not fire SIGKILL during graceful request draining.
+            stop_watchdog()
             # P1-10: run _shutdown even when _startup raised partway, so MCP
             # manager / engines / mDNS partly initialized get torn down. The
             # method internally None-checks every subsystem it touches.
@@ -1653,8 +1757,13 @@ class Server:
                     avail_mb,
                 )
 
-        # Create engine pool with scheduler config from ServerConfig
-        self.pool = EnginePool(scheduler_config=self._convert_scheduler_config())
+        # Create engine pool with scheduler config from ServerConfig.
+        # R-7: profile gate controls which modalities can load (resolved
+        # in __init__ before route registration).
+        self.pool = EnginePool(
+            scheduler_config=self._convert_scheduler_config(),
+            profile=self._profile,
+        )
 
         # Create and wire memory enforcer
         tier_str = getattr(mem_cfg, "tier", "balanced")
@@ -1667,16 +1776,18 @@ class Server:
         custom_ceiling_gb = 0.0
         if tier_str == "custom" and getattr(mem_cfg, "custom_limit_mb", None):
             custom_ceiling_gb = float(mem_cfg.custom_limit_mb) / 1024.0
-        self.pool._process_memory_enforcer = ProcessMemoryEnforcer(
-            engine_pool=self.pool,
-            memory_guard_tier=tier_str,
-            soft_threshold=mem_cfg.soft_threshold,
-            hard_threshold=mem_cfg.hard_threshold,
-            memory_guard_custom_ceiling_gb=custom_ceiling_gb,
+        self.pool.set_process_memory_enforcer(
+            ProcessMemoryEnforcer(
+                engine_pool=self.pool,
+                memory_guard_tier=tier_str,
+                soft_threshold=mem_cfg.soft_threshold,
+                hard_threshold=mem_cfg.hard_threshold,
+                memory_guard_custom_ceiling_gb=custom_ceiling_gb,
+            )
         )
-        self.pool._process_memory_enforcer.start()
-        self.pool._get_final_ceiling = (
-            self.pool._process_memory_enforcer.get_final_ceiling
+        self.pool.process_memory_enforcer.start()
+        self.pool.set_final_ceiling_callback(
+            self.pool.process_memory_enforcer.get_final_ceiling
         )
         # RC-3 (#811 audit 0906): every unload path funnels through
         # EnginePool._detach_engine, but only Server.unload_model popped
@@ -1684,12 +1795,12 @@ class Server:
         # pool.unload_engine_async without popping, leaking a stale
         # AsyncEngineCore (holding MLX weights). Register a callback so the
         # pool keeps engine_cores in sync regardless of the trigger.
-        self.pool._on_engine_detached = self._drop_engine_core
+        self.pool.set_engine_detached_callback(self._drop_engine_core)
 
         # Populate _server_state so admin helpers that import it directly
         # (instead of using getter functions) can find engine_pool etc.
         _server_state["engine_pool"] = self.pool
-        _server_state["process_memory_enforcer"] = self.pool._process_memory_enforcer
+        _server_state["process_memory_enforcer"] = self.pool.process_memory_enforcer
         # Initialize ModelSettingsManager for per-model settings + profiles
         settings_manager = None
         try:
@@ -1699,10 +1810,14 @@ class Server:
             settings_manager = ModelSettingsManager(settings_path)
             logger.info("ModelSettingsManager initialized at %s", settings_path)
         except Exception as e:
-            logger.warning("Failed to initialize ModelSettingsManager: %s", e)
+            # ENG-01 (#0909 audit): surface as ERROR, not just warning —
+            # a broken ModelSettingsManager silently degrades per-model
+            # overrides and profiles.
+            logger.error("Failed to initialize ModelSettingsManager: %s", e)
+            self._startup_failures.append("ModelSettingsManager")
 
         _server_state["settings_manager"] = settings_manager
-        self.pool._settings_manager = settings_manager
+        self.pool.set_settings_manager(settings_manager)
         _server_state["default_model"] = None  # set when a model is marked default
         # Simple namespace for sampling defaults (read by admin helpers)
         import types
@@ -1717,7 +1832,11 @@ class Server:
         )
 
         # Create request router
-        self.request_router = RequestRouter()
+        # RT-12 (#0909 audit): pass cloud_fallback_consent so the
+        # RequestRouter consent gate is consistent with SmartRouter.
+        self.request_router = RequestRouter(
+            cloud_fallback_consent=self.config.cloud_fallback_consent,
+        )
 
         # Create cloud router if enabled
         if self.config.cloud_router_enabled:
@@ -1745,13 +1864,18 @@ class Server:
                 cloud_model,
                 self.config.cloud_router_threshold,
             )
+            # Inject cloud_router into request_router so route_chat can
+            # use it (was previously created but never connected).
+            self.request_router.cloud_router = self.cloud_router
 
         # Inject context into route modules
         global _server_instance
         _server_instance = self
+        # ARCH-02 (#0909 audit): removed duplicate set_ollama_context call
+        # (was called at L1721 and L1723 — copy-paste bug exposing implicit
+        # call-order dependency).
         set_ollama_context(self.pool)
         set_openai_context(self.pool, self.request_router)
-        set_ollama_context(self.pool)
         set_anthropic_context(self.pool)
         set_responses_context(self.pool)
         set_images_context(self.pool)
@@ -1782,7 +1906,10 @@ class Server:
         except ImportError as e:
             logger.info("MCP SDK not installed, MCP disabled: %s", e)
         except Exception as e:
-            logger.warning("MCP init failed: %s", e)
+            # ENG-01 (#0909 audit): surface MCP init failure at ERROR —
+            # a broken MCP manager means tool-calling routes silently fail.
+            logger.error("MCP init failed: %s", e)
+            self._startup_failures.append("MCP")
         _server_state["mcp_manager"] = _mcp_manager
         set_embeddings_context(self.pool, _server_state)
         set_rerank_context(self.pool, _server_state)
@@ -1800,6 +1927,7 @@ class Server:
         _fine_tune_svc.set_engine_pool(self.pool)
         _fine_tune_svc.set_loop(asyncio.get_running_loop())
         set_fine_tune_context(self.pool, _fine_tune_svc)
+        self._training_services.append(_fine_tune_svc)
 
         # Wire GRPO service (#363)
         from .admin.fine_tune_route import set_grpo_context
@@ -1809,6 +1937,7 @@ class Server:
         _grpo_svc.set_engine_pool(self.pool)
         _grpo_svc.set_loop(asyncio.get_running_loop())
         set_grpo_context(self.pool, _grpo_svc)
+        self._training_services.append(_grpo_svc)
 
         # Wire RFT (rejection-sampling fine-tuning) service (#9)
         from .admin.fine_tune_route import set_rft_context
@@ -1818,6 +1947,7 @@ class Server:
         _rft_svc.set_engine_pool(self.pool)
         _rft_svc.set_loop(asyncio.get_running_loop())
         set_rft_context(self.pool, _rft_svc)
+        self._training_services.append(_rft_svc)
 
         # Wire VLM (vision-language) fine-tune service (#797)
         from .admin.fine_tune_route import set_vlm_context
@@ -1827,6 +1957,7 @@ class Server:
         _vlm_svc.set_engine_pool(self.pool)
         _vlm_svc.set_loop(asyncio.get_running_loop())
         set_vlm_context(self.pool, _vlm_svc)
+        self._training_services.append(_vlm_svc)
 
         # Wire DPO/ORPO service (#399)
         from .admin.fine_tune_route import set_dpo_context
@@ -1836,6 +1967,7 @@ class Server:
         _dpo_svc.set_engine_pool(self.pool)
         _dpo_svc.set_loop(asyncio.get_running_loop())
         set_dpo_context(self.pool, _dpo_svc)
+        self._training_services.append(_dpo_svc)
 
         # Wire reward-model training service (#424)
         from .admin.fine_tune_route import set_reward_context
@@ -1845,6 +1977,7 @@ class Server:
         _reward_svc.set_engine_pool(self.pool)
         _reward_svc.set_loop(asyncio.get_running_loop())
         set_reward_context(self.pool, _reward_svc)
+        self._training_services.append(_reward_svc)
 
         # Auto-add adapters dir to FUSION_LORA_ALLOWED_DIRS so trained
         # adapters can be served via EnginePool hot-swap without manual env config
@@ -1881,7 +2014,10 @@ class Server:
                     "HFDownloader initialized with model_dir=%s", self.config.model_dir
                 )
             except Exception as e:
-                logger.warning("Failed to initialize HFDownloader: %s", e)
+                # ENG-01 (#0909 audit): surface at ERROR — broken HFDownloader
+                # means admin download routes silently fail.
+                logger.error("Failed to initialize HFDownloader: %s", e)
+                self._startup_failures.append("HFDownloader")
 
         # Initialize the oQ quantizer, ModelScope downloader, and HF uploader.
         # All three share a refresh callback that re-discovers models in the
@@ -1907,7 +2043,10 @@ class Server:
                 )
                 logger.info("oQ Quantizer initialized")
             except Exception as e:
-                logger.warning("Failed to initialize oQManager: %s", e)
+                # ENG-01 (#0909 audit): surface at ERROR — broken oQManager
+                # means quantization routes silently fail.
+                logger.error("Failed to initialize oQManager: %s", e)
+                self._startup_failures.append("oQManager")
 
             # ModelScope downloader (requires modelscope SDK)
             try:
@@ -1924,7 +2063,8 @@ class Server:
                 else:
                     logger.info("ModelScope SDK not installed, MS downloader disabled")
             except Exception as e:
-                logger.warning("Failed to initialize MSDownloader: %s", e)
+                logger.error("Failed to initialize MSDownloader: %s", e)
+                self._startup_failures.append("MSDownloader")
 
             # HuggingFace uploader (requires huggingface_hub, lazy per-call)
             try:
@@ -1933,7 +2073,8 @@ class Server:
                 set_hf_uploader(HFUploader(model_dirs=model_dirs))
                 logger.info("HF Uploader initialized")
             except Exception as e:
-                logger.warning("Failed to initialize HFUploader: %s", e)
+                logger.error("Failed to initialize HFUploader: %s", e)
+                self._startup_failures.append("HFUploader")
 
         # Apply model aliases
         aliases = {**self.config.model_aliases}
@@ -1980,7 +2121,10 @@ class Server:
 
             await load_prefix_cache_from_disk()
         except Exception as e:
-            logger.debug("prefix cache load failed (non-fatal): %s", e)
+            # ENG-01 (#0909 audit): surface at WARNING (not debug) — a failed
+            # prefix cache load means cold starts; operator should know.
+            logger.warning("prefix cache load failed (non-fatal): %s", e)
+            self._startup_failures.append("prefix_cache_load")
 
         # Initialize GUI database (for compat layer)
         if get_database_manager:
@@ -2003,7 +2147,13 @@ class Server:
                     "api_key in config for production deployments."
                 )
         except Exception:
-            pass
+            # ENG-01 (#0909 audit): was bare `pass` — a broken auth config
+            # check should at least log, not silently disappear.
+            logger.error(
+                "Failed to check API key configuration for security warning",
+                exc_info=True,
+            )
+            self._startup_failures.append("security_check")
 
         # mDNS/Bonjour cluster advertising (#264 part 2)
         if getattr(self.config, "cluster_advertise", False):
@@ -2068,10 +2218,24 @@ class Server:
                         "configured — running in single-instance mode"
                     )
             except Exception:
-                logger.warning(
+                # ENG-01 (#0909 audit): surface at ERROR — a failed cluster
+                # LB activation means multi-instance routing silently broken.
+                logger.error(
                     "cluster_lb (#811): activation failed (non-fatal)",
                     exc_info=True,
                 )
+                self._startup_failures.append("cluster_lb")
+
+        # ENG-01 (#0909 audit): if any subsystems failed during startup,
+        # log a prominent summary so operators know what is broken before
+        # the "startup complete" message. Previously these were all silent.
+        if self._startup_failures:
+            logger.warning(
+                "startup completed with %d failed subsystem(s): %s — "
+                "affected features may be unavailable",
+                len(self._startup_failures),
+                ", ".join(self._startup_failures),
+            )
 
     async def _shutdown(self):
         """Graceful shutdown."""
@@ -2134,8 +2298,31 @@ class Server:
                 logger.info("GUI resources cleaned up")
             except Exception as e:
                 logger.warning(f"GUI cleanup warning: {e}")
+        # ENG-02 (#0909 audit): cancel pending training tasks BEFORE
+        # pool.shutdown so in-flight training jobs don't outlive the
+        # event loop. Previously training services had no cleanup path.
+        for svc in self._training_services:
+            try:
+                await svc.shutdown()
+            except Exception:
+                logger.debug(
+                    "training service shutdown failed (non-fatal)",
+                    exc_info=True,
+                )
+        self._training_services.clear()
+
+        # ENG-02 (#0909 audit): wrap pool.shutdown() in try/except so a
+        # failure here doesn't skip prefix cache save, temp cleanup, and
+        # mx.clear_cache() — the entire shutdown chain must complete.
         if self.pool:
-            await self.pool.shutdown()
+            try:
+                await self.pool.shutdown()
+            except Exception as e:
+                logger.error(
+                    "pool.shutdown() failed: %s — continuing shutdown "
+                    "to save prefix cache and clean temp files (ENG-02)",
+                    e,
+                )
 
         # A-P1-5 (#0908 audit): save prefix cache AFTER pool.shutdown Phase 1
         # (abort+drain) completes — no in-flight requests mutating the cache

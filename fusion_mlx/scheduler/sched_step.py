@@ -31,7 +31,7 @@ from .helpers import (
     _should_clear_on_fragmentation,
     _sync_and_clear_cache,
 )
-from .monkeypatches import _unregister_uid_rows_for_model
+from .monkeypatches import _unregister_uid_row, _unregister_uid_rows_for_model
 from .types import (
     _PrefillAbortedError,
 )
@@ -246,7 +246,50 @@ def step(self) -> SchedulerOutput:
                     old_uid = self.request_id_to_uid.pop(rid, None)
                     if old_uid is not None:
                         self.uid_to_request_id.pop(old_uid, None)
-                    # Reset output state to prevent duplicate tokens on re-prefill
+                    # P2-13 (#0909 audit): if the request already generated
+                    # output tokens, do NOT wipe them and re-prefill from
+                    # scratch — that would send duplicate content to the
+                    # client. Instead, finalize the request with whatever
+                    # output it has. Only reset+reschedule requests that
+                    # have produced zero output tokens (genuinely stale).
+                    if req.output_token_ids:
+                        # Already has output — finalize instead of reschedule
+                        max_tok = 0
+                        try:
+                            max_tok = int(req.max_tokens) if req.max_tokens else 0
+                        except (TypeError, ValueError):
+                            max_tok = 0
+                        finish_reason = (
+                            "length"
+                            if max_tok and len(req.output_token_ids) >= max_tok
+                            else "stop"
+                        )
+                        req.status = (
+                            RequestStatus.FINISHED_LENGTH_CAPPED
+                            if finish_reason == "length"
+                            else RequestStatus.FINISHED_STOPPED
+                        )
+                        req.batch_uid = None
+                        self.finished_req_ids.add(rid)
+                        self.requests.pop(rid, None)
+                        logger.info(
+                            "step(%d): finalizing %s with %d output tokens "
+                            "(empty batch response, avoiding duplicate reschedule)",
+                            self._step_counter,
+                            rid,
+                            len(req.output_token_ids),
+                        )
+                        output.outputs.append(
+                            RequestOutput(
+                                request_id=rid,
+                                finished=True,
+                                finish_reason=finish_reason,
+                                output_token_ids=req.output_token_ids,
+                                output_text=req.output_text,
+                            )
+                        )
+                        continue
+                    # No output yet — safe to reschedule from scratch
                     req.output_token_ids = []
                     req.output_text = ""
                     req.num_computed_tokens = 0
@@ -307,7 +350,14 @@ def step(self) -> SchedulerOutput:
         # BatchGenerator is in an inconsistent state (partial
         # prefill), so reset it entirely. Pending aborts will
         # be processed at the start of the next step().
-        _unregister_uid_rows_for_model(self.model)
+        # Only unregister the aborted UIDs — clearing ALL model
+        # rows would leave other running requests with no UID
+        # mapping, causing permanent hangs (P0-03).
+        if e.aborted_uids:
+            for uid in e.aborted_uids:
+                _unregister_uid_row(self.model, uid)
+        else:
+            _unregister_uid_rows_for_model(self.model)
         self.batch_generator = None
         self._current_sampler_params = None
         self._boundary_cache_snapshots.clear()
@@ -317,6 +367,7 @@ def step(self) -> SchedulerOutput:
         # Only reschedule the aborted requests, not the entire
         # batch — innocent requests should keep decoding.
         if e.aborted_uids:
+            rescheduled_any = False
             for uid in e.aborted_uids:
                 rid = self.uid_to_request_id.get(uid)
                 if rid and rid in self.running:
@@ -325,6 +376,9 @@ def step(self) -> SchedulerOutput:
                     req.batch_uid = None
                     self.waiting.append(req)
                     logger.debug("Rescheduled aborted uid=%d rid=%s", uid, rid)
+                    rescheduled_any = True
+            if not rescheduled_any:
+                self._reschedule_running_requests()
         else:
             self._reschedule_running_requests()
 
@@ -527,18 +581,37 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     try:
         with mx.stream(self._stream):
             _, responses = bg._next()
-    except _PrefillAbortedError:
+    except _PrefillAbortedError as e:
         # Abort during a pending-prefill step: tear down the inconsistent
         # BatchGenerator and reschedule running requests for re-prefill.
         # Mirrors the full step() _PrefillAbortedError handler.
-        _unregister_uid_rows_for_model(self.model)
+        # Only unregister aborted UIDs (P0-03).
+        if e.aborted_uids:
+            for uid in e.aborted_uids:
+                _unregister_uid_row(self.model, uid)
+        else:
+            _unregister_uid_rows_for_model(self.model)
         self.batch_generator = None
         self._current_sampler_params = None
         self._boundary_cache_snapshots.clear()
         if self._boundary_snapshot_store is not None:
             self._boundary_snapshot_store.cleanup_all()
         self._boundary_snapshot_required = None
-        self._reschedule_running_requests()
+        if e.aborted_uids:
+            rescheduled_any = False
+            for uid in e.aborted_uids:
+                rid = self.uid_to_request_id.get(uid)
+                if rid and rid in self.running:
+                    req = self.running.pop(rid)
+                    req.status = RequestStatus.WAITING
+                    req.batch_uid = None
+                    self.waiting.append(req)
+                    logger.debug("Rescheduled aborted uid=%d rid=%s", uid, rid)
+                    rescheduled_any = True
+            if not rescheduled_any:
+                self._reschedule_running_requests()
+        else:
+            self._reschedule_running_requests()
         return output
     except OverflowError as e:
         if self._is_generation_overflow_error(e):

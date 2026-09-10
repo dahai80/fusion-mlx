@@ -12,6 +12,10 @@ from .auth import (
     verify_api_key_or_x_api_key,
     verify_management_access,
 )
+from .auth_precheck import (
+    AuthPrecheckMiddleware,
+    install_auth_precheck_middleware,
+)
 from .body_depth import (
     RequestBodyDepthMiddleware,
     install_request_body_depth_middleware,
@@ -26,6 +30,7 @@ from .request_id import RequestIdMiddleware, install_request_id_middleware
 from .route_guard import RouteGuardMiddleware, install_route_guard_middleware
 
 __all__ = [
+    "AuthPrecheckMiddleware",
     "ProbeFastPathMiddleware",
     "RateLimiter",
     "RequestIdMiddleware",
@@ -35,6 +40,7 @@ __all__ = [
     "check_rate_limit",
     "check_rate_limit_or_x_api_key",
     "configure_rate_limiter",
+    "install_auth_precheck_middleware",
     "install_exception_handlers",
     "install_probe_fastpath_middleware",
     "install_request_body_depth_middleware",

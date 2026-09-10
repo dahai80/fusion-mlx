@@ -1,4 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
+# A-P2-2/A-P3-3: Function-local imports of _server_state, _version,
+# get_config, get_instance_id, and get_server_metrics are INTENTIONAL.
+# The server ↔ routes ↔ config ↔ pool import graph is circular at the
+# top level; deferring imports to call time breaks the cycle so import
+# errors surface at first request, not at module import. Do NOT hoist
+# these to module level without first extracting _server_state into a
+# separate server_state.py module (see audit A-P2-2 fix recommendation).
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException

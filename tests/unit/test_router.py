@@ -73,11 +73,44 @@ class TestRequestRouterCloudRouting:
         )
         cloud.cloud_model = "gpt-4"
 
-        router = RequestRouter(llm_engine=llm, cloud_router=cloud)
+        router = RequestRouter(
+            llm_engine=llm,
+            cloud_router=cloud,
+            cloud_fallback_consent=True,
+        )
         result = await router.route_chat(
             [{"role": "user", "content": "big prompt"}], {}
         )
         cloud.completion.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cloud_routing_blocked_without_consent(self):
+        """RT-12 (#0909 audit): without cloud_fallback_consent, prompts
+        must NOT silently leave the local process for a third-party
+        cloud — fall through to local inference instead."""
+        llm = AsyncMock()
+        llm.prefix_cache_enabled = True
+        llm.count_chat_tokens = MagicMock(return_value=30000)
+        llm.chat = AsyncMock(
+            return_value={"choices": [{"message": {"content": "local"}}]}
+        )
+        cloud = MagicMock()
+        cloud.should_route_to_cloud = MagicMock(return_value=True)
+        cloud.completion = AsyncMock(
+            return_value={"choices": [{"message": {"content": "cloud"}}]}
+        )
+        cloud.cloud_model = "gpt-4"
+
+        router = RequestRouter(
+            llm_engine=llm,
+            cloud_router=cloud,
+            cloud_fallback_consent=False,
+        )
+        result = await router.route_chat(
+            [{"role": "user", "content": "big prompt"}], {}
+        )
+        cloud.completion.assert_not_called()
+        llm.chat.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_local_routing_on_small_context(self):

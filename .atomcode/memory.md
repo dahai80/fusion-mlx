@@ -1,1 +1,2 @@
 - start.sh 已配置 DFlash2 投机解码加速，drafter 路径 ~/.fusion-mlx/models/Qwen3.8-27B-DFlash2
+- fusion-mlx 架构/方案类文档：用户明确要求"不要照抄原方案，要有自己的思路和思想"——要批判性审视、指出原方案错误、给出带 file:line 的可落地改法，而非复述。审计报告存 ~/fusion/audit/，架构方案存 ~/fusion/architecture/。

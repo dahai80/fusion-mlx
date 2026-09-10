@@ -76,8 +76,17 @@ def _resolve_limit() -> int:
         raw = os.environ.get("FUSION_MLX_MAX_REQUEST_BYTES", "").strip()
         if raw:
             cap = int(raw)
-            if cap >= 0:
+            if cap > 0:
                 return cap
+            # P2-26/ENG-09 (#0909 audit): cap=0 does NOT mean "no limit".
+            # Operators may set =0 thinking it blocks all bodies, but the
+            # old code treated it as unlimited. Fall back to default.
+            if cap == 0:
+                logger.warning(
+                    "FUSION_MLX_MAX_REQUEST_BYTES=0 treated as 'use default' "
+                    "(not 'unlimited'). Set a positive value to override."
+                )
+                return _DEFAULT_MAX_REQUEST_BYTES
     except (ValueError, TypeError):
         pass
     try:
@@ -87,7 +96,7 @@ def _resolve_limit() -> int:
         if cap > 0:
             return cap
         if cap == 0:
-            return 0
+            return _DEFAULT_MAX_REQUEST_BYTES
     except (ValueError, TypeError):
         pass
     return _DEFAULT_MAX_REQUEST_BYTES
@@ -98,17 +107,28 @@ def _resolve_body_receive_timeout() -> float:
         raw = os.environ.get("FUSION_MLX_BODY_RECEIVE_TIMEOUT_SECONDS", "").strip()
         if raw:
             timeout = float(raw)
-            if timeout >= 0:
+            if timeout > 0:
                 return timeout
+            # ENG-09 (#0909 audit): timeout=0 does NOT mean "no timeout".
+            # Fall back to default to prevent unlimited body receive time.
+            if timeout == 0:
+                logger.warning(
+                    "FUSION_MLX_BODY_RECEIVE_TIMEOUT_SECONDS=0 treated as "
+                    "'use default' (not 'no timeout'). Set a positive value "
+                    "to override."
+                )
+                return _DEFAULT_BODY_RECEIVE_TIMEOUT
     except (ValueError, TypeError):
         pass
     try:
         from ..config import get_config
 
         cfg_timeout = float(get_config().body_receive_timeout_seconds)
-        if cfg_timeout < 0:
-            return 0.0
-        return cfg_timeout
+        if cfg_timeout > 0:
+            return cfg_timeout
+        if cfg_timeout == 0:
+            return _DEFAULT_BODY_RECEIVE_TIMEOUT
+        return 0.0
     except (ValueError, TypeError):
         pass
     return _DEFAULT_BODY_RECEIVE_TIMEOUT
@@ -291,24 +311,25 @@ def _format_message(
     streaming: bool,
     streamed: int | None = None,
 ) -> str:
+    # P3-12 (#0909 audit): do not expose env var names in client-facing
+    # error messages. The server-side log already records the limit value.
     if streaming:
         return (
             f"Request body too large: streamed {streamed or 0} bytes "
-            f"exceeded the {limit}-byte server cap "
-            "(set via FUSION_MLX_MAX_REQUEST_BYTES)"
+            f"exceeded the {limit}-byte server cap."
         )
     return (
         f"Request body too large: Content-Length {advertised} bytes "
-        f"exceeds the {limit}-byte server cap "
-        "(set via FUSION_MLX_MAX_REQUEST_BYTES)"
+        f"exceeds the {limit}-byte server cap."
     )
 
 
 def _format_408_body(*, timeout: float, streamed: int) -> bytes:
+    # P3-12 (#0909 audit): do not expose env var names in client-facing
+    # error messages.
     message = (
         f"Request timed out: no body bytes received for {timeout:.1f}s "
-        f"(streamed={streamed} bytes; set via "
-        "FUSION_MLX_BODY_RECEIVE_TIMEOUT_SECONDS)"
+        f"(streamed={streamed} bytes)."
     )
     return _json.dumps(
         {
