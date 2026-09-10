@@ -145,7 +145,11 @@ try:
         except ImportError:
             sys.modules[_full] = MagicMock()
 except ImportError:
-    sys.modules["mlx_vlm"] = MagicMock()
+    import importlib.util as _ilu
+
+    _vlm_mock = MagicMock()
+    _vlm_mock.__spec__ = _ilu.spec_from_loader("mlx_vlm", loader=None)
+    sys.modules["mlx_vlm"] = _vlm_mock
     sys.modules["mlx_vlm.generate"] = MagicMock()
     # mlx_vlm.models must be a real package (with __path__) so that
     # `from mlx_vlm.models.gemma3.config import TextConfig` can resolve
@@ -235,13 +239,14 @@ _mock_module("sentencepiece")
 _mock_module("tiktoken")
 _mock_module("socksio")
 # aiohttp: optional HTTP client used by a few tests. CI [dev] extra
-# does not include it. Mock to prevent collection errors.
+# does not include it. Mock to prevent collection errors. Use
+# MagicMock so attributes like ClientSession resolve.
 try:
     import aiohttp as _real_aiohttp
 
     sys.modules["aiohttp"] = _real_aiohttp
 except ImportError:
-    _mock_module("aiohttp")
+    sys.modules["aiohttp"] = MagicMock()
 # openai_harmony: preserve real package if available (tests import HarmonyEncodingName)
 try:
     import openai_harmony as _real_openai_harmony
