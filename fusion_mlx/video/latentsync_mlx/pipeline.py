@@ -12,10 +12,20 @@ import os
 import shutil
 import subprocess
 
-import cv2
 import mlx.core as mx
 import numpy as np
 import tqdm
+
+# cv2 is a runtime-only dep for video I/O (VideoWriter, VideoCapture,
+# warpAffine, resize). Guard the import so the module loads without
+# the [video] extra installed — the entire fusion_mlx.engines import
+# chain pulls through here (engines → video → latentsync_mlx), and a
+# hard `import cv2` crashes collection + subprocess tests on CI which
+# installs only [dev]. Functions that need cv2 check _CV2 at runtime.
+try:
+    import cv2
+except ImportError:
+    cv2 = None
 
 from ..musetalk_mlx.whisper.audio2feature import get_whisper_chunk
 from ..musetalk_mlx.whisper.log_mel import N_SAMPLES, log_mel_spectrogram
@@ -28,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 
 def write_video_frames(path: str, frames: np.ndarray, fps: int = 25):
+    if cv2 is None:
+        raise ImportError("latentsync video I/O requires cv2: pip install 'fusion-mlx[video]'")
     h, w = frames.shape[1:3]
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
@@ -37,6 +49,8 @@ def write_video_frames(path: str, frames: np.ndarray, fps: int = 25):
 
 
 def read_video_cv2(video_path: str, fps: int = 25):
+    if cv2 is None:
+        raise ImportError("latentsync video I/O requires cv2: pip install 'fusion-mlx[video]'")
     cap = cv2.VideoCapture(video_path)
     frames = []
     while cap.isOpened():

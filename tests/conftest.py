@@ -147,22 +147,29 @@ try:
 except ImportError:
     import importlib.util as _ilu
 
-    _vlm_mock = MagicMock()
-    _vlm_mock.__spec__ = _ilu.spec_from_loader("mlx_vlm", loader=None)
-    sys.modules["mlx_vlm"] = _vlm_mock
-    sys.modules["mlx_vlm.generate"] = MagicMock()
-    # mlx_vlm.models must be a real package (with __path__) so that
-    # `from mlx_vlm.models.gemma3.config import TextConfig` can resolve
-    # the submodule via sys.modules. A bare MagicMock has no __path__
-    # → "is not a package" → collection crash.
+    # mlx_vlm must be a real package (ModuleType with __path__ + __spec__)
+    # so Python's import system can resolve submodules via sys.modules.
+    # A bare MagicMock triggers "'mlx_vlm' is not a package" for any
+    # `from mlx_vlm.X import Y` — affecting 15+ tests.
+    _vlm_pkg = types.ModuleType("mlx_vlm")
+    _vlm_pkg.__path__ = []
+    _vlm_pkg.__spec__ = _ilu.spec_from_loader("mlx_vlm", loader=None)
+    sys.modules["mlx_vlm"] = _vlm_pkg
+    # Mock every submodule imported by fusion_mlx code + tests.
+    for _sub in (
+        "generate", "utils", "prompt_utils", "speculative",
+        "turboquant", "vision_cache",
+    ):
+        sys.modules[f"mlx_vlm.{_sub}"] = MagicMock()
+    # mlx_vlm.models subpackage + its submodules.
     _vlm_models = types.ModuleType("mlx_vlm.models")
     _vlm_models.__path__ = []
     sys.modules["mlx_vlm.models"] = _vlm_models
-    # Mock the specific submodules imported by fusion_mlx video backends.
-    sys.modules["mlx_vlm.models.gemma3"] = MagicMock()
-    sys.modules["mlx_vlm.models.gemma3.config"] = MagicMock()
-    sys.modules["mlx_vlm.models.gemma3.language"] = MagicMock()
-    sys.modules["mlx_vlm.utils"] = MagicMock()
+    for _msub in (
+        "gemma3", "gemma3.config", "gemma3.language",
+        "gemma4", "base", "minimax_m3",
+    ):
+        sys.modules[f"mlx_vlm.models.{_msub}"] = MagicMock()
 
 
 # Other MLX ecosystem mocks. Give each a real ModuleSpec so
@@ -173,7 +180,7 @@ except ImportError:
 # patch("mlx_embeddings.generate") fail with "module has no attribute
 # 'generate'" in test_embedding.py even though the installed pkg exposes
 # generate. Collateral found during #537 rescue.
-def _inject_mock_pkg(name: str) -> None:
+def _inject_mock_pkg(name: str, use_magic: bool = False) -> None:
     import importlib.util
 
     try:
@@ -182,12 +189,17 @@ def _inject_mock_pkg(name: str) -> None:
     except ImportError:
         pass
 
-    mod = types.ModuleType(name)
+    if use_magic:
+        mod = MagicMock()
+    else:
+        mod = types.ModuleType(name)
     mod.__spec__ = importlib.util.spec_from_loader(name, loader=None)
     sys.modules[name] = mod
 
 
-_inject_mock_pkg("mlx_embeddings")
+# mlx_embeddings: use MagicMock so attributes like `generate` resolve
+# (test_embedding.py patches mlx_embeddings.generate).
+_inject_mock_pkg("mlx_embeddings", use_magic=True)
 _inject_mock_pkg("mlx_audio")
 _inject_mock_pkg("dflash_mlx")
 _inject_mock_pkg("dflash")
