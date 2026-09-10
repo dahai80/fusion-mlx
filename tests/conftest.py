@@ -147,15 +147,18 @@ try:
 except ImportError:
     import importlib.util as _ilu
 
-    # mlx_vlm must be a real package (ModuleType with __path__ + __spec__)
-    # so Python's import system can resolve submodules via sys.modules.
-    # A bare MagicMock triggers "'mlx_vlm' is not a package" for any
-    # `from mlx_vlm.X import Y` — affecting 15+ tests. Intermediate
-    # packages also need __path__ so nested imports resolve.
+    # mlx_vlm mock: MagicMock with __path__ = [] + __spec__ set.
+    # This dual nature lets `from mlx_vlm.X import Y` resolve (Python
+    # sees __path__ → treats as package → checks sys.modules for X)
+    # AND `mlx_vlm.stream_generate(...)` work (MagicMock auto-creates
+    # attributes). ALL modules (even leaves) get __path__ + __spec__
+    # because importlib.util.find_spec raises ValueError if __spec__
+    # is unset (MagicMock doesn't auto-create __spec__ — it raises
+    # AttributeError).
 
     def _mock_vlm_pkg(name):
         if name not in sys.modules:
-            mod = types.ModuleType(name)
+            mod = MagicMock()
             mod.__path__ = []
             mod.__spec__ = _ilu.spec_from_loader(name, loader=None)
             sys.modules[name] = mod
@@ -164,8 +167,7 @@ except ImportError:
         parts = name.split(".")
         for i in range(1, len(parts)):
             _mock_vlm_pkg(".".join(parts[:i]))
-        if name not in sys.modules:
-            sys.modules[name] = MagicMock()
+        _mock_vlm_pkg(name)
 
     _mock_vlm_pkg("mlx_vlm")
     for _leaf in (
@@ -181,7 +183,6 @@ except ImportError:
         "tool_parsers.minimax_m3",
         "trainer.sft_trainer",
         "trainer.utils",
-        "speculative",
         "speculative.drafters",
         "speculative.drafters.qwen3_5_mtp.config",
         "speculative.drafters.qwen3_dflash.dflash",
