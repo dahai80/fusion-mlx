@@ -247,6 +247,17 @@ def get_image_gen_timeout() -> float:
     return val
 
 
+def _subprocess_enabled() -> bool:
+    # S3: opt-in subprocess isolation for image generation. Default OFF
+    # (beta — needs per-variant real-model verification). When ON, generate()
+    # delegates to MediaJobManager (child process). R2 root fix path.
+    return os.environ.get("FUSION_IMAGE_SUBPROCESS", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 def _infer_variant(model_path: str) -> str:
     name = (model_path or "").lower()
     if "sd3" in name or "stable-diffusion-3" in name:
@@ -604,6 +615,37 @@ class ImageGenEngine(BaseNonStreamingEngine):
         loop = asyncio.get_running_loop()
         sync_cb = make_sync_step_callback(on_step, loop)
 
+        # S3 (audit 0910 §6.2): subprocess isolation. When enabled, image gen
+        # runs in a child process — Metal allocations cannot crash the LLM.
+        # Timeout = kill subprocess (real cancellation). Model loads fresh in
+        # worker; main process holds zero image Metal memory.
+        if _subprocess_enabled():
+            return await self._generate_subprocess(
+                prompt=prompt,
+                width=width,
+                height=height,
+                steps=steps,
+                seed=base_seed,
+                guidance=guidance,
+                n_images=n_images,
+                output_format=output_format,
+                scheduler=scheduler,
+                negative_prompt=negative_prompt,
+                denoising_end=denoising_end,
+                on_step=on_step,
+                control_image=control_image,
+                controlnet_strength=controlnet_strength,
+                reference_images=reference_images,
+                reference_strengths=reference_strengths,
+                edit_image=edit_image,
+                mask_image=mask_image,
+                depth_image=depth_image,
+                image_strength=image_strength,
+                kwargs=kwargs,
+                t0=t0,
+                activity_id=activity_id,
+            )
+
         def _generate():
             mx.default_stream(mx.default_device())
             images: list[bytes] = []
@@ -800,6 +842,130 @@ class ImageGenEngine(BaseNonStreamingEngine):
             return result
         finally:
             await self._finish_activity(activity_id)
+
+    async def _generate_subprocess(
+        self,
+        prompt: str,
+        width: int,
+        height: int,
+        steps: int,
+        seed: int,
+        guidance: float,
+        n_images: int,
+        output_format: str,
+        scheduler: str | None,
+        negative_prompt: str | None,
+        denoising_end: float | None,
+        on_step: Callable[[int, int], None] | None,
+        control_image: str | None,
+        controlnet_strength: float | None,
+        reference_images: list[str] | None,
+        reference_strengths: list[float] | None,
+        edit_image: str | None,
+        mask_image: str | None,
+        depth_image: str | None,
+        image_strength: float | None,
+        kwargs: dict[str, Any],
+        t0: float,
+        activity_id: str,
+    ) -> list[bytes]:
+        # S3: subprocess image generation via MediaJobManager.
+        from ..media.job_manager import MediaJobManager
+
+        mgr = getattr(ImageGenEngine, "_media_mgr", None)
+        if mgr is None:
+            mgr = MediaJobManager()
+            ImageGenEngine._media_mgr = mgr
+
+        # config_label: txt2img infers from model_path; others use VARIANT_MAP default
+        config_label = None
+        if self._variant == "txt2img":
+            config_label = _infer_flux2_config(self._model_path)
+
+        gen_params: dict[str, Any] = dict(
+            seed=seed,
+            prompt=prompt,
+            steps=steps,
+            height=height,
+            width=width,
+            guidance=guidance,
+            scheduler=scheduler,
+            negative_prompt=negative_prompt,
+            denoising_end=denoising_end,
+            control_image=control_image,
+            controlnet_strength=controlnet_strength,
+            depth_image=depth_image,
+            image_strength=image_strength,
+            edit_image=edit_image,
+            mask_image=mask_image,
+            reference_images=reference_images,
+            reference_strengths=reference_strengths,
+            extra_kwargs=kwargs,
+        )
+
+        loop = asyncio.get_running_loop()
+
+        def _on_step(image_idx: int, step: int, total: int) -> None:
+            if on_step is not None:
+                # on_step signature is (step, total); flatten across images
+                on_step(step, total)
+
+        try:
+            result = await mgr.run_image_job(
+                variant=self._variant,
+                model_path=self._model_path,
+                quantize=self._quantize,
+                config_label=config_label,
+                output_format=output_format,
+                n_images=n_images,
+                gen_params=gen_params,
+                timeout=get_image_gen_timeout(),
+                on_step=_on_step if on_step is not None else None,
+            )
+        except TimeoutError:
+            from ..engine_core import poison_executor
+
+            poison_executor("image")
+            logger.error(
+                "ImageGen subprocess timed out after %.0fs, worker killed, "
+                "image executor poisoned (S5)",
+                get_image_gen_timeout(),
+            )
+            raise RuntimeError(
+                "image generation exceeded the hang deadline "
+                f"({get_image_gen_timeout():.0f}s) and the subprocess worker "
+                "was killed (S3). The image subsystem is now poisoned; "
+                "restart fusion-mlx to recover."
+            )
+        finally:
+            await self._finish_activity(activity_id)
+
+        # Read output files into bytes, then clean up temp dir
+        import shutil
+
+        images: list[bytes] = []
+        out_dir = os.path.dirname(result.outputs[0]) if result.outputs else ""
+        try:
+            for path in result.outputs:
+                if output_format == "raw":
+                    import numpy as np
+
+                    images.append(np.load(path))
+                else:
+                    with open(path, "rb") as f:
+                        images.append(f.read())
+        finally:
+            if out_dir and os.path.isdir(out_dir):
+                shutil.rmtree(out_dir, ignore_errors=True)
+        elapsed = time.monotonic() - t0
+        self._update_activity(activity_id, elapsed_seconds=elapsed)
+        logger.info(
+            "ImageGen (subprocess) generated %d image(s) in %.2fs variant=%s",
+            len(images),
+            elapsed,
+            self._variant,
+        )
+        return images
 
     # ------------------------------------------------------------------
     # Pipeline stage API (issue #170). Exposes individual pipeline stages
