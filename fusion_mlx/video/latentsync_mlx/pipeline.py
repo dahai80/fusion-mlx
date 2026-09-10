@@ -39,7 +39,9 @@ logger = logging.getLogger(__name__)
 
 def write_video_frames(path: str, frames: np.ndarray, fps: int = 25):
     if cv2 is None:
-        raise ImportError("latentsync video I/O requires cv2: pip install 'fusion-mlx[video]'")
+        raise ImportError(
+            "latentsync video I/O requires cv2: pip install 'fusion-mlx[video]'"
+        )
     h, w = frames.shape[1:3]
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(path, fourcc, fps, (w, h))
@@ -50,7 +52,9 @@ def write_video_frames(path: str, frames: np.ndarray, fps: int = 25):
 
 def read_video_cv2(video_path: str, fps: int = 25):
     if cv2 is None:
-        raise ImportError("latentsync video I/O requires cv2: pip install 'fusion-mlx[video]'")
+        raise ImportError(
+            "latentsync video I/O requires cv2: pip install 'fusion-mlx[video]'"
+        )
     cap = cv2.VideoCapture(video_path)
     frames = []
     while cap.isOpened():

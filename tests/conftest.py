@@ -157,8 +157,12 @@ except ImportError:
     sys.modules["mlx_vlm"] = _vlm_pkg
     # Mock every submodule imported by fusion_mlx code + tests.
     for _sub in (
-        "generate", "utils", "prompt_utils", "speculative",
-        "turboquant", "vision_cache",
+        "generate",
+        "utils",
+        "prompt_utils",
+        "speculative",
+        "turboquant",
+        "vision_cache",
     ):
         sys.modules[f"mlx_vlm.{_sub}"] = MagicMock()
     # mlx_vlm.models subpackage + its submodules.
@@ -166,8 +170,12 @@ except ImportError:
     _vlm_models.__path__ = []
     sys.modules["mlx_vlm.models"] = _vlm_models
     for _msub in (
-        "gemma3", "gemma3.config", "gemma3.language",
-        "gemma4", "base", "minimax_m3",
+        "gemma3",
+        "gemma3.config",
+        "gemma3.language",
+        "gemma4",
+        "base",
+        "minimax_m3",
     ):
         sys.modules[f"mlx_vlm.models.{_msub}"] = MagicMock()
 
