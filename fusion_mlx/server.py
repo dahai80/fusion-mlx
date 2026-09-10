@@ -2246,10 +2246,19 @@ class Server:
         else:
             from .engines.batched import BatchedEngine
 
+            # Resolve per-model settings (dflash2_disabled, ttl, etc.) so
+            # the single-model serve path gets the same settings as the pool
+            # load_model path. Without this, model_settings is None and gates
+            # like dflash2_disabled never fire for CLI-served models.
+            _ms = None
+            _sm = getattr(self.pool, "_settings_manager", None)
+            if _sm is not None:
+                _ms = _sm.get_settings(model_path)
             engine = BatchedEngine(
                 model_name=model_path,
                 scheduler_config=scheduler_config,
                 stream_interval=stream_interval,
+                model_settings=_ms,
                 lora_path=pending.get("lora_path"),
             )
         await engine.start()
