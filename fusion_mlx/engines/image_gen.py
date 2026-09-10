@@ -494,6 +494,13 @@ class ImageGenEngine(BaseNonStreamingEngine):
         logger.info(
             "ImageGen engine loaded: %s variant=%s", self._model_name, self._variant
         )
+        # S4 (audit 0910 §6.2-5): Qwen-Image CFG-free patch. mflux always
+        # runs 2 DiT forwards/step; FUSION_QWEN_IMAGE_CFG=0 skips the
+        # negative forward (single-forward, ~2x speedup, halved peak).
+        if self._variant in ("qwen_image", "qwen_image_edit"):
+            from ._qwen_image_cfg_patch import apply_qwen_image_cfg_patch
+
+            apply_qwen_image_cfg_patch(self._flux)
 
     async def stop(self) -> None:
         if self._flux is None:
@@ -540,6 +547,19 @@ class ImageGenEngine(BaseNonStreamingEngine):
                     "Install with: pip install mflux-fusion"
                 )
             raise RuntimeError("ImageGen engine not started.")
+
+        # S5 (audit 0910 §6.3-5): if a prior generation hung and poisoned the
+        # image executor, fast-fail loudly instead of silently queuing behind
+        # the dead worker for 600s. Operator must restart fusion-mlx.
+        from ..engine_core import is_image_executor_poisoned
+
+        if is_image_executor_poisoned():
+            raise RuntimeError(
+                "image subsystem unavailable: a prior generation hung and "
+                "poisoned the worker thread (S5). Restart fusion-mlx to "
+                "restore image generation. Set FUSION_IMAGE_TIMEOUT to "
+                "adjust the hang deadline."
+            )
 
         flux = self._flux
         base_seed = seed if seed is not None else 0
@@ -744,10 +764,31 @@ class ImageGenEngine(BaseNonStreamingEngine):
             return images
 
         try:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("image"), _generate),
-                timeout=get_image_gen_timeout(),
-            )
+            try:
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(get_executor("image"), _generate),
+                    timeout=get_image_gen_timeout(),
+                )
+            except TimeoutError:
+                # S5 (audit 0910 §6.3-5): the deadline fired but the worker
+                # thread keeps running mflux (cannot cancel a running thread).
+                # Poison + replace so later requests fast-fail loudly instead
+                # of silently queuing behind the dead worker for 600s each.
+                from ..engine_core import poison_executor
+
+                poison_executor("image")
+                logger.error(
+                    "ImageGen generation timed out after %.0fs and poisoned "
+                    "the image worker (S5). Subsequent image requests will be "
+                    "rejected until fusion-mlx restart.",
+                    get_image_gen_timeout(),
+                )
+                raise RuntimeError(
+                    "image generation exceeded the hang deadline "
+                    f"({get_image_gen_timeout():.0f}s) and the worker thread "
+                    "could not be cancelled (S5). The image subsystem is now "
+                    "poisoned; restart fusion-mlx to recover."
+                )
             elapsed = time.monotonic() - t0
             self._update_activity(activity_id, elapsed_seconds=elapsed)
             logger.info(

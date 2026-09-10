@@ -220,10 +220,26 @@ def get_video_gen_timeout() -> float:
 # on the old executor from being mistaken for live work.
 _video_executor_poisoned = False
 _video_executor_poison_lock = threading.Lock()
+# S5 (audit 0910 §6.3-5): image executor poison — same pattern as video.
+# A hung image generation (mflux 30-step DiT) cannot be cancelled from
+# Python; without poison, every subsequent image request queues behind
+# the dead worker and times out after FUSION_IMAGE_TIMEOUT (600s).
+_image_executor_poisoned = False
+_image_executor_poison_lock = threading.Lock()
 
 
 def is_video_executor_poisoned() -> bool:
     return _video_executor_poisoned
+
+
+def is_image_executor_poisoned() -> bool:
+    return _image_executor_poisoned
+
+
+def reset_image_executor_poison() -> None:
+    global _image_executor_poisoned
+    with _image_executor_poison_lock:
+        _image_executor_poisoned = False
 
 
 def reset_video_executor_poison() -> None:
@@ -240,11 +256,41 @@ def poison_executor(pool_type: str = "video") -> None:
     # abandoned to the process lifetime. MLX weights are thread-local, so
     # the replacement worker reloads on first use.
     global _video_executor_poisoned
+    global _image_executor_poisoned
     with _video_executor_poison_lock:
         if pool_type == "video" and _video_executor_poisoned:
             return
+        if pool_type == "image" and _image_executor_poisoned:
+            return
+        # Set poisoned flag BEFORE the exec_ None check — the flag marks the
+        # subsystem poisoned regardless of whether the executor was ever
+        # initialized (a backend TimeoutError can fire before get_executor
+        # is called, leaving _global_executors without the pool entry).
+        if pool_type == "video":
+            _video_executor_poisoned = True
+        elif pool_type == "image":
+            _image_executor_poisoned = True
         exec_ = _global_executors.get(pool_type)
         if exec_ is None:
+            if pool_type == "video":
+                logger.error(
+                    "video executor POISONED (#811 R-3): a generation hung and "
+                    "could not be cancelled. No executor was registered yet. "
+                    "RESTART fusion-mlx to recover. Subsequent video requests "
+                    "will be rejected."
+                )
+            elif pool_type == "image":
+                logger.error(
+                    "image executor POISONED (S5): a generation hung and could "
+                    "not be cancelled. No executor was registered yet. "
+                    "RESTART fusion-mlx to recover. Subsequent image requests "
+                    "will be rejected."
+                )
+            else:
+                logger.error(
+                    "%s executor poisoned but not registered (#811 R-3).",
+                    pool_type,
+                )
             return
         cfg = _executor_config.get(
             pool_type, {"max_workers": 1, "prefix": f"mlx-{pool_type}"}
@@ -256,12 +302,18 @@ def poison_executor(pool_type: str = "video") -> None:
         )
         _global_executors[pool_type] = new_exec
         if pool_type == "video":
-            _video_executor_poisoned = True
             logger.error(
                 "video executor POISONED (#811 R-3): a generation hung and could "
                 "not be cancelled. New worker spawned; the stuck thread is "
                 "abandoned. RESTART fusion-mlx to reclaim its memory. "
                 "Subsequent video requests will reload on the fresh worker."
+            )
+        elif pool_type == "image":
+            logger.error(
+                "image executor POISONED (S5): a generation hung and could "
+                "not be cancelled. New worker spawned; the stuck thread is "
+                "abandoned. RESTART fusion-mlx to reclaim its memory. "
+                "Subsequent image requests will reload on the fresh worker."
             )
         else:
             logger.error("%s executor replaced after a hung job (#811 R-3).", pool_type)
