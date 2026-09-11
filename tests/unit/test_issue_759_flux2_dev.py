@@ -1,3 +1,5 @@
+import os
+
 import mlx.core as mx
 import pytest
 
@@ -72,7 +74,14 @@ def test_dev_model_config_attrs():
     assert cfg.precision == mx.bfloat16
 
 
+@pytest.mark.real_model
 def test_mistral3_text_encoder_shape():
+    if not os.environ.get("FUSION_MLX_REAL_MODEL_TESTS"):
+        pytest.skip(
+            "set FUSION_MLX_REAL_MODEL_TESTS=1 — instantiates 30-layer mistral3 "
+            "encoder at production scale (hidden=5120, vocab=131072, inter=32768) "
+            "which allocates multi-GB MLX weights and OOMs CI runners"
+        )
     enc = Mistral3TextEncoder(
         hidden_size=5120,
         num_hidden_layers=30,
