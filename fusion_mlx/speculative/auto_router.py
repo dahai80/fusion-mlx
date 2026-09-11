@@ -34,8 +34,12 @@ Decision order (see ``decide``):
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +48,51 @@ METHOD_EAGLE3 = "eagle3"
 METHOD_DFLASH = "ddtree"
 METHOD_DFLASH2 = "dflash2"
 METHOD_MTP = "mtp"
+
+
+# D2.6/G10/L13: spec-route decision jsonl logger. Append-only, size-guarded
+# (500 MiB), test-disable switch, I/O errors NEVER break inference.
+_SPEC_ROUTE_LOG_PATH = os.environ.get(
+    "FUSION_MLX_SPEC_ROUTE_LOG_PATH",
+    str(Path.home() / ".fusion-mlx" / "spec_route_decisions.jsonl"),
+)
+_SPEC_ROUTE_LOG_MAX_BYTES = 500 * 1024 * 1024  # 500 MiB size guard
+
+
+def _spec_route_log_enabled() -> bool:
+    # D2.6: test-disable switch. FUSION_MLX_SPEC_ROUTE_LOG=0 disables
+    # (default ON). Tests set =0 to avoid writing during unit runs.
+    val = os.environ.get("FUSION_MLX_SPEC_ROUTE_LOG", "1").strip().lower()
+    return val not in ("0", "false", "off")
+
+
+def _append_spec_route_decision(decision: dict) -> None:
+    # D2.6: append a routing decision to jsonl. Three guards:
+    # 1. test-disable switch (FUSION_MLX_SPEC_ROUTE_LOG=0)
+    # 2. 500 MiB size guard (stop logging when file exceeds cap)
+    # 3. I/O errors NEVER break inference (try/except + debug log)
+    if not _spec_route_log_enabled():
+        return
+    try:
+        p = Path(_SPEC_ROUTE_LOG_PATH)
+        try:
+            if p.exists() and p.stat().st_size >= _SPEC_ROUTE_LOG_MAX_BYTES:
+                logger.debug(
+                    "spec-route log: size guard hit (%d bytes), skipping append",
+                    p.stat().st_size,
+                )
+                return
+        except OSError:
+            pass
+        p.parent.mkdir(parents=True, exist_ok=True)
+        decision["ts"] = time.time()
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(json.dumps(decision, ensure_ascii=False) + "\n")
+    except OSError as e:
+        # I/O error never breaks inference — routing decision already made.
+        logger.debug("spec-route log: append failed (non-fatal): %s", e)
+
+
 METHOD_DSPARK = "dspark"
 METHOD_DFLY = "dfly"
 DEFAULT_AVAILABLE: frozenset[str] = frozenset(
@@ -237,6 +286,17 @@ class SpecAutoRouter:
             and rate is not None
             and rate >= self.keep_accept
         ):
+            _append_spec_route_decision(
+                {
+                    "method": cur,
+                    "reason": "keep_accept (rate >= threshold)",
+                    "candidates": sorted(avail),
+                    "model_family": signals.model_family,
+                    "prompt_tokens": signals.prompt_token_count,
+                    "accept_rate": rate,
+                    "kv_pressure": getattr(signals, "kv_pressure", None),
+                }
+            )
             return cur
 
         candidates = avail - excluded
@@ -244,18 +304,74 @@ class SpecAutoRouter:
         if signals.model_family is not None:
             result = self._table_route(signals, candidates)
             if result is not None:
+                _append_spec_route_decision(
+                    {
+                        "method": result,
+                        "reason": "table_route hit",
+                        "candidates": sorted(candidates),
+                        "model_family": signals.model_family,
+                        "prompt_tokens": signals.prompt_token_count,
+                        "accept_rate": rate,
+                        "kv_pressure": getattr(signals, "kv_pressure", None),
+                    }
+                )
                 return result
 
         if (
             signals.prompt_token_count >= self.long_doc_threshold
             and METHOD_DFLASH in candidates
         ):
+            _append_spec_route_decision(
+                {
+                    "method": METHOD_DFLASH,
+                    "reason": "long_doc threshold",
+                    "candidates": sorted(candidates),
+                    "model_family": signals.model_family,
+                    "prompt_tokens": signals.prompt_token_count,
+                    "accept_rate": rate,
+                    "kv_pressure": getattr(signals, "kv_pressure", None),
+                }
+            )
             return METHOD_DFLASH
         if signals.has_mtp and METHOD_MTP in candidates:
+            _append_spec_route_decision(
+                {
+                    "method": METHOD_MTP,
+                    "reason": "mtp available",
+                    "candidates": sorted(candidates),
+                    "model_family": signals.model_family,
+                    "prompt_tokens": signals.prompt_token_count,
+                    "accept_rate": rate,
+                    "kv_pressure": getattr(signals, "kv_pressure", None),
+                }
+            )
             return METHOD_MTP
         if METHOD_NGRAM in candidates:
+            _append_spec_route_decision(
+                {
+                    "method": METHOD_NGRAM,
+                    "reason": "ngram fallback",
+                    "candidates": sorted(candidates),
+                    "model_family": signals.model_family,
+                    "prompt_tokens": signals.prompt_token_count,
+                    "accept_rate": rate,
+                    "kv_pressure": getattr(signals, "kv_pressure", None),
+                }
+            )
             return METHOD_NGRAM
-        return next(iter(sorted(candidates)), METHOD_NGRAM)
+        fallback = next(iter(sorted(candidates)), METHOD_NGRAM)
+        _append_spec_route_decision(
+            {
+                "method": fallback,
+                "reason": "sorted fallback",
+                "candidates": sorted(candidates),
+                "model_family": signals.model_family,
+                "prompt_tokens": signals.prompt_token_count,
+                "accept_rate": rate,
+                "kv_pressure": getattr(signals, "kv_pressure", None),
+            }
+        )
+        return fallback
 
     def _method_usable(self, method: str, signals: RouteSignals) -> bool:
         if method == METHOD_MTP and not signals.has_mtp:

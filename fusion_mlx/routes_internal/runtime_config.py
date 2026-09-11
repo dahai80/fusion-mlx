@@ -61,6 +61,8 @@ async def runtime_config() -> dict[str, Any]:
             "gpu_memory_utilization": _safe_get(mem, "gpu_memory_utilization"),
             "max_cpu_memory_mb": _safe_get(mem, "max_cpu_memory_mb"),
         },
+        # D2.4/G6: chip tier (lite/standard/full) for profile auto-tuning.
+        "chip_tier": _detect_chip_tier_safe(),
         "cache": {
             "prefix_cache_max_blocks": _safe_get(
                 _safe_get(cfg, "cache"), "prefix_cache_max_blocks"
@@ -96,3 +98,15 @@ async def runtime_config() -> dict[str, Any]:
     except Exception:
         logger.debug("semaphore state unavailable", exc_info=True)
     return snapshot
+
+
+def _detect_chip_tier_safe() -> str:
+    # D2.4/G6: chip tier detection — never break runtime-config on
+    # non-macOS or detection failure (returns "standard" default).
+    try:
+        from ..hardware import detect_chip_tier
+
+        return detect_chip_tier()
+    except Exception:
+        logger.debug("chip_tier detection unavailable", exc_info=True)
+        return "standard"
