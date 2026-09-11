@@ -1977,9 +1977,15 @@ async def chat_completions(
                 logger.info("Response cache HIT key=%s", _cache_key[:12])
                 from starlette.responses import JSONResponse
 
+                _hit_headers = {"X-Cache": "HIT"}
+                _ci = getattr(request, "__pydantic_extra__", None) or {}
+                if isinstance(_ci, dict) and _ci:
+                    _hit_headers["X-Fusion-Ignored-Params"] = ",".join(
+                        sorted(_ci.keys())
+                    )
                 return JSONResponse(
                     content=cached,
-                    headers={"X-Cache": "HIT"},
+                    headers=_hit_headers,
                 )
             if _cache_policy == CachePolicy.ONLY_IF_CACHED:
                 from starlette.responses import JSONResponse
@@ -1996,6 +2002,16 @@ async def chat_completions(
                 )
 
     try:
+        # §6.2: collect unrecognized params (extra="allow" on
+        # ChatCompletionRequest) and surface them via
+        # X-Fusion-Ignored-Params so Cursor/Claude Code/Ollama clients
+        # know what was accepted-but-not-forwarded, without 400-ing.
+        _ignored = getattr(request, "__pydantic_extra__", None) or {}
+        _ignored_header = ""
+        if isinstance(_ignored, dict) and _ignored:
+            _ignored_header = ",".join(sorted(_ignored.keys()))
+            logger.debug("X-Fusion-Ignored-Params: %s", _ignored_header)
+
         if request.stream:
             return await _stream_chat(
                 request, principal=principal, headers=dict(http_request.headers)
@@ -2004,6 +2020,10 @@ async def chat_completions(
             result = await _run_chat(
                 request, principal=principal, headers=dict(http_request.headers)
             )
+
+            # §6.2: attach X-Fusion-Ignored-Params to non-streaming responses
+            if _ignored_header and isinstance(result, JSONResponse):
+                result.headers["X-Fusion-Ignored-Params"] = _ignored_header
 
             # Store in response cache on MISS
             if _cache_key and _cache_policy not in (

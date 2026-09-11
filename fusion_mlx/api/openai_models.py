@@ -15,7 +15,14 @@ import logging
 import math
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from fusion_mlx.api.models import _validate_response_format_raw
 from fusion_mlx.api.shared_models import (
@@ -295,7 +302,16 @@ class StreamOptions(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
-    """Request for chat completion."""
+    """Request for chat completion.
+
+    §6.2: extra='allow' captures unrecognized params (top_p/logprobs/seed/
+    parallel_tool_calls etc. from Cursor/Claude Code/Ollama clients) into
+    __pydantic_extra__ instead of silently dropping them. The route handler
+    surfaces them via the X-Fusion-Ignored-Params response header so the
+    client knows what was accepted-but-not-forwarded, without 400-ing.
+    """
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     model: str
     # Optional LoRA adapter path (mlx-lm server-compatible). When set, the

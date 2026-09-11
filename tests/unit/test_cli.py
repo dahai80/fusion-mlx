@@ -18,6 +18,24 @@ import pytest
 from fusion_mlx._version import __version__
 
 
+def _auto_detect_from_dir(model_dir):
+    """Test helper: replicate _auto_detect_single_cached_model logic on a
+    given directory so we don't have to monkeypatch Path.home()."""
+    from pathlib import Path
+
+    p = Path(model_dir)
+    if not p.is_dir():
+        return None
+    candidates = [
+        name
+        for name in [c.name for c in p.iterdir() if c.is_dir()]
+        if not name.startswith(".")
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
 class TestCLIModule:
     """Tests for CLI module existence and basic functionality."""
 
@@ -80,9 +98,13 @@ class TestCLIHelp:
         assert "model-dir" in stdout_lower
 
     def test_lifecycle_commands_in_main_help(self):
-        """Test start/stop/restart lifecycle commands are exposed."""
+        """Test start/stop/restart lifecycle commands are exposed.
+
+        §6.1: --help shows only 5 primary commands; lifecycle commands
+        appear on --help-advanced.
+        """
         result = subprocess.run(
-            [sys.executable, "-m", "fusion_mlx.cli", "--help"],
+            [sys.executable, "-m", "fusion_mlx.cli", "--help-advanced"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -92,6 +114,96 @@ class TestCLIHelp:
         assert "start" in stdout_lower
         assert "stop" in stdout_lower
         assert "restart" in stdout_lower
+
+    def test_primary_help_shows_only_5_commands(self):
+        """§6.1: default --help shows serve/chat/pull/models/ps only."""
+        result = subprocess.run(
+            [sys.executable, "-m", "fusion_mlx.cli", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode == 0
+        stdout = result.stdout
+        assert "serve" in stdout
+        assert "chat" in stdout
+        assert "pull" in stdout
+        assert "models" in stdout
+        assert "ps" in stdout
+        assert "--help-advanced" in stdout
+        assert "convert" not in stdout
+        assert "cuda-node" not in stdout
+        assert "telemetry" not in stdout
+
+
+class TestZeroArgDefaultModel:
+    """§6.1: serve/chat with no model arg reads default_model from settings.json."""
+
+    def test_settings_default_model_reader_returns_none_when_unset(self, monkeypatch):
+        from fusion_mlx import _cli_base
+
+        monkeypatch.setattr(_cli_base, "_read_settings_json", lambda: {})
+        assert _cli_base._settings_default_model() is None
+
+    def test_settings_default_model_reader_returns_value(self, monkeypatch):
+        from fusion_mlx import _cli_base
+
+        monkeypatch.setattr(
+            _cli_base,
+            "_read_settings_json",
+            lambda: {"default_model": "qwen3.5-9b-4bit"},
+        )
+        assert _cli_base._settings_default_model() == "qwen3.5-9b-4bit"
+
+    def test_settings_profile_reader_validates_choices(self, monkeypatch):
+        from fusion_mlx import _cli_base
+
+        monkeypatch.setattr(
+            _cli_base, "_read_settings_json", lambda: {"profile": "lite"}
+        )
+        assert _cli_base._settings_profile() == "lite"
+
+        monkeypatch.setattr(
+            _cli_base, "_read_settings_json", lambda: {"profile": "invalid"}
+        )
+        assert _cli_base._settings_profile() is None
+
+    def test_settings_disabled_modules_reader(self, monkeypatch):
+        from fusion_mlx import _cli_base
+
+        monkeypatch.setattr(
+            _cli_base,
+            "_read_settings_json",
+            lambda: {"disabled_modules": ["image", "video"]},
+        )
+        assert _cli_base._settings_disabled_modules() == ["image", "video"]
+
+        monkeypatch.setattr(_cli_base, "_read_settings_json", lambda: {})
+        assert _cli_base._settings_disabled_modules() == []
+
+    def test_auto_detect_single_cached_model_none_when_multi(
+        self, monkeypatch, tmp_path
+    ):
+        from fusion_mlx import _cli_base
+
+        models = tmp_path / "models"
+        models.mkdir()
+        (models / "model-a").mkdir()
+        (models / "model-b").mkdir()
+        monkeypatch.setattr(
+            _cli_base,
+            "_auto_detect_single_cached_model",
+            lambda: _auto_detect_from_dir(models),
+        )
+        assert _auto_detect_from_dir(models) is None
+
+    def test_auto_detect_single_cached_model_returns_name_when_single(
+        self, monkeypatch, tmp_path
+    ):
+        models = tmp_path / "models"
+        models.mkdir()
+        (models / "only-model").mkdir()
+        assert _auto_detect_from_dir(models) == "only-model"
 
 
 class TestLifecycleCommand:

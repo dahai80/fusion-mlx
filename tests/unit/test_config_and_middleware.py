@@ -507,6 +507,7 @@ class TestHTTPExceptionHandler:
                 "type": "rate_limit_error",
                 "code": None,
                 "param": None,
+                "solutions": [],
             }
         }
 
