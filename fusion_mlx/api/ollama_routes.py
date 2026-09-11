@@ -28,6 +28,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..middleware.auth import verify_api_key
+from ._concurrency import (
+    acquire_request_slot,
+    concurrency_guarded,
+    release_request_slot,
+)
 from ._disconnect_guard import handle_disconnect
 
 logger = logging.getLogger(__name__)
@@ -190,7 +195,11 @@ async def _call_openai_chat(
     )
 
     if not stream:
-        return await _run_chat(chat_req, _skip_cap_check=True)
+        await acquire_request_slot()
+        try:
+            return await _run_chat(chat_req, _skip_cap_check=True)
+        finally:
+            release_request_slot()
 
     from ..server import resolve_model_with_profile
 
@@ -201,13 +210,15 @@ async def _call_openai_chat(
     import uuid
 
     request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-    gen = _stream_chat_generator(
-        chat_req,
-        engine,
-        model_name,
-        None,
-        profile_overrides=profile_overrides,
-        request_id=request_id,
+    gen = concurrency_guarded(
+        _stream_chat_generator(
+            chat_req,
+            engine,
+            model_name,
+            None,
+            profile_overrides=profile_overrides,
+            request_id=request_id,
+        )
     )
     return gen, request_id, engine
 

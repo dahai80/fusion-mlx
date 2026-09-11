@@ -258,12 +258,42 @@ def section_system() -> Section:
     """
     s = Section("System")
 
-    _RAM_MODEL_MAP = [
-        (8, "Qwen3-4B (4-bit)"),
-        (16, "Qwen3.5-9B (6-bit) or Qwen3.6-27B (quant2-flat)"),
-        (24, "Qwen3.6-27B (mxfp8)"),
-        (32, "Qwen3.6-27B (6-bit)"),
-        (64, "Qwen3-72B (4-bit)"),
+    _RAM_PROFILE_MAP = [
+        (
+            8,
+            "lite",
+            "Qwen3-4B (4-bit)",
+            "4K",
+            "disable all non-LLM modules (image/video/audio/embed)",
+        ),
+        (
+            16,
+            "lite",
+            "Qwen3.5-9B (6-bit) or Qwen3.6-27B (quant2-flat)",
+            "8K",
+            "disable image/video; allow embed/audio",
+        ),
+        (
+            24,
+            "standard",
+            "Qwen3.6-27B (mxfp8)",
+            "16K",
+            "disable image gen; keep embed/vlm",
+        ),
+        (
+            32,
+            "standard",
+            "Qwen3.6-27B (6-bit)",
+            "32K",
+            "allow all except concurrent image+video",
+        ),
+        (
+            64,
+            "standard",
+            "Qwen3-72B (4-bit)",
+            "32K",
+            "all modules enabled",
+        ),
     ]
 
     chip, ram_gb = _detect_apple_silicon()
@@ -275,14 +305,32 @@ def section_system() -> Section:
             detail=f"chip={chip} ram_gb={ram_gb}",
         )
         if ram_gb:
-            rec = "no recommendation"
-            for threshold, name in _RAM_MODEL_MAP:
+            rec_profile, rec_model, rec_ctx, rec_disable = (
+                "lite",
+                "no recommendation",
+                "—",
+                "—",
+            )
+            for threshold, profile, model, ctx, disable in _RAM_PROFILE_MAP:
                 if ram_gb >= threshold:
-                    rec = name
+                    rec_profile, rec_model, rec_ctx, rec_disable = (
+                        profile,
+                        model,
+                        ctx,
+                        disable,
+                    )
             s.add(
-                f"Recommended model: {rec}",
+                f"Recommended: profile={rec_profile}, model={rec_model}",
                 CheckStatus.OK,
-                detail=f"ram_gb={ram_gb} recommendation={rec}",
+                detail=f"ram_gb={ram_gb} profile={rec_profile} "
+                f"max_context={rec_ctx} disable_hint={rec_disable}",
+            )
+            s.add(
+                "RAM profile reference (threshold / profile / model / ctx / disable)",
+                CheckStatus.OK,
+                detail=" | ".join(
+                    f"{t}GB→{p}/{m}/{c}" for t, p, m, c, _ in _RAM_PROFILE_MAP
+                ),
             )
     elif platform.system() == "Darwin":
         s.add(

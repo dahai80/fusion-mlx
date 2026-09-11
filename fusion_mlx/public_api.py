@@ -9,7 +9,7 @@
 OpenAI/Anthropic pydantic models + routes）不同，勿混。
 
 本模块只 re-export 已被下游实际依赖、承诺稳定对外公开的符号：
-- 引擎类（TTSEngine/ImageGenEngine/VideoGenEngine/STTEngine/STSEngine/EmbeddingEngine/RerankerEngine/VLMBatchedEngine）
+- 引擎类（BatchedEngine/TTSEngine/ImageGenEngine/VideoGenEngine/STTEngine/STSEngine/EmbeddingEngine/RerankerEngine/VLMBatchedEngine）
 - 引擎池（EnginePool，sequential offload 核心依赖）
 - 配置与注册（get_config/get_registry/list_available_models/ServerConfig/MemoryConfig/MemoryTier）
 - 视频 pipeline（LipsyncPipelineMLX/MuseTalkPipeline/PuLIDPipeline，下游已依赖故显式提升为公开）
@@ -22,6 +22,7 @@ import warnings
 from ._version import __version__
 from .config import MemoryConfig, MemoryTier, ServerConfig, get_config
 from .engines import (
+    BatchedEngine,
     EmbeddingEngine,
     ImageGenEngine,
     RerankerEngine,
@@ -58,6 +59,7 @@ __all__ = [
     "profile_from_config",
     "resolve_profile",
     "EnginePool",
+    "BatchedEngine",
     "TTSEngine",
     "STTEngine",
     "STSEngine",

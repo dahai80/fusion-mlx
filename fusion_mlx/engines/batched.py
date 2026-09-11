@@ -929,11 +929,18 @@ class BatchedEngine(BaseEngine):
             compiled_grammar=kwargs.get("compiled_grammar"),
             seed=kwargs.get("seed"),
         )
+        _t0 = time.perf_counter()
         output = await self._engine.generate(
             prompt=prompt, sampling_params=sampling_params
         )
         from ..api.utils import clean_special_tokens
 
+        _elapsed = time.perf_counter() - _t0
+        _tok_s = (
+            output.completion_tokens / _elapsed
+            if _elapsed > 0 and output.completion_tokens
+            else 0.0
+        )
         text = clean_special_tokens(output.output_text)
         return GenerationOutput(
             text=text,
@@ -944,6 +951,7 @@ class BatchedEngine(BaseEngine):
             cached_tokens=output.cached_tokens,
             logprobs=output.logprobs,
             new_token_ids=output.new_token_ids,
+            generation_tokens_per_second=_tok_s,
         )
 
     async def stream_generate(
@@ -1014,6 +1022,8 @@ class BatchedEngine(BaseEngine):
             **resume_kwargs,
         )
         finished_normally = False
+        _t0 = time.perf_counter()
+        _ttft: float | None = None
         try:
             async for output in engine.stream_outputs(request_id):
                 # Per-token delta: must NOT strip, otherwise the leading space
@@ -1047,6 +1057,14 @@ class BatchedEngine(BaseEngine):
                     )
                 else:
                     full_text = ""
+                if _ttft is None:
+                    _ttft = time.perf_counter() - _t0
+                _elapsed = time.perf_counter() - _t0
+                _tok_s = (
+                    output.completion_tokens / _elapsed
+                    if _elapsed > 0 and output.completion_tokens
+                    else 0.0
+                )
                 yield GenerationOutput(
                     text=full_text,
                     new_text=text,
@@ -1058,6 +1076,8 @@ class BatchedEngine(BaseEngine):
                     cached_tokens=output.cached_tokens,
                     logprobs=output.logprobs,
                     new_token_ids=output.new_token_ids,
+                    time_to_first_token=_ttft,
+                    generation_tokens_per_second=_tok_s,
                 )
         except GeneratorExit:
             logger.info(f"[stream_generate] GeneratorExit for request {request_id}")
@@ -1237,6 +1257,8 @@ class BatchedEngine(BaseEngine):
             # mid-stream exception leaves the request resident in the
             # scheduler and the imported KV state leaks.
             finished_normally = False
+            _t0 = time.perf_counter()
+            _ttft: float | None = None
             try:
                 async for output in self._engine.stream_outputs(request_id):
                     from ..api.utils import clean_special_tokens
@@ -1244,6 +1266,14 @@ class BatchedEngine(BaseEngine):
                     text = clean_special_tokens(output.output_text)
                     if output.finished:
                         finished_normally = True
+                    if _ttft is None:
+                        _ttft = time.perf_counter() - _t0
+                    _elapsed = time.perf_counter() - _t0
+                    _tok_s = (
+                        output.completion_tokens / _elapsed
+                        if _elapsed > 0 and output.completion_tokens
+                        else 0.0
+                    )
                     yield GenerationOutput(
                         text=text,
                         new_text=output.new_text,
@@ -1255,6 +1285,8 @@ class BatchedEngine(BaseEngine):
                         cached_tokens=output.cached_tokens,
                         logprobs=output.logprobs,
                         new_token_ids=output.new_token_ids,
+                        time_to_first_token=_ttft,
+                        generation_tokens_per_second=_tok_s,
                     )
             except GeneratorExit:
                 logger.info(

@@ -24,6 +24,8 @@ from pydantic import ValidationError as PydanticValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
+from ..error_solutions import ERROR_SOLUTIONS_MAP as _ERROR_SOLUTIONS_MAP
+
 logger = logging.getLogger("fusion_mlx.exception_handlers")
 
 _REQUEST_MODEL_REGISTRY: dict[str, type[BaseModel]] = {}
@@ -456,25 +458,6 @@ _HTTP_ERROR_TYPE_MAP = {
     405: "invalid_request_error",
     409: "conflict_error",
     429: "rate_limit_error",
-}
-
-
-_ERROR_SOLUTIONS_MAP: dict[int, list[str]] = {
-    413: [
-        "Reduce max_context or shorten the prompt",
-        "Use a smaller quantization (e.g. 4bit instead of 8bit)",
-        "Set profile=lite in settings.json to reduce mounted engines",
-    ],
-    503: [
-        "Retry after a short backoff (Retry-After header)",
-        "Reduce --max-concurrent-requests to lower queue depth",
-        "Check if another model is consuming memory with `fusion-mlx ps`",
-    ],
-    507: [
-        "Reduce max_tokens for the request",
-        "Use a smaller quantization to free KV cache memory",
-        "Unload other models via the /v1/models admin endpoint",
-    ],
 }
 
 

@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Centralized error-code → remediation suggestions registry.
+
+Single source for the ``solutions`` field surfaced in API error responses.
+All middleware handlers + drain paths reference this module instead of
+assembling suggestion lists inline. R-6 (#0910 audit): ops auditability +
+consistent client guidance across status codes.
+
+Extends the original 413/503/507 set with 429 (rate limit), 504 (gateway
+timeout), and 500 (internal error — generic triage hints).
+"""
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+ERROR_SOLUTIONS_MAP: dict[int, list[str]] = {
+    413: [
+        "Reduce max_context or shorten the prompt",
+        "Use a smaller quantization (e.g. 4bit instead of 8bit)",
+        "Set profile=lite in settings.json to reduce mounted engines",
+    ],
+    429: [
+        "Slow down request rate; honor Retry-After header",
+        "Reduce concurrency (fewer parallel streams / agents)",
+        "Raise FUSION_MAX_CONCURRENT_REQUESTS in settings.json if capacity allows",
+    ],
+    500: [
+        "Check `fusion-mlx log` for the stack trace",
+        "Retry once — transient engine faults (CUDA/Metal) often clear",
+        "If reproducible, report with the request_id from the error body",
+    ],
+    503: [
+        "Retry after a short backoff (Retry-After header)",
+        "Reduce --max-concurrent-requests to lower queue depth",
+        "Check if another model is consuming memory with `fusion-mlx ps`",
+    ],
+    504: [
+        "Increase client-side timeout to exceed generation duration",
+        "Reduce max_tokens or switch to streaming to receive first token sooner",
+        "Check `fusion-mlx status` for slow-model / queue-depth buildup",
+    ],
+    507: [
+        "Reduce max_tokens for the request",
+        "Use a smaller quantization to free KV cache memory",
+        "Unload other models via the /v1/models admin endpoint",
+    ],
+}
+
+
+def get_solutions(status_code: int) -> list[str]:
+    try:
+        return ERROR_SOLUTIONS_MAP.get(status_code, [])
+    except Exception:
+        logger.debug("solutions lookup failed for status %s", status_code)
+        return []
