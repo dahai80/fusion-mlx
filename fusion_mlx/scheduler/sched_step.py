@@ -112,6 +112,19 @@ def step(self) -> SchedulerOutput:
     ):
         self._check_memory_pressure()
 
+    # D2.1: proactive hot->cold demotion sweep. maybe_demote is internally
+    # guarded (2s cooldown + in-progress flag + >85% utilization gate), so
+    # calling every memory_check_interval is cheap when idle. Composes
+    # save_block + evict_lru_blocks (both tested) — no new hot-path risk.
+    if (
+        self._tiered_cache_manager is not None
+        and self._step_counter % self.config.memory_check_interval == 0
+    ):
+        try:
+            self._tiered_cache_manager.maybe_demote()
+        except Exception as e:
+            logger.debug("tiered maybe_demote skipped: %s", e)
+
     try:
         # Advance in-flight chunked prefills (one chunk per request).
         # Must run before _schedule_waiting() so that completing prefills

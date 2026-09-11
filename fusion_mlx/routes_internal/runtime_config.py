@@ -67,6 +67,12 @@ async def runtime_config() -> dict[str, Any]:
             "response_cache_enabled": _safe_get(
                 _safe_get(cfg, "response_cache"), "enabled"
             ),
+            # D2.1: tiered cache coordinator (hot->cold demotion). ON by
+            # default; FUSION_MLX_TIERED_CACHE=0 disables.
+            "tiered_cache_enabled": os.environ.get("FUSION_MLX_TIERED_CACHE", "1")
+            .strip()
+            .lower()
+            not in ("0", "false", "off"),
         },
         "env_overrides": {
             "FUSION_MAX_CONCURRENT_REQUESTS": os.environ.get(
@@ -75,6 +81,7 @@ async def runtime_config() -> dict[str, Any]:
             "FUSION_MLX_KV_CHECKPOINT_INTERVAL": os.environ.get(
                 "FUSION_MLX_KV_CHECKPOINT_INTERVAL"
             ),
+            "FUSION_MLX_TIERED_CACHE": os.environ.get("FUSION_MLX_TIERED_CACHE"),
             "HF_MIRROR": os.environ.get("HF_MIRROR"),
         },
     }
