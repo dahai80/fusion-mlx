@@ -2352,6 +2352,15 @@ class Server:
             logger.debug("tempfile_safe reap failed (non-fatal)", exc_info=True)
         mx.clear_cache()
         logger.info("fusion-mlx shutdown complete")
+        # fix-0911 §3: signal the parent-watchdog orphan path that
+        # graceful shutdown finished (cache saved, pool torn down) so it
+        # skips the SIGKILL fallback instead of truncating serialization.
+        try:
+            from ._parent_watchdog import signal_shutdown_complete
+
+            signal_shutdown_complete()
+        except Exception:
+            logger.debug("signal_shutdown_complete wiring failed", exc_info=True)
 
     async def load_model(self, model_id: str, **kwargs):
         """Dynamically load a model via the engine pool."""

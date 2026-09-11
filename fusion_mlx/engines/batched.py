@@ -1232,22 +1232,38 @@ class BatchedEngine(BaseEngine):
                 prompt=token_ids, sampling_params=sampling_params
             )
             self._engine.scheduler.import_kv_state(request_id, kv_handoff.kv_buffers)
-            async for output in self._engine.stream_outputs(request_id):
-                from ..api.utils import clean_special_tokens
+            # P1-06 (#0909 audit): mirror stream_generate's abort guard —
+            # without try/finally a GeneratorExit (client disconnect) or
+            # mid-stream exception leaves the request resident in the
+            # scheduler and the imported KV state leaks.
+            finished_normally = False
+            try:
+                async for output in self._engine.stream_outputs(request_id):
+                    from ..api.utils import clean_special_tokens
 
-                text = clean_special_tokens(output.output_text)
-                yield GenerationOutput(
-                    text=text,
-                    new_text=output.new_text,
-                    prompt_tokens=output.prompt_tokens,
-                    completion_tokens=output.completion_tokens,
-                    finished=output.finished,
-                    finish_reason=output.finish_reason,
-                    tool_calls=output.tool_calls,
-                    cached_tokens=output.cached_tokens,
-                    logprobs=output.logprobs,
-                    new_token_ids=output.new_token_ids,
+                    text = clean_special_tokens(output.output_text)
+                    if output.finished:
+                        finished_normally = True
+                    yield GenerationOutput(
+                        text=text,
+                        new_text=output.new_text,
+                        prompt_tokens=output.prompt_tokens,
+                        completion_tokens=output.completion_tokens,
+                        finished=output.finished,
+                        finish_reason=output.finish_reason,
+                        tool_calls=output.tool_calls,
+                        cached_tokens=output.cached_tokens,
+                        logprobs=output.logprobs,
+                        new_token_ids=output.new_token_ids,
+                    )
+            except GeneratorExit:
+                logger.info(
+                    "[stream_chat kv_handoff] GeneratorExit for request %s",
+                    request_id,
                 )
+            finally:
+                if not finished_normally:
+                    await self._engine.abort_request(request_id)
             return
 
         # SpecPrefill system_end

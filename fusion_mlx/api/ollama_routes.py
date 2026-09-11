@@ -13,6 +13,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..middleware.auth import verify_api_key
+from ._disconnect_guard import handle_disconnect
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +151,14 @@ async def _call_openai_chat(
     stream: bool,
     params: dict,
 ) -> Any:
-    """Call internal OpenAI chat completion handler."""
+    """Call internal OpenAI chat completion handler.
+
+    For stream=True returns ``(gen, request_id, engine)`` so the ollama
+    streaming wrapper can wire ``handle_disconnect`` on client cancel —
+    the inner openai generator's own CancelledError guard does NOT fire
+    when ASGI cancels the *outer* (ollama) frame. For stream=False
+    returns the ChatCompletionResponse unchanged.
+    """
     from .models import (
         AssistantMessage,
         ChatCompletionRequest,
@@ -189,13 +198,18 @@ async def _call_openai_chat(
     engine = await _resolve_engine(model_name)
     if engine is None:
         raise HTTPException(404, f"Model {model_name} not available")
-    return _stream_chat_generator(
+    import uuid
+
+    request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    gen = _stream_chat_generator(
         chat_req,
         engine,
         model_name,
         None,
         profile_overrides=profile_overrides,
+        request_id=request_id,
     )
+    return gen, request_id, engine
 
 
 # =============================================================================
@@ -239,70 +253,77 @@ async def api_generate(
 
     # Streaming
     async def _stream_generate():
-        gen = await _call_openai_chat(request.model, messages, True, params)
+        gen, request_id, engine = await _call_openai_chat(
+            request.model, messages, True, params
+        )
         accumulated = ""
         eval_count = 0
         prompt_eval_count = 0
-        async for chunk in gen:
-            if isinstance(chunk, str) and chunk.startswith("data: "):
-                payload = chunk[6:].strip()
-                if payload == "[DONE]":
-                    break
-                try:
-                    data = json.loads(payload)
-                    for c in data.get("choices", []):
-                        delta = c.get("delta", {})
-                        text = delta.get("content", "")
-                        if text:
-                            accumulated += text
-                            yield (
-                                json.dumps(
-                                    {
-                                        "model": request.model,
-                                        "created_at": time.strftime(
-                                            "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
-                                        ),
-                                        "response": text,
-                                        "done": False,
-                                    }
+        try:
+            async for chunk in gen:
+                if isinstance(chunk, str) and chunk.startswith("data: "):
+                    payload = chunk[6:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(payload)
+                        for c in data.get("choices", []):
+                            delta = c.get("delta", {})
+                            text = delta.get("content", "")
+                            if text:
+                                accumulated += text
+                                yield (
+                                    json.dumps(
+                                        {
+                                            "model": request.model,
+                                            "created_at": time.strftime(
+                                                "%Y-%m-%dT%H:%M:%S.000000Z",
+                                                time.gmtime(),
+                                            ),
+                                            "response": text,
+                                            "done": False,
+                                        }
+                                    )
+                                    + "\n"
                                 )
-                                + "\n"
-                            )
-                        usage_chunk = data.get("usage")
-                        if usage_chunk:
-                            eval_count = usage_chunk.get(
-                                "completion_tokens", eval_count
-                            )
-                            prompt_eval_count = usage_chunk.get(
-                                "prompt_tokens", prompt_eval_count
-                            )
-                except json.JSONDecodeError:
+                            usage_chunk = data.get("usage")
+                            if usage_chunk:
+                                eval_count = usage_chunk.get(
+                                    "completion_tokens", eval_count
+                                )
+                                prompt_eval_count = usage_chunk.get(
+                                    "prompt_tokens", prompt_eval_count
+                                )
+                    except json.JSONDecodeError:
+                        continue
+                elif isinstance(chunk, str) and chunk.startswith(": "):
+                    yield chunk
                     continue
-            elif isinstance(chunk, str) and chunk.startswith(": "):
-                yield chunk
-                continue
-
-        yield (
-            json.dumps(
-                {
-                    "model": request.model,
-                    "created_at": time.strftime(
-                        "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
-                    ),
-                    "response": "",
-                    "done": True,
-                    "done_reason": "stop",
-                    "context": [],
-                    "total_duration": 0,
-                    "load_duration": 0,
-                    "prompt_eval_count": prompt_eval_count,
-                    "prompt_eval_duration": 0,
-                    "eval_count": eval_count,
-                    "eval_duration": 0,
-                }
+            yield (
+                json.dumps(
+                    {
+                        "model": request.model,
+                        "created_at": time.strftime(
+                            "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
+                        ),
+                        "response": "",
+                        "done": True,
+                        "done_reason": "stop",
+                        "context": [],
+                        "total_duration": 0,
+                        "load_duration": 0,
+                        "prompt_eval_count": prompt_eval_count,
+                        "prompt_eval_duration": 0,
+                        "eval_count": eval_count,
+                        "eval_duration": 0,
+                    }
+                )
+                + "\n"
             )
-            + "\n"
-        )
+        except asyncio.CancelledError:
+            logger.info("ollama /api/generate client disconnected: %s", request_id)
+            handle_disconnect(request_id, engine)
+            raise
 
     return StreamingResponse(
         _stream_generate(),
@@ -353,70 +374,77 @@ async def api_chat(
 
     # Streaming
     async def _stream_chat():
-        gen = await _call_openai_chat(request.model, messages, True, params)
+        gen, request_id, engine = await _call_openai_chat(
+            request.model, messages, True, params
+        )
         eval_count = 0
         prompt_eval_count = 0
-        async for chunk in gen:
-            if isinstance(chunk, str) and chunk.startswith("data: "):
-                payload = chunk[6:].strip()
-                if payload == "[DONE]":
-                    break
-                try:
-                    data = json.loads(payload)
-                    for c in data.get("choices", []):
-                        delta = c.get("delta", {})
-                        text = delta.get("content", "")
-                        if text:
-                            yield (
-                                json.dumps(
-                                    {
-                                        "model": request.model,
-                                        "created_at": time.strftime(
-                                            "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
-                                        ),
-                                        "message": {
-                                            "role": "assistant",
-                                            "content": text,
-                                        },
-                                        "done": False,
-                                    }
+        try:
+            async for chunk in gen:
+                if isinstance(chunk, str) and chunk.startswith("data: "):
+                    payload = chunk[6:].strip()
+                    if payload == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(payload)
+                        for c in data.get("choices", []):
+                            delta = c.get("delta", {})
+                            text = delta.get("content", "")
+                            if text:
+                                yield (
+                                    json.dumps(
+                                        {
+                                            "model": request.model,
+                                            "created_at": time.strftime(
+                                                "%Y-%m-%dT%H:%M:%S.000000Z",
+                                                time.gmtime(),
+                                            ),
+                                            "message": {
+                                                "role": "assistant",
+                                                "content": text,
+                                            },
+                                            "done": False,
+                                        }
+                                    )
+                                    + "\n"
                                 )
-                                + "\n"
-                            )
-                        usage_chunk = data.get("usage")
-                        if usage_chunk:
-                            eval_count = usage_chunk.get(
-                                "completion_tokens", eval_count
-                            )
-                            prompt_eval_count = usage_chunk.get(
-                                "prompt_tokens", prompt_eval_count
-                            )
-                except json.JSONDecodeError:
+                            usage_chunk = data.get("usage")
+                            if usage_chunk:
+                                eval_count = usage_chunk.get(
+                                    "completion_tokens", eval_count
+                                )
+                                prompt_eval_count = usage_chunk.get(
+                                    "prompt_tokens", prompt_eval_count
+                                )
+                    except json.JSONDecodeError:
+                        continue
+                elif isinstance(chunk, str) and chunk.startswith(": "):
+                    yield chunk
                     continue
-            elif isinstance(chunk, str) and chunk.startswith(": "):
-                yield chunk
-                continue
-
-        yield (
-            json.dumps(
-                {
-                    "model": request.model,
-                    "created_at": time.strftime(
-                        "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
-                    ),
-                    "message": {"role": "assistant", "content": ""},
-                    "done": True,
-                    "done_reason": "stop",
-                    "total_duration": 0,
-                    "load_duration": 0,
-                    "prompt_eval_count": prompt_eval_count,
-                    "prompt_eval_duration": 0,
-                    "eval_count": eval_count,
-                    "eval_duration": 0,
-                }
+            yield (
+                json.dumps(
+                    {
+                        "model": request.model,
+                        "created_at": time.strftime(
+                            "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
+                        ),
+                        "message": {"role": "assistant", "content": ""},
+                        "done": True,
+                        "done_reason": "stop",
+                        "total_duration": 0,
+                        "load_duration": 0,
+                        "prompt_eval_count": prompt_eval_count,
+                        "prompt_eval_duration": 0,
+                        "eval_count": eval_count,
+                        "eval_duration": 0,
+                    }
+                )
+                + "\n"
             )
-            + "\n"
-        )
+        except asyncio.CancelledError:
+            logger.info("ollama /api/chat client disconnected: %s", request_id)
+            handle_disconnect(request_id, engine)
+            raise
 
     return StreamingResponse(
         _stream_chat(),

@@ -21,17 +21,23 @@ MULTIMODAL_CONTENT_TYPES = (
 
 
 def _build_insufficient_memory_detail(exc: InsufficientMemoryError) -> dict[str, Any]:
-    # R-P0-1 / R-P1-2 (#0908 audit): single source for the memory-error
-    # detail dict. Previously openai_routes built {model_unavailable,
-    # required_memory_mb, available_memory_mb} while anthropic_routes
-    # returned only str(exc) — divergent contract for the same error.
-    required_mb = exc.required // (1024 * 1024) if exc.required else 0
-    return {
-        "message": f"Model {exc.model_id} not loaded and insufficient memory",
-        "type": "model_unavailable",
-        "status": 503,
-        "required_memory_mb": required_mb,
-    }
+    # R-P0-1 / R-P1-2 (#0908 audit) + fix-0911 §2.5: single source for the
+    # memory-error detail dict. Delegates field assembly to
+    # ``exc.to_error_detail()`` (exceptions.py — the canonical schema) and
+    # layers the actionable "unload victim" suggestion on top. Previously
+    # openai_routes (4 sites) and _guards (anthropic path) each assembled
+    # the dict independently, diverging on which fields were included.
+    detail = exc.to_error_detail()
+    detail["status"] = 503
+    if exc.loaded_models:
+        unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
+        if unloadable:
+            victim = unloadable[0]
+            detail["suggestion"] = (
+                f"Unload model {victim['model_id']} "
+                f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
+            )
+    return detail
 
 
 def build_model_error_response(
@@ -49,6 +55,7 @@ def build_model_error_response(
                     "error": {
                         "message": detail["message"],
                         "type": "resource_exhausted",
+                        "suggestion": detail.get("suggestion"),
                     }
                 },
                 headers={"Retry-After": "10"},

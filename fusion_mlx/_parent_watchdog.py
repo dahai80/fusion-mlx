@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 ENV_VAR = "FUSION_MLX_WATCHDOG_PPID"
 
 _SHUTDOWN_EVENT = threading.Event()
+# Set by the server lifespan teardown AFTER prefix-cache save + pool
+# shutdown complete — distinguishes "shutdown finished cleanly" from
+# _SHUTDOWN_EVENT ("shutdown initiated"). The orphan self-kill path polls
+# this so a SIGKILL does not truncate cache serialization (fix-0911 §3).
+_SHUTDOWN_COMPLETE = threading.Event()
 _MAX_SHUTDOWN_WAIT = 20.0
 _STATUS_DIR = Path.home() / ".fusion-mlx" / "runtime"
 _STATUS_FILE = _STATUS_DIR / "server.status"
@@ -162,11 +167,18 @@ def _default_on_orphan(expected_ppid: int, observed_ppid: int) -> None:
         os.kill(os.getpid(), signal.SIGTERM)
     except OSError:
         pass
-    time.sleep(5.0)
-    try:
-        os.kill(os.getpid(), signal.SIGKILL)
-    except OSError:
-        pass
+    # fix-0911 §3: poll for graceful-shutdown completion (prefix-cache
+    # save + pool teardown) instead of a fixed 5s sleep. Cache
+    # serialization on large models can exceed 5s; a fixed window risks
+    # SIGKILL truncating the write. Wait up to 15s (matches uvicorn
+    # timeout_graceful_shutdown); if the server signals completion the
+    # main thread will exit the process cleanly — only SIGKILL if it
+    # hangs past the deadline.
+    if not wait_for_shutdown_complete(timeout=15.0):
+        try:
+            os.kill(os.getpid(), signal.SIGKILL)
+        except OSError:
+            pass
     os._exit(1)
 
 
@@ -267,6 +279,17 @@ def install_signal_handlers() -> None:
 def _trigger_shutdown(exit_code: int = 0) -> None:
     _SHUTDOWN_EVENT.set()
     write_status("shutting_down")
+
+
+def signal_shutdown_complete() -> None:
+    # Called by server lifespan teardown after cache save + pool shutdown.
+    # Lets the orphan self-kill path distinguish "graceful shutdown
+    # finished" from "shutdown initiated" and skip the SIGKILL fallback.
+    _SHUTDOWN_COMPLETE.set()
+
+
+def wait_for_shutdown_complete(timeout: float = 15.0) -> bool:
+    return _SHUTDOWN_COMPLETE.wait(timeout=timeout)
 
 
 def wait_for_shutdown(timeout: float = _MAX_SHUTDOWN_WAIT) -> bool:

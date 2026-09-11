@@ -55,6 +55,8 @@ from ._disconnect_guard import handle_disconnect
 from ._engine_helpers import release_engine as _shared_release
 from ._engine_helpers import resolve_engine as _shared_resolve
 from ._guards import (
+    _build_insufficient_memory_detail,
+    build_model_error_response,
     check_chat_capability,
     check_multimodal_content,
     check_tool_choice_support,
@@ -862,16 +864,7 @@ async def _run_chat(
         ) from exc
     except InsufficientMemoryError as exc:
         logger.warning("Insufficient memory: %s", exc)
-        err = exc.to_error_detail()
-        if exc.loaded_models:
-            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
-            if unloadable:
-                victim = unloadable[0]
-                err["suggestion"] = (
-                    f"Unload model {victim['model_id']} "
-                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
-                )
-        raise HTTPException(status_code=503, detail={"error": err}) from exc
+        raise build_model_error_response(exc, adapter="openai") from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,
@@ -997,6 +990,7 @@ async def _stream_chat_generator(
     headers: dict | None = None,
     resume_prompt_cache: list | None = None,
     resume_cached_tokens: int = 0,
+    request_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a streaming chat completion.
 
@@ -1049,7 +1043,7 @@ async def _stream_chat_generator(
     sampling.max_tokens = cap_max_tokens_to_context(
         sampling.max_tokens, model_name, prompt_token_estimate=prompt_token_estimate
     )
-    request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    request_id = request_id or f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     # SSE keepalive: prevent client/proxy timeout during long inference
     from ..server import get_settings
@@ -1478,16 +1472,7 @@ async def _stream_chat_generator(
         logger.warning("Stream: insufficient memory: %s", exc)
         import json as _json
 
-        err_detail = exc.to_error_detail()
-        err_detail["status"] = 503
-        if exc.loaded_models:
-            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
-            if unloadable:
-                victim = unloadable[0]
-                err_detail["suggestion"] = (
-                    f"Unload model {victim['model_id']} "
-                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
-                )
+        err_detail = _build_insufficient_memory_detail(exc)
         yield f"data: {_json.dumps({'error': err_detail})}\n\n"
     except ModelTooLargeError as exc:
         yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 413, "type": "model_too_large"}}}}\n\n'
@@ -2060,16 +2045,7 @@ async def chat_completions(
             headers={"Retry-After": "5"},
         ) from exc
     except InsufficientMemoryError as exc:
-        err = exc.to_error_detail()
-        if exc.loaded_models:
-            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
-            if unloadable:
-                victim = unloadable[0]
-                err["suggestion"] = (
-                    f"Unload model {victim['model_id']} "
-                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
-                )
-        raise HTTPException(status_code=503, detail={"error": err}) from exc
+        raise build_model_error_response(exc, adapter="openai") from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,
@@ -2139,16 +2115,7 @@ async def completions(
             headers={"Retry-After": "5"},
         ) from exc
     except InsufficientMemoryError as exc:
-        err = exc.to_error_detail()
-        if exc.loaded_models:
-            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
-            if unloadable:
-                victim = unloadable[0]
-                err["suggestion"] = (
-                    f"Unload model {victim['model_id']} "
-                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
-                )
-        raise HTTPException(status_code=503, detail={"error": err}) from exc
+        raise build_model_error_response(exc, adapter="openai") from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,

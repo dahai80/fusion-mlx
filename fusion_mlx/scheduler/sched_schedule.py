@@ -23,12 +23,12 @@ from mlx_lm.models.cache import make_prompt_cache
 from ..prefill_progress import get_prefill_tracker
 from ..request import Request, RequestOutput, RequestStatus
 from ..utils.proc_memory import get_phys_footprint
+from .config import SchedulingPolicy
 from .helpers import (
     _sync_and_clear_cache,
 )
 from .monkeypatches import _register_uid_rows
 from .sched_cache import _turboquant_eligible
-from .config import SchedulingPolicy
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
@@ -359,10 +359,7 @@ def _schedule_waiting(
         # low-priority work cannot starve forever under continuous
         # high-priority load. The promoted request keeps its original
         # priority field — only queue position is temporarily adjusted.
-        if (
-            self.config.policy == SchedulingPolicy.PRIORITY
-            and len(self.waiting) > 1
-        ):
+        if self.config.policy == SchedulingPolicy.PRIORITY and len(self.waiting) > 1:
             now_mono = time.monotonic()
             head = self.waiting[0]
             head_wait = now_mono - getattr(head, "_admit_time", now_mono)

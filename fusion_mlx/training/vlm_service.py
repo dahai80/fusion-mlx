@@ -271,7 +271,9 @@ class VLMFineTuneService:
         self._pending_tasks.clear()
         self._running = False
         if cancelled:
-            logger.info("VLMFineTuneService shutdown: cancelled %d pending task(s)", cancelled)
+            logger.info(
+                "VLMFineTuneService shutdown: cancelled %d pending task(s)", cancelled
+            )
 
     # =========================================================================
     # Job CRUD

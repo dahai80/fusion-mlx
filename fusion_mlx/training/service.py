@@ -409,7 +409,9 @@ class FineTuneService:
         self._pending_tasks.clear()
         self._running = False
         if cancelled:
-            logger.info("FineTuneService shutdown: cancelled %d pending task(s)", cancelled)
+            logger.info(
+                "FineTuneService shutdown: cancelled %d pending task(s)", cancelled
+            )
 
     # =========================================================================
     # Job CRUD
