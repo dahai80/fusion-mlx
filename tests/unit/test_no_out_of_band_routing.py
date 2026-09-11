@@ -466,6 +466,13 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         "FUSION_MLX_EFFICIENCY_RAPID",
         "FUSION_MLX_BASE_OVERHEAD_MS_MLX",
         "FUSION_MLX_BASE_OVERHEAD_MS_RAPID",
+        # D1.2/G12: tool-call JSON auto-repair toggle
+        # (api/tool_json_repair.py:29). Default ON — deterministic
+        # bracket/quote/comma repair of truncated tool-call JSON args.
+        # Pure output-middleware knob — never selects model / parser /
+        # tier; the tool parser dispatch is unchanged, only whether
+        # broken JSON args get repaired before being surfaced.
+        "FUSION_MLX_TOOL_JSON_REPAIR",
     }
 )
 
