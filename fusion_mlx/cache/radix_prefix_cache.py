@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -100,7 +99,6 @@ class RadixPrefixCache:
         # vs PagedCacheManager's caller). A threading.Lock serializes index
         # access; the previous asyncio.Lock was never acquired anywhere.
         self._cache_lock = threading.Lock()
-        self._cold_restore_callback: Callable[[int, bytes], bool] | None = None
 
     # ------------------------------------------------------------------ utils
 
@@ -164,12 +162,6 @@ class RadixPrefixCache:
         self._kv_cache.set_paged_ssd_cache_manager(paged_ssd_cache_manager)
         if paged_ssd_cache_manager is not None:
             logger.info("PagedSSDCacheManager connected to RadixPrefixCache")
-
-    def set_cold_restore_callback(
-        self, callback: Callable[[int, bytes], bool] | None
-    ) -> None:
-        self._cold_restore_callback = callback
-        self._kv_cache.set_cold_restore_callback(callback)
 
     def preload_blocks(self, block_table: Any) -> int:
         return self._kv_cache.preload_blocks(block_table)

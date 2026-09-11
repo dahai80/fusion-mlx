@@ -89,6 +89,12 @@ class InternalResponse:
     # Logprobs (populated only when requested; None until engine plumbing lands)
     logprobs: Any = None
 
+    # Performance telemetry (P2-1 #0911 audit): populated by the engine/
+    # route layer and surfaced into Usage.* on the wire. None = not measured.
+    model_load_duration: float | None = None
+    time_to_first_token: float | None = None
+    generation_tokens_per_second: float | None = None
+
 
 @dataclass
 class StreamChunk:
@@ -108,6 +114,11 @@ class StreamChunk:
 
     # Logprobs (populated only when requested; None until engine plumbing lands)
     logprobs: Any = None
+
+    # Performance telemetry (P2-1 #0911 audit): usually only on last chunk.
+    model_load_duration: float | None = None
+    time_to_first_token: float | None = None
+    generation_tokens_per_second: float | None = None
 
 
 class BaseAdapter(ABC):

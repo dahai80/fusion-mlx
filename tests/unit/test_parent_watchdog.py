@@ -397,6 +397,7 @@ class TestDefaultOnOrphan:
         with (
             patch.object(pwd.os, "kill") as mock_kill,
             patch.object(pwd.time, "sleep"),
+            patch.object(pwd, "wait_for_shutdown_complete", return_value=True),
             patch.object(pwd.os, "_exit") as mock_exit,
         ):
             # ``_exit`` is what terminates the call; we patch it so the
@@ -415,8 +416,10 @@ class TestDefaultOnOrphan:
 
     def test_sigkill_after_grace_window(self):
         """Defense against a lifespan drain that hangs: the second kill
-        is the un-catchable SIGKILL, sent after the same 5 s grace the
-        desktop side waits on its own terminateChild path."""
+        is the un-catchable SIGKILL, sent after polling for graceful
+        shutdown completion (fix-0911 §3). Previously a fixed 5 s sleep;
+        now wait_for_shutdown_complete(15 s) — SIGKILL only if the
+        shutdown never signals completion."""
         import signal as _signal
 
         kills: list[int] = []
@@ -426,14 +429,17 @@ class TestDefaultOnOrphan:
 
         with (
             patch.object(pwd.os, "kill", side_effect=fake_kill),
-            patch.object(pwd.time, "sleep") as mock_sleep,
+            patch.object(
+                pwd, "wait_for_shutdown_complete", return_value=False
+            ) as mock_wait,
             patch.object(pwd.os, "_exit", side_effect=SystemExit(0)),
             pytest.raises(SystemExit),
         ):
             pwd._default_on_orphan(expected_ppid=9999, observed_ppid=1)
         assert kills == [_signal.SIGTERM, _signal.SIGKILL]
-        # Exactly 5 s of sleep between SIGTERM and SIGKILL.
-        assert any(args[0] == 5.0 for args, _ in mock_sleep.call_args_list)
+        # Polls for shutdown completion (up to 15 s) instead of fixed sleep.
+        mock_wait.assert_called_once()
+        assert mock_wait.call_args.kwargs.get("timeout", 15) <= 15
 
 
 class TestSignalHandlerChaining:

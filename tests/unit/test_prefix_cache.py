@@ -371,14 +371,9 @@ class TestBlockAwarePrefixCache:
 
         assert prefix_cache.paged_ssd_cache is mock_ssd_cache
 
-    def test_set_cold_restore_callback(self, prefix_cache):
-        """Test setting cold restore callback."""
-
-        def restore_callback(block_id: int, block_hash: bytes) -> bool:
-            return True
-
-        prefix_cache.set_cold_restore_callback(restore_callback)
-        assert prefix_cache._cold_restore_callback is restore_callback
+    # test_set_cold_restore_callback removed (Group 4.3): set_cold_restore_callback
+    # was dead code — stored callback never invoked. SSD-only arch has no cold
+    # restore path. Field + method deleted from prefix_cache + radix_prefix_cache.
 
 
 class TestBlockAwarePrefixCacheWithSSD:

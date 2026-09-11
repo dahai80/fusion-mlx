@@ -15,6 +15,7 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
+
 def _safe_int_env(name: str, default: int) -> int:
     # P3-06/ENG-06 (#0909 audit): module-level int(os.environ.get(...))
     # crashes on non-numeric strings at import time.

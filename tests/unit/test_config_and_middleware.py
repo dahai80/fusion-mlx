@@ -507,7 +507,11 @@ class TestHTTPExceptionHandler:
                 "type": "rate_limit_error",
                 "code": None,
                 "param": None,
-                "solutions": [],
+                "solutions": [
+                    "Slow down request rate; honor Retry-After header",
+                    "Reduce concurrency (fewer parallel streams / agents)",
+                    "Raise FUSION_MAX_CONCURRENT_REQUESTS in settings.json if capacity allows",
+                ],
             }
         }
 

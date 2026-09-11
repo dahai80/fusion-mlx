@@ -102,7 +102,9 @@ class RewardService:
         self._pending_tasks.clear()
         self._running = False
         if cancelled:
-            logger.info("RewardService shutdown: cancelled %d pending task(s)", cancelled)
+            logger.info(
+                "RewardService shutdown: cancelled %d pending task(s)", cancelled
+            )
 
     def _resolve_model_path(self, model_id: str) -> str | None:
         if self._engine_pool is None:

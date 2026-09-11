@@ -55,6 +55,8 @@ from ._disconnect_guard import handle_disconnect
 from ._engine_helpers import release_engine as _shared_release
 from ._engine_helpers import resolve_engine as _shared_resolve
 from ._guards import (
+    _build_insufficient_memory_detail,
+    build_model_error_response,
     check_chat_capability,
     check_multimodal_content,
     check_tool_choice_support,
@@ -70,6 +72,13 @@ _pool: Any = None
 _request_router: Any = None
 _adapter = OpenAIAdapter()
 log = logging.getLogger(__name__)
+
+from ._concurrency import (  # noqa: E402
+    acquire_request_slot,
+    concurrency_guarded,
+    init_request_semaphore,
+    release_request_slot,
+)
 
 _MODEL_TYPE_TO_MODALITY: dict[str, str] = {
     "llm": "text",
@@ -133,6 +142,13 @@ def set_openai_context(pool: EnginePool, req_router: RequestRouter) -> None:
     global _pool, _request_router
     _pool = pool
     _request_router = req_router
+    try:
+        from ..config import get_config
+
+        cfg = get_config()
+        init_request_semaphore(getattr(cfg.scheduler, "max_num_seqs", 8))
+    except Exception:
+        logger.debug("request semaphore init deferred", exc_info=True)
 
 
 async def _resolve_engine(model_name: str, adapter_path=None):
@@ -500,6 +516,13 @@ def _gen_to_internal(
         request_id=request_id,
         model=model,
         logprobs=getattr(gen, "logprobs", None),
+        model_load_duration=getattr(gen, "model_load_duration", None),
+        time_to_first_token=getattr(gen, "time_to_first_token", None),
+        generation_tokens_per_second=(
+            gen.generation_tokens_per_second
+            if getattr(gen, "generation_tokens_per_second", None) is not None
+            else (gen.generation_tps or None)
+        ),
     )
 
 
@@ -862,16 +885,7 @@ async def _run_chat(
         ) from exc
     except InsufficientMemoryError as exc:
         logger.warning("Insufficient memory: %s", exc)
-        err = exc.to_error_detail()
-        if exc.loaded_models:
-            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
-            if unloadable:
-                victim = unloadable[0]
-                err["suggestion"] = (
-                    f"Unload model {victim['model_id']} "
-                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
-                )
-        raise HTTPException(status_code=503, detail={"error": err}) from exc
+        raise build_model_error_response(exc, adapter="openai") from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,
@@ -997,6 +1011,7 @@ async def _stream_chat_generator(
     headers: dict | None = None,
     resume_prompt_cache: list | None = None,
     resume_cached_tokens: int = 0,
+    request_id: str | None = None,
 ) -> AsyncIterator[str]:
     """Generate SSE events for a streaming chat completion.
 
@@ -1049,7 +1064,7 @@ async def _stream_chat_generator(
     sampling.max_tokens = cap_max_tokens_to_context(
         sampling.max_tokens, model_name, prompt_token_estimate=prompt_token_estimate
     )
-    request_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    request_id = request_id or f"chatcmpl-{uuid.uuid4().hex[:12]}"
 
     # SSE keepalive: prevent client/proxy timeout during long inference
     from ..server import get_settings
@@ -1131,6 +1146,8 @@ async def _stream_chat_generator(
         tool_text_accumulated = ""
         tool_calls_streamed = 0
         tool_calls_in_stream = False
+        _stream_ttft: float | None = None
+        _stream_tps: float | None = None
 
         ct_kwargs_stream = dict(getattr(request, "chat_template_kwargs", {}) or {})
         # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (流式路径, 2026-07-19)
@@ -1158,6 +1175,10 @@ async def _stream_chat_generator(
             resume_prompt_cache=resume_prompt_cache,
             resume_cached_tokens=resume_cached_tokens,
         ):
+            if getattr(gen, "time_to_first_token", None) is not None:
+                _stream_ttft = gen.time_to_first_token
+            if getattr(gen, "generation_tokens_per_second", None) is not None:
+                _stream_tps = gen.generation_tokens_per_second
             if gen.new_text:
                 if keepalive:
                     keepalive.reset()
@@ -1407,6 +1428,8 @@ async def _stream_chat_generator(
             prompt_tokens=_final_prompt,
             completion_tokens=completion_tokens,
             cached_tokens=_final_cached,
+            time_to_first_token=_stream_ttft,
+            generation_tokens_per_second=_stream_tps,
         )
         yield _adapter.format_stream_chunk(last_chunk, request, encoder=encoder)
         yield _adapter.format_stream_end(request)
@@ -1438,6 +1461,7 @@ async def _stream_chat_generator(
             _sgen_dur = time.perf_counter() - _start
             _stps = (_sct / _sgen_dur) if _sgen_dur > 0 else 0.0
             _sua = headers.get("user-agent") if headers else None
+            _sttft_ms = (_stream_ttft * 1000.0) if _stream_ttft else 0.0
             emit.request(
                 endpoint="/v1/chat/completions",
                 model_alias=model_name,
@@ -1445,7 +1469,7 @@ async def _stream_chat_generator(
                 tool_call_used=bool(tool_calls_in_stream),
                 prompt_tokens=_spt,
                 completion_tokens=_sct,
-                ttft_ms=0.0,
+                ttft_ms=_sttft_ms,
                 tps=_stps,
                 status=200,
                 caller_agent=_sua,
@@ -1478,16 +1502,7 @@ async def _stream_chat_generator(
         logger.warning("Stream: insufficient memory: %s", exc)
         import json as _json
 
-        err_detail = exc.to_error_detail()
-        err_detail["status"] = 503
-        if exc.loaded_models:
-            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
-            if unloadable:
-                victim = unloadable[0]
-                err_detail["suggestion"] = (
-                    f"Unload model {victim['model_id']} "
-                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
-                )
+        err_detail = _build_insufficient_memory_detail(exc)
         yield f"data: {_json.dumps({'error': err_detail})}\n\n"
     except ModelTooLargeError as exc:
         yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 413, "type": "model_too_large"}}}}\n\n'
@@ -1594,16 +1609,18 @@ async def _stream_chat(
         _stream_headers.update(_ctx_budget_headers)
 
     return StreamingResponse(
-        _stream_chat_generator(
-            request,
-            engine,
-            model_name,
-            adapter_path,
-            principal=principal,
-            profile_overrides=profile_overrides,
-            headers=headers,
-            resume_prompt_cache=resume_prompt_cache,
-            resume_cached_tokens=resume_cached_tokens,
+        concurrency_guarded(
+            _stream_chat_generator(
+                request,
+                engine,
+                model_name,
+                adapter_path,
+                principal=principal,
+                profile_overrides=profile_overrides,
+                headers=headers,
+                resume_prompt_cache=resume_prompt_cache,
+                resume_cached_tokens=resume_cached_tokens,
+            )
         ),
         media_type="text/event-stream",
         headers=_stream_headers,
@@ -2017,9 +2034,13 @@ async def chat_completions(
                 request, principal=principal, headers=dict(http_request.headers)
             )
         else:
-            result = await _run_chat(
-                request, principal=principal, headers=dict(http_request.headers)
-            )
+            await acquire_request_slot()
+            try:
+                result = await _run_chat(
+                    request, principal=principal, headers=dict(http_request.headers)
+                )
+            finally:
+                release_request_slot()
 
             # §6.2: attach X-Fusion-Ignored-Params to non-streaming responses
             if _ignored_header and isinstance(result, JSONResponse):
@@ -2060,16 +2081,7 @@ async def chat_completions(
             headers={"Retry-After": "5"},
         ) from exc
     except InsufficientMemoryError as exc:
-        err = exc.to_error_detail()
-        if exc.loaded_models:
-            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
-            if unloadable:
-                victim = unloadable[0]
-                err["suggestion"] = (
-                    f"Unload model {victim['model_id']} "
-                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
-                )
-        raise HTTPException(status_code=503, detail={"error": err}) from exc
+        raise build_model_error_response(exc, adapter="openai") from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,
@@ -2127,7 +2139,11 @@ async def completions(
             return await _stream_chat(
                 chat_req, _skip_cap_check=True, principal=principal
             )
-        return await _run_chat(chat_req, _skip_cap_check=True, principal=principal)
+        await acquire_request_slot()
+        try:
+            return await _run_chat(chat_req, _skip_cap_check=True, principal=principal)
+        finally:
+            release_request_slot()
     except HTTPException:
         raise
     except ModelNotFoundError as exc:
@@ -2139,16 +2155,7 @@ async def completions(
             headers={"Retry-After": "5"},
         ) from exc
     except InsufficientMemoryError as exc:
-        err = exc.to_error_detail()
-        if exc.loaded_models:
-            unloadable = [m for m in exc.loaded_models if not m.get("pinned", False)]
-            if unloadable:
-                victim = unloadable[0]
-                err["suggestion"] = (
-                    f"Unload model {victim['model_id']} "
-                    f"(free ~{victim.get('memory_mb', '?')}MB) then retry"
-                )
-        raise HTTPException(status_code=503, detail={"error": err}) from exc
+        raise build_model_error_response(exc, adapter="openai") from exc
     except ModelTooLargeError as exc:
         raise HTTPException(
             status_code=413,

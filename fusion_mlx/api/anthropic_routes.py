@@ -64,6 +64,7 @@ from ..middleware.auth import check_rate_limit_or_x_api_key, verify_api_key_or_x
 from ..pool import EnginePool
 from ..request import SamplingParams
 from ..server_metrics import record_llm_metrics
+from ._concurrency import acquire_request_slot, release_request_slot
 from ._disconnect_guard import handle_disconnect
 from ._engine_helpers import release_engine as _shared_release
 from ._engine_helpers import resolve_engine as _shared_resolve
@@ -320,6 +321,7 @@ async def _run_anthropic_messages(
     sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
+    await acquire_request_slot()
     try:
         ct_kwargs = dict(getattr(req, "chat_template_kwargs", {}) or {})
         # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (2026-07-19)
@@ -431,6 +433,7 @@ async def _run_anthropic_messages(
         )
         raise HTTPException(500, "Internal server error")
     finally:
+        release_request_slot()
         await _release()
 
 
@@ -540,6 +543,7 @@ async def _stream_anthropic_generator(
         sampling.max_tokens,
         messages[-1].get("content", "")[:120] if messages else "",
     )
+    await acquire_request_slot()
     try:
         # Claude Code: emit connected comment at stream start
         if _is_cc:
@@ -724,6 +728,7 @@ async def _stream_anthropic_generator(
         handle_disconnect(request_id, engine)
         raise
     finally:
+        release_request_slot()
         await _release()
 
 

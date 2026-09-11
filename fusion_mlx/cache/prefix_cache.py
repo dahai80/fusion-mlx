@@ -10,7 +10,6 @@ import logging
 import math
 import threading
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -112,9 +111,6 @@ class BlockAwarePrefixCache(CacheManager):
 
         # Request to block table mapping
         self._request_tables: dict[str, BlockCacheEntry] = {}
-
-        # Callback for restoring cold blocks (deprecated in paged SSD-only mode)
-        self._cold_restore_callback: Callable[[int, bytes], bool] | None = None
 
         # Statistics
         self._hits = 0
@@ -2864,12 +2860,6 @@ class BlockAwarePrefixCache(CacheManager):
         self.paged_cache.clear()
         self.reset_stats()
         return cleared_count
-
-    def set_cold_restore_callback(
-        self,
-        callback: Callable[[int, bytes], bool] | None,
-    ) -> None:
-        self._cold_restore_callback = callback
 
     def __len__(self) -> int:
         """Return number of active request entries."""

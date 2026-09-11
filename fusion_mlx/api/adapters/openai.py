@@ -158,6 +158,9 @@ class OpenAIAdapter(BaseAdapter):
                 prompt_tokens_details=PromptTokensDetails(
                     cached_tokens=response.cached_tokens,
                 ),
+                model_load_duration=response.model_load_duration,
+                time_to_first_token=response.time_to_first_token,
+                generation_tokens_per_second=response.generation_tokens_per_second,
             ),
         )
 
@@ -222,6 +225,9 @@ class OpenAIAdapter(BaseAdapter):
                 prompt_tokens_details=PromptTokensDetails(
                     cached_tokens=chunk.cached_tokens,
                 ),
+                model_load_duration=chunk.model_load_duration,
+                time_to_first_token=chunk.time_to_first_token,
+                generation_tokens_per_second=chunk.generation_tokens_per_second,
             )
 
         return f"data: {response.model_dump_json(exclude_none=True)}\n\n"

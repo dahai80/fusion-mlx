@@ -39,6 +39,9 @@ class GenerationOutput:
     kv_state: dict[str, Any] | None = None
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
+    model_load_duration: float | None = None
+    time_to_first_token: float | None = None
+    generation_tokens_per_second: float | None = None
     diffusion_canvas_tokens: int = 0
     diffusion_denoising_steps: int = 0
     diffusion_work_tokens: int = 0

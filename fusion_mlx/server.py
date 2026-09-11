@@ -123,6 +123,7 @@ from .routes_internal.metrics import router as metrics_router
 from .routes_internal.models import set_models_context
 from .routes_internal.responses import router as responses_router
 from .routes_internal.responses import set_responses_context
+from .routes_internal.runtime_config import router as runtime_config_router
 from .server_metrics import get_server_metrics
 from .settings import Settings
 
@@ -1278,6 +1279,7 @@ class Server:
             ("cache", cache_router, None),
             ("gc", gc_router, None),
             ("config_reload", config_reload_router, None),
+            ("runtime_config", runtime_config_router, None),
             ("admin", admin_router, None),
             ("cluster", cluster_router, None),
         ]
@@ -1443,12 +1445,7 @@ class Server:
                 "message": f"Loaded {model_id}",
             }
 
-        @app.post("/v1/models/{model_id:path}/unload")
-        async def unload_model_public(
-            model_id: str,
-            is_admin: bool = Depends(require_admin),
-            _source: bool = Depends(require_model_hub_source),
-        ):
+        async def _unload_model_impl(model_id: str) -> dict:
             if self.pool is None:
                 raise HTTPException(status_code=503, detail="Server not initialized")
             resolved = resolve_model_id(model_id)
@@ -1472,6 +1469,23 @@ class Server:
                 )
             await self.pool.unload_engine_async(resolved)
             return {"status": "ok", "model_id": model_id}
+
+        @app.post("/v1/models/{model_id:path}/unload")
+        async def unload_model_public(
+            model_id: str,
+            is_admin: bool = Depends(require_admin),
+            _source: bool = Depends(require_model_hub_source),
+        ):
+            return await _unload_model_impl(model_id)
+
+        @app.delete("/v1/models/{model_id:path}")
+        async def delete_model_public(
+            model_id: str,
+            is_admin: bool = Depends(require_admin),
+            _source: bool = Depends(require_model_hub_source),
+        ):
+            logger.info("DELETE /v1/models/%s (alias for unload)", model_id)
+            return await _unload_model_impl(model_id)
 
         @app.post("/v1/set_default_model")
         async def set_default_model(
@@ -2352,6 +2366,15 @@ class Server:
             logger.debug("tempfile_safe reap failed (non-fatal)", exc_info=True)
         mx.clear_cache()
         logger.info("fusion-mlx shutdown complete")
+        # fix-0911 §3: signal the parent-watchdog orphan path that
+        # graceful shutdown finished (cache saved, pool torn down) so it
+        # skips the SIGKILL fallback instead of truncating serialization.
+        try:
+            from ._parent_watchdog import signal_shutdown_complete
+
+            signal_shutdown_complete()
+        except Exception:
+            logger.debug("signal_shutdown_complete wiring failed", exc_info=True)
 
     async def load_model(self, model_id: str, **kwargs):
         """Dynamically load a model via the engine pool."""

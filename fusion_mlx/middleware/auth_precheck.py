@@ -67,9 +67,7 @@ def _extract_headers(scope: dict[str, Any]) -> dict[str, str]:
     headers: dict[str, str] = {}
     for raw_name, raw_value in scope.get("headers", ()):
         try:
-            headers[raw_name.decode("latin-1").lower()] = raw_value.decode(
-                "latin-1"
-            )
+            headers[raw_name.decode("latin-1").lower()] = raw_value.decode("latin-1")
         except (UnicodeDecodeError, ValueError):
             continue
     return headers
@@ -92,9 +90,7 @@ def _auth_passes_precheck(scope: dict[str, Any]) -> bool:
     provided = [k for k in (bearer, x_api_key) if k]
     if not provided:
         return False
-    return all(
-        secrets.compare_digest(k, configured_key) for k in provided
-    )
+    return all(secrets.compare_digest(k, configured_key) for k in provided)
 
 
 class AuthPrecheckMiddleware:
@@ -148,13 +144,9 @@ class AuthPrecheckMiddleware:
                     ],
                 }
             )
-            await send(
-                {"type": "http.response.body", "body": body, "more_body": False}
-            )
+            await send({"type": "http.response.body", "body": body, "more_body": False})
         except Exception:
-            logger.debug(
-                "auth pre-check 401 send failed (client already disconnected)"
-            )
+            logger.debug("auth pre-check 401 send failed (client already disconnected)")
 
         # Drain the request body so the client can receive our response
         # cleanly (some clients hang if the server responds before

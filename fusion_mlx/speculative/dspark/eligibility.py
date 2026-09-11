@@ -11,6 +11,8 @@
 # artifact (dspark-metal-convert output), not an HF repo, so it is
 # operator-supplied via --dspark-drafter-path and validated at server
 # boot. This avoids the DFlash path's per-alias drafter-field coupling.
+#
+# ENG-13 (#0909 audit): template methods delegated to BaseEligibilityChecker.
 
 from __future__ import annotations
 
@@ -19,6 +21,8 @@ from dataclasses import dataclass
 
 from fusion_mlx.model_aliases import AliasProfile
 from fusion_mlx.quant_detect import looks_like_4bit as _looks_like_4bit
+
+from ..base_eligibility import BaseEligibilityChecker
 
 logger = logging.getLogger(__name__)
 
@@ -36,77 +40,59 @@ class EligibilityReport:
     reasons: tuple[str, ...]
 
 
-def report(profile: AliasProfile, alias: str | None = None) -> EligibilityReport:
-    reasons: list[str] = []
-    if not profile.supports_dspark:
-        reasons.append(
-            "alias is not DSpark-enabled (set supports_dspark=true in "
-            "aliases.json after benching to validate the speedup)"
-        )
-    if profile.is_moe:
-        reasons.append(
-            "alias is MoE (is_moe=true) — DSpark acceptance floors on "
-            "expert-routing churn; use a dense target"
-        )
-    is_4bit = _looks_like_4bit(profile.hf_path)
-    if is_4bit:
-        reasons.append(
-            f"main model hf_path={profile.hf_path!r} is 4-bit quantized; "
-            "DSpark regresses on 4-bit (use a bf16/8-bit+ Qwen3 variant)"
-        )
-    return EligibilityReport(
-        alias=alias,
-        supports_dspark=profile.supports_dspark,
-        is_moe=profile.is_moe,
-        is_4bit=is_4bit,
-        reasons=tuple(reasons),
-    )
+class _DSparkChecker(BaseEligibilityChecker):
+    _STRATEGY_LABEL = "DSpark"
 
+    def _unavailable_exc(self) -> type[RuntimeError]:
+        return DSparkUnavailable
 
-def eligible_aliases() -> list[str]:
-    # list_profiles() returns dict[str, AliasProfile]; iterate values.
-    # Tolerant: any registry error returns [] rather than raising
-    # since this only enriches error text.
-    try:
-        from fusion_mlx.model_aliases import list_profiles
+    def _runtime_module(self) -> str:
+        return "fusion_mlx.speculative.dspark.engine"
 
-        return sorted(p.name for p in list_profiles().values() if not report(p).reasons)
-    except Exception as e:  # noqa: BLE001 — diagnostic helper, never fatal
-        logger.debug("eligible_aliases failed: %s", e)
-        return []
-
-
-def check(profile: AliasProfile, alias: str | None = None) -> None:
-    r = report(profile, alias=alias)
-    if not r.reasons:
-        return
-    header = f"DSpark unavailable for {alias!r}" if alias else "DSpark unavailable"
-    bullet = "\n  - ".join(r.reasons)
-    eligible = eligible_aliases()
-    if eligible:
-        suffix = (
-            f"Eligible aliases today: {', '.join(eligible)}. Run "
-            "`fusion-mlx info <alias>` to inspect per-alias DSpark status."
-        )
-    else:
-        suffix = (
+    def _empty_eligible_suffix(self) -> str:
+        return (
             "No aliases currently pass every DSpark gate. DSpark targets "
             "Qwen3 4B/8B/14B bf16 — pass a bf16 Qwen3 repo directly, e.g. "
             "`fusion-mlx serve --enable-dspark mlx-community/Qwen3-8B-bf16 "
             "--dspark-drafter-path <converted-mlx-draft>`."
         )
-    raise DSparkUnavailable(f"{header}:\n  - {bullet}\n\n{suffix}")
+
+    def report(
+        self, profile: AliasProfile, alias: str | None = None
+    ) -> EligibilityReport:
+        reasons: list[str] = []
+        if not profile.supports_dspark:
+            reasons.append(
+                "alias is not DSpark-enabled (set supports_dspark=true in "
+                "aliases.json after benching to validate the speedup"
+            )
+        if profile.is_moe:
+            reasons.append(
+                "alias is MoE (is_moe=true) — DSpark acceptance floors on "
+                "expert-routing churn; use a dense target"
+            )
+        is_4bit = _looks_like_4bit(profile.hf_path)
+        if is_4bit:
+            reasons.append(
+                f"main model hf_path={profile.hf_path!r} is 4-bit quantized; "
+                "DSpark regresses on 4-bit (use a bf16/8-bit+ Qwen3 variant)"
+            )
+        return EligibilityReport(
+            alias=alias,
+            supports_dspark=profile.supports_dspark,
+            is_moe=profile.is_moe,
+            is_4bit=is_4bit,
+            reasons=tuple(reasons),
+        )
 
 
-def have_runtime() -> bool:
-    # dspark-metal is vendored under fusion_mlx.speculative.dspark.engine,
-    # so the runtime ships with fusion-mlx (no external pip install). Probe
-    # the vendored module without importing it (cheap on the hot CLI path);
-    # the DSparkGenerator symbol is checked at load_runtime time.
-    try:
-        import importlib
+_checker = _DSparkChecker()
+report = _checker.report
 
-        spec = importlib.util.find_spec("fusion_mlx.speculative.dspark.engine")
-        return spec is not None
-    except (ImportError, AttributeError, ModuleNotFoundError):
-        return False
+
+def check(profile, alias=None):
+    return _checker.check(profile, alias=alias, _eligible_fn=eligible_aliases)
+
+
+eligible_aliases = _checker.eligible_aliases
+have_runtime = _checker.have_runtime

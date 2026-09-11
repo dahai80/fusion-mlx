@@ -411,6 +411,7 @@ def _run_uvicorn(app, args, log_level: str) -> None:
                 fd=uds_fd,
                 log_level=log_level,
                 timeout_keep_alive=30,
+                timeout_graceful_shutdown=15,
             )
         elif listen_fd is not None:
             # ``fd=`` overrides ``host``/``port``: uvicorn skips its own
@@ -424,6 +425,7 @@ def _run_uvicorn(app, args, log_level: str) -> None:
                 fd=listen_fd,
                 log_level=log_level,
                 timeout_keep_alive=30,
+                timeout_graceful_shutdown=15,
             )
         else:
             uvicorn.run(
@@ -432,6 +434,7 @@ def _run_uvicorn(app, args, log_level: str) -> None:
                 port=args.port,
                 log_level=log_level,
                 timeout_keep_alive=30,
+                timeout_graceful_shutdown=15,
             )
     except OSError as exc:
         # Direct EADDRINUSE — older uvicorn, ``--listen-fd`` mode bind

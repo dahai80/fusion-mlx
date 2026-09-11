@@ -25,8 +25,8 @@ def _walk_routes(app):
 
 
 def test_sr_route_registered():
-    from fusion_mlx.server import create_app
     from fusion_mlx.config import ServerConfig
+    from fusion_mlx.server import create_app
 
     # R-7: SR route requires image modality — use full profile.
     cfg = ServerConfig()

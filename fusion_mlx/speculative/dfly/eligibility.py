@@ -8,6 +8,10 @@ hidden-correction).  Gates:
   - alias must NOT be is_moe=True (MoE routing churn kills acceptance)
   - main model must be 8-bit+ (4-bit regresses)
   - drafter HF path must be reachable or operator-supplied
+
+ENG-13 (#0909 audit): template methods delegated to BaseEligibilityChecker.
+Unlike the supports_* strategies, DFly replaces the opt-in gate with a
+model_family=="hunyuan" gate (overridden in ``report`` below).
 """
 
 from __future__ import annotations
@@ -17,6 +21,8 @@ from dataclasses import dataclass
 
 from fusion_mlx.model_aliases import AliasProfile
 from fusion_mlx.quant_detect import looks_like_4bit as _looks_like_4bit
+
+from ..base_eligibility import BaseEligibilityChecker
 
 logger = logging.getLogger(__name__)
 
@@ -45,78 +51,67 @@ def _detect_model_family(profile: AliasProfile) -> str:
     return ""
 
 
-def report(profile: AliasProfile, alias: str | None = None) -> EligibilityReport:
-    reasons: list[str] = []
-    family = _detect_model_family(profile)
-    if family != "hunyuan":
-        reasons.append(
-            "DFly is a Hunyuan (Hy3)-native drafter; model_family={!r} "
-            "is not 'hunyuan'. Use dfly only with Hy3 models.".format(
-                family or "unknown"
-            )
-        )
-    if profile.is_moe:
-        reasons.append(
-            "alias is MoE (is_moe=true) — DFly acceptance floors on "
-            "expert-routing churn; use a dense Hy3 target"
-        )
-    is_4bit = _looks_like_4bit(profile.hf_path)
-    if is_4bit:
-        reasons.append(
-            f"main model hf_path={profile.hf_path!r} is 4-bit quantized; "
-            "DFly regresses on 4-bit (use bf16/8-bit+ Hy3 variant)"
-        )
-    has_drafter = bool(
-        getattr(profile, "dfly_draft_model", None)
-        or getattr(profile, "drafter_hf_path", None)
-    )
-    return EligibilityReport(
-        alias=alias,
-        model_family=family,
-        is_moe=profile.is_moe,
-        is_4bit=is_4bit,
-        has_drafter=has_drafter,
-        reasons=tuple(reasons),
-    )
+class _DFlyChecker(BaseEligibilityChecker):
+    _STRATEGY_LABEL = "DFly"
 
+    def _unavailable_exc(self) -> type[RuntimeError]:
+        return DFlyUnavailable
 
-def eligible_aliases() -> list[str]:
-    try:
-        from fusion_mlx.model_aliases import list_profiles
+    def _runtime_module(self) -> str:
+        return "fusion_mlx.speculative.dfly.drafter"
 
-        return sorted(p.name for p in list_profiles().values() if not report(p).reasons)
-    except Exception as e:  # noqa: BLE001 — diagnostic helper, never fatal
-        logger.debug("eligible_aliases failed: %s", e)
-        return []
-
-
-def check(profile: AliasProfile, alias: str | None = None) -> None:
-    r = report(profile, alias=alias)
-    if not r.reasons:
-        return
-    header = f"DFly unavailable for {alias!r}" if alias else "DFly unavailable"
-    bullet = "\n  - ".join(r.reasons)
-    eligible = eligible_aliases()
-    if eligible:
-        suffix = (
-            f"Eligible aliases today: {', '.join(eligible)}. Run "
-            "`fusion-mlx info <alias>` to inspect per-alias DFly status."
-        )
-    else:
-        suffix = (
+    def _empty_eligible_suffix(self) -> str:
+        return (
             "No aliases currently pass every DFly gate. DFly targets "
             "Hunyuan (Hy3) bf16/8-bit models — pass an Hy3 repo, e.g. "
             "`fusion-mlx serve --enable-dfly <hy3-model> "
             "--dfly-drafter-path AngelSlim/Hy3-DFly-Block8`."
         )
-    raise DFlyUnavailable(f"{header}:\n  - {bullet}\n\n{suffix}")
+
+    def report(
+        self, profile: AliasProfile, alias: str | None = None
+    ) -> EligibilityReport:
+        reasons: list[str] = []
+        family = _detect_model_family(profile)
+        if family != "hunyuan":
+            reasons.append(
+                "DFly is a Hunyuan (Hy3)-native drafter; model_family={!r} "
+                "is not 'hunyuan'. Use dfly only with Hy3 models.".format(
+                    family or "unknown"
+                )
+            )
+        if profile.is_moe:
+            reasons.append(
+                "alias is MoE (is_moe=true) — DFly acceptance floors on "
+                "expert-routing churn; use a dense Hy3 target"
+            )
+        is_4bit = _looks_like_4bit(profile.hf_path)
+        if is_4bit:
+            reasons.append(
+                f"main model hf_path={profile.hf_path!r} is 4-bit quantized; "
+                "DFly regresses on 4-bit (use a bf16/8-bit+ Hy3 variant)"
+            )
+        has_drafter = bool(
+            getattr(profile, "dfly_draft_model", None)
+            or getattr(profile, "drafter_hf_path", None)
+        )
+        return EligibilityReport(
+            alias=alias,
+            model_family=family,
+            is_moe=profile.is_moe,
+            is_4bit=is_4bit,
+            has_drafter=has_drafter,
+            reasons=tuple(reasons),
+        )
 
 
-def have_runtime() -> bool:
-    try:
-        import importlib
+_checker = _DFlyChecker()
+report = _checker.report
 
-        spec = importlib.util.find_spec("fusion_mlx.speculative.dfly.drafter")
-        return spec is not None
-    except (ImportError, AttributeError, ModuleNotFoundError):
-        return False
+
+def check(profile, alias=None):
+    return _checker.check(profile, alias=alias, _eligible_fn=eligible_aliases)
+
+
+eligible_aliases = _checker.eligible_aliases
+have_runtime = _checker.have_runtime

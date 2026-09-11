@@ -7,7 +7,6 @@ via the HuggingFace API (or mirror) and prompts the user for confirmation.
 """
 
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -74,9 +73,7 @@ def estimate_repo_size_bytes(model_name: str) -> int | None:
             sibling.rfilename and getattr(sibling, "size", 0) or 0
             for sibling in getattr(info, "siblings", [])
         )
-        total = sum(
-            getattr(s, "size", 0) or 0 for s in getattr(info, "siblings", [])
-        )
+        total = sum(getattr(s, "size", 0) or 0 for s in getattr(info, "siblings", []))
         return total if total > 0 else None
     except Exception as e:
         logger.debug("estimate_repo_size_bytes: HF API query failed: %s", e)
