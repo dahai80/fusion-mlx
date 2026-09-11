@@ -70,7 +70,12 @@ jobs:
             - uses: actions/setup-python@v7
               with:
                   python-version: ${{ matrix.python-version }}
-            - run: pip install -e ".[dev]"
+            # Install [vlm] so conftest's mlx_vlm mock is NOT triggered on
+            # macOS CI (real mlx_vlm 0.5.0 installs cleanly on Apple Silicon).
+            # Without it, 38 VLM tests fail: `from mlx_vlm.models.X import Y`
+            # resolves Y to MagicMock → isinstance/issubclass always False.
+            # macOS-14 runners are M1 → mlx + mlx_vlm wheels available.
+            - run: pip install -e ".[dev,vlm]"
             - run: pip install pytest-cov
             - name: Run unit tests with coverage
               run: |
@@ -93,3 +98,25 @@ jobs:
                     echo "FAIL: >10% tests skipped (${PCT}%) — CI provides false confidence"
                     exit 1
                   fi
+
+    eval:
+        # G1/S1: evaluation gate (ADVISORY). Runs perf/coherence/tool-call gates.
+        # No baseline → ADVISORY (warn, never fail CI). When a baseline file
+        # exists (evals/baselines/), regressions beyond threshold become enforce.
+        # CI has no running server → gates skip gracefully (advisory contract).
+        runs-on: macos-14
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-python@v7
+              with:
+                  python-version: "3.12"
+            - run: pip install -e ".[dev]"
+            - name: Run perf gate (ADVISORY — skips if no server)
+              run: |
+                  python -m fusion_mlx.eval.perf_gate --model noop \
+                    --baseline evals/baselines/perf_baseline.json 2>&1 | tee eval-output.txt || true
+            - name: Verify gate skipped gracefully (advisory contract)
+              run: |
+                  grep -q "ADVISORY\|no samples\|server unreachable" eval-output.txt
+            - name: Run eval gate unit tests
+              run: pytest tests/unit/test_eval_gates.py -q
