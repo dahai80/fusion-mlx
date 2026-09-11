@@ -10,9 +10,11 @@ from fusion_mlx import engine_core as ec
 from fusion_mlx.engine_core import (
     is_llm_executor_poisoned,
     poison_executor,
+    register_llm_engine_for_watchdog,
     reset_llm_executor_poison,
     start_llm_watchdog,
     stop_llm_watchdog,
+    unregister_llm_engine_from_watchdog,
     update_llm_heartbeat,
 )
 
@@ -116,3 +118,77 @@ class TestWatchdog:
         time.sleep(0.5)
         assert is_llm_executor_poisoned() is False
         stop_llm_watchdog()
+
+
+class _FakeEngine:
+    # Stand-in for EngineCore exposing is_dead / mark_dead so the watchdog's
+    # mark-dead-on-hung wiring (#862) can be tested without a real MLX engine.
+    def __init__(self):
+        self._dead = False
+        self.reason = None
+
+    def is_dead(self):
+        return self._dead
+
+    def mark_dead(self, reason):
+        self._dead = True
+        self.reason = reason
+
+
+class TestWatchdogAutoRebuild:
+    # G2 auto-rebuild (#862): on hung-worker detection the watchdog must mark
+    # the registered engine dead (so EnginePool's EF-1 lazy reload triggers)
+    # in addition to setting the poison flag.
+
+    def test_watchdog_marks_registered_engine_dead(self):
+        ec._LLM_WATCHDOG_TIMEOUT_S = 0.2
+        engine = _FakeEngine()
+        register_llm_engine_for_watchdog(engine)
+        try:
+            start_llm_watchdog()
+            with ec._llm_heartbeat_lock:
+                ec._llm_step_deadline = time.monotonic() + 10.0
+                ec._llm_heartbeat = time.monotonic() - 5.0
+            time.sleep(0.6)
+            assert is_llm_executor_poisoned() is True
+            assert engine.is_dead() is True
+            assert engine.reason is not None
+            assert "G2" in engine.reason
+            stop_llm_watchdog()
+        finally:
+            unregister_llm_engine_from_watchdog()
+
+    def test_no_mark_dead_when_no_engine_registered(self):
+        ec._LLM_WATCHDOG_TIMEOUT_S = 0.2
+        unregister_llm_engine_from_watchdog()
+        start_llm_watchdog()
+        with ec._llm_heartbeat_lock:
+            ec._llm_step_deadline = time.monotonic() + 10.0
+            ec._llm_heartbeat = time.monotonic() - 5.0
+        time.sleep(0.6)
+        # Poison flag still set (fast-fail), but no engine to mark — no crash.
+        assert is_llm_executor_poisoned() is True
+        stop_llm_watchdog()
+
+    def test_weakref_survives_engine_teardown(self):
+        engine = _FakeEngine()
+        register_llm_engine_for_watchdog(engine)
+        ref = ec._llm_watchdog_engine_ref
+        assert ref is not None and ref() is engine
+        del engine
+        # Weakref dies with the engine — watchdog tick must not crash.
+        ec._LLM_WATCHDOG_TIMEOUT_S = 0.2
+        start_llm_watchdog()
+        with ec._llm_heartbeat_lock:
+            ec._llm_step_deadline = time.monotonic() + 10.0
+            ec._llm_heartbeat = time.monotonic() - 5.0
+        time.sleep(0.6)
+        assert is_llm_executor_poisoned() is True
+        stop_llm_watchdog()
+        unregister_llm_engine_from_watchdog()
+
+    def test_reset_poison_clears_for_rebuild(self):
+        poison_executor("llm")
+        assert is_llm_executor_poisoned() is True
+        reset_llm_executor_poison()
+        assert is_llm_executor_poisoned() is False

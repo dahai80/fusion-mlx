@@ -9,6 +9,7 @@ import os
 import threading
 import time
 import uuid
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -249,6 +250,31 @@ _llm_watchdog_stop = threading.Event()
 # Default: 120s without a heartbeat while a step is pending = hung worker.
 # Override via FUSION_LLM_WATCHDOG_TIMEOUT.
 _LLM_WATCHDOG_TIMEOUT_S = float(os.environ.get("FUSION_LLM_WATCHDOG_TIMEOUT", "120"))
+# G2 auto-rebuild (#862): weakref to the live EngineCore so the watchdog can
+# mark it dead on hung-worker detection. Weakref survives reload churn — when
+# the pool evicts + rebuilds the engine, the old ref dies and the new engine
+# re-registers in EngineCore.start(). The pool's EF-1 lazy-reload path
+# (get_engine → is_dead() → _detach_engine + _load_engine) then recovers
+# without a process restart. The stuck Metal worker thread is abandoned
+# (same accepted hazard as the video/image poison path).
+_llm_watchdog_engine_ref: weakref.ref | None = None
+_llm_engine_ref_lock = threading.Lock()
+
+
+def register_llm_engine_for_watchdog(engine: Any) -> None:
+    # Called from EngineCore.start() after the watchdog starts. Holds a
+    # weakref so engine teardown (pool evict) is not blocked by the watchdog.
+    global _llm_watchdog_engine_ref
+    with _llm_engine_ref_lock:
+        _llm_watchdog_engine_ref = weakref.ref(engine)
+
+
+def unregister_llm_engine_from_watchdog() -> None:
+    # Called from EngineCore.stop() so a stopping engine is not marked dead
+    # by a racing watchdog tick.
+    global _llm_watchdog_engine_ref
+    with _llm_engine_ref_lock:
+        _llm_watchdog_engine_ref = None
 
 
 def is_video_executor_poisoned() -> bool:
@@ -308,11 +334,27 @@ def _llm_watchdog_tick() -> None:
                     continue
             logger.error(
                 "G2 llm watchdog: worker thread hung for %.0fs (heartbeat "
-                "stale). Poisoning llm executor — new requests will 503. "
-                "RESTART fusion-mlx to recover.",
+                "stale). Poisoning llm executor + marking engine dead for "
+                "pool auto-rebuild (#862). The stuck thread is abandoned; "
+                "the pool will evict + reload on the next request.",
                 now - hb,
             )
             poison_executor("llm")
+            # G2 auto-rebuild (#862): mark the live engine dead so
+            # EnginePool.get_engine triggers EF-1 lazy reload (evict +
+            # _load_engine) on the next request, instead of leaving the
+            # engine reported as "loaded" while every request hangs. The
+            # stuck loop task is cancelled by EngineCore.stop() during
+            # _detach_engine. mark_dead is a sync flag set + log — safe
+            # to call from this watchdog thread.
+            with _llm_engine_ref_lock:
+                ref = _llm_watchdog_engine_ref
+            if ref is not None:
+                engine = ref()
+                if engine is not None and not engine.is_dead():
+                    engine.mark_dead(
+                        "G2 hung LLM worker thread (heartbeat stale %.0fs)" % (now - hb)
+                    )
 
 
 def start_llm_watchdog() -> None:
@@ -752,10 +794,22 @@ class EngineCore:
         self._task = asyncio.create_task(self._engine_loop())
         # G2: start llm worker watchdog (detects hung Metal thread).
         start_llm_watchdog()
+        # G2 auto-rebuild (#862): a fresh start clears any inherited poison
+        # flag so a rebuilt engine (after pool evict + reload) does not
+        # fast-fail its first step. The flag is module-level and survives
+        # an engine swap; without this reset the new loop would 503 every
+        # request and never recover.
+        reset_llm_executor_poison()
+        # G2 auto-rebuild (#862): register this engine so the watchdog can
+        # mark it dead on hung-worker detection, triggering EF-1 pool reload.
+        register_llm_engine_for_watchdog(self)
         logger.info("Engine started")
 
     async def stop(self) -> None:
         self._running = False
+        # G2: unregister this engine before stopping the watchdog so a
+        # racing tick does not mark a stopping engine dead.
+        unregister_llm_engine_from_watchdog()
         # G2: stop watchdog on engine stop.
         stop_llm_watchdog()
         if self._wake_event is not None:
@@ -907,14 +961,50 @@ class EngineCore:
         while self._running:
             try:
                 # G2: if llm executor is poisoned, fast-fail all active
-                # requests with a loud error instead of hanging forever.
+                # requests and stop the loop so the pool can evict + reload
+                # (#862). Previously this slept + continued forever, leaving
+                # the engine reported as "loaded" while every request 503'd
+                # — recovery needed a process restart. Now mark_dead + exit
+                # mirrors the EF-1 circuit-breaker path: the pool's
+                # get_engine sees is_dead() and rebuilds on the next request.
                 if is_llm_executor_poisoned():
-                    self._fail_unfinished_contexts(
-                        "llm executor poisoned (G2): worker thread hung. "
-                        "RESTART fusion-mlx to recover."
+                    logger.error(
+                        "Engine loop exiting after llm executor poison "
+                        "(G2) — marking engine dead for pool auto-rebuild"
                     )
-                    await asyncio.sleep(1.0)
-                    continue
+                    self._engine_dead = True
+                    self._engine_dead_reason = (
+                        "llm executor poisoned (G2): worker thread hung"
+                    )
+                    failed_ids = await loop.run_in_executor(
+                        self._mlx_executor, self.scheduler.fail_all_requests
+                    )
+                    for rid in failed_ids or []:
+                        ctx = self._active_contexts.get(rid)
+                        if ctx is not None:
+                            try:
+                                ctx.collector.put(
+                                    RequestOutput(
+                                        request_id=rid,
+                                        finished=True,
+                                        finish_reason="error",
+                                        error="engine stopped: llm executor poisoned (G2)",
+                                    )
+                                )
+                            except Exception:
+                                pass
+                        self._mark_request_finished(rid)
+                    leaked = self._fail_unfinished_contexts(
+                        "llm executor poisoned (G2): worker thread hung"
+                    )
+                    if leaked:
+                        logger.critical(
+                            "G2: %d active context(s) force-finished on "
+                            "poison exit to avoid hang",
+                            leaked,
+                        )
+                    self._running = False
+                    return
                 # Sweep collectors orphaned by client disconnects (throttled).
                 # M4: reduced throttle from 1s to 0.2s; hard cap for burst.
                 now = time.monotonic()
