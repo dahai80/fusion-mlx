@@ -1578,6 +1578,24 @@ def serve_command(args):
             sys.exit(1)
         args.model = args.model_flag
 
+    # D3.2/N2: --beginner one-click preset. Maps to lite profile + a small
+    # recommended 4-bit model when none is given. No yaml double-track —
+    # composes onto the existing ServerConfig via the same --profile/model
+    # args the normal path reads. Mutually exclusive with --profile turbo.
+    if getattr(args, "beginner", False):
+        if args.profile == "turbo":
+            print("Error: --beginner and --profile turbo are mutually exclusive.")
+            sys.exit(1)
+        args.profile = "lite"
+        if not getattr(args, "model", None) and not getattr(args, "model_dir", None):
+            args.model = "qwen3.5-4b-4bit"
+            print(
+                "[beginner] preset: profile=lite, model=qwen3.5-4b-4bit, "
+                "port=11434. A small 4-bit model — safe for 16GB+ Macs."
+            )
+        else:
+            print("[beginner] preset: profile=lite (model kept as given).")
+
     # FusionMLX macOS app / fusion-mlx-style launch: `serve --base-path <dir>` serves
     # <dir>/models via the multi-model engine-pool server (the app spawns this
     # with --base-path ~/.fusion-mlx). Mutually exclusive with model selection.

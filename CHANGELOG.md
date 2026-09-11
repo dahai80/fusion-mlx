@@ -3,6 +3,52 @@
 ## [Unreleased]
 
 ### Added
+- **`fusion-mlx ppl` CLI** — computes mean cross-entropy perplexity on the
+  offline oq calibration corpus (code/en/zh/ja/ko/tool_calling/reasoning).
+  `fusion-mlx ppl <model> --quant <mode>` labels the quant mode so operators
+  can build a quant-cost table from real runs. Real-model only (no mock path).
+- **`--profile turbo`** — full modalities + aggressive cache (radix) + spec
+  (DFlash2) + KV quant (turboquant) default param composition. No yaml
+  double-track — the profile name drives param composition via
+  `ServerProfile.is_turbo`.
+- **`--beginner` serve flag** — one-click preset: lite profile + small
+  recommended 4-bit model (`qwen3.5-4b-4bit`) + port 11434. Safe default for
+  first-time local LLM use on 16GB+ Macs.
+- **Tiered cache mounted into live path** — `TieredCacheManager` (hot paged
+  → cold paged_ssd demotion) was implemented but dead (`create_full_cache_stack`
+  returned None). Now mounted env-gated (`FUSION_MLX_TIERED_CACHE=1` default
+  ON); `GET /v1/runtime-config` exposes `tiered_cache_enabled` + `rollback_leaves`.
+- **Radix prefix cache p50/p99 latency stats** — `/metrics` exposes
+  `fusion_mlx_prefix_lookup_{p50,p99}_seconds`; `rebuild_from_keys()` index
+  repair interface added.
+- **`max_waiting` scheduler waiting cap** — configurable
+  `SchedulerConfig.max_waiting` field (default `max(max_num_seqs*4, 32)`),
+  checked in admission.
+- **`chip_tier` hardware auto-classification** — `classify_chip_tier` /
+  `detect_chip_tier` (Apple M-series brand string → lite/standard/full,
+  false-positive guarded). `runtime-config` exposes `chip_tier`.
+- **Spec-decode route decision jsonl** — every spec-route decision appended
+  to a size-guarded jsonl (500 MiB cap, `FUSION_MLX_SPEC_ROUTE_LOG=0` test
+  disable, I/O errors never break inference). Enables offline
+  acceptance-rate/trip-rate analysis.
+- **Multi-cache atomic rollback** — `CacheRollbackManager` provides
+  transactional multi-layer rollback for composite generation writes
+  (snapshot keys → evict from all leaf caches on failure → no torn cache).
+- **Tool-call JSON auto-repair** — deterministic bracket/quote/comma repair
+  of truncated tool-call JSON args (`FUSION_MLX_TOOL_JSON_REPAIR=1` default
+  ON). No LLM regen — pure code repair.
+- **Eval gates (ADVISORY)** — `eval/perf_gate.py` (tok/s + TTFT, baseline
+  15% threshold, never invents baselines), `eval/coherence_gate.py`,
+  `eval/tool_result_grader.py`. CI `eval` job runs advisory (non-blocking).
+- **Error solutions expanded** — 6 → 12 HTTP status codes (added
+  400/401/403/404/408/502) with actionable fix suggestions.
+
+### Changed
+- **CI test job installs `[dev,vlm]`** — eliminates 38 Linux-mock VLM test
+  failures at root (macos-14 M1 runners install real mlx + mlx_vlm wheels
+  for 3.11/3.12/3.13 instead of mocking, which caused isinstance/issubclass
+  on MagicMock classes to fail).
+
 - **DFlash2 default-on via per-model settings** — `model_settings.json` now
   supports `dflash2_drafter_path` and `dflash2_block_size`. VLMBatchedEngine
   loads the DFlash2 block-diffusion drafter automatically (matching the
