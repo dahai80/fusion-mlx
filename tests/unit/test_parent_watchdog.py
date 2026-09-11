@@ -397,9 +397,7 @@ class TestDefaultOnOrphan:
         with (
             patch.object(pwd.os, "kill") as mock_kill,
             patch.object(pwd.time, "sleep"),
-            patch.object(
-                pwd, "wait_for_shutdown_complete", return_value=True
-            ),
+            patch.object(pwd, "wait_for_shutdown_complete", return_value=True),
             patch.object(pwd.os, "_exit") as mock_exit,
         ):
             # ``_exit`` is what terminates the call; we patch it so the
