@@ -184,6 +184,24 @@ Reports:
 - Model directory scan (models found, sizes, types)
 - Server health check (if server is running)
 
+### `ppl` — Perplexity / quant-cost measurement
+
+```bash
+fusion-mlx ppl <model> [--quant <mode>] [--samples-per-category N]
+```
+
+Computes mean cross-entropy perplexity on the offline `oq_calibration_data.json`
+corpus (code/en/zh/ja/ko/tool_calling/reasoning categories). Real-model only —
+loads weights via `mlx_lm.load`, no mock path.
+
+`--quant` labels the output (e.g. `mixed_2_4`, `int4`) so you can build a
+quant-cost table from real runs. It does **not** re-quantize — it labels the
+mode of the model you loaded. Lower `overall_ppl` = better quality retention.
+A 4-bit model should show measurably higher ppl than its bf16/mxfp8 parent.
+
+Output is JSON: `overall_nll`, `overall_ppl`, `total_tokens`, per-category
+breakdown. Use it to fill the PPL cost column in the README benchmark table.
+
 ---
 
 ## Usage Patterns

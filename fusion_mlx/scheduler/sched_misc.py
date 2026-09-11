@@ -321,6 +321,7 @@ def _init_tiered_cache(self) -> None:
             logger.error(f"Failed to initialize pure-memory prefix cache: {e}")
             self.paged_ssd_cache_manager = None
         self._activate_tiered_cache_manager()
+        self._activate_rollback_manager()
         return
 
     try:
@@ -381,6 +382,7 @@ def _init_tiered_cache(self) -> None:
         self.paged_ssd_cache_manager = None
 
     self._activate_tiered_cache_manager()
+    self._activate_rollback_manager()
 
 
 def _activate_tiered_cache_manager(self) -> None:
@@ -430,6 +432,38 @@ def _activate_tiered_cache_manager(self) -> None:
     except Exception as e:
         logger.warning("tiered cache: activation failed: %s", e)
         self._tiered_cache_manager = None
+
+
+def _activate_rollback_manager(self) -> None:
+    """D2.8/G13: register leaf caches for atomic multi-layer rollback.
+
+    Called after tiered cache activation. Registers every eviction-capable
+    leaf (paged hot, paged_ssd cold, block-aware prefix) so a failed
+    composite generation can evict its keys from ALL layers at once — no
+    torn cache. The tiered manager itself is NOT a leaf (it delegates to
+    hot+cold which are already registered).
+    """
+    try:
+        from ..cache.cache_rollback import CacheRollbackManager
+
+        self._rollback_manager = CacheRollbackManager()
+        if self.paged_cache_manager is not None:
+            self._rollback_manager.register_leaf(
+                "paged_hot", self.paged_cache_manager.evict
+            )
+        if self.paged_ssd_cache_manager is not None:
+            self._rollback_manager.register_leaf(
+                "paged_ssd_cold", self.paged_ssd_cache_manager.evict
+            )
+        if self.block_aware_cache is not None:
+            self._rollback_manager.register_leaf("prefix", self.block_aware_cache.evict)
+        logger.info(
+            "cache-rollback: activated (%d leaves registered)",
+            len(self._rollback_manager.leaves()),
+        )
+    except Exception as e:
+        logger.warning("cache-rollback: activation failed: %s", e)
+        self._rollback_manager = None
 
 
 def _check_memory_pressure(self) -> None:

@@ -330,6 +330,10 @@ def __init__(
         # Activated in _init_tiered_cache when both layers exist and
         # FUSION_MLX_TIERED_CACHE != "0" (default ON). None until then.
         self._tiered_cache_manager = None
+        # D2.8/G13: multi-cache rollback manager — activated alongside
+        # tiered cache, registers every leaf cache (paged/paged_ssd/
+        # prefix) for atomic rollback on composite-generation failure.
+        self._rollback_manager = None
 
         # Initialize paged cache manager for block metadata
         self.paged_cache_manager = PagedCacheManager(

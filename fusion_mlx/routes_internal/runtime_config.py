@@ -76,6 +76,8 @@ async def runtime_config() -> dict[str, Any]:
             .strip()
             .lower()
             not in ("0", "false", "off"),
+            # D2.8/G13: multi-cache atomic rollback (leaf count; 0 = off).
+            "rollback_leaves": _rollback_leaf_count(),
         },
         "env_overrides": {
             "FUSION_MAX_CONCURRENT_REQUESTS": os.environ.get(
@@ -110,3 +112,23 @@ def _detect_chip_tier_safe() -> str:
     except Exception:
         logger.debug("chip_tier detection unavailable", exc_info=True)
         return "standard"
+
+
+def _rollback_leaf_count() -> int:
+    # D2.8/G13: count registered rollback leaf caches from the live
+    # engine pool scheduler. 0 = rollback inactive or no engines.
+    try:
+        from ..pool.engine_pool import get_engine_pool
+
+        pool = get_engine_pool()
+        total = 0
+        for eng in pool._engines.values() if hasattr(pool, "_engines") else []:
+            sched = _safe_get(eng, "_scheduler") or _safe_get(eng, "scheduler")
+            rb = _safe_get(sched, "_rollback_manager")
+            leaves = _safe_get(rb, "leaves")
+            if callable(leaves):
+                total += len(leaves())
+        return total
+    except Exception:
+        logger.debug("rollback leaf count unavailable", exc_info=True)
+        return 0
