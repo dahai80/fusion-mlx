@@ -272,10 +272,12 @@ def test_env_kill_switch_via_subprocess(fake_home):
 
 
 def test_help_lists_telemetry_subcommand():
-    """Bare ``fusion-mlx --help`` must surface the telemetry subcommand
-    so users discover it. Regression target: someone refactors the
+    """``fusion-mlx --help-advanced`` must surface the telemetry subcommand
+    so users discover it. PR #860 split primary commands into ``--help``
+    and advanced subcommands into ``--help-advanced``; telemetry lives in
+    the advanced group. Regression target: someone refactors the
     subparsers and accidentally drops the registration."""
-    r = _run_cli("--help")
+    r = _run_cli("--help-advanced")
     assert r.returncode == 0, r.stderr
     assert "telemetry" in r.stdout
 

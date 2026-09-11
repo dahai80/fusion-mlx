@@ -14,6 +14,11 @@ Gates derived from PoC bench data (see issue #264):
     heuristic — for v1 we accept that risk since every supported alias
     is curated; load-time quant-config inspection is a phase-2 item.
 - Drafter HF path must be reachable (no auth-gated repo without token)
+
+ENG-13 (#0909 audit): the identical ``eligible_aliases`` / ``check`` /
+``have_runtime`` template lives in ``speculative.base_eligibility``;
+only ``report`` (the per-strategy gate logic) and three small hooks
+(label, exception, runtime module) stay here.
 """
 
 from __future__ import annotations
@@ -23,6 +28,8 @@ from dataclasses import dataclass
 
 from fusion_mlx.model_aliases import AliasProfile
 from fusion_mlx.quant_detect import looks_like_4bit as _looks_like_4bit
+
+from ..base_eligibility import BaseEligibilityChecker
 
 logger = logging.getLogger(__name__)
 
@@ -43,99 +50,59 @@ class EligibilityReport:
     reasons: tuple[str, ...]
 
 
-def report(profile: AliasProfile, alias: str | None = None) -> EligibilityReport:
-    """Compute the eligibility report without raising. Used by ``info``
-    to render gate status — ``check`` is the raise-on-failure variant.
-    """
-    reasons: list[str] = []
-    if not profile.supports_dflash:
-        reasons.append(
-            "alias is not DFlash-enabled (set supports_dflash=true in "
-            "model-config.json after benching to validate ≥1.3× speedup)"
+class _DFlashChecker(BaseEligibilityChecker):
+    _STRATEGY_LABEL = "DFlash"
+
+    def _unavailable_exc(self) -> type[RuntimeError]:
+        return DFlashUnavailable
+
+    def _runtime_module(self) -> str:
+        return "mlx_vlm.speculative.drafters"
+
+    def report(
+        self, profile: AliasProfile, alias: str | None = None
+    ) -> EligibilityReport:
+        reasons: list[str] = []
+        if not profile.supports_dflash:
+            reasons.append(
+                "alias is not DFlash-enabled (set supports_dflash=true in "
+                "model-config.json after benching to validate ≥1.3× speedup)"
+            )
+        if profile.is_moe:
+            reasons.append(
+                "alias is MoE (is_moe=true) — DFlash acceptance floors at "
+                "~1.5 tokens/round on expert-routing churn; regression "
+                "measured on Qwen3.6-35B-A3B"
+            )
+        is_4bit = _looks_like_4bit(profile.hf_path)
+        if is_4bit:
+            reasons.append(
+                f"main model hf_path={profile.hf_path!r} is 4-bit quantized; "
+                "DFlash regresses on 4-bit (use an 8-bit or higher variant)"
+            )
+        has_drafter = bool(
+            getattr(profile, "dflash_draft_model", None)
+            or getattr(profile, "drafter_hf_path", None)
         )
-    if profile.is_moe:
-        reasons.append(
-            "alias is MoE (is_moe=true) — DFlash acceptance floors at "
-            "~1.5 tokens/round on expert-routing churn; regression "
-            "measured on Qwen3.6-35B-A3B"
+        if profile.supports_dflash and not has_drafter:
+            reasons.append("supports_dflash is set but dflash_draft_model is empty")
+        return EligibilityReport(
+            alias=alias,
+            supports_dflash=profile.supports_dflash,
+            is_moe=profile.is_moe,
+            is_4bit=is_4bit,
+            has_drafter=has_drafter,
+            reasons=tuple(reasons),
         )
-    is_4bit = _looks_like_4bit(profile.hf_path)
-    if is_4bit:
-        reasons.append(
-            f"main model hf_path={profile.hf_path!r} is 4-bit quantized; "
-            "DFlash regresses on 4-bit (use an 8-bit or higher variant)"
-        )
-    has_drafter = bool(
-        getattr(profile, "dflash_draft_model", None)
-        or getattr(profile, "drafter_hf_path", None)
-    )
-    if profile.supports_dflash and not has_drafter:
-        # Should be caught at JSON-load time by _coerce, but defend
-        # against direct AliasProfile construction in tests/code.
-        reasons.append("supports_dflash is set but dflash_draft_model is empty")
-    return EligibilityReport(
-        alias=alias,
-        supports_dflash=profile.supports_dflash,
-        is_moe=profile.is_moe,
-        is_4bit=is_4bit,
-        has_drafter=has_drafter,
-        reasons=tuple(reasons),
-    )
 
 
-def eligible_aliases() -> list[str]:
-    """Return alias names whose AliasProfile currently passes every
-    DFlash gate. Computed from the live ``model-config.json`` registry so
-    error messages don't go stale as more aliases are validated.
-
-    Kept tolerant: any import or registry error returns an empty list
-    rather than raising, since this is only used to enrich error text.
-    """
-    try:
-        from fusion_mlx.model_aliases import list_profiles
-
-        return sorted(p.name for p in list_profiles().values() if not report(p).reasons)
-    except Exception as e:  # noqa: BLE001 — diagnostic helper, never fatal
-        logger.debug("eligible_aliases failed: %s", e)
-        return []
+_checker = _DFlashChecker()
+report = _checker.report
 
 
-def check(profile: AliasProfile, alias: str | None = None) -> None:
-    """Raise ``DFlashUnavailable`` with an actionable message if any
-    eligibility gate fails. Returns ``None`` on success."""
-    r = report(profile, alias=alias)
-    if not r.reasons:
-        return
-    header = f"DFlash unavailable for {alias!r}" if alias else "DFlash unavailable"
-    bullet = "\n  - ".join(r.reasons)
-    eligible = eligible_aliases()
-    if eligible:
-        suffix = (
-            f"Eligible aliases today: {', '.join(eligible)}. Run "
-            "`fusion-mlx info <alias>` to inspect per-alias DFlash status."
-        )
-    else:
-        suffix = (
-            "No aliases currently pass every DFlash gate. Run "
-            "`fusion-mlx info <alias>` to inspect per-alias DFlash status."
-        )
-    raise DFlashUnavailable(f"{header}:\n  - {bullet}\n\n{suffix}")
+def check(profile, alias=None):
+    return _checker.check(profile, alias=alias, _eligible_fn=eligible_aliases)
 
 
-def have_runtime() -> bool:
-    """Return True iff mlx-vlm 0.5.0+ DFlash hooks are importable.
-
-    Kept fast (no actual import on success path) so it's cheap to call
-    in CLI startup and in ``rapid-mlx info`` rendering. Result is
-    cached by ``importlib`` after first call.
-    """
-    try:
-        # Probe the specific symbol DFlash needs — a partial install
-        # (pre-0.5.0 mlx-vlm in our deps) would have `mlx_vlm` but no
-        # `speculative.drafters.load_drafter`.
-        import importlib
-
-        spec = importlib.util.find_spec("mlx_vlm.speculative.drafters")
-        return spec is not None
-    except (ImportError, AttributeError):
-        return False
+eligible_aliases = _checker.eligible_aliases
+have_runtime = _checker.have_runtime

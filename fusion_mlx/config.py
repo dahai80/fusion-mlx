@@ -155,6 +155,7 @@ class SchedulerConfig:
         # use_paged_cache had no runtime effect.  Removed the false conflict guard.
         # Validate ranges
         if self.max_num_seqs < 1:
+            logger.warning("max_num_seqs=%s below 1 — clamped to 1", self.max_num_seqs)
             self.max_num_seqs = 1
         # A-P3-1 (#0908 audit): clamp gpu_memory_utilization — env override
         # (FUSION_GPU_MEMORY_UTILIZATION) had no bounds; 0/1.5 silently

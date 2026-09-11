@@ -2,11 +2,14 @@
 """Request management for fusion-mlx continuous batching."""
 
 import enum
+import logging
 import os
 import time
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_TOKENS = int(os.environ.get("FUSION_MLX_MAX_TOKENS", "65536"))
 
@@ -185,6 +188,15 @@ class Request:
         return RequestStatus.get_finish_reason(self.status)
 
     def append_output_token(self, token_id: int) -> None:
+        if self.is_finished():
+            logger.error(
+                "append_output_token called on finished request %s (status=%s) — "
+                "token %d dropped",
+                getattr(self, "request_id", "?"),
+                self.status,
+                token_id,
+            )
+            return
         self.output_token_ids.append(token_id)
         self.token_freqs[token_id] += 1
         self.num_computed_tokens += 1

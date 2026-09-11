@@ -13,6 +13,8 @@
 # No 4-bit rejection: Qwen3.8-27B-4bit is the primary target. The
 # drafter repo is operator-supplied via --dflash2-drafter-path (same as
 # DSpark), not a per-alias registry field.
+#
+# ENG-13 (#0909 audit): template methods delegated to BaseEligibilityChecker.
 
 from __future__ import annotations
 
@@ -21,6 +23,8 @@ from dataclasses import dataclass
 
 from fusion_mlx.model_aliases import AliasProfile
 from fusion_mlx.quant_detect import looks_like_4bit as _looks_like_4bit
+
+from ..base_eligibility import BaseEligibilityChecker
 
 logger = logging.getLogger(__name__)
 
@@ -38,68 +42,54 @@ class EligibilityReport:
     reasons: tuple[str, ...]
 
 
-def report(profile: AliasProfile, alias: str | None = None) -> EligibilityReport:
-    reasons: list[str] = []
-    if not profile.supports_dflash2:
-        reasons.append(
-            "alias is not DFlash2-enabled (set supports_dflash2=true in "
-            "aliases.json after validating the speedup)"
-        )
-    if profile.is_moe:
-        reasons.append(
-            "alias is MoE (is_moe=true) — DFlash2 acceptance floors on "
-            "expert-routing churn; use a dense target"
-        )
-    is_4bit = _looks_like_4bit(profile.hf_path)
-    return EligibilityReport(
-        alias=alias,
-        supports_dflash2=profile.supports_dflash2,
-        is_moe=profile.is_moe,
-        is_4bit=is_4bit,
-        reasons=tuple(reasons),
-    )
+class _DFlash2Checker(BaseEligibilityChecker):
+    _STRATEGY_LABEL = "DFlash2"
 
+    def _unavailable_exc(self) -> type[RuntimeError]:
+        return DFlash2Unavailable
 
-def eligible_aliases() -> list[str]:
-    try:
-        from fusion_mlx.model_aliases import list_profiles
+    def _runtime_module(self) -> str:
+        return "dflash"
 
-        return sorted(p.name for p in list_profiles().values() if not report(p).reasons)
-    except Exception as e:  # noqa: BLE001 — diagnostic helper, never fatal
-        logger.debug("eligible_aliases failed: %s", e)
-        return []
-
-
-def check(profile: AliasProfile, alias: str | None = None) -> None:
-    r = report(profile, alias=alias)
-    if not r.reasons:
-        return
-    header = f"DFlash2 unavailable for {alias!r}" if alias else "DFlash2 unavailable"
-    bullet = "\n  - ".join(r.reasons)
-    eligible = eligible_aliases()
-    if eligible:
-        suffix = (
-            f"Eligible aliases today: {', '.join(eligible)}. Run "
-            "`fusion-mlx info <alias>` to inspect per-alias DFlash2 status."
-        )
-    else:
-        suffix = (
+    def _empty_eligible_suffix(self) -> str:
+        return (
             "No aliases currently pass every DFlash2 gate. DFlash2 targets "
             "Qwen3.8-27B dense — pass a dense Qwen3.8 repo, e.g. "
             "`fusion-mlx serve --enable-dflash2 mlx-community/Qwen3.8-27B-4bit "
             "--dflash2-drafter-path z-lab/Qwen3.8-27B-DFlash2 --block-size 5`."
         )
-    raise DFlash2Unavailable(f"{header}:\n  - {bullet}\n\n{suffix}")
+
+    def report(
+        self, profile: AliasProfile, alias: str | None = None
+    ) -> EligibilityReport:
+        reasons: list[str] = []
+        if not profile.supports_dflash2:
+            reasons.append(
+                "alias is not DFlash2-enabled (set supports_dflash2=true in "
+                "aliases.json after validating the speedup)"
+            )
+        if profile.is_moe:
+            reasons.append(
+                "alias is MoE (is_moe=true) — DFlash2 acceptance floors on "
+                "expert-routing churn; use a dense target"
+            )
+        is_4bit = _looks_like_4bit(profile.hf_path)
+        return EligibilityReport(
+            alias=alias,
+            supports_dflash2=profile.supports_dflash2,
+            is_moe=profile.is_moe,
+            is_4bit=is_4bit,
+            reasons=tuple(reasons),
+        )
 
 
-def have_runtime() -> bool:
-    # The official dflash pkg is an external pip dependency (not vendored,
-    # unlike DSpark). Probe importability cheaply without importing the
-    # heavy mlx stack. DFlash2InTargetDrafter existence is checked at load time.
-    try:
-        import importlib
+_checker = _DFlash2Checker()
+report = _checker.report
 
-        spec = importlib.util.find_spec("dflash")
-        return spec is not None
-    except (ImportError, AttributeError, ModuleNotFoundError):
-        return False
+
+def check(profile, alias=None):
+    return _checker.check(profile, alias=alias, _eligible_fn=eligible_aliases)
+
+
+eligible_aliases = _checker.eligible_aliases
+have_runtime = _checker.have_runtime

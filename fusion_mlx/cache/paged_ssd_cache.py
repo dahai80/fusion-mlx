@@ -1801,7 +1801,14 @@ class PagedSSDCacheManager:
         return entry
 
     def _handle_hot_cache_eviction(self, block_hash: bytes, entry: dict):
-        pass
+        self._stats["hot_cache_evictions"] = (
+            self._stats.get("hot_cache_evictions", 0) + 1
+        )
+        logger.debug(
+            "hot cache evicted block_hash=%s (total evictions=%s)",
+            block_hash.hex()[:16] if isinstance(block_hash, bytes) else block_hash,
+            self._stats["hot_cache_evictions"],
+        )
 
     def _enqueue_ssd_write(
         self, block_hash, tensors_raw, file_metadata, block_metadata
