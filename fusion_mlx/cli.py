@@ -185,12 +185,24 @@ Examples:
         "--profile",
         type=str,
         default=None,
-        choices=["lite", "standard", "full"],
+        choices=["lite", "standard", "full", "turbo"],
         help=(
             "Server profile: lite (LLM text only), standard (LLM + audio + "
             "embeddings + ner + rerank + ocr + spec + mcp), full (everything "
-            "including image/video/agent). Default: standard (or settings.json "
-            "profile field). Controls which routes/engines are mounted."
+            "including image/video/agent), turbo (full + aggressive cache/spec/"
+            "quant defaults). Default: standard (or settings.json profile "
+            "field). Controls which routes/engines are mounted."
+        ),
+    )
+    serve_parser.add_argument(
+        "--beginner",
+        action="store_true",
+        default=False,
+        help=(
+            "One-click beginner preset: lite profile + a small recommended "
+            "4-bit model + port 11434. Overrides --profile to lite and, if no "
+            "model is given, loads the default beginner model. Safe default "
+            "for first-time local LLM use on a 16GB+ Mac."
         ),
     )
     serve_parser.add_argument(
