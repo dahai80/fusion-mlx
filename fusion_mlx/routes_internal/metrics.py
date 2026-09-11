@@ -686,6 +686,28 @@ def _render_prefix_cache_metrics() -> list[str]:
                             labels,
                         )
                     )
+                # D2.2: radix prefix-cache lookup p50/p99 latency (seconds).
+                p50 = pc.get("lookup_p50_seconds")
+                p99 = pc.get("lookup_p99_seconds")
+                if p50 is not None:
+                    lines.extend(
+                        _fmt_metric(
+                            "fusion_mlx_prefix_lookup_p50_seconds",
+                            "gauge",
+                            "Prefix cache lookup p50 latency (seconds).",
+                            float(p50),
+                            labels,
+                        )
+                    )
+                    lines.extend(
+                        _fmt_metric(
+                            "fusion_mlx_prefix_lookup_p99_seconds",
+                            "gauge",
+                            "Prefix cache lookup p99 latency (seconds).",
+                            float(p99),
+                            labels,
+                        )
+                    )
             if seen:
                 logger.debug("prefix cache metrics rendered for %d engine(s)", seen)
     except Exception:

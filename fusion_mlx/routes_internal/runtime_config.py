@@ -52,6 +52,7 @@ async def runtime_config() -> dict[str, Any]:
             "max_num_seqs": _safe_get(sched, "max_num_seqs"),
             "max_num_batched_tokens": _safe_get(sched, "max_num_batched_tokens"),
             "max_concurrent_requests": _safe_get(sched, "max_concurrent_requests"),
+            "max_waiting": _safe_get(sched, "max_waiting"),
             "policy": _safe_get(sched, "policy"),
             "spec_decode": _safe_get(sched, "spec_decode"),
         },
