@@ -473,6 +473,27 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # tier; the tool parser dispatch is unchanged, only whether
         # broken JSON args get repaired before being surfaced.
         "FUSION_MLX_TOOL_JSON_REPAIR",
+        # D2.1: tiered cache (hot->cold demotion) toggle
+        # (cache/factory.py:253, scheduler/sched_misc.py:405). Default
+        # ON — composes paged hot + paged_ssd cold into a demotion
+        # pipeline. Pure cache-layer toggle — never selects model /
+        # parser / tier; which model loads and which tier engages are
+        # unchanged, only whether the hot->cold demotion coordinator
+        # mounts on top of the existing cache stack.
+        "FUSION_MLX_TIERED_CACHE",
+        # D2.6: spec-decode route decision jsonl logger toggle
+        # (speculative/auto_router.py:63). Default ON — appends each
+        # spec-route decision to a size-guarded jsonl for offline
+        # acceptance-rate analysis. FUSION_MLX_SPEC_ROUTE_LOG=0
+        # disables (test switch). Pure observability knob — never
+        # selects model / parser / tier; the routing decision itself
+        # is deterministic and unchanged, only whether it is logged.
+        "FUSION_MLX_SPEC_ROUTE_LOG",
+        # D2.6: spec-route jsonl output path override
+        # (speculative/auto_router.py:56). Defaults to
+        # ~/.fusion-mlx/spec_route_decisions.jsonl. Pure log-path knob
+        # — never selects model / parser / tier.
+        "FUSION_MLX_SPEC_ROUTE_LOG_PATH",
     }
 )
 
