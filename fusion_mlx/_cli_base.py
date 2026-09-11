@@ -585,6 +585,74 @@ def _mark_tip_seen(key: str) -> None:
         return
 
 
+def _read_settings_json() -> dict:
+    """Read ~/.fusion-mlx/settings.json as a dict.
+
+    Returns {} on missing/corrupt file. Cached on first call — settings.json
+    is read multiple times during a single CLI invocation (default_model,
+    profile, disabled_modules) and the file does not change mid-parse.
+    """
+    import json
+    from pathlib import Path
+
+    cache = getattr(_read_settings_json, "_cache", None)
+    if cache is not None:
+        return cache
+    path = Path.home() / ".fusion-mlx" / "settings.json"
+    data: dict = {}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text())
+            if isinstance(loaded, dict):
+                data = loaded
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.debug("settings.json read failed: %s", exc)
+    _read_settings_json._cache = data  # type: ignore[attr-defined]
+    return data
+
+
+def _settings_default_model() -> str | None:
+    """§6.3: read default_model from settings.json (top-level field)."""
+    return _read_settings_json().get("default_model")
+
+
+def _settings_profile() -> str | None:
+    """§6.3: read profile from settings.json (top-level field)."""
+    val = _read_settings_json().get("profile")
+    if val and val in ("lite", "standard", "full"):
+        return val
+    return None
+
+
+def _settings_disabled_modules() -> list[str]:
+    """§6.3: read disabled_modules from settings.json."""
+    val = _read_settings_json().get("disabled_modules")
+    if isinstance(val, list):
+        return [str(x) for x in val]
+    return []
+
+
+def _auto_detect_single_cached_model() -> str | None:
+    """§6.1: when no default_model and no explicit model arg, check if
+    ~/.fusion-mlx/models contains exactly one model directory. If so,
+    return its name so ``serve``/``chat`` can use it as the default.
+
+    Returns None when the dir is missing, empty, or has multiple entries
+    (ambiguous — don't guess).
+    """
+    from pathlib import Path
+
+    model_dir = Path.home() / ".fusion-mlx" / "models"
+    if not model_dir.is_dir():
+        return None
+    candidates = [
+        p.name for p in model_dir.iterdir() if p.is_dir() and not p.name.startswith(".")
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
 def _print_unknown_model_help(name: str, *, full_path_example: str) -> None:
     """Print fuzzy suggestions + a curated popular-models hint.
 

@@ -847,6 +847,66 @@ def _add_pflash_args(parser) -> None:
     )
 
 
+def _print_profile_banner(server_module) -> None:
+    """§4.4: print profile capability list at startup.
+
+    Shows the operator what's actually enabled: profile name, mounted
+    routes, skipped routes, spec-decode status, memory watermarks, and
+    wired limit. The commercial ops first need is "what is this machine
+    actually running?"
+    """
+    try:
+        from .config import get_config as _get_config
+
+        _cfg = _get_config()
+        _profile_name = getattr(_cfg, "profile", None) or "standard"
+        _srv = getattr(server_module, "_server", None) or getattr(
+            server_module, "server", None
+        )
+        _mounted = getattr(_srv, "_profile_mounted_routes", []) or []
+        _skipped = getattr(_srv, "_profile_skipped_routes", []) or []
+
+        from .profile import _PRESET_SPEC_DEFAULT
+
+        _spec_default = _PRESET_SPEC_DEFAULT.get(_profile_name, True)
+        _spec_flag = getattr(_cfg, "spec_decode_enabled", None)
+        if _spec_flag is not None:
+            _spec_status = "ON" if _spec_flag else "OFF"
+        else:
+            _spec_status = "ON(default)" if _spec_default else "OFF(default)"
+
+        _mem_cfg = getattr(_cfg, "memory", None)
+        _mem_tier = getattr(_mem_cfg, "tier", "balanced") if _mem_cfg else "balanced"
+        _hard_limit = getattr(_mem_cfg, "hard_limit_gb", None) if _mem_cfg else None
+
+        lines = [
+            f"  Profile: {_profile_name}  (modalities: {len(_mounted)} routes mounted, {len(_skipped)} skipped)",
+        ]
+        if _mounted:
+            lines.append(f"    Mounted: {', '.join(sorted(_mounted))}")
+        if _skipped:
+            lines.append(f"    Skipped: {', '.join(sorted(_skipped))}")
+        lines.append(f"    Spec decode: {_spec_status}")
+        lines.append(
+            f"    Memory tier: {_mem_tier}"
+            + (f"  (hard limit: {_hard_limit}G)" if _hard_limit else "")
+        )
+
+        import os
+
+        _wired = os.environ.get("MTL_WIRED_LIMIT_MB", "")
+        if _wired:
+            lines.append(
+                f"    Wired limit: {int(_wired) // 1024}G (MTL_WIRED_LIMIT_MB={_wired})"
+            )
+
+        print()
+        print("\n".join(lines))
+        print()
+    except Exception as e:
+        logging.getLogger(__name__).debug("profile banner skipped: %s", e)
+
+
 def _build_benchmark_context(target_tokens: int) -> str:
     """Build a deterministic long-context filler for the bench command.
 
@@ -968,6 +1028,8 @@ def _serve_from_model_dir(args):
     _configure_logging(log_level)
 
     app = create_app(config)
+
+    _print_profile_banner(server)
 
     # #569: route --model-dir through the same UDS-aware dispatch the
     # single-model serve path uses (_run_uvicorn → Server.run()), instead
@@ -1240,11 +1302,26 @@ def _stage_server_config(args, server, logger):
     # Alias info for /v1/models
     _get_config().model_alias = getattr(args, "_original_alias", None)
 
-    # R-7: profile gate
+    # R-7: profile gate — --profile flag > settings.json profile field
     _profile_arg = getattr(args, "profile", None)
     if _profile_arg:
         _get_config().profile = _profile_arg
         logger.info("profile from --profile flag: %s", _profile_arg)
+    else:
+        from ._cli_base import _settings_profile as _sp
+
+        _sp_val = _sp()
+        if _sp_val:
+            _get_config().profile = _sp_val
+            logger.info("profile from settings.json: %s", _sp_val)
+
+    # §6.3: disabled_modules from settings.json
+    from ._cli_base import _settings_disabled_modules as _sdm
+
+    _sdm_val = _sdm()
+    if _sdm_val:
+        _get_config().disabled_modules = _sdm_val
+        logger.info("disabled_modules from settings.json: %s", _sdm_val)
 
     # API key
     server._api_key = server._resolve_api_key(args.api_key)
@@ -1386,7 +1463,11 @@ def _print_startup_banner(args, cors_origins, gc_control, logger):
         features.append("dflash: single-user")
     if getattr(args, "enable_dflash2", False):
         features.append("dflash2: single-user")
-    _profile = getattr(args, "profile", None) or "standard"
+    _profile = getattr(args, "profile", None)
+    if not _profile:
+        from ._cli_base import _settings_profile as _sp
+
+        _profile = _sp() or "standard"
     features.append(f"profile: {_profile}")
     print()
     print("  🐆 Fusion-MLX")
@@ -1527,6 +1608,9 @@ def serve_command(args):
         print("  fusion-mlx serve --model Qwen3-4B-Q4_K_M --port 11434")
         print("  fusion-mlx serve --model-dir ~/.fusion-mlx/models --port 11435")
         print("  fusion-mlx serve --base-path ~/.fusion-mlx --port 11434")
+        print()
+        print('  Tip: set "default_model" in ~/.fusion-mlx/settings.json')
+        print("       to make `fusion-mlx serve` work with no model arg.")
         sys.exit(1)
 
     _arg_max_tokens = getattr(args, "max_tokens", None)
@@ -2274,6 +2358,7 @@ def serve_command(args):
     # the port is actually bound — printing it here would lie to users who
     # curl immediately and get connection-refused while shaders compile.
     print()
+    _print_profile_banner(server)
     host_display, uds_path = _display_host(args.host)
     listen_fd = getattr(args, "listen_fd", None)
     if uds_path is not None:

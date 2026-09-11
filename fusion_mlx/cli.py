@@ -19,10 +19,12 @@ import os
 import sys
 
 from fusion_mlx._cli_base import (
+    _auto_detect_single_cached_model,
     _listen_fd_arg,
     _log_level_choice,
     _port_arg,
     _print_unknown_model_help,
+    _settings_default_model,
 )
 from fusion_mlx._completion import alias_completer
 from fusion_mlx.cli_commands import (
@@ -42,6 +44,37 @@ from fusion_mlx.cli_serve import (
     bench_command,
     serve_command,
 )
+
+_PRIMARY_COMMANDS = ("serve", "chat", "pull", "models", "ps")
+
+
+def _print_primary_help(parser) -> None:
+    """§6.1: print a reduced help screen showing only the 5 primary
+    commands + a hint about --help-advanced. Keeps muscle-memory commands
+    visible while demoting bench/doctor/convert/cuda-node/etc. to the
+    advanced page so the first screen stays scannable.
+    """
+    from importlib.metadata import version as pkg_version
+
+    try:
+        _v = pkg_version("fusion-mlx")
+    except Exception:
+        _v = "dev"
+    print(f"fusion-mlx {_v} — AI inference for Apple Silicon\n")
+    print("Primary commands:")
+    _help_map = {
+        "serve": "Start OpenAI-compatible server",
+        "chat": "Interactive chat REPL with a model",
+        "pull": "Download a model to the HuggingFace cache",
+        "models": "List available model aliases",
+        "ps": "List running fusion-mlx servers",
+    }
+    for _cmd in _PRIMARY_COMMANDS:
+        _h = _help_map.get(_cmd, "")
+        print(f"  fusion-mlx {_cmd:<10} {_h}")
+    print()
+    print("Run `fusion-mlx <command> --help` for command-specific options.")
+    print("Run `fusion-mlx --help-advanced` to see all advanced subcommands.")
 
 
 def main():
@@ -73,6 +106,16 @@ Examples:
         action="store_true",
         help="Disable anonymous usage telemetry for this run "
         "(equivalent to FUSION_MLX_TELEMETRY=0).",
+    )
+    # §6.1: --help-advanced shows ALL subcommands; default --help shows only
+    # the 5 primary commands (serve/chat/pull/models/ps). Intercept before
+    # parse_args so argparse's built-in -h/--help never fires.
+    parser.add_argument(
+        "--help-advanced",
+        action="store_true",
+        default=False,
+        help="Show all subcommands including advanced ones "
+        "(bench/doctor/convert/cuda-node/info/agents/...)",
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
@@ -1589,9 +1632,9 @@ Examples:
     chat_parser.add_argument(
         "model",
         nargs="?",
-        default="qwen3.5-4b-4bit",
+        default=None,
         help="Model alias (e.g. qwen3.5-4b-4bit) or HF repo (org/name). "
-        "Defaults to qwen3.5-4b-4bit when omitted.",
+        "Omit to use default_model from settings.json, or qwen3.5-4b-4bit.",
     ).completer = alias_completer
     chat_parser.add_argument(
         "--system",
@@ -1848,7 +1891,59 @@ Examples:
     else:
         argcomplete.autocomplete(parser)
 
+    # §6.1: --help-advanced shows all subcommands; default --help shows
+    # only the 5 primary commands. Intercept BEFORE parse_args so
+    # argparse's built-in -h/--help (which would print everything) never
+    # fires. ``--help-advanced`` falls through to parser.print_help() which
+    # lists every registered subparser.
+    #
+    # Only intercept when --help/-h appears at the TOP LEVEL (before any
+    # subcommand). ``fusion-mlx serve --help`` must still show serve's own
+    # help via the subparser — so stop scanning at the first recognized
+    # subcommand name.
+    _argv = sys.argv[1:]
+    _sub_names = set(subparsers.choices.keys()) | {"run"}
+    _top_help = False
+    _top_help_advanced = False
+    for _tok in _argv:
+        if _tok in _sub_names:
+            break
+        if _tok in ("--help-advanced", "--help-all"):
+            _top_help_advanced = True
+            break
+        if _tok in ("--help", "-h"):
+            _top_help = True
+            break
+    if _top_help_advanced:
+        parser.print_help()
+        sys.exit(0)
+    if _top_help:
+        _print_primary_help(parser)
+        sys.exit(0)
+
     args = parser.parse_args()
+
+    # §6.1: zero-arg serve/chat — resolve default_model from settings.json
+    # before alias resolution and dispatch. Falls back to auto-detect
+    # (single cached model) for serve, or the legacy qwen3.5-4b-4bit for
+    # chat when neither settings.json nor auto-detect yields a model.
+    if (
+        getattr(args, "command", None) in ("serve", "chat", "run")
+        and not getattr(args, "model", None)
+        and not getattr(args, "model_dir", None)
+        and not getattr(args, "base_path", None)
+    ):
+        _dm = _settings_default_model()
+        if _dm:
+            args.model = _dm
+            print(f"  Using default_model from settings.json: {_dm}")
+        elif args.command == "serve":
+            _auto = _auto_detect_single_cached_model()
+            if _auto:
+                args.model = _auto
+                print(f"  Using only cached model: {_auto}")
+        elif args.command in ("chat", "run"):
+            args.model = "qwen3.5-4b-4bit"
 
     # First-run consent prompt — fires at most once per machine, only on
     # interactive subcommands when stdin is a tty. Safe no-op otherwise.
@@ -2205,7 +2300,7 @@ Examples:
 
         launch_command(args)
     else:
-        parser.print_help()
+        _print_primary_help(parser)
         sys.exit(1)
 
 

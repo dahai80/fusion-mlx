@@ -459,6 +459,25 @@ _HTTP_ERROR_TYPE_MAP = {
 }
 
 
+_ERROR_SOLUTIONS_MAP: dict[int, list[str]] = {
+    413: [
+        "Reduce max_context or shorten the prompt",
+        "Use a smaller quantization (e.g. 4bit instead of 8bit)",
+        "Set profile=lite in settings.json to reduce mounted engines",
+    ],
+    503: [
+        "Retry after a short backoff (Retry-After header)",
+        "Reduce --max-concurrent-requests to lower queue depth",
+        "Check if another model is consuming memory with `fusion-mlx ps`",
+    ],
+    507: [
+        "Reduce max_tokens for the request",
+        "Use a smaller quantization to free KV cache memory",
+        "Unload other models via the /v1/models admin endpoint",
+    ],
+}
+
+
 def _http_error_response(exc: StarletteHTTPException) -> JSONResponse:
     detail = exc.detail
     if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
@@ -475,6 +494,7 @@ def _http_error_response(exc: StarletteHTTPException) -> JSONResponse:
                 "type": _HTTP_ERROR_TYPE_MAP.get(exc.status_code, "api_error"),
                 "code": None,
                 "param": None,
+                "solutions": _ERROR_SOLUTIONS_MAP.get(exc.status_code, []),
             }
         },
         headers=getattr(exc, "headers", None),
@@ -524,6 +544,7 @@ def scheduler_queue_full_handler(request: Request, exc):
                 "message": message,
                 "type": "server_busy",
                 "code": "scheduler_queue_full",
+                "solutions": _ERROR_SOLUTIONS_MAP.get(503, []),
             }
         }
     else:
@@ -572,6 +593,7 @@ def prefill_memory_exceeded_handler(request: Request, exc):
                 "type": "invalid_request_error",
                 "code": "prefill_memory_exceeded",
                 "param": "messages",
+                "solutions": _ERROR_SOLUTIONS_MAP.get(413, []),
             }
         }
     else:
@@ -611,6 +633,65 @@ def _register_canonical_request_models() -> None:
     register_request_path("/v1/embeddings", EmbeddingRequest)
     register_request_path("/v1/messages", MessagesRequest)
     register_request_path("/v1/responses", ResponsesRequest)
+
+
+_OOM_PATTERNS = (
+    "out of memory",
+    "metal out of memory",
+    "device out of memory",
+    "cuda out of memory",
+    "allocation failed",
+    "failed to allocate",
+    "not enough memory",
+    "memory exhausted",
+    "cannot allocate",
+)
+
+
+def _detect_metal_oom(exc: Exception) -> str | None:
+    """§6.4: detect Metal/GPU OOM errors and return a friendly Chinese
+    message with actionable suggestions. Returns None for non-OOM errors
+    so the generic handler takes over normally.
+
+    Matches on exception type (MemoryError) and message substring so we
+    catch both Python's built-in MemoryError and MLX/Metal RuntimeError
+    variants that embed allocation-failure text. The raw traceback is
+    logged server-side by the caller — only the friendly message reaches
+    the HTTP response.
+    """
+    if isinstance(exc, MemoryError):
+        return _format_oom_message()
+
+    msg = str(exc).lower()
+    for pattern in _OOM_PATTERNS:
+        if pattern in msg:
+            return _format_oom_message()
+    return None
+
+
+def _format_oom_message() -> str:
+    """Build the friendly OOM message with current memory numbers."""
+    try:
+        import os
+
+        import mlx.core as mx
+
+        cache_mb = (mx.get_cache_memory() or 0) / 1024 / 1024
+        wired_env = os.environ.get("MTL_WIRED_LIMIT_MB", "")
+        wired_gb = int(int(wired_env) / 1024) if wired_env else None
+        parts = [f"内存不足：Metal 缓存已用 {cache_mb:.0f}MB"]
+        if wired_gb is not None:
+            parts.append(f"（wired limit: {wired_gb}G）")
+        parts.append(
+            "。建议：使用 4bit 量化模型、降低 max_context，或调低 --max-num-seqs。"
+        )
+        return "".join(parts)
+    except Exception:
+        return (
+            "内存不足：Metal 显存耗尽。"
+            "建议：使用 4bit 量化模型、降低 max_context，"
+            "或调低 --max-num-seqs。"
+        )
 
 
 def install_exception_handlers(app: FastAPI) -> None:
@@ -784,6 +865,38 @@ def install_exception_handlers(app: FastAPI) -> None:
                 },
             )
             return _wrap_for_anthropic(response) if anthropic else response
+        # §6.4: Metal OOM / allocation failures → friendly Chinese message
+        # with actionable suggestions. Raw stack stays in the log only.
+        _oom_msg = _detect_metal_oom(exc)
+        if _oom_msg:
+            logger.error(
+                "Metal OOM on %s %s: %s",
+                request.method,
+                request.url.path,
+                exc,
+                exc_info=True,
+            )
+            try:
+                from ..server_metrics import record_llm_failure
+
+                record_llm_failure()
+            except Exception:
+                logger.debug("failed to record OOM failure", exc_info=True)
+            is_api = request.url.path.startswith("/v1/")
+            if is_api:
+                content = {
+                    "error": {
+                        "message": _oom_msg,
+                        "type": "server_error",
+                        "code": "metal_memory_exhausted",
+                        "solutions": _ERROR_SOLUTIONS_MAP.get(507, []),
+                    }
+                }
+            else:
+                content = {"detail": _oom_msg}
+            response = JSONResponse(status_code=507, content=content)
+            return _wrap_for_anthropic(response) if anthropic else response
+
         logger.error(
             "Unhandled exception on %s %s: %s",
             request.method,

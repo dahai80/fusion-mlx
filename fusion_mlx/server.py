@@ -1300,6 +1300,8 @@ class Server:
             len(_skipped),
             ",".join(_skipped),
         )
+        self._profile_mounted_routes = _mounted
+        self._profile_skipped_routes = _skipped
 
         # #357: /v1/models/status MUST be registered before the gui_compat
         # router's /v1/models/{model_name} catch-all. Starlette matches routes
