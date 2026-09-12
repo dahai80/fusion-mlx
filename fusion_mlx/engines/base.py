@@ -52,6 +52,12 @@ class GenerationOutput:
     # Unprocessed output (pre special-token cleanup) for reasoning/wire-leak
     # detection; engines may populate it, else ``or output.text`` falls back.
     raw_text: str | None = None
+    # Model-aware reasoning extracted by ``_apply_reasoning_parser`` from the
+    # raw output (e.g. Qwen3 chat-template-injected thinking preamble). When
+    # set, the non-stream response path surfaces it as ``reasoning_content``
+    # instead of re-running the generic tag parser over the already-cleaned
+    # ``text`` (which would find no tags and drop the thinking trace).
+    reasoning_content: str | None = None
     # Per-token full-vocab log-softmax vectors (mx.array) for OpenAI
     # logprobs; populated only when the request asked for logprobs.
     # Spec-decode paths (mtp/suffix/dflash/dspark) leave this None.
@@ -161,9 +167,17 @@ def _apply_reasoning_parser(
         # answer was produced — do NOT leak the reasoning preamble back as
         # content (that is the exact bug this fix targets).
         new_text = content if content is not None else ""
-        if new_text != gen.text:
+        if new_text != gen.text or (reasoning and not gen.reasoning_content):
             gen = copy.deepcopy(gen)
             gen.text = new_text
+            # Preserve the extracted reasoning so the non-stream response
+            # path can surface it as ``reasoning_content``. Without this,
+            # format_response's generic tag parser sees an already-cleaned
+            # text (no <think> tags) and drops the thinking trace entirely
+            # (G-4 #0912 audit: non-stream reasoning_content was always None
+            # for engine-separated reasoning).
+            if reasoning:
+                gen.reasoning_content = reasoning
     except Exception as e:
         logger.debug("reasoning parser extract failed: %s", e)
     return gen

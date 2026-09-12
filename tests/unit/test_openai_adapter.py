@@ -17,6 +17,7 @@ from fusion_mlx.api.openai_models import (
     Message,
     ToolDefinition,
 )
+from fusion_mlx.api.thinking import _CLOSE_TAG, _OPEN_TAG
 
 
 class TestInternalDataClasses:
@@ -521,6 +522,49 @@ class TestOpenAIAdapter:
         result = adapter.format_response(response, request)
 
         assert result.id == "chatcmpl-custom123"
+
+    def test_format_response_engine_reasoning_preserved(self, adapter):
+        # G-4 (#0912 audit): non-stream reasoning_content was always None for
+        # engine-separated reasoning. _apply_reasoning_parser strips thinking
+        # from gen.text and attaches it as reasoning_content; format_response
+        # must surface that onto message.reasoning_content instead of re-running
+        # the generic tag parser over the already-cleaned text (which finds no
+        # tags and drops the trace).
+        request = ChatCompletionRequest(
+            model="qwen3-test",
+            messages=[Message(role="user", content="Solve 1+1")],
+        )
+        response = InternalResponse(
+            text="2",
+            finish_reason="stop",
+            reasoning_content="Let me add one plus one. 1+1=2.",
+        )
+
+        result = adapter.format_response(response, request)
+
+        assert result.choices[0].message.content == "2"
+        assert result.choices[0].message.reasoning_content == (
+            "Let me add one plus one. 1+1=2."
+        )
+
+    def test_format_response_tag_extraction_fallback(self, adapter):
+        # When the engine did NOT separate reasoning (no reasoning_content
+        # on InternalResponse), format_response falls back to the generic
+        # tag-based extract_thinking so models emitting literal
+        # ``<think>...</think>`` tags still surface reasoning.
+        request = ChatCompletionRequest(
+            model="tag-model",
+            messages=[Message(role="user", content="Hi")],
+        )
+        response = InternalResponse(
+            text=f"{_OPEN_TAG}internal monologue{_CLOSE_TAG}answer",
+            finish_reason="stop",
+        )
+
+        result = adapter.format_response(response, request)
+
+        assert result.choices[0].message.content == "answer"
+        assert result.choices[0].message.reasoning_content == "internal monologue"
 
     def test_format_stream_chunk_basic(self, adapter):
         request = ChatCompletionRequest(

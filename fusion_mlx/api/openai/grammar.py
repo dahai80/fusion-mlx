@@ -147,6 +147,7 @@ def _gen_to_internal(
     return InternalResponse(
         text=gen.text,
         finish_reason=gen.finish_reason,
+        reasoning_content=getattr(gen, "reasoning_content", None),
         prompt_tokens=gen.prompt_tokens,
         completion_tokens=gen.completion_tokens,
         cached_tokens=gen.cached_tokens,

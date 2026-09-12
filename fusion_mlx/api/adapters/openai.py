@@ -119,12 +119,23 @@ class OpenAIAdapter(BaseAdapter):
         Returns:
             ChatCompletionResponse in OpenAI format.
         """
-        # Separate thinking from content
-        raw_text = clean_special_tokens(response.text) if response.text else ""
-        thinking_content, regular_content = extract_thinking(
-            raw_text, finish_reason=response.finish_reason
-        )
-        content = regular_content.strip() if regular_content else None
+        # Separate thinking from content. When the engine already ran a
+        # model-aware reasoning parser (_apply_reasoning_parser, engines/base)
+        # it stripped the thinking trace out of response.text and attached it
+        # as response.reasoning_content — prefer that over re-running the
+        # generic tag parser, which would find no tags in the cleaned text
+        # and silently drop the reasoning (G-4 #0912 audit). Fall back to
+        # tag-based extraction only when the engine did not separate.
+        engine_reasoning = getattr(response, "reasoning_content", None)
+        if engine_reasoning:
+            thinking_content = engine_reasoning
+            content = response.text.strip() if response.text else None
+        else:
+            raw_text = clean_special_tokens(response.text) if response.text else ""
+            thinking_content, regular_content = extract_thinking(
+                raw_text, finish_reason=response.finish_reason
+            )
+            content = regular_content.strip() if regular_content else None
 
         # AtomCode 专题优化: tool_calls 场景清空 content 避双份数据冲突 (2026-07-19)
         # 原 content 含原始 <function=Bash> 模板文本, 与 tool_calls 双份数据致 claude /init 解析冲突停止
