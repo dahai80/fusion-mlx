@@ -69,7 +69,7 @@ def _patch_dispatch(monkeypatch):
     def fake_uvicorn_run(app, **kwargs):
         called["uvicorn_run"] = True
 
-    monkeypatch.setattr(cli_serve_mod, "_run_uvicorn", fake_run_uvicorn)
+    monkeypatch.setattr(cli_serve_mod.config_resolve, "_run_uvicorn", fake_run_uvicorn)
     import uvicorn
 
     monkeypatch.setattr(uvicorn, "run", fake_uvicorn_run)

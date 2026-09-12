@@ -307,15 +307,22 @@ def stub_heavy_serve_deps(monkeypatch):
     # was a stale target left by the cli->cli_serve extraction and never
     # intercepted the real call. CORS was renamed configure_cors ->
     # configure_cors_from_env (returns the origins list).
+    import importlib
+
     from fusion_mlx import _version_check
-    from fusion_mlx import cli_serve as cli_serve_mod
+
+    serve_command_mod = importlib.import_module("fusion_mlx.cli_serve.serve_command")
     from fusion_mlx import server as server_mod
 
     monkeypatch.setattr(_version_check, "prompt_upgrade_if_available", lambda: False)
     monkeypatch.setattr(_version_check, "print_staleness_warning_if_any", lambda: None)
-    monkeypatch.setattr(cli_serve_mod, "_ensure_model_downloaded", lambda model: None)
-    monkeypatch.setattr(cli_serve_mod, "_check_memory_capacity", lambda *a, **kw: None)
-    monkeypatch.setattr(cli_serve_mod, "_check_disk_space", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        serve_command_mod, "_ensure_model_downloaded", lambda model: None
+    )
+    monkeypatch.setattr(
+        serve_command_mod, "_check_memory_capacity", lambda *a, **kw: None
+    )
+    monkeypatch.setattr(serve_command_mod, "_check_disk_space", lambda *a, **kw: None)
     monkeypatch.setattr(server_mod, "configure_logging", lambda level: "info")
     monkeypatch.setattr(server_mod, "load_model", lambda *a, **kw: None)
     monkeypatch.setattr(server_mod, "configure_cors_from_env", lambda *a, **kw: [])

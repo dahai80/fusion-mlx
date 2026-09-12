@@ -1,5 +1,5 @@
 {
-  "patches/__init__.py": "528488d2790366b97b19b9338f56b3e4cc2d5b3c93961a67ca4c53f9dbc8aa94",
+  "patches/__init__.py": "4ff144331e1e36dd81d7f475fd32614e6faa5610cc1cc929215b36b9a234b183",
   "patches/_moe_shared_cache.py": "18d2e1effcfa656aea48bcc466c4b650e6f08e40ba4765836a30ab83530d24c2",
   "patches/deepseek_v4/README.md": "5d646998b69e7faa65cf306d0402b073113635661bad669347324e1e545579e9",
   "patches/deepseek_v4/__init__.py": "38bf0bd0f2363345983839057dae3628e5a19fee4f7a607a89584698dc337ba5",
@@ -52,6 +52,7 @@
   "patches/mlx_vlm_mtp/qwen35_vlm_model.py": "df6907de040df827467707c69f69f370559c1f363daab20b813056a15ea72947",
   "patches/mlx_vlm_mtp/qwen35_vlm_runtime.py": "f4e35769df8b3073c650b83011081b0ba867d78c05abfa55fe75cbc929d47448",
   "patches/qwen3_6_nested_visual.py": "9c84304d005659e401d11794d3cf4ee4a6e0c428aec182873cd8178d8d1a14b3",
+  "patches/registry.py": "081ee1d98774870d1421b67df32b088cf392db405d37201730780a6da97c9253",
   "patches/specprefill.py": "9e1f62b88ca7a30aae2cad4a1db40ae9aa1c1e15300596d6fa9231783b71dcfe",
   "patches/step3p7/__init__.py": "48a33bcb5f4bd025a359512f1ed440e9eb7eb478aae3982bb0276fb909134a03",
   "patches/step3p7/step3p7_model.py": "f77c0345f58493d8054f3f59ae3a643561592c6989fcae166103dab981525edb",
