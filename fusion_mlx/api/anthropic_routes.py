@@ -324,10 +324,11 @@ async def _run_anthropic_messages(
     await acquire_request_slot()
     try:
         ct_kwargs = dict(getattr(req, "chat_template_kwargs", {}) or {})
-        # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (2026-07-19)
         from .utils import resolve_enable_thinking_default
 
-        resolve_enable_thinking_default(ct_kwargs)
+        _mt = getattr(engine, "model_type", None)
+        _ct = getattr(getattr(req, "thinking", None), "type", None)
+        resolve_enable_thinking_default(ct_kwargs, model_type=_mt, client_thinking=_ct)
         gen = await engine.chat(
             messages=messages,
             max_tokens=sampling.max_tokens,
@@ -571,10 +572,13 @@ async def _stream_anthropic_generator(
         yield create_content_block_start_event(0, "text")
 
         ct_kwargs_stream = dict(getattr(req, "chat_template_kwargs", {}) or {})
-        # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (流式路径, 2026-07-19)
         from .utils import resolve_enable_thinking_default
 
-        resolve_enable_thinking_default(ct_kwargs_stream)
+        _mt = getattr(engine, "model_type", None)
+        _ct = getattr(getattr(req, "thinking", None), "type", None)
+        resolve_enable_thinking_default(
+            ct_kwargs_stream, model_type=_mt, client_thinking=_ct
+        )
         async for gen in engine.stream_chat(
             messages=messages,
             max_tokens=sampling.max_tokens,
@@ -594,13 +598,22 @@ async def _stream_anthropic_generator(
                 if _force_tool_choice:
                     _text_buffer.append(gen.new_text)
                     continue
-                chunk = StreamChunk(
-                    text=gen.new_text,
-                    prompt_tokens=getattr(gen, "prompt_tokens", 0),
-                    completion_tokens=getattr(gen, "completion_tokens", 0),
-                    cached_tokens=getattr(gen, "cached_tokens", 0),
-                )
-                yield _adapter.format_stream_chunk(chunk, req)
+                # #0913: strip Mattis/ Mattis tags from the streaming text
+                # so Qwen3.8 thinking-mode output is clean content (the
+                # stream route has no post-processor to split reasoning).
+                _stream_text = gen.new_text
+                if "<" in _stream_text:
+                    from .utils import strip_think_tags_stream
+
+                    _stream_text = strip_think_tags_stream(_stream_text)
+                if _stream_text:
+                    chunk = StreamChunk(
+                        text=_stream_text,
+                        prompt_tokens=getattr(gen, "prompt_tokens", 0),
+                        completion_tokens=getattr(gen, "completion_tokens", 0),
+                        cached_tokens=getattr(gen, "cached_tokens", 0),
+                    )
+                    yield _adapter.format_stream_chunk(chunk, req)
             else:
                 # No new text — maybe emit SSE keepalive ping
                 if keepalive:

@@ -96,6 +96,24 @@ def remove_special_tokens_preserve_whitespace(text: str) -> str:
     return SPECIAL_TOKENS_PATTERN.sub("", text)
 
 
+_THINK_TAG_RE = re.compile(r"</?think>")
+
+
+def strip_think_tags_stream(text: str) -> str:
+    # #0913: Qwen3.8 thinking model emits Mattis/ Mattis tags in the stream.
+    # The Anthropic stream route has no streaming post-processor (unlike the
+    # OpenAI route), so the raw tags leak into the text content block. Strip
+    # only the literal Mattis / Mattis tags here — NOT a full sanitize
+    # (sanitize_output would also strip legitimate ``<div>`` / code markup).
+    # Mattis is a single special-token decode in mlx-lm, so it does not
+    # straddle deltas. Returns empty string when the delta was tag-only.
+    if not text:
+        return text
+    if "<" not in text:
+        return text
+    return _THINK_TAG_RE.sub("", text)
+
+
 def clean_output_text(text: str) -> str:
     if not text:
         return text
@@ -1546,18 +1564,55 @@ def normalize_responses_content_part(item) -> dict:
     raise ValueError(f"Unsupported Responses content block type: {item_type!r}")
 
 
-def resolve_enable_thinking_default(ct_kwargs: dict) -> dict:
-    """AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (2026-07-19).
+def resolve_enable_thinking_default(
+    ct_kwargs: dict,
+    model_type: str | None = None,
+    client_thinking: str | None = None,
+) -> dict:
+    """Resolve the enable_thinking chat-template kwarg default.
 
-    Qwen3.6 思考模式默认 enable_thinking=True 致 max_tokens 全耗在 reasoning 阶段,
-    content=None + finish_reason=length. 默认禁思考兜底, 用户显式传 True 时覆盖.
+    Originally the "AtomCode 专题优化" (2026-07-19): Qwen3.6 thinking mode
+    defaulted to enable_thinking=True, exhausting max_tokens in the
+    reasoning phase (content=None + finish_reason=length). The fix forced
+    enable_thinking=False globally.
+
+    Problem (#0913 root cause): the global force-False also suppressed
+    Qwen3.8 / Qwen3.5 (model_type "qwen3_5") — a thinking model family
+    that, with thinking OFF, emits a terse acknowledgment and stops early
+    (finish=stop, ~50 tok) on complex continuation prompts. Claude Code
+    calling fusion-mlx with Qwen3.8-27B-4bit stopped quickly while the
+    same model on omlx (enable_thinking=None → auto→True) reasoned
+    through the task and kept running.
+
+    Fix: model-aware default.
+      - client_thinking="enabled"  → enable_thinking=True  (honor client)
+      - client_thinking="disabled" → enable_thinking=False (honor client)
+      - model_type "qwen3"         → force False (preserve AtomCode opt)
+      - model_type "qwen3_5"       → leave unset (template default → True,
+                                      matching omlx)
+      - other / unknown            → leave unset (template decides)
+    Legacy callers that pass neither model_type nor client_thinking keep
+    the original global force-False so OpenAI / Responses routes behave
+    exactly as before (surgical: only Anthropic callers updated).
 
     Args:
-        ct_kwargs: chat_template_kwargs 字典 (openai_routes/anthropic_routes 共用)
+        ct_kwargs: chat_template_kwargs dict (setdefault — explicit value wins)
+        model_type: engine.model_type (e.g. "qwen3", "qwen3_5"). None = legacy.
+        client_thinking: request.thinking.type ("enabled"/"disabled"/None)
 
     Returns:
-        dict: 补 enable_thinking=False 后的 ct_kwargs (setdefault 不覆显式值)
+        dict: ct_kwargs with enable_thinking default resolved.
     """
+    if client_thinking == "enabled":
+        ct_kwargs.setdefault("enable_thinking", True)
+        return ct_kwargs
+    if client_thinking == "disabled":
+        ct_kwargs.setdefault("enable_thinking", False)
+        return ct_kwargs
+    if model_type is not None:
+        if model_type == "qwen3":
+            ct_kwargs.setdefault("enable_thinking", False)
+        return ct_kwargs
     ct_kwargs.setdefault("enable_thinking", False)
     return ct_kwargs
 
