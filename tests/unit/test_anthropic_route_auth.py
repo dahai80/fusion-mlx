@@ -671,7 +671,10 @@ def test_configure_rate_limiter_updates_shared_anthropic_dependency(
 
 
 def test_server_startup_configures_shared_rate_limiter():
-    cli_serve_source = Path("fusion_mlx/cli_serve.py").read_text()
+    cli_serve_dir = Path("fusion_mlx/cli_serve")
+    cli_serve_source = "".join(
+        p.read_text() for p in sorted(cli_serve_dir.glob("*.py"))
+    )
 
     assert "configure_rate_limiter(args.rate_limit" in cli_serve_source
     assert "_rate_limiter = RateLimiter(requests_per_minute=args.rate_limit" not in (

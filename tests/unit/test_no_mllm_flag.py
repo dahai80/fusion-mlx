@@ -1464,13 +1464,14 @@ LOAD_MODEL_ENTRYPOINT_EXEMPTIONS: frozenset[str] = frozenset(
     {
         # Eval harness — bench / scoring tool, not a serving entrypoint.
         "agents/testing.py",
-        # fusion-mlx reorg: ``cli_serve.py`` is the serve-command runtime
-        # that CONSUMES routing flags via ``getattr(args, ...)``; flags are
-        # REGISTERED in ``cli.py`` (the argparse builder, 185 add_argument).
-        # cli_serve.py calls ``server.load_model`` forwarding the overrides,
-        # so registration-parity is already enforced on cli.py. Exempting
-        # the consumer avoids a false "must register" failure for the split.
-        "cli_serve.py",
+        # fusion-mlx reorg: ``cli_serve/`` is the serve-command runtime
+        # (split from the former cli_serve.py monolith) that CONSUMES
+        # routing flags via ``getattr(args, ...)``; flags are REGISTERED
+        # in ``cli.py`` (the argparse builder, 185 add_argument).
+        # serve_command.py calls ``server.load_model`` forwarding the
+        # overrides, so registration-parity is already enforced on cli.py.
+        # Exempting the consumer avoids a false "must register" failure.
+        "cli_serve/serve_command.py",
     }
 )
 
@@ -2137,7 +2138,9 @@ def test_hybrid_overrides_mutually_exclusive_in_load_model():
     pkg_root = pathlib.Path(
         str(importlib.resources.files("fusion_mlx").joinpath(""))
     ).resolve()
-    source = (pkg_root / "cli_serve.py").read_text()
+    source = "".join(
+        p.read_text() for p in sorted((pkg_root / "cli_serve").glob("*.py"))
+    )
     guard_idx = source.find("force_hybrid")
     no_idx = source.find("no_hybrid")
     load_idx = source.find("load_model(")
@@ -2180,7 +2183,9 @@ def test_spec_decode_overrides_mutually_exclusive_in_load_model():
     pkg_root = pathlib.Path(
         str(importlib.resources.files("fusion_mlx").joinpath(""))
     ).resolve()
-    source = (pkg_root / "cli_serve.py").read_text()
+    source = "".join(
+        p.read_text() for p in sorted((pkg_root / "cli_serve").glob("*.py"))
+    )
     guard_idx = source.find("force_spec_decode")
     no_idx = source.find("no_spec_decode")
     load_idx = source.find("load_model(")
@@ -2531,7 +2536,9 @@ def test_mtp_install_respects_supports_spec_decode():
     pkg_root = pathlib.Path(
         str(importlib.resources.files("fusion_mlx").joinpath(""))
     ).resolve()
-    source = (pkg_root / "cli_serve.py").read_text()
+    source = "".join(
+        p.read_text() for p in sorted((pkg_root / "cli_serve").glob("*.py"))
+    )
     tree = ast.parse(source)
 
     # Find the block guarded by ``if getattr(args, "spec_decode", "none")
@@ -2577,7 +2584,9 @@ def test_dflash_branch_rejects_no_spec_decode():
     pkg_root = pathlib.Path(
         str(importlib.resources.files("fusion_mlx").joinpath(""))
     ).resolve()
-    source = (pkg_root / "cli_serve.py").read_text()
+    source = "".join(
+        p.read_text() for p in sorted((pkg_root / "cli_serve").glob("*.py"))
+    )
 
     # Substring check is enough — the mutex block is small and the
     # surrounding context is distinctive. We assert ordering: the

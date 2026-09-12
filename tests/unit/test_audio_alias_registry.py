@@ -32,13 +32,17 @@ These tests pin the contract:
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 from argparse import Namespace
 from unittest.mock import patch
 
 import pytest
 
-from fusion_mlx import cli_serve
+import fusion_mlx.cli_serve.serve_command as _serve_module  # noqa: F401 (ensure import)
+
+_serve_mod = importlib.import_module("fusion_mlx.cli_serve.serve_command")
+_audio_mod = importlib.import_module("fusion_mlx.cli_serve.audio_mode")
 
 # ---------------------------------------------------------------------------
 # A) Registry resolution table
@@ -334,8 +338,8 @@ class TestAudioServeModeDispatch:
         from fusion_mlx import cli
 
         with (
-            patch.object(cli_serve, "_serve_audio_mode") as mock_audio,
-            patch.object(cli_serve, "_ensure_model_downloaded") as mock_download,
+            patch.object(_serve_mod, "_serve_audio_mode") as mock_audio,
+            patch.object(_serve_mod, "_ensure_model_downloaded") as mock_download,
             patch("fusion_mlx.server.load_model") as mock_load,
         ):
             args = _make_serve_args("kokoro")
@@ -381,8 +385,8 @@ class TestAudioServeModeDispatch:
         from fusion_mlx import cli
 
         with (
-            patch.object(cli_serve, "_serve_audio_mode") as mock_audio,
-            patch.object(cli_serve, "_ensure_model_downloaded") as mock_download,
+            patch.object(_serve_mod, "_serve_audio_mode") as mock_audio,
+            patch.object(_serve_mod, "_ensure_model_downloaded") as mock_download,
         ):
             args = _make_serve_args(alias)
             cli.serve_command(args)
@@ -403,7 +407,7 @@ class TestAudioServeModeDispatch:
             captured["entry_hf_id"] = entry.hf_id
             captured["entry_type"] = entry.type
 
-        with patch.object(cli_serve, "_serve_audio_mode", side_effect=_capture):
+        with patch.object(_serve_mod, "_serve_audio_mode", side_effect=_capture):
             args = _make_serve_args("kokoro")
             cli.serve_command(args)
 
@@ -439,7 +443,7 @@ class TestTextBootDoesNotRegress:
         from fusion_mlx import cli
 
         with (
-            patch.object(cli_serve, "_serve_audio_mode") as mock_audio,
+            patch.object(_serve_mod, "_serve_audio_mode") as mock_audio,
             patch(
                 "fusion_mlx._version_check.prompt_upgrade_if_available",
                 side_effect=SystemExit(0),
@@ -520,8 +524,10 @@ class TestAudioServeModeSyncsServerConfig:
         server._api_key = None
 
         with (
-            patch.object(cli_serve, "_run_uvicorn"),
-            patch.object(cli_serve, "_port_preflight_or_die"),
+            patch.object(_serve_mod, "_run_uvicorn"),
+            patch.object(_audio_mod, "_run_uvicorn"),
+            patch.object(_serve_mod, "_port_preflight_or_die"),
+            patch.object(_audio_mod, "_port_preflight_or_die"),
         ):
             args = _make_serve_args("kokoro")
             args.api_key = "SECRET-r10c1"
@@ -549,8 +555,10 @@ class TestAudioServeModeSyncsServerConfig:
         server._model_alias = None
 
         with (
-            patch.object(cli_serve, "_run_uvicorn"),
-            patch.object(cli_serve, "_port_preflight_or_die"),
+            patch.object(_serve_mod, "_run_uvicorn"),
+            patch.object(_audio_mod, "_run_uvicorn"),
+            patch.object(_serve_mod, "_port_preflight_or_die"),
+            patch.object(_audio_mod, "_port_preflight_or_die"),
         ):
             args = _make_serve_args("kokoro")
             cli.serve_command(args)
@@ -569,8 +577,10 @@ class TestAudioServeModeSyncsServerConfig:
         server._max_request_bytes = 8 * 1024 * 1024
 
         with (
-            patch.object(cli_serve, "_run_uvicorn"),
-            patch.object(cli_serve, "_port_preflight_or_die"),
+            patch.object(_serve_mod, "_run_uvicorn"),
+            patch.object(_audio_mod, "_run_uvicorn"),
+            patch.object(_serve_mod, "_port_preflight_or_die"),
+            patch.object(_audio_mod, "_port_preflight_or_die"),
         ):
             args = _make_serve_args("kokoro")
             args.max_request_bytes = 16 * 1024 * 1024
@@ -670,8 +680,10 @@ class TestAudioServeHonorsServedModelName:
         server._model_path = None
 
         with (
-            patch.object(cli_serve, "_run_uvicorn"),
-            patch.object(cli_serve, "_port_preflight_or_die"),
+            patch.object(_serve_mod, "_run_uvicorn"),
+            patch.object(_audio_mod, "_run_uvicorn"),
+            patch.object(_serve_mod, "_port_preflight_or_die"),
+            patch.object(_audio_mod, "_port_preflight_or_die"),
         ):
             args = _make_serve_args("kokoro")
             args.served_model_name = "custom-tts"
@@ -708,8 +720,10 @@ class TestAudioServeHonorsServedModelName:
         server._model_path = None
 
         with (
-            patch.object(cli_serve, "_run_uvicorn"),
-            patch.object(cli_serve, "_port_preflight_or_die"),
+            patch.object(_serve_mod, "_run_uvicorn"),
+            patch.object(_audio_mod, "_run_uvicorn"),
+            patch.object(_serve_mod, "_port_preflight_or_die"),
+            patch.object(_audio_mod, "_port_preflight_or_die"),
         ):
             args = _make_serve_args("kokoro")
             # served_model_name is None (default) — fixture is r11-K aware.
@@ -751,8 +765,10 @@ class TestAudioServeHonorsServedModelName:
         server._model_alias = None
 
         with (
-            patch.object(cli_serve, "_run_uvicorn"),
-            patch.object(cli_serve, "_port_preflight_or_die"),
+            patch.object(_serve_mod, "_run_uvicorn"),
+            patch.object(_audio_mod, "_run_uvicorn"),
+            patch.object(_serve_mod, "_port_preflight_or_die"),
+            patch.object(_audio_mod, "_port_preflight_or_die"),
         ):
             args = _make_serve_args(alias)
             args.served_model_name = f"gateway/{alias}"
@@ -1112,8 +1128,10 @@ class TestAudioServeHonorsEmbeddingModel:
             calls.append((name, lock))
 
         with (
-            patch.object(cli_serve, "_run_uvicorn"),
-            patch.object(cli_serve, "_port_preflight_or_die"),
+            patch.object(_serve_mod, "_run_uvicorn"),
+            patch.object(_audio_mod, "_run_uvicorn"),
+            patch.object(_serve_mod, "_port_preflight_or_die"),
+            patch.object(_audio_mod, "_port_preflight_or_die"),
             patch.object(server, "load_embedding_model", side_effect=_capture),
             patch("fusion_mlx.embedding.require_mlx_embeddings_or_exit"),
         ):
@@ -1143,8 +1161,10 @@ class TestAudioServeHonorsEmbeddingModel:
             calls.append((name, lock))
 
         with (
-            patch.object(cli_serve, "_run_uvicorn"),
-            patch.object(cli_serve, "_port_preflight_or_die"),
+            patch.object(_serve_mod, "_run_uvicorn"),
+            patch.object(_audio_mod, "_run_uvicorn"),
+            patch.object(_serve_mod, "_port_preflight_or_die"),
+            patch.object(_audio_mod, "_port_preflight_or_die"),
             patch.object(server, "load_embedding_model", side_effect=_capture),
         ):
             args = _make_serve_args("kokoro")

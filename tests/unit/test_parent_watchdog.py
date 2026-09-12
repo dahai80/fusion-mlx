@@ -218,8 +218,8 @@ class TestServeCommandWiring:
     def _cli_serve_source(self) -> str:
         from pathlib import Path
 
-        cli_file = Path(__file__).resolve().parents[2] / "fusion_mlx" / "cli_serve.py"
-        return cli_file.read_text()
+        cli_dir = Path(__file__).resolve().parents[2] / "fusion_mlx" / "cli_serve"
+        return "".join(p.read_text() for p in sorted(cli_dir.glob("*.py")))
 
     def test_serve_command_installs_watchdog(self):
         source = self._cli_serve_source()

@@ -229,11 +229,11 @@ def test_load_embedding_model_or_exit_handles_not_implemented(capsys):
             return_value=None,
         ),
         mock.patch(
-            "fusion_mlx.cli_serve._resolve_embedding_alias",
+            "fusion_mlx.cli_serve.audio_mode._resolve_embedding_alias",
             return_value=("some-embed-model", False),
         ),
         mock.patch(
-            "fusion_mlx.cli_serve._embedding_not_found_exception_classes",
+            "fusion_mlx.cli_serve.audio_mode._embedding_not_found_exception_classes",
             return_value=(FileNotFoundError,),
         ),
     ):
