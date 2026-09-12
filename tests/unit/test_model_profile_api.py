@@ -34,7 +34,7 @@ def test_resolve_model_with_profile_alias():
 def test_build_sampling_params_openai_with_profile():
     from unittest.mock import MagicMock
 
-    from fusion_mlx.api.openai_routes import _build_sampling_params
+    from fusion_mlx.api.openai import _build_sampling_params
 
     req = MagicMock()
     req.max_tokens = None
@@ -59,7 +59,7 @@ def test_build_sampling_params_openai_with_profile():
 def test_build_sampling_params_openai_request_takes_precedence():
     from unittest.mock import MagicMock
 
-    from fusion_mlx.api.openai_routes import _build_sampling_params
+    from fusion_mlx.api.openai import _build_sampling_params
 
     req = MagicMock()
     req.max_tokens = 1024
@@ -141,7 +141,7 @@ def test_build_sampling_params_openai_default_uses_config_not_hardcoded_2048():
     # operator-configured ServerConfig.default_max_tokens, NOT the legacy
     # hard-coded 2048. 2048 truncates long structured completions (~3900 chars)
     # before the JSON closes -> client gets finish=length + parse failure.
-    from fusion_mlx.api.openai_routes import _build_sampling_params
+    from fusion_mlx.api.openai import _build_sampling_params
     from fusion_mlx.config import get_config, reset_config
 
     reset_config()
@@ -160,7 +160,7 @@ def test_build_sampling_params_openai_default_uses_config_not_hardcoded_2048():
 def test_build_sampling_params_openai_default_no_config_uses_4096_dataclass_default():
     # With no explicit operator override, ServerConfig.default_max_tokens is
     # 4096 (its dataclass default). The fallback must be that, never 2048.
-    from fusion_mlx.api.openai_routes import _build_sampling_params
+    from fusion_mlx.api.openai import _build_sampling_params
     from fusion_mlx.config import reset_config
 
     reset_config()

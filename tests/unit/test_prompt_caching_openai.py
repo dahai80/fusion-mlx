@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 
 from fusion_mlx.api.adapters.base import InternalResponse
 from fusion_mlx.api.adapters.openai import OpenAIAdapter
+from fusion_mlx.api.openai import _detect_prefix_cache_boundary
 from fusion_mlx.api.openai_models import ChatCompletionRequest, Message
-from fusion_mlx.api.openai_routes import _detect_prefix_cache_boundary
 
 
 class TestDetectPrefixCacheBoundary:

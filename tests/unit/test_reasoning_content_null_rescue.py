@@ -1250,7 +1250,7 @@ def _stream_post(
     from fusion_mlx.reasoning.qwen3_parser import Qwen3ReasoningParser
 
     pytest.skip("routes_internal/chat.py removed (#71 dedup)")
-    from fusion_mlx.api.openai_routes import router as chat_router  # noqa
+    from fusion_mlx.api.openai import router as chat_router  # noqa
 
     cfg = reset_config()
     cfg.engine = _StreamEngine(
@@ -1418,7 +1418,7 @@ def test_streaming_happy_path_no_sentinel_when_content_streamed(monkeypatch):
     from fusion_mlx.engine.base import GenerationOutput
 
     pytest.skip("routes_internal/chat.py removed (#71 dedup)")
-    from fusion_mlx.api.openai_routes import router as chat_router  # noqa
+    from fusion_mlx.api.openai import router as chat_router  # noqa
 
     class _ContentEngine:
         preserve_native_tool_format = False
@@ -1584,7 +1584,7 @@ def test_chat_route_opt_out_no_sentinel_on_length_cut(monkeypatch):
     from fusion_mlx.config import reset_config
 
     pytest.skip("routes_internal/chat.py removed (#71 dedup)")
-    from fusion_mlx.api.openai_routes import router as chat_router  # noqa
+    from fusion_mlx.api.openai import router as chat_router  # noqa
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1636,7 +1636,7 @@ def test_chat_route_enabled_surfaces_sentinel_on_length_cut(monkeypatch):
     from fusion_mlx.config import reset_config
 
     pytest.skip("routes_internal/chat.py removed (#71 dedup)")
-    from fusion_mlx.api.openai_routes import router as chat_router  # noqa
+    from fusion_mlx.api.openai import router as chat_router  # noqa
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
@@ -1696,7 +1696,7 @@ def test_chat_route_default_env_surfaces_sentinel_regression_858(monkeypatch):
     from fusion_mlx.config import reset_config
 
     pytest.skip("routes_internal/chat.py removed (#71 dedup)")
-    from fusion_mlx.api.openai_routes import router as chat_router  # noqa
+    from fusion_mlx.api.openai import router as chat_router  # noqa
 
     cfg = reset_config()
     _seed_length_cut_engine(cfg)
