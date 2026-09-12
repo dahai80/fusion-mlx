@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Added
+- **`POST /v1/audio/converse`** — end-to-end voice conversation endpoint.
+  Chains STT (transcribe user speech) → LLM (generate reply) → TTS (synthesize
+  reply speech) in one request. Returns WAV audio or JSON envelope
+  (`include_metadata=true` returns transcript + reply + base64 audio).
 - **`fusion-mlx ppl` CLI** — computes mean cross-entropy perplexity on the
   offline oq calibration corpus (code/en/zh/ja/ko/tool_calling/reasoning).
   `fusion-mlx ppl <model> --quant <mode>` labels the quant mode so operators
