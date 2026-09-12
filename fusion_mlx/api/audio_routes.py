@@ -23,7 +23,11 @@ from ..engines.audio_utils import wav_bytes_to_pcm_frames, wav_header
 from ..middleware.auth import check_rate_limit, verify_api_key
 from ..pool import EnginePool
 from ..server_metrics import get_server_metrics
-from .audio_models import AudioSpeechRequest, AudioTranscriptionResponse
+from .audio_models import (
+    AudioConverseResponse,
+    AudioSpeechRequest,
+    AudioTranscriptionResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -827,5 +831,238 @@ async def process_audio(
                 pass
 
     _record_audio_request(resolved_model)
+
+    return Response(content=wav_bytes, media_type="audio/wav")
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/audio/converse — end-to-end voice conversation
+# (S3.3: audio-in → LLM → audio-out, demo-level chained pipeline)
+# ---------------------------------------------------------------------------
+
+
+_DEFAULT_STT_MODEL = "mlx-community/whisper-large-v3-mlx"
+_DEFAULT_TTS_MODEL = "mlx-community/Kokoro-82M-bf16"
+_DEFAULT_CONVERSE_MAX_TOKENS = 512
+_DEFAULT_CONVERSE_TEMPERATURE = 0.7
+
+
+@router.post(
+    "/v1/audio/converse",
+    dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
+)
+async def converse(
+    file: UploadFile = File(...),
+    model: str = Form(...),
+    stt_model: str | None = Form(None),
+    tts_model: str | None = Form(None),
+    voice: str = Form("default"),
+    system_prompt: str | None = Form(None),
+    max_tokens: int = Form(_DEFAULT_CONVERSE_MAX_TOKENS),
+    temperature: float = Form(_DEFAULT_CONVERSE_TEMPERATURE),
+    speed: float = Form(1.0),
+    include_metadata: bool = Form(False),
+):
+    """End-to-end voice conversation: speech-in → LLM → speech-out.
+
+    Chains three engines in one request:
+    1. STT: transcribe the uploaded audio → user text
+    2. LLM: generate a reply from the transcribed text
+    3. TTS: synthesize the LLM reply → audio bytes
+
+    Returns WAV audio (same as /v1/audio/speech). When
+    ``include_metadata=true``, returns a JSON envelope with transcript +
+    reply + base64-encoded audio.
+    """
+    from fusion_mlx.engines.stt import STTEngine
+    from fusion_mlx.engines.tts import TTSEngine
+    from fusion_mlx.exceptions import ModelNotFoundError
+
+    pool = _get_engine_pool()
+
+    # --- Stage 1: STT — transcribe user speech ---
+    stt_resolved = _resolve_model(stt_model or _DEFAULT_STT_MODEL)
+    suffix = os.path.splitext(file.filename or "audio.wav")[1] or ".wav"
+    if suffix.lower() in _VIDEO_CONTAINERS:
+        suffix = ".m4a"
+    stt_tmp_path = None
+    try:
+        content = await _read_upload(file)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            stt_tmp_path = tmp.name
+            tmp.write(content)
+
+        try:
+            stt_engine = await pool.get_engine(stt_resolved)
+        except ModelNotFoundError as exc:
+            avail = (
+                ", ".join(exc.available_models) if exc.available_models else "(none)"
+            )
+            raise HTTPException(
+                status_code=404,
+                detail=f"STT model '{stt_resolved}' not found. Available: {avail}",
+            ) from exc
+
+        if not isinstance(stt_engine, STTEngine):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{stt_resolved}' is not a speech-to-text model",
+            )
+
+        stt_result = await stt_engine.transcribe(stt_tmp_path)
+        user_text = (stt_result.get("text") or "").strip()
+        logger.info(
+            "converse STT done: model=%s, text_len=%d",
+            stt_resolved,
+            len(user_text),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "converse STT failed for %s: %s(%s)",
+            stt_resolved,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(500, "Internal server error") from exc
+    finally:
+        if stt_tmp_path and os.path.exists(stt_tmp_path):
+            try:
+                os.unlink(stt_tmp_path)
+            except OSError:
+                pass
+
+    if not user_text:
+        raise HTTPException(
+            status_code=422,
+            detail="Speech transcription returned empty text — no speech detected",
+        )
+
+    _record_audio_request(stt_resolved)
+
+    # --- Stage 2: LLM — generate reply ---
+    from fusion_mlx.server import resolve_model_id
+
+    llm_resolved = resolve_model_id(model) or model
+    try:
+        llm_engine = await pool.get_engine(llm_resolved)
+    except ModelNotFoundError as exc:
+        avail = ", ".join(exc.available_models) if exc.available_models else "(none)"
+        raise HTTPException(
+            status_code=404,
+            detail=f"LLM model '{llm_resolved}' not found. Available: {avail}",
+        ) from exc
+    except Exception as exc:
+        logger.exception(
+            "converse LLM load failed for %s: %s(%s)",
+            llm_resolved,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(500, "Internal server error") from exc
+
+    from fusion_mlx.engines.batched import BatchedEngine
+
+    if not isinstance(llm_engine, BatchedEngine):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{llm_resolved}' is not a text LLM",
+        )
+
+    messages: list[dict] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_text})
+
+    try:
+        gen = await llm_engine.chat(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        reply_text = (gen.text or "").strip()
+        logger.info(
+            "converse LLM done: model=%s, reply_len=%d, tokens=%d",
+            llm_resolved,
+            len(reply_text),
+            gen.completion_tokens,
+        )
+    except Exception as exc:
+        logger.exception(
+            "converse LLM generate failed for %s: %s(%s)",
+            llm_resolved,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(500, "Internal server error") from exc
+
+    if not reply_text:
+        raise HTTPException(
+            status_code=422,
+            detail="LLM generated empty reply",
+        )
+
+    # --- Stage 3: TTS — synthesize reply speech ---
+    tts_resolved = _resolve_model(tts_model or _DEFAULT_TTS_MODEL)
+    try:
+        tts_engine = await pool.get_engine(tts_resolved)
+    except ModelNotFoundError as exc:
+        avail = ", ".join(exc.available_models) if exc.available_models else "(none)"
+        raise HTTPException(
+            status_code=404,
+            detail=f"TTS model '{tts_resolved}' not found. Available: {avail}",
+        ) from exc
+
+    if not isinstance(tts_engine, TTSEngine):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{tts_resolved}' is not a text-to-speech model",
+        )
+
+    if voice == "default":
+        from fusion_mlx.routes_internal.audio import _resolve_default_voice_literal
+
+        voice = _resolve_default_voice_literal(tts_resolved, voice)
+
+    try:
+        wav_bytes = await tts_engine.synthesize(reply_text, voice=voice, speed=speed)
+    except TimeoutError as exc:
+        logger.warning(
+            "converse TTS timed out for %s: %s(%s) — GPU busy",
+            tts_resolved,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="TTS synthesis timed out (GPU busy), retry later",
+            headers={"Retry-After": "5"},
+        ) from exc
+    except Exception as exc:
+        logger.exception(
+            "converse TTS failed for %s: %s(%s)",
+            tts_resolved,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(500, "Internal server error") from exc
+
+    _record_audio_request(tts_resolved)
+
+    logger.info(
+        "converse complete: stt=%s llm=%s tts=%s wav_bytes=%d",
+        stt_resolved,
+        llm_resolved,
+        tts_resolved,
+        len(wav_bytes),
+    )
+
+    if include_metadata:
+        return AudioConverseResponse(
+            transcript=user_text,
+            reply=reply_text,
+            audio=base64.b64encode(wav_bytes).decode("ascii"),
+        )
 
     return Response(content=wav_bytes, media_type="audio/wav")
