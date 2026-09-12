@@ -846,6 +846,16 @@ class AssistantMessage(BaseModel):
         return d
 
 
+# P0-1 (#0912 audit): back-compat aliases for the Message refactor.
+# ollama_routes / reasoning_routes construct SystemMessage(role="system", ...)
+# and UserMessage(role="user", ...). Message already accepts a ``role`` field,
+# so these aliases preserve every call site without behavior change. Without
+# them the deferred import inside _call_openai_chat raises ImportError → 500
+# on every /api/chat and /api/generate call.
+SystemMessage = Message
+UserMessage = Message
+
+
 class ChatCompletionChoice(BaseModel):
     """A single choice in chat completion response."""
 

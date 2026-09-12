@@ -914,6 +914,8 @@ def get_usage(output: GenerationOutput) -> Usage:
         prompt_tokens_details=(
             PromptTokensDetails(cached_tokens=cached_tokens) if cached_tokens else None
         ),
+        time_to_first_token=getattr(output, "time_to_first_token", None),
+        model_load_duration=getattr(output, "model_load_duration", None),
     )
 
 

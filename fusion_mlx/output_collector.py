@@ -122,6 +122,11 @@ class RequestOutputCollector:
                 if new.generated_until is not None
                 else existing.generated_until
             ),
+            time_to_first_token=(
+                existing.time_to_first_token
+                if existing.time_to_first_token is not None
+                else new.time_to_first_token
+            ),
             tool_calls=new.tool_calls,
             cached_tokens=new.cached_tokens,
             logprobs=self._merge_logprobs(existing.logprobs, new.logprobs),

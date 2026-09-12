@@ -213,6 +213,14 @@ def _process_batch_responses(
 
         # Create output — skip O(N) output_token_ids copy for streaming;
         # only materialize the full list when the request finishes.
+        # G-6 (#0912 audit): propagate TTFT so the API usage layer can
+        # report it instead of returning null. ttft = time from generation
+        # start to first token; requires both timestamps present.
+        _ttft_val = None
+        if request.first_token_at is not None:
+            _gen_start = request.generation_started_at or request.arrival_time
+            if _gen_start is not None and request.first_token_at >= _gen_start:
+                _ttft_val = request.first_token_at - _gen_start
         output = RequestOutput(
             request_id=request_id,
             new_token_ids=[response.token] if not is_stop else [],
@@ -222,6 +230,7 @@ def _process_batch_responses(
             completion_tokens=request.num_output_tokens,
             cached_tokens=request.cached_tokens,
             logprobs=getattr(response, "logprobs", None),
+            time_to_first_token=_ttft_val,
         )
 
         if not is_finished:
