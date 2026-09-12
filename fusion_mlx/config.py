@@ -354,6 +354,13 @@ class ServerConfig:
     cluster_peers: list[str] = field(default_factory=list)  # e.g. ["127.0.0.1:11435"]
     cluster_lb_health_interval: float = 5.0
     cluster_lb_health_max_missed: int = 3
+    # PR-D11.1 (L14): weighted round-robin routing. Maps node_id
+    # ("host:port") to a positive integer weight. When non-empty AND
+    # cluster_lb_enabled is True, a ClusterRouter (nginx SWRR) is
+    # activated alongside the least-loaded LB — operators route
+    # proportionally to declared capacity. Empty → weighted routing
+    # inactive, least-loaded path unchanged.
+    cluster_weights: dict[str, int] = field(default_factory=dict)
 
     # Node platform tag for gateway routing (#365). Auto-detected when None
     # (darwin->mac, win32+CUDA->windows-cuda); override with FUSION_PLATFORM

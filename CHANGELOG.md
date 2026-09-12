@@ -46,6 +46,22 @@
   `eval/tool_result_grader.py`. CI `eval` job runs advisory (non-blocking).
 - **Error solutions expanded** — 6 → 12 HTTP status codes (added
   400/401/403/404/408/502) with actionable fix suggestions.
+- **Weighted round-robin cluster router** — `ServerConfig.cluster_weights`
+  (maps `host:port` → weight) activates an nginx-style smooth weighted
+  round-robin dispatcher alongside the existing least-loaded LB. Routes
+  proportionally to declared capacity (e.g. one Max + one Pro instance).
+  `GET /v1/cluster/route` exposes backend health + weights. OPT-IN: empty
+  `cluster_weights` → weighted routing inactive, least-loaded path unchanged.
+- **Ablations isolation zone** — `fusion_mlx/ablations/` directory +
+  `load_ablation(name)` loader. Experimental/falsified code env-gated OFF
+  by default (`FUSION_ABLATION_<NAME>=1` to enable), keeps trunk clean of
+  experiment corpses. See `fusion_mlx/ablations/README.md`.
+- **CI test sharding by modality** — the single Python-version test matrix
+  is replaced by 6 modality shards (`core`/`llm`/`modal`/`infra`/`exp`/
+  `rest`) running in parallel on Python 3.12, plus a `test-versions` job
+  covering 3.11 + 3.13 on the `core` shard. A pip wheel cache speeds
+  install. `scripts/shard_tests.py` partitions the suite with full
+  coverage (no test silently dropped).
 
 ### Changed
 - **CI test job installs `[dev,vlm]`** — eliminates 38 Linux-mock VLM test

@@ -60,16 +60,29 @@ jobs:
                       --whitelist scripts/public_api_whitelist.txt
 
     test:
+        # PR-D11.3 (L18): modality/engine sharding + build cache. The
+        # single Python-version matrix is replaced by a shard dimension
+        # (core/llm/modal/infra/exp/rest) running on Python 3.12 (the
+        # canonical dev version). Lint already covers 3.13; the 3-version
+        # matrix was single-dim and serialized all 14k tests on one runner.
+        # Shards run in parallel → faster feedback, smaller blast radius.
+        # A pip wheel cache (keyed on pyproject + lockfile) speeds install.
         strategy:
             fail-fast: false
             matrix:
-                python-version: ["3.11", "3.12", "3.13"]
+                shard: ["core", "llm", "modal", "infra", "exp", "rest"]
         runs-on: macos-14
         steps:
             - uses: actions/checkout@v7
             - uses: actions/setup-python@v7
               with:
-                  python-version: ${{ matrix.python-version }}
+                  python-version: "3.12"
+            - name: Cache pip wheels
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cache/pip
+                  key: ${{ runner.os }}-pip-3.12-${{ hashFiles('pyproject.toml') }}
+                  restore-keys: ${{ runner.os }}-pip-3.12-
             # Install [vlm] so conftest's mlx_vlm mock is NOT triggered on
             # macOS CI (real mlx_vlm 0.5.0 installs cleanly on Apple Silicon).
             # Without it, 38 VLM tests fail: `from mlx_vlm.models.X import Y`
@@ -77,10 +90,16 @@ jobs:
             # macOS-14 runners are M1 → mlx + mlx_vlm wheels available.
             - run: pip install -e ".[dev,vlm]"
             - run: pip install pytest-cov
+            - name: Resolve shard file list
+              id: shard
+              run: |
+                  FILES=$(python scripts/shard_tests.py ${{ matrix.shard }})
+                  echo "count: $(echo $FILES | wc -w) files in shard ${{ matrix.shard }}"
+                  echo "files=$FILES" >> "$GITHUB_OUTPUT"
             - name: Run unit tests with coverage
               run: |
                   set -eo pipefail
-                  pytest tests/unit -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-report=xml --cov-fail-under=40 --junitxml=pytest-junit.xml 2>&1 | tee pytest-output.txt
+                  pytest ${{ steps.shard.outputs.files }} -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-report=xml --cov-fail-under=40 --junitxml=pytest-junit.xml 2>&1 | tee pytest-output.txt
             - name: Guard against excessive skips
               if: always()
               run: |
@@ -98,6 +117,35 @@ jobs:
                     echo "FAIL: >10% tests skipped (${PCT}%) — CI provides false confidence"
                     exit 1
                   fi
+
+    test-versions:
+        # PR-D11.3: keep Python 3.11 + 3.13 version coverage (was the
+        # old matrix). Runs the ``core`` shard only — the smallest, most
+        # API-surface-sensitive shard — so version regressions are caught
+        # without re-running the full suite per version.
+        strategy:
+            fail-fast: false
+            matrix:
+                python-version: ["3.11", "3.13"]
+        runs-on: macos-14
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-python@v7
+              with:
+                  python-version: ${{ matrix.python-version }}
+            - name: Cache pip wheels
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cache/pip
+                  key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+                  restore-keys: ${{ runner.os }}-pip-${{ matrix.python-version }}-
+            - run: pip install -e ".[dev,vlm]"
+            - run: pip install pytest-cov
+            - name: Run core shard (version coverage)
+              run: |
+                  set -eo pipefail
+                  FILES=$(python scripts/shard_tests.py core)
+                  pytest $FILES -v --tb=short --cov=fusion_mlx --cov-report=term-missing 2>&1 | tee pytest-output.txt
 
     eval:
         # G1/S1: evaluation gate (ADVISORY). Runs perf/coherence/tool-call gates.
