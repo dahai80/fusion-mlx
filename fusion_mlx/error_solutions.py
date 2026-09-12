@@ -7,7 +7,8 @@ assembling suggestion lists inline. R-6 (#0910 audit): ops auditability +
 consistent client guidance across status codes.
 
 Extends the original 413/503/507 set with 429 (rate limit), 504 (gateway
-timeout), and 500 (internal error — generic triage hints).
+timeout), 500 (internal error — generic triage hints), plus 400/401/403/404/408/502
+to cover the 12 most common client-facing error classes (enhance-0911 S1.5).
 """
 
 import logging
@@ -15,6 +16,31 @@ import logging
 logger = logging.getLogger(__name__)
 
 ERROR_SOLUTIONS_MAP: dict[int, list[str]] = {
+    400: [
+        "Check the request body against the OpenAI/Anthropic API schema",
+        "Verify required fields (model, messages) are present and well-formed",
+        "Inspect the error.detail field for the specific validation failure",
+    ],
+    401: [
+        "Set FUSION_MLX_API_KEY in settings.json or pass Authorization: Bearer <key>",
+        "Verify the API key matches the server's configured key",
+        "If using a proxy, ensure it forwards the Authorization header",
+    ],
+    403: [
+        "Check if the requested engine/modality is disabled by the active profile",
+        "Run `fusion-mlx doctor` to see the active profile and disabled modules",
+        "Switch profile (lite/standard/full) in settings.json to enable the engine",
+    ],
+    404: [
+        "Verify the model alias with `fusion-mlx models`",
+        "Use `fusion-mlx pull <model>` to download the model first",
+        "Check for typos in the model id; aliases are case-sensitive",
+    ],
+    408: [
+        "Increase client-side timeout to exceed prefill duration for long prompts",
+        "Reduce max_context or shorten the prompt",
+        "Switch to streaming to receive the first token sooner",
+    ],
     413: [
         "Reduce max_context or shorten the prompt",
         "Use a smaller quantization (e.g. 4bit instead of 8bit)",
@@ -39,6 +65,11 @@ ERROR_SOLUTIONS_MAP: dict[int, list[str]] = {
         "Increase client-side timeout to exceed generation duration",
         "Reduce max_tokens or switch to streaming to receive first token sooner",
         "Check `fusion-mlx status` for slow-model / queue-depth buildup",
+    ],
+    502: [
+        "Check if a cloud-fallback router is configured and reachable",
+        "Retry — upstream gateway faults are often transient",
+        "Inspect `fusion-mlx log` for the forwarded request's failure reason",
     ],
     507: [
         "Reduce max_tokens for the request",

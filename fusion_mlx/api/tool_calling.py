@@ -26,6 +26,7 @@ from typing import Any
 from jsonschema import ValidationError, validate
 
 from .openai_models import FunctionCall, ResponseFormat, ToolCall
+from .tool_json_repair import repair_tool_call_json
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +172,25 @@ def _serialize_tool_call_arguments(arguments: Any) -> str:
             parsed = None
         if isinstance(parsed, dict):
             return json.dumps(parsed, ensure_ascii=False)
+        # Only attempt repair when the original was unparseable (parsed is
+        # None) AND looks like a broken JSON object (starts with "{"). Bare
+        # scalars/arrays that are valid non-dict JSON must NOT be repaired —
+        # repair_tool_call_json wraps them into {"value": ...}, which would
+        # break the "coerce non-dict to {}" contract below.
+        if parsed is None and arguments.lstrip().startswith("{"):
+            repaired = repair_tool_call_json(arguments)
+            try:
+                parsed_repaired = json.loads(repaired)
+            except (json.JSONDecodeError, ValueError):
+                parsed_repaired = None
+            if isinstance(parsed_repaired, dict):
+                logger.info(
+                    "tool_calling: repaired broken JSON args "
+                    "(orig=%.120r fixed=%.120r)",
+                    arguments,
+                    repaired,
+                )
+                return repaired
     logger.warning(
         "Tool parser returned non-dict arguments (type=%s, repr=%.200r); "
         "coercing to empty object to keep downstream template safe.",
