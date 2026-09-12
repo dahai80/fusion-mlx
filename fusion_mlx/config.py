@@ -3,7 +3,6 @@
 Merged from fusion-mlx model_settings + Rapid-MLX SchedulerConfig.
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -54,8 +53,6 @@ class SchedulerConfig:
     # ``chunked_prefill=<bool>`` explicitly; ``__post_init__`` syncs it from the
     # int knob when the CLI omits it.
     chunked_prefill: bool = False
-    # Mid-prefill cache saving every N tokens (from Rapid-MLX)
-    mid_prefill_save_interval: int = 8192
 
     # Prefix cache
     enable_prefix_cache: bool = True
@@ -267,7 +264,6 @@ class ServerConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     model_aliases: dict[str, str] = field(default_factory=dict)
-    admin_enabled: bool = True
     cloud_router_enabled: bool = False
     cloud_router_model: str | None = None
     cloud_router_api_key: str | None = None
@@ -282,7 +278,6 @@ class ServerConfig:
     model_name: str | None = None
     model_alias: str | None = None
     model_path: str | None = None
-    inference_lock: asyncio.Lock | None = None
     ready: bool = False
     draining: bool = False
     bind_host: str | None = None
@@ -321,7 +316,6 @@ class ServerConfig:
 
     # MCP
     mcp_manager: Any = None
-    mcp_executor: Any = None
 
     # Embeddings
     embedding_engine: Any = None

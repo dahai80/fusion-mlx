@@ -164,25 +164,8 @@ class RequestError(SchedulerError):
         self.request_id = request_id
 
 
-class RequestNotFoundError(RequestError):
-    """Request was not found in the scheduler."""
-
-    pass
-
-
 class RequestAbortedError(RequestError):
     """Request was aborted before completion."""
-
-    pass
-
-
-class BatchingError(SchedulerError):
-    """
-    Error during batch processing.
-
-    Can occur when the BatchGenerator encounters issues during
-    token generation or batch management.
-    """
 
     pass
 
@@ -220,12 +203,6 @@ class RequestTimeoutError(SchedulerError):
     pass
 
 
-class PreemptionError(SchedulerError):
-    """Failed to preempt a request."""
-
-    pass
-
-
 # =============================================================================
 # Model-related Exceptions
 # =============================================================================
@@ -257,12 +234,6 @@ class ModelLoadError(ModelError):
 
 class ModelInferenceError(ModelError):
     """Error during model inference/generation."""
-
-    pass
-
-
-class TokenizerError(ModelError):
-    """Error related to tokenization."""
 
     pass
 
@@ -576,12 +547,6 @@ class RouterError(FusionMLXError):
     pass
 
 
-class CloudRoutingError(RouterError):
-    """Cloud routing failed."""
-
-    pass
-
-
 # =============================================================================
 # MCP Errors
 # =============================================================================
@@ -595,12 +560,6 @@ class MCPError(MLEngineError):
 
 class MCPConnectionError(MCPError):
     """Failed to connect to MCP server."""
-
-    pass
-
-
-class MCPToolExecutionError(MCPError):
-    """Failed to execute MCP tool."""
 
     pass
 

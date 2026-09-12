@@ -64,6 +64,19 @@
   coverage (no test silently dropped).
 
 ### Changed
+- **Dead code + invalid test cleanup (#0912 audit)** — removed 5 zero-reference
+  prod modules (`multimodal_processor.py`, `optimizations.py`,
+  `positioned_kv_cache.py`, `_signal_observability.py`,
+  `mxfp4_moe_guardrail.py`, ~1,033 lines) + their 4 dedicated test files
+  (~941 lines). Deleted 6 dead exception classes (`RequestNotFoundError`,
+  `BatchingError`, `PreemptionError`, `TokenizerError`, `CloudRoutingError`,
+  `MCPToolExecutionError`) and 4 dead config fields (`mid_prefill_save_interval`,
+  `admin_enabled`, `inference_lock`, `mcp_executor`). Removed 11 invalid test
+  files (9 zero-function placeholders + all-skip + no-assert benchmark) and
+  the fossil `fusion_mlx/tests/regression_fp8_quant.py`. All deletions verified
+  zero references before removal; `memory_cache.py` (1,635 lines) deferred
+  pending surgical split of mixed tests.
+
 - **CI test job installs `[dev,vlm]`** — eliminates 38 Linux-mock VLM test
   failures at root (macos-14 M1 runners install real mlx + mlx_vlm wheels
   for 3.11/3.12/3.13 instead of mocking, which caused isinstance/issubclass
