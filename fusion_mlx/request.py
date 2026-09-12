@@ -232,6 +232,7 @@ class RequestOutput:
     completion_tokens: int = 0
     generated_at: float | None = None
     generated_until: float | None = None
+    time_to_first_token: float | None = None
     tool_calls: list[dict[str, str]] | None = None
     cached_tokens: int = 0
     error: str | None = None

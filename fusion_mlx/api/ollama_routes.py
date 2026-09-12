@@ -197,7 +197,23 @@ async def _call_openai_chat(
     if not stream:
         await acquire_request_slot()
         try:
-            return await _run_chat(chat_req, _skip_cap_check=True)
+            result = await _run_chat(chat_req, _skip_cap_check=True)
+            # P0-1 (#0912 audit): _run_chat returns a JSONResponse (not a
+            # ChatCompletionResponse) when context-budget headers are set,
+            # but ollama callers expect attribute access (.choices/.usage).
+            # Unwrap to a ChatCompletionResponse so /api/chat + /api/generate
+            # don't crash with "'JSONResponse' object has no attribute
+            # 'choices'".
+            if isinstance(result, JSONResponse):
+                from .openai_models import ChatCompletionResponse
+
+                _body = result.body
+                if isinstance(_body, (bytes, bytearray)):
+                    import json as _json
+
+                    _body = _json.loads(_body)
+                result = ChatCompletionResponse.model_validate(_body)
+            return result
         finally:
             release_request_slot()
 

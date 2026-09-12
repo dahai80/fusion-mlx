@@ -156,6 +156,7 @@ class BatchedEngine(BaseEngine):
         self._tokenizer = None
         self._engine = None
         self._loaded = False
+        self._model_load_duration: float | None = None
         self._grammar_compiler = None
         self._grammar_compiler_init_attempted = False
 
@@ -286,6 +287,7 @@ class BatchedEngine(BaseEngine):
 
             model = apply_post_load_transforms(model, self._model_settings)
             elapsed = time.monotonic() - start
+            self._model_load_duration = elapsed
             # Estimate model size from loaded weights
             total_params = 0
             try:
@@ -952,6 +954,8 @@ class BatchedEngine(BaseEngine):
             logprobs=output.logprobs,
             new_token_ids=output.new_token_ids,
             generation_tokens_per_second=_tok_s,
+            time_to_first_token=getattr(output, "time_to_first_token", None),
+            model_load_duration=self._model_load_duration,
         )
 
     async def stream_generate(
@@ -1078,6 +1082,7 @@ class BatchedEngine(BaseEngine):
                     new_token_ids=output.new_token_ids,
                     time_to_first_token=_ttft,
                     generation_tokens_per_second=_tok_s,
+                    model_load_duration=self._model_load_duration,
                 )
         except GeneratorExit:
             logger.info(f"[stream_generate] GeneratorExit for request {request_id}")
@@ -1287,6 +1292,7 @@ class BatchedEngine(BaseEngine):
                         new_token_ids=output.new_token_ids,
                         time_to_first_token=_ttft,
                         generation_tokens_per_second=_tok_s,
+                        model_load_duration=self._model_load_duration,
                     )
             except GeneratorExit:
                 logger.info(

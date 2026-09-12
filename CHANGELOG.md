@@ -85,6 +85,21 @@
   → 46.86 (4bit target + 4bit draft) tok/s.
 
 ### Fixed
+- **Ollama `/api/chat` + `/api/generate` returned 500 (#0912 audit P0-1)** —
+  the `Message` refactor dropped the `SystemMessage`/`UserMessage` aliases that
+  `ollama_routes._call_openai_chat` deferred-imports, so every non-streaming
+  Ollama request hit `ImportError` → 500. Aliases restored
+  (`SystemMessage = Message`, `UserMessage = Message`). A second crash
+  (`'JSONResponse' object has no attribute 'choices'`) occurred because
+  `_run_chat` returns a `JSONResponse` (not `ChatCompletionResponse`) when
+  context-budget headers are set; `_call_openai_chat` now unwraps it. Route
+  import smoke test added to prevent recurrence.
+- **`usage.time_to_first_token` + `usage.model_load_duration` were null
+  (#0912 audit G-6)** — the non-streaming chat path dropped both fields: the
+  `RequestOutputCollector._merge_outputs` rebuild omitted `time_to_first_token`,
+  and `BatchedEngine.generate` never set `model_load_duration`. Now propagated
+  end-to-end: scheduler sets TTFT on `RequestOutput`, collector preserves it
+  through merge, engine stamps `model_load_duration`, adapter fills `Usage`.
 - **DFlash2 spec sessions crashed with "There is no Stream(gpu, N) in
   current thread"** — the DFlash2 runtime (which carries its own target +
   draft weight copies) was loaded on the shared io executor; MLX binds
