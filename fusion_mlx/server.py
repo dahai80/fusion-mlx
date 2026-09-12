@@ -93,8 +93,8 @@ from .api.ocr_routes import router as ocr_router
 from .api.ocr_routes import set_ocr_context
 from .api.ollama_routes import router as ollama_router
 from .api.ollama_routes import set_ollama_context
-from .api.openai_routes import router as openai_router
-from .api.openai_routes import set_openai_context
+from .api.openai import router as openai_router
+from .api.openai import set_openai_context
 from .api.openclaw_routes import router as openclaw_router
 from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.reasoning_routes import router as reasoning_router

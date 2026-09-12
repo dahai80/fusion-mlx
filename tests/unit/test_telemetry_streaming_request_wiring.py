@@ -80,7 +80,7 @@ def telemetry_env(monkeypatch, tmp_path):
 
 
 def _patch_routes(monkeypatch, chunks):
-    import fusion_mlx.api.openai_routes as routes
+    import fusion_mlx.api.openai.chat as routes
 
     _stub_server_module(monkeypatch)
     monkeypatch.setattr(routes, "_inject_web_search", lambda req: _async_none())

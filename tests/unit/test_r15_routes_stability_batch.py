@@ -392,9 +392,9 @@ class _StubGenerationOutput:
 def _build_completions_app(patch_cfg, monkeypatch, *, engine_factory=None):
     """Wire a stub completions app with a MagicMock engine."""
     pytest.skip(
-        "routes_internal/completions.py removed (#71 dedup); rewrite for api/openai_routes"
+        "routes_internal/completions.py removed (#71 dedup); rewrite for api/openai"
     )
-    from fusion_mlx.api import openai_routes as comp_route  # noqa: E501
+    from fusion_mlx.api import openai as comp_route  # noqa: E501
 
     app = FastAPI()
     app.include_router(comp_route.router)
@@ -627,9 +627,9 @@ def _make_chat_client(engine) -> TestClient:
     from fusion_mlx.config import reset_config
 
     pytest.skip(
-        "routes_internal/chat.py removed (#71 dedup); rewrite for api/openai_routes"
+        "routes_internal/chat.py removed (#71 dedup); rewrite for api/openai"
     )
-    from fusion_mlx.api.openai_routes import router as chat_router  # noqa: E501
+    from fusion_mlx.api.openai import router as chat_router  # noqa: E501
 
     cfg = reset_config()
     cfg.engine = engine

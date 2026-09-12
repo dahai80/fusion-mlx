@@ -177,18 +177,18 @@ class TestEntryPayload:
 
 class TestOpenaiRoutesModality:
     def test_resolve_modality_in_openai_routes(self):
-        from fusion_mlx.api.openai_routes import _resolve_modality as or_modality
+        from fusion_mlx.api.openai import _resolve_modality as or_modality
 
         profile = AliasProfile(name="wan2-14b", hf_path="x/y", modality="video")
         with patch("fusion_mlx.model_aliases.resolve_profile", return_value=profile):
             assert or_modality("wan2-14b") == "video"
 
     def test_resolve_modality_default_text(self):
-        from fusion_mlx.api.openai_routes import _resolve_modality as or_modality
+        from fusion_mlx.api.openai import _resolve_modality as or_modality
 
         with (
             patch("fusion_mlx.model_aliases.resolve_profile", return_value=None),
-            patch("fusion_mlx.api.openai_routes._pool", None),
+            patch("fusion_mlx.api.openai._common._pool", None),
         ):
             assert or_modality("unknown") == "text"
 

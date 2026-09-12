@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("mlx")  # suite needs mlx runtime; skip if absent
 
-from fusion_mlx.api.openai_routes import (
+from fusion_mlx.api.openai import (
     _CHANNEL_REASONING_PARSERS,
     _resolve_streaming_reasoning_parser,
 )

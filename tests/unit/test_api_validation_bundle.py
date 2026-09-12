@@ -74,7 +74,8 @@ class TestValidateModelName:
         """The OpenAI chat route must still reject unknown model names with 404.
         This confirms that removing _validate_model_name from the Anthropic
         route did NOT affect the OpenAI route."""
-        from fusion_mlx.api import openai_routes
+        from fusion_mlx.api import openai as openai_routes
+        from fusion_mlx.api.openai import chat as _chat_mod
 
         engine = MagicMock()
         engine.is_mllm = False
@@ -95,8 +96,8 @@ class TestValidateModelName:
                 return engine
             return None
 
-        monkeypatch.setattr(openai_routes, "_resolve_engine", _fake_resolve)
-        monkeypatch.setattr(openai_routes, "_release_engine", _noop_async)
+        monkeypatch.setattr(_chat_mod, "_resolve_engine", _fake_resolve)
+        monkeypatch.setattr(_chat_mod, "_release_engine", _noop_async)
 
         app = FastAPI()
         app.include_router(openai_routes.router)
@@ -705,7 +706,8 @@ class TestPsCommandPortParsing:
 
 class TestCompletionsSuffixRejection:
     def _build_completions_app(self, patch_cfg, monkeypatch):
-        from fusion_mlx.api import openai_routes as comp_route
+        from fusion_mlx.api import openai as comp_route
+        from fusion_mlx.api.openai import chat as _chat_mod
         from fusion_mlx.middleware.auth import check_rate_limit, verify_api_key
 
         app = FastAPI()
@@ -731,8 +733,8 @@ class TestCompletionsSuffixRejection:
         async def _fake_resolve(_model_name, adapter_path=None):
             return engine
 
-        monkeypatch.setattr(comp_route, "_resolve_engine", _fake_resolve)
-        monkeypatch.setattr(comp_route, "_release_engine", _noop_async)
+        monkeypatch.setattr(_chat_mod, "_resolve_engine", _fake_resolve)
+        monkeypatch.setattr(_chat_mod, "_release_engine", _noop_async)
         return TestClient(app, raise_server_exceptions=False)
 
     def test_suffix_rejected_with_400(self, patched_config, monkeypatch):

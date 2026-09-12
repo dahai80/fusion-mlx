@@ -1347,12 +1347,14 @@ class TestR10C2NoReasoningAliasOnChatWire:
         # keys) must be absent.
         import inspect
 
-        import fusion_mlx.api.openai_routes as _routes_mod
+        import fusion_mlx.api.openai.streaming as _routes_mod
         import fusion_mlx.routes_internal.chat as _chat_mod
 
         # The fast-path SSE helper migrated from the (now-shim)
-        # ``routes_internal.chat`` to ``api.openai_routes`` in the
+        # ``routes_internal.chat`` to the OpenAI streaming module in the
         # r10-B refactor. Inspect the canonical module that holds it.
+        # (PR-D4: openai_routes.py split into api/openai/ package —
+        # _stream_chat_generator now lives in ``api.openai.streaming``.)
         route_src = inspect.getsource(_routes_mod)
         _shim_src = inspect.getsource(_chat_mod)
         # R10-C2 invariant — the dup-emission template must be gone

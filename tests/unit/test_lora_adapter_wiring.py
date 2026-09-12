@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import fusion_mlx.api.openai_routes as routes
+import fusion_mlx.api.openai as routes
 from fusion_mlx.api.openai_models import ChatCompletionRequest, CompletionRequest
 
 
@@ -82,8 +82,10 @@ async def test_run_chat_threads_adapters_to_get_engine(
 ) -> None:
     _stub_resolve_model_id(monkeypatch)
     pool = _BoomPool()
-    monkeypatch.setattr(routes, "_pool", pool)
-    monkeypatch.setattr(routes, "_request_router", object())
+    import fusion_mlx.api.openai._common as _common_mod
+
+    monkeypatch.setattr(_common_mod, "_pool", pool)
+    monkeypatch.setattr(_common_mod, "_request_router", object())
 
     req = ChatCompletionRequest(
         model="m", messages=[{"role": "user", "content": "hi"}], adapters="/lora"

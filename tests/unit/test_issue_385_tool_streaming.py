@@ -13,7 +13,7 @@ import json
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from fusion_mlx.api.openai_routes import router as chat_router
+from fusion_mlx.api.openai import router as chat_router
 from fusion_mlx.config import reset_config
 from fusion_mlx.engines.base import GenerationOutput
 
