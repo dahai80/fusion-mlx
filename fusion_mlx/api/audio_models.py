@@ -89,3 +89,17 @@ class AudioProcessRequest(BaseModel):
     """
 
     model: str
+
+
+class AudioConverseResponse(BaseModel):
+    """Response metadata for /v1/audio/converse.
+
+    The endpoint returns raw WAV bytes (audio/wav), same as
+    /v1/audio/speech. This model exists for OpenAPI schema generation
+    and for the optional ``include_metadata`` query param which returns
+    a JSON envelope with the transcript + LLM reply + audio (b64).
+    """
+
+    transcript: str
+    reply: str
+    audio: str | None = None
