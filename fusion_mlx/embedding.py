@@ -8,5 +8,5 @@ logger = logging.getLogger(__name__)
 
 
 def require_mlx_embeddings_or_exit():
-    print("Embedding models are not available in this build", file=sys.stderr)
+    logger.error("Embedding models are not available in this build")
     sys.exit(1)

@@ -747,9 +747,6 @@ class TestTTSVoiceRouting:
         assert kwargs.get("voice") == "Vivian"
         assert "instruct" not in kwargs
 
-    @pytest.mark.xfail(
-        reason="strict=False: voice-routing contract divergence: test wants `instruct` set + `voice` absent, prod sets BOTH to same value. REDESIGN — needs prod/test alignment not harness fix"
-    )
     def test_voicedesign_routes_to_instruct(self, _run_synthesize):
         """Model with only 'instruct' param: value goes to instruct."""
         call = _run_synthesize(["instruct"], voice_value="female, calm, slow")

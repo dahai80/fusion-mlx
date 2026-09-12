@@ -720,11 +720,15 @@ class TestMlxAudioVersionPin:
             len(mlx_audio_specs) == 1
         ), f"Expected exactly one mlx-audio pin, found {mlx_audio_specs}"
         spec = mlx_audio_specs[0]
-        excludes_broken = "<0.4.4" in spec or "==0.4.3" in spec
+        # 0.4.4 broke istftnet.SineGen (broadcast_shapes regression) AND
+        # kitten_tts forward pass. Accept any pin that does not resolve to
+        # 0.4.4: the legacy ``<0.4.4`` / ``==0.4.3``, or ``==0.5.3`` which
+        # fixes both bugs (G-7 #0912 audit).
+        excludes_broken = "<0.4.4" in spec or "==0.4.3" in spec or "==0.5.3" in spec
         assert excludes_broken, (
             f"R11-B-F6 regression: mlx-audio must exclude 0.4.4 to avoid "
             f"the istftnet SineGen broadcast_shapes regression. Accept "
-            f"``<0.4.4`` or ``==0.4.3``. Current pin: {spec!r}"
+            f"``<0.4.4``, ``==0.4.3``, or ``==0.5.3``. Current pin: {spec!r}"
         )
 
 

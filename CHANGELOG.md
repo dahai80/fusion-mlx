@@ -98,6 +98,19 @@
   → 46.86 (4bit target + 4bit draft) tok/s.
 
 ### Fixed
+- **TTS kitten-tts crash (G-7, #0912 audit P1)** — `/v1/audio/speech` against
+  `mlx-community/kitten-tts-nano-0.8` returned 500. Two stacked root causes:
+  (1) fusion-mlx passed the Kokoro default voice `af_heart` to every TTS
+  family; kitten_tts only has `expr-voice-N-*`, so mlx_audio raised
+  `ValueError` in `_prepare_inputs`. `TTSEngine` now introspects the loaded
+  model's `voices`/`voice_aliases` and falls back to the first available
+  voice with a loud warning instead of crashing. (2) `mlx-audio==0.4.4` had a
+  kitten_tts forward-pass `broadcast_shapes` bug (all voices crashed); bumped
+  to `0.5.3` which fixes it. The `[audio]` extra now also pins
+  `phonemizer-fork` (kitten_tts phonemizer), `misaki[en]` (Kokoro text
+  processing, new in 0.5.x), and `espeakng-loader` (misaki/espeak non-English
+  path) — all omitted by mlx-audio's `[tts]` extra. Verified live: Kokoro +
+  kitten-tts both synthesize correctly.
 - **Ollama `/api/chat` + `/api/generate` returned 500 (#0912 audit P0-1)** —
   the `Message` refactor dropped the `SystemMessage`/`UserMessage` aliases that
   `ollama_routes._call_openai_chat` deferred-imports, so every non-streaming
