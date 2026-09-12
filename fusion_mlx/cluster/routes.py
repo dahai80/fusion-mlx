@@ -133,3 +133,40 @@ async def cluster_evict(
         logger.warning("cluster route: evict node %s not found", req.node_id)
         raise HTTPException(status_code=404, detail=f"node not found: {req.node_id}")
     return {"status": "evicted", "node_id": req.node_id}
+
+
+@router.get("/route")
+async def cluster_route_snapshot(
+    _auth: bool = Depends(verify_management_access),
+) -> dict[str, Any]:
+    # PR-D11.1 (L14): weighted router observability. Returns the SWRR
+    # backend set + health counters. When weighted routing is inactive
+    # (no cluster_weights configured), returns inactive=true so operators
+    # know the least-loaded LB — not the weighted router — is selecting.
+    from .router import get_router
+
+    router = get_router()
+    if router is None:
+        return {
+            "active": False,
+            "total": 0,
+            "backends": [],
+            "note": "weighted routing inactive (no cluster_weights configured)",
+        }
+    snaps = await router.snapshot()
+    return {
+        "active": True,
+        "total": len(snaps),
+        "backends": [
+            {
+                "name": s.name,
+                "base_url": s.base_url,
+                "weight": s.weight,
+                "alive": s.alive,
+                "failures": s.failures,
+                "last_success_ts": s.last_success_ts,
+                "last_failure_ts": s.last_failure_ts,
+            }
+            for s in snaps
+        ],
+    }

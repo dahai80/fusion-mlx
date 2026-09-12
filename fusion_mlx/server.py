@@ -2228,6 +2228,18 @@ class Server:
                         ),
                     )
                     logger.info("cluster_lb (#811): activated with %d peer(s)", count)
+                    # PR-D11.1 (L14): weighted round-robin router. Activates
+                    # only when cluster_weights is non-empty. Coexists with
+                    # the least-loaded LB — supplements, does not replace.
+                    from .cluster.router import bootstrap_weighted
+
+                    wcount = await bootstrap_weighted(self.config)
+                    if wcount > 0:
+                        logger.info(
+                            "cluster_router (#D11.1): weighted routing "
+                            "activated with %d backend(s)",
+                            wcount,
+                        )
                 else:
                     logger.warning(
                         "cluster_lb (#811): enabled but no valid peers "
