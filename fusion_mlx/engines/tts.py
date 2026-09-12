@@ -38,6 +38,44 @@ class TTSEngine(BaseNonStreamingEngine):
     def model_name(self) -> str:
         return self._model_name
 
+    @staticmethod
+    def _available_voices(model: Any) -> list[str]:
+        seen: set[str] = set()
+        voices = getattr(model, "voices", None)
+        if isinstance(voices, dict) and voices:
+            seen.update(voices.keys())
+        aliases = getattr(model, "voice_aliases", None)
+        if isinstance(aliases, dict) and aliases:
+            seen.update(aliases.keys())
+            seen.update(aliases.values())
+        return sorted(seen)
+
+    @staticmethod
+    def _resolve_model_voice(model: Any, voice: str | None) -> str | None:
+        # G-7 (#0912 audit): mlx-audio kitten_tts raises ValueError in
+        # _prepare_inputs when the requested voice (e.g. Kokoro "af_heart"
+        # passed by default) is not in the model's voice set. Kokoro exposes
+        # no introspectable voices dict, so it passes through unchanged and
+        # mlx_audio owns the default. For kitten_tts / models that expose a
+        # voices dict or voice_aliases, validate up-front and fall back to
+        # the first available voice with a loud warning instead of a 500.
+        available = TTSEngine._available_voices(model)
+        if not available:
+            return voice
+        if voice is not None and voice in set(available):
+            return voice
+        fallback = available[0]
+        if voice is not None:
+            logger.warning(
+                "TTS voice %r not available for %s (available: %s); "
+                "falling back to %r",
+                voice,
+                type(model).__name__,
+                available,
+                fallback,
+            )
+        return fallback
+
     def supports_native_tts_streaming(self) -> bool:
         if self._model is None:
             return False
@@ -112,12 +150,12 @@ class TTSEngine(BaseNonStreamingEngine):
         def _build_kwargs() -> dict[str, Any]:
             gk: dict[str, Any] = {"text": text, "verbose": False}
             gp = inspect.signature(model.generate).parameters
-            if voice is not None:
-                gk["voice"] = (
-                    voice
-                    if "voice" in gp
-                    else gk.setdefault("instruct", voice) if "instruct" in gp else None
-                )
+            _resolved_voice = TTSEngine._resolve_model_voice(model, voice)
+            if _resolved_voice is not None:
+                if "voice" in gp:
+                    gk["voice"] = _resolved_voice
+                elif "instruct" in gp:
+                    gk["instruct"] = _resolved_voice
             if instructions is not None and "instruct" in gp:
                 gk["instruct"] = instructions
             if speed != 1.0:
@@ -223,12 +261,12 @@ class TTSEngine(BaseNonStreamingEngine):
             gp = inspect.signature(model.generate).parameters
             if "streaming_interval" in gp:
                 gk["streaming_interval"] = streaming_interval
-            if voice is not None:
-                gk["voice"] = (
-                    voice
-                    if "voice" in gp
-                    else gk.setdefault("instruct", voice) if "instruct" in gp else None
-                )
+            _resolved_voice = TTSEngine._resolve_model_voice(model, voice)
+            if _resolved_voice is not None:
+                if "voice" in gp:
+                    gk["voice"] = _resolved_voice
+                elif "instruct" in gp:
+                    gk["instruct"] = _resolved_voice
             if instructions is not None and "instruct" in gp:
                 gk["instruct"] = instructions
             if speed != 1.0:

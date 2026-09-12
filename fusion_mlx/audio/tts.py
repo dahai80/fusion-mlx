@@ -112,6 +112,41 @@ class TTSEngine:
         else:
             return "kokoro"
 
+    @staticmethod
+    def _available_voices(model) -> list[str]:
+        seen: set[str] = set()
+        voices = getattr(model, "voices", None)
+        if isinstance(voices, dict) and voices:
+            seen.update(voices.keys())
+        aliases = getattr(model, "voice_aliases", None)
+        if isinstance(aliases, dict) and aliases:
+            seen.update(aliases.keys())
+            seen.update(aliases.values())
+        return sorted(seen)
+
+    @staticmethod
+    def _resolve_model_voice(model, voice: str | None) -> str | None:
+        # G-7 (#0912 audit): Kokoro's "af_heart" default is invalid for
+        # kitten_tts (voices expr-voice-N-*) and crashes _prepare_inputs.
+        # Validate against the model's voice set, fall back to the first
+        # available voice with a loud warning instead of a 500.
+        available = TTSEngine._available_voices(model)
+        if not available:
+            return voice
+        if voice is not None and voice in set(available):
+            return voice
+        fallback = available[0]
+        if voice is not None:
+            logger.warning(
+                "TTS voice %r not available for %s (available: %s); "
+                "falling back to %r",
+                voice,
+                type(model).__name__,
+                available,
+                fallback,
+            )
+        return fallback
+
     def load(self) -> None:
         if self._loaded:
             return
@@ -147,12 +182,14 @@ class TTSEngine:
             audio_chunks = []
             sample_rate = 24000
 
-            for result in self.model.generate(
-                text=text,
-                voice=voice,
-                speed=speed,
-                lang_code=lang_code,
-            ):
+            _voice = self._resolve_model_voice(self.model, voice)
+            _gen_kwargs: dict = {"text": text, "speed": speed}
+            if _voice is not None:
+                _gen_kwargs["voice"] = _voice
+            # lang_code is Kokoro-specific; mlx_audio models with **kwargs
+            # absorb it harmlessly, others ignore it.
+            _gen_kwargs["lang_code"] = lang_code
+            for result in self.model.generate(**_gen_kwargs):
                 audio_data = result.audio
                 if hasattr(result, "sample_rate"):
                     sample_rate = result.sample_rate
@@ -194,11 +231,11 @@ class TTSEngine:
 
         sample_rate = 24000
 
-        for result in self.model.generate(
-            text=text,
-            voice=voice,
-            speed=speed,
-        ):
+        _voice = self._resolve_model_voice(self.model, voice)
+        _gen_kwargs: dict = {"text": text, "speed": speed}
+        if _voice is not None:
+            _gen_kwargs["voice"] = _voice
+        for result in self.model.generate(**_gen_kwargs):
             audio_data = result.audio
             if hasattr(result, "sample_rate"):
                 sample_rate = result.sample_rate

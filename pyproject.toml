@@ -88,7 +88,18 @@ modelscope = [
     "modelscope>=1.10.0",
 ]
 audio = [
-    "mlx-audio[tts,stt,sts]==0.4.3",
+    # G-7 (#0912 audit): bump 0.4.3 -> 0.5.3. 0.4.4 had a kitten_tts
+    # forward-pass broadcast_shapes bug (all voices crashed); 0.5.3 fixes
+    # it. mlx-audio's [tts] extra omits two optional deps that specific
+    # TTS families need at runtime, causing opaque 500s:
+    #   - phonemizer-fork: kitten_tts _prepare_inputs (espeak-ng binary
+    #     is present but the Python pkg is not in the [tts] extra).
+    #   - misaki[en]: Kokoro text processing (new in 0.5.x; needs num2words
+    #     via the [en] extra).
+    "mlx-audio[tts,stt,sts]==0.5.3",
+    "phonemizer-fork>=3.3.2",
+    "misaki[en]>=0.9.4",
+    "espeakng-loader>=0.2.0",
 ]
 image = [
     # Vendored wheel in packaging/_wheels/; install with --find-links packaging/_wheels
