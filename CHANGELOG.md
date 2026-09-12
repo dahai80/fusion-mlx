@@ -98,6 +98,26 @@
   → 46.86 (4bit target + 4bit draft) tok/s.
 
 ### Fixed
+- **Non-stream reasoning_content always None (G-4, #0912 audit P2)** —
+  `/v1/chat/completions` (non-stream) returned `reasoning_content: null` for
+  engine-separated reasoning (Qwen3 chat-template-injected thinking). The
+  engine's `_apply_reasoning_parser` stripped the thinking trace out of
+  `gen.text` but discarded the extracted reasoning instead of attaching it,
+  so the adapter's generic tag parser then found no tags in the cleaned text
+  and dropped the trace entirely. `GenerationOutput` now carries a
+  `reasoning_content` field populated by the parser; `_gen_to_internal`
+  propagates it and `format_response` surfaces it (falling back to tag-based
+  extraction only when the engine did not separate). Streaming was already
+  wired; this is the non-stream parity fix.
+- **Non-stream chat 500 with unrecognized params** —
+  `/v1/chat/completions` (non-stream) returned 500 with
+  `UnboundLocalError: cannot access local variable 'JSONResponse'` when the
+  request carried top-level params not in the OpenAI spec (e.g.
+  `enable_thinking`, common from Claude Code/Ollama clients) AND the response
+  cache took the MISS path. `JSONResponse` was imported only inside three
+  conditional blocks, so Python treated it as an unbound local at the
+  post-dispatch `isinstance(result, JSONResponse)` line. Fixed with one
+  unconditional import at the top of the route handler.
 - **TTS kitten-tts crash (G-7, #0912 audit P1)** — `/v1/audio/speech` against
   `mlx-community/kitten-tts-nano-0.8` returned 500. Two stacked root causes:
   (1) fusion-mlx passed the Kokoro default voice `af_heart` to every TTS

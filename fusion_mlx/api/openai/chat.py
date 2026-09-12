@@ -464,6 +464,8 @@ async def chat_completions(
     _rate: bool = Depends(check_rate_limit),
 ) -> Any:
     """Handle OpenAI-compatible chat completion requests."""
+    from starlette.responses import JSONResponse
+
     from ..markitdown import is_markitdown_model
 
     if is_markitdown_model(request.model):
@@ -516,7 +518,6 @@ async def chat_completions(
             if cached is not None and _cache_policy != CachePolicy.WRITE_ONLY:
                 _cache_status = "HIT"
                 logger.info("Response cache HIT key=%s", _cache_key[:12])
-                from starlette.responses import JSONResponse
 
                 _hit_headers = {"X-Cache": "HIT"}
                 _ci = getattr(request, "__pydantic_extra__", None) or {}
@@ -529,8 +530,6 @@ async def chat_completions(
                     headers=_hit_headers,
                 )
             if _cache_policy == CachePolicy.ONLY_IF_CACHED:
-                from starlette.responses import JSONResponse
-
                 return JSONResponse(
                     content={
                         "error": {
@@ -576,8 +575,6 @@ async def chat_completions(
                 CachePolicy.NO_STORE,
                 CachePolicy.BYPASS,
             ):
-                from starlette.responses import JSONResponse
-
                 from ...cache.response_cache import CachePolicy, get_response_cache
 
                 cache = get_response_cache()
