@@ -320,6 +320,8 @@ def _init_tiered_cache(self) -> None:
         except Exception as e:
             logger.error(f"Failed to initialize pure-memory prefix cache: {e}")
             self.paged_ssd_cache_manager = None
+        self._activate_tiered_cache_manager()
+        self._activate_rollback_manager()
         return
 
     try:
@@ -378,6 +380,90 @@ def _init_tiered_cache(self) -> None:
     except Exception as e:
         logger.error(f"Failed to initialize paged SSD cache: {e}")
         self.paged_ssd_cache_manager = None
+
+    self._activate_tiered_cache_manager()
+    self._activate_rollback_manager()
+
+
+def _activate_tiered_cache_manager(self) -> None:
+    """D2.1: mount TieredCacheManager into the live cache path.
+
+    Wraps hot (PagedCacheManager) + cold (PagedSSDCacheManager) so the
+    proactive demotion sweep (hot->cold when utilization > 85%) runs in
+    the scheduler tick. Without this, _evict_lru_blocks_locked resets
+    blocks on memory pressure with no SSD save -> evicted data is lost.
+    The tiered coordinator saves-to-SSD BEFORE evicting, making cold
+    recovery possible on a future prefix hit.
+
+    Guarded: maybe_demote has a 2s cooldown + in-progress flag + only
+    fires above demotion_threshold, so the sweep composes existing
+    tested ops (save_block + evict_lru_blocks) without hot-path risk.
+    Env FUSION_MLX_TIERED_CACHE=0 disables (default ON).
+    """
+    import os as _os
+
+    if _os.environ.get("FUSION_MLX_TIERED_CACHE", "1").strip().lower() in (
+        "0",
+        "false",
+        "off",
+    ):
+        logger.info("tiered cache: disabled by FUSION_MLX_TIERED_CACHE=0")
+        self._tiered_cache_manager = None
+        return
+    if self.paged_cache_manager is None:
+        self._tiered_cache_manager = None
+        return
+    try:
+        from ..cache.tiered_cache import TieredCacheManager
+
+        self._tiered_cache_manager = TieredCacheManager(
+            hot=self.paged_cache_manager,
+            cold=self.paged_ssd_cache_manager,
+        )
+        logger.info(
+            "tiered cache: mounted (hot=%s, cold=%s)",
+            type(self.paged_cache_manager).__name__,
+            (
+                type(self.paged_ssd_cache_manager).__name__
+                if self.paged_ssd_cache_manager
+                else "None"
+            ),
+        )
+    except Exception as e:
+        logger.warning("tiered cache: activation failed: %s", e)
+        self._tiered_cache_manager = None
+
+
+def _activate_rollback_manager(self) -> None:
+    """D2.8/G13: register leaf caches for atomic multi-layer rollback.
+
+    Called after tiered cache activation. Registers every eviction-capable
+    leaf (paged hot, paged_ssd cold, block-aware prefix) so a failed
+    composite generation can evict its keys from ALL layers at once — no
+    torn cache. The tiered manager itself is NOT a leaf (it delegates to
+    hot+cold which are already registered).
+    """
+    try:
+        from ..cache.cache_rollback import CacheRollbackManager
+
+        self._rollback_manager = CacheRollbackManager()
+        if self.paged_cache_manager is not None:
+            self._rollback_manager.register_leaf(
+                "paged_hot", self.paged_cache_manager.evict
+            )
+        if self.paged_ssd_cache_manager is not None:
+            self._rollback_manager.register_leaf(
+                "paged_ssd_cold", self.paged_ssd_cache_manager.evict
+            )
+        if self.block_aware_cache is not None:
+            self._rollback_manager.register_leaf("prefix", self.block_aware_cache.evict)
+        logger.info(
+            "cache-rollback: activated (%d leaves registered)",
+            len(self._rollback_manager.leaves()),
+        )
+    except Exception as e:
+        logger.warning("cache-rollback: activation failed: %s", e)
+        self._rollback_manager = None
 
 
 def _check_memory_pressure(self) -> None:
@@ -618,6 +704,13 @@ def get_ssd_cache_stats(self) -> dict[str, Any] | None:
     counters = self._collect_cache_counters()
     if counters:
         stats["cache_rates"] = self._cache_rate_tracker.snapshot_and_get_rates(counters)
+
+    # D2.1: tiered coordinator stats (hot/cold/promote/demote).
+    if self._tiered_cache_manager is not None:
+        try:
+            stats["tiered"] = self._tiered_cache_manager.get_tier_stats()
+        except Exception as e:
+            logger.debug("tiered stats unavailable: %s", e)
 
     return stats if stats else None
 

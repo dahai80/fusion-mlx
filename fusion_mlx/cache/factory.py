@@ -243,12 +243,33 @@ class CacheFactory:
         if paged_cache is not None:
             memory_monitor = CacheFactory.create_memory_monitor(config, paged_cache)
 
+        # D2.1: mount tiered cache coordinator (hot paged_cache -> cold
+        # paged_ssd). Env-gated default ON; None when hot layer absent.
+        tiered_cache = None
+        if paged_cache is not None:
+            import os
+
+            _tiered_on = os.environ.get(
+                "FUSION_MLX_TIERED_CACHE", "1"
+            ).strip().lower() not in ("0", "false", "off")
+            if _tiered_on:
+                try:
+                    tiered_cache = CacheFactory.create_tiered_cache(
+                        hot=paged_cache,
+                        cold=paged_ssd_cache,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "create_full_cache_stack: tiered mount failed: %s", e
+                    )
+                    tiered_cache = None
+
         return {
             "paged_cache": paged_cache,
             "paged_ssd_cache": paged_ssd_cache,
             "prefix_cache": prefix_cache,
             "memory_monitor": memory_monitor,
-            "tiered_cache": None,
+            "tiered_cache": tiered_cache,
         }
 
     @staticmethod

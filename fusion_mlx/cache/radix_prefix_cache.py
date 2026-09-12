@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -94,6 +95,9 @@ class RadixPrefixCache:
         self._tokens_saved = 0
         self._tokens_matched_total = 0
         self._tokens_requested_total = 0
+        # D2.2: windowed lookup-latency samples (seconds) for p50/p99.
+        # Bounded deque so memory stays flat under sustained load.
+        self._lookup_latencies: deque[float] = deque(maxlen=1024)
         # P1-1: all trie mutations (fetch/store/release/fork/clear) and the
         # block-freed callback run from different threads (executor thread
         # vs PagedCacheManager's caller). A threading.Lock serializes index
@@ -176,6 +180,7 @@ class RadixPrefixCache:
     def get_stats_dict(self) -> dict[str, Any]:
         paged_stats = self.paged_cache.get_memory_usage()
         total = self._hits + self._misses
+        p50, p99 = self._lookup_percentiles()
         return {
             "hits": self._hits,
             "misses": self._misses,
@@ -185,8 +190,20 @@ class RadixPrefixCache:
             "tokens_matched_total": self._tokens_matched_total,
             "tokens_requested_total": self._tokens_requested_total,
             "active_requests": len(self._request_tables),
+            "lookup_p50_seconds": p50,
+            "lookup_p99_seconds": p99,
             **paged_stats,
         }
+
+    def _lookup_percentiles(self) -> tuple[float, float]:
+        """D2.2: p50/p99 of windowed lookup latency (seconds)."""
+        n = len(self._lookup_latencies)
+        if n == 0:
+            return 0.0, 0.0
+        s = sorted(self._lookup_latencies)
+        p50 = s[n // 2]
+        p99 = s[min(n - 1, int(n * 0.99))]
+        return round(p50, 6), round(p99, 6)
 
     def clear(self) -> int:
         with self._cache_lock:
@@ -200,6 +217,7 @@ class RadixPrefixCache:
         self._tokens_saved = 0
         self._tokens_matched_total = 0
         self._tokens_requested_total = 0
+        self._lookup_latencies.clear()
         return cleared
 
     def reset_stats(self) -> None:
@@ -208,6 +226,7 @@ class RadixPrefixCache:
         self._tokens_saved = 0
         self._tokens_matched_total = 0
         self._tokens_requested_total = 0
+        self._lookup_latencies.clear()
 
     def __len__(self) -> int:
         return len(self._request_tables)
@@ -225,6 +244,7 @@ class RadixPrefixCache:
         if not tokens:
             return None, tokens
 
+        _t0 = time.perf_counter()
         # P1-1: hold the index lock across the trie walk + refcount/entry
         # mutation so the block-freed callback cannot detach a node we are
         # mid-descent on. No delegation to _kv_cache happens here, so there
@@ -278,10 +298,12 @@ class RadixPrefixCache:
                     len(matched_block_ids),
                     len(remaining),
                 )
+                self._lookup_latencies.append(time.perf_counter() - _t0)
                 return block_table, remaining
 
             self._misses += 1
             logger.debug("radix cache miss req=%s tokens=%d", request_id, len(tokens))
+            self._lookup_latencies.append(time.perf_counter() - _t0)
             return None, tokens
 
     # ------------------------------------------------------------------ store
@@ -437,6 +459,39 @@ class RadixPrefixCache:
         return new_table
 
     # ------------------------------------------------------------------ stats
+
+    def rebuild_from_keys(self) -> int:
+        """D2.2: rebuild the block_id -> node index from allocated blocks.
+
+        Read-path consistency repair: after block churn (crash recovery,
+        concurrent invalidation races), _node_index may hold stale
+        block_ids that no longer exist in paged_cache.allocated_blocks,
+        or miss blocks that do. This scans allocated_blocks and prunes
+        stale _node_index entries (block_id absent or block_hash cleared).
+
+        Returns the number of stale entries pruned. Does NOT reconstruct
+        trie position from hash alone (token-block keys are not derivable
+        from a block hash) — that requires a full SSD key replay, out of
+        scope here. The trie structure itself is preserved; only the
+        reverse index is reconciled.
+        """
+        pruned = 0
+        with self._cache_lock:
+            allocated = self.paged_cache.allocated_blocks
+            stale_ids = []
+            for block_id, node in list(self._node_index.items()):
+                block = allocated.get(block_id)
+                if block is None or block.block_hash is None:
+                    node.block_id = None
+                    stale_ids.append(block_id)
+            for bid in stale_ids:
+                self._node_index.pop(bid, None)
+                pruned += 1
+        if pruned:
+            logger.info(
+                "radix rebuild_from_keys: pruned %d stale index entries", pruned
+            )
+        return pruned
 
     def get_stats(self) -> dict[str, int]:
         return {

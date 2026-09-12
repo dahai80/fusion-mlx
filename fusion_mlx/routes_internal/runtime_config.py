@@ -52,6 +52,7 @@ async def runtime_config() -> dict[str, Any]:
             "max_num_seqs": _safe_get(sched, "max_num_seqs"),
             "max_num_batched_tokens": _safe_get(sched, "max_num_batched_tokens"),
             "max_concurrent_requests": _safe_get(sched, "max_concurrent_requests"),
+            "max_waiting": _safe_get(sched, "max_waiting"),
             "policy": _safe_get(sched, "policy"),
             "spec_decode": _safe_get(sched, "spec_decode"),
         },
@@ -60,6 +61,8 @@ async def runtime_config() -> dict[str, Any]:
             "gpu_memory_utilization": _safe_get(mem, "gpu_memory_utilization"),
             "max_cpu_memory_mb": _safe_get(mem, "max_cpu_memory_mb"),
         },
+        # D2.4/G6: chip tier (lite/standard/full) for profile auto-tuning.
+        "chip_tier": _detect_chip_tier_safe(),
         "cache": {
             "prefix_cache_max_blocks": _safe_get(
                 _safe_get(cfg, "cache"), "prefix_cache_max_blocks"
@@ -67,6 +70,14 @@ async def runtime_config() -> dict[str, Any]:
             "response_cache_enabled": _safe_get(
                 _safe_get(cfg, "response_cache"), "enabled"
             ),
+            # D2.1: tiered cache coordinator (hot->cold demotion). ON by
+            # default; FUSION_MLX_TIERED_CACHE=0 disables.
+            "tiered_cache_enabled": os.environ.get("FUSION_MLX_TIERED_CACHE", "1")
+            .strip()
+            .lower()
+            not in ("0", "false", "off"),
+            # D2.8/G13: multi-cache atomic rollback (leaf count; 0 = off).
+            "rollback_leaves": _rollback_leaf_count(),
         },
         "env_overrides": {
             "FUSION_MAX_CONCURRENT_REQUESTS": os.environ.get(
@@ -75,6 +86,7 @@ async def runtime_config() -> dict[str, Any]:
             "FUSION_MLX_KV_CHECKPOINT_INTERVAL": os.environ.get(
                 "FUSION_MLX_KV_CHECKPOINT_INTERVAL"
             ),
+            "FUSION_MLX_TIERED_CACHE": os.environ.get("FUSION_MLX_TIERED_CACHE"),
             "HF_MIRROR": os.environ.get("HF_MIRROR"),
         },
     }
@@ -88,3 +100,35 @@ async def runtime_config() -> dict[str, Any]:
     except Exception:
         logger.debug("semaphore state unavailable", exc_info=True)
     return snapshot
+
+
+def _detect_chip_tier_safe() -> str:
+    # D2.4/G6: chip tier detection — never break runtime-config on
+    # non-macOS or detection failure (returns "standard" default).
+    try:
+        from ..hardware import detect_chip_tier
+
+        return detect_chip_tier()
+    except Exception:
+        logger.debug("chip_tier detection unavailable", exc_info=True)
+        return "standard"
+
+
+def _rollback_leaf_count() -> int:
+    # D2.8/G13: count registered rollback leaf caches from the live
+    # engine pool scheduler. 0 = rollback inactive or no engines.
+    try:
+        from ..pool.engine_pool import get_engine_pool
+
+        pool = get_engine_pool()
+        total = 0
+        for eng in pool._engines.values() if hasattr(pool, "_engines") else []:
+            sched = _safe_get(eng, "_scheduler") or _safe_get(eng, "scheduler")
+            rb = _safe_get(sched, "_rollback_manager")
+            leaves = _safe_get(rb, "leaves")
+            if callable(leaves):
+                total += len(leaves())
+        return total
+    except Exception:
+        logger.debug("rollback leaf count unavailable", exc_info=True)
+        return 0

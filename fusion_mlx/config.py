@@ -100,6 +100,11 @@ class SchedulerConfig:
 
     # Admission control
     max_concurrent_requests: int = 256
+    # D2.3/G7: waiting-queue depth cap. Requests beyond this are rejected
+    # with 503 + Retry-After instead of queuing unbounded (oMLX blueprint
+    # scheduler.py:5853). Complements max_concurrent_requests (which caps
+    # in-flight); this caps the backlog. Default: 4x max_num_seqs, min 32.
+    max_waiting: int = 0
 
     # R15-P1 additions
     prefix_cache_index: str = "radix"
@@ -168,6 +173,13 @@ class SchedulerConfig:
             self.gpu_memory_utilization = 0.90
         if self.max_num_batched_tokens < self.max_num_seqs:
             self.max_num_batched_tokens = self.max_num_seqs
+        # D2.3/G7: default max_waiting = 4x max_num_seqs (min 32) when unset.
+        if self.max_waiting <= 0:
+            self.max_waiting = max(self.max_num_seqs * 4, 32)
+            logger.info(
+                "max_waiting defaulted to %d (4x max_num_seqs, min 32)",
+                self.max_waiting,
+            )
         if self.cache_memory_percent < 0 or self.cache_memory_percent > 1:
             self.cache_memory_percent = 0.20
         if self.suffix_min_confidence < 0 or self.suffix_min_confidence > 1:

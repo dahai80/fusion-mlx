@@ -1848,6 +1848,11 @@ Examples:
     except ModuleNotFoundError:
         pass
 
+    # D2.7/G12: ppl — perplexity on oq calibration corpus, quant-cost label.
+    from fusion_mlx.cli_ppl import add_ppl_parser
+
+    add_ppl_parser(subparsers)
+
     # Shell tab completion via argcomplete. Must fire before parse_args:
     # when the shell completion handler invokes us with the
     # ``_ARGCOMPLETE`` env var set, this function short-circuits before

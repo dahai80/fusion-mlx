@@ -48,7 +48,10 @@ def add_request(self, request: Request) -> None:
     # already admitted to the active set still consumes KV memory, so capping
     # only `waiting` would let total in-flight grow unbounded while the
     # waiting queue stays small (P3-2 memory-flood backpressure gap).
-    max_inflight = max(self.config.max_num_seqs * 4, 32)
+    # D2.3/G7: max_inflight is now the configurable max_waiting field
+    # (defaults to max(max_num_seqs*4, 32) — same formula as before, but
+    # operator-tunable instead of hardcoded).
+    max_inflight = self.config.max_waiting
     # `prefilling` is lazily initialized (sched_trim), not set in __init__,
     # so getattr with an empty-deque default keeps add_request safe on a fresh
     # scheduler that has never run a step.

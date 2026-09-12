@@ -97,20 +97,31 @@ Env: `FUSION_SESSION_TAIL_CACHE=1` (default OFF until E2E validated).
 
 **Benchmark** (Qwen3.6-27B, Apple M2 Ultra 137GB):
 
-| Quantization | Model Size | bpw | Decode Speed | vs mxfp8 | vs mixed_3_4 |
-|---|---|---|---|---|---|
-| mxfp8 | 26 GB | 8.0 | 18.5 tok/s | baseline | - |
-| mxfp4 | 13 GB | 4.0 | 32.3 tok/s | **+75%** | - |
-| mixed_4_6 | 15 GB | 4.85 | 29.0 tok/s | **+57%** | - |
-| mixed_3_4 | 12 GB | 3.68 | 36.2 tok/s | **+96%** | baseline |
-| mixed_2_6 | 10 GB | 3.25 | 39.3 tok/s | **+112%** | +9% |
-| mixed_2_4 | 9.3 GB | 2.95 | 42.8 tok/s | **+131%** | +18% |
-| quant2 | 8.5 GB | 2.72 | 45.1 tok/s | **+144%** | +25% |
-| quant2-g128 | 7.8 GB | 2.46 | 48.2 tok/s | **+161%** | +33% |
-| quant2-all | 7.5 GB | 2.37 | 48.5 tok/s | **+162%** | **+34%** |
-| quant2-flat | 7.1 GB | 2.25 | 49.4 tok/s | **+167%** | +36%* |
+| Quantization | Model Size | bpw | Decode Speed | vs mxfp8 | vs mixed_3_4 | PPL cost |
+|---|---|---|---|---|---|---|
+| mxfp8 | 26 GB | 8.0 | 18.5 tok/s | baseline | - | baseline |
+| mxfp4 | 13 GB | 4.0 | 32.3 tok/s | **+75%** | - | — |
+| mixed_4_6 | 15 GB | 4.85 | 29.0 tok/s | **+57%** | - | — |
+| mixed_3_4 | 12 GB | 3.68 | 36.2 tok/s | **+96%** | baseline | — |
+| mixed_2_6 | 10 GB | 3.25 | 39.3 tok/s | **+112%** | +9% | — |
+| mixed_2_4 | 9.3 GB | 2.95 | 42.8 tok/s | **+131%** | +18% | — |
+| quant2 | 8.5 GB | 2.72 | 45.1 tok/s | **+144%** | +25% | — |
+| quant2-g128 | 7.8 GB | 2.46 | 48.2 tok/s | **+161%** | +33% | — |
+| quant2-all | 7.5 GB | 2.37 | 48.5 tok/s | **+162%** | **+34%** | — |
+| quant2-flat | 7.1 GB | 2.25 | 49.4 tok/s | **+167%** | +36%* | — |
 
 *\*quant2-flat: max speed but 2-bit embeddings degrade quality. Use quant2-all for best quality/speed tradeoff.*
+
+**PPL cost** — perplexity delta vs the mxfp8 baseline measures the quality tax
+of each quant mode. Fill the `—` cells with real runs:
+
+```bash
+fusion-mlx ppl <model-alias> --quant <mode>            # e.g. --quant mixed_2_4
+```
+
+Outputs `overall_ppl` + per-category (code/en/zh/ja/ko/tool_calling/reasoning)
+NLL on the offline `oq_calibration_data.json` corpus. Lower = better. A 4-bit
+mode should show measurably higher ppl than its bf16/mxfp8 parent.
 
 Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantization recipes, mixed-bit quantization (bandwidth reduction), greedy decode fast path (skip logsumexp for argmax), fused QKV/gate projections, fused decode sampler, async_eval double-buffering, GatedDeltaNet linear attention fast path, StreamingJSONEncoder, B=1 fast path.
 

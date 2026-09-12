@@ -65,12 +65,18 @@ _PRESET_DISABLED: dict[str, frozenset[str]] = {
     "lite": _LITE_DISABLED,
     "standard": _STANDARD_DISABLED,
     "full": _FULL_DISABLED,
+    # D2.5: turbo = full modalities + aggressive cache/spec/quant params.
+    # is_turbo flag signals the serve path to default-enable DFlash2 +
+    # radix prefix cache + KV turboquant. No yaml double-track — the
+    # profile name drives param composition via ServerProfile.is_turbo.
+    "turbo": _FULL_DISABLED,
 }
 
 _PRESET_SPEC_DEFAULT: dict[str, bool] = {
     "lite": False,
     "standard": True,
     "full": True,
+    "turbo": True,
 }
 
 
@@ -79,6 +85,13 @@ class ServerProfile:
     name: str = "standard"
     disabled: set[str] = field(default_factory=set)
     api_routes: set[str] | None = None
+
+    @property
+    def is_turbo(self) -> bool:
+        # D2.5: turbo profile = aggressive cache (radix) + spec (DFlash2)
+        # + KV quant (turboquant) defaults. Serve path reads this to
+        # compose the param layer above the base profile.
+        return self.name == "turbo"
 
     def engine_allowed(self, modality: str) -> bool:
         if modality == "llm":
@@ -96,7 +109,8 @@ class ServerProfile:
         return (
             f"profile={self.name} enabled_modalities=[{','.join(enabled)}] "
             f"disabled=[{','.join(sorted(self.disabled))}] "
-            f"spec_decode_default={self.spec_decode_default()}"
+            f"spec_decode_default={self.spec_decode_default()} "
+            f"is_turbo={self.is_turbo}"
         )
 
 
