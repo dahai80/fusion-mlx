@@ -31,7 +31,7 @@ def test_helper_exports_exist():
 
 
 def test_chat_lane_wires_injection():
-    from fusion_mlx.api import openai_routes
+    from fusion_mlx.api.openai import chat as openai_routes
 
     src = _source(openai_routes)
     assert (

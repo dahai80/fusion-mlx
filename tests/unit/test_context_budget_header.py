@@ -178,7 +178,7 @@ class TestContextBudgetRouteIntegration:
         return TestClient(app)
 
     def test_non_streaming_response_has_context_budget_header(self, client):
-        with patch("fusion_mlx.api.openai_routes._resolve_engine") as mock_resolve:
+        with patch("fusion_mlx.api.openai.chat._resolve_engine") as mock_resolve:
             mock_engine = MagicMock()
             mock_engine.is_mllm = False
             mock_engine._model = _StubModel(
@@ -204,7 +204,7 @@ class TestContextBudgetRouteIntegration:
             mock_resolve.return_value = mock_engine
 
             with patch.object(mock_engine, "chat", return_value=mock_gen):
-                with patch("fusion_mlx.api.openai_routes._release_engine"):
+                with patch("fusion_mlx.api.openai.chat._release_engine"):
                     resp = client.post(
                         "/v1/chat/completions",
                         json={

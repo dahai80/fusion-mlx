@@ -2,7 +2,7 @@
 
 The original ``routes_internal/chat.py`` was deleted in f4e2c05.
 Tests still import from this path. This shim re-exports ``router``
-from the current ``api.openai_routes`` and restores the deleted
+from the current ``api.openai`` and restores the deleted
 helper functions that tests depend on.
 """
 
@@ -11,7 +11,7 @@ import logging
 import re
 import uuid
 
-from ..api.openai_routes import router  # noqa: F401
+from ..api.openai import router  # noqa: F401
 from ..service.helpers import (
     _parse_tool_calls_with_parser,  # noqa: F401
     _resolve_enable_thinking,  # noqa: F401
@@ -259,5 +259,5 @@ async def _create_chat_completion_impl(*args, **kwargs):
     """Compatibility stub - tests monkeypatch this at runtime."""
     raise NotImplementedError(
         "_create_chat_completion_impl was removed; "
-        "use fusion_mlx.api.openai_routes directly"
+        "use fusion_mlx.api.openai directly"
     )

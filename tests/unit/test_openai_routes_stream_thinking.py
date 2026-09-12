@@ -18,8 +18,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from fusion_mlx.api.openai_routes import router as openai_router
-from fusion_mlx.api.openai_routes import set_openai_context
+from fusion_mlx.api.openai import router as openai_router
+from fusion_mlx.api.openai import set_openai_context
 from fusion_mlx.api.thinking import _CLOSE_TAG, _OPEN_TAG
 from fusion_mlx.engine.base import GenerationOutput
 

@@ -193,7 +193,7 @@ def test_no_api_key_keeps_dev_path_anonymous():
 PROTECTED_ROUTER_MODULES = (
     "fusion_mlx.api.anthropic_routes",
     "fusion_mlx.api.audio_routes",
-    "fusion_mlx.api.openai_routes",
+    "fusion_mlx.api.openai",
     "fusion_mlx.api.embeddings_routes",
     "fusion_mlx.api.mcp_routes",
     "fusion_mlx.routes_internal.models",

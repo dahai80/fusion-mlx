@@ -43,7 +43,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from fusion_mlx.api.openai_routes import _compile_grammar_for_request
+from fusion_mlx.api.openai import _compile_grammar_for_request
 from fusion_mlx.utils.image import extract_images_from_messages, load_image
 
 

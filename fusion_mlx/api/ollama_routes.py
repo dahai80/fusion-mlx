@@ -170,7 +170,7 @@ async def _call_openai_chat(
         SystemMessage,
         UserMessage,
     )
-    from .openai_routes import (
+    from .openai import (
         _resolve_engine,
         _run_chat,
         _stream_chat_generator,

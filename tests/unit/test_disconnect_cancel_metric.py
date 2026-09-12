@@ -110,7 +110,7 @@ def test_streaming_cancel_tick_is_wired_in_cancellederror_handler():
     import ast
     from pathlib import Path
 
-    src = Path("fusion_mlx/api/openai_routes.py").read_text()
+    src = Path("fusion_mlx/api/openai/streaming.py").read_text()
     tree = ast.parse(src)
     wired = False
     for node in ast.walk(tree):

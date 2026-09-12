@@ -35,7 +35,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from fusion_mlx.api.openai_routes import router as completions_router
+from fusion_mlx.api.openai import router as completions_router
 from fusion_mlx.config import reset_config
 from fusion_mlx.engine.base import GenerationOutput
 from fusion_mlx.middleware.exception_handlers import install_exception_handlers

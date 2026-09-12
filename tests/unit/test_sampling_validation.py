@@ -395,9 +395,9 @@ def _stub_chat_impl(monkeypatch) -> dict:
             },
         }
 
-    from fusion_mlx.api import openai_routes
+    from fusion_mlx.api.openai import chat as _chat_mod
 
-    monkeypatch.setattr(openai_routes, "_run_chat", _impl, raising=True)
+    monkeypatch.setattr(_chat_mod, "_run_chat", _impl, raising=True)
     return captured
 
 

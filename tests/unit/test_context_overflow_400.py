@@ -189,7 +189,7 @@ def test_completions_rejects_over_context_window():
     """``/v1/completions`` (raw-prompt API) must enforce the same
     cap. The helper here is ``enforce_context_length_for_prompt``
     — no chat template applied."""
-    from fusion_mlx.api.openai_routes import router as completions_router
+    from fusion_mlx.api.openai import router as completions_router
 
     client = _make_app([completions_router])
 

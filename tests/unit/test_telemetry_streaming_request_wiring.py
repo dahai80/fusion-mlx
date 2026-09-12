@@ -80,7 +80,8 @@ def telemetry_env(monkeypatch, tmp_path):
 
 
 def _patch_routes(monkeypatch, chunks):
-    import fusion_mlx.api.openai_routes as routes
+    import fusion_mlx.api.openai.chat as routes
+    import fusion_mlx.api.openai.streaming as streaming
 
     _stub_server_module(monkeypatch)
     monkeypatch.setattr(routes, "_inject_web_search", lambda req: _async_none())
@@ -108,12 +109,16 @@ def _patch_routes(monkeypatch, chunks):
             stop=None,
         ),
     )
-    monkeypatch.setattr(routes, "_resolve_streaming_reasoning_parser", lambda m: None)
-    monkeypatch.setattr(routes, "_resolve_streaming_tool_parser", lambda e, m: None)
-    monkeypatch.setattr(routes, "_compile_grammar_for_request", lambda e, r: None)
+    monkeypatch.setattr(
+        streaming, "_resolve_streaming_reasoning_parser", lambda m: None
+    )
+    monkeypatch.setattr(streaming, "_resolve_streaming_tool_parser", lambda e, m: None)
+    monkeypatch.setattr(streaming, "_compile_grammar_for_request", lambda e, r: None)
     monkeypatch.setattr(routes, "record_chat_session", lambda *a, **kw: None)
     monkeypatch.setattr(routes, "record_llm_metrics", lambda *a, **kw: None)
-    monkeypatch.setattr(routes, "record_llm_disconnect_cancel", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        streaming, "record_llm_disconnect_cancel", lambda *a, **kw: None
+    )
     monkeypatch.setattr(routes, "is_claude_code_request", lambda h: False)
     monkeypatch.setattr(
         routes,
@@ -129,16 +134,16 @@ def _patch_routes(monkeypatch, chunks):
         helpers, "compute_prompt_tokens_for_messages", lambda e, m, **kw: 5
     )
     engine = _FakeEngine(chunks)
-    return routes, engine
+    return routes, streaming, engine
 
 
 async def _async_none():
     return None
 
 
-async def _drive(routes, engine, req, headers):
+async def _drive(streaming, engine, req, headers):
     chunks_out: list[str] = []
-    async for piece in routes._stream_chat_generator(
+    async for piece in streaming._stream_chat_generator(
         req,
         engine,
         "test-model",
@@ -171,13 +176,13 @@ def test_streaming_emit_request_and_activation_when_consent_on(
         _FakeStreamGen(new_text="hello ", completion_tokens=3, prompt_tokens=10),
         _FakeStreamGen(new_text="world", completion_tokens=5, prompt_tokens=10),
     ]
-    routes, engine = _patch_routes(monkeypatch, chunks)
+    routes, streaming, engine = _patch_routes(monkeypatch, chunks)
     req = _make_request()
 
     import asyncio
 
     out = asyncio.new_event_loop().run_until_complete(
-        _drive(routes, engine, req, {"user-agent": "test-agent/1.0"})
+        _drive(streaming, engine, req, {"user-agent": "test-agent/1.0"})
     )
     asyncio.set_event_loop(asyncio.new_event_loop())
 
@@ -217,13 +222,13 @@ def test_streaming_no_emit_when_consent_off(telemetry_env, monkeypatch):
     chunks = [
         _FakeStreamGen(new_text="hello", completion_tokens=5, prompt_tokens=10),
     ]
-    routes, engine = _patch_routes(monkeypatch, chunks)
+    routes, streaming, engine = _patch_routes(monkeypatch, chunks)
     req = _make_request()
 
     import asyncio
 
     out = asyncio.new_event_loop().run_until_complete(
-        _drive(routes, engine, req, {"user-agent": "test-agent/1.0"})
+        _drive(streaming, engine, req, {"user-agent": "test-agent/1.0"})
     )
     asyncio.set_event_loop(asyncio.new_event_loop())
 
@@ -246,13 +251,13 @@ def test_streaming_telemetry_failure_does_not_break_stream(telemetry_env, monkey
         _FakeStreamGen(new_text="hello ", completion_tokens=3, prompt_tokens=10),
         _FakeStreamGen(new_text="world", completion_tokens=5, prompt_tokens=10),
     ]
-    routes, engine = _patch_routes(monkeypatch, chunks)
+    routes, streaming, engine = _patch_routes(monkeypatch, chunks)
     req = _make_request()
 
     import asyncio
 
     out = asyncio.new_event_loop().run_until_complete(
-        _drive(routes, engine, req, {"user-agent": "test-agent/1.0"})
+        _drive(streaming, engine, req, {"user-agent": "test-agent/1.0"})
     )
     asyncio.set_event_loop(asyncio.new_event_loop())
 

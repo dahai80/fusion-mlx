@@ -786,11 +786,11 @@ class TestLaneInjectionParity:
         # Codex r4 BLOCKING: walk the route's AST and assert a real
         # ``Call`` node to the helper exists. A dead ``import`` no
         # longer satisfies this — only a live call site counts.
-        from fusion_mlx.api import openai_routes as chat_route
+        from fusion_mlx.api.openai import chat as chat_route
 
         calls = self._find_helper_calls(chat_route)
         assert len(calls) >= 1, (
-            "api/openai_routes.py must contain at least one Call node to"
+            "api/openai/chat.py must contain at least one Call node to"
             " the UI-TARS sysprompt injection helper — dogfood C-05"
         )
 
@@ -809,10 +809,10 @@ class TestLaneInjectionParity:
         # wrapper — not just that those tokens appear anywhere in the
         # source. AST-level check over the actual ``Call`` node's
         # keyword arguments.
-        from fusion_mlx.api import openai_routes as chat_route
+        from fusion_mlx.api.openai import chat as chat_route
 
         calls = self._find_helper_calls(chat_route)
-        assert calls, "api/openai_routes.py must call the helper"
+        assert calls, "api/openai/chat.py must call the helper"
         call = calls[0]
         model_expr = self._call_kwarg_value_source(call, "model_name")
         tc_expr = self._call_kwarg_value_source(call, "tool_choice")

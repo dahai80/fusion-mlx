@@ -73,7 +73,8 @@ def telemetry_env(monkeypatch, tmp_path):
 
 
 def _patch_routes(monkeypatch, gen):
-    import fusion_mlx.api.openai_routes as routes
+    import fusion_mlx.api.openai._common as _common_mod
+    import fusion_mlx.api.openai.chat as routes
 
     _stub_server_module(monkeypatch)
     engine = _FakeEngine(gen)
@@ -83,8 +84,8 @@ def _patch_routes(monkeypatch, gen):
     monkeypatch.setattr(routes, "_release_engine", lambda *a, **kw: _async_return(None))
     monkeypatch.setattr(routes, "record_chat_session", lambda *a, **kw: None)
     monkeypatch.setattr(routes, "record_llm_metrics", lambda *a, **kw: None)
-    monkeypatch.setattr(routes, "_pool", None)
-    monkeypatch.setattr(routes, "_request_router", object())
+    monkeypatch.setattr(_common_mod, "_pool", None)
+    monkeypatch.setattr(_common_mod, "_request_router", object())
     return routes
 
 
