@@ -744,19 +744,42 @@ def resolve_vocab_size(model) -> int | None:
         return None
     config = getattr(model, "config", None)
     if config is not None:
-        for attr in ("vocab_size", "text_config"):
-            vs = getattr(config, attr, None)
+        # Dict config (e.g. raw HF config.json loaded as dict).
+        if isinstance(config, dict):
+            vs = config.get("vocab_size")
             if isinstance(vs, int):
                 return vs
-            if isinstance(vs, dict) and "vocab_size" in vs:
-                return vs["vocab_size"]
-            text_cfg = getattr(config, "text_config", None)
-            if text_cfg is not None:
-                vs2 = getattr(text_cfg, "vocab_size", None)
+            text_cfg = config.get("text_config")
+            if isinstance(text_cfg, dict):
+                vs2 = text_cfg.get("vocab_size")
                 if isinstance(vs2, int):
                     return vs2
+        else:
+            for attr in ("vocab_size", "text_config"):
+                vs = getattr(config, attr, None)
+                if isinstance(vs, int):
+                    return vs
+                if isinstance(vs, dict) and "vocab_size" in vs:
+                    return vs["vocab_size"]
+                text_cfg = getattr(config, "text_config", None)
+                if text_cfg is not None:
+                    vs2 = getattr(text_cfg, "vocab_size", None)
+                    if isinstance(vs2, int):
+                        return vs2
     for attr in ("vocab_size",):
         vs = getattr(model, attr, None)
+        if isinstance(vs, int):
+            return vs
+    # mlx-lm Model exposes ModelArgs via ``.args`` (no ``.config`` attr in
+    # recent mlx-lm versions). The engine already reads ``model.args``
+    # for model_type (engines/batched.py:188); mirror that here so
+    # grammar/llguidance + scheduler GrammarConstraintProcessor can
+    # resolve vocab_size (G-5 #0912 audit: grammar compiled but
+    # constraint skipped because vocab_size was None → unconstrained
+    # free-text output on strict json_schema requests).
+    args = getattr(model, "args", None)
+    if args is not None:
+        vs = getattr(args, "vocab_size", None)
         if isinstance(vs, int):
             return vs
     return None
