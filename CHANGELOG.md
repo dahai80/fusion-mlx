@@ -98,6 +98,16 @@
   → 46.86 (4bit target + 4bit draft) tok/s.
 
 ### Fixed
+- **API key three-source divergence (G-8/T-2, #0912 audit P0-3)** — the
+  admin layer (`global_settings.auth.api_key`), module global
+  (`admin/auth._api_key`), and config layer (`get_config().api_key`) could
+  drift: the admin initial-setup route mutated the admin layer without
+  syncing the other two, so same-machine instances recognized different
+  keys → 401 with no hint about the effective key source. Fixed:
+  `_get_configured_api_key` treats config as source of truth (matches boot
+  priority CLI > env > settings.json); if admin layer disagrees, logs
+  ERROR (fail-visible) and re-aligns admin to config. The admin
+  initial-setup route now syncs all three sources on key change.
 - **Strict json_schema not enforced (G-5, #0912 audit P1)** —
   `response_format: {type: json_schema, strict: true}` returned free text
   with 200 OK instead of schema-conformant JSON. Root cause:
