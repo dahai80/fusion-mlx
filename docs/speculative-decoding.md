@@ -319,6 +319,23 @@ remain usable from the admin panel, tests, and per-model settings.
 - **DFlash/DSpark draft loads cost memory.** Budget for the draft model in
   addition to the target; on memory-constrained machines prefer
   SuffixDecoding (drafter-free) or MTP (uses the target's own heads).
+- **DFlash2 temp=0 output can diverge from non-spec greedy (one flip, not
+  token loss).** A/B (2026-09-13, Qwen3.8-27B-4bit, temp=0): outputs match
+  byte-for-byte up to the first divergence, then split into two internally
+  fluent greedy chains. Root cause is numerical, not accounting: verify
+  feeds the draft block `[D1..DK]` as one batched forward while the regular
+  path steps one token at a time — chunked linear-attention recurrence and
+  different GEMM shapes round differently, so argmax can flip at near-ties.
+  Verified NOT emission loss: `StreamingDetokenizer.last_segment` is
+  documented as "text since the last access" (cumulative, offset-tracked),
+  so `_emit_spec_tokens`'s add-K-then-read-once pattern does not drop
+  segments; verify bonus indexing (`resample_idx = n_accepted - 1`) and the
+  hybrid snapshot/trim rollback were re-audited and are consistent. There is
+  no code fix that removes this divergence without sequential per-token
+  verify (which would eliminate the speedup). Practical guidance: at
+  temp=0 treat spec output as a different-but-valid greedy chain; do not
+  use spec decode when bit-exact reproducibility vs the plain path is
+  required.
 
 ---
 
