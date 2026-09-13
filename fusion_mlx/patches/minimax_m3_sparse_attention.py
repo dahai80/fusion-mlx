@@ -210,3 +210,13 @@ def apply_minimax_m3_sparse_attention_patch() -> bool:
 
 
 __all__ = ["apply_minimax_m3_sparse_attention_patch", "_storage_q_positions"]
+
+
+from .registry import register as _reg
+
+_reg(
+    "minimax_m3_sparse_attention_leftpad",
+    "minimax_m3_vl",
+    "MiniMax M3 sparse attention left-padding (mlx-vlm upstream bug, not yet PR'd)",
+    lambda model, config: apply_minimax_m3_sparse_attention_patch(),
+)

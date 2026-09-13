@@ -63,3 +63,13 @@ def apply_mlx_vlm_diffusion_patch() -> bool:
 
 def is_applied() -> bool:
     return _APPLIED
+
+
+from .registry import register as _reg
+
+_reg(
+    "mlx_vlm_diffusion_soft_embedding_fix",
+    "vlm_diffusion",
+    "mlx-vlm diffusion soft_embedding weight patch (upstream helper omission)",
+    lambda model, config: apply_mlx_vlm_diffusion_patch(),
+)

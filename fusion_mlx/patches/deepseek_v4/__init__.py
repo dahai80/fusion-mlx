@@ -193,4 +193,14 @@ def is_applied() -> bool:
     return _APPLIED
 
 
+from ..registry import register as _reg
+
+_reg(
+    "deepseek_v4_mlxlm_pr1192",
+    "deepseek_v4",
+    "DeepSeek V4 model+cache+tokenizer (mlx-lm PR 1192, not in pinned v0.31.3)",
+    lambda model, config: apply_deepseek_v4_patch(),
+    upstream_issue="https://github.com/ml-explore/mlx-lm/pull/1192",
+)
+
 __all__ = ["apply_deepseek_v4_patch", "is_applied", "PR_HEAD_SHA", "PR_URL"]

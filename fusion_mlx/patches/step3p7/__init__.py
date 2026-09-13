@@ -75,4 +75,14 @@ def is_applied() -> bool:
     return _APPLIED
 
 
+from ..registry import register as _reg
+
+_reg(
+    "step3p7_mlxlm_pr1325",
+    "step3p7",
+    "Step 3.7 text wrapper over Step 3.5 LM (mlx-lm PR 1325, not in pinned pkg)",
+    lambda model, config: apply_step3p7_patch(),
+    upstream_issue="https://github.com/ml-explore/mlx-lm/pull/1325",
+)
+
 __all__ = ["apply_step3p7_patch", "is_applied", "PR_HEAD_SHA", "PR_URL"]

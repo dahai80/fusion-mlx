@@ -168,3 +168,14 @@ def apply_turboquant_attention_patch() -> bool:
     _PATCHED = True
     logger.info("TurboQuant attention patch applied")
     return True
+
+
+from .registry import register as _reg
+
+_reg(
+    "turboquant_long_prefill_chunking",
+    "global",
+    "Long-prefill quantized attention chunking (fusion-mlx native, not upstream)",
+    lambda model, config: apply_turboquant_attention_patch(),
+    is_global=True,
+)

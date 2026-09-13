@@ -965,6 +965,37 @@ def section_integrity() -> Section:
             detail=str(e)[:200],
         )
 
+    # Patch registry: list all registered model patches for audit visibility.
+    try:
+        from ..patches import ensure_all_registered, list_patches
+
+        ensure_all_registered()
+        patches = list_patches()
+        if not patches:
+            s.add(
+                "Patch registry: empty",
+                CheckStatus.WARN,
+                detail="no patches registered (ensure_all_registered did not run)",
+            )
+        else:
+            n_applied = sum(1 for p in patches if p.get("is_applied"))
+            n_upstream = sum(1 for p in patches if p.get("upstream_issue"))
+            s.add(
+                f"Patch registry: {len(patches)} registered ({n_applied} applied, {n_upstream} with upstream issue)",
+                CheckStatus.OK,
+                detail="; ".join(
+                    f"{p['patch_id']}[{p['target']}]"
+                    + ("*" if p.get("is_applied") else "")
+                    for p in patches
+                ),
+            )
+    except Exception as e:
+        s.add(
+            f"Patch registry: probe failed ({type(e).__name__})",
+            CheckStatus.FAIL,
+            detail=str(e)[:200],
+        )
+
     return s
 
 

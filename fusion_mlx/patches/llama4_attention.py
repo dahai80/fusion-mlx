@@ -121,3 +121,13 @@ def apply_llama4_attention_patch() -> bool:
 
 
 __all__ = ["apply_llama4_attention_patch", "_llama4_attn_scales"]
+
+
+from .registry import register as _reg
+
+_reg(
+    "llama4_attention_scales_fix",
+    "llama4",
+    "llama4 attention scale correction (mlx-lm upstream bug, not yet PR'd)",
+    lambda model, config: apply_llama4_attention_patch(),
+)

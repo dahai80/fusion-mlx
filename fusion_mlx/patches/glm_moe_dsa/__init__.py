@@ -100,6 +100,15 @@ def is_applied() -> bool:
     return _APPLIED
 
 
+from ..registry import register as _reg
+
+_reg(
+    "glm_moe_dsa_mlxlm_optimized",
+    "glm_moe_dsa",
+    "GLM-5.2 optimized MoE-DSA kernels (vendored mlx-lm snapshot, not upstream)",
+    lambda model, config: apply_glm_moe_dsa_patch(),
+)
+
 __all__ = [
     "apply_glm_moe_dsa_patch",
     "is_applied",

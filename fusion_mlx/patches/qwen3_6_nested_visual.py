@@ -109,3 +109,13 @@ def apply_qwen3_6_nested_visual_patch() -> bool:
     model_cls.sanitize = _make_patched_sanitize(original_sanitize)
     logger.info("qwen3_6_nested_visual: patched mlx_vlm.qwen3_5_moe Model.sanitize")
     return True
+
+
+from .registry import register as _reg
+
+_reg(
+    "qwen3_6_nested_visual_sanitize",
+    "qwen3_5_moe",
+    "qwen3.6 nested visual weight sanitize (mlx-vlm lacks rule, self-guards if upstream adds)",
+    lambda model, config: apply_qwen3_6_nested_visual_patch(),
+)

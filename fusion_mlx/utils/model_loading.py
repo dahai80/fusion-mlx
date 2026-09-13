@@ -254,6 +254,14 @@ def maybe_apply_pre_load_patches(
 
     set_mtp_active(False)
 
+    # Importing subpackages below triggers self-registration into the central
+    # patch registry (patches/registry.py) for audit visibility. The dispatch
+    # conditionals below remain explicit — they encode startswith/nested/
+    # for_vlm logic that registry string-match cannot safely replace.
+    from ..patches import ensure_all_registered
+
+    ensure_all_registered()
+
     config_path = Path(model_name) / "config.json"
     if not config_path.exists():
         return

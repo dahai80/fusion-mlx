@@ -110,3 +110,14 @@ def apply_mlx_lm_mtp_patch() -> bool:
         return False
 
     return True
+
+
+from ..registry import register as _reg
+
+_reg(
+    "mtp_qwen35_mlxlm_pr990",
+    "mtp",
+    "Qwen3.5/3.6 native MTP heads (mlx-lm PR 990, not in pinned pkg)",
+    lambda model, config: apply_mlx_lm_mtp_patch(),
+    upstream_issue="https://github.com/ml-explore/mlx-lm/pull/990",
+)
