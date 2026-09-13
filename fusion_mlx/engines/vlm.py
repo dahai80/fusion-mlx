@@ -1628,8 +1628,20 @@ class VLMBatchedEngine(BaseEngine):
                 from ..api.utils import remove_special_tokens_preserve_whitespace
 
                 text = remove_special_tokens_preserve_whitespace(output.new_text)
+                # Mirror BatchedEngine.stream_generate (batched.py:1062-1081):
+                # at finish, text carries the accumulated full text so
+                # stream_chat's _fallback_parse_tool_calls can see the whole
+                # XML tool-call block. Without this, text is only the last
+                # per-token delta and the fallback parses nothing — tool calls
+                # leak to the client as plain text (same regression as #203).
+                if output.finished and output.output_text:
+                    from ..api.utils import clean_special_tokens
+
+                    full_text = clean_special_tokens(output.output_text)
+                else:
+                    full_text = text
                 yield GenerationOutput(
-                    text=text,
+                    text=full_text,
                     new_text=text,
                     prompt_tokens=output.prompt_tokens,
                     completion_tokens=output.completion_tokens,
