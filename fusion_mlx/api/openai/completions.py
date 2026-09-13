@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
 from fastapi import Depends, HTTPException, Request
+from starlette.responses import JSONResponse, StreamingResponse
 
 from ...exceptions import (
     InsufficientMemoryError,
@@ -20,7 +22,9 @@ from .._concurrency import acquire_request_slot, release_request_slot
 from .._guards import build_model_error_response
 from ..openai_models import (
     ChatCompletionRequest,
+    CompletionChoice,
     CompletionRequest,
+    CompletionResponse,
     ModelInfo,
     ModelsResponse,
 )
@@ -33,6 +37,131 @@ from ._common import (
     router,
 )
 from .chat import _run_chat, _stream_chat
+
+
+def _chat_dict_to_completion_dict(chat_dict: dict, model: str) -> dict:
+    """Map a chat-completion response dict to the legacy text-completion shape.
+
+    G-1 (#0912 audit): ``/v1/completions`` wrapped the prompt into a chat
+    message and returned the chat shape (``choices[0].message.content``)
+    directly instead of ``choices[0].text``. OpenAI SDK clients expecting
+    the text-completion envelope read ``choices[0].text`` and got ``None``.
+    This is the single message→text mapping the audit calls for.
+    """
+    choices = chat_dict.get("choices") or []
+    text = ""
+    finish_reason = None
+    logprobs = None
+    if choices:
+        ch = choices[0]
+        msg = ch.get("message") or {}
+        text = msg.get("content") or ""
+        finish_reason = ch.get("finish_reason")
+        logprobs = ch.get("logprobs")
+    comp_choices = [
+        CompletionChoice(
+            index=0,
+            text=text,
+            finish_reason=finish_reason,
+        ).model_dump()
+    ]
+    comp_choice = comp_choices[0]
+    if logprobs is not None:
+        comp_choice["logprobs"] = logprobs
+    else:
+        comp_choice["logprobs"] = None
+    out = {
+        "id": chat_dict.get("id") or f"cmpl-comp-{int(time.time())}",
+        "object": "text_completion",
+        "created": chat_dict.get("created") or int(time.time()),
+        "model": model,
+        "choices": [comp_choice],
+    }
+    if chat_dict.get("usage"):
+        out["usage"] = chat_dict["usage"]
+    return out
+
+
+def _to_completion_result(result: Any, model: str):
+    """Convert a chat-path result to the text-completion shape.
+
+    Handles both the plain ``ChatCompletionResponse`` return and the
+    ``JSONResponse`` wrapper used when context-budget headers are attached.
+    """
+    if isinstance(result, JSONResponse):
+        body = result.body
+        if isinstance(body, (bytes, bytearray)):
+            chat_dict = json.loads(body)
+        else:
+            chat_dict = json.loads(body)
+        comp = _chat_dict_to_completion_dict(chat_dict, model)
+        logger.debug("completions non-stream json-response remap model=%s", model)
+        return JSONResponse(content=comp, headers=dict(result.headers))
+    if hasattr(result, "model_dump"):
+        chat_dict = result.model_dump()
+        comp = _chat_dict_to_completion_dict(chat_dict, model)
+        logger.debug("completions non-stream remap model=%s", model)
+        return CompletionResponse(**comp)
+    return result
+
+
+async def _rewrite_chat_stream_to_completion(body_iter: Any, model: str):
+    """Rewrite chat-shaped SSE chunks to text-completion shape.
+
+    Chat chunk: ``choices[0].delta.content`` / ``object: chat.completion.chunk``
+    Legacy chunk: ``choices[0].text`` / ``object: text_completion``
+    """
+    async for raw in body_iter:
+        if isinstance(raw, (bytes, bytearray)):
+            chunk_str = raw.decode("utf-8", errors="replace")
+        else:
+            chunk_str = raw
+        # Pass through keep-alive / non-data lines untouched.
+        for line in chunk_str.splitlines(keepends=True):
+            if not line.startswith("data: "):
+                yield line
+                continue
+            payload = line[6:].strip()
+            if payload == "[DONE]":
+                yield line
+                continue
+            try:
+                obj = json.loads(payload)
+            except (json.JSONDecodeError, ValueError):
+                yield line
+                continue
+            choices = obj.get("choices") or []
+            text = None
+            finish_reason = None
+            logprobs = None
+            if choices:
+                ch = choices[0]
+                delta = ch.get("delta") or {}
+                text = delta.get("content")
+                finish_reason = ch.get("finish_reason")
+                logprobs = ch.get("logprobs")
+            comp_choice = {
+                "index": 0,
+                "text": text if text is not None else "",
+                "finish_reason": finish_reason,
+                "logprobs": logprobs,
+            }
+            comp = {
+                "id": obj.get("id") or f"cmpl-comp-{int(time.time())}",
+                "object": "text_completion",
+                "created": obj.get("created") or int(time.time()),
+                "model": model,
+                "choices": [comp_choice],
+            }
+            if obj.get("usage"):
+                comp["usage"] = obj["usage"]
+            yield f"data: {json.dumps(comp, ensure_ascii=False)}\n\n"
+
+
+def _wrap_stream_response(sr: StreamingResponse, model: str) -> StreamingResponse:
+    """Wrap a chat StreamingResponse so its body emits completion SSE."""
+    sr.body_iterator = _rewrite_chat_stream_to_completion(sr.body_iterator, model)
+    return sr
 
 
 @router.post("/completions")
@@ -79,14 +208,22 @@ async def completions(
             stop=request.stop,
         )
         if request.stream:
-            return await _stream_chat(
-                chat_req, _skip_cap_check=True, principal=principal
-            )
+            sr = await _stream_chat(chat_req, _skip_cap_check=True, principal=principal)
+            # G-1 (#0912): remap chat-shaped SSE → text-completion shape so
+            # ``choices[0].delta.content`` surfaces as ``choices[0].text``.
+            if isinstance(sr, StreamingResponse):
+                return _wrap_stream_response(sr, request.model)
+            return sr
         await acquire_request_slot()
         try:
-            return await _run_chat(chat_req, _skip_cap_check=True, principal=principal)
+            result = await _run_chat(
+                chat_req, _skip_cap_check=True, principal=principal
+            )
         finally:
             release_request_slot()
+        # G-1 (#0912): remap chat.completion shape → text_completion shape
+        # (choices[0].message.content → choices[0].text).
+        return _to_completion_result(result, request.model)
     except HTTPException:
         raise
     except ModelNotFoundError as exc:
