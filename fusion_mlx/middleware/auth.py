@@ -237,7 +237,30 @@ async def check_rate_limit_or_x_api_key(request: Request):
         )
 
 
-def _get_configured_api_key() -> str | None:
+def _resolve_api_key_from_config() -> str | None:
+    """Read the config-layer API key (ServerConfig.api_key).
+
+    The config layer is the boot-time source of truth: at startup
+    ``_resolve_effective_api_key`` resolves CLI > env > settings.json and
+    writes the effective key onto BOTH ``self.settings.api_key`` (admin
+    layer) and ``get_config().api_key`` (config layer). Runtime admin
+    writes (auth_routes initial-setup) mutate the admin layer without
+    syncing config — this function reads the config layer only.
+    """
+    try:
+        from ..config import get_config
+
+        cfg = get_config()
+        key = getattr(cfg, "api_key", None)
+        if key:
+            return key
+    except Exception:
+        logger.debug("Failed to read configured API key from config", exc_info=True)
+    return None
+
+
+def _read_admin_layer_api_key() -> str | None:
+    """Read the admin-layer API key (global_settings.auth.api_key)."""
     try:
         from ..admin.helpers import _get_global_settings
 
@@ -249,8 +272,6 @@ def _get_configured_api_key() -> str | None:
                 if key:
                     return key
     except (ImportError, AttributeError):
-        # Module/attribute missing during partial startup — not a config
-        # fault; fall through to the config-layer read below.
         logger.debug(
             "admin.helpers not available for API key read; falling back to config",
             exc_info=True,
@@ -267,16 +288,46 @@ def _get_configured_api_key() -> str | None:
             "investigate settings.json (OP-5 fail-visible)",
             exc_info=True,
         )
-    try:
-        from ..config import get_config
-
-        cfg = get_config()
-        key = getattr(cfg, "api_key", None)
-        if key:
-            return key
-    except Exception:
-        logger.debug("Failed to read configured API key from config", exc_info=True)
     return None
+
+
+def _write_admin_layer_api_key(key: str) -> None:
+    """Re-align the admin layer to the config source of truth."""
+    try:
+        from ..admin.helpers import _get_global_settings
+
+        settings = _get_global_settings()
+        if settings is not None:
+            auth = getattr(settings, "auth", None)
+            if auth is not None:
+                auth.api_key = key
+    except Exception:
+        logger.debug(
+            "Failed to write API key back to admin layer",
+            exc_info=True,
+        )
+
+
+def _get_configured_api_key() -> str | None:
+    # G-8/T-2 (#0912 audit): API key three-source divergence. The admin
+    # layer (global_settings.auth.api_key) and the config layer
+    # (get_config().api_key) are synced at boot but can drift when the
+    # admin initial-setup route mutates the admin layer without syncing
+    # config — "same machine, two instances, two keys". Config is the
+    # source of truth (CLI > env > settings.json resolved at boot); if
+    # the admin layer disagrees, fail visibly and re-align it.
+    resolved = _resolve_api_key_from_config()
+    admin_key = _read_admin_layer_api_key()
+    if resolved and admin_key and admin_key != resolved:
+        logger.error(
+            "API key conflict (G-8/T-2 #0912): admin global-settings key "
+            "differs from config source of truth (CLI > env > "
+            "settings.json). Re-aligning admin layer to the config value "
+            "to prevent same-machine multi-instance key divergence."
+        )
+        _write_admin_layer_api_key(resolved)
+        return resolved
+    return resolved or admin_key
 
 
 def _verify_api_key_values(

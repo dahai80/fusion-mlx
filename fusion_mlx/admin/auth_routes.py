@@ -167,6 +167,25 @@ async def setup_api_key(
         # Apply to settings and runtime
         global_settings.auth.api_key = request.api_key
         _server_state["api_key"] = request.api_key
+        # G-8/T-2 (#0912 audit): sync ALL three key sources so the admin
+        # layer (global_settings.auth.api_key), the module global
+        # (admin/auth._api_key via set_api_key), and the config layer
+        # (get_config().api_key) agree. Pre-fix this route only mutated
+        # the admin layer → middleware's _get_configured_api_key read a
+        # different key than admin auth → same-machine multi-instance
+        # 401 divergence.
+        try:
+            from .auth import set_api_key
+
+            set_api_key(request.api_key)
+        except Exception:
+            logger.debug("set_api_key sync failed on initial setup", exc_info=True)
+        try:
+            from ..config import get_config
+
+            get_config().api_key = request.api_key
+        except Exception:
+            logger.debug("config api_key sync failed on initial setup", exc_info=True)
 
         # Persist to file
         try:
