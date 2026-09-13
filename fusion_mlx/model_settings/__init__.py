@@ -27,6 +27,21 @@ PROFILES_VERSION = 1
 TEMPLATES_VERSION = 1
 
 
+def _canonical_model_id(model_id: str) -> str:
+    # F-4 (#0912 audit): model_settings.json slash/hyphen dual-key.
+    # HF repo id ("mlx-community/Qwen3.8-27B-4bit") and the pool
+    # registered dir name ("mlx-community--Qwen3.8-27B-4bit") resolved
+    # to DIFFERENT dict keys -> same model stored under two keys that
+    # could diverge silently. Canonical = hyphen form ("/" -> "--"),
+    # matching the on-disk model directory naming the EnginePool
+    # registers entries under. Applied on load (merge dup keys,
+    # fail-visible WARNING) and every public read/write so the two
+    # forms can never coexist.
+    if not model_id:
+        return model_id
+    return model_id.replace("/", "--")
+
+
 @dataclass
 class ModelSettings:
     max_context_window: int | None = None
@@ -198,11 +213,27 @@ class ModelSettingsManager:
             self._settings = {}
             for model_id, model_data in models_data.items():
                 try:
-                    self._settings[model_id] = ModelSettings.from_dict(model_data)
+                    parsed = ModelSettings.from_dict(model_data)
                 except Exception as e:
                     logger.warning(
                         "Failed to load settings for model '%s': %s", model_id, e
                     )
+                    continue
+                canonical = _canonical_model_id(model_id)
+                if canonical in self._settings:
+                    # F-4 (#0912): same model stored under both slash and
+                    # hyphen keys. Keep first (deterministic), drop the
+                    # duplicate, log loudly so the operator reconciles.
+                    logger.error(
+                        "F-4 model_settings dual-key conflict: '%s' and '%s' "
+                        "collapse to '%s'; keeping first, dropping duplicate. "
+                        "Re-apply settings via admin if needed.",
+                        model_id,
+                        canonical,
+                        canonical,
+                    )
+                    continue
+                self._settings[canonical] = parsed
             logger.info("Loaded settings for %d models", len(self._settings))
         except json.JSONDecodeError as e:
             logger.error("Invalid JSON in settings file: %s", e)
@@ -231,8 +262,9 @@ class ModelSettingsManager:
 
     def get_settings(self, model_id: str) -> ModelSettings:
         with self._lock:
-            if model_id in self._settings:
-                settings = self._settings[model_id]
+            cid = _canonical_model_id(model_id)
+            if cid in self._settings:
+                settings = self._settings[cid]
                 return ModelSettings.from_dict(settings.to_dict())
             return ModelSettings()
 
@@ -242,9 +274,15 @@ class ModelSettingsManager:
         resolved_model_id: str | None = None,
     ) -> ModelSettings:
         with self._lock:
-            candidates = [model_id]
+            cid = _canonical_model_id(model_id)
+            candidates = [cid]
+            # F-4: keep the bare-repo-name suffix fallback for the case
+            # where settings were stored under "Qwen3.8-27B-4bit" (no
+            # org prefix) but the request carries the full HF id. Split
+            # the ORIGINAL model_id (pre-canonical) so the "/" is still
+            # present to split on.
             if "/" in model_id:
-                candidates.append(model_id.split("/", 1)[1])
+                candidates.append(_canonical_model_id(model_id.split("/", 1)[1]))
             for candidate in candidates:
                 profile_match = self._find_exposed_profile_locked(candidate)
                 if profile_match is not None:
@@ -254,32 +292,34 @@ class ModelSettingsManager:
 
     def set_settings(self, model_id: str, settings: ModelSettings) -> None:
         with self._lock:
+            cid = _canonical_model_id(model_id)
             if settings.is_default:
                 for mid, s in self._settings.items():
-                    if mid != model_id and s.is_default:
+                    if mid != cid and s.is_default:
                         s.is_default = False
                         logger.info(
                             "Cleared is_default from model '%s' (new default: '%s')",
                             mid,
-                            model_id,
+                            cid,
                         )
-            self._settings[model_id] = ModelSettings.from_dict(settings.to_dict())
-            logger.info("Updated settings for model '%s'", model_id)
+            self._settings[cid] = ModelSettings.from_dict(settings.to_dict())
+            logger.info("Updated settings for model '%s'", cid)
             self._save()
 
     def delete_settings(self, model_id: str) -> bool:
         with self._lock:
+            cid = _canonical_model_id(model_id)
             removed = False
-            if model_id in self._settings:
-                del self._settings[model_id]
+            if cid in self._settings:
+                del self._settings[cid]
                 self._save()
                 removed = True
-            if model_id in self._profiles:
-                del self._profiles[model_id]
+            if cid in self._profiles:
+                del self._profiles[cid]
                 self._save_profiles()
                 removed = True
             if removed:
-                logger.info("Deleted settings for model '%s'", model_id)
+                logger.info("Deleted settings for model '%s'", cid)
             return removed
 
     def get_default_model_id(self) -> str | None:
@@ -320,8 +360,21 @@ class ModelSettingsManager:
                     version,
                     PROFILES_VERSION,
                 )
-            self._profiles = data.get("profiles", {}) or {}
+            raw_profiles = data.get("profiles", {}) or {}
+            self._profiles = {}
             changed = False
+            for model_id, profiles in raw_profiles.items():
+                canonical = _canonical_model_id(model_id)
+                if canonical in self._profiles:
+                    logger.error(
+                        "F-4 model_profiles dual-key conflict: '%s' and '%s' "
+                        "collapse to '%s'; keeping first, dropping duplicate.",
+                        model_id,
+                        canonical,
+                        canonical,
+                    )
+                    continue
+                self._profiles[canonical] = profiles
             for model_id, profiles in self._profiles.items():
                 used_api_names: set[str] = set()
                 for name, profile in profiles.items():
@@ -452,9 +505,10 @@ class ModelSettingsManager:
 
     def get_exposed_profile_source_model_id(self, model_id: str) -> str | None:
         with self._lock:
-            candidates = [model_id]
+            cid = _canonical_model_id(model_id)
+            candidates = [cid]
             if "/" in model_id:
-                candidates.append(model_id.split("/", 1)[1])
+                candidates.append(_canonical_model_id(model_id.split("/", 1)[1]))
             for candidate in candidates:
                 match = self._find_exposed_profile_locked(candidate)
                 if match is not None:
@@ -466,9 +520,10 @@ class ModelSettingsManager:
         model_id: str,
     ) -> tuple[str, ModelSettings] | None:
         with self._lock:
-            candidates = [model_id]
+            cid = _canonical_model_id(model_id)
+            candidates = [cid]
             if "/" in model_id:
-                candidates.append(model_id.split("/", 1)[1])
+                candidates.append(_canonical_model_id(model_id.split("/", 1)[1]))
             for candidate in candidates:
                 match = self._find_exposed_profile_locked(candidate)
                 if match is not None:
@@ -585,11 +640,12 @@ class ModelSettingsManager:
 
     def list_profiles(self, model_id: str) -> list[dict]:
         with self._lock:
-            per_model = self._profiles.get(model_id, {})
+            cid = _canonical_model_id(model_id)
+            per_model = self._profiles.get(cid, {})
             return [
                 {
                     **p,
-                    "model_id": self._display_profile_model_id_locked(model_id, p),
+                    "model_id": self._display_profile_model_id_locked(cid, p),
                     "has_engine_fields": self._has_engine_fields(p),
                 }
                 for p in per_model.values()
@@ -597,7 +653,8 @@ class ModelSettingsManager:
 
     def get_profile(self, model_id: str, name: str) -> dict | None:
         with self._lock:
-            return dict(self._profiles.get(model_id, {}).get(name, {})) or None
+            cid = _canonical_model_id(model_id)
+            return dict(self._profiles.get(cid, {}).get(name, {})) or None
 
     def save_profile(
         self,
@@ -614,10 +671,11 @@ class ModelSettingsManager:
         validate_profile_name(name)
         filtered = filter_profile_fields(settings or {})
         with self._lock:
-            per_model = self._profiles.setdefault(model_id, {})
+            cid = _canonical_model_id(model_id)
+            per_model = self._profiles.setdefault(cid, {})
             if name in per_model:
                 raise ValueError(
-                    f"Profile '{name}' already exists for model '{model_id}'"
+                    f"Profile '{name}' already exists for model '{cid}'"
                 )
             now = utcnow().isoformat()
             profile_api_name = self._allocate_profile_api_name_locked(
@@ -638,7 +696,7 @@ class ModelSettingsManager:
                 "expose_as_model": bool(expose_as_model),
             }
             self._validate_exposed_profile_ids_available_locked(
-                model_id,
+                cid,
                 profile_record,
                 reserved_model_ids=reserved_model_ids,
             )
@@ -661,7 +719,8 @@ class ModelSettingsManager:
         reserved_model_ids: set[str] | None = None,
     ) -> dict | None:
         with self._lock:
-            per_model = self._profiles.get(model_id, {})
+            cid = _canonical_model_id(model_id)
+            per_model = self._profiles.get(cid, {})
             if name not in per_model:
                 return None
             profile = dict(per_model[name])
@@ -671,7 +730,7 @@ class ModelSettingsManager:
                 validate_profile_name(new_name)
                 if new_name in per_model:
                     raise ValueError(
-                        f"Profile '{new_name}' already exists for model '{model_id}'"
+                        f"Profile '{new_name}' already exists for model '{cid}'"
                     )
                 target_name = new_name
                 profile["name"] = new_name
@@ -696,7 +755,7 @@ class ModelSettingsManager:
                 profile["expose_as_model"] = bool(expose_as_model)
             profile["updated_at"] = utcnow().isoformat()
             self._validate_exposed_profile_ids_available_locked(
-                model_id,
+                cid,
                 profile,
                 exclude_profile_name=name,
                 reserved_model_ids=reserved_model_ids,
@@ -705,7 +764,7 @@ class ModelSettingsManager:
             settings_snapshot = copy.deepcopy(self._settings)
             old_active = None
             if rename_mode:
-                old_active = self._settings.get(model_id)
+                old_active = self._settings.get(cid)
                 if old_active is not None and old_active.active_profile_name == name:
                     old_active.active_profile_name = target_name
                 del per_model[name]
