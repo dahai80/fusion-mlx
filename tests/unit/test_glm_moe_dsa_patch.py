@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fusion_mlx.utils import model_loading
 from fusion_mlx.utils.model_loading import maybe_apply_pre_load_patches
 
 
@@ -77,7 +76,9 @@ def _wait_for_pending_writes(manager):
 
 
 def test_pre_load_dispatch_applies_glm_patch(tmp_path, monkeypatch):
-    monkeypatch.setattr(model_loading, "_patch_mlx_lm_load_config", lambda: None)
+    # _patch_mlx_lm_load_config was refactored into maybe_apply_pre_load_patches;
+    # the stale monkeypatch target was removed. The mlx_lm_mtp mock is still
+    # needed: maybe_apply_pre_load_patches imports set_mtp_active from it.
     monkeypatch.setitem(
         sys.modules,
         "fusion_mlx.patches.mlx_lm_mtp",

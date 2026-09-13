@@ -10,7 +10,9 @@
 #   runtime-fail  - collects but fails on stale assertions / removed attrs
 #   timeout       - hangs or exceeds the unit-gate budget (integration-style)
 #
-# Total: 116 modules excluded (#0907 audit: 2 rescued this round, was 118);
+# Total: 113 modules excluded (#0912 audit: 3 rescued this round —
+# test_glm_moe_dsa_patch, test_memory_monitor_vlm_config, test_step3p7_patch;
+# was 116);
 # ~379 healthy modules remain in the CI gate (~14222 test items collected).
 # Phase-1 (mlx-enhance): 15 stale debt entries whose prod code had since
 # been fixed were re-activated (test_embedding, test_hot_cache,
@@ -1262,7 +1264,12 @@ test_gemma4_text_import_guard.py
 # emitted as literal text; (3) _generation_config_eos/_output_parser_factory
 # unguarded getattr broke bare-__new__ Scheduler stubs.
 # (rescued — left in list by mistake) test_generation_config_loader.py
-test_glm_moe_dsa_patch.py
+# RESCUED 2026-09-13 (10 pass / 1 skip): stale monkeypatch target
+# _patch_mlx_lm_load_config removed in refactor (function merged into
+# maybe_apply_pre_load_patches). Removed the dead setattr line; mlx_lm_mtp
+# mock retained (maybe_apply_pre_load_patches imports set_mtp_active from it).
+# No prod gap.
+# test_glm_moe_dsa_patch.py
 # KEEP_QUARANTINED test_harmony_finalize.py (18 pass / 3 fail): deep route-
 # refactor drift (GOTCHA ⑧ chat.py shim). The 3 streaming failures all root
 # in the test mounting routes_internal/chat whose stream_chat_completion is a
@@ -1378,7 +1385,9 @@ test_librechat_docker.py
 # mocked 8GB. Imports were already renamed (line 15 fusion_mlx.memory_cache);
 # only the patch target strings were missed. No prod gap.
 # test_memory_cache.py
-test_memory_monitor_vlm_config.py
+# RESCUED 2026-09-13 (23 pass): no failures — was "unclear-needs-run" with no
+# triage note. Module collects + passes clean. No prod gap.
+# test_memory_monitor_vlm_config.py
 # KEEP_QUARANTINED test_metal_cap_enforcement (eval round15 2026-08-24):
 # 27f/0p REDESIGN-DRIFT. All 27 tests patch.object 3 Scheduler attrs that
 # are MISSING: _resolve_metal_cap_bytes, _current_metal_active_bytes,
@@ -2062,9 +2071,24 @@ test_singleton_cache_passthrough.py
 # exceeds debt-cleanup scope (Rules 2/3). The idle-ping contract is preserved
 # in prod via SSEKeepalive.maybe_ping(); test harness is stale.
 test_sse_keepalive.py
-# test_status_endpoint.py  (RESCUED round10: 5 pass + 3 xfail strict. Harness drift — server.app now lazy (app=None until get_app()); ServerState→_ServerState; /api/status route reads self.pool closure not _server_state.engine_pool; require_admin blocks non-loopback when no api_key. Rewrote: Server() instance + server.app + dependency_overrides[require_admin]=True for 200 cases; set_api_key for auth test. 3 xfail: /health flat shape no engine_pool.final_ceiling; /api/status dropped active_requests/waiting_requests; /api/status surfaces only 3 metric fields not full ServerMetrics.)
-test_step3p7_patch.py
 # test_stop_string_enforcement.py  (RESCUED 2026-08-19 round10e2: 12 pass. Harness drift — production stop-string path rewired from _decode_tokens seam to streaming detokenizer (_get_detokenizer → add_token/text/last_segment/finalize); test stubbed obsolete _decode_tokens. Rewrote _run_step: _FakeDetok (text=last_segment=decoded_full after add_token, prev_len=0 so stop scan from 0; finalize sets _finalized flag → last_segment returns "" post-finalize so L256 output.new_text += final_segment does NOT double-append); tokenizer.decode stubbed → decoded_full for finished re-decode path L259. 9 fails (stop-scan+detokenizer path) → 0. 3 prior-pass (empty_stop/empty_string/already-length) unaffected. Pure scheduler unit, no engine.)
+# RESCUED 2026-09-13 (6 pass): step3p7 model_type not dispatched in
+# maybe_apply_pre_load_patches — only deepseek_v4/glm_moe_dsa/mtp had
+# branches. Added step3p7 dispatch (handles both top-level model_type and
+# nested text_config.model_type for step3p7-on-step3p5 architecture). Real
+# prod gap fixed: step3p7 patch was never applied via the pre-load path.
+# test_step3p7_patch.py
+# KEEP_QUARANTINED test_streaming_reasoning_split_r8c.py (eval 2026-09-13):
+# 16 pass / 2 fail. NOT stale contract — real postprocessor behavior gap.
+# The 2 failures (test_literal_think_token_mid_content_does_not_latch,
+# test_r10c7_plain_then_standalone_think_chunk_does_not_latch) feed literal
+# `tidi` (Qwen3 think-open token) mid-content with enable_thinking=False and
+# expect it preserved as literal text ("use the tidi tag"). Prod
+# postprocessor strips `tidi` from content → user sees "use the tag" (key
+# word missing). Root cause: qwen3_parser streaming reasoning split path
+# removes the token. Fix needs careful investigation — could regress
+# D-STOP-THINK leak fix (PR #799). Not a debt-quick-fix; track as postprocessor
+# behavior issue.
 test_streaming_reasoning_split_r8c.py
 # KEEP_QUARANTINED test_streaming_tool_filter.py (eval round11 2026-08-24):
 # 12P/1F. test_qwen_format_suppressed asserts plain `<tool_call>` tag

@@ -278,6 +278,20 @@ def maybe_apply_pre_load_patches(
         if apply_glm_moe_dsa_patch():
             logger.info("GLM MoE DSA pre-load patch applied for %s", model_name)
 
+    # step3p7: register mlx_lm.models.step3p7 when upstream lacks it. The
+    # config may carry model_type="step3p7" at the top level or nested under
+    # text_config (step3p7-on-step3p5 architecture).
+    _effective_type = model_type
+    if _effective_type != "step3p7":
+        text_cfg = config.get("text_config") or {}
+        if isinstance(text_cfg, dict) and text_cfg.get("model_type") == "step3p7":
+            _effective_type = "step3p7"
+    if _effective_type == "step3p7":
+        from ..patches.step3p7 import apply_step3p7_patch
+
+        if apply_step3p7_patch():
+            logger.info("step3p7 pre-load patch applied for %s", model_name)
+
     if _has_mtp_heads(config) and model_type:
         mtp_enabled = bool(
             model_settings is not None and getattr(model_settings, "mtp_enabled", False)
