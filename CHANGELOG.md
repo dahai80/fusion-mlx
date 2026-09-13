@@ -98,6 +98,15 @@
   → 46.86 (4bit target + 4bit draft) tok/s.
 
 ### Fixed
+- **`/v1/completions` returned chat shape not text shape (G-1, #0912 audit P2)** —
+  the legacy text-completion endpoint wrapped the prompt into a chat message,
+  ran it through the chat path, and returned the `ChatCompletionResponse`
+  envelope (`choices[0].message.content`, `object: chat.completion`) directly.
+  OpenAI SDK clients reading `choices[0].text` got `None`. Fixed: single
+  message→text mapping — non-stream remaps to `CompletionResponse`
+  (`choices[0].text`, `object: text_completion`, context-budget
+  `JSONResponse` wrapper preserved); stream rewrites chat SSE chunks
+  (`choices[0].delta.content`) to completion SSE (`choices[0].text`).
 - **Non-stream reasoning_content always None (G-4, #0912 audit P2)** —
   `/v1/chat/completions` (non-stream) returned `reasoning_content: null` for
   engine-separated reasoning (Qwen3 chat-template-injected thinking). The
