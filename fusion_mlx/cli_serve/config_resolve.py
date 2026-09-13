@@ -17,6 +17,57 @@ from .audio_mode import _display_host
 logger = logging.getLogger(__name__)
 
 
+def _load_settings_cache_section(settings_dir: str | None) -> dict:
+    """Read the ``cache`` section of settings.json (admin panel surface)."""
+    import json
+    from pathlib import Path
+
+    if not settings_dir:
+        settings_dir = str(Path.home() / ".fusion-mlx")
+    path = Path(settings_dir) / "settings.json"
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    section = data.get("cache")
+    return section if isinstance(section, dict) else {}
+
+
+def _parse_size_to_bytes(value) -> int | None:
+    """Parse ``"20GB"`` / ``"512MiB"`` / int-bytes into bytes."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = str(value).strip().upper().replace(" ", "")
+    units = (
+        ("KIB", 1024),
+        ("MIB", 1024**2),
+        ("GIB", 1024**3),
+        ("TIB", 1024**4),
+        ("KB", 1000),
+        ("MB", 1000**2),
+        ("GB", 1000**3),
+        ("TB", 1000**4),
+        ("K", 1024),
+        ("M", 1024**2),
+        ("G", 1024**3),
+        ("T", 1024**4),
+    )
+    for suffix, factor in units:
+        if text.endswith(suffix):
+            body = text[: -len(suffix)]
+            try:
+                return int(float(body) * factor)
+            except ValueError:
+                return None
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
+
+
 def _add_pflash_args(parser) -> None:
     """Attach PFlash long-prompt-compression CLI flags to an argparse parser.
 
@@ -255,7 +306,37 @@ def _serve_from_model_dir(args):
         suffix_min_draft_len=getattr(args, "suffix_min_draft_len", 0),
         chunked_prefill=(getattr(args, "chunked_prefill_tokens", 0) or 0) > 0,
         prefill_step_size=getattr(args, "chunked_prefill_tokens", 4096) or 4096,
+        max_cache_blocks=getattr(args, "max_cache_blocks", None),
     )
+    # Cache section of settings.json (admin panel writes it here). Without
+    # this the --model-dir path always ran the pure-memory prefix cache
+    # (cache_dir=None, hot_cache_only=True, 1GiB hot LRU default), so a
+    # 128k-token KV working set was evicted before the next request could
+    # reconstruct it — cache hit logged, then "paged cache reconstruction
+    # failed" and a full re-prefill (cached_tokens=0).
+    cache_sj = _load_settings_cache_section(getattr(config, "settings_dir", None))
+    if cache_sj:
+        _ssd_dir = cache_sj.get("paged_ssd_cache_dir") or cache_sj.get("ssd_cache_dir")
+        if _ssd_dir:
+            _sched.paged_ssd_cache_dir = str(_ssd_dir)
+        _hot = _parse_size_to_bytes(cache_sj.get("hot_cache_max_size"))
+        if _hot:
+            _sched.hot_cache_max_size = _hot
+        if "hot_cache_only" in cache_sj:
+            _sched.hot_cache_only = bool(cache_sj["hot_cache_only"])
+        if cache_sj.get("initial_cache_blocks"):
+            _sched.initial_cache_blocks = int(cache_sj["initial_cache_blocks"])
+        _ssd_max = _parse_size_to_bytes(cache_sj.get("ssd_cache_max_size"))
+        if _ssd_max:
+            _sched.paged_ssd_cache_max_size = _ssd_max
+        logger.info(
+            "cache settings applied from settings.json: ssd_dir=%s "
+            "hot_cache_max=%s hot_cache_only=%s initial_blocks=%s",
+            _sched.paged_ssd_cache_dir,
+            _sched.hot_cache_max_size,
+            _sched.hot_cache_only,
+            _sched.initial_cache_blocks,
+        )
     config.scheduler = _sched
 
     logger.info(

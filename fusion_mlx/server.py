@@ -1602,6 +1602,13 @@ class Server:
             model_name="",
         )
         for _f in (
+            "max_cache_blocks",
+            "paged_cache_block_size",
+            "paged_ssd_cache_dir",
+            "paged_ssd_cache_max_size",
+            "hot_cache_only",
+            "hot_cache_max_size",
+            "initial_cache_blocks",
             "spec_decode",
             "dflash_drafter_path",
             "dflash2_drafter_path",
