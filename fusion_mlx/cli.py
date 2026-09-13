@@ -2316,6 +2316,14 @@ Examples:
         from fusion_mlx.launch.cli import launch_command
 
         launch_command(args)
+    elif args.command == "ppl":
+        # D2.7/G12: ppl subcommand registered via add_ppl_parser (sets
+        # func=ppl_command), but this dispatch chain routes on
+        # args.command — wire the branch or the parser silently prints help
+        # instead of computing perplexity.
+        from fusion_mlx.cli_ppl import ppl_command
+
+        sys.exit(ppl_command(args))
     else:
         _print_primary_help(parser)
         sys.exit(1)

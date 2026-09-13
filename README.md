@@ -113,7 +113,7 @@ Env: `FUSION_SESSION_TAIL_CACHE=1` (default OFF until E2E validated).
 *\*quant2-flat: max speed but 2-bit embeddings degrade quality. Use quant2-all for best quality/speed tradeoff.*
 
 **PPL cost** — perplexity delta vs the mxfp8 baseline measures the quality tax
-of each quant mode. Fill the `—` cells with real runs:
+of each quant mode. Run:
 
 ```bash
 fusion-mlx ppl <model-alias> --quant <mode>            # e.g. --quant mixed_2_4
@@ -122,6 +122,19 @@ fusion-mlx ppl <model-alias> --quant <mode>            # e.g. --quant mixed_2_4
 Outputs `overall_ppl` + per-category (code/en/zh/ja/ko/tool_calling/reasoning)
 NLL on the offline `oq_calibration_data.json` corpus. Lower = better. A 4-bit
 mode should show measurably higher ppl than its bf16/mxfp8 parent.
+
+Real measurements (Qwen3.8-27B, Apple M2 Ultra 137GB, 3 samples/category,
+14911 tokens):
+
+| Quantization | overall_ppl | Δ vs mxfp8 | Notes |
+|---|---|---|---|
+| mxfp8 (8bit) | 6.10 | baseline | HF pre-quant `Qwen3.8-27B-8bit` |
+| mixed_3_4 (4bit) | 6.34 | +0.24 | HF pre-quant `Qwen3.8-27B-4bit`; 4-bit shows measurably higher ppl as expected |
+| mxfp4 / mixed_4_6 / mixed_2_6 / mixed_2_4 / quant2* | — | — | needs turboquant run on matching base model — gate: download each quant variant |
+
+The `—` cells in the speed table above need `fusion-mlx ppl` run on each
+turboquant mode variant of the same base model; HF pre-quant and turboquant
+modes are not directly comparable, so only matching-base rows are filled.
 
 Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantization recipes, mixed-bit quantization (bandwidth reduction), greedy decode fast path (skip logsumexp for argmax), fused QKV/gate projections, fused decode sampler, async_eval double-buffering, GatedDeltaNet linear attention fast path, StreamingJSONEncoder, B=1 fast path.
 

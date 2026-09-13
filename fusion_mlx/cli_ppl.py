@@ -43,6 +43,7 @@ def _load_corpus(samples_per_category: int) -> dict[str, list[str]]:
 
 def _compute_loss(model, tokenizer, text: str) -> tuple[float, int]:
     import mlx.core as mx
+    import mlx.nn as nn
 
     tokens = tokenizer.encode(text)
     if len(tokens) < 2:
@@ -50,8 +51,11 @@ def _compute_loss(model, tokenizer, text: str) -> tuple[float, int]:
     input_ids = mx.array(tokens[:-1])
     target_ids = mx.array(tokens[1:])
     logits = model(input_ids[None])
-    log_probs = mx.nn.losses.cross_entropy(logits, target_ids[None], reduction="mean")
-    return float(log_probs), len(target_ids)
+    # mlx.nn is a separate module, not mx.nn — the original code raised
+    # AttributeError on every call, so the ppl CLI never produced output.
+    loss = nn.losses.cross_entropy(logits, target_ids[None], reduction="mean")
+    mx.eval(loss)
+    return float(loss), len(target_ids)
 
 
 def ppl_command(args: argparse.Namespace) -> int:

@@ -58,3 +58,28 @@ def test_add_ppl_parser_default_quant_is_none():
     args = parser.parse_args(["ppl", "some-model"])
     assert args.quant is None
     assert args.samples_per_category == 5
+
+
+def test_ppl_dispatch_routes_to_ppl_command_not_help(capsys):
+    """Regression: ppl parser registered + set_defaults(func=ppl_command),
+    but cli.main's dispatch chain (if/elif on args.command) had no ``ppl``
+    branch → fell through to _print_primary_help, silently printing help
+    instead of computing perplexity. Assert dispatch reaches ppl_command
+    (which fails on alias resolution, proving the branch is wired)."""
+    import pytest
+
+    with pytest.raises(SystemExit):
+        import sys
+
+        old = sys.argv
+        sys.argv = ["fusion-mlx", "ppl", "definitely-not-a-real-model-xyz"]
+        try:
+            from fusion_mlx.cli import main
+
+            main()
+        finally:
+            sys.argv = old
+    out = capsys.readouterr()
+    # ppl_command prints alias resolution then raises SystemExit(nonzero);
+    # the bug printed the primary help (contains "Primary commands").
+    assert "Primary commands" not in out.out
