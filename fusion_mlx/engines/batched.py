@@ -1327,6 +1327,15 @@ class BatchedEngine(BaseEngine):
                 except Exception as e:
                     logger.debug(f"SpecPrefill: system_end calc failed: {e}")
 
+        # 流式增量中抑制原始工具调用标记 (Qwen taught format 会在 delta 里
+        # 透传 "<function=...>...</function>" markup, finish 时虽解析为
+        # tool_use 块, 但已发出的 text 增量无法撤回). 按请求建抑制器,
+        # feed 每个 delta, finish 时 flush 余量.
+        suppressor = None
+        if tools:
+            from ..api.tool_calling import ToolCallStreamFilter
+
+            suppressor = ToolCallStreamFilter(self._tokenizer)
         async for output in self.stream_generate(
             prompt=prompt,
             max_tokens=max_tokens,
@@ -1340,6 +1349,12 @@ class BatchedEngine(BaseEngine):
             resume_cached_tokens=resume_cached_tokens,
             **kwargs,
         ):
+            if suppressor is not None and output.new_text:
+                delta = suppressor.feed(output.new_text)
+                if output.finished:
+                    delta += suppressor.finish()
+                if delta != output.new_text:
+                    output.new_text = delta
             if output.finished and tools and not output.tool_calls:
                 output = _fallback_parse_tool_calls(output, self._tokenizer, tools)
             yield output

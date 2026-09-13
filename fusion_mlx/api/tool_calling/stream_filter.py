@@ -40,6 +40,13 @@ class ToolCallStreamFilter:
         if marker_end is None:
             marker_end = ""
         self._marker_pairs: list[tuple[str, str]] = [("<tool_call>", "</tool_call>")]
+        # 裸 XML 工具调用 (Qwen3.5/3.8 taught format): envelope 控制字符被
+        # remove_special_tokens_preserve_whitespace 从流式 delta 剥掉后, 剩余
+        # "<function=...>\n<parameter=...>...</function>" 纯文本形态. 没有这
+        # 对, 流式增量把原始标记原样透传给客户端 (tool_use 块之外多一段
+        # markup 残留). close 等待 "</function>"; 部分前缀保留与 EH-5 未闭合
+        # 丢弃逻辑经 _marker_pairs 自动覆盖.
+        self._marker_pairs.append(("<function=", "</function>"))
         self._suppress_after_markers: list[str] = []
         if marker:
             if marker_end:
