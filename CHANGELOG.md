@@ -98,6 +98,22 @@
   → 46.86 (4bit target + 4bit draft) tok/s.
 
 ### Fixed
+- **Strict json_schema not enforced (G-5, #0912 audit P1)** —
+  `response_format: {type: json_schema, strict: true}` returned free text
+  with 200 OK instead of schema-conformant JSON. Root cause:
+  `resolve_vocab_size` (utils/tokenizer.py) only checked `model.config` and
+  `model.vocab_size`, but recent mlx-lm `Model` objects expose neither —
+  config lives on `model.args` (a `ModelArgs` dataclass with `vocab_size`).
+  The engine already read `model.args` for `model_type` but the vocab
+  resolver did not. Effect: `_compile_grammar_for_request` created an
+  llguidance LLMatcher with `vocab_size=None` → chat.py skipped R12-4
+  post-gen validation (`compiled_grammar is not None`) → scheduler's
+  `GrammarConstraintProcessor` also got None → logged "Cannot determine
+  vocab_size; skipping grammar constraint" and did NOT attach the logits
+  processor. Net: grammar compiled but never applied. Fixed: resolver
+  falls back to `model.args.vocab_size` + handles dict configs properly.
+  Verified live: Qwen3-0.6B strict json_schema now returns valid JSON
+  matching the schema.
 - **`/v1/completions` returned chat shape not text shape (G-1, #0912 audit P2)** —
   the legacy text-completion endpoint wrapped the prompt into a chat message,
   ran it through the chat path, and returned the `ChatCompletionResponse`
