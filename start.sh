@@ -318,6 +318,7 @@ do_start() {
             --dflash2-drafter-path "${model_dir}/Qwen3.8-27B-DFlash2" \
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
+            --max-cache-blocks 4096 \
             $(host_port_args) \
             ${api_key_arg} \
             > "${LOG_DIR}/server.log" 2>&1 &
@@ -667,6 +668,7 @@ _run_with_watchdog() {
             --dflash2-drafter-path "${model_dir}/Qwen3.8-27B-DFlash2" \
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
+            --max-cache-blocks 4096 \
             $(host_port_args) \
             ${api_key_arg} \
             > "${LOG_DIR}/server.log" 2>&1
