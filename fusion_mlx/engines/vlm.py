@@ -194,6 +194,10 @@ class VLMBatchedEngine(BaseEngine):
         self._engine = None
         self._vlm_load_executor = None
         self._loaded = False
+        # G-6 (#0912 audit): model load duration, stamped on every
+        # GenerationOutput so the API usage layer can report it.
+        # Mirrors BatchedEngine._model_load_duration.
+        self._model_load_duration: float | None = None
         self._vision_cache = None
         self._vision_cache_enabled = True
         self._grammar_compiler = None
@@ -353,6 +357,7 @@ class VLMBatchedEngine(BaseEngine):
                 self._model_name, trust_remote_code=self._trust_remote_code
             )
             elapsed = time.monotonic() - start
+            self._model_load_duration = elapsed
             # Estimate model size
             try:
                 from mlx.utils import tree_flatten
@@ -1527,6 +1532,7 @@ class VLMBatchedEngine(BaseEngine):
             stop,
             **kwargs,
         )
+        _t0 = time.perf_counter()
         output = await self._engine.generate(
             prompt=prompt,
             sampling_params=sampling_params,
@@ -1536,12 +1542,23 @@ class VLMBatchedEngine(BaseEngine):
             vlm_cache_key_start=vlm_cache_key_start,
             vlm_cache_key_ranges=vlm_cache_key_ranges,
         )
+        _elapsed = time.perf_counter() - _t0
+        _tok_s = (
+            output.completion_tokens / _elapsed
+            if _elapsed > 0 and output.completion_tokens
+            else 0.0
+        )
         # Mirror BatchedEngine.generate (batched.py:644-646): strip special
-        # tokens (<|im_end|>, <|endoftext|>, ...) so they don't leak into the
+        # tokens (<|im_end|>,<|endoftext|>, ...) so they don't leak into the
         # VLM response text. RequestOutput.output_text is raw.
         from ..api.utils import clean_special_tokens
 
         text = clean_special_tokens(output.output_text)
+        # G-6 (#0912 audit): propagate TTFT + model_load_duration so the
+        # API usage layer reports them instead of null. Mirrors
+        # BatchedEngine.generate (batched.py:957-958). Without this, VLM
+        # requests (Qwen3.8-27B served via VLMBatchedEngine) returned
+        # usage.time_to_first_token / model_load_duration = null.
         return GenerationOutput(
             text=text,
             prompt_tokens=output.prompt_tokens,
@@ -1549,6 +1566,9 @@ class VLMBatchedEngine(BaseEngine):
             finish_reason=output.finish_reason,
             tool_calls=output.tool_calls,
             cached_tokens=output.cached_tokens,
+            generation_tokens_per_second=_tok_s,
+            time_to_first_token=getattr(output, "time_to_first_token", None),
+            model_load_duration=self._model_load_duration,
         )
 
     async def stream_generate(
@@ -1614,10 +1634,32 @@ class VLMBatchedEngine(BaseEngine):
             **specprefill_kwargs,
         )
         finished_normally = False
+        _ttft: float | None = None
+        _t0 = time.perf_counter()
         try:
             async for output in engine.stream_outputs(request_id):
                 if output.finished:
                     finished_normally = True
+                # G-6 (#0912 audit): capture TTFT from the first output that
+                # carries it (scheduler stamps time_to_first_token on the
+                # first token). Mirrors BatchedEngine.stream_generate
+                # (batched.py:1075-1083).
+                if (
+                    _ttft is None
+                    and getattr(output, "time_to_first_token", None) is not None
+                ):
+                    _ttft = output.time_to_first_token
+                # G-6 (#0912 audit): compute cumulative generation rate from
+                # wall-clock elapsed since add_request, mirroring
+                # BatchedEngine.stream_generate (batched.py:1066-1071). VLM
+                # previously left generation_tokens_per_second unset so stream
+                # usage returned null for tok/s.
+                _elapsed = time.perf_counter() - _t0
+                _tok_s = (
+                    output.completion_tokens / _elapsed
+                    if _elapsed > 0 and output.completion_tokens
+                    else 0.0
+                )
                 # Mirror BatchedEngine.stream_generate (batched.py:713-720):
                 # strip special tokens from the streamed delta so they don't
                 # leak into the VLM SSE stream. Both text and new_text carry
@@ -1649,6 +1691,9 @@ class VLMBatchedEngine(BaseEngine):
                     finish_reason=output.finish_reason,
                     tool_calls=output.tool_calls,
                     cached_tokens=output.cached_tokens,
+                    time_to_first_token=_ttft,
+                    generation_tokens_per_second=_tok_s,
+                    model_load_duration=self._model_load_duration,
                 )
         except GeneratorExit:
             logger.info(

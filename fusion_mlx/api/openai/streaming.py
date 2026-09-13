@@ -276,6 +276,7 @@ async def _stream_chat_generator(
         tool_calls_in_stream = False
         _stream_ttft: float | None = None
         _stream_tps: float | None = None
+        _stream_model_load: float | None = None
 
         ct_kwargs_stream = dict(getattr(request, "chat_template_kwargs", {}) or {})
         # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (流式路径, 2026-07-19)
@@ -307,6 +308,11 @@ async def _stream_chat_generator(
                 _stream_ttft = gen.time_to_first_token
             if getattr(gen, "generation_tokens_per_second", None) is not None:
                 _stream_tps = gen.generation_tokens_per_second
+            # G-6 (#0912 audit): capture model_load_duration from the engine
+            # (BatchedEngine/VLMBatchedEngine stamp it on every GenerationOutput)
+            # so the final stream chunk's Usage is not null.
+            if getattr(gen, "model_load_duration", None) is not None:
+                _stream_model_load = gen.model_load_duration
             if gen.new_text:
                 if keepalive:
                     keepalive.reset()
@@ -558,6 +564,7 @@ async def _stream_chat_generator(
             cached_tokens=_final_cached,
             time_to_first_token=_stream_ttft,
             generation_tokens_per_second=_stream_tps,
+            model_load_duration=_stream_model_load,
         )
         yield _adapter.format_stream_chunk(last_chunk, request, encoder=encoder)
         yield _adapter.format_stream_end(request)

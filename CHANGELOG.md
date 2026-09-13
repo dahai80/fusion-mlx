@@ -98,6 +98,18 @@
   → 46.86 (4bit target + 4bit draft) tok/s.
 
 ### Fixed
+- **VLM usage performance fields null (G-6, #0912 audit P2)** — Qwen3.8-27B
+  is served via `VLMBatchedEngine`, but PR #878 only stamped
+  `time_to_first_token` / `model_load_duration` /
+  `generation_tokens_per_second` on `BatchedEngine`. VLM `generate()` and
+  `stream_generate()` constructed `GenerationOutput` without those fields →
+  chat-completion usage returned `null` for all three (stream and non-stream).
+  Fixed: `VLMBatchedEngine` now stamps all three on both paths (TTFT captured
+  from the scheduler-stamped first output, tps computed cumulatively like
+  `BatchedEngine`), and `streaming.py`'s final `StreamChunk` now carries
+  `model_load_duration` so the stream `Usage` is no longer null. Verified live
+  on Qwen3.8-27B-4bit: stream `ttft=0.13s, model_load=1.10s, gen_tps=3.32`;
+  non-stream `ttft=0.14s, model_load=1.10s, gen_tps=1.14`.
 - **model_settings.json slash/hyphen dual-key (F-4, #0912 audit P2)** — the
   same model could be stored under two divergent keys:
   `mlx-community/Qwen3.8-27B-4bit` (slash, the HF repo id returned by
