@@ -24,6 +24,7 @@ class DFlash2Runtime:
     drafter: Any = None
     draft_repo: str = ""
     block_size: int = 5
+    _preset: Any = None
     _accept_lens: list = field(default_factory=list)
 
     def record_accept(self, avg_accept: float | None) -> None:
@@ -41,6 +42,7 @@ def load_runtime(
     draft_repo: str,
     block_size: int = 5,
     draft_bits: int | None = 4,
+    preset: Any = None,
 ) -> DFlash2Runtime:
     if not draft_repo:
         raise ValueError("draft_repo must be a non-empty string")
@@ -71,4 +73,5 @@ def load_runtime(
         drafter=drafter,
         draft_repo=draft_repo,
         block_size=block_size,
+        _preset=preset,
     )

@@ -1063,8 +1063,26 @@ class DFlash2SpecState:
     prefill replay. Mirrors DFlashSpecState (v1).
     """
 
-    def __init__(self, runtime):
+    def __init__(self, runtime, preset=None):
         self.runtime = runtime
+        self._preset = preset
+        self._warmup = (
+            getattr(preset, "warmup_steps", DFLASH2_SPEC_WARMUP_STEPS)
+            if preset
+            else DFLASH2_SPEC_WARMUP_STEPS
+        )
+        self._cb_threshold = (
+            getattr(
+                preset, "circuit_breaker_threshold", DFLASH2_CIRCUIT_BREAKER_THRESHOLD
+            )
+            if preset
+            else DFLASH2_CIRCUIT_BREAKER_THRESHOLD
+        )
+        self._cb_window = (
+            getattr(preset, "circuit_breaker_window", DFLASH2_CIRCUIT_BREAKER_WINDOW)
+            if preset
+            else DFLASH2_CIRCUIT_BREAKER_WINDOW
+        )
         self.steps_since_start = 0
         self.total_spec_steps = 0
         self.total_draft_proposed = 0
@@ -1090,7 +1108,7 @@ class DFlash2SpecState:
     def should_speculate(self) -> bool:
         if self._circuit_tripped:
             return False
-        return self.steps_since_start >= DFLASH2_SPEC_WARMUP_STEPS
+        return self.steps_since_start >= self._warmup
 
     def record_result(self, n_accepted: int, n_total: int):
         self.total_spec_steps += 1
@@ -1100,18 +1118,18 @@ class DFlash2SpecState:
         if n_total > 0:
             rate = n_accepted / n_total
             self._recent_rates.append(rate)
-            if len(self._recent_rates) > DFLASH2_CIRCUIT_BREAKER_WINDOW:
+            if len(self._recent_rates) > self._cb_window:
                 self._recent_rates.pop(0)
-            if len(self._recent_rates) >= DFLASH2_CIRCUIT_BREAKER_WINDOW:
+            if len(self._recent_rates) >= self._cb_window:
                 avg = sum(self._recent_rates) / len(self._recent_rates)
-                if avg < DFLASH2_CIRCUIT_BREAKER_THRESHOLD:
+                if avg < self._cb_threshold:
                     self._circuit_tripped = True
                     logger.warning(
                         "dflash2_spec: circuit breaker tripped "
                         "(avg accept %.1f%% < %.1f%% over %d steps) — "
                         "disabling spec for rest of request",
                         avg * 100,
-                        DFLASH2_CIRCUIT_BREAKER_THRESHOLD * 100,
+                        self._cb_threshold * 100,
                         len(self._recent_rates),
                     )
 
@@ -1149,7 +1167,8 @@ def dflash2_spec_step(
         dflash2_runtime = scheduler._dflash2_runtime
         if dflash2_runtime is None:
             return []
-        dflash2_state = DFlash2SpecState(dflash2_runtime)
+        _preset = getattr(dflash2_runtime, "_preset", None)
+        dflash2_state = DFlash2SpecState(dflash2_runtime, preset=_preset)
         scheduler._dflash2_spec_state = dflash2_state
 
     request = scheduler.running.get(request_id)

@@ -690,15 +690,25 @@ class VLMBatchedEngine(BaseEngine):
             return
         try:
             from ..speculative.dflash2 import load_runtime as load_dflash2_runtime
+            from ..speculative.dflash2.presets import resolve_preset
 
+            _preset = resolve_preset(
+                self._model_name,
+                self._model,
+                (
+                    getattr(self._model_settings, "quant_bits", None)
+                    if self._model_settings
+                    else None
+                ),
+            )
             block_size = (
                 (
                     getattr(self._model_settings, "dflash2_block_size", None)
                     if self._model_settings
                     else None
                 )
-                or getattr(self._scheduler_config, "dflash2_block_size", 5)
-                or 5
+                or getattr(self._scheduler_config, "dflash2_block_size", 0)
+                or _preset.block_size
             )
             draft_bits = (
                 getattr(self._model_settings, "dflash2_draft_bits", None)
@@ -706,7 +716,10 @@ class VLMBatchedEngine(BaseEngine):
                 else None
             )
             if draft_bits is None:
-                draft_bits = getattr(self._scheduler_config, "dflash2_draft_bits", 4)
+                draft_bits = (
+                    getattr(self._scheduler_config, "dflash2_draft_bits", None)
+                    or _preset.draft_bits
+                )
             loop = asyncio.get_running_loop()
             # Load ONLY the draft on the VLM single-worker mlx executor
             # (the SAME thread that runs scheduler steps).
@@ -716,6 +729,7 @@ class VLMBatchedEngine(BaseEngine):
                     dflash2_path,
                     block_size=block_size,
                     draft_bits=draft_bits,
+                    preset=_preset,
                 ),
             )
             # Bind drafter to the scheduler's already-loaded VLM target.
