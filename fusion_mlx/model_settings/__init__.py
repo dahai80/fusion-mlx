@@ -225,11 +225,10 @@ class ModelSettingsManager:
                     # hyphen keys. Keep first (deterministic), drop the
                     # duplicate, log loudly so the operator reconciles.
                     logger.error(
-                        "F-4 model_settings dual-key conflict: '%s' and '%s' "
-                        "collapse to '%s'; keeping first, dropping duplicate. "
-                        "Re-apply settings via admin if needed.",
+                        "F-4 model_settings dual-key conflict: '%s' duplicates "
+                        "already-loaded canonical key '%s'; keeping first, "
+                        "dropping duplicate. Re-apply settings via admin if needed.",
                         model_id,
-                        canonical,
                         canonical,
                     )
                     continue
@@ -367,10 +366,10 @@ class ModelSettingsManager:
                 canonical = _canonical_model_id(model_id)
                 if canonical in self._profiles:
                     logger.error(
-                        "F-4 model_profiles dual-key conflict: '%s' and '%s' "
-                        "collapse to '%s'; keeping first, dropping duplicate.",
+                        "F-4 model_profiles dual-key conflict: '%s' duplicates "
+                        "already-loaded canonical key '%s'; keeping first, "
+                        "dropping duplicate.",
                         model_id,
-                        canonical,
                         canonical,
                     )
                     continue

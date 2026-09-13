@@ -98,6 +98,18 @@
   → 46.86 (4bit target + 4bit draft) tok/s.
 
 ### Fixed
+- **model_settings.json slash/hyphen dual-key (F-4, #0912 audit P2)** — the
+  same model could be stored under two divergent keys:
+  `mlx-community/Qwen3.8-27B-4bit` (slash, the HF repo id returned by
+  `resolve_model`) and `mlx-community--Qwen3.8-27B-4bit` (hyphen, the
+  on-disk directory name the EnginePool registers entries under). Admin
+  writes used the pool entry id (hyphen); serve-time lookups used the
+  resolved HF repo id (slash) → the operator set TTL/pin via admin but
+  serve read the other key and got defaults. Fixed:
+  `ModelSettingsManager` canonicalizes every model_id key to hyphen form
+  (`/` → `--`) on load (merging duplicate keys with a fail-visible ERROR
+  log) and on every public read/write/profile method, so the two forms
+  can never coexist. Existing corrupted files self-repair on next load.
 - **API key three-source divergence (G-8/T-2, #0912 audit P0-3)** — the
   admin layer (`global_settings.auth.api_key`), module global
   (`admin/auth._api_key`), and config layer (`get_config().api_key`) could
