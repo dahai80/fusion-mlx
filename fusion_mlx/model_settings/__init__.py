@@ -674,9 +674,7 @@ class ModelSettingsManager:
             cid = _canonical_model_id(model_id)
             per_model = self._profiles.setdefault(cid, {})
             if name in per_model:
-                raise ValueError(
-                    f"Profile '{name}' already exists for model '{cid}'"
-                )
+                raise ValueError(f"Profile '{name}' already exists for model '{cid}'")
             now = utcnow().isoformat()
             profile_api_name = self._allocate_profile_api_name_locked(
                 per_model,
@@ -781,15 +779,16 @@ class ModelSettingsManager:
 
     def delete_profile(self, model_id: str, name: str) -> bool:
         with self._lock:
-            per_model = self._profiles.get(model_id, {})
+            cid = _canonical_model_id(model_id)
+            per_model = self._profiles.get(cid, {})
             if name not in per_model:
                 return False
             profiles_snapshot = copy.deepcopy(self._profiles)
             settings_snapshot = copy.deepcopy(self._settings)
             del per_model[name]
-            if not per_model and model_id in self._profiles:
-                del self._profiles[model_id]
-            old_active = self._settings.get(model_id)
+            if not per_model and cid in self._profiles:
+                del self._profiles[cid]
+            old_active = self._settings.get(cid)
             if old_active is not None and old_active.active_profile_name == name:
                 old_active.active_profile_name = None
             try:
@@ -809,12 +808,13 @@ class ModelSettingsManager:
         settings_sanitizer: Callable[[dict[str, Any]], None] | None = None,
     ) -> ModelSettings | None:
         with self._lock:
-            per_model = self._profiles.get(model_id, {})
+            cid = _canonical_model_id(model_id)
+            per_model = self._profiles.get(cid, {})
             if name not in per_model:
                 return None
             profile_settings = per_model[name].get("settings", {}) or {}
             settings_snapshot = copy.deepcopy(self._settings)
-            current = self._settings.get(model_id)
+            current = self._settings.get(cid)
             if current is None:
                 current = ModelSettings()
             merged = current.to_dict()
@@ -824,7 +824,7 @@ class ModelSettingsManager:
             if settings_sanitizer is not None:
                 settings_sanitizer(merged)
             new_settings = ModelSettings.from_dict(merged)
-            self._settings[model_id] = new_settings
+            self._settings[cid] = new_settings
             try:
                 self._save()
             except Exception:
