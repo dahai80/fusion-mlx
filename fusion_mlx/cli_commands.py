@@ -520,6 +520,7 @@ def rm_command(args):
 
 def ps_command(_args):
     """List running fusion-mlx servers (process scan)."""
+    import shlex
     import time
 
     import psutil
@@ -527,9 +528,19 @@ def ps_command(_args):
     rows: list[tuple[int, str, str, str]] = []
     for proc in psutil.process_iter(["pid", "cmdline", "create_time"]):
         try:
-            cmd = proc.info["cmdline"] or []
+            raw = proc.info["cmdline"] or []
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
+        # setproctitle renames the server to "fusion-mlx-server" and
+        # collapses argv into a single string element (with trailing
+        # empty strings). Re-split via shlex so token matching works for
+        # both layouts:
+        #   original: ["fusion-mlx", "serve", "--model-dir", ...]
+        #   renamed:  ["fusion-mlx-server serve --model-dir ...", "", ...]
+        if raw and (" " in raw[0] or "fusion-mlx-server" in raw[0]):
+            cmd = shlex.split(" ".join(raw))
+        else:
+            cmd = raw
         if not any(
             ("fusion-mlx" in c or "fusion_mlx" in c) and "serve" in cmd for c in cmd
         ):

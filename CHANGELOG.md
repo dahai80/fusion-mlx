@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Added
+- **Server process name → `fusion-mlx-server`** — `serve` now calls
+  `setproctitle.setproctitle("fusion-mlx-server ...")` so the running
+  server shows as `fusion-mlx-server` in `ps`/`top`/Activity Monitor
+  instead of generic `python`. `ps_command` re-splits the collapsed
+  single-string argv (setproctitle side effect) via `shlex` so
+  `fusion-mlx ps` and `start.sh status` still detect the server.
+  `setproctitle>=1.3.0` added to core deps (best-effort: falls back to
+  `python` if unset).
 - **Dequant fusion systematization (O5.2)** — `W4A8Linear` generalized to
   configurable weight bits (Q4/Q6/Q8). `QUANT_FORMAT_REGISTRY` +
   `create_fused_linear(fmt)` factory. `NVFP4FusedLinear` holds packed
