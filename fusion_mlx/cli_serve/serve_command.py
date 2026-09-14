@@ -87,6 +87,22 @@ def serve_command(args):
     import os
     import sys
 
+    # Set process title to fusion-mlx-server so ps/top/Activity Monitor show
+    # the server name instead of generic "python". Best-effort: skip if
+    # setproctitle not installed (no crash, just falls back to python name).
+    # Preserve the serve args in the title so `fusion-mlx ps` (which scans
+    # cmdline for "fusion-mlx" + "serve" tokens) can still detect + parse
+    # the running server.
+    try:
+        import setproctitle
+
+        _title_args = " ".join(sys.argv[1:])
+        setproctitle.setproctitle(f"fusion-mlx-server {_title_args}")
+    except ImportError:
+        logging.getLogger(__name__).debug(
+            "setproctitle not installed; process name stays 'python'"
+        )
+
     # Install the M5 hardware-compat shim BEFORE any `from .server import`
     # (line ~1150), which transitively imports mlx_lm.generate -- that module
     # captures mx.new_thread_local_stream at module-import time, and on M5
