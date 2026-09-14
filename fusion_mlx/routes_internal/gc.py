@@ -78,8 +78,16 @@ async def run_gc(is_admin: bool = Depends(require_admin)):
             import mlx.core as mx
 
             if mx.metal.is_available():
-                mx.metal.clear_cache()
-                logger.info("gc: mx.metal.clear_cache() completed")
+                # O3.2: route through the single-threaded LLM executor so
+                # clear_cache serializes with any concurrent engine unload/
+                # evict — prevents interleaved Metal allocator mutations.
+                from ..engine_core import get_mlx_executor
+
+                _f = get_mlx_executor().submit(
+                    lambda: (mx.synchronize(), mx.metal.clear_cache())
+                )
+                _f.result()
+                logger.info("gc: mx.metal.clear_cache() completed (via executor)")
         except Exception as e:
             logger.warning("gc: mx.metal.clear_cache() failed: %s", e)
 
