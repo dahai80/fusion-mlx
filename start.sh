@@ -314,8 +314,6 @@ do_start() {
             --model-dir "${model_dir}" \
             --log-level "${log_level}" \
             --enable-prefix-cache \
-            --enable-dflash2 \
-            --dflash2-drafter-path "${model_dir}/Qwen3.8-27B-DFlash2" \
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
             --max-cache-blocks 4096 \
@@ -664,8 +662,6 @@ _run_with_watchdog() {
             --model-dir "${model_dir}" \
             --log-level "${log_level}" \
             --enable-prefix-cache \
-            --enable-dflash2 \
-            --dflash2-drafter-path "${model_dir}/Qwen3.8-27B-DFlash2" \
             --continuous-batching \
             --chunked-prefill-tokens 4096 \
             --max-cache-blocks 4096 \
