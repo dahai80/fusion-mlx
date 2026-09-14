@@ -26,18 +26,18 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from ..engines.base import BaseEngine
-    from ..engines.batched import BatchedEngine
-    from ..engines.embedding import EmbeddingEngine
-    from ..engines.image_gen import ImageGenEngine
-    from ..engines.ner import NEREngine
-    from ..engines.reranker import RerankerEngine
-    from ..engines.sts import STSEngine
-    from ..engines.stt import STTEngine
-    from ..engines.tts import TTSEngine
-    from ..engines.video import VideoGenEngine
-    from ..engines.vlm import VLMBatchedEngine
-    from ..runtime.diffusion_lane import DiffusionEngine
-    from .model_settings import ModelSettingsManager
+    from ..engines.batched import BatchedEngine  # noqa: F401
+    from ..engines.embedding import EmbeddingEngine  # noqa: F401
+    from ..engines.image_gen import ImageGenEngine  # noqa: F401
+    from ..engines.ner import NEREngine  # noqa: F401
+    from ..engines.reranker import RerankerEngine  # noqa: F401
+    from ..engines.sts import STSEngine  # noqa: F401
+    from ..engines.stt import STTEngine  # noqa: F401
+    from ..engines.tts import TTSEngine  # noqa: F401
+    from ..engines.video import VideoGenEngine  # noqa: F401
+    from ..engines.vlm import VLMBatchedEngine  # noqa: F401
+    from ..runtime.diffusion_lane import DiffusionEngine  # noqa: F401
+    from .model_settings import ModelSettingsManager  # noqa: F401
 
 import mlx.core as mx
 
@@ -1344,7 +1344,7 @@ class EnginePool:
                     if (
                         entry.engine is not None
                         and force_lm
-                        and isinstance(entry.engine, VLMBatchedEngine)
+                        and type(entry.engine).__name__ == "VLMBatchedEngine"
                     ):
                         self._raise_if_reload_busy(entry, "reload as LM")
                         needs_reload = True
@@ -2498,6 +2498,17 @@ class EnginePool:
         load_completed = False
         pre_load_memory = max(mx.get_active_memory(), get_phys_footprint())
         try:
+            from ..engines.batched import BatchedEngine
+            from ..engines.embedding import EmbeddingEngine
+            from ..engines.image_gen import ImageGenEngine
+            from ..engines.ner import NEREngine
+            from ..engines.reranker import RerankerEngine
+            from ..engines.sts import STSEngine
+            from ..engines.stt import STTEngine
+            from ..engines.tts import TTSEngine
+            from ..engines.video import VideoGenEngine
+            from ..engines.vlm import VLMBatchedEngine
+
             effective_type = entry.engine_type
             if force_lm and effective_type == "vlm":
                 effective_type = "batched"
