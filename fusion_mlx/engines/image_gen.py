@@ -418,6 +418,54 @@ def _img_to_bytes(img, output_format: str) -> bytes:
     return buf.getvalue()
 
 
+def _resolve_image_to_path(value, temp_paths: list) -> str:
+    # Accept either a filesystem path or base64 image data (raw b64 or a
+    # data:image/...;base64,... URI). mflux variants expect file paths for
+    # image_path/masked_image_path/controlnet_image_path; passing a b64 blob
+    # makes mflux try open(<b64 string>) -> OSError "File name too long" (#898).
+    # b64 data is decoded to a NamedTemporaryFile; its path is appended to
+    # temp_paths so the caller can unlink after generate_image returns.
+    import base64
+    import os
+    import re
+    import tempfile
+
+    if not value:
+        return value
+    if os.path.isfile(value):
+        return value
+    raw = value
+    m = re.match(r"data:image/[a-zA-Z+]+;base64,(.*)", value, re.DOTALL)
+    if m:
+        raw = m.group(1)
+    try:
+        decoded = base64.b64decode(raw, validate=True)
+    except Exception:
+        # Not valid b64 and not an existing file — return as-is so mflux
+        # surfaces the real open() error rather than us mis-guessing.
+        return value
+    if len(decoded) < 8:
+        return value
+    magic = decoded[:12]
+    ext = "png"
+    if magic[:3] == b"\xff\xd8\xff":
+        ext = "jpg"
+    elif magic[:4] == b"\x89PNG":
+        ext = "png"
+    elif magic[:6] in (b"GIF87a", b"GIF89a"):
+        ext = "gif"
+    elif magic[:4] == b"RIFF" and magic[8:12] == b"WEBP":
+        ext = "webp"
+    tmp = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
+    tmp.write(decoded)
+    tmp.close()
+    temp_paths.append(tmp.name)
+    logger.debug(
+        "_resolve_image_to_path: decoded b64 -> %s (%d bytes)", tmp.name, len(decoded)
+    )
+    return tmp.name
+
+
 class _StepProgressInLoop:
     # mflux CallbackRegistry subscriber (InLoopCallback protocol). Registered
     # on flux.callbacks before generate_image; call_in_loop fires once per
@@ -717,49 +765,79 @@ class ImageGenEngine(BaseNonStreamingEngine):
                         denoising_end,
                         self._variant,
                     )
-                # Variant-specific generate_image kwargs
+                # Variant-specific generate_image kwargs. Resolve b64 image
+                # inputs (edit_image/mask_image/control_image/depth_image/
+                # reference_images) to temp file paths — mflux variants expect
+                # paths, not inline b64 blobs (#898 OSError "File name too
+                # long"). temp_paths cleaned after generate_image returns.
                 variant = self._variant
+                _img_temp_paths: list = []
+                _edit_path = (
+                    _resolve_image_to_path(edit_image, _img_temp_paths)
+                    if edit_image is not None
+                    else None
+                )
+                _mask_path = (
+                    _resolve_image_to_path(mask_image, _img_temp_paths)
+                    if mask_image is not None
+                    else None
+                )
+                _control_path = (
+                    _resolve_image_to_path(control_image, _img_temp_paths)
+                    if control_image is not None
+                    else None
+                )
+                _depth_path = (
+                    _resolve_image_to_path(depth_image, _img_temp_paths)
+                    if depth_image is not None
+                    else None
+                )
+                _ref_paths = None
+                if reference_images:
+                    _ref_paths = [
+                        _resolve_image_to_path(r, _img_temp_paths)
+                        for r in reference_images
+                    ]
                 if variant == "controlnet_canny" or variant == "controlnet_upscaler":
-                    if control_image is None:
+                    if _control_path is None:
                         raise ValueError(f"variant '{variant}' requires control_image")
-                    gen_kwargs["controlnet_image_path"] = control_image
+                    gen_kwargs["controlnet_image_path"] = _control_path
                     if controlnet_strength is not None:
                         gen_kwargs["controlnet_strength"] = controlnet_strength
                 elif variant == "depth":
-                    if depth_image is not None:
-                        gen_kwargs["depth_image_path"] = depth_image
-                    elif control_image is not None:
-                        gen_kwargs["image_path"] = control_image
+                    if _depth_path is not None:
+                        gen_kwargs["depth_image_path"] = _depth_path
+                    elif _control_path is not None:
+                        gen_kwargs["image_path"] = _control_path
                     if image_strength is not None:
                         gen_kwargs["image_strength"] = image_strength
                 elif variant == "fill":
-                    if edit_image is None or mask_image is None:
+                    if _edit_path is None or _mask_path is None:
                         raise ValueError(
                             "variant 'fill' requires edit_image and mask_image"
                         )
-                    gen_kwargs["image_path"] = edit_image
-                    gen_kwargs["masked_image_path"] = mask_image
+                    gen_kwargs["image_path"] = _edit_path
+                    gen_kwargs["masked_image_path"] = _mask_path
                     if image_strength is not None:
                         gen_kwargs["image_strength"] = image_strength
                 elif variant == "kontext":
-                    if edit_image is not None:
-                        gen_kwargs["image_path"] = edit_image
-                    elif control_image is not None:
-                        gen_kwargs["image_path"] = control_image
+                    if _edit_path is not None:
+                        gen_kwargs["image_path"] = _edit_path
+                    elif _control_path is not None:
+                        gen_kwargs["image_path"] = _control_path
                     if image_strength is not None:
                         gen_kwargs["image_strength"] = image_strength
                 elif variant == "redux":
-                    if not reference_images:
+                    if not _ref_paths:
                         raise ValueError("variant 'redux' requires reference_images")
-                    gen_kwargs["redux_image_paths"] = reference_images
+                    gen_kwargs["redux_image_paths"] = _ref_paths
                     if reference_strengths is not None:
                         gen_kwargs["redux_image_strengths"] = reference_strengths
                     if image_strength is not None:
                         gen_kwargs["image_strength"] = image_strength
                 elif variant in ("txt2img", "flux1_dev", "flux1_schnell", "flux2_dev"):
-                    if edit_image is not None or control_image is not None:
-                        img = edit_image or control_image
-                        gen_kwargs["image_path"] = img
+                    if _edit_path is not None or _control_path is not None:
+                        gen_kwargs["image_path"] = _edit_path or _control_path
                         if image_strength is not None:
                             gen_kwargs["image_strength"] = image_strength
                 elif variant == "sd3":
@@ -772,12 +850,12 @@ class ImageGenEngine(BaseNonStreamingEngine):
                     if negative_prompt is not None:
                         gen_kwargs["negative_prompt"] = negative_prompt
                 if variant in ("sd3", "sdxl", "cosxl", "sdxs", "sd15", "sd2") and (
-                    edit_image is not None or control_image is not None
+                    _edit_path is not None or _control_path is not None
                 ):
                     # img2img / partial-denoise (#480): each pipeline encodes
                     # the init image to a latent, noises to t_start, and runs a
                     # partial denoise at image_strength (denoise fraction).
-                    gen_kwargs["image_path"] = edit_image or control_image
+                    gen_kwargs["image_path"] = _edit_path or _control_path
                     if image_strength is not None:
                         gen_kwargs["image_strength"] = image_strength
                 elif variant == "stable_cascade":
@@ -823,8 +901,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
                         guidance,
                         image_strength or 0.6,
                     )
-                    _init_arr = _load_image_array(edit_image, width, height)
-                    _mask_arr = _load_mask_array(mask_image, width, height)
+                    _init_arr = _load_image_array(_edit_path, width, height)
+                    _mask_arr = _load_mask_array(_mask_path, width, height)
                     _vae = getattr(flux, "vae", None)
                     if _vae is None:
                         raise ValueError(
@@ -862,6 +940,13 @@ class ImageGenEngine(BaseNonStreamingEngine):
                             flux.callbacks.in_loop.remove(subscriber)
                         except (ValueError, AttributeError):
                             pass
+                    # Cleanup b64-decoded temp image files (#898).
+                    for _tp in _img_temp_paths:
+                        try:
+                            os.unlink(_tp)
+                        except OSError:
+                            pass
+                    _img_temp_paths.clear()
                 img_w, img_h = gen.image.size
                 min_w = max(8, width // 2)
                 min_h = max(8, height // 2)
