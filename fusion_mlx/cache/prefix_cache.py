@@ -134,6 +134,14 @@ class BlockAwarePrefixCache(CacheManager):
         # block_id -> expiry epoch (0.0 = permanent). Pin increments
         # PagedCacheManager ref_count so LRU eviction skips the block.
         self._pinned_blocks: dict[int, float] = {}
+        # O5.4 (optimization-0914 item 17/23): async SSD preload executor.
+        # Single-thread pool — preload I/O is serialized to avoid contention
+        # with the engine thread. The future is awaited before reconstruct.
+        import concurrent.futures
+
+        self._preload_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="ssd-preload"
+        )
         # threading.Lock (not asyncio.Lock) — fetch/store/insert run sync on the
         # engine thread, the block-freed callback fires from a different thread
         # (PagedCacheManager caller). The prior asyncio.Lock was never acquired
@@ -1606,6 +1614,22 @@ class BlockAwarePrefixCache(CacheManager):
             return 0
 
         return self.paged_ssd_cache.preload_matched_blocks(block_hashes)
+
+    def preload_blocks_async(self, block_table: BlockTable):
+        """Fire SSD→hot-cache preload in a background thread.
+
+        Returns a concurrent.futures.Future that resolves to the block
+        count when I/O completes. Call ``.result()`` before
+        ``reconstruct_cache`` to ensure blocks are hot. No-op (returns
+        a completed future with 0) when SSD cache is absent.
+        """
+        import concurrent.futures
+
+        if self.paged_ssd_cache is None or not block_table or not block_table.block_ids:
+            fut = concurrent.futures.Future()
+            fut.set_result(0)
+            return fut
+        return self._preload_executor.submit(self.preload_blocks, block_table)
 
     def reconstruct_cache(
         self,

@@ -55,8 +55,24 @@ def doctor_command(args: Any) -> None:
         sys.exit(2)
 
     verbose = bool(getattr(args, "verbose", False))
+    fix = bool(getattr(args, "fix", False))
     report = run_all()
     render(report, verbose=verbose)
+    if fix:
+        from .auto_fix import run_auto_fix
+
+        fixed = run_auto_fix(report)
+        if fixed:
+            print("\n── Auto-fix results ──────────────────────────────────────")
+            for action in fixed:
+                status = "✓ fixed" if action.success else "✗ failed"
+                print(f"  {status}: {action.description}")
+            print(
+                f"\n{len([a for a in fixed if a.success])}/{len(fixed)} "
+                "issues resolved."
+            )
+        else:
+            print("\n── Auto-fix: no actionable issues found ─────────────────")
     sys.exit(report.exit_code)
 
 

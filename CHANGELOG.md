@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- **MemoryTier auto-detection** — `--memory-tier auto` (new default) derives
+  SAFE/BALANCED/AGGRESSIVE from unified memory size
+  (<16 GB → SAFE, 16-32 GB → BALANCED, 32+ GB → AGGRESSIVE).
+- **`fusion-mlx doctor --fix`** — self-heals 3 classes of drift: HF mirror
+  unreachable (switch to backup), port conflict (suggest free port),
+  cache quota exceeds physical (downgrade tier).
+- **Async SSD prefetch** — `BlockAwarePrefixCache.preload_blocks_async`
+  fires SSD→hot-cache preload in a background thread, awaited before
+  `reconstruct_cache`. Reduces admission P99 long-tail on cold cache hits.
 - **Batched paged decode-attention kernel** — `paged_decode_attention` now
   accepts `kv_lens: mx.array` (per-sequence effective lengths) and 2-D
   `block_table` shaped `(B, max_blocks)`, enabling true batched decode with
