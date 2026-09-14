@@ -71,14 +71,13 @@ def mask_latent(mask_image: mx.array, latent_shape: tuple[int, ...]) -> mx.array
     # (standard VAE downsample factor 8). Uses area-average resize.
     if mask_image.ndim == 3:
         mask_image = mask_image.mean(axis=-1)
-    *spatial, _ = latent_shape
     # latent_shape is (C, H_lat, W_lat) or (B, C, H_lat, W_lat)
-    if len(spatial) == 3:
-        _, h_lat, w_lat = spatial
-    elif len(spatial) == 2:
-        h_lat, w_lat = spatial
+    if len(latent_shape) == 3:
+        _, h_lat, w_lat = latent_shape
+    elif len(latent_shape) == 4:
+        *_, h_lat, w_lat = latent_shape
     else:
-        h_lat = w_lat = spatial[-1]
+        h_lat = w_lat = latent_shape[-1]
     h_in = mask_image.shape[0]
     w_in = mask_image.shape[1]
     if h_in == h_lat and w_in == w_lat:
