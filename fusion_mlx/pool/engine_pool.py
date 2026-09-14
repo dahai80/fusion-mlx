@@ -1698,14 +1698,20 @@ class EnginePool:
                     -int(entry.estimated_size)
                 )
             # #209: force reclaim Metal memory (sync path previously skipped this)
+            # O3.2 (optimization-0914 item 6): route synchronize + clear_cache
+            # through get_mlx_executor so the single-threaded LLM executor
+            # serializes with async clear_cache calls — prevents interleaved
+            # Metal allocator mutations between sync unload and async evict.
             try:
                 import gc
 
                 import mlx.core as mx
 
                 gc.collect()
-                mx.synchronize()
-                mx.clear_cache()
+                _f = get_mlx_executor().submit(
+                    lambda: (mx.synchronize(), mx.clear_cache())
+                )
+                _f.result()
             except Exception:
                 logger.error(
                     "Metal memory reclaim failed during unregister of %s",

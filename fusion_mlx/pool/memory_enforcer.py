@@ -89,9 +89,19 @@ _WIRED_LIMIT_BUFFER_BYTES = 25 * 1024**3
 _PHYSICAL_RAM_WIRED_CAP_FRACTION = 0.80
 
 # MLX compile cache / buffer pool hard top. Without this, mx.get_cache_memory()
-# grows monotonically — only released by explicit mx.clear_cache(). Set once
-# at startup so the pool never exceeds this size.
-_MLX_CACHE_LIMIT_BYTES = 1 * 1024**3
+# grows monotonically — only released by explicit mx.clear_cache(). O3.1
+# (optimization-0914 item 5): raised from a hardcoded 1GB to a fraction of
+# the recommended working set so larger Macs get more compile-cache headroom
+# (fewer kernel recompiles) without the unbounded growth that caused OOM.
+# Env FUSION_MLX_CACHE_LIMIT_FRACTION (default 0.5) tunes the fraction; 1GB
+# is the floor so tiny working sets still get a usable cache.
+_MLX_CACHE_LIMIT_FRACTION = float(
+    os.environ.get("FUSION_MLX_CACHE_LIMIT_FRACTION", "0.5") or "0.5"
+)
+_MLX_CACHE_LIMIT_MAX_BYTES = (
+    8 * 1024**3
+)  # cap so 0.5× doesn't over-allocate on huge RAM
+_MLX_CACHE_LIMIT_FLOOR_BYTES = 1 * 1024**3
 
 # Fraction of "active" pages we count as reclaimable via macOS
 # compression / swap. macOS's compressor averages 2-3x so ~60-67% of
@@ -481,17 +491,28 @@ class ProcessMemoryEnforcer:
         return min(static_ceiling + _WIRED_LIMIT_BUFFER_BYTES, physical_cap)
 
     def _apply_mlx_cache_limit(self) -> None:
-        """Set MLX compile cache / buffer pool hard top to 1GB.
+        """Set MLX compile cache / buffer pool hard top.
 
+        O3.1: dynamic limit = clamp(working_set × fraction, floor, max).
         Without this, mx.get_cache_memory() grows monotonically — only
-        released by explicit mx.clear_cache(). A 1GB cap (matching
-        flyto-mlx's subprocess setting) prevents unbounded growth while
-        keeping enough compiled kernels hot for performance.
+        released by explicit mx.clear_cache().
         """
+        working_set = _get_max_metal_working_set_bytes()
+        if working_set > 0:
+            raw = int(working_set * _MLX_CACHE_LIMIT_FRACTION)
+            limit = max(
+                _MLX_CACHE_LIMIT_FLOOR_BYTES,
+                min(raw, _MLX_CACHE_LIMIT_MAX_BYTES),
+            )
+        else:
+            limit = _MLX_CACHE_LIMIT_FLOOR_BYTES
         try:
-            mx.metal.set_cache_limit(_MLX_CACHE_LIMIT_BYTES)
+            mx.metal.set_cache_limit(limit)
             logger.info(
-                "MLX metal cache limit set to %s", _format_gb(_MLX_CACHE_LIMIT_BYTES)
+                "MLX metal cache limit set to %s (working_set=%s fraction=%s)",
+                _format_gb(limit),
+                _format_gb(working_set) if working_set else "n/a",
+                _MLX_CACHE_LIMIT_FRACTION,
             )
         except Exception as exc:
             logger.warning("mx.metal.set_cache_limit failed: %s", exc)

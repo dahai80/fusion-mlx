@@ -578,8 +578,52 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
     chunk = state.tokens_remaining[:, :n]
     state.tokens_remaining = state.tokens_remaining[:, n:]
     _throttle_pre = get_phys_footprint()
-    self.model(chunk, cache=state.cache)
-    mx.eval([c.state for c in state.cache])
+    # O3.4 (optimization-0914 item 21-L4): OOM graceful retry. If the model
+    # call or eval hits a Metal allocation failure, clear the MLX compile
+    # cache (via the serialized executor) and retry the chunk once. The
+    # prefill_oom_retries counter caps at 1 so a persistent OOM propagates
+    # to the exception handler → 507 instead of an EXC_BAD_ACCESS crash.
+    try:
+        self.model(chunk, cache=state.cache)
+        mx.eval([c.state for c in state.cache])
+    except (MemoryError, RuntimeError) as _oom_exc:
+        _oom_msg = str(_oom_exc).lower()
+        _is_oom = isinstance(_oom_exc, MemoryError) or any(
+            p in _oom_msg
+            for p in (
+                "out of memory",
+                "metal out of memory",
+                "allocation failed",
+                "device out of memory",
+            )
+        )
+        if not _is_oom:
+            raise
+        if state.request.prefill_oom_retries >= 1:
+            logger.error(
+                "prefill OOM retry exhausted for %s (chunk=%d): %s",
+                state.request.request_id,
+                n,
+                _oom_exc,
+            )
+            raise
+        state.request.prefill_oom_retries += 1
+        logger.warning(
+            "prefill OOM for %s (chunk=%d) — clearing MLX cache and retrying once: %s",
+            state.request.request_id,
+            n,
+            _oom_exc,
+        )
+        try:
+            from ..engine_core import get_mlx_executor
+
+            _f = get_mlx_executor().submit(lambda: (mx.synchronize(), mx.clear_cache()))
+            _f.result()
+        except Exception:
+            mx.synchronize()
+            mx.clear_cache()
+        self.model(chunk, cache=state.cache)
+        mx.eval([c.state for c in state.cache])
     _throttle_post = get_phys_footprint()
     self._record_chunk_transient(
         n,

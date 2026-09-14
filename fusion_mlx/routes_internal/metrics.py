@@ -444,6 +444,54 @@ def _render_uptime_metal() -> list[str]:
             )
     except Exception:
         logger.debug("mlx memory metrics unavailable", exc_info=True)
+    # O3.3 (optimization-0914 item 15): phys_footprint + fragmentation ratio.
+    # Fragmentation = (phys_footprint - mlx_active - mlx_cache) / phys_footprint.
+    # High ratio (>30%) signals Python/unmapped overhead or allocator
+    # fragmentation — triggers a protected clear_cache when observed.
+    try:
+        from ..utils.proc_memory import get_phys_footprint
+
+        phys = get_phys_footprint()
+        if phys > 0:
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_phys_footprint_bytes",
+                    "gauge",
+                    "Process physical footprint (mach phys_footprint) in bytes.",
+                    int(phys),
+                )
+            )
+            mlx_active = 0
+            mlx_cache = 0
+            try:
+                import mlx.core as mx
+
+                if mx.metal.is_available():
+                    mlx_active = int(mx.get_active_memory() or 0)
+                    mlx_cache = int(mx.get_cache_memory() or 0)
+            except Exception:
+                pass
+            overhead = max(0, phys - mlx_active - mlx_cache)
+            frag_ratio = overhead / phys if phys > 0 else 0.0
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_memory_fragmentation_ratio",
+                    "gauge",
+                    "Memory fragmentation ratio: (phys_footprint - mlx_active - mlx_cache) / phys_footprint.",
+                    round(frag_ratio, 4),
+                )
+            )
+            if frag_ratio > 0.30:
+                logger.warning(
+                    "High memory fragmentation: %.1f%% (phys=%d active=%d cache=%d overhead=%d)",
+                    frag_ratio * 100,
+                    phys,
+                    mlx_active,
+                    mlx_cache,
+                    overhead,
+                )
+    except Exception:
+        logger.debug("phys_footprint/fragmentation metrics unavailable", exc_info=True)
     return lines
 
 
