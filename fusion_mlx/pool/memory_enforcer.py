@@ -103,6 +103,11 @@ _MLX_CACHE_LIMIT_MAX_BYTES = (
 )  # cap so 0.5× doesn't over-allocate on huge RAM
 _MLX_CACHE_LIMIT_FLOOR_BYTES = 1 * 1024**3
 
+# Backward-compat alias: the old static 1 GB limit. Kept for tests / callers
+# that reference the constant directly. The actual runtime limit is now
+# dynamic (see _apply_mlx_cache_limit).
+_MLX_CACHE_LIMIT_BYTES = _MLX_CACHE_LIMIT_FLOOR_BYTES
+
 # Fraction of "active" pages we count as reclaimable via macOS
 # compression / swap. macOS's compressor averages 2-3x so ~60-67% of
 # active is realistically reclaimable; 0.8 pushes into swap territory.

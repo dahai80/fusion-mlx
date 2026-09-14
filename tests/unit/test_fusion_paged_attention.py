@@ -64,3 +64,58 @@ def test_paged_decode_matches_sdpa(
     assert out.shape == ref.shape
     rel = mx.max(mx.abs(out - ref)) / (mx.max(mx.abs(ref)) + 1e-9)
     assert float(rel) < 1e-2, f"rel diff {float(rel)} too large"
+
+
+@pytest.mark.skipif(not metal_available(), reason="metal kernel unavailable")
+def test_paged_decode_batched_per_seq_kv_lens():
+    mx.random.seed(42)
+    B = 2
+    n_heads = 8
+    n_kv_heads = 2
+    head_dim = 64
+    gqa = n_heads // n_kv_heads
+    block_size = 16
+    scale = 1.0 / (head_dim**0.5)
+    kv_lens = [33, 17]
+    max_kv = max(kv_lens)
+    max_blocks = (max_kv + block_size - 1) // block_size
+    q = mx.random.normal(shape=(B, n_heads, 1, head_dim)) * 0.1
+    keys_pool = (
+        mx.random.normal(shape=(max_blocks, B, n_kv_heads, block_size, head_dim)) * 0.1
+    )
+    values_pool = (
+        mx.random.normal(shape=(max_blocks, B, n_kv_heads, block_size, head_dim)) * 0.1
+    )
+    bt_2d = mx.array([list(range(max_blocks)) for _ in range(B)], dtype=mx.uint32)
+    kv_lens_arr = mx.array(kv_lens, dtype=mx.uint32)
+    out = paged_decode_attention(
+        q,
+        keys_pool,
+        values_pool,
+        bt_2d,
+        kv_lens_arr,
+        scale,
+        gqa,
+    )
+    assert out.shape == (B, n_heads, 1, head_dim)
+    for bi in range(B):
+        nkv = kv_lens[bi]
+        nb = (nkv + block_size - 1) // block_size
+        k_parts = [keys_pool[pb, bi] for pb in range(nb)]
+        v_parts = [values_pool[pb, bi] for pb in range(nb)]
+        k_all = mx.concatenate(
+            [p.reshape(n_kv_heads, block_size, head_dim) for p in k_parts], axis=1
+        )[:, :nkv, :]
+        v_all = mx.concatenate(
+            [p.reshape(n_kv_heads, block_size, head_dim) for p in v_parts], axis=1
+        )[:, :nkv, :]
+        k_4d = k_all[None]
+        v_4d = v_all[None]
+        if gqa > 1:
+            k_4d = mx.repeat(k_4d, gqa, axis=1)
+            v_4d = mx.repeat(v_4d, gqa, axis=1)
+        ref = mx.fast.scaled_dot_product_attention(
+            q[bi : bi + 1], k_4d, v_4d, scale=scale
+        )
+        rel = mx.max(mx.abs(out[bi : bi + 1] - ref)) / (mx.max(mx.abs(ref)) + 1e-9)
+        assert float(rel) < 1e-2, f"batch {bi} rel diff {float(rel)} too large"

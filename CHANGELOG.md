@@ -3,6 +3,20 @@
 ## [Unreleased]
 
 ### Added
+- **Batched paged decode-attention kernel** — `paged_decode_attention` now
+  accepts `kv_lens: mx.array` (per-sequence effective lengths) and 2-D
+  `block_table` shaped `(B, max_blocks)`, enabling true batched decode with
+  variable-length sequences. Each sequence only iterates `[0, kv_len_i)`
+  blocks instead of a shared scalar. Gated on `FUSION_PAGED_FUSED_KERNEL=on`
+  (A/B switch, default off — needs real-model numerical-equivalence bench).
+- **MFA per-shape tuning table** — `dispatch_policy.select_backend` loads a
+  JSON tuning table (`FUSION_MFA_TUNING_TABLE` env path) keyed by
+  `d{head_dim}_{decode|prefill}_b{batch_size}` to override empirical device
+  rules with measured data. Empty by default (gate: needs bench data).
+- **PAGED_FUSED backend in dispatch_policy** — decode step with `batch > 1`
+  on Apple Silicon with `head_dim ≤ 128` selects `PAGED_FUSED` when
+  `FUSION_PAGED_FUSED_KERNEL=on` (the actual kernel dispatch is via the
+  patcher `fused_call` path; mfa_bridge falls back to SDPA).
 - **KV block-level pin API** — `BlockAwarePrefixCache.pin_prefix(tokens, ttl)`
   / `unpin_prefix(tokens)` increment `PagedCacheManager` ref counts so LRU
   eviction skips pinned blocks; TTL expiry auto-releases. Bucketed prefix

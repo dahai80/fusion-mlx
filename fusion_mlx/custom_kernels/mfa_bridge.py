@@ -95,6 +95,14 @@ def flash_attention(
         return _mfa_dispatch(
             q, k, v, scale, mask, causal, window_size, softcap, return_lse
         )
+    elif decision.backend == AttentionBackend.PAGED_FUSED:
+        logger.debug(
+            "PAGED_FUSED selected but mfa_bridge lacks paged cache; "
+            "patcher fused_call handles actual kernel dispatch"
+        )
+        return _mlx_sdpa_fallback(
+            q, k, v, scale, mask, causal, window_size, softcap, return_lse
+        )
     else:
         return _mlx_sdpa_fallback(
             q, k, v, scale, mask, causal, window_size, softcap, return_lse
