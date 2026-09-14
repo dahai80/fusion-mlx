@@ -274,10 +274,36 @@ def _serve_from_model_dir(args):
     port_raw = getattr(args, "port", None)
     port = 11434 if port_raw is None else int(port_raw)
     config = ServerConfig(host=host, port=port, model_dir=args.model_dir)
-    # R-7: pass --profile into ServerConfig
+    # R-7: profile gate — --profile flag > settings.json profile field > hardware auto-detect.
+    # _serve_from_model_dir bypasses _stage_server_config, so replicate the
+    # settings.json fallback here too — otherwise start.sh (which runs
+    # `serve --model-dir` without --profile) never sees settings.json profile,
+    # and Server.__init__ falls through to hardware auto-detect (standard on
+    # 128GB), skipping image/video routes.
     _profile = getattr(args, "profile", None)
     if _profile:
         config.profile = _profile
+        logger.info("profile from --profile flag: %s", _profile)
+    else:
+        from .._cli_base import _settings_profile as _sp
+
+        _sp_val = _sp()
+        if _sp_val:
+            config.profile = _sp_val
+            logger.info("profile from settings.json: %s", _sp_val)
+    # Sync into the global config singleton so Server.__init__ (which reads
+    # get_config().profile as a fallback) and downstream subsystems see it.
+    from ..config import get_config as _get_config
+
+    if config.profile:
+        _get_config().profile = config.profile
+    # §6.3: disabled_modules from settings.json
+    from .._cli_base import _settings_disabled_modules as _sdm
+
+    _sdm_val = _sdm()
+    if _sdm_val:
+        _get_config().disabled_modules = _sdm_val
+        logger.info("disabled_modules from settings.json: %s", _sdm_val)
 
     # Pass spec-decode / dflash2 / dspark CLI flags through to the engine
     # pool's scheduler_config. Without this, --enable-dflash2 +
