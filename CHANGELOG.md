@@ -32,6 +32,27 @@
   allocates 60% of available system memory (floored 4 GB, capped 32 GB) to
   the subprocess, passed via `lease_bytes` spec field. Worker sets MLX
   cache_limit + wired_limit accordingly.
+- **MFA per-shape tuning microbench (O4.2)** — `fusion-mlx tune-mfa`
+  micro-benchmarks MLX_SDPA vs MFA-ext (NAX/STEEL/STEEL_DSPLIT) per
+  (head_dim, phase, batch_size) shape and emits a JSON tuning table
+  loaded by `dispatch_policy._tuning_lookup` (env `FUSION_MFA_TUNING_TABLE`).
+  Replaces the static 5-tier device heuristic with measured per-shape winners.
+- **Inpaint b64 image input fix (O5.5)** — `image_gen._resolve_image_to_path`
+  decodes base64 image data (raw b64 or data URI) to temp files before
+  passing to mflux variants, which expect file paths. Fixes OSError
+  "File name too long" on fill/controlnet/depth/kontext/redux variants.
+
+### Closed gates (real-model validated)
+- **O5.5 inpaint** — FLUX.1-Fill-dev (54 GB, hf-mirror) native fill variant
+  validated end-to-end: b64 edit+mask → 1024×1024 RGB output in 91s. Mask
+  fidelity: non-mask region mean diff 8/255 (~3% VAE round-trip noise).
+- **O4.2 tuning** — 18-shape measured tuning table (M3/8-core): mixed
+  winners (d128 decode MLX_SDPA, d128 prefill b≥2 NAX, d256 STEEL_DSPLIT,
+  d64 STEEL/NAX). `_tuning_lookup` overrides heuristic at runtime.
+- **O4.1 kernel A/B** — PAGED_FUSED decode kernel: +6.2% tok/s
+  (141→150 tok/s, Qwen3.5-4B batch 4). Stream correctness fix
+  (`mx.gpu` DeviceType → `stream=None`). Upstream mlx_lm teardown race
+  filed: ml-explore/mlx-lm#1888.
 
 ### Declared BURN-IN (not landed)
 - **D8.1 LLM subprocess isolation (O6.2)** — `worker_protocol.py` generalization
