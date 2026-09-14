@@ -1793,6 +1793,12 @@ Examples:
         action="store_true",
         help="Print the underlying probe detail for each check",
     )
+    doctor_parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="Attempt automatic fixes for detected issues "
+        "(mirror fallback, port conflict, cache quota)",
+    )
     # Legacy compatibility shims — accepted-but-ignored so the redirect
     # message in ``doctor_command`` can fire (see comment above).
     doctor_parser.add_argument(

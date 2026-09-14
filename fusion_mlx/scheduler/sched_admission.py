@@ -118,11 +118,18 @@ def add_request(self, request: Request) -> None:
                     "Skipping hot-cache preload for %s under memory pressure",
                     request.request_id,
                 )
+                _preload_fut = None
             else:
-                self.block_aware_cache.preload_blocks(block_table)
-            # Reconstruct actual KVCache objects from stored tensor data
-            # Note: reconstruct_cache may modify block_table in-place if
-            # partial reconstruction occurs (some blocks invalid)
+                _preload_fut = self.block_aware_cache.preload_blocks_async(block_table)
+            if _preload_fut is not None:
+                try:
+                    _preload_fut.result(timeout=10)
+                except Exception as exc:
+                    logger.warning(
+                        "async SSD preload failed for %s: %s",
+                        request.request_id,
+                        exc,
+                    )
             original_tokens = block_table.num_tokens
             if bypass_hot_cache:
                 reconstructed = self.block_aware_cache.reconstruct_cache(
@@ -625,8 +632,18 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                     "Skipping hot-cache preload for %s under memory pressure",
                     request.request_id,
                 )
+                _preload_fut = None
             else:
-                self.block_aware_cache.preload_blocks(block_table)
+                _preload_fut = self.block_aware_cache.preload_blocks_async(block_table)
+            if _preload_fut is not None:
+                try:
+                    _preload_fut.result(timeout=10)
+                except Exception as exc:
+                    logger.warning(
+                        "async SSD preload failed for %s: %s",
+                        request.request_id,
+                        exc,
+                    )
             original_tokens = block_table.num_tokens
             if bypass_hot_cache:
                 reconstructed = self.block_aware_cache.reconstruct_cache(

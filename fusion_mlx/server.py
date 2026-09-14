@@ -2649,9 +2649,9 @@ def main():
     parser.add_argument("--model-dir", default=None, help="Model directory")
     parser.add_argument(
         "--memory-tier",
-        choices=["safe", "balanced", "aggressive", "custom"],
-        default="balanced",
-        help="Memory enforcement tier",
+        choices=["safe", "balanced", "aggressive", "custom", "auto"],
+        default="auto",
+        help="Memory enforcement tier (auto = derive from unified memory size)",
     )
     parser.add_argument(
         "--ssd-cache", action="store_true", help="Enable SSD cold layer"
@@ -2690,9 +2690,14 @@ def main():
         port=args.port,
         model_dir=args.model_dir,
     )
-    config.memory.tier = getattr(
-        config.memory.tier.__class__, args.memory_tier, config.memory.tier
-    )
+    if args.memory_tier == "auto":
+        from .config import auto_detect_memory_tier
+
+        config.memory.tier = auto_detect_memory_tier()
+    else:
+        config.memory.tier = getattr(
+            config.memory.tier.__class__, args.memory_tier, config.memory.tier
+        )
     config.memory.ssd_cache_enabled = args.ssd_cache
     config.cloud_router_enabled = args.cloud_router
     if args.cloud_api_key:

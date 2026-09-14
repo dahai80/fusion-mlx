@@ -24,6 +24,49 @@ class MemoryTier(Enum):
     CUSTOM = "custom"
 
 
+def auto_detect_memory_tier() -> MemoryTier:
+    """Derive MemoryTier from unified memory size.
+
+    <16 GB → SAFE, 16-32 GB → BALANCED, 32+ GB → AGGRESSIVE.
+    Falls back to BALANCED on detection failure.
+    """
+    try:
+        ram_bytes = _detect_ram_bytes()
+        ram_gb = ram_bytes / (1024**3)
+        if ram_gb < 16:
+            logger.info("auto MemoryTier=SAFE (ram=%.1f GB)", ram_gb)
+            return MemoryTier.SAFE
+        if ram_gb < 32:
+            logger.info("auto MemoryTier=BALANCED (ram=%.1f GB)", ram_gb)
+            return MemoryTier.BALANCED
+        logger.info("auto MemoryTier=AGGRESSIVE (ram=%.1f GB)", ram_gb)
+        return MemoryTier.AGGRESSIVE
+    except Exception as exc:
+        logger.warning("auto MemoryTier detection failed: %s → BALANCED", exc)
+        return MemoryTier.BALANCED
+
+
+def _detect_ram_bytes() -> int:
+    try:
+        import psutil
+
+        return psutil.virtual_memory().total
+    except ImportError:
+        pass
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        return int(result.stdout.strip())
+    except Exception:
+        return 16 * 1024**3
+
+
 class SchedulingPolicy(Enum):
     """Scheduling policy for request ordering."""
 
