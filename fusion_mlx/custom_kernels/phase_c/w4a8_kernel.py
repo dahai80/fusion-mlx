@@ -93,14 +93,21 @@ def w4a8_tiled_matmul(
 
 
 class W4A8Linear(nn.Module):
-    # Drop-in replacement for nn.Linear: stores W4 quantized weight triple
+    # Drop-in replacement for nn.Linear: stores W{bits} quantized weight triple
     # + quantizes activations to int8 in __call__. Output matches nn.Linear
     # (x @ W.T + b) within int8 quantization error.
+    #
+    # bits is configurable (Q4/Q6/Q8 weight formats, O5.2 dequant fusion
+    # systematization). Default 4 = historical W4A8. Q6/Q8 trade memory for
+    # lower quant error; the dequant-fused path (dequant activation int8->fp16
+    # at the matmul boundary, not holding fp16 activations) is the same.
     #
     # NOTE: MLX QuantizedLinear already stores W4; this module exists so the
     # W4A8 *activation* path is reachable from the load converter. On models
     # already shipped as mlx 4-bit, the weight triple is taken from the
     # loaded QuantizedLinear; on fp16 models, from_linear quantizes first.
+
+    _VALID_BITS = (4, 6, 8)
 
     def __init__(
         self,
@@ -108,22 +115,31 @@ class W4A8Linear(nn.Module):
         in_features: int,
         bias: bool = True,
         group_size: int = 64,
+        bits: int = 4,
     ):
         super().__init__()
+        if bits not in self._VALID_BITS:
+            raise ValueError(f"W4A8Linear bits={bits} not in {self._VALID_BITS} (O5.2)")
         self.out_features = out_features
         self.in_features = in_features
         self.group_size = group_size
-        # W4 triple: (w_q uint32 packed, scales, biases).
+        self.bits = bits
+        # W{bits} triple: (w_q uint32 packed, scales, biases).
         self.w_quantized = mx.zeros((out_features, in_features), dtype=mx.uint32)
         self.w_scales = mx.ones((out_features, in_features // group_size))
         self.w_biases = mx.zeros((out_features, in_features // group_size))
         self.bias = mx.zeros((out_features,), dtype=mx.float16) if bias else None
 
     @classmethod
-    def from_linear(cls, linear: nn.Linear, group_size: int = 64) -> W4A8Linear:
+    def from_linear(
+        cls,
+        linear: nn.Linear,
+        group_size: int = 64,
+        bits: int = 4,
+    ) -> W4A8Linear:
         out_f, in_f = linear.weight.shape
         has_bias = hasattr(linear, "bias") and linear.bias is not None
-        layer = cls(out_f, in_f, bias=has_bias, group_size=group_size)
+        layer = cls(out_f, in_f, bias=has_bias, group_size=group_size, bits=bits)
         # Quantize the fp16 weight to 4-bit via mlx.nn.quantize. That op mutates
         # the module tree in place (replacing nn.Linear children with
         # nn.QuantizedLinear), so wrap the source linear so its quantized child
@@ -140,7 +156,7 @@ class W4A8Linear(nn.Module):
                     return self.lin(x)
 
             wrap = _Wrap(linear)
-            nn.quantize(wrap, group_size=group_size, bits=4)
+            nn.quantize(wrap, group_size=group_size, bits=bits)
             ql = wrap.lin
             if not isinstance(ql, nn.QuantizedLinear):
                 raise TypeError("nn.quantize did not produce QuantizedLinear")
@@ -169,7 +185,7 @@ class W4A8Linear(nn.Module):
         in_f = q_layer.input_dims
         has_bias = getattr(q_layer, "bias", None) is not None
         group_size = getattr(q_layer, "group_size", 64)
-        layer = cls(out_f, in_f, bias=has_bias, group_size=group_size)
+        layer = cls(out_f, in_f, bias=has_bias, group_size=group_size, bits=4)
         layer.w_quantized = q_layer.weight
         layer.w_scales = q_layer.scales
         layer.w_biases = q_layer.biases
@@ -178,7 +194,7 @@ class W4A8Linear(nn.Module):
         return layer
 
     def __call__(self, x: mx.array) -> mx.array:
-        # If W4 quantize failed in from_linear, w_quantized is fp16 → plain matmul.
+        # If W{bits} quantize failed in from_linear, w_quantized is fp16 → plain matmul.
         if self.w_quantized.dtype == mx.float16:
             out = x.astype(mx.float16) @ mx.transpose(self.w_quantized)
         else:
@@ -188,18 +204,22 @@ class W4A8Linear(nn.Module):
                 self.w_scales,
                 self.w_biases,
                 group_size=self.group_size,
-                bits=4,
+                bits=self.bits,
             )
         if self.bias is not None:
             out = out + self.bias
         return out
 
 
-def convert_to_w4a8(model: nn.Module, group_size: int = 64) -> tuple[nn.Module, int]:
+def convert_to_w4a8(
+    model: nn.Module,
+    group_size: int = 64,
+    bits: int = 4,
+) -> tuple[nn.Module, int]:
     # Walk the module tree (handles list-nested submodules via fp8_linear's
     # _iter_submodules) and replace nn.Linear AND nn.QuantizedLinear with
     # W4A8Linear. Already-4-bit layers reuse their weight triple
-    # (from_quantized); fp16 layers quantize (from_linear). Returns
+    # (from_quantized); fp16 layers quantize (from_linear, bits). Returns
     # (model, n_converted) so callers can log the count.
     from ..fp8_linear import _iter_submodules
 
@@ -208,7 +228,7 @@ def convert_to_w4a8(model: nn.Module, group_size: int = 64) -> tuple[nn.Module, 
         if isinstance(module, nn.QuantizedLinear):
             new_layer = W4A8Linear.from_quantized(module)
         elif isinstance(module, nn.Linear):
-            new_layer = W4A8Linear.from_linear(module, group_size=group_size)
+            new_layer = W4A8Linear.from_linear(module, group_size=group_size, bits=bits)
         else:
             continue
         if container_kind == "list":
@@ -216,8 +236,49 @@ def convert_to_w4a8(model: nn.Module, group_size: int = 64) -> tuple[nn.Module, 
         else:
             setattr(parent, key, new_layer)
         n += 1
-        logger.info("convert_to_w4a8: %s -> W4A8Linear", name)
+        logger.info("convert_to_w4a8: %s -> W4A8Linear(bits=%d)", name, bits)
     return model, n
+
+
+# O5.2 dequant-fusion systematization: registry maps quant format name ->
+# (weight bits, group_size). create_fused_linear is the runtime factory the
+# fusion decision layer (O5.3) calls to materialize a fused-quant linear for
+# a chosen format. Q4 = W4A8 historical; Q6/Q8 = lower-error variants;
+# nvfp4 = E2M1+E4M3 block-scale (dequanted per-call, fused into forward).
+QUANT_FORMAT_REGISTRY: dict[str, dict] = {
+    "q4": {"bits": 4, "group_size": 64, "cls": "W4A8Linear"},
+    "q6": {"bits": 6, "group_size": 64, "cls": "W4A8Linear"},
+    "q8": {"bits": 8, "group_size": 64, "cls": "W4A8Linear"},
+    "nvfp4": {"bits": 4, "group_size": 16, "cls": "NVFP4FusedLinear"},
+}
+
+
+def create_fused_linear(
+    linear: nn.Linear,
+    fmt: str = "q4",
+) -> nn.Module:
+    # Factory for the dequant-fusion systematization (O5.2). Returns a fused
+    # quantized linear for the named format. Unknown format raises ValueError.
+    if fmt not in QUANT_FORMAT_REGISTRY:
+        raise ValueError(
+            f"unknown quant format {fmt!r}; valid: {list(QUANT_FORMAT_REGISTRY)}"
+        )
+    spec = QUANT_FORMAT_REGISTRY[fmt]
+    cls_name = spec["cls"]
+    if cls_name == "W4A8Linear":
+        return W4A8Linear.from_linear(
+            linear,
+            group_size=spec["group_size"],
+            bits=spec["bits"],
+        )
+    if cls_name == "NVFP4FusedLinear":
+        from .nvfp4_fused_linear import NVFP4FusedLinear
+
+        return NVFP4FusedLinear.from_linear(
+            linear,
+            group_size=spec["group_size"],
+        )
+    raise ValueError(f"registry cls {cls_name!r} has no materializer")
 
 
 __all__ = [
@@ -226,4 +287,6 @@ __all__ = [
     "w4a8_tiled_matmul",
     "W4A8Linear",
     "convert_to_w4a8",
+    "QUANT_FORMAT_REGISTRY",
+    "create_fused_linear",
 ]

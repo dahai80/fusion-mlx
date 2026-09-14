@@ -98,9 +98,24 @@ def w4a8_fused_matmul(
 
 
 from .fused_gdn import FusedGDN, apply_fused_gdn
+from .fusion_decision import (
+    FusionPattern,
+    FusionPlan,
+    OpDescriptor,
+    decide_fusion,
+    register_pattern,
+    registered_patterns,
+)
 from .glm_moe_ffn import is_native_available as moe_ffn_is_native_available
 from .glm_moe_ffn import moe_ffn_fused
-from .w4a8_kernel import W4A8Linear, convert_to_w4a8, w4a8_tiled_matmul
+from .nvfp4_fused_linear import NVFP4FusedLinear
+from .w4a8_kernel import (
+    QUANT_FORMAT_REGISTRY,
+    W4A8Linear,
+    convert_to_w4a8,
+    create_fused_linear,
+    w4a8_tiled_matmul,
+)
 
 __all__ = [
     "NATIVE_SYMBOLS",
@@ -114,7 +129,16 @@ __all__ = [
     "moe_ffn_is_native_available",
     "W4A8Linear",
     "convert_to_w4a8",
+    "create_fused_linear",
+    "QUANT_FORMAT_REGISTRY",
     "w4a8_tiled_matmul",
+    "NVFP4FusedLinear",
     "FusedGDN",
     "apply_fused_gdn",
+    "OpDescriptor",
+    "FusionPattern",
+    "FusionPlan",
+    "decide_fusion",
+    "register_pattern",
+    "registered_patterns",
 ]

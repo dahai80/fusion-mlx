@@ -2498,16 +2498,26 @@ class EnginePool:
         load_completed = False
         pre_load_memory = max(mx.get_active_memory(), get_phys_footprint())
         try:
-            from ..engines.batched import BatchedEngine
-            from ..engines.embedding import EmbeddingEngine
-            from ..engines.image_gen import ImageGenEngine
-            from ..engines.ner import NEREngine
-            from ..engines.reranker import RerankerEngine
-            from ..engines.sts import STSEngine
-            from ..engines.stt import STTEngine
-            from ..engines.tts import TTSEngine
-            from ..engines.video import VideoGenEngine
-            from ..engines.vlm import VLMBatchedEngine
+            # Resolve engine classes via module globals so test patches
+            # (patch("fusion_mlx.pool.engine_pool.BatchedEngine", ...)) take
+            # effect. __getattr__ lazily imports + caches on first access.
+            # A local `from ..engines.batched import BatchedEngine` would
+            # bypass the patch by re-binding the real class locally.
+            _g = globals()
+            BatchedEngine = _g.get("BatchedEngine") or __getattr__("BatchedEngine")
+            VLMBatchedEngine = _g.get("VLMBatchedEngine") or __getattr__(
+                "VLMBatchedEngine"
+            )
+            EmbeddingEngine = _g.get("EmbeddingEngine") or __getattr__(
+                "EmbeddingEngine"
+            )
+            RerankerEngine = _g.get("RerankerEngine") or __getattr__("RerankerEngine")
+            NEREngine = _g.get("NEREngine") or __getattr__("NEREngine")
+            STTEngine = _g.get("STTEngine") or __getattr__("STTEngine")
+            TTSEngine = _g.get("TTSEngine") or __getattr__("TTSEngine")
+            STSEngine = _g.get("STSEngine") or __getattr__("STSEngine")
+            ImageGenEngine = _g.get("ImageGenEngine") or __getattr__("ImageGenEngine")
+            VideoGenEngine = _g.get("VideoGenEngine") or __getattr__("VideoGenEngine")
 
             effective_type = entry.engine_type
             if force_lm and effective_type == "vlm":
