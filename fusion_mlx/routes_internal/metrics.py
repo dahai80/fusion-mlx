@@ -708,6 +708,32 @@ def _render_prefix_cache_metrics() -> list[str]:
                             labels,
                         )
                     )
+                # O2.1: pinned block count.
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_prefix_pinned_blocks",
+                        "gauge",
+                        "Pinned KV blocks immune to LRU eviction.",
+                        int(pc.get("pinned_blocks", 0)),
+                        labels,
+                    )
+                )
+                # O2.2: bucketed hit rates by prefix length.
+                buckets = pc.get("hit_buckets")
+                if isinstance(buckets, dict):
+                    for bname, bstats in buckets.items():
+                        if not isinstance(bstats, dict):
+                            continue
+                        blabels = {**labels, "bucket": bname}
+                        lines.extend(
+                            _fmt_metric(
+                                "fusion_mlx_prefix_bucket_hit_rate",
+                                "gauge",
+                                "Prefix cache hit rate by prefix-length bucket.",
+                                float(bstats.get("hit_rate", 0.0)),
+                                blabels,
+                            )
+                        )
             if seen:
                 logger.debug("prefix cache metrics rendered for %d engine(s)", seen)
     except Exception:

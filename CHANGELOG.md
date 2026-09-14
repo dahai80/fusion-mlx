@@ -3,6 +3,28 @@
 ## [Unreleased]
 
 ### Added
+- **Zero-arg `fusion-mlx serve`** — when no model and no `default_model` is
+  configured, prints a RAM-tiered recommendation table (4B/9B/27B by unified
+  memory) with copy-paste `pull` commands instead of a bare error. The
+  `resolve_model("default")` alias resolves `settings.json default_model`
+  → auto-detected single cached model.
+- **Bare-JSON tool-call recovery** — models that emit raw
+  `{"name":...,"parameters":...}` without template markers (Llama-3.1/3.2
+  base chat template) now have their tool calls extracted instead of leaking
+  JSON into `message.content`. Gated on `tools` being declared and
+  `FUSION_MLX_TOOL_RECOVERY=1` (default on).
+- **KV block-level pin API** — `BlockAwarePrefixCache.pin_prefix(tokens, ttl)`
+  / `unpin_prefix(tokens)` prevent LRU eviction of system-prompt KV blocks
+  via ref-count. TTL expiry auto-releases. `fusion_mlx_prefix_pinned_blocks`
+  metric exposed.
+- **Prefix cache bucketed hit-rate metrics** — `/metrics` exposes
+  `fusion_mlx_prefix_bucket_hit_rate` labeled by prefix-length bucket
+  (`<1k`, `1k-8k`, `8k-32k`, `32k+`) so operators can see which prompt sizes
+  benefit from caching.
+- **SSE streaming escape optimization** — `_escape_json_string` rewritten to
+  table-based `str.translate` with ASCII fast-path; `data:` envelope baked
+  into pre-computed templates. Eliminates per-chunk `json.dumps` on the hot
+  token-streaming path.
 - **`POST /v1/audio/converse`** — end-to-end voice conversation endpoint.
   Chains STT (transcribe user speech) → LLM (generate reply) → TTS (synthesize
   reply speech) in one request. Returns WAV audio or JSON envelope
