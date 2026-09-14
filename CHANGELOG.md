@@ -3,6 +3,28 @@
 ## [Unreleased]
 
 ### Added
+- **Dequant fusion systematization (O5.2)** — `W4A8Linear` generalized to
+  configurable weight bits (Q4/Q6/Q8). `QUANT_FORMAT_REGISTRY` +
+  `create_fused_linear(fmt)` factory. `NVFP4FusedLinear` holds packed
+  NVFP4 weights and dequants per `__call__` (dequant fused into forward,
+  not load-time) — retains 4-bit storage across inference.
+- **Runtime fusion decision layer (O5.3)** — `phase_c/fusion_decision.py`
+  replaces manual three-piece dispatch (gdn/glm_moe_ffn/w4a8) with a
+  pattern-based `decide_fusion(ops)` runtime decider. New architectures
+  register a `FusionPattern` and auto-benefit without hand-wiring.
+- **Inpaint denoise loop (O5.5)** — `engines/_inpaint_denoise.py` staged
+  masked-denoise (white=regen semantics): `prepare_latents` →
+  `noise_latent` → `mask_latent` → `inpaint_latent` (per-step
+  re-composite) → `composite`. Wired to `staged_inpaint=True` / variant
+  `inpaint` dispatch. MSE=0 parity gated on real flux model.
+- **CLI param grouping (O5.6)** — `serve --help` regrouped into 10
+  categories (Core/Memory/Scheduler/KV cache/Prefix cache/Speculative
+  decode/Sampling/Tool calling/Networking/Behavior) via post-hoc
+  `_action_groups` reassignment — zero changes to 111 `add_argument` calls.
+- **Engine pool test-patch fix** — `_load_engine` resolves engine classes
+  via module globals (`__getattr__` lazy import) so `unittest.mock.patch`
+  on `fusion_mlx.pool.engine_pool.BatchedEngine` takes effect. Fixes
+  test_admission_stale_accumulator_779 regression from PR #887.
 - **Image worker weight preflight** — `_preflight_components` verifies
   transformer/text_encoder/vae safetensors exist before loading, catching
   partial downloads with a clear error instead of a minutes-later crash.

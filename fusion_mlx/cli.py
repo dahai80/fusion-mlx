@@ -1229,6 +1229,11 @@ Examples:
     # PFlash long-prompt prefill compression (#287). Off by default; see
     # fusion_mlx/pflash.py for the design and the prefix-cache bypass.
     _add_pflash_args(serve_parser)
+    # O5.6: regroup serve --help into categories (Core/Memory/Scheduler/...)
+    # without touching the add_argument calls.
+    from fusion_mlx._cli_grouping import regroup_serve_help
+
+    regroup_serve_help(serve_parser)
     # Bench command
     bench_parser = subparsers.add_parser("bench", help="Run benchmark")
     bench_parser.add_argument(

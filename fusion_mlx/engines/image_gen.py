@@ -373,6 +373,51 @@ def _flux_quantize_from_env() -> int | None:
     return None
 
 
+def _load_image_array(path: str, width: int, height: int) -> "mx.array":
+    # Load an image file to a normalized mx.array (H,W,3) in [-1,1].
+    import mlx.core as mx
+    from PIL import Image
+
+    img = Image.open(path).convert("RGB").resize((width, height))
+    import numpy as np
+
+    arr = np.array(img, dtype=np.float32) / 127.5 - 1.0
+    return mx.array(arr)
+
+
+def _load_mask_array(path: str, width: int, height: int) -> "mx.array":
+    # Load a mask to (H,W) float in [0,1]. White=1=regen, black=0=freeze.
+    import mlx.core as mx
+    from PIL import Image
+
+    img = Image.open(path).convert("L").resize((width, height))
+    import numpy as np
+
+    arr = np.array(img, dtype=np.float32) / 255.0
+    return mx.array(arr)
+
+
+def _decoded_to_pil(decoded: "mx.array"):
+    # Convert a VAE-decoded latent (H,W,3) in [-1,1] to a PIL Image.
+    import numpy as np
+    from PIL import Image
+
+    arr = np.array(decoded)
+    if arr.ndim == 4:
+        arr = arr[0]
+    arr = np.clip((arr + 1.0) * 127.5, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr)
+
+
+def _img_to_bytes(img, output_format: str) -> bytes:
+    import io
+
+    fmt = output_format if output_format and output_format != "raw" else "PNG"
+    buf = io.BytesIO()
+    img.save(buf, format=fmt)
+    return buf.getvalue()
+
+
 class _StepProgressInLoop:
     # mflux CallbackRegistry subscriber (InLoopCallback protocol). Registered
     # on flux.callbacks before generate_image; call_in_loop fires once per
@@ -759,6 +804,46 @@ class ImageGenEngine(BaseNonStreamingEngine):
                         "ignoring (got %d chars)",
                         len(negative_prompt),
                     )
+                # O5.5: staged inpaint denoise loop (white=regen semantics).
+                # For models without a native fill variant, run the staged
+                # masked-denoise: prepare_latents -> noise -> mask -> per-step
+                # re-composite. Gated on staged_inpaint=True in kwargs OR
+                # variant == "inpaint". Native fill variant stays preferred.
+                if kwargs.get("staged_inpaint") or variant == "inpaint":
+                    if edit_image is None or mask_image is None:
+                        raise ValueError(
+                            "staged inpaint requires edit_image and mask_image"
+                        )
+                    from fusion_mlx.engines._inpaint_denoise import run_inpaint_denoise
+
+                    logger.info(
+                        "O5.5 staged inpaint denoise: steps=%d guidance=%.1f "
+                        "image_strength=%.2f",
+                        steps,
+                        guidance,
+                        image_strength or 0.6,
+                    )
+                    _init_arr = _load_image_array(edit_image, width, height)
+                    _mask_arr = _load_mask_array(mask_image, width, height)
+                    _vae = getattr(flux, "vae", None)
+                    if _vae is None:
+                        raise ValueError(
+                            "staged inpaint: flux model has no vae attribute"
+                        )
+                    _decoded = run_inpaint_denoise(
+                        flux,
+                        _vae,
+                        _init_arr,
+                        _mask_arr,
+                        image_strength=image_strength or 0.6,
+                        num_inference_steps=steps,
+                        guidance=guidance,
+                        seed=base_seed + i,
+                        on_step=sync_cb,
+                    )
+                    _img = _decoded_to_pil(_decoded)
+                    images.append(_img_to_bytes(_img, output_format))
+                    continue
                 subscriber = None
                 if sync_cb is not None and getattr(flux, "callbacks", None) is not None:
                     subscriber = _StepProgressInLoop(sync_cb, steps)
