@@ -345,6 +345,71 @@ def _parse_bracket_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
 
 
 # ---------------------------------------------------------------------------
+# O1.2 (optimization-0914 item 2): bare-JSON tool-call recovery.
+# Models without native tool-call markup (Llama-3.1/3.2 base chat template)
+# emit raw {"name":...,"parameters":...} with no template markers. All
+# preceding fallbacks miss this shape, leaking JSON into message.content.
+# ---------------------------------------------------------------------------
+
+
+def _recover_bare_json_tool_calls(
+    text: str,
+) -> tuple[list[ToolCall], str] | None:
+    # Lazy import: llama_tool_parser pulls abstract_tool_parser + optional
+    # transformers. Keep it off parse.py module import for cold-start cost.
+    from ...tool_parsers.llama_tool_parser import (
+        _find_top_level_json_object,
+        _parse_json_tool_call,
+    )
+
+    tool_calls: list[ToolCall] = []
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    n_scanned = 0
+    while True:
+        span = _find_top_level_json_object(text, pos)
+        if span is None:
+            break
+        begin, end = span
+        candidate = text[begin:end]
+        n_scanned += 1
+        parsed = _parse_json_tool_call(candidate)
+        if parsed is None:
+            # Span balances but json.loads failed (trailing comma, truncation,
+            # single quotes). Run the repair fixer and re-validate shape.
+            repaired = repair_tool_call_json(candidate)
+            if repaired and repaired != "{}":
+                parsed = _parse_json_tool_call(repaired)
+        if parsed is not None:
+            tool_calls.append(
+                ToolCall(
+                    id=f"call_{uuid.uuid4().hex[:8]}",
+                    type="function",
+                    function=FunctionCall(
+                        name=parsed["name"],
+                        arguments=_serialize_tool_call_arguments(parsed["arguments"]),
+                    ),
+                )
+            )
+            spans.append((begin, end))
+        pos = end
+
+    if not tool_calls:
+        if n_scanned:
+            logger.debug(
+                "bare-JSON recovery: scanned %d object(s), 0 valid tool calls",
+                n_scanned,
+            )
+        return None
+
+    # Strip matched spans (reverse order to keep indices valid).
+    cleaned = text
+    for begin, end in sorted(spans, reverse=True):
+        cleaned = cleaned[:begin] + cleaned[end:]
+    return tool_calls, cleaned.strip()
+
+
+# ---------------------------------------------------------------------------
 # Gemma 4 robust fallback parser
 # ---------------------------------------------------------------------------
 
@@ -696,6 +761,32 @@ def parse_tool_calls(
                     cleaned_text[idx:],
                 )
                 cleaned_text = cleaned_text[:idx].strip()
+
+    # O1.2 (optimization-0914 item 2): bare-JSON tool-call recovery.
+    # Last-resort branch for models that emit raw {"name":...,"parameters":...}
+    # with no template markers (Llama-3.1/3.2 base chat template). Only
+    # attempt when caller declared tool intent (tools non-empty) so prose
+    # JSON in unconstrained generation stays as content. Env-gated, default on.
+    if tools and cleaned_text and '{"name"' in cleaned_text:
+        import os as _os
+
+        _recovery_on = _os.getenv("FUSION_MLX_TOOL_RECOVERY", "1") not in (
+            "0",
+            "off",
+            "false",
+            "",
+        )
+        if _recovery_on:
+            _recovered = _recover_bare_json_tool_calls(cleaned_text)
+            if _recovered is not None:
+                _tc_list, _cleaned = _recovered
+                logger.info(
+                    "bare-JSON tool-call recovery: %d call(s) recovered "
+                    "from unmarked content (tools=%d)",
+                    len(_tc_list),
+                    len(tools),
+                )
+                return _cleaned, _tc_list
 
     return cleaned_text, None
 
