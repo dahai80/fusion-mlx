@@ -12,15 +12,52 @@ Performance improvement: ~20-30% reduction in server CPU overhead for streaming.
 import json
 import time
 
+# O1.1 (optimization-0914 item 1): fast JSON string escape without json.dumps.
+# The hot streaming path called json.dumps(s)[1:-1] per chunk just to escape
+# one string — a full tokenizer + serializer pass for a single value. This
+# table-based escaper handles the JSON-required special chars (RFC 8259 §7):
+# " \ must escape; control chars U+0000..U+001F use \uXXXX. ASCII printable
+# passes through unchanged. Non-ASCII (U+0080+) passes through raw — valid in
+# JSON as long as the output is UTF-8 encoded (FastAPI Response handles that).
+# Falls back to json.dumps for any edge case the table misses (surrogate
+# pairs, malformed sequences) so correctness is never compromised.
+_ESCAPE_TABLE = {
+    0x22: '\\"',  # "
+    0x5C: "\\\\",  # backslash
+    0x08: "\\b",
+    0x0C: "\\f",
+    0x0A: "\\n",
+    0x0D: "\\r",
+    0x09: "\\t",
+}
+
 
 def _escape_json_string(s: str) -> str:
-    """
-    Escape a string for JSON without the surrounding quotes.
+    """Escape a string for JSON without the surrounding quotes.
 
-    Uses json.dumps for correctness then strips the quotes.
-    This handles all special characters: quotes, backslashes, newlines, tabs, unicode.
+    Fast path: str.translate for the 7 common escapes. Avoids the per-chunk
+    json.dumps() call on the streaming hot path. Falls back to json.dumps
+    for non-ASCII content (json.dumps default ensure_ascii=True escapes
+    U+0080+ to \\uXXXX — matching that exactly in pure Python would be
+    slower than just calling json.dumps, so we defer for correctness).
     """
-    # json.dumps adds quotes, we strip them for template insertion
+    if not s:
+        return ""
+    # Fast path: ASCII-only with no special chars → return as-is.
+    # This is the common case for token streaming (most tokens are ASCII).
+    if s.isascii():
+        if not any(c in s for c in '"\\\b\f\n\r\t'):
+            if not any(ord(c) < 0x20 for c in s):
+                return s
+        out = s.translate(_ESCAPE_TABLE)
+        # Check for control chars translate didn't cover (U+0000..U+001F
+        # excluding the 7 above).
+        if any(
+            ord(c) < 0x20 and ord(c) not in (0x08, 0x0C, 0x0A, 0x0D, 0x09) for c in out
+        ):
+            return json.dumps(s)[1:-1]
+        return out
+    # Non-ASCII: fall back to json.dumps for \uXXXX escape parity.
     return json.dumps(s)[1:-1]
 
 
@@ -82,22 +119,25 @@ class StreamingJSONEncoder:
         escaped_model = _escape_json_string(model)
         escaped_object = _escape_json_string(object_type)
 
-        # Pre-build common prefix: {"id":"...","object":"...","created":...,"model":"..."
+        # O1.1 (optimization-0914 item 1): bake the ``data: `` SSE envelope
+        # prefix into _prefix so the hot path avoids re-concatenating it per
+        # chunk. The closing ``}}\n\n`` suffix is pre-computed too.
         self._prefix = (
-            f'{{"id":"{escaped_id}",'
+            f'data: {{"id":"{escaped_id}",'
             f'"object":"{escaped_object}",'
             f'"created":{self.created},'
             f'"model":"{escaped_model}"'
         )
+        self._suffix = "}\n\n"
 
         # Pre-build completion template parts
-        # Full pattern: {"id":...,"choices":[{"index":0,"text":"CONTENT","finish_reason":REASON}]}
+        # Full pattern: data: {"id":...,"choices":[{"index":0,"text":"CONTENT","finish_reason":REASON}]}\n\n
         self._completion_choices_prefix = ',"choices":[{"index":'
         self._completion_text_prefix = ',"text":"'
         self._completion_text_suffix = '","finish_reason":'
 
         # Pre-build chat template parts
-        # Full pattern: {"id":...,"choices":[{"index":0,"delta":{...},"finish_reason":REASON}]}
+        # Full pattern: data: {"id":...,"choices":[{"index":0,"delta":{...},"finish_reason":REASON}]}\n\n
         self._chat_choices_prefix = ',"choices":[{"index":0,"delta":{'
         self._chat_finish_prefix = '},"finish_reason":'
 
@@ -127,7 +167,7 @@ class StreamingJSONEncoder:
         finish_json = "null" if finish_reason is None else f'"{finish_reason}"'
 
         # Build using pre-computed parts
-        # Pattern: {"id":...,"object":...,"model":...,"choices":[{"index":N,"text":"TEXT","finish_reason":REASON}],"usage":...}
+        # Pattern: data: {"id":...,"choices":[{"index":N,"text":"TEXT","finish_reason":REASON}],"usage":...}\n\n
         choices_json = (
             f"{self._completion_choices_prefix}{index}"
             f"{self._completion_text_prefix}{escaped_text}"
@@ -139,11 +179,9 @@ class StreamingJSONEncoder:
         # Final pattern: {prefix}{choices]}  or  {prefix}{choices],"usage":{...}}
         if usage is not None:
             usage_json = json.dumps(usage)
-            result = (
-                f'data: {self._prefix}{choices_json},"usage":{usage_json}}}' + "\n\n"
-            )
+            result = f'{self._prefix}{choices_json},"usage":{usage_json}{self._suffix}'
         else:
-            result = f"data: {self._prefix}{choices_json}}}" + "\n\n"
+            result = f"{self._prefix}{choices_json}{self._suffix}"
 
         return result
 
@@ -171,7 +209,7 @@ class StreamingJSONEncoder:
         finish_json = "null" if finish_reason is None else f'"{finish_reason}"'
 
         # Build using pre-computed parts
-        # Pattern: {"id":...,"choices":[{"index":0,"delta":{...},"finish_reason":REASON}],"usage":...}
+        # Pattern: data: {"id":...,"choices":[{"index":0,"delta":{...},"finish_reason":REASON}],"usage":...}\n\n
         choices_json = (
             f"{self._chat_choices_prefix}{delta_json}"
             f"{self._chat_finish_prefix}{finish_json}}}"
@@ -182,11 +220,9 @@ class StreamingJSONEncoder:
         # Final pattern: {prefix}{choices]}  or  {prefix}{choices],"usage":{...}}
         if usage is not None:
             usage_json = json.dumps(usage)
-            result = (
-                f'data: {self._prefix}{choices_json},"usage":{usage_json}}}' + "\n\n"
-            )
+            result = f'{self._prefix}{choices_json},"usage":{usage_json}{self._suffix}'
         else:
-            result = f"data: {self._prefix}{choices_json}}}" + "\n\n"
+            result = f"{self._prefix}{choices_json}{self._suffix}"
 
         return result
 

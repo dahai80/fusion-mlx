@@ -337,6 +337,36 @@ def _check_path_allowed(name: str) -> None:
 
 
 def resolve_model(name: str) -> str:
+    # O1.3 (optimization-0914 item 7): "default" alias resolves to the
+    # settings.json default_model, falling back to auto-detection when
+    # exactly one model is cached locally. Lets `serve`/`chat`/`resolve_model`
+    # all honor a single "default" token instead of each call site
+    # reimplementing the precedence chain.
+    if name == "default":
+        try:
+            from ._cli_base import (
+                _auto_detect_single_cached_model,
+                _settings_default_model,
+            )
+
+            _dm = _settings_default_model()
+            if _dm:
+                logger.info(
+                    'resolve_model("default") -> settings default_model: %s', _dm
+                )
+                return _dm
+            _ad = _auto_detect_single_cached_model()
+            if _ad:
+                logger.info('resolve_model("default") -> auto-detect: %s', _ad)
+                return _ad
+        except Exception as exc:
+            logger.warning('resolve_model("default") resolution failed: %s', exc)
+        raise ValueError(
+            'Cannot resolve "default" model: no default_model set in '
+            "settings.json and model auto-detection is ambiguous "
+            "(zero or multiple models cached). Set default_model in "
+            "~/.fusion-mlx/settings.json or pass an explicit model."
+        )
     if ".." in name.split(os.sep) or ".." in name.split("/"):
         logger.warning("resolve_model: path traversal component rejected: %s", name)
         raise ValueError(f"Path not allowed: {name}. Path traversal (..) is forbidden.")

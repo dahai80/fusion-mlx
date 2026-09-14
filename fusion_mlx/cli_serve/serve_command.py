@@ -35,6 +35,52 @@ from .preflight import (
 logger = logging.getLogger(__name__)
 
 
+_RAM_TIERS = [
+    (16, "qwen3.5-4b-4bit", "~4 GB", "Macs with 16GB unified memory"),
+    (32, "qwen3.5-9b-4bit", "~6 GB", "Macs with 24-32GB unified memory"),
+    (1 << 62, "qwen3.5-27b-4bit", "~16 GB", "Macs with 48GB+ unified memory"),
+]
+
+
+def _print_ram_recommendation_table() -> None:
+    # O1.3: actionable zero-arg serve guidance. Detects total RAM and
+    # prints the recommended 4-bit model for the tier plus a copy-paste
+    # pull command. Replaces the old bare "serve requires a model" error.
+    try:
+        from ..hardware.memory import detect_ram_bytes
+
+        ram_bytes = detect_ram_bytes()
+    except Exception:
+        ram_bytes = 0
+    ram_gib = ram_bytes / (1024**3) if ram_bytes else 0
+    recommended = _RAM_TIERS[0][1]
+    for threshold, model, _size, _desc in _RAM_TIERS:
+        if ram_gib <= threshold or ram_bytes == 0:
+            recommended = model
+            break
+    print("No model specified and no default_model configured.")
+    print()
+    print("Recommended models by RAM tier (4-bit quant):")
+    print("  RAM        Model                  Footprint   Notes")
+    print("  ---------- ---------------------- ----------- -------------------------")
+    for threshold, model, size, desc in _RAM_TIERS:
+        label = f"<= {threshold}GB" if threshold < (1 << 62) else "32GB+"
+        marker = " <== you" if model == recommended else ""
+        print(f"  {label:10s} {model:22s} {size:11s} {desc}{marker}")
+    print()
+    print("Quick start:")
+    print(f"  fusion-mlx pull {recommended}")
+    print(f"  fusion-mlx serve {recommended}")
+    print()
+    print('  Or set "default_model" in ~/.fusion-mlx/settings.json:')
+    print(f'    {{"default_model": "{recommended}"}}')
+    print("  then:  fusion-mlx serve")
+    print()
+    print("  Other launch forms:")
+    print("  fusion-mlx serve --model-dir ~/.fusion-mlx/models --port 11435")
+    print("  fusion-mlx serve --base-path ~/.fusion-mlx --port 11434")
+
+
 def serve_command(args):
     """Start the OpenAI-compatible server."""
     import logging
@@ -110,14 +156,30 @@ def serve_command(args):
             sys.exit(1)
         return _serve_from_model_dir(args)
     if not getattr(args, "model", None):
-        print("Error: serve requires a model or --model-dir/--base-path <dir>.")
-        print("  fusion-mlx serve --model Qwen3-4B-Q4_K_M --port 11434")
-        print("  fusion-mlx serve --model-dir ~/.fusion-mlx/models --port 11435")
-        print("  fusion-mlx serve --base-path ~/.fusion-mlx --port 11434")
-        print()
-        print('  Tip: set "default_model" in ~/.fusion-mlx/settings.json')
-        print("       to make `fusion-mlx serve` work with no model arg.")
-        sys.exit(1)
+        # O1.3 (optimization-0914 item 7): zero-arg serve. Try "default"
+        # alias (settings default_model → auto-detect single cached model).
+        # If that resolves, boot it. Otherwise print a RAM-tiered model
+        # recommendation table with copy-paste pull commands instead of a
+        # bare error, so the user knows what to install for their machine.
+        from ..model_aliases import resolve_model
+
+        try:
+            _default = resolve_model("default")
+            if _default:
+                print(f"[default] resolved model: {_default}")
+                args.model = _default
+        except ValueError:
+            _print_ram_recommendation_table()
+            sys.exit(1)
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "default model resolution failed: %s", exc
+            )
+            _print_ram_recommendation_table()
+            sys.exit(1)
+        if not getattr(args, "model", None):
+            _print_ram_recommendation_table()
+            sys.exit(1)
 
     _arg_max_tokens = getattr(args, "max_tokens", None)
     _max_tokens_is_explicit = _arg_max_tokens is not None

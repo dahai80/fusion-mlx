@@ -2106,6 +2106,13 @@ batching as a self-contained generator.
   capture/trim/verify/rollback internally) — lossless by construction.
 - Target family: `qwen3_8` **dense** (non-MoE). The auto-router routes
   `qwen3_8` to `dflash2` first, with a `suffix` (n-gram) fallback.
+- **MoE excluded by design, not by limit.** Block-diffusion drafts a whole
+  block from one fixed routing path, but MoE routing is token-determined and
+  non-deterministic across the block — the draft path and verify path diverge,
+  collapsing acceptance to ~0. This is a mathematical property of MoE
+  routing churn, not an engineering limitation, so MoE targets use MTP or
+  n-gram speculation instead (`dflash2/eligibility.py` rejects MoE;
+  `presets.py` routes MoE to `mtp`/`ngram`).
 - **block_size ≤ 5** for MLX quantized targets (official draft ships 8; larger
   verify widths are matmul-inefficient on quantized weights). `load_runtime`
   rejects `block_size > 5`.
