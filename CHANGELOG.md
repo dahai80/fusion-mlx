@@ -3,6 +3,26 @@
 ## [Unreleased]
 
 ### Added
+- **KV block-level pin API** — `BlockAwarePrefixCache.pin_prefix(tokens, ttl)`
+  / `unpin_prefix(tokens)` increment `PagedCacheManager` ref counts so LRU
+  eviction skips pinned blocks; TTL expiry auto-releases. Bucketed prefix
+  hit-rate (`<1k`/`1k-8k`/`8k-32k`/`32k+`) exposed via `/metrics` as
+  `fusion_mlx_prefix_bucket_hit_rate`.
+- **MLX cache_limit dynamic fraction** — `memory_enforcer` derives the Metal
+  cache cap from `recommendedMaxWorkingSetSize × FUSION_MLX_CACHE_LIMIT_FRACTION`
+  (default 0.5, clamped [1 GB, 8 GB]) instead of a hard 1 GB constant.
+- **Memory fragmentation metric** — `/metrics` exposes
+  `fusion_mlx_phys_footprint_bytes` and
+  `fusion_mlx_memory_fragmentation_ratio` (overhead / phys_footprint);
+  warns at >30%.
+- **OOM graceful retry (L4)** — `_step_prefill_chunk` catches transient
+  Metal allocation failures, clears the cache via `get_mlx_executor`, and
+  retries once (`prefill_oom_retries` cap 1) instead of crashing with
+  `EXC_BAD_ACCESS`.
+- **Executor-serialized Metal cleanup** — `engine_pool` sync unload and the
+  `/api/v1/gc` route now route `mx.clear_cache()` through `get_mlx_executor`
+  to serialize with concurrent engine mutations.
+
 - **Zero-arg `fusion-mlx serve`** — when no model and no `default_model` is
   configured, prints a RAM-tiered recommendation table (4B/9B/27B by unified
   memory) with copy-paste `pull` commands instead of a bare error. The
