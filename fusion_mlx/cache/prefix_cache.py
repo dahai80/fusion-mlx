@@ -122,6 +122,18 @@ class BlockAwarePrefixCache(CacheManager):
         self._tokens_requested_total = 0
         self._last_partial_tokens_skipped = 0
         self._last_tokens_to_next_block = 0
+        # O2.2 (optimization-0914 item 13): prefix-length bucketed hit stats.
+        # Buckets: <1k, 1k-8k, 8k-32k, 32k+. Each bucket tracks (hits, misses).
+        self._hit_buckets: dict[str, tuple[int, int]] = {
+            "<1k": (0, 0),
+            "1k-8k": (0, 0),
+            "8k-32k": (0, 0),
+            "32k+": (0, 0),
+        }
+        # O2.1 (optimization-0914 item 3): pinned block set.
+        # block_id -> expiry epoch (0.0 = permanent). Pin increments
+        # PagedCacheManager ref_count so LRU eviction skips the block.
+        self._pinned_blocks: dict[int, float] = {}
         # threading.Lock (not asyncio.Lock) — fetch/store/insert run sync on the
         # engine thread, the block-freed callback fires from a different thread
         # (PagedCacheManager caller). The prior asyncio.Lock was never acquired
@@ -367,6 +379,7 @@ class BlockAwarePrefixCache(CacheManager):
             self._tokens_saved += num_prefix_tokens
             self._tokens_matched_total += num_prefix_tokens
             self._tokens_requested_total += len(tokens)
+            self._record_bucket_hit(num_prefix_tokens)
 
             logger.debug(
                 f"Cache hit for {request_id}: "
@@ -420,6 +433,7 @@ class BlockAwarePrefixCache(CacheManager):
                     # entire match evicted — treat as miss
                     self._misses += 1
                     self._tokens_requested_total += len(tokens)
+                    self._record_bucket_miss(len(tokens))
                     return None, tokens
 
                 remaining = tokens[live_prefix_len:]
@@ -427,6 +441,7 @@ class BlockAwarePrefixCache(CacheManager):
                 self._tokens_saved += live_prefix_len
                 self._tokens_matched_total += live_prefix_len
                 self._tokens_requested_total += len(tokens)
+                self._record_bucket_hit(live_prefix_len)
 
                 logger.debug(
                     f"Prefix index hit for {request_id}: {live_prefix_len} tokens matched"
@@ -438,6 +453,7 @@ class BlockAwarePrefixCache(CacheManager):
         # No cache hit
         self._misses += 1
         self._tokens_requested_total += len(tokens)
+        self._record_bucket_miss(len(tokens))
         logger.debug(f"Cache miss for {request_id}")
         return None, tokens
 
@@ -2805,13 +2821,18 @@ class BlockAwarePrefixCache(CacheManager):
     def get_stats_dict(self) -> dict[str, Any]:
         """
         Get cache statistics as a dictionary.
-
-        This method provides the legacy dictionary format for compatibility.
-
         Returns:
             Dictionary with cache statistics.
         """
         paged_stats = self.paged_cache.get_memory_usage()
+        bucket_stats = {}
+        for name, (h, m) in self._hit_buckets.items():
+            total = h + m
+            bucket_stats[name] = {
+                "hits": h,
+                "misses": m,
+                "hit_rate": (h / total) if total > 0 else 0.0,
+            }
         return {
             "hits": self._hits,
             "misses": self._misses,
@@ -2829,8 +2850,92 @@ class BlockAwarePrefixCache(CacheManager):
             "tokens_matched_total": self._tokens_matched_total,
             "tokens_requested_total": self._tokens_requested_total,
             "active_requests": len(self._request_tables),
+            "pinned_blocks": len(self._pinned_blocks),
+            "hit_buckets": bucket_stats,
             **paged_stats,
         }
+
+    # O2.2: bucket a hit/miss by matched prefix length.
+    def _bucket_for_len(self, prefix_len: int) -> str:
+        if prefix_len < 1024:
+            return "<1k"
+        if prefix_len < 8192:
+            return "1k-8k"
+        if prefix_len < 32768:
+            return "8k-32k"
+        return "32k+"
+
+    def _record_bucket_hit(self, prefix_len: int) -> None:
+        b = self._bucket_for_len(prefix_len)
+        h, m = self._hit_buckets[b]
+        self._hit_buckets[b] = (h + 1, m)
+
+    def _record_bucket_miss(self, requested_len: int) -> None:
+        b = self._bucket_for_len(requested_len)
+        h, m = self._hit_buckets[b]
+        self._hit_buckets[b] = (h, m + 1)
+
+    # O2.1 (optimization-0914 item 3): KV block-level pin API.
+    # Pin increments PagedCacheManager ref_count so LRU eviction skips the
+    # block. Unpin decrements via free_block (ref→0 makes it evictable again).
+    def pin_prefix(self, tokens: list[int], ttl: float | None = None) -> int:
+        if not tokens:
+            return 0
+        self._expire_pinned_blocks()
+        best = self._find_best_prefix_match(tokens)
+        if not best:
+            logger.debug("pin_prefix: no cached prefix for %d tokens", len(tokens))
+            return 0
+        _prefix_len, block_ids, _num_blocks = best
+        expiry = time.time() + ttl if ttl else 0.0
+        count = 0
+        with self._cache_lock:
+            for bid in block_ids:
+                if bid in self._pinned_blocks:
+                    continue
+                if self.paged_cache.increment_ref(bid):
+                    self._pinned_blocks[bid] = expiry
+                    count += 1
+        logger.info(
+            "pin_prefix: pinned %d/%d blocks (ttl=%s, tokens=%d)",
+            count,
+            len(block_ids),
+            ttl,
+            len(tokens),
+        )
+        return count
+
+    def unpin_prefix(self, tokens: list[int]) -> int:
+        if not tokens:
+            return 0
+        best = self._find_best_prefix_match(tokens)
+        if not best:
+            return 0
+        _prefix_len, block_ids, _num_blocks = best
+        count = 0
+        with self._cache_lock:
+            for bid in block_ids:
+                if bid not in self._pinned_blocks:
+                    continue
+                del self._pinned_blocks[bid]
+                self.paged_cache.free_block(bid)
+                count += 1
+        logger.info("unpin_prefix: unpinned %d blocks", count)
+        return count
+
+    def _expire_pinned_blocks(self) -> int:
+        now = time.time()
+        expired = [
+            bid for bid, exp in self._pinned_blocks.items() if exp and now >= exp
+        ]
+        if not expired:
+            return 0
+        with self._cache_lock:
+            for bid in expired:
+                self._pinned_blocks.pop(bid, None)
+                self.paged_cache.free_block(bid)
+        logger.info("pin TTL expired: released %d blocks", len(expired))
+        return len(expired)
 
     def reset_stats(self) -> None:
         """Reset statistics."""
@@ -2843,6 +2948,8 @@ class BlockAwarePrefixCache(CacheManager):
         self._tokens_requested_total = 0
         self._last_partial_tokens_skipped = 0
         self._last_tokens_to_next_block = 0
+        for k in self._hit_buckets:
+            self._hit_buckets[k] = (0, 0)
         self.paged_cache.reset_stats()
 
     def clear(self) -> int:
