@@ -1236,6 +1236,18 @@ Examples:
     regroup_serve_help(serve_parser)
     # Bench command
     bench_parser = subparsers.add_parser("bench", help="Run benchmark")
+    # O4.2: MFA per-shape tuning microbench -> JSON tuning table loaded by
+    # dispatch_policy._tuning_lookup (env FUSION_MFA_TUNING_TABLE).
+    tune_parser = subparsers.add_parser(
+        "tune-mfa",
+        help="Micro-benchmark attention backends per shape -> tuning table",
+    )
+    tune_parser.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        help="Output JSON path (default ~/.fusion-mlx/mfa_tuning_table.json)",
+    )
     bench_parser.add_argument(
         "model", type=str, help="Model to benchmark"
     ).completer = alias_completer
@@ -2247,6 +2259,10 @@ Examples:
         serve_command(args)
     elif args.command == "bench":
         bench_command(args)
+    elif args.command == "tune-mfa":
+        from fusion_mlx.custom_kernels.mfa.tune_bench import run_tuning_bench
+
+        run_tuning_bench(getattr(args, "output", None))
     elif args.command == "convert":
         from fusion_mlx.cli_convert import convert_command
 
