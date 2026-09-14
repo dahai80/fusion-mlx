@@ -36,9 +36,9 @@ def run_auto_fix(report) -> list[FixAction]:
 
     for section in report.sections:
         section_name = section.title.lower()
-        for row in section.rows:
-            if row.status.value == "fail":
-                _try_fix(section_name, row.label, row.detail or "", actions)
+        for check in section.checks:
+            if check.status.value == "fail":
+                _try_fix(section_name, check.label, check.detail or "", actions)
 
     return actions
 
