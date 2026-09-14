@@ -18,9 +18,12 @@
 #
 # Exit codes: 0=ok, 137=OOM (jetsam), 139=segfault/Metal crash, 1=other error.
 import json
+import logging
 import os
 import sys
 import traceback
+
+logger = logging.getLogger(__name__)
 
 
 def _emit(event: dict) -> None:
@@ -28,18 +31,69 @@ def _emit(event: dict) -> None:
     sys.stdout.flush()
 
 
-def _setup_mlx() -> None:
+def _preflight_components(model_path: str) -> list[str]:
+    """Verify expected weight shards exist before loading.
+
+    Checks for transformer / text_encoder / vae safetensors in the model
+    directory. Returns a list of missing component names (empty = all OK).
+    Catches the 'loads for minutes then crashes' failure mode where a
+    partial download leaves the worker spinning on a missing shard.
+    """
+    missing: list[str] = []
+    if not model_path or not os.path.isdir(model_path):
+        logger.warning("preflight: model_path missing or not a dir: %s", model_path)
+        return ["model_dir"]
+
+    files = set(os.listdir(model_path))
+    has_transformer = any(
+        "transformer" in f.lower() and f.endswith(".safetensors") for f in files
+    )
+    has_vae = any("vae" in f.lower() and f.endswith(".safetensors") for f in files)
+    has_text_encoder = any(
+        ("text_encoder" in f.lower() or "t5" in f.lower() or "clip" in f.lower())
+        and f.endswith(".safetensors")
+        for f in files
+    )
+    has_any_safetensors = any(f.endswith(".safetensors") for f in files)
+
+    if not has_any_safetensors:
+        missing.append("safetensors (none found)")
+    else:
+        if not has_transformer:
+            missing.append("transformer shard")
+        if not has_vae:
+            missing.append("vae shard")
+        if not has_text_encoder:
+            missing.append("text_encoder shard")
+    if missing:
+        logger.warning(
+            "preflight: missing weight components in %s: %s",
+            model_path,
+            ", ".join(missing),
+        )
+    else:
+        logger.info("preflight: all weight components present in %s", model_path)
+    return missing
+
+
+def _setup_mlx(lease_bytes: int = 0) -> None:
     import mlx.core as mx
 
-    cache_limit = int(os.environ.get("FUSION_IMAGE_CACHE_LIMIT", str(1 << 30)))
+    if lease_bytes > 0:
+        cache_limit = min(lease_bytes // 2, 4 * 1024**3)
+        wired_mb = min(lease_bytes, 32 * 1024) // (1 << 20)
+    else:
+        cache_limit = int(os.environ.get("FUSION_IMAGE_CACHE_LIMIT", str(1 << 30)))
+        wired_mb = 0
     try:
         mx.metal.set_cache_limit(cache_limit)
+        logger.info("image_worker: cache_limit=%d bytes", cache_limit)
     except Exception:
         pass
-    wired = os.environ.get("FUSION_IMAGE_WIRED_LIMIT_MB")
-    if wired:
+    if wired_mb > 0:
         try:
-            mx.metal.set_wired_limit(int(wired) * (1 << 20))
+            mx.metal.set_wired_limit(wired_mb * (1 << 20))
+            logger.info("image_worker: wired_limit=%d MB", wired_mb)
         except Exception:
             pass
 
@@ -99,7 +153,8 @@ def _save_image(gen, output_path: str, output_format: str) -> str:
 
 
 def run_worker(spec: dict) -> int:
-    _setup_mlx()
+    lease_bytes = int(spec.get("lease_bytes", 0))
+    _setup_mlx(lease_bytes=lease_bytes)
     variant = spec["variant"]
     model_path = spec["model_path"]
     quantize = spec.get("quantize")
@@ -109,6 +164,17 @@ def run_worker(spec: dict) -> int:
     n_images = max(1, spec.get("n_images", 1))
     gen_params = spec["gen_params"]
     os.makedirs(output_dir, exist_ok=True)
+
+    missing = _preflight_components(model_path)
+    if missing:
+        _emit(
+            {
+                "type": "error",
+                "message": f"weight preflight failed: missing {' '.join(missing)} "
+                f"in {model_path}. Run `fusion-mlx pull <model>` to re-download.",
+            }
+        )
+        return 1
 
     flux = _load_model(variant, model_path, quantize, config_label)
 

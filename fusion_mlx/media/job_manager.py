@@ -52,6 +52,7 @@ class MediaJobManager:
     ) -> tuple[str, dict]:
         job_id = f"img_{int(time.monotonic() * 1000)}_{os.getpid()}"
         output_dir = tempfile.mkdtemp(prefix=f"fusion_{job_id}_")
+        lease_bytes = self._compute_lease_bytes()
         spec = {
             "variant": variant,
             "model_path": model_path,
@@ -61,8 +62,25 @@ class MediaJobManager:
             "output_format": output_format,
             "n_images": n_images,
             "gen_params": gen_params,
+            "lease_bytes": lease_bytes,
         }
+        logger.info("image job %s lease_bytes=%d", job_id, lease_bytes)
         return output_dir, spec
+
+    def _compute_lease_bytes(self) -> int:
+        """Allocate a memory budget for the subprocess based on current
+        system pressure. 60% of available memory, floored at 4 GB,
+        capped at 32 GB.
+        """
+        try:
+            import psutil
+
+            avail = psutil.virtual_memory().available
+            lease = int(avail * 0.6)
+            lease = max(4 * 1024**3, min(lease, 32 * 1024**3))
+            return lease
+        except Exception:
+            return 8 * 1024**3
 
     async def run_image_job(
         self,

@@ -3,6 +3,20 @@
 ## [Unreleased]
 
 ### Added
+- **Image worker weight preflight** — `_preflight_components` verifies
+  transformer/text_encoder/vae safetensors exist before loading, catching
+  partial downloads with a clear error instead of a minutes-later crash.
+- **Dynamic image worker memory lease** — `MediaJobManager._compute_lease_bytes`
+  allocates 60% of available system memory (floored 4 GB, capped 32 GB) to
+  the subprocess, passed via `lease_bytes` spec field. Worker sets MLX
+  cache_limit + wired_limit accordingly.
+
+### Declared BURN-IN (not landed)
+- **D8.1 LLM subprocess isolation (O6.2)** — `worker_protocol.py` generalization
+  + `BatchedEngine` subprocess-ization requires 72h soak test. Image/video
+  subprocess isolation already landed (O6.1); LLM watchdog restart with
+  weight hot-cache is the gate. ⛔ BURN-IN — no fabricated path.
+
 - **MemoryTier auto-detection** — `--memory-tier auto` (new default) derives
   SAFE/BALANCED/AGGRESSIVE from unified memory size
   (<16 GB → SAFE, 16-32 GB → BALANCED, 32+ GB → AGGRESSIVE).
