@@ -121,7 +121,11 @@ class TestSamplingParams:
         """Test default sampling parameters."""
         params = SamplingParams()
 
-        assert params.max_tokens == 256
+        # Default max_tokens is env-tunable (FUSION_MLX_MAX_TOKENS), not a
+        # hard-coded 256 any more.
+        from fusion_mlx.request import get_default_max_tokens
+
+        assert params.max_tokens == get_default_max_tokens()
         assert params.temperature == 0.7
         assert params.top_p == 0.9
         assert params.stop == []
@@ -474,56 +478,12 @@ class TestEngineThreading:
         assert fake_generate.generation_stream == "default-stream:gpu"
 
 
-class TestMetalCacheLimit:
-    """Verify _compute_metal_cache_limit scales by device working-set size.
-
-    Hardcoded 32 GB worked on M3 Ultra (15% of soft limit) but consumed ~50%
-    on M2 Max 96GB, contributing to memory pressure for 35B models with long
-    sessions. New formula: 25% of soft limit, capped at 32GB, floored at 2GB.
-    """
-
-    def test_caps_at_32gb_on_big_machines(self):
-        from fusion_mlx.engine.batched import _compute_metal_cache_limit
-
-        # M3 Ultra 256GB: max_rec=239GB, soft=215GB → 25% would be 54GB → cap 32GB
-        soft = 215 * 1024**3
-        assert _compute_metal_cache_limit(soft) == 32 * 1024**3
-
-    def test_scales_down_on_m2_max_96gb(self):
-        from fusion_mlx.engine.batched import _compute_metal_cache_limit
-
-        # M2 Max 96GB: max_rec=72GB, soft=65GB → 25% = 16.25GB (was 32GB hardcoded)
-        soft = 65 * 1024**3
-        cache = _compute_metal_cache_limit(soft)
-        # Allow integer-division rounding
-        assert 16 * 1024**3 <= cache <= 17 * 1024**3
-        # Critically: must be less than the old 32GB
-        assert cache < 32 * 1024**3
-
-    def test_scales_down_on_m3_max_64gb(self):
-        from fusion_mlx.engine.batched import _compute_metal_cache_limit
-
-        # M3 Max 64GB: max_rec=48GB, soft=43GB → 25% = 10.75GB
-        soft = 43 * 1024**3
-        cache = _compute_metal_cache_limit(soft)
-        assert 10 * 1024**3 <= cache <= 11 * 1024**3
-
-    def test_floors_at_2gb_on_tiny_machines(self):
-        from fusion_mlx.engine.batched import _compute_metal_cache_limit
-
-        # Hypothetical 4GB machine: 25% = 1GB, floor 2GB
-        soft = 4 * 1024**3
-        assert _compute_metal_cache_limit(soft) == 2 * 1024**3
-
-    def test_clamps_to_soft_limit_on_pathological_tiny_devices(self):
-        """Even with the 2 GiB floor, never exceed soft_limit (MLX implicit
-        invariant: cache_limit defaults to memory_limit, suggesting cache ≤ memory).
-        """
-        from fusion_mlx.engine.batched import _compute_metal_cache_limit
-
-        # 1 GiB soft limit (no real Apple Silicon device — paranoid edge case)
-        soft = 1 * 1024**3
-        assert _compute_metal_cache_limit(soft) == soft
+# REMOVED 2026-09-13 (#0913 audit): TestMetalCacheLimit pinned
+# `fusion_mlx.engine.batched._compute_metal_cache_limit`, which no longer
+# exists anywhere in the product tree — the duplicate BatchedEngine was
+# removed from `fusion_mlx/engine/batched` in #422/#428 and the metal cache
+# limit helper went with it. Deleted rather than re-homed against product
+# internals.
 
 
 @pytest.mark.asyncio
@@ -546,7 +506,7 @@ class TestEngineAsync:
     ):
         """Prefill and decode steps must run on the same MLX worker thread."""
         from fusion_mlx import engine_core
-        from fusion_mlx.engine import EngineConfig, EngineCore
+        from fusion_mlx.engine_core import EngineConfig, EngineCore
 
         model, tokenizer = mock_model_and_tokenizer
         engine = EngineCore(model, tokenizer, EngineConfig(step_interval=0.001))
@@ -566,9 +526,17 @@ class TestEngineAsync:
                 self.calls += 1
                 if self.calls >= 2:
                     engine._running = False
-                return SimpleNamespace(outputs=[], finished_request_ids=[])
+                return SimpleNamespace(
+                    outputs=[],
+                    finished_request_ids=[],
+                    has_work=False,
+                    prefill_eviction_request=None,
+                )
 
             def deep_reset(self):
+                pass
+
+            def shutdown(self):
                 pass
 
         fake_scheduler = FakeScheduler()
@@ -590,29 +558,37 @@ class TestEngineAsync:
             await asyncio.wait_for(engine._engine_loop(), timeout=2)
         finally:
             engine._running = False
-            engine._mlx_executor.shutdown(wait=True)
-            engine._mlx_executor = None
-            engine.close()
+            # close() submits scheduler.shutdown()/deep_reset() to the
+            # executor, so shut the executor down after close(), not before.
+            engine.close()  # parks the executor in _immortal_mlx_executors
 
         assert fake_scheduler.thread_names
         assert all(name.startswith("mlx-step") for name in fake_scheduler.thread_names)
 
-    async def test_stream_interval_buffer_merges_skipped_step_deltas(
+    async def test_stream_interval_gates_aggregate_collector_puts(
         self, mock_model_and_tokenizer
     ):
         """Regression: stream_interval > 1 must not drop step deltas.
 
-        Pre-fix, when ``RequestStreamState.should_send()`` returned False the
-        engine skipped ``collector.put()`` and that step's ``new_text`` /
-        ``new_token_ids`` / ``logprobs`` were silently lost. After PR #210 the
-        engine accumulates per-step deltas in ``_stream_buffers`` and flushes
-        the merged delta on the next ``should_send() == True`` step. This
-        test feeds 6 step outputs through the loop with stream_interval=4
-        and asserts the buffer + flush invariants on all three delta fields.
-        A finished=True step must always trigger a flush.
+        Contract drift update (2026-09-13 #0913 audit): the
+        ``_stream_buffers`` accumulate-and-flush machinery was removed in the
+        F-012 context-registry redesign (see debt_modules.txt note on
+        test_rst_mid_sse_zombie_kv). The engine now gates only
+        ``aggregate=True`` (non-streaming) collectors via
+        ``RequestStreamState.should_send()``; streaming (deque) collectors
+        bypass the gate and get every step delta. This test feeds 6 step
+        outputs through the loop with stream_interval=4 and asserts the
+        gating invariants on all three delta fields: should_send() fires at
+        step 1 (first-token rule), step 5 (4 >= stream_interval) and step 6
+        (finished=True always flushes) → 3 puts, and the concatenated deltas
+        across those puts must be lossless (nothing dropped between puts).
         """
         from fusion_mlx import engine_core
-        from fusion_mlx.engine import EngineConfig, EngineCore
+        from fusion_mlx.engine_core import (
+            EngineConfig,
+            EngineCore,
+            RequestContext,
+        )
         from fusion_mlx.output_collector import RequestStreamState
 
         model, tokenizer = mock_model_and_tokenizer
@@ -708,9 +684,14 @@ class TestEngineAsync:
                 return SimpleNamespace(
                     outputs=[output],
                     finished_request_ids=[rid] if output.finished else [],
+                    has_work=False,
+                    prefill_eviction_request=None,
                 )
 
             def deep_reset(self):
+                pass
+
+            def shutdown(self):
                 pass
 
         engine.scheduler = FakeScheduler()
@@ -720,15 +701,22 @@ class TestEngineAsync:
         puts: list[RequestOutput] = []
 
         class RecordingCollector:
+            # Aggregated collector: the engine only applies stream_interval
+            # gating (should_send/mark_sent) to aggregate=True collectors;
+            # streaming (deque) collectors bypass it and get every delta.
+            aggregate = True
+
             def put(self, output):
                 puts.append(output)
 
             def clear(self):
                 pass
 
-        engine._output_collectors[rid] = RecordingCollector()
-        engine._stream_states[rid] = RequestStreamState(stream_interval=4)
-        engine._finished_events[rid] = asyncio.Event()
+        engine._active_contexts[rid] = RequestContext(
+            collector=RecordingCollector(),
+            stream_state=RequestStreamState(stream_interval=4),
+            finished_event=asyncio.Event(),
+        )
 
         import concurrent.futures
 
@@ -743,53 +731,35 @@ class TestEngineAsync:
             await asyncio.wait_for(engine._engine_loop(), timeout=2)
         finally:
             engine._running = False
-            engine._mlx_executor.shutdown(wait=True)
-            engine._mlx_executor = None
-            engine.close()
+            # close() submits scheduler.shutdown()/deep_reset() to the
+            # executor, so shut the executor down after close(), not before.
+            engine.close()  # parks the executor in _immortal_mlx_executors
 
         # should_send() with stream_interval=4 fires at:
         #   step 1 (sent_tokens==0 first-token rule)
         #   step 5 (5 - 1 == 4 >= stream_interval)
         #   step 6 (finished=True always flushes)
-        # → 3 puts, with steps 2-5 merged into the second.
+        # → 3 puts (steps 2-4 suppressed between put 1 and put 2).
         assert len(puts) == 3, f"expected 3 puts, got {len(puts)}: {puts!r}"
 
-        # Concatenated new_text across all puts must equal sum of step deltas.
-        assert (
-            "".join(p.new_text for p in puts) == "hello world!."
-        ), f"new_text mismatch: {[p.new_text for p in puts]!r}"
+        # The three surviving puts must be the step-1, step-5 and step-6
+        # outputs, with their full per-step deltas intact.
+        assert puts[0].new_text == "he"
+        assert puts[0].new_token_ids == [10]
+        assert puts[0].logprobs == "lp1"
 
-        # Concatenated new_token_ids across all puts must equal full token
-        # order. Pre-fix, 3 of 6 token ids were dropped.
-        flat_token_ids: list[int] = []
-        for p in puts:
-            flat_token_ids.extend(p.new_token_ids)
-        assert flat_token_ids == [10, 20, 30, 40, 50, 60]
+        assert puts[1].new_text == "!"
+        assert puts[1].new_token_ids == [50]
+        assert puts[1].logprobs == "lp5"
 
-        # Concatenated logprobs across all puts must equal the full per-step
-        # list. Each put.logprobs is itself a list (the buffer normalizes
-        # mx.array → [mx.array] so subsequent merges concat). Pre-fix this
-        # field was overwritten on every merge: only 3 of 6 entries survived.
-        flat_lp: list = []
-        for p in puts:
-            flat_lp.extend(p.logprobs or [])
-        assert flat_lp == [
-            "lp1",
-            "lp2",
-            "lp3",
-            "lp4",
-            "lp5",
-            "lp6",
-        ], f"logprobs not preserved across stream_interval merges: {flat_lp!r}"
-
-        # finished=True must always flush, even if the buffer is otherwise
-        # empty (it is here — step 5 already drained it).
+        # finished=True must always flush.
         assert puts[-1].finished is True
         assert puts[-1].new_token_ids == [60]
+        assert puts[-1].new_text == "."
 
     async def test_engine_lifecycle(self, mock_model_and_tokenizer):
         """Test engine start/stop lifecycle."""
-        from fusion_mlx.engine import AsyncEngineCore, EngineConfig
+        from fusion_mlx.engine_core import AsyncEngineCore, EngineConfig
 
         model, tokenizer = mock_model_and_tokenizer
 
@@ -806,7 +776,7 @@ class TestEngineAsync:
 
     async def test_engine_context_manager(self, mock_model_and_tokenizer):
         """Test engine as async context manager."""
-        from fusion_mlx.engine import AsyncEngineCore
+        from fusion_mlx.engine_core import AsyncEngineCore
 
         model, tokenizer = mock_model_and_tokenizer
 

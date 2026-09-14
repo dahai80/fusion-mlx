@@ -66,13 +66,11 @@ for failure):
 
 ## Stub / false-coverage — stay quarantined despite green run
 
-### test_dense_sampler_fastpath.py — KEEP_QUARANTINED (false coverage)
-- 7 tests pass, but they exercise a **no-op shim** installer
-  (`_install_dense_sampler_fastpath` conftest stub), not prod. The real
-  dense-sampler fast-path was NOT ported (replaced by a simpler
-  module-level `get_or_create_fused_sampler` singleton, deliberately no
-  bounded-LRU). Un-quarantining = false coverage. Perf feature gap
-  (homogeneous-batch fast path) remains a future feature decision. Issue #674.
+### test_dense_sampler_fastpath.py — REMOVED 2026-09-13 (#0913 audit, user decision)
+- False-coverage file deleted from disk and from `debt_modules.txt`. The 7
+  green tests exercised a conftest no-op shim installer, not prod; un-quarantining
+  would have been false coverage, so the file was removed instead. Perf feature
+  gap (homogeneous-batch fast path) remains tracked as issue #674.
 
 ### test_request_time_alias_resolution.py — KEEP_QUARANTINED (deep drift)
 - 5 real STT-resolver tests pass, but 15 tests xfail (embeddings/chat route

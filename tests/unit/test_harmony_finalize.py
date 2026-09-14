@@ -441,12 +441,12 @@ def test_end_to_end_harmony_stop_match_keeps_content_null():
 class _HarmonyReasoningOnlyStreamEngine:
     """Streaming engine mimicking gpt-oss cut short mid-analysis.
 
-    Emits channel-routed reasoning-only deltas — same shape the
-    ``HarmonyStreamingRouter`` produces when feeding through
-    ``_stream_with_output_router`` on a generation that ends before a
-    final-channel transition. Used to drive the chat route's SSE
-    pipeline via ``TestClient`` so the streaming D-HARMONY-LEAK gate
-    can be exercised without booting a real model server.
+    Emits harmony-encoded deltas (channel header then analysis text) —
+    the shape a real gpt-oss engine streams. The real streaming
+    implementation (``fusion_mlx/api/openai/streaming.py``) resolves the
+    HarmonyReasoningParser from the model name and routes analysis text
+    to ``reasoning_content``; driving the SSE pipeline via TestClient
+    exercises the D-HARMONY-LEAK gate without booting a real server.
     """
 
     preserve_native_tool_format = False
@@ -464,10 +464,11 @@ class _HarmonyReasoningOnlyStreamEngine:
     async def stream_chat(self, messages, **kwargs):
         from fusion_mlx.engine.base import GenerationOutput
 
-        accumulated_reasoning = ""
-        for i, delta in enumerate(self._deltas):
-            accumulated_reasoning += delta
-            is_last = i == len(self._deltas) - 1
+        # Harmony encoding arrives token-by-token: channel marker, channel
+        # type, message header, then the analysis text streams.
+        frames = ["<|channel|>", "analysis", "<|message|>"] + list(self._deltas)
+        for i, delta in enumerate(frames):
+            is_last = i == len(frames) - 1
             yield GenerationOutput(
                 text="",
                 new_text=delta,
@@ -475,8 +476,6 @@ class _HarmonyReasoningOnlyStreamEngine:
                 completion_tokens=i + 1,
                 finished=is_last,
                 finish_reason=self._finish_reason if is_last else None,
-                channel="reasoning",
-                reasoning_text=accumulated_reasoning,
             )
 
 
@@ -691,80 +690,8 @@ def test_production_helper_skips_synthetic_raw_when_tool_calls_detected():
     )
 
 
-def test_streaming_route_imports_production_harmony_predicate():
-    """Codex r2 BLOCKING: belt-and-suspenders — the streaming chat
-    route's body must reference the production
-    ``_is_harmony_cut_short_stream`` symbol at the synthetic_raw
-    decision point, not duplicate its logic inline. If a future
-    refactor inlines the predicate again, this regression test
-    triggers and the codex r1/r2 fix-cycle's drift hazard is caught
-    before merge.
-    """
-    import inspect
-
-    from fusion_mlx.routes_internal import chat as chat_module
-
-    # The stream_chat_completion function specifically must use the
-    # helper (the helper's own definition also has the symbol, but we
-    # care about the route consuming it, not just defining it).
-    stream_src = inspect.getsource(chat_module.stream_chat_completion)
-    assert "_is_harmony_cut_short_stream(" in stream_src, (
-        "stream_chat_completion must invoke the harmony cut-short "
-        "predicate via the module-level helper, not inline a "
-        "reimplementation"
-    )
-
-
-def test_streaming_route_call_site_passes_tool_calls_detected_arg():
-    """Codex r2 BLOCKING (PR #794): static-import pin that the route's
-    invocation of ``_is_harmony_cut_short_stream`` actually passes
-    ``processor.tool_calls_detected`` through, not a hard-coded
-    ``False`` or a different field. Together with the helper-level
-    unit test above (which proves the helper itself honours the
-    ``tool_calls_detected`` argument), this closes the static-drift
-    gap codex r2 flagged — the production predicate is consulted AND
-    the route feeds it the right argument.
-
-    An end-to-end TestClient drive of the cap-exhaust path requires
-    the full streaming postprocessor configuration the production
-    server runs (tool_call_parser, model_registry, channel-routed
-    capability probe), which is heavy to fake. The two-layer pin
-    (helper unit + AST inspection of the call site) is the minimal
-    discrimination that fails on either drift.
-    """
-    import ast
-    import inspect
-
-    from fusion_mlx.routes_internal import chat as chat_module
-
-    stream_src = inspect.getsource(chat_module.stream_chat_completion)
-    tree = ast.parse(stream_src)
-
-    # Find every call to _is_harmony_cut_short_stream and confirm
-    # exactly one of the args is ``processor.tool_calls_detected``.
-    matches: list[ast.Call] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            func = node.func
-            name = (
-                func.id
-                if isinstance(func, ast.Name)
-                else (func.attr if isinstance(func, ast.Attribute) else None)
-            )
-            if name == "_is_harmony_cut_short_stream":
-                matches.append(node)
-    assert matches, "stream_chat_completion must invoke _is_harmony_cut_short_stream"
-    for call in matches:
-        passed_attrs = []
-        for arg in list(call.args) + [kw.value for kw in call.keywords]:
-            if (
-                isinstance(arg, ast.Attribute)
-                and isinstance(arg.value, ast.Name)
-                and arg.value.id == "processor"
-            ):
-                passed_attrs.append(arg.attr)
-        assert "tool_calls_detected" in passed_attrs, (
-            "D-HARMONY-LEAK r2 BLOCKING: route must pass "
-            "processor.tool_calls_detected to _is_harmony_cut_short_stream; "
-            f"call site passed processor.{passed_attrs!r}"
-        )
+# REMOVED 2026-09-13 (#0913 audit): test_streaming_route_imports_production_harmony_predicate
+# and test_streaming_route_call_site_passes_tool_calls_detected_arg — static pins on the
+# OLD contract where stream_chat_completion invoked _is_harmony_cut_short_stream; that
+# route function is now a back-compat stub (streaming moved) and the predicate has no
+# call site. The helper's own unit test still pins the semantics.
