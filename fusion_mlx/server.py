@@ -30,21 +30,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from ._version import __version__
 from .admin.auth import require_admin
 from .admin.routes import router as admin_router
-from .api.agent_routes import router as agent_router
 from .api.anthropic_routes import router as anthropic_router
 from .api.anthropic_routes import set_anthropic_context
-from .api.audio_routes import router as audio_router
-from .api.audio_routes import set_audio_context
-from .api.convert_routes import router as convert_router
-from .api.distributed_routes import router as distributed_router
-from .api.images import router as images_router
-from .api.images import set_images_context
-from .api.images_sr import router as images_sr_router
-from .api.images_sr import set_images_sr_context
-from .api.layered_quantize_routes import router as layered_quantize_router
-from .api.mcp_routes import router as mcp_router
-from .api.mcp_routes import set_mcp_manager_getter
-from .api.watermark_routes import router as watermark_router
 from .exceptions import (
     InsufficientMemoryError,
     ModelBusyError,
@@ -63,19 +50,13 @@ from .middleware import (
     scheduler_queue_full_handler,  # noqa: F401  re-exported for handler tests
 )
 
-# GUI compatibility layer
-try:
-    from fusion_mlx.gui_compat.database import close_database, get_database_manager
-    from fusion_mlx.gui_compat.server import get_gui_compat_router
-except (ImportError, AttributeError):
-    # ImportError: gui_compat or its transitive deps missing
-    # AttributeError: mlx_whisper→tiktoken chain can raise this
-    #   (SwigPy interference in pytest). gui_compat is optional.
-    get_gui_compat_router = None
-    get_database_manager = None
-    close_database = None
+# GUI compatibility layer — A4: deferred to Server boot to avoid eager
+# mlx_vlm/mlx_embeddings import at module load. gui_compat pulls in heavy
+# VLM deps at module top; importing here keeps them out of the lite path.
+get_gui_compat_router = None
+get_database_manager = None
+close_database = None
 
-# Import route modules
 from .admin.helpers import (
     set_admin_getters,
     set_hf_downloader,
@@ -83,31 +64,15 @@ from .admin.helpers import (
     set_ms_downloader,
     set_oq_manager,
 )
-from .api.bench_routes import router as bench_router
-from .api.embeddings_routes import router as embeddings_router
-from .api.embeddings_routes import set_embeddings_context
-from .api.flywheel_routes import router as flywheel_router
-from .api.ner_routes import router as ner_router
-from .api.ner_routes import set_ner_context
-from .api.ocr_routes import router as ocr_router
-from .api.ocr_routes import set_ocr_context
 from .api.ollama_routes import router as ollama_router
 from .api.ollama_routes import set_ollama_context
 from .api.openai import router as openai_router
 from .api.openai import set_openai_context
-from .api.openclaw_routes import router as openclaw_router
-from .api.openclaw_routes import set_openclaw_agent_pool
 from .api.reasoning_routes import router as reasoning_router
 from .api.reasoning_routes import set_reasoning_context
-from .api.recommend_batch_routes import router as recommend_batch_router
 from .api.recommend_routes import router as recommend_router
-from .api.rerank_routes import router as rerank_router
-from .api.rerank_routes import set_rerank_context
 from .api.session_routes import router as sessions_router
 from .api.session_routes import set_sessions_context
-from .api.spec_routes import router as spec_router
-from .api.videos_routes import router as videos_router
-from .api.videos_routes import set_videos_context
 from .cluster.routes import router as cluster_router
 from .config import ServerConfig
 from .dispatch import CloudRouter, RequestRouter
@@ -126,6 +91,39 @@ from .routes_internal.responses import set_responses_context
 from .routes_internal.runtime_config import router as runtime_config_router
 from .server_metrics import get_server_metrics
 from .settings import Settings
+
+_LAZY_ROUTES: dict[str, tuple[str, str, str | None]] = {
+    "audio": (".api.audio_routes", "router", "audio"),
+    "images": (".api.images", "router", "image"),
+    "images_sr": (".api.images_sr", "router", "image"),
+    "videos": (".api.videos_routes", "router", "video"),
+    "mcp": (".api.mcp_routes", "router", "mcp"),
+    "openclaw": (".api.openclaw_routes", "router", "agent"),
+    "agent": (".api.agent_routes", "router", "agent"),
+    "convert": (".api.convert_routes", "router", "tools"),
+    "watermark": (".api.watermark_routes", "router", "tools"),
+    "layered_quantize": (".api.layered_quantize_routes", "router", "llm"),
+    "distributed": (".api.distributed_routes", "router", "multitenant"),
+    "bench": (".api.bench_routes", "router", "bench"),
+    "flywheel": (".api.flywheel_routes", "router", "bench"),
+    "spec": (".api.spec_routes", "router", "llm"),
+    "embeddings": (".api.embeddings_routes", "router", "embedding"),
+    "ner": (".api.ner_routes", "router", "ner"),
+    "ocr": (".api.ocr_routes", "router", "ocr"),
+    "rerank": (".api.rerank_routes", "router", "reranker"),
+    "recommend_batch": (".api.recommend_batch_routes", "router", "llm"),
+}
+
+
+def _resolve_lazy_route(name: str):
+    import importlib
+
+    spec = _LAZY_ROUTES.get(name)
+    if spec is None:
+        return None
+    mod = importlib.import_module(spec[0], __package__)
+    return getattr(mod, spec[1])
+
 
 logger = logging.getLogger(__name__)
 
@@ -1245,31 +1243,31 @@ class Server:
         # in full profile — code-level prohibition, stronger than profile gate.
         _FORBIDDEN_UNTIL_FIXED.add("flywheel")
 
-        _ROUTE_REGISTRY: list[tuple[str, Any, str | None]] = [
+        _ROUTE_REGISTRY: list[tuple[str, str | None, str | None]] = [
             ("ollama", ollama_router, "llm"),
             ("openai", openai_router, "llm"),
             ("anthropic", anthropic_router, "llm"),
             ("responses", responses_router, "llm"),
-            ("audio", audio_router, "audio"),
-            ("images", images_router, "image"),
-            ("images_sr", images_sr_router, "image"),
-            ("videos", videos_router, "video"),
-            ("mcp", mcp_router, "mcp"),
-            ("openclaw", openclaw_router, "agent"),
-            ("agent", agent_router, "agent"),
-            ("convert", convert_router, "tools"),
-            ("watermark", watermark_router, "tools"),
-            ("layered_quantize", layered_quantize_router, "llm"),
-            ("distributed", distributed_router, "multitenant"),
+            ("audio", None, "audio"),
+            ("images", None, "image"),
+            ("images_sr", None, "image"),
+            ("videos", None, "video"),
+            ("mcp", None, "mcp"),
+            ("openclaw", None, "agent"),
+            ("agent", None, "agent"),
+            ("convert", None, "tools"),
+            ("watermark", None, "tools"),
+            ("layered_quantize", None, "llm"),
+            ("distributed", None, "multitenant"),
             ("recommend", recommend_router, "llm"),
-            ("bench", bench_router, "bench"),
-            ("recommend_batch", recommend_batch_router, "llm"),
-            ("flywheel", flywheel_router, "bench"),
-            ("spec", spec_router, "llm"),
-            ("embeddings", embeddings_router, "embedding"),
-            ("rerank", rerank_router, "reranker"),
-            ("ner", ner_router, "ner"),
-            ("ocr", ocr_router, "ocr"),
+            ("bench", None, "bench"),
+            ("recommend_batch", None, "llm"),
+            ("flywheel", None, "bench"),
+            ("spec", None, "llm"),
+            ("embeddings", None, "embedding"),
+            ("rerank", None, "reranker"),
+            ("ner", None, "ner"),
+            ("ocr", None, "ocr"),
             ("reasoning", reasoning_router, "llm"),
             ("sessions", sessions_router, "llm"),
             ("health_probe", health_probe_router, None),
@@ -1292,6 +1290,11 @@ class Server:
             if _mod is not None and not _profile.engine_allowed(_mod):
                 _skipped.append(f"{_name}(modality={_mod})")
                 continue
+            if _router is None:
+                _router = _resolve_lazy_route(_name)
+                if _router is None:
+                    _skipped.append(f"{_name}(lazy-import-failed)")
+                    continue
             app.include_router(_router)
             _mounted.append(_name)
         logger.info(
@@ -1320,6 +1323,26 @@ class Server:
             return status
 
         # Register GUI compatibility router (discovery, settings, manager, admin UI)
+        # A4: lazy import — gui_compat pulls in mlx_vlm/mlx_embeddings at module
+        # top; defer to boot time so lite profile skips heavy VLM deps.
+        global get_gui_compat_router, get_database_manager, close_database
+        if get_gui_compat_router is None:
+            try:
+                from fusion_mlx.gui_compat.database import (
+                    close_database as _cd,
+                )
+                from fusion_mlx.gui_compat.database import (
+                    get_database_manager as _gdm,
+                )
+                from fusion_mlx.gui_compat.server import (
+                    get_gui_compat_router as _gcr,
+                )
+
+                get_gui_compat_router = _gcr
+                get_database_manager = _gdm
+                close_database = _cd
+            except (ImportError, AttributeError):
+                pass
         if get_gui_compat_router:
             app.include_router(get_gui_compat_router())
 
@@ -1891,9 +1914,10 @@ class Server:
             # use it (was previously created but never connected).
             self.request_router.cloud_router = self.cloud_router
 
-        # Inject context into route modules
+        # Inject context into route modules (only for mounted routes)
         global _server_instance
         _server_instance = self
+        _mounted = set(self._profile_mounted_routes)
         # ARCH-02 (#0909 audit): removed duplicate set_ollama_context call
         # (was called at L1721 and L1723 — copy-paste bug exposing implicit
         # call-order dependency).
@@ -1901,43 +1925,74 @@ class Server:
         set_openai_context(self.pool, self.request_router)
         set_anthropic_context(self.pool)
         set_responses_context(self.pool)
-        set_images_context(self.pool)
-        set_images_sr_context(self.pool)
-        set_videos_context(self.pool)
-        set_audio_context(self.pool)
-        set_openclaw_agent_pool(self.pool)
-        set_mcp_manager_getter(lambda: None)  # placeholder, replaced below
+        if "images" in _mounted:
+            from .api.images import set_images_context
+
+            set_images_context(self.pool)
+        if "images_sr" in _mounted:
+            from .api.images_sr import set_images_sr_context
+
+            set_images_sr_context(self.pool)
+        if "videos" in _mounted:
+            from .api.videos_routes import set_videos_context
+
+            set_videos_context(self.pool)
+        if "audio" in _mounted:
+            from .api.audio_routes import set_audio_context
+
+            set_audio_context(self.pool)
+        if "openclaw" in _mounted or "agent" in _mounted:
+            from .api.openclaw_routes import set_openclaw_agent_pool
+
+            set_openclaw_agent_pool(self.pool)
+        if "mcp" in _mounted:
+            from .api.mcp_routes import set_mcp_manager_getter
+
+            set_mcp_manager_getter(lambda: None)  # placeholder, replaced below
 
         # Wire MCP client manager
         _mcp_manager = None
-        try:
-            from .mcp import MCPClientManager, load_mcp_config
+        if "mcp" in _mounted:
+            try:
+                from .mcp import MCPClientManager, load_mcp_config
 
-            mcp_config = load_mcp_config()
-            if mcp_config.servers:
-                _mcp_manager = MCPClientManager(mcp_config)
-                await _mcp_manager.start()
-                set_mcp_manager_getter(lambda: _mcp_manager)
-                logger.info(
-                    "MCP manager started: %d servers configured",
-                    len(mcp_config.servers),
-                )
-            else:
-                logger.info("MCP: no servers configured, MCP disabled")
-        except FileNotFoundError:
-            logger.info("MCP: no config found, MCP disabled")
-        except ImportError as e:
-            logger.info("MCP SDK not installed, MCP disabled: %s", e)
-        except Exception as e:
-            # ENG-01 (#0909 audit): surface MCP init failure at ERROR —
-            # a broken MCP manager means tool-calling routes silently fail.
-            logger.error("MCP init failed: %s", e)
-            self._startup_failures.append("MCP")
+                mcp_config = load_mcp_config()
+                if mcp_config.servers:
+                    _mcp_manager = MCPClientManager(mcp_config)
+                    await _mcp_manager.start()
+                    set_mcp_manager_getter(lambda: _mcp_manager)
+                    logger.info(
+                        "MCP manager started: %d servers configured",
+                        len(mcp_config.servers),
+                    )
+                else:
+                    logger.info("MCP: no servers configured, MCP disabled")
+            except FileNotFoundError:
+                logger.info("MCP: no config found, MCP disabled")
+            except ImportError as e:
+                logger.info("MCP SDK not installed, MCP disabled: %s", e)
+            except Exception as e:
+                # ENG-01 (#0909 audit): surface MCP init failure at ERROR —
+                # a broken MCP manager means tool-calling routes silently fail.
+                logger.error("MCP init failed: %s", e)
+                self._startup_failures.append("MCP")
         _server_state["mcp_manager"] = _mcp_manager
-        set_embeddings_context(self.pool, _server_state)
-        set_rerank_context(self.pool, _server_state)
-        set_ner_context(self.pool, _server_state)
-        set_ocr_context(self.pool)
+        if "embeddings" in _mounted:
+            from .api.embeddings_routes import set_embeddings_context
+
+            set_embeddings_context(self.pool, _server_state)
+        if "rerank" in _mounted:
+            from .api.rerank_routes import set_rerank_context
+
+            set_rerank_context(self.pool, _server_state)
+        if "ner" in _mounted:
+            from .api.ner_routes import set_ner_context
+
+            set_ner_context(self.pool, _server_state)
+        if "ocr" in _mounted:
+            from .api.ocr_routes import set_ocr_context
+
+            set_ocr_context(self.pool)
         set_reasoning_context(self.pool)
         set_sessions_context(self.pool, _server_state)
         set_models_context(self.pool)

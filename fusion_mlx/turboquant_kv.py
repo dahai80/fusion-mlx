@@ -38,6 +38,11 @@ from mlx_vlm.turboquant import (
 
 logger = logging.getLogger(__name__)
 
+# A4: apply TurboQuantKVCache.merge monkey-patch on lazy import
+from .scheduler.monkeypatches import _apply_turboquant_merge_patch
+
+_apply_turboquant_merge_patch()
+
 __all__ = [
     "TurboQuantConfig",
     "TurboQuantKVCache",
