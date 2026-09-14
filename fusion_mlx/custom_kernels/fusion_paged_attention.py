@@ -326,7 +326,7 @@ def paged_decode_attention(
             output_shapes=[(B, n_heads, 1, head_dim)],
             output_dtypes=[mx.float32],
             init_value=0,
-            stream=stream or mx.gpu,
+            stream=stream,
         )
     else:
         kernel = _make_paged_decode_attention_kernel_scalar()
@@ -349,6 +349,6 @@ def paged_decode_attention(
             output_shapes=[(B, n_heads, 1, head_dim)],
             output_dtypes=[mx.float32],
             init_value=0,
-            stream=stream or mx.gpu,
+            stream=stream,
         )
     return out[0].astype(q.dtype)
