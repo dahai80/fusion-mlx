@@ -49,14 +49,15 @@ def _make_paged_decode_attention_kernel_scalar():
         for (uint d = 0; d < HEAD_DIM; ++d) o[d] = 0.0f;
         float sc = float(softcap[0]);
 
-        const uint num_blocks = (NUM_KV + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        const uint num_kv = kv_lens[batch];
+        const uint num_blocks = (num_kv + BLOCK_SIZE - 1) / BLOCK_SIZE;
         for (uint lb = 0; lb < num_blocks; ++lb) {
-          uint pb = block_table[lb];
-          uint block_len = (lb + 1 == num_blocks) ? (NUM_KV - lb * BLOCK_SIZE) : BLOCK_SIZE;
+          uint pb = block_table[batch * MAX_BLOCKS + lb];
+          uint block_len = (lb + 1 == num_blocks) ? (num_kv - lb * BLOCK_SIZE) : BLOCK_SIZE;
           for (uint t = 0; t < block_len; ++t) {
             uint kv_pos = lb * BLOCK_SIZE + t;
             if (SLIDING_WINDOW > 0) {
-              if (kv_pos + SLIDING_WINDOW < NUM_KV) {
+              if (kv_pos + SLIDING_WINDOW < num_kv) {
                 continue;
               }
             }
@@ -88,7 +89,14 @@ def _make_paged_decode_attention_kernel_scalar():
 
     return mx.fast.metal_kernel(
         name="fusion_paged_decode_attention_scalar",
-        input_names=["q", "keys_pool", "values_pool", "block_table", "softcap"],
+        input_names=[
+            "q",
+            "keys_pool",
+            "values_pool",
+            "block_table",
+            "kv_lens",
+            "softcap",
+        ],
         output_names=["out"],
         source=source,
     )
@@ -124,10 +132,11 @@ def _make_paged_decode_attention_kernel_tiled():
         }
         float sc = float(softcap[0]);
 
-        const uint num_blocks = (NUM_KV + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        const uint num_kv = kv_lens[batch];
+        const uint num_blocks = (num_kv + BLOCK_SIZE - 1) / BLOCK_SIZE;
         for (uint lb = 0; lb < num_blocks; ++lb) {
-          uint pb = block_table[lb];
-          uint block_len = (lb + 1 == num_blocks) ? (NUM_KV - lb * BLOCK_SIZE) : BLOCK_SIZE;
+          uint pb = block_table[batch * MAX_BLOCKS + lb];
+          uint block_len = (lb + 1 == num_blocks) ? (num_kv - lb * BLOCK_SIZE) : BLOCK_SIZE;
 
           // Cooperative load of K and V block into threadgroup shared mem.
           const uint tile_elems = BLOCK_SIZE * HEAD_DIM;
@@ -152,7 +161,7 @@ def _make_paged_decode_attention_kernel_tiled():
             for (uint t = 0; t < block_len; ++t) {
               uint kv_pos = lb * BLOCK_SIZE + t;
               if (SLIDING_WINDOW > 0) {
-                if (kv_pos + SLIDING_WINDOW < NUM_KV) {
+                if (kv_pos + SLIDING_WINDOW < num_kv) {
                   continue;
                 }
               }
@@ -186,7 +195,14 @@ def _make_paged_decode_attention_kernel_tiled():
 
     return mx.fast.metal_kernel(
         name="fusion_paged_decode_attention_tiled",
-        input_names=["q", "keys_pool", "values_pool", "block_table", "softcap"],
+        input_names=[
+            "q",
+            "keys_pool",
+            "values_pool",
+            "block_table",
+            "kv_lens",
+            "softcap",
+        ],
         output_names=["out"],
         source=source,
     )
@@ -225,6 +241,30 @@ def paged_decode_attention(
     sc = float(softcap)
     softcap_arr = mx.array([sc], dtype=mx.float32)
 
+    if isinstance(num_kv, mx.array):
+        kv_lens_arr = num_kv.astype(mx.uint32)
+        if kv_lens_arr.shape[0] != B:
+            logger.warning(
+                "paged fused decode: kv_lens len=%d != B=%d, broadcasting",
+                kv_lens_arr.shape[0],
+                B,
+            )
+            kv_lens_arr = mx.broadcast_to(kv_lens_arr[:1], (B,)).astype(mx.uint32)
+        max_kv = int(mx.max(kv_lens_arr).item())
+    else:
+        max_kv = int(num_kv)
+        kv_lens_arr = mx.array([max_kv] * B, dtype=mx.uint32)
+
+    if block_table.ndim == 1:
+        max_blocks = block_table.shape[0]
+        bt_2d = mx.broadcast_to(
+            block_table.reshape(1, max_blocks), (B, max_blocks)
+        ).reshape(B * max_blocks)
+    else:
+        max_blocks = block_table.shape[1]
+        bt_2d = block_table.reshape(B * max_blocks)
+    bt_mx = bt_2d.astype(mx.uint32)
+
     tile_elems = block_size * head_dim
     use_tiled = tile_elems <= _TILE_SHARED_MEM_LIMIT
 
@@ -233,7 +273,8 @@ def paged_decode_attention(
         if use_tiled:
             logger.info(
                 "paged fused decode kernel: tiled path grid=(%d) threadgroup=(%d) "
-                "block_size=%d head_dim=%d tile_elems=%d sw=%d softcap=%s",
+                "block_size=%d head_dim=%d tile_elems=%d sw=%d softcap=%s "
+                "B=%d max_kv=%d max_blocks=%d",
                 B * n_heads,
                 _TILE_THREADS,
                 block_size,
@@ -241,11 +282,15 @@ def paged_decode_attention(
                 tile_elems,
                 sw,
                 sc,
+                B,
+                max_kv,
+                max_blocks,
             )
         else:
             logger.info(
                 "paged fused decode kernel: scalar fallback grid=(%d) "
-                "block_size=%d head_dim=%d tile_elems=%d > limit=%d sw=%d softcap=%s",
+                "block_size=%d head_dim=%d tile_elems=%d > limit=%d sw=%d softcap=%s "
+                "B=%d max_kv=%d max_blocks=%d",
                 B * n_heads,
                 block_size,
                 head_dim,
@@ -253,6 +298,9 @@ def paged_decode_attention(
                 _TILE_SHARED_MEM_LIMIT,
                 sw,
                 sc,
+                B,
+                max_kv,
+                max_blocks,
             )
         _logged_compile = True
 
@@ -261,12 +309,12 @@ def paged_decode_attention(
         if kernel is None:
             return None
         out = kernel(
-            inputs=[q_scaled, keys_pool, values_pool, block_table, softcap_arr],
+            inputs=[q_scaled, keys_pool, values_pool, bt_mx, kv_lens_arr, softcap_arr],
             template=[
                 ("BLOCK_SIZE", block_size),
                 ("HEAD_DIM", head_dim),
                 ("GQA_FACTOR", gqa_factor),
-                ("NUM_KV", num_kv),
+                ("MAX_BLOCKS", max_blocks),
                 ("N_HEADS", n_heads),
                 ("N_KV_HEADS", n_kv_heads),
                 ("B", B),
@@ -285,12 +333,12 @@ def paged_decode_attention(
         if kernel is None:
             return None
         out = kernel(
-            inputs=[q_scaled, keys_pool, values_pool, block_table, softcap_arr],
+            inputs=[q_scaled, keys_pool, values_pool, bt_mx, kv_lens_arr, softcap_arr],
             template=[
                 ("BLOCK_SIZE", block_size),
                 ("HEAD_DIM", head_dim),
                 ("GQA_FACTOR", gqa_factor),
-                ("NUM_KV", num_kv),
+                ("MAX_BLOCKS", max_blocks),
                 ("N_HEADS", n_heads),
                 ("N_KV_HEADS", n_kv_heads),
                 ("B", B),

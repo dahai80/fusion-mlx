@@ -18,6 +18,8 @@ from fusion_mlx.pool.memory_enforcer import (
     _LARGE_SYSTEM_CEILING_FRACTION,
     _LARGE_SYSTEM_THRESHOLD,
     _MLX_CACHE_LIMIT_BYTES,
+    _MLX_CACHE_LIMIT_FLOOR_BYTES,
+    _MLX_CACHE_LIMIT_MAX_BYTES,
     _PHYSICAL_RAM_WIRED_CAP_FRACTION,
     _PREFILL_ABORT_MARGIN,
     _SMALL_SYSTEM_RESERVE,
@@ -202,6 +204,8 @@ class TestWiredLimitTarget:
 
     def test_mlx_cache_limit_is_1gb(self):
         assert _MLX_CACHE_LIMIT_BYTES == 1 * 1024**3
+        assert _MLX_CACHE_LIMIT_FLOOR_BYTES == 1 * 1024**3
+        assert _MLX_CACHE_LIMIT_MAX_BYTES == 8 * 1024**3
 
     def test_128gb_balanced_wired_target(self):
         """128GB balanced: ceiling=72GB (G1), target=min(72+25, 102.4)=97GB."""

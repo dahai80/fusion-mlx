@@ -20,6 +20,7 @@ class AttentionBackend(Enum):
     STEEL_DSPLIT = auto()
     TURBOQUANT = auto()
     MLX_SDPA = auto()
+    PAGED_FUSED = auto()
 
 
 class DeviceGeneration(Enum):
@@ -49,6 +50,58 @@ class DispatchDecision:
 
 
 _DEVICE_INFO: DeviceInfo | None = None
+
+_TUNING_TABLE: dict[str, dict] | None = None
+_TUNING_TABLE_PATH = os.environ.get("FUSION_MFA_TUNING_TABLE", "")
+
+
+def _load_tuning_table() -> dict[str, dict] | None:
+    global _TUNING_TABLE
+    if _TUNING_TABLE is not None:
+        return _TUNING_TABLE
+    path = _TUNING_TABLE_PATH
+    if not path:
+        return None
+    try:
+        import json
+
+        with open(path) as f:
+            raw = json.load(f)
+        if isinstance(raw, dict):
+            _TUNING_TABLE = raw
+            logger.info("MFA tuning table loaded from %s (%d entries)", path, len(raw))
+            return _TUNING_TABLE
+    except Exception as exc:
+        logger.warning("MFA tuning table load failed (%s): %s", path, exc)
+    _TUNING_TABLE = {}
+    return _TUNING_TABLE
+
+
+def _tuning_lookup(
+    head_dim: int,
+    is_decode: bool,
+    batch_size: int,
+) -> DispatchDecision | None:
+    table = _load_tuning_table()
+    if not table:
+        return None
+    phase = "decode" if is_decode else "prefill"
+    key = f"d{head_dim}_{phase}_b{batch_size}"
+    entry = table.get(key)
+    if entry is None:
+        return None
+    be_name = str(entry.get("backend", "")).upper()
+    for be in AttentionBackend:
+        if be.name == be_name:
+            reason = f"tuning-table override: {key} → {be_name}"
+            bs = entry.get("block_size", [64, 64])
+            return DispatchDecision(
+                backend=be,
+                reason=reason,
+                block_size=tuple(bs) if isinstance(bs, (list, tuple)) else (64, 64),
+            )
+    logger.debug("tuning-table entry %s has unknown backend %s", key, be_name)
+    return None
 
 
 def _detect_device_info() -> DeviceInfo:
@@ -149,6 +202,10 @@ def select_backend(
 ) -> DispatchDecision:
     info = get_device_info()
 
+    _tuned = _tuning_lookup(head_dim, is_decode, batch_size)
+    if _tuned is not None:
+        return _tuned
+
     _force = os.environ.get("MFA_FORCE_BACKEND", "").upper()
     if _force:
         for be in AttentionBackend:
@@ -168,6 +225,14 @@ def select_backend(
         )
 
     if is_decode:
+        _paged_on = os.environ.get("FUSION_PAGED_FUSED_KERNEL", "off") == "on"
+        if _paged_on and batch_size > 1 and info.is_apple_silicon and head_dim <= 128:
+            return DispatchDecision(
+                backend=AttentionBackend.PAGED_FUSED,
+                reason="decode step: batch>1 with paged KV → fused paged kernel",
+                supports_backward=False,
+                block_size=(1, 64),
+            )
         return DispatchDecision(
             backend=AttentionBackend.MLX_SDPA,
             reason="decode step: mx.fast.sdpa is optimal",
