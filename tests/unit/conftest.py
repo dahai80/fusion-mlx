@@ -1235,14 +1235,23 @@ def _add_round3_stubs():
             },
         )
 
-    # fusion_mlx._tempfile_safe
-    if "fusion_mlx._tempfile_safe" not in sys.modules:
-        sys.modules["fusion_mlx._tempfile_safe"] = _make_stub(
-            "fusion_mlx._tempfile_safe",
-            {
-                "tempfile_safe": lambda *a, **k: "/tmp/stub",
-            },
-        )
+    # fusion_mlx._tempfile_safe — pure-Python, always importable.
+    # A4 lazy-import refactor: _tempfile_safe no longer eagerly loaded by
+    # `import fusion_mlx`, so the stub guard below would install a stale
+    # stub (missing managed_tempfile_path) and break video backend import.
+    # Force-load the real module so ltx2_5/ltx2 `from ..._tempfile_safe
+    # import managed_tempfile_path` resolves against real symbols.
+    try:
+        import fusion_mlx._tempfile_safe as _ts  # noqa: F401
+    except Exception:
+        if "fusion_mlx._tempfile_safe" not in sys.modules:
+            sys.modules["fusion_mlx._tempfile_safe"] = _make_stub(
+                "fusion_mlx._tempfile_safe",
+                {
+                    "managed_tempfile_path": lambda *a, **k: "/tmp/stub",
+                    "safe_tempdir": lambda *a, **k: "/tmp/stub",
+                },
+            )
 
 
 _add_round3_stubs()

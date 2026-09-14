@@ -3,6 +3,11 @@
 # LTX2Backend (LTX-2 + LTX-2.3) and Wan2Backend run on vendored pure-MLX ports
 # (fusion_mlx.video.ltx2 / wan2, Phases 4/5); ltx_video_legacy is a direct
 # pure-MLX impl. No mlx-video runtime dependency remains.
+#
+# A4: backend classes are lazily imported via __getattr__ (PEP 562) so that
+# importing this package (e.g. for validate_params/constraints_for) does not
+# eagerly parse all 12 backend modules. The BACKENDS dict is built on first
+# access. On lite profile (video disabled), backends are never imported.
 
 from __future__ import annotations
 
@@ -14,35 +19,37 @@ from .base import (
     VideoGenParams,
     validate_params,
 )
-from .cogvideox import CogVideoBackend
-from .cosmos import CosmosBackend
-from .hunyuanvideo import HunyuanVideoBackend
-from .ltx2 import LTX2Backend
-from .ltx2_5 import LTX2_5Backend
-from .ltx_video_legacy import LegacyLTXBackend
-from .minimax_h3 import MiniMaxH3Backend
-from .opensora import OpenSoraBackend
-from .skyreels import SkyReelsBackend
-from .svd import SVDBackend
-from .uniworld import UniWorldBackend
-from .wan2 import Wan2Backend
 
-BACKENDS: dict[str, type[VideoBackend]] = {
-    "ltx2_5": LTX2_5Backend,
-    "ltx2": LTX2Backend,
-    "cosmos": CosmosBackend,
-    "svd": SVDBackend,
-    "wan2": Wan2Backend,
-    "skyreels": SkyReelsBackend,
-    "ltx_video_legacy": LegacyLTXBackend,
-    "cogvideo": CogVideoBackend,
-    "hunyuanvideo": HunyuanVideoBackend,
-    "opensora": OpenSoraBackend,
-    "uniworld": UniWorldBackend,
-    "minimax_h3": MiniMaxH3Backend,
+_LAZY_BACKENDS: dict[str, tuple[str, str]] = {
+    "LTX2_5Backend": (".ltx2_5", "LTX2_5Backend"),
+    "LTX2Backend": (".ltx2", "LTX2Backend"),
+    "CosmosBackend": (".cosmos", "CosmosBackend"),
+    "SVDBackend": (".svd", "SVDBackend"),
+    "Wan2Backend": (".wan2", "Wan2Backend"),
+    "SkyReelsBackend": (".skyreels", "SkyReelsBackend"),
+    "LegacyLTXBackend": (".ltx_video_legacy", "LegacyLTXBackend"),
+    "CogVideoBackend": (".cogvideox", "CogVideoBackend"),
+    "HunyuanVideoBackend": (".hunyuanvideo", "HunyuanVideoBackend"),
+    "OpenSoraBackend": (".opensora", "OpenSoraBackend"),
+    "UniWorldBackend": (".uniworld", "UniWorldBackend"),
+    "MiniMaxH3Backend": (".minimax_h3", "MiniMaxH3Backend"),
 }
 
-# Stable name aliases -> canonical registry key.
+_REGISTRY_KEYS: dict[str, str] = {
+    "ltx2_5": "LTX2_5Backend",
+    "ltx2": "LTX2Backend",
+    "cosmos": "CosmosBackend",
+    "svd": "SVDBackend",
+    "wan2": "Wan2Backend",
+    "skyreels": "SkyReelsBackend",
+    "ltx_video_legacy": "LegacyLTXBackend",
+    "cogvideo": "CogVideoBackend",
+    "hunyuanvideo": "HunyuanVideoBackend",
+    "opensora": "OpenSoraBackend",
+    "uniworld": "UniWorldBackend",
+    "minimax_h3": "MiniMaxH3Backend",
+}
+
 _ALIASES: dict[str, str] = {
     "ltx-2": "ltx2",
     "ltx_2": "ltx2",
@@ -98,6 +105,52 @@ _ALIASES: dict[str, str] = {
     "ref2va": "minimax_h3",
 }
 
+_BACKENDS_CACHE: dict[str, type[VideoBackend]] | None = None
+
+
+def _get_backends() -> dict[str, type[VideoBackend]]:
+    global _BACKENDS_CACHE
+    if _BACKENDS_CACHE is not None:
+        return _BACKENDS_CACHE
+    import importlib
+
+    _BACKENDS_CACHE = {}
+    for key, cls_name in _REGISTRY_KEYS.items():
+        submod, attr = _LAZY_BACKENDS[cls_name]
+        mod = importlib.import_module(submod, __name__)
+        _BACKENDS_CACHE[key] = getattr(mod, attr)
+    return _BACKENDS_CACHE
+
+
+def __getattr__(name: str):
+    if name == "BACKENDS":
+        return _get_backends()
+    entry = _LAZY_BACKENDS.get(name)
+    if entry is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    submod, attr = entry
+    import importlib
+
+    mod = importlib.import_module(submod, __name__)
+    val = getattr(mod, attr)
+    globals()[name] = val
+    return val
+
+
+def __dir__() -> list[str]:
+    return sorted(
+        list(_LAZY_BACKENDS.keys())
+        + [
+            "BACKENDS",
+            "VideoBackend",
+            "VideoConstraints",
+            "VideoGenParams",
+            "validate_params",
+            "resolve_backend",
+            "constraints_for",
+        ]
+    )
+
 
 def resolve_backend(
     model_name: str,
@@ -105,28 +158,25 @@ def resolve_backend(
     explicit: str | None = None,
     **kwargs: Any,
 ) -> VideoBackend:
-    # Explicit hint wins; else auto-detect via per-backend detect(); else
-    # fall back to LTX2Backend so Phase 0 preserves the prior single-backend
-    # behavior for any text-to-video model.
     if explicit:
         key = _ALIASES.get(explicit.lower(), explicit.lower())
-        cls = BACKENDS.get(key)
+        backends = _get_backends()
+        cls = backends.get(key)
         if cls is None:
             raise ValueError(f"unknown video backend: {explicit}")
         return cls(model_name, **kwargs)
 
-    for cls in BACKENDS.values():
+    backends = _get_backends()
+    for cls in backends.values():
         if cls.detect(model_name):
             return cls(model_name, **kwargs)
 
-    return LTX2Backend(model_name, **kwargs)
+    return __getattr__("LTX2Backend")(model_name, **kwargs)
 
 
 def constraints_for(
     model_name: str, *, explicit: str | None = None
 ) -> VideoConstraints:
-    # Lightweight backend-aware constraint lookup for the API layer. Builds a
-    # throwaway backend (no model loading) to read its static constraints.
     return resolve_backend(model_name, explicit=explicit).constraints()
 
 

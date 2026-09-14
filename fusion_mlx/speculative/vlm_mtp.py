@@ -41,16 +41,32 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
-try:
-    from mlx_vlm.speculative import load_drafter as _vlm_load_drafter
-    from mlx_vlm.speculative.utils import _mtp_rounds, _mtp_rounds_batch
+HAS_MLX_VLM = None
+_vlm_load_drafter = None
+_mtp_rounds = None
+_mtp_rounds_batch = None
 
-    HAS_MLX_VLM = True
-except ImportError:
-    _vlm_load_drafter = None
-    _mtp_rounds = None
-    _mtp_rounds_batch = None
-    HAS_MLX_VLM = False
+
+def _ensure_vlm_mtp_imports():
+    global HAS_MLX_VLM, _vlm_load_drafter, _mtp_rounds, _mtp_rounds_batch
+    if HAS_MLX_VLM is not None:
+        return
+    try:
+        from mlx_vlm.speculative import load_drafter as _ld
+        from mlx_vlm.speculative.utils import _mtp_rounds as _r
+        from mlx_vlm.speculative.utils import _mtp_rounds_batch as _rb
+
+        HAS_MLX_VLM = True
+    except ImportError:
+        HAS_MLX_VLM = False
+        return
+    if _vlm_load_drafter is None:
+        _vlm_load_drafter = _ld
+    if _mtp_rounds is None:
+        _mtp_rounds = _r
+    if _mtp_rounds_batch is None:
+        _mtp_rounds_batch = _rb
+
 
 from ..utils.model_loading import materialize_lazy_state
 
@@ -82,6 +98,7 @@ def load_vlm_mtp_drafter(path: str) -> VLMMTPDrafter | None:
     is the wrong kind. Soft-fails so a misconfigured toggle does not crash
     model loading."""
     try:
+        _ensure_vlm_mtp_imports()
         drafter_model, resolved_kind = _vlm_load_drafter(path, kind=None)
     except Exception as e:
         logger.warning(
@@ -175,6 +192,7 @@ def run_vlm_mtp_decode(
         first_bonus_list = first_bonus.tolist()  # forces eval once
         yield [int(x) for x in first_bonus_list]
         eos_set = set(eos_token_ids) if eos_token_ids else None
+        _ensure_vlm_mtp_imports()
         for tokens, _ in _mtp_rounds_batch(
             target_language_model,
             drafter.model,
@@ -204,6 +222,7 @@ def run_vlm_mtp_decode(
 
     yield first_bonus_int
 
+    _ensure_vlm_mtp_imports()
     for tok, _ in _mtp_rounds(
         target_language_model,
         drafter.model,

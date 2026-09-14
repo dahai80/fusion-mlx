@@ -354,9 +354,25 @@ def _build_audio_detection_sets():
         return _stt, _tts, _sts
 
 
-AUDIO_STT_MODEL_TYPES, AUDIO_TTS_MODEL_TYPES, AUDIO_STS_MODEL_TYPES = (
-    _build_audio_detection_sets()
-)
+_AUDIO_SETS_CACHE: tuple[set, set, set] | None = None
+
+
+def _get_audio_sets():
+    global _AUDIO_SETS_CACHE
+    if _AUDIO_SETS_CACHE is None:
+        _AUDIO_SETS_CACHE = _build_audio_detection_sets()
+    return _AUDIO_SETS_CACHE
+
+
+def __getattr__(name):
+    if name == "AUDIO_STT_MODEL_TYPES":
+        return _get_audio_sets()[0]
+    if name == "AUDIO_TTS_MODEL_TYPES":
+        return _get_audio_sets()[1]
+    if name == "AUDIO_STS_MODEL_TYPES":
+        return _get_audio_sets()[2]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # Architecture-based detection — these are checked before model_type and
 # are always static because architecture strings are stable identifiers.
@@ -780,11 +796,12 @@ def detect_model_type(model_path: Path) -> ModelType:
     # model_type check (dynamically loaded from mlx-audio when available).
     # Check TTS before STT because some model_type values (e.g. "vibevoice")
     # appear in both sets — TTS is the more common category for these.
-    if normalized_type in AUDIO_TTS_MODEL_TYPES or model_type in AUDIO_TTS_MODEL_TYPES:
+    _stt_types, _tts_types, _sts_types = _get_audio_sets()
+    if normalized_type in _tts_types or model_type in _tts_types:
         return "audio_tts"
-    if normalized_type in AUDIO_STT_MODEL_TYPES or model_type in AUDIO_STT_MODEL_TYPES:
+    if normalized_type in _stt_types or model_type in _stt_types:
         return "audio_stt"
-    if normalized_type in AUDIO_STS_MODEL_TYPES or model_type in AUDIO_STS_MODEL_TYPES:
+    if normalized_type in _sts_types or model_type in _sts_types:
         return "audio_sts"
     # mlx-audio LFM STS may use an "lfm*" model_type without a known architecture
     # string yet. Liquid LFM *text* checkpoints share that prefix — disambiguate

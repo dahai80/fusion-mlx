@@ -22,24 +22,39 @@ from ._version import __version__
 from .config import MemoryConfig, MemoryTier, ServerConfig
 from .dispatch import CloudRouter, RequestRouter
 from .engine_core import AsyncEngineCore, EngineConfig
-from .engines import (
-    BaseEngine,
-    BaseNonStreamingEngine,
-    BatchedEngine,
-    EmbeddingEngine,
-    GenerationOutput,
-    ImageGenEngine,
-    RerankerEngine,
-    STSEngine,
-    STTEngine,
-    TTSEngine,
-    VideoGenEngine,
-    VLMBatchedEngine,
-)
 from .pool import EnginePool, MemoryProfile, ModelDiscovery, ProcessMemoryEnforcer
 from .request import Request, RequestOutput, RequestStatus, SamplingParams
 from .scheduler import Scheduler, SchedulerConfig, SchedulerOutput, SchedulingPolicy
 from .server import Server, create_app
+
+_LAZY_ENGINES: dict[str, tuple[str, str]] = {
+    "BaseEngine": (".engines", "BaseEngine"),
+    "BaseNonStreamingEngine": (".engines", "BaseNonStreamingEngine"),
+    "GenerationOutput": (".engines", "GenerationOutput"),
+    "BatchedEngine": (".engines", "BatchedEngine"),
+    "VLMBatchedEngine": (".engines", "VLMBatchedEngine"),
+    "EmbeddingEngine": (".engines", "EmbeddingEngine"),
+    "RerankerEngine": (".engines", "RerankerEngine"),
+    "STTEngine": (".engines", "STTEngine"),
+    "TTSEngine": (".engines", "TTSEngine"),
+    "STSEngine": (".engines", "STSEngine"),
+    "ImageGenEngine": (".engines", "ImageGenEngine"),
+    "VideoGenEngine": (".engines", "VideoGenEngine"),
+}
+
+
+def __getattr__(name: str):
+    entry = _LAZY_ENGINES.get(name)
+    if entry is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    submod, attr = entry
+    import importlib
+
+    mod = importlib.import_module(submod, __name__)
+    val = getattr(mod, attr)
+    globals()[name] = val
+    return val
+
 
 __all__ = [
     # Version

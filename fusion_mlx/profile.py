@@ -119,12 +119,57 @@ def _from_preset(name: str) -> ServerProfile:
     return ServerProfile(name=name, disabled=disabled)
 
 
+def suggest_profile_from_hardware() -> str | None:
+    """Auto-suggest a profile based on detected RAM and chip tier.
+
+    Combines RAM thresholds (from doctor _RAM_PROFILE_MAP) with chip tier
+    classification. Returns None on non-macOS or detection failure.
+
+    Thresholds:
+      < 16 GB → lite  (too constrained for standard modalities)
+      16-23 GB → lite (27B-4bit=15.7G weights, tight headroom)
+      >= 24 GB → standard
+    Chip tier overrides: base M-chip (no Pro/Max/Ultra) with < 32 GB → lite.
+    """
+    try:
+        from .hardware.memory import detect_ram_bytes
+
+        ram_bytes = detect_ram_bytes()
+        ram_gb = ram_bytes / (1024**3)
+    except Exception:
+        logger.debug("RAM detection failed, skipping hardware profile suggestion")
+        return None
+
+    from .hardware.apple import detect_chip_tier
+
+    chip_tier = detect_chip_tier()
+    logger.info("hardware auto-detect: ram_gb=%.1f chip_tier=%s", ram_gb, chip_tier)
+
+    if ram_gb < 24:
+        return "lite"
+    if chip_tier == "lite" and ram_gb < 32:
+        return "lite"
+    return "standard"
+
+
 def resolve_profile(
     explicit: str | None = None,
     settings_profile: str | None = None,
     disabled_modules: list[str] | None = None,
 ) -> ServerProfile:
-    name = explicit or settings_profile or "standard"
+    if explicit:
+        name = explicit
+        logger.info("profile from explicit flag: %s", name)
+    elif settings_profile:
+        name = settings_profile
+        logger.info("profile from settings.json: %s", name)
+    else:
+        hw = suggest_profile_from_hardware()
+        name = hw or "standard"
+        if hw:
+            logger.info("profile auto-selected from hardware: %s", name)
+        else:
+            logger.info("profile default: standard (hardware detection unavailable)")
     if name not in _PRESET_DISABLED:
         logger.warning("unknown profile '%s', falling back to 'standard'", name)
         name = "standard"

@@ -25,23 +25,23 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
+    from ..engines.base import BaseEngine
+    from ..engines.batched import BatchedEngine
+    from ..engines.embedding import EmbeddingEngine
+    from ..engines.image_gen import ImageGenEngine
+    from ..engines.ner import NEREngine
+    from ..engines.reranker import RerankerEngine
+    from ..engines.sts import STSEngine
+    from ..engines.stt import STTEngine
+    from ..engines.tts import TTSEngine
+    from ..engines.video import VideoGenEngine
+    from ..engines.vlm import VLMBatchedEngine
     from ..runtime.diffusion_lane import DiffusionEngine
     from .model_settings import ModelSettingsManager
 
 import mlx.core as mx
 
 from ..engine_core import get_mlx_executor
-from ..engines.base import BaseEngine
-from ..engines.batched import BatchedEngine
-from ..engines.embedding import EmbeddingEngine
-from ..engines.image_gen import ImageGenEngine
-from ..engines.ner import NEREngine
-from ..engines.reranker import RerankerEngine
-from ..engines.sts import STSEngine
-from ..engines.stt import STTEngine
-from ..engines.tts import TTSEngine
-from ..engines.video import VideoGenEngine
-from ..engines.vlm import VLMBatchedEngine
 from ..exceptions import (
     AdapterPathError,
     EngineDisabledError,
@@ -56,6 +56,33 @@ from ..utils.proc_memory import get_phys_footprint
 from .model_discovery import DiscoveredModel, discover_models, format_size
 
 logger = logging.getLogger(__name__)
+
+
+_LAZY_ENGINE_CLASSES: dict[str, tuple[str, str]] = {
+    "BatchedEngine": ("fusion_mlx.engines.batched", "BatchedEngine"),
+    "VLMBatchedEngine": ("fusion_mlx.engines.vlm", "VLMBatchedEngine"),
+    "EmbeddingEngine": ("fusion_mlx.engines.embedding", "EmbeddingEngine"),
+    "RerankerEngine": ("fusion_mlx.engines.reranker", "RerankerEngine"),
+    "NEREngine": ("fusion_mlx.engines.ner", "NEREngine"),
+    "STTEngine": ("fusion_mlx.engines.stt", "STTEngine"),
+    "TTSEngine": ("fusion_mlx.engines.tts", "TTSEngine"),
+    "STSEngine": ("fusion_mlx.engines.sts", "STSEngine"),
+    "ImageGenEngine": ("fusion_mlx.engines.image_gen", "ImageGenEngine"),
+    "VideoGenEngine": ("fusion_mlx.engines.video", "VideoGenEngine"),
+}
+
+
+def __getattr__(name: str):
+    entry = _LAZY_ENGINE_CLASSES.get(name)
+    if entry is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    submod, attr = entry
+    mod = importlib.import_module(submod)
+    val = getattr(mod, attr)
+    globals()[name] = val
+    return val
 
 
 @dataclass

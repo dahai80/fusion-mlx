@@ -480,16 +480,19 @@ except ImportError:
     pass
 
 
-# Monkey-patch TurboQuantKVCache.merge so _merge_caches() works
-try:
-    from mlx_vlm.turboquant import TurboQuantKVCache as _TQCache
+# Monkey-patch TurboQuantKVCache.merge so _merge_caches() works.
+# A4: deferred to _apply_turboquant_merge_patch() — called from
+# turboquant_kv.py on first import (lazy). Avoids eager mlx_vlm import.
+def _apply_turboquant_merge_patch():
+    try:
+        from mlx_vlm.turboquant import TurboQuantKVCache as _TQCache
 
-    from ..turboquant_kv import BatchTurboQuantKVCache as _BTQCache
+        from ..turboquant_kv import BatchTurboQuantKVCache as _BTQCache
 
-    if not hasattr(_TQCache, "merge"):
-        _TQCache.merge = _BTQCache.merge
-except ImportError:
-    pass
+        if not hasattr(_TQCache, "merge"):
+            _TQCache.merge = _BTQCache.merge
+    except ImportError:
+        pass
 
 
 # Monkey-patch ChunkedKVCache for Llama-4 (Scout / Maverick): mlx_lm's
