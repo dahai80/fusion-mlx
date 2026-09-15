@@ -14,6 +14,15 @@
   thread still runs. The enforcer throttles the repeated warning (first
   poll, then every 60th) and escalates to ERROR after 300 stuck polls
   with the `FUSION_IMAGE_SUBPROCESS=1` hint.
+- **Issue #899 follow-up: logging deduplication, faulthandler, robust
+  stop** — `configure_file_logging()` is now idempotent so repeated
+  `Server()` instantiations in unit tests no longer add 4-5 duplicate
+  file handlers to `~/.fusion-mlx/logs/server.log`. `serve` installs
+  `faulthandler` + a `SIGUSR1` traceback dump so a wedged event loop can
+  be diagnosed on demand. `start.sh` falls back to `lsof -i :${PORT}`
+  when `fusion-mlx ps` fails to find the server, so `stop`/`restart`
+  can still terminate a stuck process (and the existing 45s SIGTERM →
+  SIGKILL fallback then finishes the job).
 
 ### Added
 - **Server process name → `fusion-mlx-server`** — `serve` now calls

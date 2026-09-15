@@ -969,6 +969,7 @@ class TestServeCommandFunctions:
             lambda **kwargs: None,
         )
         monkeypatch.setattr("faulthandler.enable", lambda *args, **kwargs: None)
+        monkeypatch.setattr("faulthandler.register", lambda *args, **kwargs: None)
         monkeypatch.setattr("uvicorn.Config.bind_socket", tracking_bind_socket)
         try:
             with pytest.raises(SystemExit) as exc:
@@ -1023,6 +1024,7 @@ class TestServeCommandFunctions:
             lambda **kwargs: None,
         )
         monkeypatch.setattr("faulthandler.enable", lambda *args, **kwargs: None)
+        monkeypatch.setattr("faulthandler.register", lambda *args, **kwargs: None)
         captured = {}
         original_bind_socket = uvicorn.Config.bind_socket
 
