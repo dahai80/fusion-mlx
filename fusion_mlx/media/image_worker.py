@@ -32,29 +32,39 @@ def _emit(event: dict) -> None:
 
 
 def _preflight_components(model_path: str) -> list[str]:
-    """Verify expected weight shards exist before loading.
-
-    Checks for transformer / text_encoder / vae safetensors in the model
-    directory. Returns a list of missing component names (empty = all OK).
-    Catches the 'loads for minutes then crashes' failure mode where a
-    partial download leaves the worker spinning on a missing shard.
-    """
+    # Verify expected weight shards exist before loading. Handles both
+    # layouts: FLUX top-level (transformer-00001.safetensors) and the
+    # subdirectory layout Qwen-Image/mflux uses (transformer/0.safetensors,
+    # text_encoder/N.safetensors, vae/...). Catches the "loads for minutes
+    # then crashes" mode where a partial download leaves the worker spinning
+    # on a missing shard.
     missing: list[str] = []
     if not model_path or not os.path.isdir(model_path):
         logger.warning("preflight: model_path missing or not a dir: %s", model_path)
         return ["model_dir"]
 
-    files = set(os.listdir(model_path))
-    has_transformer = any(
-        "transformer" in f.lower() and f.endswith(".safetensors") for f in files
-    )
-    has_vae = any("vae" in f.lower() and f.endswith(".safetensors") for f in files)
+    # Collect all .safetensors anywhere under model_path (one os.walk covers
+    # both top-level and subdir layouts). Depth-limited so an operator who
+    # points model_path at a parent dir does not trigger a huge tree scan.
+    # Match component names against the relative PATH (dir + filename) because
+    # the subdir layout names shards "0.safetensors" with the component in the
+    # directory (transformer/0.safetensors), not the filename.
+    st_paths: list[str] = []
+    for root, _dirs, names in os.walk(model_path):
+        rel = os.path.relpath(root, model_path)
+        depth = 0 if rel == "." else rel.count(os.sep) + 1
+        if depth > 3:
+            continue
+        for f in names:
+            if f.endswith(".safetensors"):
+                st_paths.append((os.path.join(rel, f)).lower())
+    has_transformer = any("transformer" in p for p in st_paths)
+    has_vae = any("vae" in p for p in st_paths)
     has_text_encoder = any(
-        ("text_encoder" in f.lower() or "t5" in f.lower() or "clip" in f.lower())
-        and f.endswith(".safetensors")
-        for f in files
+        "text_encoder" in p or "t5" in p or "clip" in p or "encoder" in p
+        for p in st_paths
     )
-    has_any_safetensors = any(f.endswith(".safetensors") for f in files)
+    has_any_safetensors = bool(st_paths)
 
     if not has_any_safetensors:
         missing.append("safetensors (none found)")
@@ -72,7 +82,11 @@ def _preflight_components(model_path: str) -> list[str]:
             ", ".join(missing),
         )
     else:
-        logger.info("preflight: all weight components present in %s", model_path)
+        logger.info(
+            "preflight: all weight components present in %s (%d shards)",
+            model_path,
+            len(st_paths),
+        )
     return missing
 
 

@@ -222,12 +222,18 @@ VARIANT_DEFAULT_STEPS: dict[str, int] = {
 _IMAGE_GEN_TIMEOUT_DEFAULT_S = 600.0
 
 
-def get_image_gen_timeout() -> float:
+def get_image_gen_timeout(n_images: int = 1) -> float:
+    # n_images scales the deadline: multi-image jobs (one worker, N images)
+    # need proportionally more time. The base covers weight reload + one
+    # image; each additional image adds base again, capped at 3600s so a
+    # runaway n_images value cannot pin an executor forever. Model-load
+    # callers pass n_images=1 (default).
     import os
 
+    n = max(1, int(n_images or 1))
     raw = os.environ.get("FUSION_IMAGE_TIMEOUT")
     if not raw:
-        return _IMAGE_GEN_TIMEOUT_DEFAULT_S
+        return min(_IMAGE_GEN_TIMEOUT_DEFAULT_S * n, 3600.0)
     try:
         val = float(raw)
     except (TypeError, ValueError):
@@ -236,15 +242,16 @@ def get_image_gen_timeout() -> float:
             raw,
             _IMAGE_GEN_TIMEOUT_DEFAULT_S,
         )
-        return _IMAGE_GEN_TIMEOUT_DEFAULT_S
+        return min(_IMAGE_GEN_TIMEOUT_DEFAULT_S * n, 3600.0)
     if val <= 0:
         logger.warning(
             "FUSION_IMAGE_TIMEOUT=%r <= 0, using default %.0fs",
             raw,
             _IMAGE_GEN_TIMEOUT_DEFAULT_S,
         )
-        return _IMAGE_GEN_TIMEOUT_DEFAULT_S
-    return val
+        return min(_IMAGE_GEN_TIMEOUT_DEFAULT_S * n, 3600.0)
+    # Env value is a per-image budget; scale by n_images, cap at 3600s.
+    return min(val * n, 3600.0)
 
 
 def _subprocess_enabled() -> bool:
@@ -1113,7 +1120,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 fut = loop.run_in_executor(get_executor("image"), _generate)
                 result = await asyncio.wait_for(
                     asyncio.shield(fut),
-                    timeout=get_image_gen_timeout(),
+                    timeout=get_image_gen_timeout(n_images),
                 )
             except asyncio.CancelledError:
                 # Hard memory pressure aborted this request, but the worker
@@ -1143,11 +1150,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
                     "ImageGen generation timed out after %.0fs and poisoned "
                     "the image worker (S5). Subsequent image requests will be "
                     "rejected until fusion-mlx restart.",
-                    get_image_gen_timeout(),
+                    get_image_gen_timeout(n_images),
                 )
                 raise RuntimeError(
                     "image generation exceeded the hang deadline "
-                    f"({get_image_gen_timeout():.0f}s) and the worker thread "
+                    f"({get_image_gen_timeout(n_images):.0f}s) and the worker thread "
                     "could not be cancelled (S5). The image subsystem is now "
                     "poisoned; restart fusion-mlx to recover."
                 )
@@ -1239,7 +1246,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 output_format=output_format,
                 n_images=n_images,
                 gen_params=gen_params,
-                timeout=get_image_gen_timeout(),
+                timeout=get_image_gen_timeout(n_images),
                 on_step=_on_step if on_step is not None else None,
             )
         except TimeoutError:
@@ -1249,11 +1256,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
             logger.error(
                 "ImageGen subprocess timed out after %.0fs, worker killed, "
                 "image executor poisoned (S5)",
-                get_image_gen_timeout(),
+                get_image_gen_timeout(n_images),
             )
             raise RuntimeError(
                 "image generation exceeded the hang deadline "
-                f"({get_image_gen_timeout():.0f}s) and the subprocess worker "
+                f"({get_image_gen_timeout(n_images):.0f}s) and the subprocess worker "
                 "was killed (S3). The image subsystem is now poisoned; "
                 "restart fusion-mlx to recover."
             )
