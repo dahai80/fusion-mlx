@@ -704,10 +704,15 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         try:
             from ..server import _server_state
+
+            pool = _server_state.engine_pool
         except Exception:  # noqa: BLE001
-            logger.debug("image admission: _server_state unavailable; skipping gate")
+            # _server_state.__getattr__ raises KeyError for unset attrs in
+            # test/unit contexts where the pool is not wired; treat as unset.
+            logger.debug(
+                "image admission: _server_state/engine_pool unavailable; skipping gate"
+            )
             return
-        pool = _server_state.engine_pool
         if pool is None:
             logger.debug("image admission: engine_pool not set; skipping gate")
             return
@@ -768,7 +773,10 @@ class ImageGenEngine(BaseNonStreamingEngine):
         image_strength: float | None = None,
         **kwargs,
     ) -> list[bytes]:
-        if self._flux is None:
+        # Subprocess mode loads weights in the worker — the main process does
+        # not need _flux. Only enforce the started-check for in-process mode.
+        _subproc = _subprocess_enabled()
+        if not _subproc and self._flux is None:
             if self._mflux_missing:
                 raise RuntimeError(
                     "Image generation unavailable: mflux-fusion not installed. "
@@ -836,7 +844,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         # runs in a child process — Metal allocations cannot crash the LLM.
         # Timeout = kill subprocess (real cancellation). Model loads fresh in
         # worker; main process holds zero image Metal memory.
-        subprocess_mode = _subprocess_enabled()
+        subprocess_mode = _subproc
 
         # OP-901 (C): memory admission gate. Before spawning the worker (or
         # running in-process), reserve headroom against the process ceiling

@@ -104,6 +104,13 @@ class TestSD15PipelineConstruction:
 class TestSD15EngineImg2ImgForwarding:
     # Verify the engine routes img2img inputs (edit_image/control_image +
     # image_strength) into generate_image for sd15/sdxl/sd3 variants (#480).
+
+    @pytest.fixture(autouse=True)
+    def _force_inprocess(self, monkeypatch):
+        # These tests mock the in-process _flux (StubPipe); force in-process
+        # mode so generate() does not spawn a real subprocess worker.
+        monkeypatch.setenv("FUSION_IMAGE_SUBPROCESS", "0")
+
     def _make_engine(self, variant):
         eng = ImageGenEngine(model_name="foo", variant=variant)
         captured = {}

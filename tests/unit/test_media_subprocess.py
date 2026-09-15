@@ -153,8 +153,16 @@ class TestMediaJobManagerSpec:
 
 
 class TestSubprocessEnabled:
-    def test_default_off(self, monkeypatch):
+    def test_default_on(self, monkeypatch):
+        # OP-901 (B): subprocess isolation is the DEFAULT (four-view crash fix).
+        # FUSION_IMAGE_SUBPROCESS=0 opts out for single-image/low-RAM/latency cases.
         monkeypatch.delenv("FUSION_IMAGE_SUBPROCESS", raising=False)
+        from fusion_mlx.engines.image_gen import _subprocess_enabled
+
+        assert _subprocess_enabled() is True
+
+    def test_env_off(self, monkeypatch):
+        monkeypatch.setenv("FUSION_IMAGE_SUBPROCESS", "0")
         from fusion_mlx.engines.image_gen import _subprocess_enabled
 
         assert _subprocess_enabled() is False

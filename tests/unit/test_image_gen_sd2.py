@@ -109,6 +109,13 @@ class TestSD2PipelineConstruction:
 
 
 class TestSD2EngineForwarding:
+
+    @pytest.fixture(autouse=True)
+    def _force_inprocess(self, monkeypatch):
+        # These tests mock the in-process _flux (StubPipe); force in-process
+        # mode so generate() does not spawn a real subprocess worker.
+        monkeypatch.setenv("FUSION_IMAGE_SUBPROCESS", "0")
+
     def _make_engine(self, variant):
         eng = ImageGenEngine(model_name="foo", variant=variant)
         captured = {}

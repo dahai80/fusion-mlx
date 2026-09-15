@@ -218,6 +218,10 @@ class TestImageGenKnobFlow:
             "mflux.models.flux2.variants.txt2img.flux2_klein",
             fake_flux_mod,
         )
+        # Knob-forwarding tests exercise the in-process _generate path (FakeFlux).
+        # Force in-process: default subprocess isolation (OP-901 B) would spawn a
+        # real worker that bypasses these mflux mocks.
+        monkeypatch.setattr(mod, "_subprocess_enabled", lambda: False)
         engine = mod.ImageGenEngine("flux-schnell", quantize=4)
         return engine, capture
 
