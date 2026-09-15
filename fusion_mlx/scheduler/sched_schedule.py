@@ -400,6 +400,15 @@ def _schedule_waiting(
             )
             break
 
+        # Deferred requests (add_request skipped fetch_cache while a
+        # relevant store_cache was in flight) must be prefix-prepped here,
+        # now that the freshness wait has settled — otherwise fetch_cache
+        # never runs and cross-request prefix reuse is silently skipped.
+        # Skip resume requests (seeded prompt_cache) so externally-loaded
+        # KV isn't overwritten; _prepare's own guard handles already-prepped.
+        if request.prompt_cache is None or request.cached_tokens == 0:
+            self._prepare_prefix_cache_for_request(request)
+
         # SpecPrefill: score remaining tokens on the executor thread
         # (not in add_request, which runs on the FastAPI event loop)
         self._try_specprefill_scoring(request)

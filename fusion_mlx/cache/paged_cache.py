@@ -1041,7 +1041,7 @@ class PagedCacheManager(CacheManager):
         Returns:
             Tuple of (cached_blocks, num_cached_tokens)
         """
-        if not self.enable_caching:
+        if not self.enable_caching or self.block_size <= 0:
             return [], 0
 
         with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
@@ -1203,6 +1203,18 @@ class PagedCacheManager(CacheManager):
             if table:
                 for block_id in table.block_ids:
                     self.free_block(block_id)
+
+    def detach_request_table(self, request_id: str) -> BlockTable | None:
+        # Pop a request's block table from tracking WITHOUT freeing the
+        # underlying blocks. Used by the store_cache worker after
+        # release_for_eviction has already decremented refs to 0: the
+        # cached blocks stay in the hash index (findable for future prefix
+        # reuse) and become reclaimable by LRU eviction. Calling
+        # delete_block_table here instead would double-decrement refs
+        # (release_for_eviction already ran) and pop the block out of the
+        # hash index, defeating cross-request prefix caching.
+        with self._block_table_lock:
+            return self.request_tables.pop(request_id, None)
 
     def add_block_to_table(
         self,
@@ -1443,7 +1455,53 @@ class PagedCacheManager(CacheManager):
                 return True
             needed = requested_blocks - self.free_block_queue.num_free_blocks
             self._evict_lru_blocks_locked(needed)
+            if self.free_block_queue.num_free_blocks < requested_blocks:
+                # Free-queue LRU exhausted — reclaim ref==0 cached blocks
+                # that survived request completion (store_cache worker
+                # retains them in the hash index for prefix reuse). Evict
+                # oldest by last_access so hot prefixes stay resident.
+                still_needed = requested_blocks - self.free_block_queue.num_free_blocks
+                self._evict_cached_blocks_locked(still_needed)
             return self.free_block_queue.num_free_blocks >= requested_blocks
+
+    def _evict_cached_blocks_locked(self, num_blocks: int) -> int:
+        # Evict ref==0 cached blocks still held in allocated_blocks (kept
+        # findable in the hash index for prefix reuse by the store_cache
+        # worker's clear_request_entry_no_free path). Caller must hold all
+        # 3 locks. Evicts oldest by last_access; skips ref>0 (in-use) and
+        # null blocks.
+        if num_blocks <= 0:
+            return 0
+        candidates = [
+            b
+            for b in self.allocated_blocks.values()
+            if b.ref_count <= 0 and not b.is_null and b.block_hash is not None
+        ]
+        if not candidates:
+            return 0
+        candidates.sort(key=lambda b: b.last_access)
+        evicted = 0
+        for block in candidates:
+            if evicted >= num_blocks:
+                break
+            freed_parent_hash = block.block_hash
+            self.cached_block_hash_to_block.pop(block.block_hash, block.block_id)
+            self.stats.total_tokens_cached -= block.token_count
+            block.reset_hash()
+            self._notify_block_content_invalidated(block.block_id)
+            block.token_count = 0
+            if block.block_id in self.allocated_blocks:
+                del self.allocated_blocks[block.block_id]
+                self.stats.allocated_blocks -= 1
+            self.stats.free_blocks += 1
+            self.free_block_queue.append(block)
+            self.stats.evictions += 1
+            evicted += 1
+            if freed_parent_hash is not None:
+                evicted += self._cascade_evict_orphans_locked(freed_parent_hash)
+        if evicted > 0:
+            logger.info("Evicted %d cached prefix blocks (LRU by last_access)", evicted)
+        return evicted
 
     # =========================================================================
     # Statistics and Properties

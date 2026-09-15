@@ -669,6 +669,7 @@ class BlockAwarePrefixCache(CacheManager):
             block.token_count = len(block_tokens)
             block_table.block_ids.append(block.block_id)
             block_table.num_tokens += len(block_tokens)
+            self.paged_cache.stats.total_tokens_cached += len(block_tokens)
 
             # Compute chain hash for this block
             block.block_hash = compute_block_hash(
@@ -1546,6 +1547,26 @@ class BlockAwarePrefixCache(CacheManager):
                     f"clear_request_entry: delete_block_table({request_id}) failed: {e}"
                 )
             logger.debug(f"Cleared request entry for {request_id} (blocks retained)")
+
+    def clear_request_entry_no_free(self, request_id: str) -> None:
+        # Drop request-table tracking WITHOUT freeing cached blocks. Used by
+        # the store_cache worker: release_for_eviction already decremented
+        # refs to 0, so the blocks are evictable but must stay in the hash
+        # index for future prefix reuse. The regular clear_request_entry
+        # calls delete_block_table -> free_block which double-decrements
+        # (release_for_eviction already ran) and removes blocks from the
+        # hash index, breaking cross-request prefix caching.
+        entry = self._request_tables.pop(request_id, None)
+        if entry is not None:
+            try:
+                self.paged_cache.detach_request_table(request_id)
+            except Exception as e:
+                logger.debug(
+                    f"clear_request_entry_no_free: detach({request_id}) failed: {e}"
+                )
+            logger.debug(
+                f"Detached request entry for {request_id} (cached blocks retained)"
+            )
 
     def fork_cache(
         self,
@@ -2736,6 +2757,9 @@ class BlockAwarePrefixCache(CacheManager):
         """Find best matching prefix in the index."""
         best_match = None
         best_len = 0
+
+        if self.block_size <= 0 or not tokens:
+            return None
 
         parent_hash = b""
         prefix_len = 0
