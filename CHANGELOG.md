@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Hard memory pressure abort for media engines (`aborted=0` loop)** —
+  hard pressure picked a busy image model (e.g. FLUX2-dev-mlx-8bit) but
+  `BaseNonStreamingEngine` had no `abort_all_requests`, so nothing was
+  cancelled and the enforcer logged the same warning every poll (~1467x)
+  until the process died. Non-streaming engines now track their activity
+  tasks and `abort_all_requests()` cancels them: subprocess image jobs
+  kill their worker (memory actually freed), in-process jobs shield the
+  executor future so the pool cannot unload the model while the worker
+  thread still runs. The enforcer throttles the repeated warning (first
+  poll, then every 60th) and escalates to ERROR after 300 stuck polls
+  with the `FUSION_IMAGE_SUBPROCESS=1` hint.
+
 ### Added
 - **Server process name → `fusion-mlx-server`** — `serve` now calls
   `setproctitle.setproctitle("fusion-mlx-server")` (bare name, no serve

@@ -402,6 +402,11 @@ class ProcessMemoryEnforcer:
         self._last_evicted_at: dict[str, float] = {}
         self._unrecoverable_polls: int = 0
         self._drain_flipped: bool = False
+        # Hard-pressure busy-victim abort bookkeeping: consecutive cycles
+        # stuck on the same busy victim. Used to throttle the per-second
+        # warning spam and escalate once it is clearly not resolving.
+        self._hard_busy_victim: str | None = None
+        self._hard_busy_cycles: int = 0
 
     def update_loaded_model_bytes(self, delta: int) -> None:
         """Adjust tracked loaded model byte count."""
@@ -1324,6 +1329,9 @@ class ProcessMemoryEnforcer:
                 f"soft={_format_gb(soft)}, hard={_format_gb(hard)}, "
                 f"ceiling={_format_gb(ceiling)})"
             )
+            if new_level != "hard":
+                self._hard_busy_victim = None
+                self._hard_busy_cycles = 0
 
         if new_level == "hard":
             freed_hot = await asyncio.to_thread(
@@ -1529,12 +1537,36 @@ class ProcessMemoryEnforcer:
                                 await self._engine_pool._unload_pending_if_idle_locked(
                                     busy_victim
                                 )
-                            logger.warning(
-                                "Hard memory pressure: requested abort/unload for "
-                                "'%s' (aborted=%d)",
-                                busy_victim,
-                                aborted,
-                            )
+                            # Throttle: a busy image/video job that cannot be
+                            # interrupted leaves the loop here every poll
+                            # (observed 1467x1s). Log the first cycle, then
+                            # every 60th; escalate to ERROR at 5 minutes so
+                            # the operator gets an actionable signal instead
+                            # of an identical warning wall.
+                            if busy_victim != self._hard_busy_victim:
+                                self._hard_busy_victim = busy_victim
+                                self._hard_busy_cycles = 0
+                            self._hard_busy_cycles += 1
+                            if self._hard_busy_cycles == 300:
+                                logger.error(
+                                    "Hard memory pressure stuck on busy victim "
+                                    "'%s' for %d polls; abort cannot free memory "
+                                    "mid-job. For killable image workers set "
+                                    "FUSION_IMAGE_SUBPROCESS=1.",
+                                    busy_victim,
+                                    self._hard_busy_cycles,
+                                )
+                            elif (
+                                self._hard_busy_cycles == 1
+                                or self._hard_busy_cycles % 60 == 0
+                            ):
+                                logger.warning(
+                                    "Hard memory pressure: requested abort/unload "
+                                    "for '%s' (aborted=%d, stuck_cycles=%d)",
+                                    busy_victim,
+                                    aborted,
+                                    self._hard_busy_cycles,
+                                )
                             break
 
                         aborted_any = False

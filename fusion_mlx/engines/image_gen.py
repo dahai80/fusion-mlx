@@ -977,10 +977,27 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         try:
             try:
+                fut = loop.run_in_executor(get_executor("image"), _generate)
                 result = await asyncio.wait_for(
-                    loop.run_in_executor(get_executor("image"), _generate),
+                    asyncio.shield(fut),
                     timeout=get_image_gen_timeout(),
                 )
+            except asyncio.CancelledError:
+                # Hard memory pressure aborted this request, but the worker
+                # thread cannot be interrupted mid-generation. Shield-wait
+                # for it so the activity stays open: the pool must not see
+                # the engine as idle and unload the model out from under
+                # the running thread. The cancelled request itself is gone.
+                logger.warning(
+                    "ImageGen generate cancelled (abort/memory pressure); "
+                    "worker thread still running, holding engine busy until "
+                    "it finishes"
+                )
+                try:
+                    await asyncio.shield(fut)
+                except (Exception, asyncio.CancelledError):
+                    pass
+                raise
             except TimeoutError:
                 # S5 (audit 0910 §6.3-5): the deadline fired but the worker
                 # thread keeps running mflux (cannot cancel a running thread).

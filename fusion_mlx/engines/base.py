@@ -397,6 +397,10 @@ class BaseNonStreamingEngine(ABC):
         self._active_count = 0
         self._active_lock = threading.Lock()
         self._activities: dict[str, dict[str, Any]] = {}
+        # activity_id -> asyncio.Task running it. abort_all_requests()
+        # cancels these so hard memory pressure can actually stop
+        # in-flight media jobs (subprocess mode: worker gets killed).
+        self._active_tasks: dict[str, asyncio.Task | None] = {}
 
     async def _run_via_executor(
         self, fn, executor_name: str = "llm", timeout: float = 120.0
@@ -448,8 +452,13 @@ class BaseNonStreamingEngine(ABC):
     ) -> str:
         activity_id = str(uuid.uuid4())
         now = time.monotonic()
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
         with self._active_lock:
             self._active_count += 1
+            self._active_tasks[activity_id] = task
             activity = {
                 "request_id": activity_id,
                 "kind": kind,
@@ -473,6 +482,7 @@ class BaseNonStreamingEngine(ABC):
     def _end_activity(self, activity_id: str) -> None:
         with self._active_lock:
             removed = self._activities.pop(activity_id, None)
+            self._active_tasks.pop(activity_id, None)
             if removed is None:
                 raise RuntimeError(
                     f"Activity {activity_id} ended more than once or was never started"
@@ -480,6 +490,36 @@ class BaseNonStreamingEngine(ABC):
             self._active_count -= 1
             if self._active_count < 0:
                 raise RuntimeError("Active request count became negative")
+
+    async def abort_all_requests(self) -> int:
+        # Hard memory pressure hook (memory_enforcer). Cancels the asyncio
+        # tasks running this engine's activities. Subprocess-backed jobs
+        # (MediaJobManager) kill their worker in the cancellation path, so
+        # this frees memory for real. In-process executor threads cannot be
+        # interrupted; engines must shield the future and keep the activity
+        # open until the thread finishes (see image_gen _generate path).
+        # Entries are removed once cancelled so repeated aborts don't
+        # re-cancel a task already unwinding.
+        with self._active_lock:
+            tasks = [t for t in self._active_tasks.values() if t is not None]
+            cancelled_ids = {id(t) for t in tasks}
+            self._active_tasks = {
+                k: v
+                for k, v in self._active_tasks.items()
+                if v is None or id(v) not in cancelled_ids
+            }
+        aborted = 0
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+                aborted += 1
+        if aborted:
+            logger.warning(
+                "%s: aborted %d active media job(s) (memory pressure)",
+                type(self).__name__,
+                aborted,
+            )
+        return aborted
 
     async def _finish_activity(self, activity_id: str) -> None:
         self._end_activity(activity_id)
