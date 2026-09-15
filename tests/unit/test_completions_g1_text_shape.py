@@ -163,3 +163,14 @@ def test_completions_stream_emits_text_completion_chunks():
     assert last["choices"][0]["finish_reason"] == "stop", last
     assert last.get("usage") is not None
     assert last["usage"]["completion_tokens"] == 3
+
+
+def teardown_module():
+    # The module-level ``set_openai_context(_MockPool(engine), None)`` wires
+    # a mock engine pool into the shared OpenAI route context. Without this
+    # teardown the mock leaks into every later test module in the session —
+    # their ``_resolve_engine`` finds our mock (engine_type=unknown) instead
+    # of their own ``cfg.engine`` stub (test_diffusion_engine et al.).
+    from fusion_mlx.api.openai import set_openai_context
+
+    set_openai_context(None, None)

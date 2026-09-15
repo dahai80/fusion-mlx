@@ -100,3 +100,15 @@ def test_non_stream_chat_plain_request_still_200():
     )
     assert resp.status_code == 200, resp.text
     assert "X-Fusion-Ignored-Params" not in resp.headers
+
+
+def teardown_module():
+    # The module-level ``set_openai_context(_MockPool(engine), None)`` wires
+    # a mock engine pool into the shared OpenAI route context. Without this
+    # teardown the mock leaks into every later test module in the session —
+    # their ``_resolve_engine`` finds our mock (engine_type=unknown) instead
+    # of their own ``cfg.engine`` stub, 400-ing chat-capability checks that
+    # should never see our pool (test_chat_route_vlm_image et al).
+    from fusion_mlx.api.openai import set_openai_context
+
+    set_openai_context(None, None)
