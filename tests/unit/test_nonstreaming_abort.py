@@ -103,8 +103,8 @@ class TestImageGenCancelShield:
     async def test_cancel_holds_activity_until_thread_finishes(self, monkeypatch):
         from fusion_mlx.engines import image_gen as ig
 
-        monkeypatch.delenv("FUSION_IMAGE_SUBPROCESS", raising=False)
-        monkeypatch.setattr(ig, "get_image_gen_timeout", lambda: 60.0)
+        monkeypatch.setenv("FUSION_IMAGE_SUBPROCESS", "0")
+        monkeypatch.setattr(ig, "get_image_gen_timeout", lambda *a, **k: 60.0)
 
         eng = ig.ImageGenEngine("/tmp/fake-model", variant="txt2img")
 

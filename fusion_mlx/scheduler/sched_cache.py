@@ -179,7 +179,12 @@ def _async_store_cache_worker(
         if block_table and self.paged_cache_manager is not None:
             self.paged_cache_manager.release_for_eviction(block_table.block_ids)
         if self.block_aware_cache is not None:
-            self.block_aware_cache.clear_request_entry(request_id)
+            # release_for_eviction already decremented refs to 0; the cached
+            # blocks must stay in the hash index for future prefix reuse.
+            # clear_request_entry would double-free (free_block decrements
+            # again) and remove blocks from the hash index, breaking
+            # cross-request prefix caching.
+            self.block_aware_cache.clear_request_entry_no_free(request_id)
     except Exception as e:
         logger.warning("Async store_cache failed for %s: %s", request_id, e)
 

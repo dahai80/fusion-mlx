@@ -138,7 +138,17 @@ class MediaJobManager:
             raise TimeoutError(result.error)
         finally:
             if proc.returncode is None:
-                self._kill(proc)
+                # If we already received a terminal event (result or error),
+                # the worker is shutting down cleanly — give it a short grace
+                # window to exit with its real exit code instead of racing a
+                # SIGTERM that rewrites returncode to -15 and masks the cause.
+                if result.outputs or result.error:
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=3.0)
+                    except TimeoutError:
+                        self._kill(proc)
+                else:
+                    self._kill(proc)
             await proc.wait()
             result.elapsed = time.monotonic() - t0
 

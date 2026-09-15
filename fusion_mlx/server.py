@@ -890,7 +890,41 @@ def load_model(
 
 
 def resolve_model_id(model_id: str) -> str:
-    """Resolve a model alias to its real ID."""
+    # "default" delegates to resolve_model("default") so the API path
+    # (chat/completions) honors the same settings.json default_model →
+    # auto-detect chain as CLI serve (optimization-0914 item 7). Without this,
+    # API requests with model="default" fell through to the stale static
+    # DEFAULT_ALIASES["default"] entry, which can point at a model not on disk.
+    # Falls back to the static alias only when the dynamic resolver cannot
+    # decide (ambiguous cache) AND the static target actually exists.
+    if model_id == "default":
+        try:
+            from .model_aliases import resolve_model
+
+            dyn = resolve_model("default")
+            logger.info("resolve_model_id(default) -> dynamic: %s", dyn)
+            return dyn
+        except ValueError:
+            # Ambiguous auto-detect + no settings default_model: try the
+            # static alias only if its target is actually on disk.
+            from .config import DEFAULT_ALIASES
+
+            static = DEFAULT_ALIASES.get("default")
+            if static:
+                from pathlib import Path
+
+                home = Path.home()
+                for cand in (
+                    home / ".fusion-mlx" / "models" / static.replace("/", "--"),
+                    home / ".fusion-mlx" / "models" / static.replace("/", "_"),
+                ):
+                    if cand.exists():
+                        logger.info(
+                            "resolve_model_id(default) -> static fallback: %s",
+                            static,
+                        )
+                        return static
+            raise
     from .config import DEFAULT_ALIASES
 
     resolved = DEFAULT_ALIASES.get(model_id)
