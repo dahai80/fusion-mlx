@@ -154,20 +154,33 @@ ensure_venv() {
 }
 
 # ── Check if server is running ──────────────────────────────────────
+# OP-899: ps scan can false-negative when setproctitle argv is collapsed
+# or server.json is stale. Fall back to lsof on the listen port so a
+# genuinely stuck server is still reachable for stop/restart.
 is_running() {
     if is_uds; then
-        fusion-mlx ps 2>/dev/null | /usr/bin/grep -Fq "$(uds_socket)"
-    else
-        fusion-mlx ps 2>/dev/null | /usr/bin/grep -q "${PORT}"
+        fusion-mlx ps 2>/dev/null | /usr/bin/grep -Fq "$(uds_socket)" && return 0
+        lsof "$(uds_socket)" 2>/dev/null | /usr/bin/grep -q "LISTEN" && return 0
+        return 1
     fi
+    if fusion-mlx ps 2>/dev/null | /usr/bin/grep -q "${PORT}"; then
+        return 0
+    fi
+    lsof -iTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null | tail -n +2 | /usr/bin/grep -q . && return 0
+    return 1
 }
 
 get_pid() {
+    local pid=""
     if is_uds; then
-        fusion-mlx ps 2>/dev/null | /usr/bin/grep -F "$(uds_socket)" | awk '{print $1}' | head -1
+        pid=$(fusion-mlx ps 2>/dev/null | /usr/bin/grep -F "$(uds_socket)" | awk '{print $1}' | head -1)
     else
-        fusion-mlx ps 2>/dev/null | /usr/bin/grep "${PORT}" | awk '{print $1}' | head -1
+        pid=$(fusion-mlx ps 2>/dev/null | /usr/bin/grep "${PORT}" | awk '{print $1}' | head -1)
     fi
+    if [[ -z "${pid}" ]]; then
+        pid=$(lsof -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | head -1)
+    fi
+    echo "${pid}"
 }
 
 # ── Wait for healthy ────────────────────────────────────────────────

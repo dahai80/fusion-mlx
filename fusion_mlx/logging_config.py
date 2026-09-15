@@ -227,14 +227,29 @@ def configure_file_logging(
         TRACE if level_name == "TRACE" else getattr(logging, level_name, logging.INFO)
     )
 
+    log_file = log_dir / "server.log"
+
+    # OP-899: idempotent file handler. Unit tests that instantiate Server
+    # repeatedly add a handler to the root logger each time, causing the
+    # same record to be written 4-5x to server.log and mixing test output
+    # with the real server log. If a handler for the same path already
+    # exists, just update its level and return.
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        if (
+            isinstance(handler, TimedRotatingFileHandler)
+            and Path(getattr(handler, "baseFilename", "")).resolve()
+            == log_file.resolve()
+        ):
+            handler.setLevel(log_level)
+            return log_dir
+
     if include_request_id:
         format_str = (
             "%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] - %(message)s"
         )
     else:
         format_str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
-    log_file = log_dir / "server.log"
 
     file_handler = TimedRotatingFileHandler(
         filename=log_file,

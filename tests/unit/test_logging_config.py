@@ -2,8 +2,10 @@
 """Tests for logging configuration filters."""
 
 import logging
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 
-from fusion_mlx.logging_config import AdminStatsAccessFilter
+from fusion_mlx.logging_config import AdminStatsAccessFilter, configure_file_logging
 
 
 class TestAdminStatsAccessFilter:
@@ -50,3 +52,44 @@ class TestAdminStatsAccessFilter:
             '127.0.0.1 - "POST /v1/chat/completions HTTP/1.1" 200'
         )
         assert self.filter.filter(record) is True
+
+
+class TestConfigureFileLogging:
+    def test_adds_handler_on_first_call(self, tmp_path):
+        root = logging.getLogger()
+        handlers_before = len(root.handlers)
+        configure_file_logging(tmp_path)
+        handlers_after = len(root.handlers)
+        assert handlers_after == handlers_before + 1
+        added = root.handlers[-1]
+        assert isinstance(added, TimedRotatingFileHandler)
+        assert Path(added.baseFilename).name == "server.log"
+
+    def test_second_call_does_not_duplicate(self, tmp_path):
+        root = logging.getLogger()
+        handlers_before = len(root.handlers)
+        configure_file_logging(tmp_path)
+        configure_file_logging(tmp_path)
+        assert len(root.handlers) == handlers_before + 1
+        assert (
+            sum(
+                1
+                for h in root.handlers
+                if isinstance(h, TimedRotatingFileHandler)
+                and Path(h.baseFilename).resolve()
+                == (tmp_path / "server.log").resolve()
+            )
+            == 1
+        )
+
+    def test_second_call_updates_level(self, tmp_path):
+        root = logging.getLogger()
+        configure_file_logging(tmp_path, level="INFO")
+        configure_file_logging(tmp_path, level="DEBUG")
+        handler = next(
+            h
+            for h in root.handlers
+            if isinstance(h, TimedRotatingFileHandler)
+            and Path(h.baseFilename).resolve() == (tmp_path / "server.log").resolve()
+        )
+        assert handler.level == logging.DEBUG

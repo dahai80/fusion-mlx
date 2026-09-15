@@ -102,6 +102,23 @@ def serve_command(args):
         logging.getLogger(__name__).debug(
             "setproctitle not installed; process name stays 'python'"
         )
+
+    # OP-899: install faulthandler early so operators can diagnose a
+    # wedged event loop (`kill -USR1 <pid>` dumps all python stacks to
+    # stderr / launchd logs). SIGSEGV dumps are enabled by default; this
+    # also makes asyncio-cancel/exception traces available on demand.
+    try:
+        import faulthandler
+        import signal
+
+        faulthandler.enable()
+        if hasattr(signal, "SIGUSR1"):
+            faulthandler.register(signal.SIGUSR1, all_threads=True)
+    except Exception:
+        logging.getLogger(__name__).debug(
+            "faulthandler setup failed; on-demand traceback unavailable",
+            exc_info=True,
+        )
     try:
         import json
 
