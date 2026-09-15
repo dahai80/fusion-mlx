@@ -748,10 +748,17 @@ do_install_launchd() {
     </array>
     <key>WorkingDirectory</key>
     <string>${PROJ_DIR}</string>
+    # OP-899: RunAtLoad=false + KeepAlive=false. launchd only starts the
+    # server on explicit `launchctl start` (or `start.sh start`); no
+    # login auto-start, no crash respawn. With KeepAlive=true a crash or
+    # SIGTERM during manual stop triggered instant respawn, and if the
+    # operator also ran `start.sh start`, two servers briefly raced for
+    # port 11434 (historical logs: "already running" + duplicate SIGTERM
+    # of stale PIDs). Manual lifecycle only — start.sh start/stop.
     <key>RunAtLoad</key>
-    <true/>
+    <false/>
     <key>KeepAlive</key>
-    <true/>
+    <false/>
     <key>StandardOutPath</key>
     <string>${LOG_DIR}/launchd.out.log</string>
     <key>StandardErrorPath</key>

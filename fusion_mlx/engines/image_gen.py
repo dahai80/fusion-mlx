@@ -248,14 +248,75 @@ def get_image_gen_timeout() -> float:
 
 
 def _subprocess_enabled() -> bool:
-    # S3: opt-in subprocess isolation for image generation. Default OFF
-    # (beta — needs per-variant real-model verification). When ON, generate()
-    # delegates to MediaJobManager (child process). R2 root fix path.
-    return os.environ.get("FUSION_IMAGE_SUBPROCESS", "").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
+    # OP-901 (B): subprocess isolation is now the DEFAULT. Image generation
+    # runs in a child process so its Metal allocations cannot crash the LLM
+    # in the main process (EXC_BAD_ACCESS on wired exhaustion took the whole
+    # server down on four-view jobs). The worker (media/image_worker.py)
+    # already does per-image mx.metal.clear_cache + preflight + CFG-free patch
+    # and releases all memory on exit. Set FUSION_IMAGE_SUBPROCESS=0 to force
+    # the legacy in-process path (single-image, low-RAM, latency-sensitive).
+    val = os.environ.get("FUSION_IMAGE_SUBPROCESS", "").lower()
+    if val in ("0", "false", "no", "off"):
+        return False
+    return True
+
+
+def _estimate_activation_peak(
+    width: int,
+    height: int,
+    steps: int,
+    n_images: int,
+    variant: str,
+    *,
+    subprocess_mode: bool,
+) -> int:
+    # OP-901 (C): heuristic peak activation memory for an image generation
+    # job, used by the media admission gate. Avoids a per-variant bench
+    # table (gate) — this is a conservative upper bound, not a precise
+    # measurement. Over-estimating is safe (extra eviction); under-
+    # estimating falls back to the enforcer's 1s pressure loop.
+    #
+    # Override: FUSION_IMAGE_ACTIVATION_HEADROOM_GB=<float> forces a fixed
+    # headroom (0 = disabled, admission skips). Negative = use heuristic.
+    env = os.environ.get("FUSION_IMAGE_ACTIVATION_HEADROOM_GB")
+    if env is not None:
+        try:
+            gb = float(env)
+        except ValueError:
+            logger.warning(
+                "invalid FUSION_IMAGE_ACTIVATION_HEADROOM_GB=%r, using heuristic",
+                env,
+            )
+        else:
+            if gb <= 0:
+                return 0
+            return int(gb * 1024**3)
+    # Latent + DiT intermediate activation: roughly width*height*channels.
+    # FLUX/SDXL use 16-channel latents at 1/8 resolution; DiT holds several
+    # intermediate tensors (qkv, mlp, residuals) ~64x the latent bytes per
+    # step. Use a per-pixel byte cost that captures this conservatively.
+    px = max(1, width) * max(1, height)
+    # ~256 bytes/pixel covers 16-ch fp16 latent (32B) + DiT intermediates
+    # (~128B) + attention workspace. Validated order-of-magnitude against
+    # FLUX.1-dev 1024x1024 (~8GB observed peak) and schnell-4bit (~3GB).
+    per_image_activation = px * 256
+    # VAE decode peak: output image (3 ch x 4B) + tiled decode workspace.
+    vae_peak = px * 12 + 128 * 1024 * 1024
+    single = per_image_activation + vae_peak
+    # CFG doubles the DiT forward for non-CFG-free variants.
+    if variant not in ("qwen_image", "qwen_image_edit", "flux1_schnell"):
+        single = int(single * 1.8)
+    # Subprocess worker clears cache per image (image_worker.py:220), so
+    # peak = single-image. In-process loop does NOT clear between images,
+    # so peak scales with n_images (the original crash vector).
+    if subprocess_mode:
+        peak = single
+    else:
+        peak = single * max(1, n_images)
+    # Floor at 512 MB — covers fixed overhead (weights compile cache, text
+    # encoder activations, mflux runtime) without masking the resolution/n
+    # scaling that the admission decision relies on.
+    return max(512 * 1024**2, int(peak))
 
 
 def _infer_variant(model_path: str) -> str:
@@ -619,6 +680,62 @@ class ImageGenEngine(BaseNonStreamingEngine):
             timeout=5.0,
         )
 
+    async def _admit_generation(
+        self,
+        *,
+        width: int,
+        height: int,
+        steps: int,
+        n_images: int,
+        subprocess_mode: bool,
+    ) -> None:
+        # OP-901 (C): reserve memory headroom for an image generation job.
+        # Raises InsufficientMemoryError (mapped to HTTP 507) if the ceiling
+        # cannot be met even after LRU LLM eviction. No-op when the enforcer
+        # is not wired (ceiling == 0) or the headroom estimate is disabled.
+        from ..pool.engine_pool import InsufficientMemoryError
+
+        try:
+            from ..server import _server_state
+        except Exception:  # noqa: BLE001
+            logger.debug("image admission: _server_state unavailable; skipping gate")
+            return
+        pool = _server_state.engine_pool
+        if pool is None:
+            logger.debug("image admission: engine_pool not set; skipping gate")
+            return
+        if subprocess_mode:
+            from ..media.job_manager import MediaJobManager
+
+            required = MediaJobManager()._compute_lease_bytes()
+        else:
+            required = _estimate_activation_peak(
+                width,
+                height,
+                steps,
+                n_images,
+                self._variant,
+                subprocess_mode=False,
+            )
+        if required <= 0:
+            return
+        ok = await pool.admit_media_job(required, exclude_model_id=self._model_name)
+        if not ok:
+            raise InsufficientMemoryError(
+                required=required,
+                current=0,
+                ceiling=0,
+                message=(
+                    f"Image generation (variant={self._variant}, "
+                    f"{width}x{height}, n={n_images}) requires "
+                    f"{required / 1024**3:.1f}GB headroom that cannot be freed "
+                    f"even after evicting all non-pinned LLM models. Lower "
+                    f"resolution, reduce n_images, or unload models manually."
+                ),
+                model_id=self._model_name,
+                loaded_models=[],
+            )
+
     async def generate(
         self,
         prompt: str,
@@ -712,7 +829,23 @@ class ImageGenEngine(BaseNonStreamingEngine):
         # runs in a child process — Metal allocations cannot crash the LLM.
         # Timeout = kill subprocess (real cancellation). Model loads fresh in
         # worker; main process holds zero image Metal memory.
-        if _subprocess_enabled():
+        subprocess_mode = _subprocess_enabled()
+
+        # OP-901 (C): memory admission gate. Before spawning the worker (or
+        # running in-process), reserve headroom against the process ceiling
+        # and evict LRU LLM models so the image job does not drive the
+        # process into EXC_BAD_ACCESS on wired exhaustion. Subprocess mode
+        # reserves the worker lease; in-process mode reserves the estimated
+        # activation peak (weights already counted in current usage).
+        await self._admit_generation(
+            width=width,
+            height=height,
+            steps=steps,
+            n_images=n_images,
+            subprocess_mode=subprocess_mode,
+        )
+
+        if subprocess_mode:
             return await self._generate_subprocess(
                 prompt=prompt,
                 width=width,
