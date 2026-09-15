@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Fixed
+- **mflux four-view image generation memory crash (subprocess isolation
+  default-on + media admission gate)** — generating `n=4` images with mflux
+  models drove the process into `EXC_BAD_ACCESS / SIGBUS` (Metal wired
+  memory exhaustion), killing the entire server including any co-resident
+  LLM. Image generation now defaults to **subprocess isolation** (`media/
+  image_worker.py`): the FLUX/DiT weights and activations live in a child
+  process that is fully released on exit, so a crash or OOM kills only the
+  worker, not the LLM. The worker already clears the Metal cache per image
+  and preflights weight shards. Set `FUSION_IMAGE_SUBPROCESS=0` to force the
+  legacy in-process path. A new **media admission gate**
+  (`engine_pool.admit_media_job`) estimates the job's activation peak
+  (`_estimate_activation_peak`) and evicts LRU non-pinned LLM models until
+  `current + required <= ceiling`; if no model can be evicted the request
+  returns HTTP 507 instead of crashing the process. Override the peak
+  heuristic with `FUSION_IMAGE_ACTIVATION_HEADROOM_GB`.
 - **Hard memory pressure abort for media engines (`aborted=0` loop)** —
   hard pressure picked a busy image model (e.g. FLUX2-dev-mlx-8bit) but
   `BaseNonStreamingEngine` had no `abort_all_requests`, so nothing was

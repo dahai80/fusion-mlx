@@ -762,6 +762,65 @@ class EnginePool:
     def set_settings_manager(self, manager) -> None:
         self._settings_manager = manager
 
+    async def admit_media_job(
+        self,
+        required_bytes: int,
+        exclude_model_id: str | None = None,
+    ) -> bool:
+        # OP-901 (C): memory admission gate for media (image/video) jobs.
+        # Media generation competes with loaded LLMs for the same Metal wired
+        # budget; without this gate a four-view image job drives the process
+        # into EXC_BAD_ACCESS (wired exhaustion) and takes the LLM down with
+        # it. This evicts LRU non-pinned LLM models until
+        # current_usage + required_bytes <= ceiling, mirroring the LLM
+        # pre-load admission loop (line ~1442) but with the "incoming" being
+        # a transient media job rather than a model load.
+        #
+        # Returns True if the headroom fits (possibly after eviction), False
+        # if no evictable model can close the gap (caller raises 507).
+        ceiling = self._current_ceiling()
+        if ceiling <= 0 or required_bytes <= 0:
+            # No ceiling wired (enforcer disabled) or nothing to reserve.
+            return True
+        evicted = 0
+        for _ in range(20):
+            current = self._admission_current_usage(exclude_entry_key=exclude_model_id)
+            projected = current + required_bytes
+            if projected <= ceiling:
+                logger.info(
+                    "media admission ok: projected=%s ceiling=%s "
+                    "(current=%s required=%s evicted=%d)",
+                    format_size(projected),
+                    format_size(ceiling),
+                    format_size(current),
+                    format_size(required_bytes),
+                    evicted,
+                )
+                return True
+            victim = self._find_lru_victim()
+            if victim is None:
+                logger.warning(
+                    "media admission FAILED: projected=%s ceiling=%s, "
+                    "no evictable LLM model (%d evicted, gap=%s)",
+                    format_size(projected),
+                    format_size(ceiling),
+                    evicted,
+                    format_size(projected - ceiling),
+                )
+                return False
+            logger.info(
+                "media admission: evicting '%s' to fit media job "
+                "(projected=%s > ceiling=%s, required=%s)",
+                victim,
+                format_size(projected),
+                format_size(ceiling),
+                format_size(required_bytes),
+            )
+            self._record_eviction("media_admission")
+            await self.unload_engine_async(victim)
+            evicted += 1
+        return False
+
     @property
     def loading_count(self) -> int:
         # ENG-03: replaces server.py's direct iteration over _entries to
