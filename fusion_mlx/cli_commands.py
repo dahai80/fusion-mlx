@@ -520,10 +520,23 @@ def rm_command(args):
 
 def ps_command(_args):
     """List running fusion-mlx servers (process scan)."""
+    import json as _json
     import shlex
     import time
 
     import psutil
+
+    # serve stamps ~/.fusion-mlx/server.json at boot so a bare
+    # setproctitle name (no flags to parse) can still be enriched with
+    # host/port/model. Match by pid; a stale file (crashed server) never
+    # matches a live scan row.
+    _srv_info: dict = {}
+    try:
+        _info_path = os.path.join(os.path.expanduser("~"), ".fusion-mlx", "server.json")
+        with open(_info_path, encoding="utf-8") as _f:
+            _srv_info = _json.loads(_f.read())
+    except (OSError, ValueError):
+        pass
 
     rows: list[tuple[int, str, str, str]] = []
     for proc in psutil.process_iter(["pid", "cmdline", "create_time"]):
@@ -531,17 +544,20 @@ def ps_command(_args):
             raw = proc.info["cmdline"] or []
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
-        # setproctitle renames the server to "fusion-mlx-server" and
-        # collapses argv into a single string element (with trailing
-        # empty strings). Re-split via shlex so token matching works for
-        # both layouts:
-        #   original: ["fusion-mlx", "serve", "--model-dir", ...]
-        #   renamed:  ["fusion-mlx-server serve --model-dir ...", "", ...]
+        # setproctitle renames the server to a bare "fusion-mlx-server"
+        # (or, on older builds, "fusion-mlx-server <args>") and collapses
+        # argv into a single string element (with trailing empty
+        # strings). Re-split via shlex so token matching works for all
+        # layouts:
+        #   original:      ["fusion-mlx", "serve", "--model-dir", ...]
+        #   renamed+args:  ["fusion-mlx-server serve --model-dir ...", "", ...]
+        #   renamed bare:  ["fusion-mlx-server", "", ...]
         if raw and (" " in raw[0] or "fusion-mlx-server" in raw[0]):
             cmd = shlex.split(" ".join(raw))
         else:
             cmd = raw
-        if not any(
+        bare_server = cmd == ["fusion-mlx-server"]
+        if not bare_server and not any(
             ("fusion-mlx" in c or "fusion_mlx" in c) and "serve" in cmd for c in cmd
         ):
             continue
@@ -581,6 +597,16 @@ def ps_command(_args):
         model = "(unknown)"
         port = "11434"  # serve's default
         host = ""  # --host value; unix:/path means UDS listen mode (#351)
+        if bare_server:
+            # Bare setproctitle name carries no flags; enrich from the
+            # boot-stamped server.json (pid-gated so a stale file from a
+            # dead server can't lie about this row).
+            if _srv_info.get("pid") == proc.info["pid"]:
+                host = str(_srv_info.get("host") or "")
+                port = str(_srv_info.get("port") or port)
+                model = str(_srv_info.get("model") or "(unknown)")
+            else:
+                port = "(unknown)"
         try:
             i = cmd.index("serve") + 1
             # Pre-PR this loop ``break``ed on the first positional, so a

@@ -87,20 +87,46 @@ def serve_command(args):
     import os
     import sys
 
-    # Set process title to fusion-mlx-server so ps/top/Activity Monitor show
-    # the server name instead of generic "python". Best-effort: skip if
-    # setproctitle not installed (no crash, just falls back to python name).
-    # Preserve the serve args in the title so `fusion-mlx ps` (which scans
-    # cmdline for "fusion-mlx" + "serve" tokens) can still detect + parse
-    # the running server.
+    # Set process title to a bare "fusion-mlx-server" so ps/top/Activity
+    # Monitor show just the server name (not "python", not a wall of serve
+    # args). A bare title carries no flags for `fusion-mlx ps` to parse, so
+    # also stamp ~/.fusion-mlx/server.json (pid/host/port/model) for the CLI
+    # scan to enrich its rows. Best-effort on both counts: without
+    # setproctitle the name stays "python"; without a writable server.json
+    # the scan falls back to cmdline token matching.
     try:
         import setproctitle
 
-        _title_args = " ".join(sys.argv[1:])
-        setproctitle.setproctitle(f"fusion-mlx-server {_title_args}")
+        setproctitle.setproctitle("fusion-mlx-server")
     except ImportError:
         logging.getLogger(__name__).debug(
             "setproctitle not installed; process name stays 'python'"
+        )
+    try:
+        import json
+
+        _srv_info = {
+            "pid": os.getpid(),
+            "host": getattr(args, "host", None) or "127.0.0.1",
+            "port": getattr(args, "port", None) or 11434,
+            "model": getattr(args, "model", None)
+            or getattr(args, "model_dir", None)
+            or "",
+        }
+        _info_dir = os.path.join(os.path.expanduser("~"), ".fusion-mlx")
+        os.makedirs(_info_dir, exist_ok=True)
+        _info_path = os.path.join(_info_dir, "server.json")
+        with open(_info_path, "w", encoding="utf-8") as _f:
+            json.dump(_srv_info, _f)
+        logging.getLogger(__name__).debug(
+            "stamped server.json: pid=%s host=%s port=%s",
+            _srv_info["pid"],
+            _srv_info["host"],
+            _srv_info["port"],
+        )
+    except OSError:
+        logging.getLogger(__name__).warning(
+            "could not write ~/.fusion-mlx/server.json", exc_info=True
         )
 
     # Install the M5 hardware-compat shim BEFORE any `from .server import`

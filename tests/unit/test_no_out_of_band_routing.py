@@ -95,8 +95,10 @@ ROUTING_WRITE_ALLOWED_FUNCS: frozenset[str] = frozenset(
 # an explicit edit + PR review.
 ROUTING_WRITE_ALLOWED_LOCATIONS: dict[str, frozenset[str]] = {
     "load_model": frozenset({"server.py"}),
-    "detect_model_config": frozenset({"model_auto_config.py"}),
-    "enrich_model_config": frozenset({"model_auto_config.py"}),
+    # model_auto_config.py was split into a package (core.py holds
+    # detect/enrich); the pin follows the code.
+    "detect_model_config": frozenset({"model_auto_config/core.py"}),
+    "enrich_model_config": frozenset({"model_auto_config/core.py"}),
     "_coerce": frozenset({"model_aliases.py"}),
     "_load": frozenset({"model_aliases.py"}),
 }
@@ -494,6 +496,24 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # ~/.fusion-mlx/spec_route_decisions.jsonl. Pure log-path knob
         # — never selects model / parser / tier.
         "FUSION_MLX_SPEC_ROUTE_LOG_PATH",
+        # O1.2: tool-recovery bare-JSON fallback toggle
+        # (api/tool_calling/parse.py:773). Default ON — adds a terminal
+        # bare-JSON tool-call detection branch after the 4 existing
+        # fallbacks. Pure output-parsing knob — never selects model /
+        # parser / tier; the tool parser dispatch is unchanged, only
+        # whether untemplated JSON tool calls get recovered.
+        "FUSION_MLX_TOOL_RECOVERY",
+        # O3.1: Metal cache_limit fraction of
+        # recommendedMaxWorkingSetSize (pool/memory_enforcer.py:99).
+        # Pure memory-capacity knob — bounds how much of the working-set
+        # budget MLX's cache_limit may claim. Never selects model /
+        # parser / tier.
+        "FUSION_MLX_CACHE_LIMIT_FRACTION",
+        # llama.cpp backend bridge: llama-server binary override
+        # (engines/llama_cpp_backend.py:32). Points the bridge at a
+        # specific llama-server executable. Pure integration-endpoint
+        # knob — where the external binary lives, never engine routing.
+        "FUSION_MLX_LLAMA_SERVER",
     }
 )
 

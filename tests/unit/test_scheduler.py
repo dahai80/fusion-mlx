@@ -676,7 +676,7 @@ class TestSchedulerAddRequest:
 
         scheduler.add_request(request)
 
-        scheduler.block_aware_cache.preload_blocks.assert_not_called()
+        scheduler.block_aware_cache.preload_blocks_async.assert_not_called()
         scheduler.block_aware_cache.reconstruct_cache.assert_called_once_with(
             block_table,
             promote_to_hot_cache=False,
@@ -714,7 +714,9 @@ class TestSchedulerAddRequest:
 
         scheduler.add_request(request)
 
-        scheduler.block_aware_cache.preload_blocks.assert_called_once_with(block_table)
+        scheduler.block_aware_cache.preload_blocks_async.assert_called_once_with(
+            block_table
+        )
         scheduler.block_aware_cache.reconstruct_cache.assert_called_once_with(
             block_table
         )
@@ -751,7 +753,9 @@ class TestSchedulerAddRequest:
 
         scheduler.add_request(request)
 
-        scheduler.block_aware_cache.preload_blocks.assert_called_once_with(block_table)
+        scheduler.block_aware_cache.preload_blocks_async.assert_called_once_with(
+            block_table
+        )
         scheduler.block_aware_cache.reconstruct_cache.assert_called_once_with(
             block_table
         )
