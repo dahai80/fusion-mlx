@@ -376,8 +376,8 @@ async def _apply_memory_guard_tier_runtime(
     Returns:
         Tuple of (success, message)
     """
-    from ..server import _server_state
     from ..config_schema import VALID_MEMORY_GUARD_TIERS
+    from ..server import _server_state
 
     enforcer = _server_state.process_memory_enforcer
     if enforcer is None:
