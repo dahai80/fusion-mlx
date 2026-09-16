@@ -220,6 +220,11 @@ VARIANT_DEFAULT_STEPS: dict[str, int] = {
 # pass). Override via FUSION_IMAGE_TIMEOUT (seconds). Invalid/non-positive
 # values fall back to the default with a warning.
 _IMAGE_GEN_TIMEOUT_DEFAULT_S = 600.0
+# OP-901 (defect 2/3): grace window for an in-process image worker to finish
+# after a memory-pressure cancel. The worker thread cannot be interrupted
+# mid-generation; waiting indefinitely wedged the pool (#901). Bounded wait
+# then poison so the state is explicit and recoverable. Env-overridable.
+_CANCEL_GRACE_S = float(os.environ.get("FUSION_IMAGE_CANCEL_GRACE_S", "30"))
 
 
 def get_image_gen_timeout(n_images: int = 1) -> float:
@@ -747,6 +752,13 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 model_id=self._model_name,
                 loaded_models=[],
             )
+        # OP-901 (defect 1): register the admitted reservation so the enforcer
+        # raises its hard watermark to the ceiling for this job's duration.
+        # Without it, usage in [95%,100%] of ceiling trips hard pressure and
+        # aborts the job the gate just admitted (#901 self-conflict wedge).
+        enforcer = getattr(pool, "process_memory_enforcer", None)
+        if enforcer is not None and required > 0:
+            enforcer.register_media_reservation(required)
 
     async def generate(
         self,
@@ -1132,19 +1144,52 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 )
             except asyncio.CancelledError:
                 # Hard memory pressure aborted this request, but the worker
-                # thread cannot be interrupted mid-generation. Shield-wait
-                # for it so the activity stays open: the pool must not see
-                # the engine as idle and unload the model out from under
-                # the running thread. The cancelled request itself is gone.
+                # thread cannot be interrupted mid-generation. Previously
+                # this awaited asyncio.shield(fut) indefinitely — the engine
+                # stayed "has active requests" forever, the enforcer spun
+                # "aborted=0" every poll, and the pool could never unload
+                # the model: every subsequent request inherited the poisoned
+                # state until SIGKILL (#901 defect 2/3).
+                #
+                # OP-901 fix: bounded grace wait. Give the worker a short
+                # window to finish gracefully (release activations). If it
+                # does, the activity ends and the engine becomes unloadable.
+                # If it does NOT, poison the image executor (same as the
+                # timeout path) so subsequent requests fast-fail loudly and
+                # the operator gets an actionable restart signal instead of
+                # a silent 10-minute hang.
                 logger.warning(
                     "ImageGen generate cancelled (abort/memory pressure); "
-                    "worker thread still running, holding engine busy until "
-                    "it finishes"
+                    "worker thread still running, grace window %ds",
+                    _CANCEL_GRACE_S,
                 )
+                from ..engine_core import poison_executor
+
+                # Bounded grace wait. Only poison on a TRUE grace timeout
+                # (worker still running past the deadline). A CancelledError
+                # here is a re-cancel from a subsequent abort poll — swallow
+                # it (matching the legacy shield behavior) so a second abort
+                # does not poison the executor and wedge every later image
+                # request. The worker thread finishes in the background and
+                # the activity ends when it does.
                 try:
-                    await asyncio.shield(fut)
-                except (Exception, asyncio.CancelledError):
-                    pass
+                    await asyncio.wait_for(asyncio.shield(fut), timeout=_CANCEL_GRACE_S)
+                except asyncio.CancelledError:
+                    logger.debug(
+                        "grace wait re-cancelled by a subsequent abort; "
+                        "worker still running in background"
+                    )
+                except TimeoutError:
+                    poison_executor("image")
+                    logger.error(
+                        "ImageGen worker did not finish within %ds grace "
+                        "after cancel; poisoned image executor (S5). The "
+                        "engine will be unloaded once the orphaned thread "
+                        "exits; restart fusion-mlx to recover image gen.",
+                        _CANCEL_GRACE_S,
+                    )
+                except Exception:
+                    logger.debug("grace wait raised", exc_info=True)
                 raise
             except TimeoutError:
                 # S5 (audit 0910 §6.3-5): the deadline fired but the worker
@@ -1176,6 +1221,20 @@ class ImageGenEngine(BaseNonStreamingEngine):
             )
             return result
         finally:
+            # OP-901 (defect 1): release the media reservation so the hard
+            # watermark drops back to ceiling * hard_threshold for normal
+            # LLM policing.
+            try:
+                from ..server import _server_state
+
+                _pool = _server_state.engine_pool
+                _enf = getattr(_pool, "process_memory_enforcer", None)
+                if _enf is not None:
+                    _enf.unregister_media_reservation()
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "media reservation release: pool unavailable", exc_info=True
+                )
             await self._finish_activity(activity_id)
 
     async def _generate_subprocess(

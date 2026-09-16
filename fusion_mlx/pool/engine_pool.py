@@ -164,6 +164,7 @@ class EngineEntry:
     in_use: int = 0  # in-flight acquire/use lease count; never evict while > 0
     abort_requested: bool = False  # Set under hard pressure for leased requests
     pending_unload_reason: str | None = None  # Unload as soon as leases/activity drain
+    ane_pinned: bool = False  # P0 ANE旁路: ANE权重常驻engine不被普通LRU逐出
     runtime_settings_signature: tuple[tuple[str, str], ...] | None = None
     adapter_path: str | None = None  # LoRA adapter path for derived adapter entries
     base_model_id: str | None = None  # Base model_id for derived adapter entries
@@ -766,6 +767,7 @@ class EnginePool:
         self,
         required_bytes: int,
         exclude_model_id: str | None = None,
+        kind: str = "image",
     ) -> bool:
         # OP-901 (C): memory admission gate for media (image/video) jobs.
         # Media generation competes with loaded LLMs for the same Metal wired
@@ -776,20 +778,36 @@ class EnginePool:
         # pre-load admission loop (line ~1442) but with the "incoming" being
         # a transient media job rather than a model load.
         #
+        # P0 ANE旁路扩展: kind="ane" 把ANE权重常驻纳入current, ceiling
+        # 取min(process_ceiling, ane_memory_budget); kind="kernel" 走image
+        # 路径(required含自定义内核threadgroup mem). 默认kind="image"行为
+        # 完全不变, 现有image_gen调用无需改.
+        #
         # Returns True if the headroom fits (possibly after eviction), False
         # if no evictable model can close the gap (caller raises 507).
         ceiling = self._current_ceiling()
         if ceiling <= 0 or required_bytes <= 0:
             # No ceiling wired (enforcer disabled) or nothing to reserve.
             return True
+        if kind == "ane":
+            enforcer = self._process_memory_enforcer
+            if enforcer is not None:
+                ane_budget = enforcer.get_ane_memory_budget()
+                if ane_budget > 0:
+                    ceiling = min(ceiling, ane_budget)
         evicted = 0
         for _ in range(20):
             current = self._admission_current_usage(exclude_entry_key=exclude_model_id)
+            if kind == "ane":
+                enforcer = self._process_memory_enforcer
+                if enforcer is not None:
+                    current += enforcer.get_ane_resident_bytes()
             projected = current + required_bytes
             if projected <= ceiling:
                 logger.info(
-                    "media admission ok: projected=%s ceiling=%s "
+                    "%s admission ok: projected=%s ceiling=%s "
                     "(current=%s required=%s evicted=%d)",
+                    kind,
                     format_size(projected),
                     format_size(ceiling),
                     format_size(current),
@@ -800,8 +818,9 @@ class EnginePool:
             victim = self._find_lru_victim()
             if victim is None:
                 logger.warning(
-                    "media admission FAILED: projected=%s ceiling=%s, "
+                    "%s admission FAILED: projected=%s ceiling=%s, "
                     "no evictable LLM model (%d evicted, gap=%s)",
+                    kind,
                     format_size(projected),
                     format_size(ceiling),
                     evicted,
@@ -809,8 +828,9 @@ class EnginePool:
                 )
                 return False
             logger.info(
-                "media admission: evicting '%s' to fit media job "
+                "%s admission: evicting '%s' to fit job "
                 "(projected=%s > ceiling=%s, required=%s)",
+                kind,
                 victim,
                 format_size(projected),
                 format_size(ceiling),
@@ -1849,6 +1869,9 @@ class EnginePool:
             if e.engine is None or e.is_pinned:
                 continue
             if e.in_use > 0:
+                continue
+            if e.ane_pinned:
+                logger.debug(f"Skipping victim '{mid}': ANE-pinned (权重常驻)")
                 continue
             if self._entry_has_active_requests(e):
                 logger.debug(f"Skipping victim '{mid}': has active requests")

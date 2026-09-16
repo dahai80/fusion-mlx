@@ -1300,12 +1300,62 @@ def _render_latency_histograms() -> list[str]:
     return lines
 
 
+def _render_ane_metrics() -> list[str]:
+    # P0 ANE旁路内存感知: expose ANE resident / Metal wired / IOSurface shared
+    # so an operator sees ANE权重常驻占用纳入enforcer (不再隐形). enforcer
+    # accessed via pool.process_memory_enforcer; all absent → 0, never breaks
+    # /metrics.
+    lines: list[str] = []
+    try:
+        from ..server import _server_state
+
+        pool = _server_state.get("engine_pool")
+        enforcer = getattr(pool, "process_memory_enforcer", None) if pool else None
+        ane_bytes = 0
+        wired = 0
+        iosurface = 0
+        if enforcer is not None:
+            ane_bytes = int(getattr(enforcer, "get_ane_resident_bytes", lambda: 0)())
+            wired = int(getattr(enforcer, "get_metal_wired_bytes", lambda: 0)())
+            iosurface = int(
+                getattr(enforcer, "get_iosurface_shared_bytes", lambda: 0)()
+            )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_ane_resident_bytes_total",
+                "gauge",
+                "ANE (CoreML) resident weight memory registered with the enforcer.",
+                ane_bytes,
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_metal_wired_bytes",
+                "gauge",
+                "Metal wired (active) memory via mx.get_active_memory.",
+                wired,
+            )
+        )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_iosurface_shared_bytes",
+                "gauge",
+                "IOSurface bridge bytes shared between GPU and ANE (de-duplicated).",
+                iosurface,
+            )
+        )
+    except Exception:
+        logger.debug("ane metrics render error", exc_info=True)
+    return lines
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
     lines.extend(_render_engine_metrics())
     lines.extend(_render_disconnect_metrics())
     lines.extend(_render_pool_metrics())
+    lines.extend(_render_ane_metrics())
     lines.extend(_render_engine_eviction_metrics())
     lines.extend(_render_preload_failure_metrics())
     lines.extend(_render_degradation_metrics())

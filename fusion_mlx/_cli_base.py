@@ -635,6 +635,66 @@ def _settings_disabled_modules() -> list[str]:
     return []
 
 
+def _settings_memory_guard_tier() -> str | None:
+    # OP-901 (defect 4): settings.json memory.memory_guard_tier was written by
+    # the admin panel but never read at boot — `serve` defaulted to BALANCED
+    # and `python -m fusion_mlx.server` forced auto_detect, so an operator's
+    # `custom` + `memory_guard_custom_ceiling_gb` never applied unless they
+    # knew to pass the CLI flag (#901). Return the tier string or None.
+    mem = _read_settings_json().get("memory")
+    if not isinstance(mem, dict):
+        return None
+    tier = mem.get("memory_guard_tier")
+    if isinstance(tier, str) and tier.strip().lower() in (
+        "safe",
+        "balanced",
+        "aggressive",
+        "custom",
+    ):
+        return tier.strip().lower()
+    return None
+
+
+def _settings_memory_custom_ceiling_gb() -> float | None:
+    # OP-901 (defect 4): companion to _settings_memory_guard_tier — the custom
+    # ceiling GB stored by the admin panel under memory.memory_guard_custom_ceiling_gb.
+    mem = _read_settings_json().get("memory")
+    if not isinstance(mem, dict):
+        return None
+    val = mem.get("memory_guard_custom_ceiling_gb")
+    if isinstance(val, (int, float)) and val > 0:
+        return float(val)
+    return None
+
+
+def apply_settings_memory_tier(config, *, cli_tier: str = "auto") -> None:
+    # OP-901 (defect 4): resolve config.memory.tier with precedence
+    #   explicit CLI flag (not "auto") > settings.json > auto_detect.
+    # Call from both serve and `python -m fusion_mlx.server` boot paths so
+    # settings.json memory.memory_guard_tier / memory_guard_custom_ceiling_gb
+    # take effect at boot without a CLI flag.
+    from .config import MemoryTier, auto_detect_memory_tier
+
+    tier = cli_tier.strip().lower() if isinstance(cli_tier, str) else "auto"
+    if tier == "auto":
+        sj_tier = _settings_memory_guard_tier()
+        if sj_tier:
+            tier = sj_tier
+            logger.info("memory tier from settings.json: %s", tier)
+        else:
+            tier = auto_detect_memory_tier().name.lower()
+            logger.info("memory tier auto-detected: %s", tier)
+    config.memory.tier = getattr(MemoryTier, tier.upper(), MemoryTier.BALANCED)
+    if config.memory.tier == MemoryTier.CUSTOM:
+        sj_gb = _settings_memory_custom_ceiling_gb()
+        if sj_gb is not None:
+            config.memory.custom_limit_mb = int(sj_gb * 1024)
+            logger.info(
+                "memory custom_limit_mb from settings.json: %d MB",
+                config.memory.custom_limit_mb,
+            )
+
+
 def _auto_detect_single_cached_model() -> str | None:
     """§6.1: when no default_model and no explicit model arg, check if
     ~/.fusion-mlx/models contains exactly one model directory. If so,

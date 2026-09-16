@@ -407,6 +407,25 @@ class ProcessMemoryEnforcer:
         # warning spam and escalate once it is clearly not resolving.
         self._hard_busy_victim: str | None = None
         self._hard_busy_cycles: int = 0
+        # ANE旁路内存感知 (P0底座): CoreML权重常驻IOSurface池不在
+        # phys_footprint内, enforcer原本盲视. 注册/注销由ANE engine
+        # load/unload调用, get_ane_resident_bytes纳入_current_usage_bytes.
+        self._ane_resident: dict[str, int] = {}
+        # IOSurface共享桥双计数规避: 同一物理页GPU侧MTLBuffer已被
+        # mx.get_active_memory计入, ANE侧只补差额; shared部分在此去重.
+        self._iosurface_shared_bytes: int = 0
+        self._ane_memory_budget_bytes: int = 0
+        # OP-901 (defect 1): media job admission reservation. When an image/
+        # video job passes admit_media_job, its projected peak was already
+        # checked <= ceiling. But the hard watermark (ceiling * 0.95) sits
+        # BELOW ceiling, so once the job's activations push real usage past
+        # 95% the enforcer hard-aborts the very job it just admitted — a
+        # self-conflict that wedged four-view FLUX generation (#901). While a
+        # reservation is active the hard watermark is raised to the full
+        # ceiling so admitted usage is tolerated up to the limit the gate
+        # already approved. Set/cleared by ImageGenEngine.generate prologue/
+        # finally. Thread-safe single-slot (one media job at a time per pool).
+        self._media_reservation_bytes: int = 0
 
     def update_loaded_model_bytes(self, delta: int) -> None:
         """Adjust tracked loaded model byte count."""
@@ -417,6 +436,108 @@ class ProcessMemoryEnforcer:
         """Return current loaded model byte count (thread-safe)."""
         with self._state_lock:
             return self._loaded_model_bytes
+
+    def register_ane_resident(self, engine_id: str, bytes_: int) -> None:
+        """Register ANE engine resident memory (CoreML weights + IOSurface pool).
+
+        Called by ANE engine on successful load. Overwrites prior value for the
+        same engine_id (reload re-registers, not accumulates). Thread-safe.
+        """
+        b = max(0, int(bytes_))
+        with self._state_lock:
+            self._ane_resident[engine_id] = b
+        logger.info(
+            "ANE resident registered: engine='%s' bytes=%s (total=%s)",
+            engine_id,
+            _format_gb(b),
+            _format_gb(self.get_ane_resident_bytes()),
+        )
+
+    def unregister_ane_resident(self, engine_id: str) -> None:
+        """Unregister ANE engine resident memory on unload."""
+        with self._state_lock:
+            removed = self._ane_resident.pop(engine_id, None)
+        if removed is not None:
+            logger.info(
+                "ANE resident unregistered: engine='%s' bytes=%s (total=%s)",
+                engine_id,
+                _format_gb(removed),
+                _format_gb(self.get_ane_resident_bytes()),
+            )
+
+    def get_ane_resident_bytes(self) -> int:
+        """Total ANE resident memory across all registered ANE engines."""
+        with self._state_lock:
+            return sum(self._ane_resident.values())
+
+    def get_metal_wired_bytes(self) -> int:
+        """Current Metal wired (active) memory via mx.get_active_memory.
+
+        Returns 0 if MLX/Metal unavailable or the API raises (older MLX).
+        Not cached — callers (metrics tick) invoke at most once per second.
+        """
+        try:
+            return int(mx.get_active_memory() or 0)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("get_metal_wired_bytes: mx.get_active_memory failed: %s", exc)
+            return 0
+
+    def get_iosurface_shared_bytes(self) -> int:
+        """IOSurface shared bridge bytes currently double-counted between GPU
+        and ANE pools. Used by _current_usage_bytes to subtract the overlap so
+        the same physical page is not counted twice."""
+        with self._state_lock:
+            return self._iosurface_shared_bytes
+
+    def register_iosurface_shared(self, bytes_: int) -> None:
+        with self._state_lock:
+            self._iosurface_shared_bytes = max(0, int(bytes_))
+
+    def get_ane_memory_budget(self) -> int:
+        """ANE memory budget ceiling. Defaults to 15% of static ceiling.
+
+        settings.json ane_memory_budget_gb overrides. Returns 0 when the
+        enforcer guard is disabled (no ANE budget enforced).
+        """
+        if not self._prefill_memory_guard:
+            return 0
+        if self._ane_memory_budget_bytes > 0:
+            return self._ane_memory_budget_bytes
+        try:
+            static = self._get_static_ceiling()
+        except Exception:  # noqa: BLE001
+            static = 0
+        return int(static * 0.15)
+
+    def set_ane_memory_budget_gb(self, gb: float) -> None:
+        with self._state_lock:
+            self._ane_memory_budget_bytes = max(0, int(gb * 1024**3))
+
+    def register_media_reservation(self, bytes_: int) -> None:
+        # OP-901 (defect 1): raise the hard watermark to the full ceiling for
+        # the duration of an admitted media job so the enforcer does not
+        # hard-abort the job it just admitted (usage between 95% and 100% of
+        # ceiling is expected for a job whose projected peak was approved).
+        b = max(0, int(bytes_))
+        with self._state_lock:
+            self._media_reservation_bytes = b
+        if b > 0:
+            logger.info(
+                "media reservation registered: %s (hard watermark raised to "
+                "ceiling for admitted job)",
+                _format_gb(b),
+            )
+
+    def unregister_media_reservation(self) -> None:
+        with self._state_lock:
+            prev = self._media_reservation_bytes
+            self._media_reservation_bytes = 0
+        if prev > 0:
+            logger.info("media reservation released: %s", _format_gb(prev))
+
+    def get_media_reservation_bytes(self) -> int:
+        with self._state_lock:
+            return self._media_reservation_bytes
 
     @staticmethod
     def _normalize_tier(tier: str) -> str:
@@ -753,8 +874,12 @@ class ProcessMemoryEnforcer:
         """
         phys = get_phys_footprint()
         if self._has_active_requests():
-            return max(self._cached_executor_active_memory_bytes(), phys)
-        return max(mx.get_active_memory(), phys)
+            base = max(self._cached_executor_active_memory_bytes(), phys)
+        else:
+            base = max(mx.get_active_memory(), phys)
+        ane = self.get_ane_resident_bytes()
+        shared = self.get_iosurface_shared_bytes()
+        return base + ane - shared
 
     def _is_emergency_pressure(self, current: int, ceiling: int) -> bool:
         """Return True only for pressure beyond the configured ceiling.
@@ -1310,6 +1435,14 @@ class ProcessMemoryEnforcer:
         current = self._current_usage_bytes()
         soft = int(ceiling * self._soft_threshold)
         hard = int(ceiling * self._hard_threshold)
+        # OP-901 (defect 1): while a media job's admission reservation is
+        # active, the hard watermark is raised to the full ceiling. The job's
+        # projected peak was already approved <= ceiling by admit_media_job;
+        # without this raise, usage in [95%, 100%] of ceiling trips hard
+        # pressure and aborts the admitted job — the self-conflict that
+        # wedged four-view FLUX (#901). Emergency (over-ceiling) still fires.
+        if self._media_reservation_bytes > 0:
+            hard = ceiling
         prev_level = self._pressure_level
         emergency = self._is_emergency_pressure(current, ceiling)
 

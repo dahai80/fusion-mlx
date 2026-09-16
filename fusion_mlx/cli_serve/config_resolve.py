@@ -305,6 +305,13 @@ def _serve_from_model_dir(args):
         _get_config().disabled_modules = _sdm_val
         logger.info("disabled_modules from settings.json: %s", _sdm_val)
 
+    # OP-901 (defect 4/5): apply memory tier (CLI > settings.json > auto).
+    from .._cli_base import apply_settings_memory_tier as _apply_mem
+
+    _apply_mem(config, cli_tier=getattr(args, "memory_tier", "auto"))
+    _get_config().memory.tier = config.memory.tier
+    _get_config().memory.custom_limit_mb = config.memory.custom_limit_mb
+
     # Pass spec-decode / dflash2 / dspark CLI flags through to the engine
     # pool's scheduler_config. Without this, --enable-dflash2 +
     # --dflash2-drafter-path are silently dropped in --model-dir mode:
@@ -679,6 +686,11 @@ def _stage_server_config(args, server, logger):
     if _sdm_val:
         _get_config().disabled_modules = _sdm_val
         logger.info("disabled_modules from settings.json: %s", _sdm_val)
+
+    # OP-901 (defect 4/5): apply memory tier (CLI > settings.json > auto).
+    from .._cli_base import apply_settings_memory_tier as _apply_mem
+
+    _apply_mem(_get_config(), cli_tier=getattr(args, "memory_tier", "auto"))
 
     # API key
     server._api_key = server._resolve_api_key(args.api_key)

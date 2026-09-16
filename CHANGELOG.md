@@ -3,6 +3,24 @@
 ## [Unreleased]
 
 ### Fixed
+- **image-gen deadlock + log pollution (#901, #899)** — four-view image
+  generation under memory pressure wedged the server: the enforcer
+  hard-aborted the very media job its admission gate had just admitted
+  (hard watermark at 95% of ceiling vs. admitted usage up to 100%), the
+  cancelled in-process worker thread could not be interrupted so the engine
+  stayed "has active requests" forever (`aborted=0` every poll, pool unable
+  to unload), and the S5 poison state was unrecoverable without SIGKILL.
+  Fixes: a media reservation raises the hard watermark to the full ceiling
+  for the duration of an admitted job; the cancel path now does a bounded
+  grace wait (`FUSION_IMAGE_CANCEL_GRACE_S`, default 30s) then poisons only
+  on a true timeout (a re-cancel is swallowed, no spurious poison);
+  `settings.json` `memory.memory_guard_tier` /
+  `memory_guard_custom_ceiling_gb` now apply at boot with precedence
+  CLI > settings.json > auto-detect; `--memory-tier` added to the `serve`
+  subcommand so both entry points accept the same flag. Separately,
+  `Server.__init__` no longer attaches the `server.log` file handler under
+  pytest (`PYTEST_CURRENT_TEST`) or `FUSION_LOG_FILE_DISABLE=1`, fixing the
+  test-log pollution that broke incident forensics on the live server's log.
 - **mflux four-view image generation memory crash (subprocess isolation
   default-on + media admission gate)** — generating `n=4` images with mflux
   models drove the process into `EXC_BAD_ACCESS / SIGBUS` (Metal wired
