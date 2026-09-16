@@ -15,8 +15,33 @@ _pending_abort_tasks: set[asyncio.Task] = set()
 
 
 def handle_disconnect(request_id: str, engine) -> None:
+    # #903: probe the engine abort surface instead of assuming
+    # abort_request exists (VLMBatchedEngine only had abort_all_requests —
+    # the AttributeError left disconnected requests generating into the
+    # void). Prefer per-request abort; fall back to abort-all only when the
+    # engine offers nothing narrower.
     try:
-        task = asyncio.create_task(engine.abort_request(request_id))
+        abort = getattr(engine, "abort_request", None)
+        if callable(abort):
+            coro = abort(request_id)
+        else:
+            abort_all = getattr(engine, "abort_all_requests", None)
+            if not callable(abort_all):
+                logger.debug(
+                    "disconnect guard: engine %s has no abort surface; "
+                    "request %s left running",
+                    type(engine).__name__,
+                    request_id,
+                )
+                return
+            logger.warning(
+                "disconnect guard: %s lacks abort_request; falling back to "
+                "abort_all_requests for %s",
+                type(engine).__name__,
+                request_id,
+            )
+            coro = abort_all()
+        task = asyncio.create_task(coro)
         _pending_abort_tasks.add(task)
         task.add_done_callback(_pending_abort_tasks.discard)
         task.add_done_callback(
