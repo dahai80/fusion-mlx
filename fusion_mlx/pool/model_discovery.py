@@ -467,6 +467,26 @@ def _is_unsupported_model(model_path: Path) -> bool:
     )
 
 
+def _effective_model_name(model_path: Path) -> str:
+    """Name used for keyword heuristics.
+
+    For HF Hub cache entries the model directory is the snapshot commit hash
+    (e.g. ``models--mlx-community--Qwen3-Reranker-0.6B-4bit/snapshots/<hash>/``),
+    so ``model_path.name`` is the hash and carries no model identity. Walk up
+    to the ``models--org--repo`` ancestor and decode it; fall back to the
+    immediate name for flat local layouts.
+    """
+    cur = model_path
+    for _ in range(4):
+        if cur.name.startswith("models--"):
+            encoded = cur.name[len("models--") :]
+            return encoded.replace("--", "/")
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return model_path.name
+
+
 def _is_causal_lm_reranker(model_path: Path) -> bool:
     """
     Heuristic check for CausalLM models fine-tuned as rerankers.
@@ -476,7 +496,7 @@ def _is_causal_lm_reranker(model_path: Path) -> bool:
     scoring. We detect them by checking the model directory name for "reranker"
     or "rerank" keywords, since config.json is identical to a standard LLM.
     """
-    name_lower = model_path.name.lower()
+    name_lower = _effective_model_name(model_path).lower()
     return "reranker" in name_lower or "rerank" in name_lower
 
 
@@ -489,7 +509,7 @@ def _is_causal_lm_embedding(model_path: Path) -> bool:
     weights. We detect them by checking the model directory name for "embedding"
     or "embed" keywords, since config.json is identical to a standard LLM.
     """
-    name_lower = model_path.name.lower()
+    name_lower = _effective_model_name(model_path).lower()
     return "embedding" in name_lower or "embed" in name_lower
 
 
@@ -647,6 +667,11 @@ def detect_model_type(model_path: Path) -> ModelType:
         return "image"
     if _is_video_model(model_path):
         return "video"
+    # GLiNER NER models ship gliner_config.json (no config.json); the gliner
+    # package reads it directly. Without this, ModelDiscovery skips the dir
+    # entirely (_is_model_dir) and the NER route 404s on every gliner model.
+    if (model_path / "gliner_config.json").exists():
+        return "ner"
 
     config_path = model_path / "config.json"
     if not config_path.exists():
@@ -1231,10 +1256,11 @@ def _is_video_model(path: Path) -> bool:
 def _is_model_dir(path: Path) -> bool:
     """Check if a directory contains a valid model (config.json or image manifest)."""
     has_config = (path / "config.json").exists()
+    has_gliner_config = (path / "gliner_config.json").exists()
     has_image_manifest = _is_image_model(path)
     has_video_manifest = _is_video_model(path)
     return (
-        has_config or has_image_manifest or has_video_manifest
+        has_config or has_gliner_config or has_image_manifest or has_video_manifest
     ) and not _is_adapter_dir(path)
 
 
@@ -1497,6 +1523,17 @@ def _is_hf_cache_mlx_compatible(model_dir: Path, source_repo_id: str) -> bool:
             exc_info=True,
         )
 
+    # GLiNER NER models (gliner_config.json) are loaded by the `gliner` Python
+    # package, which accepts HF-format safetensors/bin natively (same as
+    # mlx_audio above). The MLX-metadata / repo-name checks below are LLM-centric
+    # and wrongly reject upstream GLiNER repos (e.g. gliner-community/*, which
+    # ship HF-format model.fp16.safetensors with no MLX metadata).
+    if (model_dir / "gliner_config.json").exists() and _has_any_weights(model_dir):
+        logger.info(
+            f"Accepting HF cache GLiNER NER model with HF-format weights: {source_repo_id}"
+        )
+        return True
+
     if not list(model_dir.glob("model*.safetensors")):
         # MLX-native .npz weights (e.g. mlx-community whisper STT checkpoints)
         # are loadable by mlx_audio.stt without conversion — treat as compatible.
@@ -1553,6 +1590,8 @@ def _register_model(
             engine_type: EngineType = "embedding"
         elif model_type == "reranker":
             engine_type = "reranker"
+        elif model_type == "ner":
+            engine_type = "ner"
         elif model_type == "vlm":
             engine_type = "vlm"
         elif model_type == "audio_stt":

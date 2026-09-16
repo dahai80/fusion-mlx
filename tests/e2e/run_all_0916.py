@@ -16,6 +16,10 @@ M_FAST = "mlx-community/Qwen3.5-4B-MLX-4bit"
 M_DEEP = "mlx-community/Qwen3.8-27B-4bit"
 M_LLAMA = "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
 M_VLM = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+M_STS = "iky1e/DeepFilterNet2-MLX"
+M_OCR = "mlx-community/GLM-OCR-4bit"
+M_RERANKER = "mlx-community/Qwen3-Reranker-0.6B-4bit"
+M_NER = "gliner-community/gliner_large-v2.5"
 
 results = []
 
@@ -371,9 +375,35 @@ def run_media(client):
         record("B6","PASS" if ok else "FAIL", f"status={r.status_code} text={d.get('text','')[:30]}")
     except Exception as e: record("B6","ERROR",str(e))
 
-    # B7 STS / B8 OCR — SKIP (no model)
-    record("B7","SKIP","no STS model")
-    record("B8","SKIP","no OCR model")
+    # B7 STS (speech-to-speech enhancement via DeepFilterNet)
+    try:
+        r = client.post(
+            "/v1/audio/process",
+            files={"file": ("a.wav", synth_wav_bytes(), "audio/wav")},
+            data={"model": M_STS},
+            timeout=120.0,
+        )
+        ct = r.headers.get("content-type", "")
+        ok = r.status_code == 200 and ct.startswith("audio/wav") and len(r.content) > 1000
+        record("B7", "PASS" if ok else "FAIL", f"status={r.status_code} ct={ct} bytes={len(r.content)}")
+    except Exception as e:
+        record("B7", "ERROR", str(e))
+
+    # B8 OCR (GLM-OCR on a red PNG data-URI)
+    try:
+        img = "data:image/png;base64," + red_png_b64(128, 128)
+        r = client.post(
+            "/v1/ocr",
+            json={"model": M_OCR, "image": img, "output_format": "markdown"},
+            timeout=120.0,
+        )
+        d = r.json()
+        results = d.get("results") or []
+        text = (results[0].get("text", "") if results else "")[:40]
+        ok = r.status_code == 200 and len(results) > 0
+        record("B8", "PASS" if ok else "FAIL", f"status={r.status_code} text={text!r}")
+    except Exception as e:
+        record("B8", "ERROR", str(e))
 
 def run_retrieval(client):
     # C1 embeddings
@@ -383,8 +413,50 @@ def run_retrieval(client):
         ok=r.status_code==200 and len(emb)==1024 and any(emb)
         record("C1","PASS" if ok else "FAIL", f"status={r.status_code} dim={len(emb)} nonzero={any(emb)}")
     except Exception as e: record("C1","ERROR",str(e))
-    record("C2","SKIP","no reranker model (downloading)")
-    record("C3","SKIP","no NER model")
+    # C2 rerank (Qwen3-Reranker-0.6B CausalLM yes/no scoring)
+    try:
+        r = client.post(
+            "/v1/rerank",
+            json={
+                "model": M_RERANKER,
+                "query": "machine learning frameworks",
+                "documents": [
+                    "PyTorch and TensorFlow are popular ML frameworks.",
+                    "A recipe for chocolate cake.",
+                    "Deep learning neural networks for vision.",
+                ],
+                "top_n": 2,
+                "return_documents": True,
+            },
+            timeout=120.0,
+        )
+        d = r.json()
+        res = d.get("results") or []
+        ok = r.status_code == 200 and len(res) > 0 and "relevance_score" in res[0]
+        top_doc = (res[0].get("document") or {}).get("text", "")[:30] if res else ""
+        record("C2", "PASS" if ok else "FAIL", f"status={r.status_code} n={len(res)} top={top_doc!r}")
+    except Exception as e:
+        record("C2", "ERROR", str(e))
+
+    # C3 NER (GLiNER entity extraction)
+    try:
+        r = client.post(
+            "/v1/ner",
+            json={
+                "model": M_NER,
+                "text": "Apple was founded by Steve Jobs in California in 1976.",
+                "labels": ["organization", "person", "location"],
+            },
+            timeout=120.0,
+        )
+        d = r.json()
+        data = d.get("data") or []
+        ents = data[0] if data else []
+        ok = r.status_code == 200 and len(ents) > 0
+        labels = sorted({e.get("label") for e in ents}) if ents else []
+        record("C3", "PASS" if ok else "FAIL", f"status={r.status_code} n_ents={len(ents)} labels={labels}")
+    except Exception as e:
+        record("C3", "ERROR", str(e))
 
 def run_ops(client):
     # D1 health

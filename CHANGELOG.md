@@ -43,6 +43,30 @@
   caplog assertion relied on `caplog.at_level("DEBUG")` setting the root
   logger, but a prior test in the 13k-suite left the module logger above
   DEBUG. Pinned the specific logger via `caplog.at_level(DEBUG, logger=...)`.
+- **GLiNER NER models rejected by discovery (#0916)** — GLiNER models ship
+  `gliner_config.json` (no `config.json`), so `_is_model_dir` skipped them
+  and `_is_hf_cache_mlx_compatible` rejected them as "non-MLX" (HF-format
+  safetensors, repo not `mlx-community`). The gliner package loads HF-format
+  weights natively (like mlx_audio). Now recognized at all three gates
+  (`_is_model_dir`, `detect_model_type` → `ner`, `_is_hf_cache_mlx_compatible`)
+  and routed to `NEREngine` (`_register_model` gained the missing `ner`
+  engine_type branch — previously fell through to `batched` → `mlx_lm.load`
+  → `FileNotFoundError` on the absent `config.json`).
+- **CausalLM reranker name heuristic failed for HF-cache models (#0916)** —
+  `_is_causal_lm_reranker` / `_is_causal_lm_embedding` checked
+  `model_path.name`, which for HF-cache entries is the snapshot commit hash
+  (e.g. `5f324548...`), carrying no model identity. Qwen3-Reranker was
+  detected as a plain LLM and loaded via `BatchedEngine`, then rejected by
+  the rerank route ("not a reranker model"). New `_effective_model_name`
+  walks up to the `models--org--repo` ancestor and decodes it.
+- **CausalLM reranker load: `trust_remote_code` + missing `chat_template`
+  (#0916)** — `_load_causal_lm` passed `trust_remote_code=` as a top-level
+  kwarg to `mlx_lm.load` (unsupported → `TypeError`), redundantly with the
+  same flag already inside `tokenizer_config`. Separately, the
+  `mlx-community/Qwen3-Reranker-0.6B-4bit` conversion ships no
+  `chat_template`, so `apply_chat_template` raised `ValueError` during
+  prefix/suffix derivation. Both fixed (kwarg dropped; ChatML fallback
+  template applied when the tokenizer lacks one).
 
 ### Changed
 - **Image-gen subprocess admission sizing (#0916)** — the subprocess-mode
