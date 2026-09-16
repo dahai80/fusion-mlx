@@ -93,3 +93,61 @@ async def test_unload_pool_fallback_no_server_returns_none(monkeypatch):
 
     result = await gcs._unload_pool_model("anything")
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_unload_pool_fallback_slash_id_resolves_double_hyphen(monkeypatch):
+    # #0916: pool entry keys use HF-cache double-hyphen naming
+    # (models--org--repo). A slash-form model id ("org/repo") must resolve
+    # to the "org--repo" entry, not "org-repo" (single hyphen). The old
+    # single-hyphen replace missed every slash-form unload -> 404.
+    calls = []
+
+    class _Pool:
+        def __init__(self):
+            # Only the canonical double-hyphen key exists in the pool.
+            self._entries = {
+                "mlx-community--Qwen3-0.6B-4bit": _make_entry(engine=object())
+            }
+
+        def get_entry(self, mid):
+            calls.append(("get_entry", mid))
+            return self._entries.get(mid)
+
+        async def unload_engine_async(self, mid):
+            calls.append(("unload", mid))
+
+    _patch_server(monkeypatch, _Pool())
+    import fusion_mlx.gui_compat.server as gcs
+
+    result = await gcs._unload_pool_model("mlx-community/Qwen3-0.6B-4bit")
+    assert result is True
+    # Must have probed the double-hyphen key (not single-hyphen).
+    probed = [mid for tag, mid in calls if tag == "get_entry"]
+    assert "mlx-community--Qwen3-0.6B-4bit" in probed
+    assert "mlx-community-Qwen3-0.6B-4bit" not in probed
+    assert ("unload", "mlx-community--Qwen3-0.6B-4bit") in calls
+
+
+@pytest.mark.asyncio
+async def test_resolve_pool_model_slash_id_resolves_double_hyphen(monkeypatch):
+    # Symmetric: the load fallback (_resolve_pool_model) must also resolve a
+    # slash-form id to the double-hyphen pool entry.
+    class _Pool:
+        def __init__(self):
+            self._entries = {
+                "mlx-community--Qwen3-0.6B-4bit": _make_entry(engine=object())
+            }
+
+        def get_entry(self, mid):
+            return self._entries.get(mid)
+
+        async def get_engine(self, mid):
+            return object()
+
+    _patch_server(monkeypatch, _Pool())
+    import fusion_mlx.gui_compat.server as gcs
+
+    result = await gcs._resolve_pool_model("mlx-community/Qwen3-0.6B-4bit")
+    assert result is not None
+    assert result["status"] == "ok"

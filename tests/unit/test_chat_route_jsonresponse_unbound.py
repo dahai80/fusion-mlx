@@ -66,8 +66,13 @@ def _make_client(engine) -> TestClient:
 
 
 def test_non_stream_chat_with_extra_params_does_not_500():
-    """Non-stream chat + unrecognized top-level param (enable_thinking) must
-    return 200, not 500 UnboundLocalError on the JSONResponse reference."""
+    """Non-stream chat + unrecognized top-level param must return 200, not 500
+    UnboundLocalError on the JSONResponse reference.
+
+    #0916: ``enable_thinking`` is now a recognized ChatCompletionRequest field
+    (mapped from the Anthropic-style ``thinking`` dict), so it no longer lands
+    in ``__pydantic_extra__``. Use a truly unrecognized key to exercise the
+    ignored-params -> X-Fusion-Ignored-Params path the regression guards."""
     client = _make_client(_PlainChatEngine())
     resp = client.post(
         "/v1/chat/completions",
@@ -75,7 +80,7 @@ def test_non_stream_chat_with_extra_params_does_not_500():
             "model": "test-model",
             "max_tokens": 32,
             "messages": [{"role": "user", "content": "hi"}],
-            "enable_thinking": True,
+            "unrecognized_client_knob": True,
         },
     )
     assert resp.status_code == 200, resp.text
@@ -83,7 +88,7 @@ def test_non_stream_chat_with_extra_params_does_not_500():
     assert body["choices"][0]["message"]["content"] == "hello"
     # X-Fusion-Ignored-Params must be attached (proves the unbound line ran).
     assert "X-Fusion-Ignored-Params" in resp.headers
-    assert "enable_thinking" in resp.headers["X-Fusion-Ignored-Params"]
+    assert "unrecognized_client_knob" in resp.headers["X-Fusion-Ignored-Params"]
 
 
 def test_non_stream_chat_plain_request_still_200():

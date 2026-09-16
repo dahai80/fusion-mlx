@@ -1497,6 +1497,13 @@ class VLMBatchedEngine(BaseEngine):
     ):
         from ..request import SamplingParams
 
+        # Fallback when max_tokens is None (Responses API / Ollama / clients
+        # that omit it). Without this the mlx_lm BatchGenerator receives None
+        # and crashes with "'>=' not supported between int and NoneType".
+        if not max_tokens or max_tokens <= 0:
+            from ..config import get_config
+
+            max_tokens = get_config().default_max_tokens
         extra_stop_ids = self._resolve_ocr_stop_token_ids() if self.is_ocr_model else []
         return SamplingParams(
             max_tokens=max_tokens,

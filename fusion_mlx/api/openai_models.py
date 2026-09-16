@@ -346,6 +346,14 @@ class ChatCompletionRequest(BaseModel):
     chat_template_kwargs: dict[str, Any] | None = None
     # Thinking budget (max thinking tokens, None = unlimited)
     thinking_budget: int | None = None
+    # #0916: Anthropic-style thinking control dict {"type":"enabled",
+    # "budget_tokens":N} / {"type":"disabled"}.Mapped to enable_thinking +
+    # reasoning_max_tokens by _map_thinking_to_enable_thinking so the
+    # OpenAI route honors explicit thinking intent instead of hitting the
+    # legacy force-False default.
+    thinking: dict | None = None
+    enable_thinking: bool | None = None
+    reasoning_max_tokens: int | None = None
     # SpecPrefill: per-request enable/disable (None = use model setting)
     specprefill: bool | None = None
     # SpecPrefill: per-request keep percentage (0.1-0.5, None = use model setting)
@@ -437,6 +445,25 @@ class ChatCompletionRequest(BaseModel):
             elif "max_completion_tokens" in values:
                 values.pop("max_completion_tokens")
         return values
+
+    @model_validator(mode="after")
+    def _map_thinking_to_enable_thinking(self) -> "ChatCompletionRequest":
+        # #0916: map Anthropic-style {"thinking":{"type":"enabled",
+        # "budget_tokens":N}} to the enable_thinking bool + reasoning_max_tokens
+        # int the engine chat_template_kwargs resolver consumes. Without this
+        # the OpenAI route's resolve_enable_thinking_default hits the legacy
+        # force-False path and silently suppresses thinking.
+        if self.thinking and isinstance(self.thinking, dict):
+            _ttype = self.thinking.get("type")
+            if _ttype == "enabled":
+                if self.enable_thinking is None:
+                    self.enable_thinking = True
+                _budget = self.thinking.get("budget_tokens")
+                if _budget and self.reasoning_max_tokens is None:
+                    self.reasoning_max_tokens = int(_budget)
+            elif _ttype == "disabled":
+                self.enable_thinking = False
+        return self
 
     @field_validator("temperature")
     @classmethod

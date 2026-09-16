@@ -3,6 +3,55 @@
 ## [Unreleased]
 
 ### Fixed
+- **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
+  HF-cache double-hyphen naming convention (`models--org--repo`, e.g.
+  `mlx-community--Qwen3.8-27B-4bit`), but the slash→hyphen fallback in
+  `server._unload_model_impl`, `server.load_model_public`, and the
+  gui_compat `_resolve_pool_model` / `_unload_pool_model` helpers used a
+  single-hyphen replace (`"/" → "-"`), producing `org-repo` and missing the
+  loaded `org--repo` entry. Every load/unload of a slash-form model id
+  (`mlx-community/Qwen3.8-27B-4bit`) returned 404, so the gui_compat unload
+  route (which shadows the main pool handler) leaked engines across
+  load/unload cycles and e2e defensive unloads between image/video tests
+  never freed memory → cascading InsufficientMemoryError under the A/B
+  harness. Fixed: `"/" → "--"` in all four resolve paths.
+- **Image/video generation admission rejection returns 507, not 500
+  (#0916)** — `InsufficientMemoryError` / `ModelTooLargeError` raised by
+  `EnginePool.get_engine` during image (`/v1/images/generations`) and video
+  (`/v1/videos/generate`) generation was swallowed by the routes' generic
+  `except Exception → HTTPException(500)`, masking a retryable memory
+  admission rejection as a permanent server fault. Now mapped to 507
+  (Insufficient Storage) with `Retry-After: 5` so clients can back off and
+  retry instead of treating the response as a hard failure.
+- **Kokoro TTS discovery + load (#0916)** — (1) `_has_any_weights` globbed
+  only `model*.safetensors`, but Kokoro names weights after the model
+  (`kokoro-v1_0.safetensors`), so discovery skipped it as "without
+  model*.safetensors". Broadened to accept any `*.safetensors`/`*.npz`/
+  `*.pth`/`*.bin`. (2) mlx_audio's `get_model_name_parts` falls back to the
+  snapshot hash as `model_type` when the cache path lacks a `hub/` segment
+  (fusion-mlx stores models under `~/.fusion-mlx/models/`, not the HF
+  `hub/` layout) → "not supported for tts". The `TTSEngine._detect_family`
+  helper now passes `model_type` explicitly for known families (kokoro,
+  chatterbox, vibevoice, voxcpm, csm, cosyvoice) and lets mlx_audio
+  auto-detect from config for the rest (qwen3_tts, kitten-tts).
+- **Non-stream chat `X-Fusion-Ignored-Params` header (#0916)** —
+  `enable_thinking` is now a recognized `ChatCompletionRequest` field
+  (mapped from the Anthropic-style `thinking` dict), so it no longer lands
+  in `__pydantic_extra__` and is not reported in the ignored-params header.
+  The regression test was updated to use a truly unrecognized key.
+- **Flaky `test_scope_logs_baseline_peak` under full suite (#0916)** — the
+  caplog assertion relied on `caplog.at_level("DEBUG")` setting the root
+  logger, but a prior test in the 13k-suite left the module logger above
+  DEBUG. Pinned the specific logger via `caplog.at_level(DEBUG, logger=...)`.
+
+### Changed
+- **Image-gen subprocess admission sizing (#0916)** — the subprocess-mode
+  admission requirement was the full `_compute_lease_bytes()` (60% of
+  available RAM, cap 32GB), forcing LLM eviction even when a small image
+  job (512×512, ~5GB) fit alongside a loaded LLM. Now resolves the local
+  snapshot and sums weight file sizes + the per-image activation peak;
+  falls back to the lease estimate only when the path can't be resolved.
+
 - **G2 watchdog false-poison on media GPU starvation (SR / in-process image
   gen)** — a long-running super-resolution job (286s for 2048×1152→4096×2304
   scale=2) ran synchronously on the event loop thread, blocking all async I/O

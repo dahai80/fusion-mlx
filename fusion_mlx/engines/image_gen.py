@@ -331,6 +331,37 @@ def _estimate_activation_peak(
     return max(512 * 1024**2, int(peak))
 
 
+def _resolve_weight_bytes(model_path: str) -> int:
+    """Sum on-disk weight file sizes for the model, resolved to its local
+    HF-cache snapshot. Returns 0 if the path can't be resolved (uncached
+    remote, missing dir) so the caller can fall back to the lease estimate.
+    """
+    from pathlib import Path
+
+    p = Path(str(model_path)).expanduser()
+    if p.is_dir():
+        candidate = p
+    else:
+        # Resolve HF repo id → local snapshot dir.
+        try:
+            from huggingface_hub import try_to_load_from_cache
+
+            cached = try_to_load_from_cache(
+                repo_id=str(model_path), filename="config.json"
+            )
+            if not cached or not isinstance(cached, str):
+                return 0
+            candidate = Path(cached).parent
+        except Exception:  # noqa: BLE001
+            return 0
+    try:
+        from ..pool.model_discovery import estimate_model_size
+
+        return estimate_model_size(candidate)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def _infer_variant(model_path: str) -> str:
     name = (model_path or "").lower()
     if "sd3" in name or "stable-diffusion-3" in name:
@@ -722,9 +753,30 @@ class ImageGenEngine(BaseNonStreamingEngine):
             logger.debug("image admission: engine_pool not set; skipping gate")
             return
         if subprocess_mode:
-            from ..media.job_manager import MediaJobManager
+            # #0916: the subprocess worker re-loads weights in an isolated
+            # process, so its real peak = model weights + per-image
+            # activation (the worker clears cache per image). Using the full
+            # _compute_lease_bytes() (60% of available RAM, cap 32GB) as the
+            # admission requirement was far too conservative — it forced LLM
+            # eviction even when a small image job (512x512, ~5GB) fit
+            # alongside the loaded LLM. Resolve the local snapshot and sum
+            # weight files for an accurate estimate; fall back to the lease
+            # only when the path can't be resolved (e.g. uncached remote).
+            activation = _estimate_activation_peak(
+                width,
+                height,
+                steps,
+                n_images,
+                self._variant,
+                subprocess_mode=True,
+            )
+            weight_bytes = _resolve_weight_bytes(self._model_path)
+            if weight_bytes > 0:
+                required = weight_bytes + activation
+            else:
+                from ..media.job_manager import MediaJobManager
 
-            required = MediaJobManager()._compute_lease_bytes()
+                required = MediaJobManager()._compute_lease_bytes()
         else:
             required = _estimate_activation_peak(
                 width,

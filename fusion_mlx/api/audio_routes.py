@@ -738,6 +738,17 @@ async def create_speech(request: AudioSpeechRequest):
             detail="TTS synthesis timed out (GPU busy), retry later",
             headers={"Retry-After": "5"},
         ) from exc
+    except ValueError as exc:
+        # Client-input errors (e.g. unsupported voice on a Base TTS model,
+        # invalid ref_audio) are 400, not 500 — the model loaded fine; the
+        # request parameters are wrong.
+        logger.warning(
+            "audio speech bad request for %s: %s(%s)",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception(
             "audio speech synthesize failed for %s: %s(%s)",

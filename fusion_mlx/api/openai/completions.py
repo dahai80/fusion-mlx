@@ -96,7 +96,14 @@ def _to_completion_result(result: Any, model: str):
             chat_dict = json.loads(body)
         comp = _chat_dict_to_completion_dict(chat_dict, model)
         logger.debug("completions non-stream json-response remap model=%s", model)
-        return JSONResponse(content=comp, headers=dict(result.headers))
+        # Drop content-length from copied headers — the remapped completion
+        # body is a different length than the original chat body, so the stale
+        # content-length causes "Too little data for declared Content-Length"
+        # (peer closed connection mid-response). Starlette recomputes it.
+        new_headers = {
+            k: v for k, v in result.headers.items() if k.lower() != "content-length"
+        }
+        return JSONResponse(content=comp, headers=new_headers)
     if hasattr(result, "model_dump"):
         chat_dict = result.model_dump()
         comp = _chat_dict_to_completion_dict(chat_dict, model)

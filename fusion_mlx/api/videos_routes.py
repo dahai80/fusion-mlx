@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from ..engines import VideoGenEngine
 from ..engines.video_backends import constraints_for, validate_params
-from ..exceptions import ModelNotFoundError
+from ..exceptions import InsufficientMemoryError, ModelNotFoundError, ModelTooLargeError
 from ..middleware.auth import check_rate_limit, verify_api_key
 from ..pool import EnginePool
 
@@ -471,6 +471,12 @@ async def generate_video(
         # 400 instead of the generic 500 so the client sees the remediation.
         logger.warning("Video generation rejected: %s", exc)
         raise HTTPException(400, str(exc))
+    except (InsufficientMemoryError, ModelTooLargeError) as exc:
+        # #0916: admission rejection is retryable (free memory / retry), not a
+        # generic 500. Map to 507 so clients can back off instead of treating
+        # it as a permanent server fault.
+        logger.warning("Video generation memory admission failed: %s", exc)
+        raise HTTPException(507, str(exc), headers={"Retry-After": "5"}) from exc
     except Exception as exc:
         logger.exception("Video generation failed")
         raise HTTPException(500, "Internal server error")

@@ -207,10 +207,22 @@ def _build_sampler_and_processors(
 
 
 def _get_model_vocab_size(self) -> int | None:
-    """Return vocab_size from model config, or None if unavailable."""
+    """Return vocab_size from model config, or None if unavailable.
+
+    Falls back to the tokenizer's vocab length when the model config doesn't
+    expose vocab_size (some mlx-lm quants omit it from ModelArgs). Without
+    this, GrammarConstraintProcessor is skipped → unconstrained output on
+    json_schema / regex requests (#0916 A10: malformed JSON).
+    """
     from ..utils.tokenizer import resolve_vocab_size
 
-    return resolve_vocab_size(self.model)
+    vs = resolve_vocab_size(self.model)
+    if vs is not None:
+        return vs
+    try:
+        return len(self.tokenizer)
+    except Exception:
+        return None
 
 
 def _get_think_token_id(self, attr: str) -> int | None:

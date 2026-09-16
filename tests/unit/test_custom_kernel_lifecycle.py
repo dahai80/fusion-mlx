@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for custom_kernels/lifecycle.py (P0底座)."""
 
+import logging
+
 import pytest
 
+from fusion_mlx.custom_kernels.lifecycle import logger as _lifecycle_logger
 from fusion_mlx.custom_kernels.lifecycle import with_kernel_scope
 
 
@@ -72,7 +75,12 @@ def test_scope_clear_cache_failure_swallowed(monkeypatch):
 
 
 def test_scope_logs_baseline_peak(caplog, fake_mx):
-    with caplog.at_level("DEBUG"):
+    # #0916: under the full suite a prior test leaves the root logger (or this
+    # module's logger) above DEBUG, so caplog.at_level("DEBUG") on root alone
+    # doesn't capture the module-level DEBUG record. Pin the specific logger's
+    # level via caplog.set_level so the record is captured regardless of
+    # cross-module logging pollution.
+    with caplog.at_level(logging.DEBUG, logger=_lifecycle_logger.name):
         with with_kernel_scope("logged"):
             pass
     assert any("kernel_scope[logged]" in r.message for r in caplog.records)
