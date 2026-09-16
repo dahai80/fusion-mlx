@@ -64,6 +64,24 @@ class TestResolveExpectedPpid:
 
 
 class TestInstallParentWatchdog:
+    @pytest.fixture(autouse=True)
+    def _stop_stray_watchdog_threads(self):
+        """#900: a watchdog thread left alive by an earlier test (this
+        module or any other that installs one) polls pwd.os.getppid on
+        its interval and races the getppid patches below, consuming the
+        install-time call. Stop + join any stray before AND after each
+        test in this class so ordering can never leak state."""
+
+        def _drain():
+            pwd.stop_watchdog()
+            t = pwd._active_watchdog_thread
+            if t is not None and t.is_alive():
+                t.join(timeout=1.0)
+
+        _drain()
+        yield
+        _drain()
+
     def test_noop_when_expected_ppid_is_none(self):
         assert pwd.install_parent_watchdog(None) is None
 
@@ -105,25 +123,21 @@ class TestInstallParentWatchdog:
     def test_loop_detects_ppid_change(self, monkeypatch):
         """Simulate the post-SIGKILL re-parent: live PPID flips to 1
         (launchd) while the expected PPID stays at the supervisor's old
-        PID. The watchdog must fire on the very next poll."""
+        PID. The watchdog must fire on the very next poll.
+
+        #900: the flip is driven by an explicit Event, NOT a call-ordinal
+        side_effect — under full-suite ordering a stray watchdog thread
+        from a prior test can consume the "first" getppid() call inside
+        the patch window, making install see the flipped value and
+        short-circuit to None. Event-based flip is immune to stray
+        consumers: every pre-flip call returns real_ppid."""
         real_ppid = os.getppid()
         fired = threading.Event()
         captured: list[tuple[int, int]] = []
-
-        # Toggle: getppid() first returns the real value (so install
-        # succeeds), then returns 1 after the flip to simulate launchd
-        # adopting the orphan.
-        call_count = {"n": 0}
+        flip = threading.Event()
 
         def fake_getppid():
-            call_count["n"] += 1
-            # First call happens inside install_parent_watchdog's
-            # install-time short-circuit check. Return real_ppid so the
-            # install proceeds to spawning a thread. Subsequent calls
-            # (from the loop body) return 1 to simulate the orphan.
-            if call_count["n"] == 1:
-                return real_ppid
-            return 1
+            return real_ppid if not flip.is_set() else 1
 
         def on_orphan(expected, observed):
             captured.append((expected, observed))
@@ -134,9 +148,11 @@ class TestInstallParentWatchdog:
                 real_ppid, interval=0.05, on_orphan=on_orphan
             )
             assert thread is not None
-            # The loop fires immediately on the second poll (no initial
-            # sleep). 2 s ceiling guards against runaway tests on
-            # severely overloaded CI; in practice this resolves in <50 ms.
+            # Simulate launchd adopting the orphan AFTER install succeeded.
+            flip.set()
+            # The loop fires on the next poll. 2 s ceiling guards against
+            # runaway tests on severely overloaded CI; in practice this
+            # resolves in <50 ms.
             assert fired.wait(timeout=2.0), "watchdog never fired"
         # Thread is daemon — even if join times out the suite proceeds.
         thread.join(timeout=1.0)
@@ -180,21 +196,21 @@ class TestInstallParentWatchdog:
             call_count["n"] += 1
             fired.set()
 
-        # Simulate the always-orphan condition: after install-time
-        # check, getppid always returns 1.
-        getppid_calls = {"n": 0}
+        # Simulate the always-orphan condition: getppid returns the real
+        # value until the flip event, then always 1. Event-based (not
+        # call-ordinal) per #900 — immune to stray getppid consumers
+        # racing inside the patch window under full-suite ordering.
+        flip = threading.Event()
 
         def fake_getppid():
-            getppid_calls["n"] += 1
-            if getppid_calls["n"] == 1:
-                return real_ppid
-            return 1
+            return real_ppid if not flip.is_set() else 1
 
         with patch.object(pwd.os, "getppid", side_effect=fake_getppid):
             thread = pwd.install_parent_watchdog(
                 real_ppid, interval=0.02, on_orphan=on_orphan
             )
             assert thread is not None
+            flip.set()
             assert fired.wait(timeout=2.0)
             # Give the loop a chance to (incorrectly) fire again. If it
             # had been written without an exit-after-fire, this 200 ms
