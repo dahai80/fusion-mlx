@@ -3,6 +3,22 @@
 ## [Unreleased]
 
 ### Fixed
+- **G2 watchdog false-poison on media GPU starvation (SR / in-process image
+  gen)** — a long-running super-resolution job (286s for 2048×1152→4096×2304
+  scale=2) ran synchronously on the event loop thread, blocking all async I/O
+  and monopolizing the shared Metal command queue. The co-resident LLM worker
+  was not hung — only starved of GPU time — but its heartbeat went stale past
+  the 120s watchdog timeout, so the G2 watchdog false-poisoned the LLM
+  executor and marked the engine dead. SR returned 200 two minutes later, but
+  the LLM was already dead → 500 on an unrelated in-flight LLM stream request
+  (production incident). Three-layer fix: (1) the G2 watchdog now defers the
+  LLM poison while a media job is active (`set_media_job_active`), bounded by
+  `FUSION_LLM_WATCHDOG_MEDIA_DEFER_S` (default 3600s) so a genuinely stuck
+  media job still poisons; (2) the SR route runs `super_resolve` via
+  `asyncio.to_thread` so the event loop stays responsive (keepalive, health,
+  other requests) and sets/clears the media flag in a `finally`; (3) the
+  in-process image-gen path sets the same flag (subprocess mode does not — its
+  child process owns a separate Metal context).
 - **image-gen deadlock + log pollution (#901, #899)** — four-view image
   generation under memory pressure wedged the server: the enforcer
   hard-aborted the very media job its admission gate had just admitted

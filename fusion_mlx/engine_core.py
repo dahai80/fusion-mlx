@@ -259,6 +259,42 @@ _LLM_WATCHDOG_TIMEOUT_S = float(os.environ.get("FUSION_LLM_WATCHDOG_TIMEOUT", "1
 # (same accepted hazard as the video/image poison path).
 _llm_watchdog_engine_ref: weakref.ref | None = None
 _llm_engine_ref_lock = threading.Lock()
+# G2-SR: media job active flag. When a media job (super-resolution, in-process
+# image gen) is running on the shared Metal command queue, it starves the LLM
+# worker thread — the heartbeat goes stale not because the worker hung (Metal
+# assertion/OOM) but because GPU time is monopolized by the media job. Without
+# this signal the G2 watchdog false-poisons the LLM executor at 120s, killing
+# a perfectly healthy engine (#901-class production incident: 2048x1152 SR
+# took 286s, LLM poisoned at 123s, 500 on the co-resident LLM request). The
+# flag is set/cleared by the media route (images_sr / image_gen in-process)
+# in a try/finally so it always clears on exit. The watchdog defers poison
+# while the flag is set, bounded by _LLM_WATCHDOG_MEDIA_DEFER_S so a truly
+# stuck media job (not just a slow one) eventually triggers recovery.
+_media_job_active: bool = False
+_media_job_active_lock = threading.Lock()
+_media_defer_start: float = 0.0
+_media_defer_logged: bool = False
+# Max time the watchdog defers poison while a media job is active. Generous
+# default: SR on large images can run 300-600s; a true Metal assertion crashes
+# the process regardless. Env-overridable for operators who want a tighter
+# bound. After this, the watchdog stops deferring and poisons normally.
+_LLM_WATCHDOG_MEDIA_DEFER_S = float(
+    os.environ.get("FUSION_LLM_WATCHDOG_MEDIA_DEFER_S", "3600")
+)
+
+
+def set_media_job_active(active: bool) -> None:
+    global _media_job_active, _media_defer_start, _media_defer_logged
+    with _media_job_active_lock:
+        _media_job_active = active
+        if not active:
+            _media_defer_start = 0.0
+            _media_defer_logged = False
+
+
+def is_media_job_active() -> bool:
+    with _media_job_active_lock:
+        return _media_job_active
 
 
 def register_llm_engine_for_watchdog(engine: Any) -> None:
@@ -315,7 +351,7 @@ def update_llm_heartbeat() -> None:
 
 
 def _llm_watchdog_tick() -> None:
-    global _llm_executor_poisoned
+    global _llm_executor_poisoned, _media_defer_start, _media_defer_logged
     while not _llm_watchdog_stop.is_set():
         _llm_watchdog_stop.wait(10.0)
         if _llm_watchdog_stop.is_set():
@@ -329,6 +365,35 @@ def _llm_watchdog_tick() -> None:
         # A step is pending (deadline != 0) and the heartbeat has not
         # advanced within the watchdog window — the worker is hung.
         if now - hb > _LLM_WATCHDOG_TIMEOUT_S:
+            # G2-SR: if a media job is active, the LLM worker is likely
+            # starved on the shared Metal command queue (not hung). Defer
+            # poison so the engine survives; the heartbeat advances once
+            # the media job releases the GPU. Bounded by the media defer
+            # budget so a truly stuck media job still triggers recovery.
+            if is_media_job_active():
+                if _media_defer_start == 0.0:
+                    _media_defer_start = now
+                if now - _media_defer_start < _LLM_WATCHDOG_MEDIA_DEFER_S:
+                    if not _media_defer_logged:
+                        _media_defer_logged = True
+                        logger.warning(
+                            "G2 llm watchdog: heartbeat stale %.0fs but "
+                            "media job active — deferring poison (GPU "
+                            "starvation suspected, not hang). LLM will "
+                            "recover when the media job releases the GPU.",
+                            now - hb,
+                        )
+                    continue
+                else:
+                    logger.error(
+                        "G2 llm watchdog: media job active for %.0fs, "
+                        "heartbeat stale %.0fs — exceeded media defer budget "
+                        "(%ds). Poisoning; the media job may be stuck.",
+                        now - _media_defer_start,
+                        now - hb,
+                        _LLM_WATCHDOG_MEDIA_DEFER_S,
+                    )
+                    # fall through to poison
             with _llm_executor_poison_lock:
                 if _llm_executor_poisoned:
                     continue

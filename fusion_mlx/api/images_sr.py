@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import logging
@@ -69,8 +70,23 @@ async def super_resolution(
     except Exception as exc:
         logger.warning("sr decode failed: %s", exc)
         raise HTTPException(422, "could not decode image") from exc
+    # G2-SR: super_resolve is a long-running synchronous Metal workload (tile
+    # loop with mx.eval). Previously it ran on the event loop thread, blocking
+    # ALL async I/O for the full duration (2048x1152 scale=2 = 286s) and
+    # starving the co-resident LLM worker on the shared Metal command queue.
+    # The G2 watchdog then false-poisoned the LLM at 120s → 500 on an
+    # unrelated LLM request. Two fixes:
+    #   1. asyncio.to_thread — unblocks the event loop (keepalive, health,
+    #      other requests) while Metal work runs in a worker thread.
+    #   2. set_media_job_active — signals the G2 watchdog to defer the LLM
+    #      poison while the media job holds the GPU (the LLM recovers once
+    #      SR releases Metal). Cleared in finally so it always resets.
+    from fusion_mlx.engine_core import set_media_job_active
+
+    set_media_job_active(True)
     try:
-        sr = super_resolve(
+        sr = await asyncio.to_thread(
+            super_resolve,
             inp,
             model_path=model_path,
             scale=scale,
@@ -80,6 +96,8 @@ async def super_resolution(
     except Exception as exc:
         logger.exception("sr inference failed")
         raise HTTPException(500, "super-resolution failed") from exc
+    finally:
+        set_media_job_active(False)
     from PIL import Image
 
     out_hwc = sr[0]

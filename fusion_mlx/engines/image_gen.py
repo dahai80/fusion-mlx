@@ -899,6 +899,14 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 activity_id=activity_id,
             )
 
+        # G2-SR: in-process image gen runs on the shared Metal command queue
+        # and can starve the LLM worker (same hazard as SR). Subprocess mode
+        # does NOT (child process has its own Metal context). Set the media
+        # flag only for the in-process path so the G2 watchdog defers.
+        from ..engine_core import set_media_job_active
+
+        set_media_job_active(True)
+
         def _generate():
             mx.default_stream(mx.default_device())
             images: list[bytes] = []
@@ -1235,6 +1243,14 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 logger.debug(
                     "media reservation release: pool unavailable", exc_info=True
                 )
+            # G2-SR: clear the media job active flag so the G2 watchdog
+            # resumes normal LLM policing.
+            try:
+                from ..engine_core import set_media_job_active
+
+                set_media_job_active(False)
+            except Exception:  # noqa: BLE001
+                pass
             await self._finish_activity(activity_id)
 
     async def _generate_subprocess(
