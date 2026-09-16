@@ -1070,67 +1070,81 @@ class Server:
         # file handler to the root logger; console logging is configured
         # separately by ``configure_logging`` from cli_serve. Best-effort: a
         # filesystem failure here must not block server startup.
+        #
+        # #899: skip attaching the file handler when running under pytest.
+        # Tests that construct Server()/create_app() would otherwise attach a
+        # root-logger file handler to the live server's server.log, polluting
+        # it with test log lines (httpx testserver, fake enforcer victims)
+        # 4-5x duplicated and breaking incident forensics on that file.
+        # FUSION_LOG_FILE_DISABLE=1 also disables it for non-pytest use.
         try:
             import os
 
-            from .logging_config import configure_file_logging
+            if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get(
+                "FUSION_LOG_FILE_DISABLE", ""
+            ).lower() in ("1", "true", "yes", "on"):
+                logger.debug("file logging skipped (pytest or FUSION_LOG_FILE_DISABLE)")
+            else:
+                from .logging_config import configure_file_logging
 
-            log_dir = Path(self.config.settings_dir) / "logs"
-            _json = os.environ.get("FUSION_LOG_JSON", "").strip().lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            )
-            # OPS-P4-8 (#0907 audit): retention was hard-coded to the 7-day
-            # default in configure_file_logging. Read it from env, then the
-            # settings.json logging.retention_days field, so a long-lived
-            # deployment can grow/shrink the rotation window without editing
-            # code. Invalid values fall back to 7 loudly.
-            _retention = 7
-            _raw_retention = os.environ.get("FUSION_LOG_RETENTION_DAYS", "").strip()
-            if not _raw_retention and isinstance(self.settings, object):
-                try:
-                    _cfg = getattr(self.settings, "as_dict", lambda: {})()
-                    _retention_cfg = (_cfg.get("logging", {}) or {}).get(
-                        "retention_days"
-                    )
-                    if _retention_cfg is not None:
-                        _raw_retention = str(_retention_cfg)
-                except Exception:  # noqa: BLE001
-                    logger.debug(
-                        "logging retention read from settings failed", exc_info=True
-                    )
-            if _raw_retention:
-                try:
-                    _retention = int(_raw_retention)
-                    if _retention < 1:
-                        raise ValueError
-                except (ValueError, TypeError):
-                    logger.warning(
-                        "FUSION_LOG_RETENTION_DAYS/logging.retention_days=%r is "
-                        "not a positive int; falling back to 7-day retention",
-                        _raw_retention,
-                    )
-                    _retention = 7
-            # OP-1: mirror the console JSON knob onto the file handler so the
-            # rotated server.log stays consistent with the stream format.
-            # OPS-FIX: level was hardcoded "INFO", ignoring --log-level DEBUG
-            # set via cli_serve/settings.json. Read the root logger's effective
-            # level so the file handler matches the console handler.
-            import logging as _stdlib_logging
+                log_dir = Path(self.config.settings_dir) / "logs"
+                _json = os.environ.get("FUSION_LOG_JSON", "").strip().lower() in (
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                )
+                # OPS-P4-8 (#0907 audit): retention was hard-coded to the 7-day
+                # default in configure_file_logging. Read it from env, then the
+                # settings.json logging.retention_days field, so a long-lived
+                # deployment can grow/shrink the rotation window without editing
+                # code. Invalid values fall back to 7 loudly.
+                _retention = 7
+                _raw_retention = os.environ.get("FUSION_LOG_RETENTION_DAYS", "").strip()
+                if not _raw_retention and isinstance(self.settings, object):
+                    try:
+                        _cfg = getattr(self.settings, "as_dict", lambda: {})()
+                        _retention_cfg = (_cfg.get("logging", {}) or {}).get(
+                            "retention_days"
+                        )
+                        if _retention_cfg is not None:
+                            _raw_retention = str(_retention_cfg)
+                    except Exception:  # noqa: BLE001
+                        logger.debug(
+                            "logging retention read from settings failed", exc_info=True
+                        )
+                if _raw_retention:
+                    try:
+                        _retention = int(_raw_retention)
+                        if _retention < 1:
+                            raise ValueError
+                    except (ValueError, TypeError):
+                        logger.warning(
+                            "FUSION_LOG_RETENTION_DAYS/logging.retention_days=%r is "
+                            "not a positive int; falling back to 7-day retention",
+                            _raw_retention,
+                        )
+                        _retention = 7
+                # OP-1: mirror the console JSON knob onto the file handler so the
+                # rotated server.log stays consistent with the stream format.
+                # OPS-FIX: level was hardcoded "INFO", ignoring --log-level DEBUG
+                # set via cli_serve/settings.json. Read the root logger's effective
+                # level so the file handler matches the console handler.
+                import logging as _stdlib_logging
 
-            _root_level = _stdlib_logging.getLogger().getEffectiveLevel()
-            _file_level = (
-                _stdlib_logging.getLevelName(_root_level) if _root_level > 0 else "INFO"
-            )
-            configure_file_logging(
-                log_dir=log_dir,
-                level=_file_level,
-                retention_days=_retention,
-                format_style="json" if _json else "standard",
-            )
-            logger.info("File logging enabled: %s", log_dir / "server.log")
+                _root_level = _stdlib_logging.getLogger().getEffectiveLevel()
+                _file_level = (
+                    _stdlib_logging.getLevelName(_root_level)
+                    if _root_level > 0
+                    else "INFO"
+                )
+                configure_file_logging(
+                    log_dir=log_dir,
+                    level=_file_level,
+                    retention_days=_retention,
+                    format_style="json" if _json else "standard",
+                )
+                logger.info("File logging enabled: %s", log_dir / "server.log")
         except Exception:
             logger.debug("configure_file_logging failed (non-fatal)", exc_info=True)
 
@@ -2725,9 +2739,12 @@ def main():
         model_dir=args.model_dir,
     )
     if args.memory_tier == "auto":
-        from .config import auto_detect_memory_tier
+        # OP-901 (defect 4): prefer settings.json memory.memory_guard_tier
+        # over auto-detect so an operator's `custom` + ceiling applies at
+        # boot without a CLI flag. Explicit --memory-tier still wins.
+        from ._cli_base import apply_settings_memory_tier
 
-        config.memory.tier = auto_detect_memory_tier()
+        apply_settings_memory_tier(config, cli_tier="auto")
     else:
         config.memory.tier = getattr(
             config.memory.tier.__class__, args.memory_tier, config.memory.tier

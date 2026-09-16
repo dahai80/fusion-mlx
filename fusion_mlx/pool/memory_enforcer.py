@@ -415,6 +415,17 @@ class ProcessMemoryEnforcer:
         # mx.get_active_memory计入, ANE侧只补差额; shared部分在此去重.
         self._iosurface_shared_bytes: int = 0
         self._ane_memory_budget_bytes: int = 0
+        # OP-901 (defect 1): media job admission reservation. When an image/
+        # video job passes admit_media_job, its projected peak was already
+        # checked <= ceiling. But the hard watermark (ceiling * 0.95) sits
+        # BELOW ceiling, so once the job's activations push real usage past
+        # 95% the enforcer hard-aborts the very job it just admitted — a
+        # self-conflict that wedged four-view FLUX generation (#901). While a
+        # reservation is active the hard watermark is raised to the full
+        # ceiling so admitted usage is tolerated up to the limit the gate
+        # already approved. Set/cleared by ImageGenEngine.generate prologue/
+        # finally. Thread-safe single-slot (one media job at a time per pool).
+        self._media_reservation_bytes: int = 0
 
     def update_loaded_model_bytes(self, delta: int) -> None:
         """Adjust tracked loaded model byte count."""
@@ -501,6 +512,32 @@ class ProcessMemoryEnforcer:
     def set_ane_memory_budget_gb(self, gb: float) -> None:
         with self._state_lock:
             self._ane_memory_budget_bytes = max(0, int(gb * 1024**3))
+
+    def register_media_reservation(self, bytes_: int) -> None:
+        # OP-901 (defect 1): raise the hard watermark to the full ceiling for
+        # the duration of an admitted media job so the enforcer does not
+        # hard-abort the job it just admitted (usage between 95% and 100% of
+        # ceiling is expected for a job whose projected peak was approved).
+        b = max(0, int(bytes_))
+        with self._state_lock:
+            self._media_reservation_bytes = b
+        if b > 0:
+            logger.info(
+                "media reservation registered: %s (hard watermark raised to "
+                "ceiling for admitted job)",
+                _format_gb(b),
+            )
+
+    def unregister_media_reservation(self) -> None:
+        with self._state_lock:
+            prev = self._media_reservation_bytes
+            self._media_reservation_bytes = 0
+        if prev > 0:
+            logger.info("media reservation released: %s", _format_gb(prev))
+
+    def get_media_reservation_bytes(self) -> int:
+        with self._state_lock:
+            return self._media_reservation_bytes
 
     @staticmethod
     def _normalize_tier(tier: str) -> str:
@@ -1398,6 +1435,14 @@ class ProcessMemoryEnforcer:
         current = self._current_usage_bytes()
         soft = int(ceiling * self._soft_threshold)
         hard = int(ceiling * self._hard_threshold)
+        # OP-901 (defect 1): while a media job's admission reservation is
+        # active, the hard watermark is raised to the full ceiling. The job's
+        # projected peak was already approved <= ceiling by admit_media_job;
+        # without this raise, usage in [95%, 100%] of ceiling trips hard
+        # pressure and aborts the admitted job — the self-conflict that
+        # wedged four-view FLUX (#901). Emergency (over-ceiling) still fires.
+        if self._media_reservation_bytes > 0:
+            hard = ceiling
         prev_level = self._pressure_level
         emergency = self._is_emergency_pressure(current, ceiling)
 

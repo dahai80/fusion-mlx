@@ -301,6 +301,17 @@ Examples:
         "--completion-batch-size", type=int, default=32, help="Completion batch size"
     )
     serve_parser.add_argument(
+        "--memory-tier",
+        choices=["safe", "balanced", "aggressive", "custom", "auto"],
+        default="auto",
+        help=(
+            "Memory enforcement tier (auto = settings.json "
+            "memory.memory_guard_tier if set, else derive from unified "
+            "memory size). Mirrors the `python -m fusion_mlx.server` flag "
+            "so both entry points accept the same core options (#901)."
+        ),
+    )
+    serve_parser.add_argument(
         "--enable-prefix-cache",
         action="store_true",
         default=True,
