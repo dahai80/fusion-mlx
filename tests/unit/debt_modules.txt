@@ -100,18 +100,10 @@ test_per_request_thinking_budget.py
 # test_settings.py already KEEP_QUARANTINED round10 for the same settings
 # redesign. REDESIGN-DRIFT (removed feature).
 test_server.py
-# KEEP_QUARANTINED test_settings.py (eval round10): collection ImportError —
-# file imports ~20 layered settings classes (AuthSettings, CacheSettings,
-# ClaudeCodeSettings, GlobalSettings, HuggingFaceSettings, MCPSettings,
-# MemorySettings, ModelSettings, NetworkSettings, SamplingSettings,
-# SchedulerSettings, ServerSettings, ...) + BURST_DECODE_MODES/
-# DEFAULT_BURST_DECODE_MODE + burst_decode_env from fusion_mlx.settings.
-# fusion-mlx settings.py has only 4 classes (IntegrationSettings, SubKeyEntry,
-# _SettingsAuthView, Settings) — rapid-mlx layered-arch, not ported. burst_decode
-# exists only in admin UI (JS/html/i18n) not Python. Rescue requires porting the
-# rapid-mlx settings architecture or rewriting 20+ class refs — feature-port,
-# not test-debt. Leave quarantined.
-test_settings.py
+# test_settings.py UNQUARANTINED (#886 finding 2, 2026-09-16): file was
+# rewritten against the current single-Settings contract (round-trip perms,
+# auth view, IntegrationSettings, api_key scrubbing) — 16/16 pass on main.
+# The old round10 entry described the pre-rewrite layered-arch file.
 
 ## runtime-fail (315)
 # test_447_stream_tool_choice_auto.py RESCUED 2026-08-18 (13 pass + 1 xfail):
