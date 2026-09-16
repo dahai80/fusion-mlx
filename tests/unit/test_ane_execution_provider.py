@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Unit tests for ANEExecutionProvider trait (P0底座)."""
+"""Unit tests for ANEExecutionProvider trait (P0底座) + BaseEngine abort surface (#903)."""
 
-from fusion_mlx.engine.base import ANEExecutionProvider, BaseEngine
+import pytest
+
+from fusion_mlx.engines.base import ANEExecutionProvider, BaseEngine
 
 
 class _PlainEngine(BaseEngine):
@@ -10,6 +12,10 @@ class _PlainEngine(BaseEngine):
     @property
     def model_name(self):
         return "plain"
+
+    @property
+    def model_type(self):
+        return None
 
     @property
     def tokenizer(self):
@@ -84,3 +90,58 @@ def test_ane_override_resident_memory():
     e._ane_resident_bytes = 2 * 1024**3
     assert e.ane_resident_memory() == 2 * 1024**3
     assert e.ane_supported() is True
+
+
+# --- #903: BaseEngine.abort_request unified surface ---
+
+
+class _FakeEngineCoreEngine:
+    """Innermost engine (AsyncEngineCore.engine shape)."""
+
+    def __init__(self):
+        self.aborted = []
+
+    async def abort_request(self, request_id):
+        self.aborted.append(request_id)
+        return True
+
+
+class _FakeEngineCore:
+    def __init__(self):
+        self.engine = _FakeEngineCoreEngine()
+
+
+class _EngineWithCore(_PlainEngine):
+    """Engine shape mirroring BatchedEngine/VLMBatchedEngine (_engine attr)."""
+
+    def __init__(self):
+        self._engine = _FakeEngineCore()
+
+
+class _EngineWithoutCore(_PlainEngine):
+    def __init__(self):
+        self._engine = None
+
+
+@pytest.mark.asyncio
+async def test_abort_request_delegates_to_enginecore():
+    e = _EngineWithCore()
+    ok = await e.abort_request("req-1")
+    assert ok is True
+    assert e._engine.engine.aborted == ["req-1"]
+
+
+@pytest.mark.asyncio
+async def test_abort_request_no_core_returns_false():
+    e = _EngineWithoutCore()
+    assert await e.abort_request("req-1") is False
+
+
+@pytest.mark.asyncio
+async def test_vlm_shape_engine_has_abort_request():
+    """The exact #903 repro shape: engine with only _engine + no local
+    abort_request previously raised AttributeError from _disconnect_guard."""
+    e = _EngineWithCore()
+    assert hasattr(e, "abort_request")
+    await e.abort_request("req-42")
+    assert e._engine.engine.aborted == ["req-42"]

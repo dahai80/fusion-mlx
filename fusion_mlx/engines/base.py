@@ -345,6 +345,18 @@ class BaseEngine(ABC):
             return ec.get_cache_stats()
         return None
 
+    async def abort_request(self, request_id: str) -> bool:
+        # #903: unified per-request abort surface. _disconnect_guard and
+        # routes_internal/health call engine.abort_request(request_id), but
+        # only AsyncEngineCore exposed it — VLMBatchedEngine raised
+        # AttributeError on client disconnect so the request kept generating.
+        # Delegate to the wrapped EngineCore (same shape as
+        # abort_all_requests below).
+        ec = getattr(self, "_engine", None)
+        if ec and getattr(ec, "engine", None):
+            return await ec.engine.abort_request(request_id)
+        return False
+
     async def abort_all_requests(self) -> int:
         ec = getattr(self, "_engine", None)
         if ec and getattr(ec, "engine", None):
@@ -521,6 +533,26 @@ class BaseNonStreamingEngine(ABC):
             )
         return aborted
 
+    async def abort_request(self, request_id: str) -> bool:
+        # #903: per-request abort for non-streaming (activity-tracked)
+        # engines. The disconnect guard and /v1/requests/{id}/cancel call
+        # this; cancel the single activity task matching the request id.
+        # Returns True if a matching task was cancelled.
+        with self._active_lock:
+            task = self._active_tasks.get(request_id)
+            if task is None:
+                return False
+            del self._active_tasks[request_id]
+        if not task.done():
+            task.cancel()
+            logger.info(
+                "%s: aborted request %s (client disconnect/cancel)",
+                type(self).__name__,
+                request_id,
+            )
+            return True
+        return False
+
     async def _finish_activity(self, activity_id: str) -> None:
         self._end_activity(activity_id)
 
@@ -559,3 +591,54 @@ class BaseNonStreamingEngine(ABC):
     @abstractmethod
     def get_stats(self) -> dict[str, Any]:
         pass
+
+
+class ANEExecutionProvider:
+    """Opt-in mixin for engines that can offload submodules to Apple ANE.
+
+    Non-intrusive by design: engines MUST explicitly inherit this mixin to
+    advertise ANE capability. The LLM autoregressive mainline (BatchedEngine /
+    VLMBatchedEngine / ImageGenEngine) never inherits it, so the mainline
+    stays Metal-only. All hooks default to "ANE disabled" so an engine that
+    inherits but has no CoreML model behaves identically to a plain Metal
+    engine.
+
+    Red lines enforced here:
+      - ane_pinned=True  : ANE engines are never LRU-evicted by the normal
+        admission loop (weights stay resident; eviction would lose compiled
+        CoreML state).
+      - ane_pageable=False: ANE resident memory is not reclaimable by jetsam
+        in the same way as Metal wired pages; the enforcer accounts for it
+        separately via register_ane_resident / get_ane_resident_bytes.
+      - ane_fallback_to_metal: on any CoreML failure / ABI break / thermal
+        throttle, flip _ane_enabled off and the engine continues on Metal.
+    """
+
+    _ane_enabled: bool = False
+    _ane_resident_bytes: int = 0
+    _ane_coreml_model: object | None = None
+
+    def ane_supported(self) -> bool:
+        return False
+
+    def ane_warmup(self) -> bool:
+        return False
+
+    def ane_resident_memory(self) -> int:
+        return self._ane_resident_bytes
+
+    @property
+    def ane_pinned(self) -> bool:
+        return True
+
+    @property
+    def ane_pageable(self) -> bool:
+        return False
+
+    def ane_fallback_to_metal(self) -> None:
+        if self._ane_enabled:
+            logger.warning(
+                "ANE fallback to Metal triggered for engine (resident=%d bytes)",
+                self._ane_resident_bytes,
+            )
+        self._ane_enabled = False

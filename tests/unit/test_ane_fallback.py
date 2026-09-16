@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for ANE fallback / degradation tolerance (P0底座)."""
 
-from fusion_mlx.engine.base import ANEExecutionProvider
+from fusion_mlx.engines.base import ANEExecutionProvider
 
 
 class _AneEngine(ANEExecutionProvider):
