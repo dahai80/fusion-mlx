@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- **C++ Shim extension skeleton + Tier-1 safety base (PR-A)** — first PR of
+  the llama.cpp-capability landing roadmap. New `fusion_mlx/shim/` package:
+  nanobind+MLX CMake extension with a Python degrade fallback (`fast.py`),
+  `FUSION_SHIM_ENABLED` master switch (default OFF). Tier-1 safety base:
+  `hardware_probe` (MTLDevice BF16/FP8 MMA + chip gen), `alignas(128)` shared
+  structs, `memory_sentinel` (dispatch_source MEMORYPRESSURE, additive to
+  ProcessMemoryEnforcer), C-ABI exception envelope, `check_metal_spill.sh`
+  L1 gate. Build via `scripts/build_shim.sh`; degrades gracefully when unbuilt.
+
 ### Fixed
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
   HF-cache double-hyphen naming convention (`models--org--repo`, e.g.
