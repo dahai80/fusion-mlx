@@ -42,6 +42,17 @@
   (NaN-sentinel + repeated-token-stall detection, 32k long-text harness).
   All primitives deterministic + unit-testable without a real model;
   real-model tests gated by `FUSION_MLX_REAL_MODEL_TESTS=1` + running server.
+- **Fused RoPE + RMSNorm P0 operators (PR-G)** — `shim/fused_ops.py` adds
+  two P0 bandwidth operators: `fused_rmsnorm_residual` (RMSNorm + residual
+  add in one `@mx.compile` graph, eliminating the separate `+` dispatch;
+  v2 doc §5.6: threadgroup reduction, no global atomic) and `fused_rope`
+  (FP32 position computation + optional YaRN/NTK-by-parts frequency scaling
+  for context extension; stock `mx.fast.rope` has no YaRN path + computes
+  positions in input dtype → fp16 overflow at long context). Both verified
+  against stock MLX via the PR-F golden reference harness (KL < 1e-6).
+  `maybe_patch_model_rmsnorm` patches standard mlx_lm layers in-place.
+  Degrade switches `FUSION_SHIM_FUSED_RMSNORM`/`FUSION_SHIM_FUSED_ROPE`
+  (default OFF).
 
 ### Fixed
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
