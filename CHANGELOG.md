@@ -33,6 +33,15 @@
   the fused fast path (dynamic candidate set); DRY keeps it. Also fixes
   `repetition_penalty` being dropped at the `_common._build_sampling_params`
   API mapping (pre-existing bug).
+- **Golden Reference alignment harness (PR-F)** — `eval/golden_reference.py`
+  provides deterministic numeric primitives for verifying enhanced code
+  paths (Shim kernels, fused RoPE/RMSNorm, quantized KV, spec decode) match
+  the stock MLX reference: `kl_divergence`/`logits_kl`/`assert_logits_aligned`
+  (default KL tol 1e-6 nats, v2 doc §7 L2), `MemoryGrowthTracker` (psutil RSS
+  sampler, post-warmup slope leak detection, §7 L5), `check_long_text_stability`
+  (NaN-sentinel + repeated-token-stall detection, 32k long-text harness).
+  All primitives deterministic + unit-testable without a real model;
+  real-model tests gated by `FUSION_MLX_REAL_MODEL_TESTS=1` + running server.
 
 ### Fixed
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
