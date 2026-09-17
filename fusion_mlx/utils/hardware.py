@@ -165,6 +165,40 @@ def get_mlx_device_name() -> str | None:
     return None
 
 
+def get_chip_generation(chip_name: str | None = None) -> int:
+    """Derive Apple Silicon generation (1-5+) from the chip name string.
+
+    Parses the 'M' + digit pattern: 'Apple M4 Pro' -> 4, 'Apple M2' -> 2.
+    Returns 0 for unknown/non-Apple chips. FUSION_SHIM_FORCE_CHIP overrides
+    the sysctl probe (used by tests + the C++ probe's own fallback) so the
+    two paths agree on a forced chip.
+    """
+    import os
+
+    forced = os.environ.get("FUSION_SHIM_FORCE_CHIP")
+    name = (
+        forced if forced else (chip_name if chip_name is not None else get_chip_name())
+    )
+    if not name:
+        return 0
+    for i, ch in enumerate(name):
+        if ch == "M" and i + 1 < len(name) and name[i + 1].isdigit():
+            return int(name[i + 1])
+    return 0
+
+
+def get_mma_capability(chip_name: str | None = None) -> dict[str, bool]:
+    """Hardware BF16/FP8 matrix-multiply-accumulate capability.
+
+    M3+ has hardware BF16 simdgroup matrix MMA; M4+ adds FP8 throughput.
+    On non-Apple/headless hosts this returns a conservative all-false probe.
+    Single source of truth — the shim fast.py Python fallback and the C++
+    hardware_probe both derive from the same gen thresholds.
+    """
+    gen = get_chip_generation(chip_name)
+    return {"has_bf16_mma": gen >= 3, "has_fp8_mma": gen >= 4}
+
+
 def detect_hardware() -> HardwareInfo:
     """
     Detect Apple Silicon hardware and return complete info.

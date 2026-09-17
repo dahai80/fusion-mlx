@@ -166,3 +166,45 @@ def test_missing_symbols_empty_for_known_ops():
     missing = fast.missing_symbols(("hardware_probe", "start_memory_sentinel"))
     if fast.is_native_available():
         assert missing == []
+
+
+def test_hardware_probe_agrees_with_utils_hardware(monkeypatch):
+    # The Python fallback path must agree with utils/hardware.py's
+    # get_chip_generation + get_mma_capability (single source of truth).
+    from fusion_mlx.utils.hardware import get_chip_generation, get_mma_capability
+
+    for chip in ("Apple M2", "Apple M3 Max", "Apple M4 Pro"):
+        monkeypatch.setenv("FUSION_SHIM_FORCE_CHIP", chip)
+        probe = fast._python_hardware_probe()
+        gen = get_chip_generation(chip)
+        mma = get_mma_capability(chip)
+        assert probe["gen"] == gen
+        assert probe["has_bf16_mma"] == mma["has_bf16_mma"]
+        assert probe["has_fp8_mma"] == mma["has_fp8_mma"]
+
+
+def test_sentinel_callback_wakes_enforcer(monkeypatch):
+    # PR-B: the C++ sentinel callback must be wired to enforcer.wake so a
+    # kernel pressure event triggers an early re-check. We verify the
+    # wiring without a real pressure event: start the sentinel (native
+    # only), invoke the callback directly, confirm wake was called.
+    import fusion_mlx.shim as shim
+
+    if not fast.is_native_available():
+        pytest.skip("native _ext not built — sentinel is native-only")
+    if not shim.is_shim_enabled():
+        pytest.skip("FUSION_SHIM_ENABLED != 1 — sentinel not started")
+
+    from fusion_mlx.pool.memory_enforcer import ProcessMemoryEnforcer
+
+    class _FakePool:
+        _entries = {}
+
+    enforcer = ProcessMemoryEnforcer(_FakePool())
+    woken = []
+    enforcer.wake = lambda active=False: woken.append(active)
+
+    # Sentinel should have been started by enforcer.start(); but since we
+    # didn't call start (would spin a real loop), invoke the callback directly.
+    enforcer._on_sentinel_pressure(2, "critical")
+    assert woken == [True]

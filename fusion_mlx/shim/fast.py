@@ -60,49 +60,44 @@ def missing_symbols(required: tuple[str, ...]) -> list[str]:
 
 
 def _python_hardware_probe() -> dict[str, Any]:
-    # Derive BF16/FP8 MMA capability from the chip generation string.
-    # M3+ has hardware BF16 simdgroup matrix MMA; M4+ adds FP8 throughput.
-    # On non-Apple/headless hosts this returns a conservative all-false probe.
-    # FUSION_SHIM_FORCE_CHIP overrides sysctl (used by tests + the C++
-    # probe's own fallback), so the two paths agree on a forced chip.
+    # Single source of truth: utils/hardware.py get_chip_generation +
+    # get_mma_capability. FUSION_SHIM_FORCE_CHIP overrides sysctl (used by
+    # tests + the C++ probe's own fallback), so the two paths agree on a
+    # forced chip. On non-Apple/headless hosts this returns a conservative
+    # all-false probe.
     forced = os.environ.get("FUSION_SHIM_FORCE_CHIP")
     if forced:
         chip = forced
+        architecture = forced
     else:
         try:
             from ..utils.hardware import get_chip_name, get_mlx_device_name
 
             chip = get_chip_name() or "Apple Silicon"
-        except Exception:
-            chip = "Apple Silicon"
-
-    gen = 0
-    for i, ch in enumerate(chip):
-        if ch == "M" and i + 1 < len(chip) and chip[i + 1].isdigit():
-            gen = int(chip[i + 1])
-            break
-
-    has_bf16 = gen >= 3
-    has_fp8 = gen >= 4
-    device_name = chip
-    architecture = chip
-    if not forced:
-        try:
-            from ..utils.hardware import get_mlx_device_name
-
+            architecture = chip
             mlx_name = get_mlx_device_name()
             if mlx_name:
                 architecture = mlx_name
         except Exception:
-            pass
+            chip = "Apple Silicon"
+            architecture = "Apple Silicon"
+
+    try:
+        from ..utils.hardware import get_chip_generation, get_mma_capability
+
+        gen = get_chip_generation(chip)
+        mma = get_mma_capability(chip)
+    except Exception:
+        gen = 0
+        mma = {"has_bf16_mma": False, "has_fp8_mma": False}
 
     return {
         "architecture": architecture,
         "gen": gen,
-        "has_bf16_mma": has_bf16,
-        "has_fp8_mma": has_fp8,
+        "has_bf16_mma": mma["has_bf16_mma"],
+        "has_fp8_mma": mma["has_fp8_mma"],
         "gpu_core_count": 0,
-        "device_name": device_name,
+        "device_name": chip,
     }
 
 

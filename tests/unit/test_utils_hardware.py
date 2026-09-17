@@ -176,3 +176,61 @@ class TestFormatBytesHardware:
 class TestDefaultMemoryBytes:
     def test_default_memory_bytes_value(self):
         assert DEFAULT_MEMORY_BYTES == 8 * 1024**3
+
+
+class TestChipGeneration:
+    def test_gen_from_explicit_name(self):
+        from fusion_mlx.utils.hardware import get_chip_generation
+
+        assert get_chip_generation("Apple M4 Pro") == 4
+        assert get_chip_generation("Apple M2") == 2
+        assert get_chip_generation("Apple M3 Max") == 3
+        assert get_chip_generation("Apple M1") == 1
+
+    def test_gen_unknown_chip(self):
+        from fusion_mlx.utils.hardware import get_chip_generation
+
+        assert get_chip_generation("Apple Silicon") == 0
+        assert get_chip_generation("Intel x86") == 0
+        assert get_chip_generation("") == 0
+        # None falls back to get_chip_name() -> real chip, so just confirm
+        # it returns a non-negative int rather than asserting 0.
+        assert get_chip_generation(None) >= 0
+
+    def test_gen_force_chip_overrides(self, monkeypatch):
+        from fusion_mlx.utils.hardware import get_chip_generation
+
+        monkeypatch.setenv("FUSION_SHIM_FORCE_CHIP", "Apple M5 Max")
+        # Even if we pass an explicit name, the forced env wins.
+        assert get_chip_generation("Apple M2") == 5
+
+
+class TestMmaCapability:
+    def test_m3_has_bf16_not_fp8(self):
+        from fusion_mlx.utils.hardware import get_mma_capability
+
+        cap = get_mma_capability("Apple M3 Max")
+        assert cap["has_bf16_mma"] is True
+        assert cap["has_fp8_mma"] is False
+
+    def test_m4_has_both(self):
+        from fusion_mlx.utils.hardware import get_mma_capability
+
+        cap = get_mma_capability("Apple M4 Pro")
+        assert cap["has_bf16_mma"] is True
+        assert cap["has_fp8_mma"] is True
+
+    def test_m2_neither(self):
+        from fusion_mlx.utils.hardware import get_mma_capability
+
+        cap = get_mma_capability("Apple M2")
+        assert cap["has_bf16_mma"] is False
+        assert cap["has_fp8_mma"] is False
+
+    def test_bf16_implies_gen_ge_3(self):
+        from fusion_mlx.utils.hardware import get_chip_generation, get_mma_capability
+
+        for chip in ("Apple M3", "Apple M4 Pro", "Apple M5 Max"):
+            cap = get_mma_capability(chip)
+            if cap["has_bf16_mma"]:
+                assert get_chip_generation(chip) >= 3
