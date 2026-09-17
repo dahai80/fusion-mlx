@@ -11,6 +11,17 @@
   structs, `memory_sentinel` (dispatch_source MEMORYPRESSURE, additive to
   ProcessMemoryEnforcer), C-ABI exception envelope, `check_metal_spill.sh`
   L1 gate. Build via `scripts/build_shim.sh`; degrades gracefully when unbuilt.
+- **Tier-1 safety base wired into live system (PR-B)** — `hardware.py`
+  `get_chip_generation()`/`get_mma_capability()` as single source of truth
+  for BF16/FP8 MMA; `fast.py` Python fallback DRY'd to use them. C++
+  `memory_sentinel` wired to `ProcessMemoryEnforcer.start()/stop()` —
+  callback `wake(active=True)` breaks poll sleep on kernel pressure;
+  polling stays authoritative; opt-in via `FUSION_SHIM_ENABLED=1`.
+- **GGUF loader + ASFW layout converter (PR-C)** — `migrate/asfw.py`
+  SIMD32-aligned weight layout converter (splits scales from packed,
+  groups by simdgroup width). `migrate/gguf_loader.py` high-level loader
+  with per-tensor layer format validation + fallback. `FUSION_SHIM_ASFW=1`
+  env switch (default OFF). Supports Q4_0/Q8_0/Q4_K; IQ series falls back.
 
 ### Fixed
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
