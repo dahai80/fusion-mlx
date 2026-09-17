@@ -22,6 +22,17 @@
   groups by simdgroup width). `migrate/gguf_loader.py` high-level loader
   with per-tensor layer format validation + fallback. `FUSION_SHIM_ASFW=1`
   env switch (default OFF). Supports Q4_0/Q8_0/Q4_K; IQ series falls back.
+- **SamplerChain: DRY + Mirostat v2 stateful samplers (PR-D)** —
+  `utils/sampling.py` adds `make_dry_processor` (suffix-trie repeat penalty)
+  + `make_mirostat_v2_processor` (running-mu surprise ceiling). Both plug
+  into mlx_lm `BatchGenerator.logits_processors` (CPU state, §3.5 CPU/GPU
+  split); the fused `@mx.compile` fast path stays as the degrade for the
+  GPU logit transforms (top_k/top_p/min_p/temp). `request.SamplingParams`
+  + `ChatCompletionRequest`/`CompletionRequest` gain `mirostat_tau/eta/mode`
+  + `dry_multiplier/base/allowed_length/penalty_last_n`. Mirostat disables
+  the fused fast path (dynamic candidate set); DRY keeps it. Also fixes
+  `repetition_penalty` being dropped at the `_common._build_sampling_params`
+  API mapping (pre-existing bug).
 
 ### Fixed
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the

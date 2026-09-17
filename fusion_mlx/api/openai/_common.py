@@ -318,6 +318,46 @@ def _build_sampling_params(
         frequency_penalty=(
             req.frequency_penalty if req.frequency_penalty is not None else 0.0
         ),
+        repetition_penalty=(
+            req.repetition_penalty
+            if getattr(req, "repetition_penalty", None) is not None
+            else po.get("repetition_penalty", 1.0)
+        ),
+        mirostat_tau=(
+            req.mirostat_tau
+            if getattr(req, "mirostat_tau", None) is not None
+            else po.get("mirostat_tau", 0.0)
+        ),
+        mirostat_eta=(
+            req.mirostat_eta
+            if getattr(req, "mirostat_eta", None) is not None
+            else po.get("mirostat_eta", 0.1)
+        ),
+        mirostat_mode=(
+            req.mirostat_mode
+            if getattr(req, "mirostat_mode", None) is not None
+            else po.get("mirostat_mode", 0)
+        ),
+        dry_multiplier=(
+            req.dry_multiplier
+            if getattr(req, "dry_multiplier", None) is not None
+            else po.get("dry_multiplier", 0.0)
+        ),
+        dry_base=(
+            req.dry_base
+            if getattr(req, "dry_base", None) is not None
+            else po.get("dry_base", 1.75)
+        ),
+        dry_allowed_length=(
+            req.dry_allowed_length
+            if getattr(req, "dry_allowed_length", None) is not None
+            else po.get("dry_allowed_length", 2)
+        ),
+        dry_penalty_last_n=(
+            req.dry_penalty_last_n
+            if getattr(req, "dry_penalty_last_n", None) is not None
+            else po.get("dry_penalty_last_n", -1)
+        ),
         stop=(
             req.stop
             if isinstance(req.stop, list)
