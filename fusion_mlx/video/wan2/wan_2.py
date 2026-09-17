@@ -290,6 +290,32 @@ class WanModel(nn.Module):
                 nk = nk.replace(".ffn.0.", ".ffn.fc1.")
             elif ".ffn.2." in nk:
                 nk = nk.replace(".ffn.2.", ".ffn.fc2.")
+            # diffusers WanTransformer3DModel block naming: attn1 -> self_attn,
+            # attn2 -> cross_attn; to_q/to_k/to_v/to_out.0 -> q/k/v/o; ffn.net.*
+            # -> ffn.fc1/fc2. Without these the attention/FFN weights are
+            # dropped by strict=False and every block runs on random init
+            # (same failure class as the condition_embedder remap below).
+            elif ".attn1." in nk:
+                nk = nk.replace(".attn1.", ".self_attn.")
+                nk = nk.replace(".to_q.", ".q.").replace(".to_k.", ".k.")
+                nk = nk.replace(".to_v.", ".v.").replace(".to_out.0.", ".o.")
+            elif ".attn2." in nk:
+                nk = nk.replace(".attn2.", ".cross_attn.")
+                nk = nk.replace(".to_q.", ".q.").replace(".to_k.", ".k.")
+                nk = nk.replace(".to_v.", ".v.").replace(".to_out.0.", ".o.")
+            elif ".ffn.net.0.proj." in nk:
+                nk = nk.replace(".ffn.net.0.proj.", ".ffn.fc1.")
+            elif ".ffn.net.2." in nk:
+                nk = nk.replace(".ffn.net.2.", ".ffn.fc2.")
+            elif ".norm2." in nk and nk.startswith("blocks."):
+                # diffusers block norm2 is the CROSS-attention affine norm
+                # (transformer_wan.py: norm2 = FP32LayerNorm(affine) applied
+                # before attn2; norm3 is the non-affine FFN norm). Our model
+                # has it reversed: norm3 carries the affine params, norm1/norm2
+                # are non-affine.
+                nk = nk.replace(".norm2.", ".norm3.")
+            elif nk.endswith(".scale_shift_table"):
+                nk = nk[: -len("scale_shift_table")] + "modulation"
             # text_embedding: .0 -> _0, .2 -> _1
             elif nk.startswith("text_embedding.0."):
                 nk = f"text_embedding_0.{nk[len('text_embedding.0.') :]}"

@@ -392,12 +392,19 @@ def generate_video(
             model_path = model_dir / "model.safetensors"
             if not model_path.exists() and (model_dir / "dit").is_dir():
                 model_path = model_dir / "dit"
+            if not model_path.exists() and (model_dir / "transformer").is_dir():
+                model_path = model_dir / "transformer"
             if model_path.exists():
                 from .utils import _load_safetensors
 
                 probe = _load_safetensors(model_path)
                 for k, v in probe.items():
-                    if "patch_embedding_proj.weight" in k:
+                    # diffusers checkpoints ship ``patch_embedding.weight``
+                    # (Conv3d); wan-converted ones ``patch_embedding_proj.weight``
+                    if (
+                        "patch_embedding_proj.weight" in k
+                        or "patch_embedding.weight" in k
+                    ):
                         dim = v.shape[0]
                         if dim <= 2048:
                             config = WanModelConfig.wan21_t2v_1_3b()
@@ -420,12 +427,14 @@ def generate_video(
         model_path = model_dir / "model.safetensors"
         if not model_path.exists() and (model_dir / "dit").is_dir():
             model_path = model_dir / "dit"
+        if not model_path.exists() and (model_dir / "transformer").is_dir():
+            model_path = model_dir / "transformer"
         if model_path.exists():
             from .utils import _load_safetensors
 
             probe = _load_safetensors(model_path)
             for k, v in probe.items():
-                if "patch_embedding_proj.weight" in k:
+                if "patch_embedding_proj.weight" in k or "patch_embedding.weight" in k:
                     actual_dim = v.shape[0]
                     if actual_dim != config.dim:
                         print(
@@ -993,10 +1002,13 @@ def generate_video(
             high_noise_path, config, quantization, loras=_loras_high
         )
     else:
-        # Support both flat (model.safetensors) and diffusers (dit/ subdir) layouts
+        # Support both flat (model.safetensors) and diffusers (dit/ or
+        # transformer/ subdir) layouts
         dit_path = model_dir / "model.safetensors"
         if not dit_path.exists() and (model_dir / "dit").is_dir():
             dit_path = model_dir / "dit"
+        if not dit_path.exists() and (model_dir / "transformer").is_dir():
+            dit_path = model_dir / "transformer"
         single_model = load_wan_model(
             dit_path, config, quantization, loras=_loras_single
         )

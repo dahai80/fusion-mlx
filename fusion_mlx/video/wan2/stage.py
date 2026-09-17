@@ -108,12 +108,19 @@ def load_wan_config(model_dir: str | Path):
             model_path = model_dir / "model.safetensors"
             if not model_path.exists() and (model_dir / "dit").is_dir():
                 model_path = model_dir / "dit"
+            if not model_path.exists() and (model_dir / "transformer").is_dir():
+                model_path = model_dir / "transformer"
             if model_path.exists():
                 from .utils import _load_safetensors
 
                 probe = _load_safetensors(model_path)
                 for k, v in probe.items():
-                    if "patch_embedding_proj.weight" in k:
+                    # diffusers checkpoints ship ``patch_embedding.weight``
+                    # (Conv3d); wan-converted ones ``patch_embedding_proj.weight``
+                    if (
+                        "patch_embedding_proj.weight" in k
+                        or "patch_embedding.weight" in k
+                    ):
                         dim = v.shape[0]
                         if dim <= 2048:
                             config = WanModelConfig.wan21_t2v_1_3b()

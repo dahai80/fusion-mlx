@@ -254,7 +254,10 @@ def load_t5_encoder(model_path: Path, config, dtype: str | None = None):
         num_buckets=config.t5_num_buckets,
         shared_pos=False,
     )
-    weights = mx.load(str(model_path))
+    # resolve_t5_path may return the text_encoder/ subdir itself (diffusers
+    # layout: config.json + model-0000X-of-0000Y shards) — mx.load cannot
+    # read a directory, route through the sharded loader instead.
+    weights = _load_safetensors(model_path)
     # Drop non-weight entries (tokenizer, metadata) that load_weights can't handle
     weights = {
         k: v for k, v in weights.items() if k not in ("spiece_model", "scaled_fp8")
@@ -339,7 +342,9 @@ def load_vae_decoder(model_path: Path, config=None):
 
         vae = WanVAE(z_dim=16)
 
-    weights = mx.load(str(model_path))
+    # _resolve_model_file may return the vae/ subdir (diffusers layout with
+    # config.json) — mx.load cannot read a directory.
+    weights = _load_safetensors(model_path)
     if is_wan22:
         weights = sanitize_wan22_vae_weights(weights)
     else:
