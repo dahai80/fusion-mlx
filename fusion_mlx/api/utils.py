@@ -1564,6 +1564,23 @@ def normalize_responses_content_part(item) -> dict:
     raise ValueError(f"Unsupported Responses content block type: {item_type!r}")
 
 
+def client_thinking_from_request(request) -> str | None:
+    # #0916: OpenAI /v1/chat/completions route dropped the client's thinking
+    # intent — resolve_enable_thinking_default was called without
+    # client_thinking, hitting the legacy force-False path and silently
+    # overriding an explicit {"thinking":{"type":"enabled"}} request.
+    # Derive the "enabled"/"disabled"/None string the resolver expects from
+    # the request's enable_thinking field (populated by the
+    # ChatCompletionRequest validator from the Anthropic-style thinking
+    # dict, or set directly).
+    et = getattr(request, "enable_thinking", None)
+    if et is True:
+        return "enabled"
+    if et is False:
+        return "disabled"
+    return None
+
+
 def resolve_enable_thinking_default(
     ct_kwargs: dict,
     model_type: str | None = None,

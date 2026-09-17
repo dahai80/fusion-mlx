@@ -929,6 +929,13 @@ class BatchedEngine(BaseEngine):
     ) -> GenerationOutput:
         if not self._loaded:
             await self.start()
+        # Fallback when max_tokens is None (clients that omit it). Without
+        # this the mlx_lm BatchGenerator receives None and crashes with
+        # "'>=' not supported between int and NoneType".
+        if not max_tokens or max_tokens <= 0:
+            from ..config import get_config
+
+            max_tokens = get_config().default_max_tokens
         sampling_params = SamplingParams(
             max_tokens=max_tokens,
             temperature=temperature,
@@ -987,6 +994,13 @@ class BatchedEngine(BaseEngine):
     ) -> AsyncIterator[GenerationOutput]:
         if not self._loaded:
             await self.start()
+        # Fallback when max_tokens is None (clients that omit it). Without
+        # this the mlx_lm BatchGenerator receives None and crashes with
+        # "'>=' not supported between int and NoneType".
+        if not max_tokens or max_tokens <= 0:
+            from ..config import get_config
+
+            max_tokens = get_config().default_max_tokens
         sampling_params = SamplingParams(
             max_tokens=max_tokens,
             temperature=temperature,

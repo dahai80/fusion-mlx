@@ -601,6 +601,11 @@ class ChatCompletionRequest(BaseModel):
     timeout: float | None = None
     # Thinking/reasoning control (Qwen3 style).  None = server default.
     enable_thinking: bool | None = None
+    # Anthropic-style thinking config ({"type":"enabled","budget_tokens":N}).
+    # Mapped to enable_thinking + reasoning_max_tokens by a model_validator
+    # so OpenAI clients that send the Anthropic-style thinking dict on
+    # /v1/chat/completions get reasoning without a separate field.
+    thinking: dict | None = None
     # Reasoning effort (OpenAI / Anthropic compatible).  None = unset.
     # Valid values: "minimal", "low", "medium", "high", "none".
     reasoning_effort: str | None = None
@@ -726,6 +731,24 @@ class ChatCompletionRequest(BaseModel):
                     "different values; use max_completion_tokens only."
                 )
             self.max_tokens = self.max_completion_tokens
+        return self
+
+    @model_validator(mode="after")
+    def _map_thinking_to_enable_thinking(self) -> "ChatCompletionRequest":
+        # G-4 (#0912): Anthropic-style thinking dict ({"type":"enabled",
+        # "budget_tokens":N}) on /v1/chat/completions was silently dropped
+        # (extra="ignore"), so reasoning never engaged. Map it to the
+        # existing enable_thinking + reasoning_max_tokens fields.
+        if self.thinking and isinstance(self.thinking, dict):
+            _ttype = self.thinking.get("type")
+            if _ttype == "enabled":
+                if self.enable_thinking is None:
+                    self.enable_thinking = True
+                _budget = self.thinking.get("budget_tokens")
+                if _budget and self.reasoning_max_tokens is None:
+                    self.reasoning_max_tokens = int(_budget)
+            elif _ttype == "disabled":
+                self.enable_thinking = False
         return self
 
     @model_validator(mode="after")

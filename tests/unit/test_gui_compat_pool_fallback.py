@@ -9,7 +9,8 @@ import pytest
 
 def _make_srv(slash_resolved, hyphen_entry):
     pool = MagicMock()
-    entry_map = {slash_resolved: None, slash_resolved.replace("/", "-"): hyphen_entry}
+    # #0916: pool entry keys use HF-cache double-hyphen naming (org--repo).
+    entry_map = {slash_resolved: None, slash_resolved.replace("/", "--"): hyphen_entry}
     pool.get_entry.side_effect = lambda mid: entry_map.get(mid)
     pool.get_engine = AsyncMock(return_value=MagicMock())
     pool.unload_engine_async = AsyncMock(return_value=None)
@@ -32,7 +33,7 @@ async def test_resolve_pool_model_slash_id_falls_back_to_hyphen(monkeypatch):
     assert result["model_id"] == slash_id
     assert pool.get_entry.call_count == 2
     assert pool.get_entry.call_args_list[0].args[0] == slash_id
-    assert pool.get_entry.call_args_list[1].args[0] == slash_id.replace("/", "-")
+    assert pool.get_entry.call_args_list[1].args[0] == slash_id.replace("/", "--")
 
 
 @pytest.mark.asyncio
@@ -47,8 +48,8 @@ async def test_unload_pool_model_slash_id_falls_back_to_hyphen(monkeypatch):
     result = await gui._unload_pool_model(slash_id)
     assert result is True
     assert pool.get_entry.call_count == 2
-    assert pool.get_entry.call_args_list[1].args[0] == slash_id.replace("/", "-")
-    pool.unload_engine_async.assert_awaited_once_with(slash_id.replace("/", "-"))
+    assert pool.get_entry.call_args_list[1].args[0] == slash_id.replace("/", "--")
+    pool.unload_engine_async.assert_awaited_once_with(slash_id.replace("/", "--"))
 
 
 @pytest.mark.asyncio

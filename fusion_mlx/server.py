@@ -1477,7 +1477,11 @@ class Server:
             resolved = resolve_model_id(model_id)
             entry = self.pool.get_entry(resolved)
             if entry is None and "/" in resolved:
-                hyphen = resolved.replace("/", "-")
+                # #0916: pool entry keys use HF-cache double-hyphen naming
+                # (models--org--repo). A single "/" -> "-" replace produced
+                # "org-repo" and missed the loaded "org--repo" entry, so
+                # load/unload of any slash-form id 404'd.
+                hyphen = resolved.replace("/", "--")
                 hyphen_entry = self.pool.get_entry(hyphen)
                 if hyphen_entry is not None:
                     logger.debug(
@@ -1522,7 +1526,7 @@ class Server:
             resolved = resolve_model_id(model_id)
             entry = self.pool.get_entry(resolved)
             if entry is None and "/" in resolved:
-                hyphen = resolved.replace("/", "-")
+                hyphen = resolved.replace("/", "--")
                 hyphen_entry = self.pool.get_entry(hyphen)
                 if hyphen_entry is not None:
                     logger.debug(

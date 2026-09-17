@@ -149,9 +149,14 @@ async def _run_chat(
     try:
         ct_kwargs = dict(getattr(request, "chat_template_kwargs", {}) or {})
         # AtomCode 专题优化: enable_thinking 默认禁思考收敛单点 (2026-07-19)
-        from ..utils import resolve_enable_thinking_default
+        from ..utils import (
+            client_thinking_from_request,
+            resolve_enable_thinking_default,
+        )
 
-        resolve_enable_thinking_default(ct_kwargs)
+        resolve_enable_thinking_default(
+            ct_kwargs, client_thinking=client_thinking_from_request(request)
+        )
         compiled_grammar = _compile_grammar_for_request(engine, request)
         gen = await engine.chat(
             messages=messages,

@@ -3,6 +3,98 @@
 ## [Unreleased]
 
 ### Fixed
+- **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
+  HF-cache double-hyphen naming convention (`models--org--repo`, e.g.
+  `mlx-community--Qwen3.8-27B-4bit`), but the slash→hyphen fallback in
+  `server._unload_model_impl`, `server.load_model_public`, and the
+  gui_compat `_resolve_pool_model` / `_unload_pool_model` helpers used a
+  single-hyphen replace (`"/" → "-"`), producing `org-repo` and missing the
+  loaded `org--repo` entry. Every load/unload of a slash-form model id
+  (`mlx-community/Qwen3.8-27B-4bit`) returned 404, so the gui_compat unload
+  route (which shadows the main pool handler) leaked engines across
+  load/unload cycles and e2e defensive unloads between image/video tests
+  never freed memory → cascading InsufficientMemoryError under the A/B
+  harness. Fixed: `"/" → "--"` in all four resolve paths.
+- **Image/video generation admission rejection returns 507, not 500
+  (#0916)** — `InsufficientMemoryError` / `ModelTooLargeError` raised by
+  `EnginePool.get_engine` during image (`/v1/images/generations`) and video
+  (`/v1/videos/generate`) generation was swallowed by the routes' generic
+  `except Exception → HTTPException(500)`, masking a retryable memory
+  admission rejection as a permanent server fault. Now mapped to 507
+  (Insufficient Storage) with `Retry-After: 5` so clients can back off and
+  retry instead of treating the response as a hard failure.
+- **Kokoro TTS discovery + load (#0916)** — (1) `_has_any_weights` globbed
+  only `model*.safetensors`, but Kokoro names weights after the model
+  (`kokoro-v1_0.safetensors`), so discovery skipped it as "without
+  model*.safetensors". Broadened to accept any `*.safetensors`/`*.npz`/
+  `*.pth`/`*.bin`. (2) mlx_audio's `get_model_name_parts` falls back to the
+  snapshot hash as `model_type` when the cache path lacks a `hub/` segment
+  (fusion-mlx stores models under `~/.fusion-mlx/models/`, not the HF
+  `hub/` layout) → "not supported for tts". The `TTSEngine._detect_family`
+  helper now passes `model_type` explicitly for known families (kokoro,
+  chatterbox, vibevoice, voxcpm, csm, cosyvoice) and lets mlx_audio
+  auto-detect from config for the rest (qwen3_tts, kitten-tts).
+- **Non-stream chat `X-Fusion-Ignored-Params` header (#0916)** —
+  `enable_thinking` is now a recognized `ChatCompletionRequest` field
+  (mapped from the Anthropic-style `thinking` dict), so it no longer lands
+  in `__pydantic_extra__` and is not reported in the ignored-params header.
+  The regression test was updated to use a truly unrecognized key.
+- **Flaky `test_scope_logs_baseline_peak` under full suite (#0916)** — the
+  caplog assertion relied on `caplog.at_level("DEBUG")` setting the root
+  logger, but a prior test in the 13k-suite left the module logger above
+  DEBUG. Pinned the specific logger via `caplog.at_level(DEBUG, logger=...)`.
+- **GLiNER NER models rejected by discovery (#0916)** — GLiNER models ship
+  `gliner_config.json` (no `config.json`), so `_is_model_dir` skipped them
+  and `_is_hf_cache_mlx_compatible` rejected them as "non-MLX" (HF-format
+  safetensors, repo not `mlx-community`). The gliner package loads HF-format
+  weights natively (like mlx_audio). Now recognized at all three gates
+  (`_is_model_dir`, `detect_model_type` → `ner`, `_is_hf_cache_mlx_compatible`)
+  and routed to `NEREngine` (`_register_model` gained the missing `ner`
+  engine_type branch — previously fell through to `batched` → `mlx_lm.load`
+  → `FileNotFoundError` on the absent `config.json`).
+- **CausalLM reranker name heuristic failed for HF-cache models (#0916)** —
+  `_is_causal_lm_reranker` / `_is_causal_lm_embedding` checked
+  `model_path.name`, which for HF-cache entries is the snapshot commit hash
+  (e.g. `5f324548...`), carrying no model identity. Qwen3-Reranker was
+  detected as a plain LLM and loaded via `BatchedEngine`, then rejected by
+  the rerank route ("not a reranker model"). New `_effective_model_name`
+  walks up to the `models--org--repo` ancestor and decodes it.
+- **CausalLM reranker load: `trust_remote_code` + missing `chat_template`
+  (#0916)** — `_load_causal_lm` passed `trust_remote_code=` as a top-level
+  kwarg to `mlx_lm.load` (unsupported → `TypeError`), redundantly with the
+  same flag already inside `tokenizer_config`. Separately, the
+  `mlx-community/Qwen3-Reranker-0.6B-4bit` conversion ships no
+  `chat_template`, so `apply_chat_template` raised `ValueError` during
+  prefix/suffix derivation. Both fixed (kwarg dropped; ChatML fallback
+  template applied when the tokenizer lacks one).
+- **DeepFilterNet2-MLX routed to BatchedEngine → `KeyError('model_type')`
+  (#0916)** — `iky1e/DeepFilterNet2-MLX` ships `config.json` with
+  DeepFilterNet keys (`df_order`/`nb_erb`/`nb_df`) but no `model_type` /
+  `architectures`, so `detect_model_type` fell through to `"llm"` →
+  `mlx_lm.load` → `KeyError`. Now detected as `audio_sts` (config-key check
+  + `_effective_model_name` for HF-cache hash dirs) and routed to
+  `STSEngine`. Also fixed the STS loader: `DeepFilterNetModel.from_pretrained`
+  defaults `subfolder="v3"` (official repo layout); third-party conversions
+  with `config.json` at the snapshot root now get `subfolder=None`, and input
+  audio is resampled to the model's native sample_rate (48kHz) before
+  `enhance_file` (mlx_audio raises `ValueError` on rate mismatch).
+- **VLM OCR `ValueError: chat_template is not set` (#0916)** —
+  `mlx-community/GLM-OCR-4bit` (GLM-4.6V family) ships
+  `tokenizer_config.json` with `chat_template=null` and a separate
+  `chat_template.jinja`; `transformers`' `AutoTokenizer` reads the field, not
+  the `.jinja` file, so `apply_chat_template` raised during vision-input
+  prep. `VLMBatchedEngine._prepare_vision_inputs` now catches the
+  `ValueError`, resolves `chat_template.jinja` from the HF cache via
+  `try_to_load_from_cache`, sets it on the tokenizer, and retries.
+
+### Changed
+- **Image-gen subprocess admission sizing (#0916)** — the subprocess-mode
+  admission requirement was the full `_compute_lease_bytes()` (60% of
+  available RAM, cap 32GB), forcing LLM eviction even when a small image
+  job (512×512, ~5GB) fit alongside a loaded LLM. Now resolves the local
+  snapshot and sums weight file sizes + the per-image activation peak;
+  falls back to the lease estimate only when the path can't be resolved.
+
 - **G2 watchdog false-poison on media GPU starvation (SR / in-process image
   gen)** — a long-running super-resolution job (286s for 2048×1152→4096×2304
   scale=2) ran synchronously on the event loop thread, blocking all async I/O

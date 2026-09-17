@@ -66,7 +66,9 @@ async def _resolve_pool_model(model_name: str) -> dict | None:
     resolved = resolve_model_id(model_name)
     entry = srv.pool.get_entry(resolved)
     if entry is None and "/" in resolved:
-        hyphen = resolved.replace("/", "-")
+        # #0916: pool entry keys use HF-cache double-hyphen naming
+        # (models--org--repo); single "/" -> "-" missed the entry -> 404.
+        hyphen = resolved.replace("/", "--")
         hyphen_entry = srv.pool.get_entry(hyphen)
         if hyphen_entry is not None:
             logger.debug(
@@ -110,7 +112,7 @@ async def _unload_pool_model(model_name: str) -> bool | None:
     resolved = resolve_model_id(model_name)
     entry = srv.pool.get_entry(resolved)
     if entry is None and "/" in resolved:
-        hyphen = resolved.replace("/", "-")
+        hyphen = resolved.replace("/", "--")
         hyphen_entry = srv.pool.get_entry(hyphen)
         if hyphen_entry is not None:
             logger.debug(

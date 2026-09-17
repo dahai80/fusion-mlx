@@ -9,7 +9,7 @@ import base64
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..engines import ImageGenEngine
 from ..engines.image_gen import VARIANT_MAP
@@ -38,6 +38,12 @@ class ImageGenerateRequest(BaseModel):
     # Image dimensions (default 1024x1024)
     width: int = Field(default=1024, ge=256, le=2048)
     height: int = Field(default=1024, ge=256, le=2048)
+    # OpenAI-compatible size string ("WxH", e.g. "512x512"). Mapped to
+    # width/height by _parse_size before validation. #0916: without this,
+    # OpenAI clients sending {"size":"512x512"} had it silently dropped
+    # (extra="ignore") and got 1024x1024 — inflating memory admission and
+    # causing spurious InsufficientMemoryError on constrained setups.
+    size: str | None = None
     # Diffusion steps (None = variant-aware default; #823: 4 was too few for
     # full-diffusion DiTs like Qwen-Image-2512 which need ~30). 1..50.
     steps: int | None = Field(default=None, ge=1, le=50)
@@ -71,6 +77,23 @@ class ImageGenerateRequest(BaseModel):
     depth_image: str | None = None
     # Img2img strength (used by depth/kontext/redux/txt2img i2i)
     image_strength: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _parse_size(cls, values):
+        # Map OpenAI-style {"size":"WxH"} to width/height before validation.
+        if isinstance(values, dict) and values.get("size"):
+            parts = str(values["size"]).lower().split("x")
+            if len(parts) == 2:
+                try:
+                    w, h = int(parts[0]), int(parts[1])
+                    if "width" not in values:
+                        values["width"] = w
+                    if "height" not in values:
+                        values["height"] = h
+                except ValueError:
+                    pass
+        return values
 
 
 class ImageOutput(BaseModel):
@@ -113,7 +136,11 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
             )
 
         # Find an image gen engine
-        from fusion_mlx.exceptions import ModelNotFoundError
+        from fusion_mlx.exceptions import (
+            InsufficientMemoryError,
+            ModelNotFoundError,
+            ModelTooLargeError,
+        )
         from fusion_mlx.server import resolve_model_id
 
         model_name = request.model
@@ -242,6 +269,12 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
             "not installed. Install it with: pip install -e '.[image]' "
             "--find-links packaging/_wheels",
         )
+    except (InsufficientMemoryError, ModelTooLargeError) as exc:
+        # #0916: admission rejection is retryable (free memory / retry), not a
+        # generic 500. Map to 507 so clients can back off instead of treating
+        # it as a permanent server fault.
+        logger.warning("Image generation memory admission failed: %s", exc)
+        raise HTTPException(507, str(exc), headers={"Retry-After": "5"}) from exc
     except Exception as exc:
         logger.exception("Image generation failed")
         raise HTTPException(500, "Internal server error")

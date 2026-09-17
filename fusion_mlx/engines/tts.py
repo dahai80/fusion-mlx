@@ -27,6 +27,30 @@ class TTSEngine(BaseNonStreamingEngine):
         self._model_name = model_name
         self._model = None
         self._kwargs = kwargs
+        self._model_family = self._detect_family(model_name)
+
+    @staticmethod
+    def _detect_family(model_name: str) -> str | None:
+        # #0916: fusion-mlx stores models under ~/.fusion-mlx/models/ (no
+        # "hub/" dir), so mlx_audio's get_model_name_parts falls back to the
+        # snapshot hash as model_type → "not supported for tts". When the
+        # family is known by name, pass model_type explicitly to skip the
+        # broken name derivation; otherwise let mlx_audio auto-detect from
+        # config (qwen3_tts, kitten-tts, etc.).
+        name_lower = model_name.lower()
+        if "kokoro" in name_lower:
+            return "kokoro"
+        if "chatterbox" in name_lower:
+            return "chatterbox"
+        if "vibevoice" in name_lower:
+            return "vibevoice"
+        if "voxcpm" in name_lower:
+            return "voxcpm"
+        if "csm" in name_lower:
+            return "csm"
+        if "cosyvoice" in name_lower:
+            return "cosyvoice"
+        return None
 
     @staticmethod
     def _audio_array_to_pcm_bytes(audio: Any) -> bytes:
@@ -97,17 +121,20 @@ class TTSEngine(BaseNonStreamingEngine):
             ) from exc
 
         model_name = self._model_name
+        _load_kwargs: dict = {}
+        if self._model_family is not None:
+            _load_kwargs["model_type"] = self._model_family
 
         def _load_sync():
             try:
-                return _load_model(model_name, strict=True)
+                return _load_model(model_name, strict=True, **_load_kwargs)
             except ValueError as exc:
                 if "Expected shape" not in str(exc):
                     raise
                 logger.warning(
                     f"Strict loading failed for {model_name}, retrying strict=False"
                 )
-                return _load_model(model_name, strict=False)
+                return _load_model(model_name, strict=False, **_load_kwargs)
 
         loop = asyncio.get_running_loop()
         self._model = await asyncio.wait_for(

@@ -144,10 +144,24 @@ def _gen_to_internal(
     gen: GenerationOutput, model: str, request_id: str
 ) -> InternalResponse:
     """Convert GenerationOutput to InternalResponse for the adapter."""
+    # G-4 (#0912): non-stream path — extract reasoning from \model text so
+    # reasoning_content is populated (streaming path does this via
+    # ThinkingParser). Without this, thinking content leaks into text and
+    # reasoning_content stays None. extract_thinking is a no-op when no
+    # thinking tags are present.
+    _text = gen.text
+    _reasoning = getattr(gen, "reasoning_content", None)
+    if _reasoning is None and _text:
+        from ..thinking import extract_thinking
+
+        _think, _content = extract_thinking(_text, gen.finish_reason)
+        if _think:
+            _reasoning = _think
+            _text = _content
     return InternalResponse(
-        text=gen.text,
+        text=_text,
         finish_reason=gen.finish_reason,
-        reasoning_content=getattr(gen, "reasoning_content", None),
+        reasoning_content=_reasoning,
         prompt_tokens=gen.prompt_tokens,
         completion_tokens=gen.completion_tokens,
         cached_tokens=gen.cached_tokens,

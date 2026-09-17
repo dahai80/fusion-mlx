@@ -95,7 +95,7 @@ class TTSEngine:
         self._loaded = False
         self._model_family = self._detect_family(model_name)
 
-    def _detect_family(self, model_name: str) -> str:
+    def _detect_family(self, model_name: str) -> str | None:
         name_lower = model_name.lower()
         if "kokoro" in name_lower:
             return "kokoro"
@@ -109,8 +109,10 @@ class TTSEngine:
             return "csm"
         elif "cosyvoice" in name_lower:
             return "cosyvoice"
-        else:
-            return "kokoro"
+        # Unknown family → let mlx_audio auto-detect from config. Returning
+        # "kokoro" here would override correct detection for models whose
+        # config mlx_audio recognizes (qwen3_tts, kitten-tts, etc.).
+        return None
 
     @staticmethod
     def _available_voices(model) -> list[str]:
@@ -153,7 +155,16 @@ class TTSEngine:
         try:
             from mlx_audio.tts.generate import load_model
 
-            self.model = load_model(self.model_name)
+            # #0916: fusion-mlx stores models under ~/.fusion-mlx/models/
+            # (no "hub/" dir), so mlx_audio's get_model_name_parts falls back
+            # to the snapshot hash as model_type → "not supported for tts".
+            # Pass model_type explicitly when the family is known by name so
+            # the name-based derivation is skipped; otherwise let mlx_audio
+            # auto-detect from config (qwen3_tts, kitten-tts, etc.).
+            _load_kwargs: dict = {}
+            if self._model_family is not None:
+                _load_kwargs["model_type"] = self._model_family
+            self.model = load_model(self.model_name, **_load_kwargs)
             self._loaded = True
             logger.info(
                 "TTS model loaded: %s (family: %s)",

@@ -16,6 +16,16 @@ from .base import BaseNonStreamingEngine
 
 logger = logging.getLogger(__name__)
 
+# #0916: fallback ChatML template for CausalLM rerankers whose tokenizer_config
+# ships without a chat_template (e.g. mlx-community/Qwen3-Reranker-0.6B-4bit).
+# Mirrors the standard Qwen3 ChatML format used by the Qwen3-Reranker family.
+_QWEN3_CHATML_TEMPLATE = (
+    "{% for message in messages %}"
+    "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
+    "{% endfor %}"
+    "{% if add_generation_prompt %}{{'<|im_start|>assistant\n'}}{% endif %}"
+)
+
 _THINK_BLOCK = "<think>\n\n</think>\n\n"
 
 
@@ -196,7 +206,6 @@ class MLXRerankerModel:
             loaded = mlx_lm_load(
                 model_path,
                 tokenizer_config=tokenizer_config,
-                trust_remote_code=self._trust_remote_code,
             )
             model = loaded[0]
             tokenizer_wrapper = loaded[1]
@@ -213,6 +222,13 @@ class MLXRerankerModel:
             {"role": "system", "content": self._CAUSAL_LM_SYSTEM_PROMPT},
             {"role": "user", "content": _SENTINEL},
         ]
+        # #0916: some mlx-community CausalLM reranker conversions ship without
+        # a chat_template in tokenizer_config.json (e.g. Qwen3-Reranker-0.6B-4bit).
+        # apply_chat_template raises ValueError without one, breaking every
+        # CausalLM reranker load. Qwen3-family rerankers use ChatML, so fall
+        # back to the standard Qwen3 ChatML template when the tokenizer lacks one.
+        if not getattr(tokenizer, "chat_template", None):
+            tokenizer.chat_template = _QWEN3_CHATML_TEMPLATE
         template_str = tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
@@ -255,7 +271,6 @@ class MLXRerankerModel:
             loaded = mlx_lm_load(
                 model_path,
                 tokenizer_config=tokenizer_config,
-                trust_remote_code=self._trust_remote_code,
             )
             model = loaded[0]
             tokenizer_wrapper = loaded[1]

@@ -467,6 +467,26 @@ def _is_unsupported_model(model_path: Path) -> bool:
     )
 
 
+def _effective_model_name(model_path: Path) -> str:
+    """Name used for keyword heuristics.
+
+    For HF Hub cache entries the model directory is the snapshot commit hash
+    (e.g. ``models--mlx-community--Qwen3-Reranker-0.6B-4bit/snapshots/<hash>/``),
+    so ``model_path.name`` is the hash and carries no model identity. Walk up
+    to the ``models--org--repo`` ancestor and decode it; fall back to the
+    immediate name for flat local layouts.
+    """
+    cur = model_path
+    for _ in range(4):
+        if cur.name.startswith("models--"):
+            encoded = cur.name[len("models--") :]
+            return encoded.replace("--", "/")
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return model_path.name
+
+
 def _is_causal_lm_reranker(model_path: Path) -> bool:
     """
     Heuristic check for CausalLM models fine-tuned as rerankers.
@@ -476,7 +496,7 @@ def _is_causal_lm_reranker(model_path: Path) -> bool:
     scoring. We detect them by checking the model directory name for "reranker"
     or "rerank" keywords, since config.json is identical to a standard LLM.
     """
-    name_lower = model_path.name.lower()
+    name_lower = _effective_model_name(model_path).lower()
     return "reranker" in name_lower or "rerank" in name_lower
 
 
@@ -489,7 +509,7 @@ def _is_causal_lm_embedding(model_path: Path) -> bool:
     weights. We detect them by checking the model directory name for "embedding"
     or "embed" keywords, since config.json is identical to a standard LLM.
     """
-    name_lower = model_path.name.lower()
+    name_lower = _effective_model_name(model_path).lower()
     return "embedding" in name_lower or "embed" in name_lower
 
 
@@ -647,6 +667,11 @@ def detect_model_type(model_path: Path) -> ModelType:
         return "image"
     if _is_video_model(model_path):
         return "video"
+    # GLiNER NER models ship gliner_config.json (no config.json); the gliner
+    # package reads it directly. Without this, ModelDiscovery skips the dir
+    # entirely (_is_model_dir) and the NER route 404s on every gliner model.
+    if (model_path / "gliner_config.json").exists():
+        return "ner"
 
     config_path = model_path / "config.json"
     if not config_path.exists():
@@ -813,6 +838,24 @@ def detect_model_type(model_path: Path) -> ModelType:
         if _architecture_indicates_causal_lm(architectures):
             return "llm"
         return "audio_sts"
+
+    # Kokoro TTS ships a custom config (no model_type / architectures) with
+    # distinctive istftnet + plbert keys. mlx-audio loads it by repo name;
+    # mirror that here so discovery classifies it as audio_tts instead of
+    # falling through to "llm" (which makes it unavailable on /v1/audio/speech).
+    if "istftnet" in config or "plbert" in config:
+        return "audio_tts"
+    # DeepFilterNet (speech enhancement / STS) ships a config with df_order /
+    # nb_erb / nb_df keys and no model_type/architectures. Without this, it
+    # falls through to "llm" -> mlx_lm.load -> KeyError('model_type'). The
+    # mlx-audio package loads it by repo name; mirror that here. Use
+    # _effective_model_name so HF-cache snapshot hash dirs resolve to the
+    # real repo id (e.g. iky1e/DeepFilterNet2-MLX).
+    if "df_order" in config or "nb_erb" in config or "nb_df" in config:
+        return "audio_sts"
+    name_lower = _effective_model_name(model_path).lower()
+    if "kokoro" in name_lower or "deepfilternet" in name_lower:
+        return "audio_tts" if "kokoro" in name_lower else "audio_sts"
 
     return "llm"
 
@@ -1221,10 +1264,11 @@ def _is_video_model(path: Path) -> bool:
 def _is_model_dir(path: Path) -> bool:
     """Check if a directory contains a valid model (config.json or image manifest)."""
     has_config = (path / "config.json").exists()
+    has_gliner_config = (path / "gliner_config.json").exists()
     has_image_manifest = _is_image_model(path)
     has_video_manifest = _is_video_model(path)
     return (
-        has_config or has_image_manifest or has_video_manifest
+        has_config or has_gliner_config or has_image_manifest or has_video_manifest
     ) and not _is_adapter_dir(path)
 
 
@@ -1408,10 +1452,15 @@ _AUDIO_MODEL_TYPES = frozenset({"audio_stt", "audio_tts", "audio_sts"})
 
 
 def _has_any_weights(model_dir: Path) -> bool:
+    # Audio models (TTS/STT) name weights after the model — e.g. Kokoro's
+    # kokoro-v1_0.safetensors / kokoro-v1_0.pth — not model*.safetensors.
+    # Accept any common weight format; this helper is only used by the audio
+    # acceptance path in _is_hf_cache_mlx_compatible.
     return bool(
-        list(model_dir.glob("model*.safetensors"))
+        list(model_dir.glob("*.safetensors"))
         or list(model_dir.glob("*.npz"))
-        or list(model_dir.glob("pytorch_model*.bin"))
+        or list(model_dir.glob("*.pth"))
+        or list(model_dir.glob("*.bin"))
     )
 
 
@@ -1465,6 +1514,34 @@ def _is_hf_cache_mlx_compatible(model_dir: Path, source_repo_id: str) -> bool:
     # MLX-metadata / repo-name checks below are LLM-centric and wrongly reject
     # upstream HF-format audio repos (e.g. openai/whisper-tiny, which has a full
     # tokenizer + HF model.safetensors and transcribes correctly via mlx_audio).
+    # Check audio type BEFORE the model*.safetensors glob gate below — audio
+    # repos often name weights after the model (e.g. Kokoro's
+    # kokoro-v1_0.safetensors) and would be rejected by the LLM-centric glob.
+    try:
+        if detect_model_type(model_dir) in _AUDIO_MODEL_TYPES and _has_any_weights(
+            model_dir
+        ):
+            logger.info(
+                f"Accepting HF cache audio model with HF-format weights: {source_repo_id}"
+            )
+            return True
+    except Exception:
+        logger.debug(
+            f"detect_model_type failed for {source_repo_id}; falling through",
+            exc_info=True,
+        )
+
+    # GLiNER NER models (gliner_config.json) are loaded by the `gliner` Python
+    # package, which accepts HF-format safetensors/bin natively (same as
+    # mlx_audio above). The MLX-metadata / repo-name checks below are LLM-centric
+    # and wrongly reject upstream GLiNER repos (e.g. gliner-community/*, which
+    # ship HF-format model.fp16.safetensors with no MLX metadata).
+    if (model_dir / "gliner_config.json").exists() and _has_any_weights(model_dir):
+        logger.info(
+            f"Accepting HF cache GLiNER NER model with HF-format weights: {source_repo_id}"
+        )
+        return True
+
     if not list(model_dir.glob("model*.safetensors")):
         # MLX-native .npz weights (e.g. mlx-community whisper STT checkpoints)
         # are loadable by mlx_audio.stt without conversion — treat as compatible.
@@ -1487,21 +1564,9 @@ def _is_hf_cache_mlx_compatible(model_dir: Path, source_repo_id: str) -> bool:
     if _safetensors_has_mlx_metadata(model_dir):
         return True
 
-    # Audio models with HF-format safetensors load fine in mlx_audio — do not
-    # gate them on MLX metadata or an mlx-* repo name.
-    try:
-        if detect_model_type(model_dir) in _AUDIO_MODEL_TYPES and _has_any_weights(
-            model_dir
-        ):
-            logger.info(
-                f"Accepting HF cache audio model with HF-format weights: {source_repo_id}"
-            )
-            return True
-    except Exception:
-        logger.debug(
-            f"detect_model_type failed for {source_repo_id}; falling through",
-            exc_info=True,
-        )
+    # Audio models with HF-format safetensors were already accepted above
+    # (before the model*.safetensors glob gate). This path only reaches models
+    # that have model*.safetensors but no MLX metadata — gate on repo name.
 
     repo_lower = source_repo_id.lower()
     if repo_lower.startswith("mlx-community/") or _MLX_NAME_RE.search(source_repo_id):
@@ -1533,6 +1598,8 @@ def _register_model(
             engine_type: EngineType = "embedding"
         elif model_type == "reranker":
             engine_type = "reranker"
+        elif model_type == "ner":
+            engine_type = "ner"
         elif model_type == "vlm":
             engine_type = "vlm"
         elif model_type == "audio_stt":
