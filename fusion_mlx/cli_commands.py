@@ -251,7 +251,9 @@ def models_command(args):
 
     data = None
     try:
-        r = requests.get(base + "/v1/models", timeout=5)
+        r = requests.get(
+            base + "/v1/models", timeout=5, headers={"X-Fusion-Route": "cli"}
+        )
         if r.status_code == 200:
             data = r.json()
     except requests.RequestException:
@@ -278,7 +280,11 @@ def models_command(args):
                 candidates.append(f"http://localhost:{p}")
         for cand in candidates:
             try:
-                rc = requests.get(cand + "/v1/models", timeout=2)
+                rc = requests.get(
+                    cand + "/v1/models",
+                    timeout=2,
+                    headers={"X-Fusion-Route": "cli"},
+                )
                 if rc.status_code == 200:
                     print(f"Auto-detected server at {cand}")
                     data = rc.json()
@@ -910,7 +916,11 @@ def _wait_for_chat_server(base_url: str, proc, timeout_s: int = 600) -> None:
             # second to keep the spinner smooth and the network polite.
             if tick % 10 == 0:
                 try:
-                    r = requests.get(f"{base_url}/health/ready", timeout=2)
+                    r = requests.get(
+                        f"{base_url}/health/ready",
+                        timeout=2,
+                        headers={"X-Fusion-Route": "cli"},
+                    )
                     if r.status_code == 200:
                         return
                 except requests.RequestException:
@@ -1001,6 +1011,7 @@ def _stream_chat_response(
     payload: dict,
     timeout_s: int,
     metrics: dict | None = None,
+    api_key: str | None = None,
 ) -> str:
     """POST /v1/chat/completions with stream=True and print tokens as they
     arrive. Returns the full assistant content (concatenated content deltas).
@@ -1193,6 +1204,10 @@ def _stream_chat_response(
         json=payload,
         stream=True,
         timeout=timeout_s,
+        headers={
+            "X-Fusion-Route": "cli",
+            **({"Authorization": f"Bearer {api_key}"} if api_key else {}),
+        },
     ) as resp:
         if resp.status_code != 200:
             # With stream=True the body may still be partial / mid-chunk when
@@ -1330,6 +1345,23 @@ def _stream_chat_response(
     return full
 
 
+def _resolve_chat_api_key(argv_api_key: str | None = None) -> str | None:
+    import os
+    from pathlib import Path
+
+    key = argv_api_key or os.environ.get("FUSION_MLX_API_KEY")
+    if key:
+        return key
+    try:
+        from fusion_mlx.settings import Settings
+
+        settings = Settings.load(Path.home() / ".fusion-mlx" / "settings.json")
+        return settings.auth.api_key or None
+    except Exception as e:
+        logger.warning("chat: could not read settings.json api_key: %s", e)
+        return None
+
+
 def chat_command(args):
     """Interactive REPL chat with a model.
 
@@ -1343,6 +1375,11 @@ def chat_command(args):
     import subprocess
 
     from fusion_mlx._tempfile_safe import managed_tempfile_path
+
+    # Client-side auth: same SSOT priority the server enforces
+    # (CLI --api-key > FUSION_MLX_API_KEY env > settings.json auth.api_key).
+    # Without this, a REPL against a key-protected server 401s on turn one.
+    _chat_api_key = _resolve_chat_api_key(getattr(args, "api_key", None))
 
     base_url: str
     proc = None
@@ -1983,6 +2020,7 @@ def chat_command(args):
                 payload,
                 timeout_s=args.response_timeout,
                 metrics=metrics,
+                api_key=_chat_api_key,
             )
         except KeyboardInterrupt:
             print(f"\n  {YELLOW}(response interrupted){RESET}\n")

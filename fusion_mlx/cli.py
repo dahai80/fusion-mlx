@@ -1206,6 +1206,14 @@ Examples:
         default=None,
         help="API key for cloud model (overrides environment variable).",
     )
+    serve_parser.add_argument(
+        "--cloud-consent",
+        action="store_true",
+        help="Consent to cloud fallback (RT-12 gate). Prompts above "
+        "--cloud-threshold may leave the local process. Without this flag, "
+        "--cloud-model routes nothing to the cloud and only logs suppressed "
+        "fallbacks.",
+    )
     # Embedding model option
     serve_parser.add_argument(
         "--embedding-model",
@@ -1735,6 +1743,13 @@ Examples:
         type=int,
         default=600,
         help="Seconds to wait for the spawned server to become ready (default: 600)",
+    )
+    chat_parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="API key for a key-protected server (falls back to "
+        "FUSION_MLX_API_KEY env or settings.json auth.api_key)",
     )
     chat_parser.add_argument(
         "--response-timeout",

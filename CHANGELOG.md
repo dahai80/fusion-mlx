@@ -3,6 +3,43 @@
 ## [Unreleased]
 
 ### Fixed
+- **Event-loop wedge on rejected auth requests (#0917)** — the 401
+  body-drain loop in `AuthPrecheckMiddleware` spun forever when the client
+  disconnected mid-drain (ASGI `http.disconnect` was received in a loop and
+  never matched the `http.request` exit condition), pinning the uvicorn
+  event loop at 100% CPU and hanging every subsequent request (issue #899
+  wedge pattern). The drain loop now exits on `http.disconnect`.
+  Regression tests in `tests/unit/test_auth_precheck.py`.
+- **Chat CLI 401 against key-protected servers (#0917)** — `chat_command`
+  sent no Authorization header, so the first REPL turn against any server
+  started with an API key failed with 401. Added `--api-key` to the chat
+  parser and a client-side SSOT resolver with the same priority the server
+  enforces (argv > `FUSION_MLX_API_KEY` > settings.json `auth.api_key`).
+- **Chat CLI 403 from route_guard (#0917)** — the REPL's HTTP calls
+  (`/v1/models`, `/health/ready`, `/v1/chat/completions`) carried no
+  `X-Fusion-Route` header, so they were rejected by the source-validation
+  middleware; the ready-poll path also blocked forever because
+  `/health/ready` was not in the exempt-path table. All four CLI calls now
+  send the header and `/health/ready` (with trailing slash) is exempt.
+- **Audio-only serve crashed on every request (#0917)** —
+  `_serve_audio_mode` bound the module-level `fusion_mlx.server.app`
+  snapshot, which is `None` until the first `get_app()` call, so uvicorn
+  served a None app (`TypeError: 'NoneType' object is not callable`). The
+  audio boot path now resolves the app through `server.get_app()`.
+- **`--cloud-consent` never reached the server (#0917)** — the CLI cloud
+  router args were staged in `_pending_single_model` but never consumed by
+  `load_model`, and `Server()` builds a fresh config rather than reading
+  the singleton, so the consent flag and cloud-router settings were
+  silently dropped on the live serve path. `load_model` now stamps both
+  the singleton and the live instance config, accepts a keyword-only
+  `cloud_consent`, and passes `cloud_router_api_base` through to
+  `CloudRouter`.
+
+### Added
+- **`--cloud-consent` serve flag (#0917)** — explicit consent gate for
+  cloud fallback routing (RT-12). Without it, `--cloud-model` routes
+  nothing to the cloud and only logs suppressed fallbacks; with it,
+  prompts above `--cloud-threshold` may leave the local process.
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
   HF-cache double-hyphen naming convention (`models--org--repo`, e.g.
   `mlx-community--Qwen3.8-27B-4bit`), but the slash→hyphen fallback in

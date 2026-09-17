@@ -69,7 +69,6 @@ def _serve_audio_mode(args, entry) -> None:
     from .. import server
     from ..config import get_config
     from ..middleware.auth import configure_rate_limiter
-    from ..server import app
 
     uvicorn_log_level = server.configure_logging(args.log_level)
 
@@ -234,7 +233,12 @@ def _serve_audio_mode(args, entry) -> None:
     # banner FIRST.
     sys.stdout.flush()
 
-    _run_uvicorn(app, args, uvicorn_log_level)
+    # ``from ..server import app`` would bind the module-level ``app``
+    # snapshot, which is ``None`` until ``get_app()`` first runs — booting
+    # audio mode that way hands uvicorn a None app ("'NoneType' object is
+    # not callable" on every request). Resolve via ``get_app()`` so the
+    # Server/FastAPI app is constructed if needed.
+    _run_uvicorn(server.get_app(), args, uvicorn_log_level)
 
 
 def _load_embedding_model_or_exit(args, load_fn) -> None:

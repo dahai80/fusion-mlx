@@ -52,6 +52,8 @@ _EXEMPT_PATHS: frozenset[bytes] = frozenset(
     {
         b"/",
         b"/health",
+        b"/health/ready",
+        b"/health/ready/",
         b"/healthz",
         b"/readyz",
         b"/livez",
