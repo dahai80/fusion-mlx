@@ -66,6 +66,20 @@
   fetch / multi-step / trim / block-boundary-span. Degrade switch
   `FUSION_SHIM_TWO_LEVEL_KV` (default OFF). Cross-pool production wiring
   to `BlockAwarePrefixCache` is Tier-2 deferred (adapter interface stable).
+- **Tree-Mask spec-decode verify + Draft Virtual Append Offset (PR-I)** —
+  `speculative/tree_mask.py` adds tree-mask verification: verify multiple
+  draft candidates (a tree, not a chain) in one target forward pass via a
+  causal tree attention mask (`build_tree_attention_mask` /
+  `apply_tree_mask`), returning the longest accepted root-to-leaf path
+  (`verify_tree_logits`). `DraftVirtualAppendOffset` stages draft KV at a
+  virtual offset without committing to the real cache; `commit(n)` advances
+  the real offset atomically, `rollback()` discards staged KV zero-copy
+  (trim-free). Golden check: a chain tree returns the same accepted length
+  + bonus as the stock `dflash/verifier._decide_accepted_prefix` linear
+  first-mismatch. Metal ragged-candidate kernel (true ragged Q packing) is
+  Tier-2 deferred — dense tree mask + stock broadcast attention here; the
+  vendored steel `block_token_mask` is the eventual kernel target.
+  Degrade switch `FUSION_SHIM_TREE_MASK` (default OFF).
 
 ### Fixed
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
