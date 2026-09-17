@@ -7,13 +7,11 @@
 #include <string>
 
 // MLX metal device access. metal::device(default_device()) returns the
-// per-device Device wrapper holding the MTL::Device.
+// per-device Device wrapper holding the MTL::Device. MLX's device.h
+// already includes <Metal/Metal.hpp> (the metal-cpp C++ wrapper), which
+// exposes MTL::Device GPU-family queries without an Obj-C bridge.
 #include "mlx/backend/metal/device.h"
 #include "mlx/device.h"
-
-// Metal-cpp gives us MTL::Device GPU-family queries without an Obj-C
-// bridge. MLX ships the Metal-cpp headers via its include path.
-#include <Metal/Metal.h>
 
 namespace fusion_mlx::shim {
 
@@ -79,15 +77,14 @@ HardwareProbe probe_hardware() {
             bool apple9 = mtl->supportsFamily(MTL::GPUFamilyApple9);
             bool mac2 = mtl->supportsFamily(MTL::GPUFamilyMac2);
             bool apple10 = mtl->supportsFamily(MTL::GPUFamilyApple10);
-            bool apple11 = mtl->supportsFamily(MTL::GPUFamilyApple11);
-            bool apple12 = mtl->supportsFamily(MTL::GPUFamilyApple12);
-            bool apple13 = mtl->supportsFamily(MTL::GPUFamilyApple13);
             if (apple9 || mac2) {
                 h.has_bf16_mma = true;
             }
             // FP8 throughput: conservative — only M4+ (Apple10+) until
-            // per-part benchmarks confirm non-emulated e4m3/e5m2.
-            if (apple10 || apple11 || apple12 || apple13 || mac2) {
+            // per-part benchmarks confirm non-emulated e4m3/e5m2. The
+            // bundled metal-cpp may not expose Apple11+ enums; the
+            // gen>=4 fallback below catches newer parts either way.
+            if (apple10) {
                 h.has_fp8_mma = true;
             }
             // registry->deviceName returns the marketing name.
