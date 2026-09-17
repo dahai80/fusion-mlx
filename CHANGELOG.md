@@ -67,6 +67,25 @@
   `chat_template`, so `apply_chat_template` raised `ValueError` during
   prefix/suffix derivation. Both fixed (kwarg dropped; ChatML fallback
   template applied when the tokenizer lacks one).
+- **DeepFilterNet2-MLX routed to BatchedEngine → `KeyError('model_type')`
+  (#0916)** — `iky1e/DeepFilterNet2-MLX` ships `config.json` with
+  DeepFilterNet keys (`df_order`/`nb_erb`/`nb_df`) but no `model_type` /
+  `architectures`, so `detect_model_type` fell through to `"llm"` →
+  `mlx_lm.load` → `KeyError`. Now detected as `audio_sts` (config-key check
+  + `_effective_model_name` for HF-cache hash dirs) and routed to
+  `STSEngine`. Also fixed the STS loader: `DeepFilterNetModel.from_pretrained`
+  defaults `subfolder="v3"` (official repo layout); third-party conversions
+  with `config.json` at the snapshot root now get `subfolder=None`, and input
+  audio is resampled to the model's native sample_rate (48kHz) before
+  `enhance_file` (mlx_audio raises `ValueError` on rate mismatch).
+- **VLM OCR `ValueError: chat_template is not set` (#0916)** —
+  `mlx-community/GLM-OCR-4bit` (GLM-4.6V family) ships
+  `tokenizer_config.json` with `chat_template=null` and a separate
+  `chat_template.jinja`; `transformers`' `AutoTokenizer` reads the field, not
+  the `.jinja` file, so `apply_chat_template` raised during vision-input
+  prep. `VLMBatchedEngine._prepare_vision_inputs` now catches the
+  `ValueError`, resolves `chat_template.jinja` from the HF cache via
+  `try_to_load_from_cache`, sets it on the tokenizer, and retries.
 
 ### Changed
 - **Image-gen subprocess admission sizing (#0916)** — the subprocess-mode

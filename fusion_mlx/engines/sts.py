@@ -6,6 +6,7 @@ import gc
 import logging
 import os
 import tempfile
+from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
@@ -70,7 +71,17 @@ def _detect_sts_family(model_name: str, config_model_type: str = "") -> str:
 def _load_deepfilternet(model_name: str):
     from mlx_audio.sts.models.deepfilternet import DeepFilterNetModel
 
-    return DeepFilterNetModel.from_pretrained(model_name_or_path=model_name)
+    # mlx_audio's from_pretrained defaults subfolder="v3" (the official
+    # mlx-community/DeepFilterNet-mlx repo layout). Third-party conversions
+    # (e.g. iky1e/DeepFilterNet2-MLX) place config.json at the snapshot root
+    # with no v3/ subdir — the default subfolder then raises
+    # FileNotFoundError(snapshot/v3/config.json). Pass subfolder=None for
+    # local dirs that already have config.json at root.
+    local = Path(model_name).expanduser()
+    subfolder = "v3" if not (local / "config.json").exists() else None
+    return DeepFilterNetModel.from_pretrained(
+        model_name_or_path=model_name, subfolder=subfolder
+    )
 
 
 def _load_mossformer2(model_name: str):
@@ -101,11 +112,50 @@ _FAMILY_LOADERS = {
 }
 
 
+def _resample_audio(samples: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
+    if sr_in == sr_out:
+        return samples
+    try:
+        from scipy.signal import resample_poly
+
+        return resample_poly(samples, sr_out, sr_in).astype(np.float32)
+    except ImportError:
+        # Fallback: simple linear interpolation (no scipy).
+        n_out = int(round(len(samples) * sr_out / sr_in))
+        idx = np.linspace(0, len(samples) - 1, n_out)
+        return np.interp(idx, np.arange(len(samples)), samples).astype(np.float32)
+
+
 def _process_deepfilternet(model, audio_path: str, **kwargs) -> bytes:
     fd, out_path = tempfile.mkstemp(suffix=".wav")
     os.close(fd)
     try:
-        model.enhance_file(str(audio_path), out_path)
+        # DeepFilterNet requires input at its native sample_rate (typically
+        # 48kHz); mlx_audio raises ValueError on mismatch. Resample when the
+        # uploaded audio is at a different rate.
+        target_sr = int(getattr(getattr(model, "config", None), "sample_rate", 48000))
+        enhance_path = str(audio_path)
+        try:
+            from mlx_audio import audio_io
+
+            audio_np, sr = audio_io.read(str(audio_path))
+            if int(sr) != target_sr:
+                audio_flat = np.asarray(audio_np).flatten().astype(np.float32)
+                resampled = _resample_audio(audio_flat, int(sr), target_sr)
+                wav_bytes = _audio_to_wav_bytes(resampled, target_sr)
+                rfd, rpath = tempfile.mkstemp(suffix=".wav")
+                with os.fdopen(rfd, "wb") as rf:
+                    rf.write(wav_bytes)
+                enhance_path = rpath
+        except Exception:
+            logger.debug(
+                "DeepFilterNet resample pre-check failed; passing raw", exc_info=True
+            )
+        try:
+            model.enhance_file(enhance_path, out_path)
+        finally:
+            if enhance_path != str(audio_path) and os.path.exists(enhance_path):
+                os.unlink(enhance_path)
         with open(out_path, "rb") as f:
             return f.read()
     finally:

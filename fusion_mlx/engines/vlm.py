@@ -877,6 +877,40 @@ class VLMBatchedEngine(BaseEngine):
 
         return None
 
+    def _load_fallback_chat_template(self, template_target: Any) -> bool:
+        # Some mlx-community VLM conversions (e.g. GLM-OCR-4bit, GLM-4.6V)
+        # ship tokenizer_config.json with chat_template=null and a separate
+        # chat_template.jinja. transformers' AutoTokenizer reads the field,
+        # not the .jinja file, so apply_chat_template raises ValueError.
+        # Resolve the jinja from the HF cache and set it on the tokenizer.
+        tok = getattr(template_target, "tokenizer", template_target)
+        if getattr(tok, "chat_template", None):
+            return True
+        try:
+            from huggingface_hub import try_to_load_from_cache
+
+            from .._mirror import _hf_cache_root
+
+            cache_dir = str(_hf_cache_root())
+            jinja_path = try_to_load_from_cache(
+                self._model_name, "chat_template.jinja", cache_dir=cache_dir
+            )
+            if not jinja_path:
+                return False
+            with open(jinja_path, encoding="utf-8") as f:
+                tok.chat_template = f.read()
+            logger.info(
+                "VLM loaded fallback chat_template.jinja for %s", self._model_name
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                "VLM fallback chat_template load failed for %s: %s",
+                self._model_name,
+                e,
+            )
+            return False
+
     # -- Vision input preparation --
 
     def _prepare_vision_inputs(
@@ -934,6 +968,17 @@ class VLMBatchedEngine(BaseEngine):
 
         try:
             prompt = template_target.apply_chat_template(messages, **template_kwargs)
+        except ValueError as e:
+            if "chat_template is not set" in str(e):
+                loaded = self._load_fallback_chat_template(template_target)
+                if loaded:
+                    prompt = template_target.apply_chat_template(
+                        messages, **template_kwargs
+                    )
+                else:
+                    raise
+            else:
+                raise
         except TypeError as e:
             logger.warning(
                 "VLM apply_chat_template TypeError: %s, kwargs_keys=%s — surgical fallback preserving tools",

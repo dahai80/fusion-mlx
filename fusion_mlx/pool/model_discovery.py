@@ -845,9 +845,17 @@ def detect_model_type(model_path: Path) -> ModelType:
     # falling through to "llm" (which makes it unavailable on /v1/audio/speech).
     if "istftnet" in config or "plbert" in config:
         return "audio_tts"
-    name_lower = model_path.name.lower()
-    if "kokoro" in name_lower:
-        return "audio_tts"
+    # DeepFilterNet (speech enhancement / STS) ships a config with df_order /
+    # nb_erb / nb_df keys and no model_type/architectures. Without this, it
+    # falls through to "llm" -> mlx_lm.load -> KeyError('model_type'). The
+    # mlx-audio package loads it by repo name; mirror that here. Use
+    # _effective_model_name so HF-cache snapshot hash dirs resolve to the
+    # real repo id (e.g. iky1e/DeepFilterNet2-MLX).
+    if "df_order" in config or "nb_erb" in config or "nb_df" in config:
+        return "audio_sts"
+    name_lower = _effective_model_name(model_path).lower()
+    if "kokoro" in name_lower or "deepfilternet" in name_lower:
+        return "audio_tts" if "kokoro" in name_lower else "audio_sts"
 
     return "llm"
 

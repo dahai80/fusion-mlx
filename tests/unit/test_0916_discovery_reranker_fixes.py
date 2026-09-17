@@ -138,3 +138,90 @@ class TestRerankerChatTemplateFallback:
         parts = rendered.split(sentinel)
         assert len(parts) == 2, f"expected 2 parts, got {len(parts)}: {rendered!r}"
         assert "<|im_start|>assistant" in parts[1]
+
+
+class TestDeepFilterNetDiscovery:
+    def test_detect_model_type_deepfilternet_config_keys(self, tmp_path):
+        # DeepFilterNet2-MLX ships config.json with df_order/nb_erb/nb_df and
+        # no model_type/architectures. Without the dedicated check it falls
+        # through to "llm" -> mlx_lm.load -> KeyError('model_type').
+        d = tmp_path / "DeepFilterNet2-MLX"
+        d.mkdir()
+        (d / "config.json").write_text('{"df_order": 5, "nb_erb": 32, "nb_df": 96}')
+        (d / "model.safetensors").write_bytes(b"\x00" * 64)
+        assert detect_model_type(d) == "audio_sts"
+
+    def test_detect_model_type_deepfilternet_hf_cache_name(self, tmp_path):
+        # HF-cache snapshot dir name is the commit hash; _effective_model_name
+        # must resolve the models-- ancestor so "deepfilternet" is detected.
+        root = tmp_path / "models--iky1e--DeepFilterNet2-MLX"
+        snap = root / "snapshots" / "5c0892ed7e3c"
+        snap.mkdir(parents=True)
+        (snap / "config.json").write_text('{"sample_rate": 48000}')
+        (snap / "model.safetensors").write_bytes(b"\x00" * 64)
+        assert detect_model_type(snap) == "audio_sts"
+
+    def test_detect_model_type_kokoro_uses_effective_name(self, tmp_path):
+        # Kokoro in HF cache: snapshot hash dir, no istftnet/plbert in config
+        # (some conversions). Must still resolve via repo id.
+        root = tmp_path / "models--mlx-community--Kokoro-82M"
+        snap = root / "snapshots" / "abc123"
+        snap.mkdir(parents=True)
+        (snap / "config.json").write_text('{"some": "cfg"}')
+        (snap / "model.safetensors").write_bytes(b"\x00" * 64)
+        assert detect_model_type(snap) == "audio_tts"
+
+
+class TestVlmChatTemplateFallback:
+    def test_load_fallback_chat_template_returns_false_when_no_jinja(
+        self, tmp_path, monkeypatch
+    ):
+        # No chat_template.jinja in cache -> helper returns False (caller raises).
+        import huggingface_hub
+
+        from fusion_mlx import _mirror
+        from fusion_mlx.engines.vlm import VLMBatchedEngine
+
+        monkeypatch.setattr(_mirror, "_hf_cache_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            huggingface_hub, "try_to_load_from_cache", lambda *a, **k: None
+        )
+
+        class _FakeTok:
+            chat_template = None
+
+        eng = VLMBatchedEngine.__new__(VLMBatchedEngine)
+        eng._model_name = "org/nonexistent-model-xyz"
+        assert eng._load_fallback_chat_template(_FakeTok()) is False
+
+    def test_load_fallback_chat_template_loads_jinja(self, tmp_path, monkeypatch):
+        # chat_template.jinja present in the model's HF-cache snapshot dir ->
+        # helper sets it on the tokenizer. Build the real cache layout and
+        # stub the HF cache lookup (conftest mocks huggingface_hub).
+        import huggingface_hub
+
+        from fusion_mlx import _mirror
+        from fusion_mlx.engines.vlm import VLMBatchedEngine
+
+        snap = tmp_path / "models--org--any-model" / "snapshots" / "abc123"
+        refs = tmp_path / "models--org--any-model" / "refs"
+        snap.mkdir(parents=True)
+        refs.mkdir()
+        (refs / "main").write_text("abc123")
+        jinja_file = snap / "chat_template.jinja"
+        jinja_file.write_text("{{ messages }}")
+        monkeypatch.setattr(_mirror, "_hf_cache_root", lambda: tmp_path)
+        monkeypatch.setattr(
+            huggingface_hub,
+            "try_to_load_from_cache",
+            lambda repo, filename, cache_dir=None: str(jinja_file),
+        )
+
+        class _FakeTok:
+            chat_template = None
+
+        tok = _FakeTok()
+        eng = VLMBatchedEngine.__new__(VLMBatchedEngine)
+        eng._model_name = "org/any-model"
+        assert eng._load_fallback_chat_template(tok) is True
+        assert tok.chat_template == "{{ messages }}"

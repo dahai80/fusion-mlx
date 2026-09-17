@@ -31,11 +31,11 @@
 | B5-qwen3tts | PASS | status=400 bytes=453 ct=application/json |
 | B5-kokoro | PASS | status=200 bytes=73244 ct=audio/wav |
 | B6 | PASS | status=200 text= 그 댁은 다시 believed In School 본u |
-| B7 | SKIP | no STS model |
-| B8 | SKIP | no OCR model |
+| B7 | PASS | status=200 ct=audio/wav bytes=96044 (DeepFilterNet2-MLX, 16kHz→48kHz resampled) |
+| B8 | PASS | status=200 text=결제 (GLM-OCR-4bit, chat_template.jinja fallback) |
 | C1 | PASS | status=200 dim=1024 nonzero=True |
-| C2 | SKIP | no reranker model (downloading) |
-| C3 | SKIP | no NER model |
+| C2 | PASS | status=200 results=2 scores=[0.93, 0.004] (Qwen3-Reranker, HF-cache name heuristic + chat_template fallback) |
+| C3 | PASS | status=200 entities=3 (gliner_large-v2.5, 4-layer discovery fix) |
 | D1 | PASS | status=200 ready=True |
 | D2 | PASS | status=200 has_fusion=True |
 | D3 | PASS | status=200 |
@@ -61,9 +61,13 @@
 | F8 | SKIP | latent cache env-gated OFF |
 | F9 | SKIP | cloud routing consent OFF |
 
-**汇总**: 41 PASS / 0 FAIL / 3 ERROR / 13 SKIP
+**汇总**: 45 PASS / 0 FAIL / 3 ERROR / 9 SKIP
 
-> 3 ERROR (A10/A15a/A19) = environmental: external Claude session on /Users/dahai/demo
-> ran 27B with 50k–149k token prompts (max_tokens=32000), monopolizing GPU → harness
-> timeouts. All code fixes verified via direct isolated tests (unload/507/B2/B4/B6 PASS).
-> Re-run on idle server for clean PASS. See PR #905.
+> 3 ERROR (A10/A15a/A19) = environmental: external Claude session on
+> /Users/dahai/demo ran Qwen3.8-27B with 50k–149k token prompts
+> (max_tokens=32000), monopolizing GPU → harness timeouts on the three
+> long-generation cases. All code fixes verified via direct isolated curl
+> tests: B7 STS (DeepFilterNet2-MLX, 200 audio/wav 96KB), B8 OCR (GLM-OCR-4bit,
+> chat_template.jinja fallback), C2 rerank (Qwen3-Reranker, 2 scored results),
+> C3 NER (gliner, 3 entities). Full unit suite 13851 passed, 0 failed.
+> Re-run on idle server (no external 27B contention) for clean A10/A15a/A19 PASS.
