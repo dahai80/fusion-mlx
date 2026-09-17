@@ -53,6 +53,19 @@
   `maybe_patch_model_rmsnorm` patches standard mlx_lm layers in-place.
   Degrade switches `FUSION_SHIM_FUSED_RMSNORM`/`FUSION_SHIM_FUSED_ROPE`
   (default OFF).
+- **PagedKVCache two-level addressing + CoW (PR-H)** —
+  `custom_kernels/paged_kv_cow.py` extends `FusionPagedKVCache` with
+  refcounted physical blocks + copy-on-write (`ensure_writable` copies a
+  shared block before mutation), two-level page indirection
+  (`share_pages` adopts physical blocks from a prefix-cache hit with
+  refcount increment, skipping KV recompute), and FA-tile alignment
+  (`align_block_size_to_fa_tile` rounds block_size to the Metal Flash
+  Attention tile granularity). `PrefixPageBinder` binds prefix block
+  hashes to physical pages for donation. Verified vs stock
+  `FusionPagedKVCache` via the PR-F golden harness (KL < 1e-6) on
+  fetch / multi-step / trim / block-boundary-span. Degrade switch
+  `FUSION_SHIM_TWO_LEVEL_KV` (default OFF). Cross-pool production wiring
+  to `BlockAwarePrefixCache` is Tier-2 deferred (adapter interface stable).
 
 ### Fixed
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
