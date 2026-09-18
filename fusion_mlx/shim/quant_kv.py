@@ -218,7 +218,7 @@ def q80_dequantize(d, qs):
 # halves DRAM traffic (int8/nibble vs fp16) — memory-bound decode wins.
 
 
-_FUSED_CHUNK = 128
+_FUSED_CHUNK = 64
 
 
 def _n_chunks(kv_t: int) -> int:
@@ -249,15 +249,10 @@ uint t_end = t_start + CHUNK;
 if (t_end > KvT) t_end = KvT;
 uint part = head * nC + ci;
 
-threadgroup float qsh[256];
-threadgroup float Ksh[256];
-threadgroup float Vsh[256];
-threadgroup float acc[256];
 threadgroup float sg_sums[8];
 
-qsh[tid] = float(q[q_base + tid]) * scale;
-acc[tid] = 0.0f;
-threadgroup_barrier(mem_flags::mem_threadgroup);
+float qv = float(q[q_base + tid]) * scale;
+float accv = 0.0f;
 
 float m = -1e30f;
 float l = 0.0f;
@@ -265,9 +260,9 @@ float l = 0.0f;
 for (uint t = t_start; t < t_end; t++) {
     uint j = tid / 32;
     float sc = float(kd[kd_base + t * Db + j]);
-    Ksh[tid] = sc * float((int)kq[kq_base + t * D + tid]);
+    float kv = sc * float((int)kq[kq_base + t * D + tid]);
 
-    float partial = qsh[tid] * Ksh[tid];
+    float partial = qv * kv;
     float sg = simd_sum(partial);
     ushort sid = tid / 32;
     ushort lane = tid % 32;
@@ -285,17 +280,17 @@ for (uint t = t_start; t < t_end; t++) {
     float corr = metal::exp(m - m_new);
     float p = metal::exp(score - m_new);
     l = l * corr + p;
-    acc[tid] = acc[tid] * corr;
+    accv = accv * corr;
     m = m_new;
 
     float scv = float(vd[kd_base + t * Db + j]);
-    Vsh[tid] = scv * float((int)vq[kq_base + t * D + tid]);
-    acc[tid] = acc[tid] + p * Vsh[tid];
+    float vv = scv * float((int)vq[kq_base + t * D + tid]);
+    accv = accv + p * vv;
 }
 
 pm[part] = m;
 pl[part] = l;
-pacc[part * D + tid] = acc[tid];
+pacc[part * D + tid] = accv;
 """
 
 
@@ -444,15 +439,10 @@ uint t_end = t_start + CHUNK;
 if (t_end > KvT) t_end = KvT;
 uint part = head * nC + ci;
 
-threadgroup float qsh[256];
-threadgroup float Ksh[256];
-threadgroup float Vsh[256];
-threadgroup float acc[256];
 threadgroup float sg_sums[8];
 
-qsh[tid] = float(q[q_base + tid]) * scale;
-acc[tid] = 0.0f;
-threadgroup_barrier(mem_flags::mem_threadgroup);
+float qv = float(q[q_base + tid]) * scale;
+float accv = 0.0f;
 
 float m = -1e30f;
 float l = 0.0f;
@@ -463,9 +453,9 @@ for (uint t = t_start; t < t_end; t++) {
     uint byte_idx = tid / 2;
     uchar byte = kq[kq_base + t * Dp + byte_idx];
     float nib = ((tid & 1u) == 0u) ? float(byte & 0xFu) : float(byte >> 4);
-    Ksh[tid] = sc * (nib - 8.0f);
+    float kv = sc * (nib - 8.0f);
 
-    float partial = qsh[tid] * Ksh[tid];
+    float partial = qv * kv;
     float sg = simd_sum(partial);
     ushort sid = tid / 32;
     ushort lane = tid % 32;
@@ -483,19 +473,19 @@ for (uint t = t_start; t < t_end; t++) {
     float corr = metal::exp(m - m_new);
     float p = metal::exp(score - m_new);
     l = l * corr + p;
-    acc[tid] = acc[tid] * corr;
+    accv = accv * corr;
     m = m_new;
 
     float scv = float(vd[kd_base + t * Dblk + j]);
     uchar vbyte = vq[kq_base + t * Dp + byte_idx];
     float vnib = ((tid & 1u) == 0u) ? float(vbyte & 0xFu) : float(vbyte >> 4);
-    Vsh[tid] = scv * (vnib - 8.0f);
-    acc[tid] = acc[tid] + p * Vsh[tid];
+    float vv = scv * (vnib - 8.0f);
+    accv = accv + p * vv;
 }
 
 pm[part] = m;
 pl[part] = l;
-pacc[part * D + tid] = acc[tid];
+pacc[part * D + tid] = accv;
 """
 
 
@@ -675,15 +665,14 @@ def quantized_attention(q, k_pack, v_pack, scale, mask=None, chunk=512):
     T = kd.shape[-2]
     # Fused decode path (L==1, D multiple of 32 <=256, no mask): 2-pass Metal
     # kernel dequantizes KV on-the-fly — halves DRAM traffic vs fp16. Wins at
-    # long context (T>=8192, DRAM-bound) with enough heads for occupancy
-    # (B*H>=16). Below that the chunked dequant+SDPA path is faster (compute
-    # dominates, dequant overhead loses).
+    # long context (T>=8192, DRAM-bound). Below that the chunked dequant+SDPA
+    # path is faster (compute dominates, dequant overhead loses).
     if (
         L == 1
         and D % _QK == 0
         and D <= 256
         and H % Hkv == 0
-        and B * H >= 16
+        and B * H >= 8
         and T >= 8192
         and (mask is None or (isinstance(mask, str) and mask == "causal"))
     ):

@@ -205,10 +205,13 @@ def bench_quant_kv(iters: int) -> dict:
     # Quant KV value proposition = memory savings (q8 -47%, q4 -72%).
     # dequant+SDPA path (B=1): break-even q8, +9% q4 — memory win not speed.
     # fused decode path: wins at long context (T>=8192, DRAM-bound).
+    #   B=8 T=4096: +9% (compute-bound, dequant overhead loses)
+    #   B=16 T=8192: -37%/-40% (DRAM-bound, halves traffic)
     r_decode = _bench_quant_kv_shape(512, iters, "T=512 decode")
     r_long = _bench_quant_kv_shape(4096, iters, "T=4096 long ctx")
-    r_fused = _bench_quant_kv_fused(16, 8192, iters, "B=16 T=8192 long ctx")
-    return [r_decode, r_long, r_fused]
+    r_fused_short = _bench_quant_kv_fused(8, 4096, iters, "B=8 T=4096 compute-bound")
+    r_fused_long = _bench_quant_kv_fused(16, 8192, iters, "B=16 T=8192 DRAM-bound")
+    return [r_decode, r_long, r_fused_short, r_fused_long]
 
 
 def bench_grammar_apply(iters: int) -> dict:
