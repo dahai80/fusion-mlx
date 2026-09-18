@@ -65,8 +65,13 @@ HardwareProbe probe_hardware() {
     try {
         auto& d = mlx::core::metal::device(mlx::core::default_device());
         h.architecture = d.get_architecture();
+        // MLX's architecture gen is the GPU id (e.g. applegpu_g17s -> 17),
+        // NOT the chip generation. Chip gen (M5 -> 5, utils/hardware.py
+        // get_chip_generation convention) from the sysctl/forced name is
+        // authoritative; MLX gen is only a headless fallback when the
+        // name parse found nothing.
         int mlx_gen = d.get_architecture_gen();
-        if (mlx_gen > 0) {
+        if (h.gen == 0 && mlx_gen > 0) {
             h.gen = mlx_gen;
         }
         MTL::Device* mtl = d.mtl_device();
@@ -109,6 +114,13 @@ HardwareProbe probe_hardware() {
     }
     if (!h.has_fp8_mma && h.gen >= 4) {
         h.has_fp8_mma = true;
+    }
+    // FUSION_SHIM_FORCE_CHIP must make BOTH probe paths (C++ and Python
+    // fallback) agree on the FORCED chip: re-derive MMA from the forced
+    // generation, discarding family-probe bits read from the real device.
+    if (std::getenv("FUSION_SHIM_FORCE_CHIP") != nullptr) {
+        h.has_bf16_mma = h.gen >= 3;
+        h.has_fp8_mma = h.gen >= 4;
     }
     if (h.architecture.empty()) {
         h.architecture = h.device_name;

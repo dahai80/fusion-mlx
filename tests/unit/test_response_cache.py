@@ -56,6 +56,26 @@ class TestFingerprint:
 
 
 class TestResolvePolicy:
+    def test_response_format_dict_included(self):
+        c = ResponseCache()
+        from fusion_mlx.api.openai_models import ResponseFormat
+
+        rf = ResponseFormat(
+            type="json_schema",
+            json_schema={"name": "f", "schema": {"type": "object"}},
+        )
+        # Chat lane passes ResponseFormat.model_dump() (pydantic models are
+        # not json.dumps-able — TypeError 500, see audit validate-0918 #3).
+        k1 = c.fingerprint(
+            "m1", [{"role": "user", "content": "hi"}], response_format=rf.model_dump()
+        )
+        k2 = c.fingerprint("m1", [{"role": "user", "content": "hi"}], response_format=None)
+        assert k1 != k2
+        k3 = c.fingerprint(
+            "m1", [{"role": "user", "content": "hi"}], response_format=rf.model_dump()
+        )
+        assert k1 == k3
+
     def test_temp_zero_is_force(self):
         c = ResponseCache()
         assert c.resolve_policy(0.0) == CachePolicy.FORCE

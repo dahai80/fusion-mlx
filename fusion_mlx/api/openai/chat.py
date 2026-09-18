@@ -504,6 +504,10 @@ async def chat_completions(
         http_headers = dict(http_request.headers)
         _cache_policy = cache.resolve_policy(request.temperature, http_headers)
         if _cache_policy != CachePolicy.BYPASS:
+            # ResponseFormat is a pydantic model — json.dumps inside
+            # fingerprint() raises TypeError on it (500). Serialize like
+            # tools above.
+            _rf = getattr(request, "response_format", None)
             _cache_key = cache.fingerprint(
                 model=request.model,
                 messages=[m.model_dump() for m in request.messages],
@@ -515,7 +519,9 @@ async def chat_completions(
                     t.model_dump() if hasattr(t, "model_dump") else t
                     for t in (request.tools or [])
                 ],
-                response_format=getattr(request, "response_format", None),
+                response_format=(
+                    _rf.model_dump() if hasattr(_rf, "model_dump") else _rf
+                ),
                 seed=request.seed,
                 adapters=getattr(request, "adapters", None),
             )
