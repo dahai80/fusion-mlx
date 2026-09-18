@@ -31,7 +31,7 @@ from .utils.weights import (
     load_vae_weights,
     load_whisper_encoder_weights,
 )
-from .whisper.audio2feature import apply_pe, get_whisper_chunk
+from .whisper.audio2feature import apply_pe, extract_prefix_tail, get_whisper_chunk
 from .whisper.whisper_encoder import WhisperEncoder
 
 _NORM_MEAN = 0.5
@@ -141,15 +141,28 @@ class MuseTalkPipeline:
         mx.eval(pred)
         return self.decode_latents(pred)
 
-    def encode_audio(self, mel, librosa_length, fps=25):
-        """mel (1,80,3000) -> per-frame cross-attn chunks (num_frames,50,384)."""
-        stacked = self.whisper_encoder(mel)
-        return get_whisper_chunk(stacked, librosa_length, fps=fps)
+    def encode_audio(self, mel, librosa_length, fps=25, prefix=None):
+        """mel (1,80,3000) -> per-frame cross-attn chunks (num_frames,50,384).
 
-    def encode_audio_from_wav(self, wav_path, fps=25):
+        #914 prefix-context cache: ``prefix`` (1, prefix_len, 5, 384) is the prior
+        5s window's tail embedding spliced as left context to smooth the boundary
+        between consecutive windows. Returns ``(chunks, tail)`` where ``tail`` is
+        this window's stacked-state tail to cache for the next call. When
+        ``prefix`` is None the tail is still returned (caller may ignore it) so
+        the first window seeds the second without API branching.
+        """
+        stacked = self.whisper_encoder(mel)
+        chunks = get_whisper_chunk(stacked, librosa_length, fps=fps, prefix=prefix)
+        tail = extract_prefix_tail(stacked)
+        return chunks, tail
+
+    def encode_audio_from_wav(self, wav_path, fps=25, prefix=None):
         """Torch-free audio frontend: wav -> MLX log-mel -> whisper enc -> cross-attn chunks.
 
         Mirrors AudioProcessor.get_audio_feature + get_whisper_chunk with no torch/transformers.
+
+        #914: returns ``(chunks, tail)``; pass ``tail`` as ``prefix`` on the next
+        5s window to carry boundary context (smooths lip teleport at edges).
         """
         import librosa
 
@@ -159,7 +172,9 @@ class MuseTalkPipeline:
         segs = [wav[i : i + N_SAMPLES] for i in range(0, max(len(wav), 1), N_SAMPLES)]
         feats = [self.whisper_encoder(log_mel_spectrogram(mx.array(s))) for s in segs]
         stacked = mx.concatenate(feats, axis=1)  # (1, total_seq, 5, 384)
-        return get_whisper_chunk(stacked, len(wav), fps=fps)
+        chunks = get_whisper_chunk(stacked, len(wav), fps=fps, prefix=prefix)
+        tail = extract_prefix_tail(stacked)
+        return chunks, tail
 
     def run_batched(self, latent_stack, chunk_stack, batch_size=8):
         """Process N frames in batches (datagen-style). latent_stack:(N,8,32,32),

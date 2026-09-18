@@ -35,17 +35,27 @@ def apply_pe(x):
 
 
 def get_whisper_chunk(
-    stacked, librosa_length, fps=25, audio_fps=50, sr=16000, pad_left=2, pad_right=2
+    stacked, librosa_length, fps=25, audio_fps=50, sr=16000, pad_left=2, pad_right=2,
+    prefix=None,
 ):
     """stacked: (1, seq, n_hidden, 384) -> (num_frames, (10*n_hidden), 384).
 
     Faithful port of AudioProcessor.get_whisper_chunk.
+
+    #914 prefix-context cache: ``prefix`` is the prior 5s window's tail embedding
+    (1, prefix_len, n_hidden, 384) spliced as left context so consecutive windows
+    carry boundary state (smooths lip teleport at 5s edges). When given, the tail
+    (last ``prefix_len`` frames of this window's stacked states) is returned for
+    the next call via ``extract_prefix_tail``.
     """
     feat_len_per_frame = 2 * (pad_left + pad_right + 1)  # 10
     idx_mult = audio_fps / fps
     num_frames = math.floor((librosa_length / sr) * fps)
     actual_length = math.floor((librosa_length / sr) * audio_fps)
     wf = stacked[:, :actual_length, ...]
+    # #914: splice prior-window tail as left context before zero-padding.
+    if prefix is not None:
+        wf = mx.concatenate([prefix, wf], axis=1)
     pad = math.ceil(idx_mult)
     zeros_l = mx.zeros_like(wf[:, : pad * pad_left])
     zeros_r = mx.zeros_like(wf[:, : pad * 3 * pad_right])
@@ -59,3 +69,18 @@ def get_whisper_chunk(
     prompts = mx.concatenate(clips, axis=0)  # (T, 10, n_hidden, 384)
     t, c, h, w = prompts.shape
     return prompts.reshape(t, c * h, w)  # (T, 50, 384)
+
+
+_PREFIX_TAIL_LEN = 10
+
+
+def extract_prefix_tail(stacked, tail_len: int = _PREFIX_TAIL_LEN):
+    """#914: slice the tail of this window's stacked states for the next call's prefix.
+
+    stacked: (1, seq, n_hidden, 384) -> (1, min(tail_len, seq), n_hidden, 384).
+    The tail length is bounded by the window's available frames so a short final
+    window does not over-extend the next prefix.
+    """
+    seq = stacked.shape[1]
+    take = min(tail_len, seq)
+    return stacked[:, seq - take :, ...]
