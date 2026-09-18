@@ -75,14 +75,18 @@ def q40_quantize(x):
     return d.astype(mx.float16), packed
 
 
-def q40_dequantize(d, packed):
-    # Inverse of q40_quantize. d: (..., N/32), packed: (..., N/16).
+@mx.compile
+def _q40_dequant_kernel(d, packed):
     p = packed.reshape(*packed.shape[:-1], -1, _Q40_BYTES_PER_BLOCK)
     lo = (p & 0xF).astype(mx.float32)
     hi = (p >> 4).astype(mx.float32)
     q = mx.stack([lo, hi], axis=-1).reshape(*p.shape[:-1], _QK) - 8.0
-    out = q.astype(mx.float32) * mx.expand_dims(d.astype(mx.float32), -1)
+    out = q * mx.expand_dims(d.astype(mx.float32), -1)
     return mx.reshape(out, (*out.shape[:-2], -1))
+
+
+def q40_dequantize(d, packed):
+    return _q40_dequant_kernel(d, packed)
 
 
 # --- Q8_0 codec -------------------------------------------------------------
@@ -99,11 +103,15 @@ def q80_quantize(x):
     return d.astype(mx.float16), q
 
 
-def q80_dequantize(d, qs):
-    # Inverse of q80_quantize. d: (..., N/32), qs: (..., N).
+@mx.compile
+def _q80_dequant_kernel(d, qs):
     q = qs.astype(mx.float32).reshape(*qs.shape[:-1], -1, _QK)
     out = q * mx.expand_dims(d.astype(mx.float32), -1)
     return mx.reshape(out, (*out.shape[:-2], -1))
+
+
+def q80_dequantize(d, qs):
+    return _q80_dequant_kernel(d, qs)
 
 
 # --- attention paths --------------------------------------------------------
