@@ -94,6 +94,22 @@
   Python side: `shim.fast.engine_runner(qos)` factory + `_InlineEngineRunner`
   fallback (runs inline, exceptions propagate normally) — duck-typed either
   way. Degrade switch `FUSION_ENGINE_RUNNER` (default OFF).
+- **Q4_0/Q8_0 quantized KV online decompression + FP32 softmax (PR-K)** —
+  `shim/quant_kv.py` adds llama.cpp block-format KV quantization with two
+  attention paths: codecs `q40_quantize/q40_dequantize` (32-elem blocks,
+  fp16 delta, nibble-packed — 18 bytes/block) and `q80_` (34 bytes/block),
+  golden-verified against a numpy reference (exact packing match). Online
+  path: chunk-streamed attention dequantizes one KV chunk at a time and
+  folds it into a running FP32 softmax (streaming max/sum/numerator —
+  §2.2 Softmax 中间 FP32 累加; peak fp16 memory = one chunk, not the whole
+  cache). Degraded path: dequantize-all then stock
+  `mx.fast.scaled_dot_product_attention`. `ShimQuantizedKVCache` stores
+  Q4_0/Q8_0 packs (53% of fp16 at Q8_0, 28% at Q4_0), deliberately without
+  a `bits` attribute so mlx-lm's sdpa wrapper cannot route it into the
+  affine `quantized_matmul` path; attention goes through
+  `cache.attention()` (GQA + causal/additive masks supported). OFF mode:
+  plain fp16 concat cache + stock SDPA — zero behavior change.
+  Degrade switch `FUSION_SHIM_QUANT_KV` (default OFF).
 
 ### Fixed
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
