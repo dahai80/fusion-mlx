@@ -46,7 +46,7 @@ import numpy as np
 VOCAB = 32000
 
 
-def timed_ab(fn_a, fn_b, iters: int, warmup: int = 5) -> tuple[float, float]:
+def timed_ab(fn_a, fn_b, iters: int, warmup: int = 15) -> tuple[float, float]:
     for _ in range(warmup):
         mx.eval(fn_a())
         mx.eval(fn_b())
