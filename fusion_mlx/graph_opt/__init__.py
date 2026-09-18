@@ -11,8 +11,8 @@ pattern in a loop is matched once.
 from .passes import (
     GraphPass,
     compile_with_custom_pass,
-    register_pattern,
     fused_conv_groupnorm_silu,
+    register_pattern,
 )
 from .patterns import ConvGroupNormSiLU
 
