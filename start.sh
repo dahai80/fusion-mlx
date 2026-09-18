@@ -239,9 +239,18 @@ preflight() {
 }
 
 # ── Parse start args ─────────────────────────────────────────────────
+# start.sh accepts:
+#   start.sh start [options] [<model>] [--spec-decode-flags...]
+# Internal options: --watchdog, --preload <list>
+# Everything else (model + spec-decode flags) passes through to
+# `fusion-mlx serve`. When a <model> is given positionally or via
+# --model, start.sh drops --model-dir (mutually exclusive with the
+# positional model in the CLI) and boots that single model directly.
 _parse_start_args() {
     local watchdog=""
     local preload=""
+    local model=""
+    local extra=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --watchdog)
@@ -256,14 +265,52 @@ _parse_start_args() {
                 preload="$2"
                 shift 2
                 ;;
-            *)
+            --model)
+                if [[ -z "${2:-}" || "${2}" == --* ]]; then
+                    log_error "--model requires a value"
+                    exit 1
+                fi
+                model="$2"
+                shift 2
+                ;;
+            # spec-decode / model flags that take a value
+            --dflash-drafter-path|--dflash2-drafter-path|--dspark-drafter-path|\
+            --dflash2-block-size|--dflash2-draft-bits|--dspark-draft-quant-bits|\
+            --mtp-num-draft-tokens|--spec-decode|--specprefill-draft-model|\
+            --draft-model|--served-model-name|--cloud-model|--embedding-model)
+                if [[ -z "${2:-}" || "${2}" == --* ]]; then
+                    log_error "$1 requires a value"
+                    exit 1
+                fi
+                extra+=("$1" "$2")
+                shift 2
+                ;;
+            # boolean spec-decode flags (no value)
+            --enable-dflash|--enable-dflash2|--enable-dspark|--enable-mtp|\
+            --no-spec-decode|--force-spec-decode|--mtp-optimistic|--mtp-sidecar)
+                extra+=("$1")
+                shift
+                ;;
+            --*)
                 log_error "Unknown start option: $1"
                 exit 1
+                ;;
+            *)
+                # positional model
+                if [[ -z "${model}" ]]; then
+                    model="$1"
+                    shift
+                else
+                    log_error "Multiple positional models not supported (got '$1', already have '${model}')"
+                    exit 1
+                fi
                 ;;
         esac
     done
     START_WATCHDOG="${watchdog}"
     START_PRELOAD="${preload}"
+    START_MODEL="${model}"
+    START_EXTRA_ARGS=("${extra[@]+"${extra[@]}"}")
 }
 
 # ── start ───────────────────────────────────────────────────────────
@@ -279,12 +326,28 @@ do_start() {
 
     log_step "Starting fusion-mlx on port ${PORT}"
 
-    # Read model_dir from settings if available
+    # Read model_dir from settings if available (only used in discovery mode)
     local model_dir="${HOME}/.fusion-mlx/models"
     if [[ -f "${SETTINGS}" ]]; then
         local md
         md=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('model',{}).get('model_dir','${model_dir}'))" 2>/dev/null || echo "${model_dir}")
         model_dir="${md}"
+    fi
+
+    # Model selection: CLI <model>/--model > settings.json model.default >
+    # discovery mode (--model-dir). When a model is given, --model-dir is
+    # dropped (mutually exclusive in the CLI serve parser).
+    local serve_model="${START_MODEL}"
+    if [[ -z "${serve_model}" && -f "${SETTINGS}" ]]; then
+        serve_model=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('model',{}).get('default',''))" 2>/dev/null || echo "")
+    fi
+    if [[ -n "${serve_model}" ]]; then
+        log_info "Model: ${serve_model}"
+    else
+        log_info "Discovery mode (model-dir=${model_dir})"
+    fi
+    if [[ ${#START_EXTRA_ARGS[@]} -gt 0 ]]; then
+        log_info "Extra serve args: ${START_EXTRA_ARGS[*]}"
     fi
 
     # OPS-P3-4 (#0907 audit): honor settings.json server.log_level so the
@@ -308,12 +371,22 @@ do_start() {
     fi
 
     if [[ -n "${START_WATCHDOG}" ]]; then
-        _run_with_watchdog "${model_dir}"
+        _run_with_watchdog "${model_dir}" "${serve_model}"
     else
         local api_key_arg=""
         if [[ -n "${API_KEY}" ]]; then
             api_key_arg="--api-key ${API_KEY}"
             export FUSION_MLX_API_KEY="${API_KEY}"
+        fi
+        # Build the serve command. <model> (positional) and --model-dir
+        # are mutually exclusive in the CLI — pick one based on whether a
+        # model was specified. Spec-decode flags from START_EXTRA_ARGS
+        # pass through verbatim.
+        local model_or_dir
+        if [[ -n "${serve_model}" ]]; then
+            model_or_dir="${serve_model}"
+        else
+            model_or_dir="--model-dir ${model_dir}"
         fi
         # Redirect serve stdout+stderr to server.log so the detached
         # process never holds a dead tty. Without this, tqdm (writes to
@@ -322,7 +395,7 @@ do_start() {
         # file. Truncate on each start (singular server.log convention).
         : > "${LOG_DIR}/server.log"
         fusion-mlx serve \
-            --model-dir "${model_dir}" \
+            ${model_or_dir} \
             --log-level "${log_level}" \
             --enable-prefix-cache \
             --continuous-batching \
@@ -330,6 +403,7 @@ do_start() {
             --max-cache-blocks 4096 \
             $(host_port_args) \
             ${api_key_arg} \
+            ${START_EXTRA_ARGS[@]+"${START_EXTRA_ARGS[@]}"} \
             > "${LOG_DIR}/server.log" 2>&1 &
     fi
 
@@ -628,6 +702,7 @@ do_clean() {
 # ── watchdog supervisor ─────────────────────────────────────────────
 _run_with_watchdog() {
     local model_dir="$1"
+    local serve_model="${2:-}"
     # PRELOAD_MODELS is already exported in the environment
     local backoff=1
     local max_backoff=30
@@ -667,10 +742,18 @@ _run_with_watchdog() {
         # OPS-P3-4 (#0907 audit): honor settings.json server.log_level here too.
         local log_level
         log_level=$(_resolve_log_level)
+        # Model vs discovery: <model> positional and --model-dir are
+        # mutually exclusive. Spec-decode flags pass through verbatim.
+        local model_or_dir
+        if [[ -n "${serve_model}" ]]; then
+            model_or_dir="${serve_model}"
+        else
+            model_or_dir="--model-dir ${model_dir}"
+        fi
         # Redirect to server.log (same tty-detach fix as do_start, #501).
         : > "${LOG_DIR}/server.log"
         fusion-mlx serve \
-            --model-dir "${model_dir}" \
+            ${model_or_dir} \
             --log-level "${log_level}" \
             --enable-prefix-cache \
             --continuous-batching \
@@ -678,6 +761,7 @@ _run_with_watchdog() {
             --max-cache-blocks 4096 \
             $(host_port_args) \
             ${api_key_arg} \
+            ${START_EXTRA_ARGS[@]+"${START_EXTRA_ARGS[@]}"} \
             > "${LOG_DIR}/server.log" 2>&1
 
         local exit_code=$?

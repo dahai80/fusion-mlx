@@ -361,6 +361,23 @@ fusion-mlx serve qwen3.5-9b-4bit --enable-dspark
 fusion-mlx serve qwen3.5-9b-4bit --kv-cache-turboquant
 ```
 
+`start.sh` also accepts a model and spec-decode flags (passed through to
+`fusion-mlx serve`), so you don't need to invoke the CLI directly:
+
+```bash
+# Single model with DFlash2 speculative decoding
+./start.sh start qwen3.8-27b-4bit --enable-dflash2 --dflash2-drafter-path z-lab/Qwen3.8-27B-DFlash2
+
+# Single model with DSpark
+./start.sh start qwen3.5-9b-4bit --enable-dspark --dspark-drafter-path dspark_qwen3_8b_block7-mlx
+
+# Discovery mode (no model = auto-discovers all models in model-dir)
+./start.sh start
+
+# Watchdog + model + MTP
+./start.sh start --watchdog qwen3-8b-4bit --enable-mtp
+```
+
 ### Bench
 
 ```bash
