@@ -1,0 +1,22 @@
+[
+    {
+        "op": "grammar_bitmask_apply (2% allowed)",
+        "stock_ms": 3.090729499945155,
+        "shim_ms": 1.4119380000465753
+    },
+    {
+        "op": "quant_kv_degraded_attention (q8_0, T=512)",
+        "stock_ms": 0.18324950019632524,
+        "shim_ms": 0.17512500016891863
+    },
+    {
+        "op": "fused_rmsnorm_residual",
+        "stock_ms": 1.0458335002567765,
+        "shim_ms": 1.0086459997182828
+    },
+    {
+        "op": "fused_rope",
+        "stock_ms": 0.9521874999336433,
+        "shim_ms": 0.9837085001436208
+    }
+]

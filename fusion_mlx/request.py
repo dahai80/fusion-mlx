@@ -53,6 +53,16 @@ class SamplingParams:
     repetition_penalty: float = 1.0
     presence_penalty: float = 0.0
     frequency_penalty: float = 0.0
+    # Mirostat v2 (v2 doc §3.5) — 0 tau = off. Stateful CPU sampler.
+    mirostat_tau: float = 0.0
+    mirostat_eta: float = 0.1
+    mirostat_mode: int = 0
+    # DRY sampler (v2 doc §3.5) — 0 multiplier = off. Penalizes recent
+    # token-sequence repeats via a suffix trie over the generated window.
+    dry_multiplier: float = 0.0
+    dry_base: float = 1.75
+    dry_allowed_length: int = 2
+    dry_penalty_last_n: int = -1
     stop: list[str] | None = None
     stop_token_ids: list[int] | None = None
     logprobs: bool = False

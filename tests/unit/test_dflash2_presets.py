@@ -10,6 +10,7 @@ from fusion_mlx.speculative.dflash2.presets import (
     DFlash2Preset,
     _adjust_for_quant,
     _detect_family,
+    _is_hybrid_model,
     resolve_preset,
 )
 
@@ -117,3 +118,82 @@ def test_adjust_for_quant_none_no_change():
     base = DFlash2Preset(block_size=5, draft_bits=4, reason="test")
     adjusted = _adjust_for_quant(base, None)
     assert adjusted.draft_bits == 4
+
+
+def _hybrid_model(model_type="qwen3_5", layer_types=None):
+    class FakeTextConfig(dict):
+        pass
+
+    tc = FakeTextConfig()
+    if layer_types is not None:
+        tc["layer_types"] = layer_types
+        tc["model_type"] = model_type + "_text"
+
+    class FakeArgs:
+        pass
+
+    args = FakeArgs()
+    args.model_type = model_type
+    args.text_config = tc
+
+    class FakeModel:
+        pass
+
+    m = FakeModel()
+    m.args = args
+    return m
+
+
+def test_is_hybrid_detects_linear_attention_layers():
+    m = _hybrid_model(
+        "qwen3_5",
+        ["linear_attention", "linear_attention", "full_attention"],
+    )
+    assert _is_hybrid_model(m) is True
+
+
+def test_is_hybrid_detects_qwen3_5_model_type():
+    m = _hybrid_model("qwen3_5", layer_types=["full_attention"])
+    assert _is_hybrid_model(m) is True
+
+
+def test_is_hybrid_false_for_dense_qwen3():
+    class FakeArgs:
+        model_type = "qwen3"
+        text_config = {"model_type": "qwen3", "layer_types": ["full_attention"]}
+
+    class FakeModel:
+        args = FakeArgs()
+
+    assert _is_hybrid_model(FakeModel()) is False
+
+
+def test_is_hybrid_false_for_none_model():
+    assert _is_hybrid_model(None) is False
+
+
+def test_hybrid_preset_raises_threshold_and_shrinks_block():
+    m = _hybrid_model(
+        "qwen3_5",
+        ["linear_attention", "linear_attention", "full_attention"],
+    )
+    p = resolve_preset("Qwen3.8-27B-4bit", model=m, quant_bits=4)
+    assert p.hybrid is True
+    assert p.block_size == 2
+    assert p.circuit_breaker_threshold == 0.80
+    assert p.circuit_breaker_window == 6
+    assert "HYBRID" in p.reason
+
+
+def test_dense_preset_not_affected_by_hybrid_logic():
+    class FakeArgs:
+        model_type = "qwen3"
+        text_config = {"layer_types": ["full_attention"]}
+
+    class FakeModel:
+        args = FakeArgs()
+
+    p = resolve_preset("Qwen3-8B-4bit", model=FakeModel(), quant_bits=4)
+    assert p.hybrid is False
+    assert p.block_size == 4
+    assert p.circuit_breaker_threshold == 0.25

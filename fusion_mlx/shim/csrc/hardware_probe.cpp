@@ -1,0 +1,158 @@
+// fusion_mlx/shim/csrc/hardware_probe.cpp
+// Runtime MTLDevice feature-set probe. Derives BF16/FP8 MMA capability
+// from the GPU family rather than the marketing name where possible.
+#include "hardware_probe.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+
+// MLX metal device access. metal::device(default_device()) returns the
+// per-device Device wrapper holding the MTL::Device. MLX's device.h
+// already includes <Metal/Metal.hpp> (the metal-cpp C++ wrapper), which
+// exposes MTL::Device GPU-family queries without an Obj-C bridge.
+#include "mlx/backend/metal/device.h"
+#include "mlx/device.h"
+
+namespace fusion_mlx::shim {
+
+namespace {
+
+// Parse "M3", "M4 Pro", "M2 Max" -> generation int. Returns 0 if unknown.
+int gen_from_name(const std::string& name) {
+    // Look for "M" + digit.
+    for (std::size_t i = 0; i + 1 < name.size(); ++i) {
+        if (name[i] == 'M' && name[i + 1] >= '1' && name[i + 1] <= '9') {
+            return name[i + 1] - '0';
+        }
+    }
+    return 0;
+}
+
+} // namespace
+
+HardwareProbe probe_hardware() {
+    HardwareProbe h{};
+    h.gen = 0;
+    h.has_bf16_mma = false;
+    h.has_fp8_mma = false;
+    h.gpu_core_count = 0;
+
+    // Default device name from the environment / sysctl fallback so the
+    // probe is still useful when MLX Metal is unavailable (headless CI).
+    if (const char* cn = std::getenv("FUSION_SHIM_FORCE_CHIP")) {
+        h.device_name = cn;
+        h.gen = gen_from_name(cn);
+    } else {
+        // sysctl machdep.cpu.brand_string is the authoritative chip string
+        // on Apple Silicon; reading it via popen keeps this dependency-free.
+        FILE* fp = popen("/usr/sbin/sysctl -n machdep.cpu.brand_string 2>/dev/null", "r");
+        if (fp) {
+            char buf[128] = {0};
+            if (std::fgets(buf, sizeof(buf), fp)) {
+                h.device_name = std::string(buf);
+                while (!h.device_name.empty() &&
+                       (h.device_name.back() == '\n' || h.device_name.back() == '\r')) {
+                    h.device_name.pop_back();
+                }
+            }
+            pclose(fp);
+        }
+        h.gen = gen_from_name(h.device_name);
+    }
+
+    // GPU core count via IORegistry (AGXAccelerator "gpu-core-count").
+    // Physical property of the host — deliberately NOT overridden by
+    // FUSION_SHIM_FORCE_CHIP (forcing a chip name does not change the
+    // number of physical GPU cores). Read once here; 0 = unavailable
+    // (non-Apple host / headless CI), never a guess.
+    {
+        FILE* gp =
+            popen("/usr/sbin/ioreg -r -c AGXAccelerator -d 1 2>/dev/null", "r");
+        if (gp) {
+            std::string ioreg_out;
+            char gbuf[1024];
+            while (std::fgets(gbuf, sizeof(gbuf), gp)) {
+                ioreg_out += gbuf;
+            }
+            pclose(gp);
+            const std::string key = "\"gpu-core-count\" = ";
+            std::size_t pos = ioreg_out.find(key);
+            if (pos != std::string::npos) {
+                int cores = std::atoi(ioreg_out.c_str() + pos + key.size());
+                if (cores > 0) {
+                    h.gpu_core_count = cores;
+                }
+            }
+        }
+    }
+
+    // Try MLX Metal device for architecture + GPU family. This block is
+    // guarded so a headless build (no Metal) still links.
+    try {
+        auto& d = mlx::core::metal::device(mlx::core::default_device());
+        h.architecture = d.get_architecture();
+        // MLX's architecture gen is the GPU id (e.g. applegpu_g17s -> 17),
+        // NOT the chip generation. Chip gen (M5 -> 5, utils/hardware.py
+        // get_chip_generation convention) from the sysctl/forced name is
+        // authoritative; MLX gen is only a headless fallback when the
+        // name parse found nothing.
+        int mlx_gen = d.get_architecture_gen();
+        if (h.gen == 0 && mlx_gen > 0) {
+            h.gen = mlx_gen;
+        }
+        MTL::Device* mtl = d.mtl_device();
+        if (mtl) {
+            // GPU family probe. MTLGPUFamilyApple9 = M3-generation. BF16
+            // simdgroup matrix multiply is available from Apple9 onward —
+            // MTLGPUFamilyMac2 is the M1-generation desktop family and must
+            // NOT be treated as BF16-capable (matches utils/hardware.py
+            // get_mma_capability: gen >= 3).
+            bool apple9 = mtl->supportsFamily(MTL::GPUFamilyApple9);
+            bool apple10 = mtl->supportsFamily(MTL::GPUFamilyApple10);
+            if (apple9) {
+                h.has_bf16_mma = true;
+            }
+            // FP8 throughput: conservative — only M4+ (Apple10+) until
+            // per-part benchmarks confirm non-emulated e4m3/e5m2. The
+            // bundled metal-cpp may not expose Apple11+ enums; the
+            // gen>=4 fallback below catches newer parts either way.
+            if (apple10) {
+                h.has_fp8_mma = true;
+            }
+            // registry->deviceName returns the marketing name.
+            if (h.device_name.empty()) {
+                h.device_name = h.architecture;
+            }
+        }
+    } catch (...) {
+        // Headless / no Metal: keep the sysctl-derived values. The Python
+        // fallback layer (fast.py) re-derives capability from
+        // utils/hardware.py when _ext is absent or this probe fails.
+        if (h.architecture.empty()) {
+            h.architecture = h.device_name;
+        }
+    }
+
+    // Final derivation by generation if the family probe did not fire.
+    if (!h.has_bf16_mma && h.gen >= 3) {
+        h.has_bf16_mma = true;
+    }
+    if (!h.has_fp8_mma && h.gen >= 4) {
+        h.has_fp8_mma = true;
+    }
+    // FUSION_SHIM_FORCE_CHIP must make BOTH probe paths (C++ and Python
+    // fallback) agree on the FORCED chip: re-derive MMA from the forced
+    // generation, discarding family-probe bits read from the real device.
+    if (std::getenv("FUSION_SHIM_FORCE_CHIP") != nullptr) {
+        h.has_bf16_mma = h.gen >= 3;
+        h.has_fp8_mma = h.gen >= 4;
+    }
+    if (h.architecture.empty()) {
+        h.architecture = h.device_name;
+    }
+
+    return h;
+}
+
+} // namespace fusion_mlx::shim

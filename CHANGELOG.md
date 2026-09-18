@@ -34,12 +34,235 @@
   the singleton and the live instance config, accepts a keyword-only
   `cloud_consent`, and passes `cloud_router_api_base` through to
   `CloudRouter`.
+- **Shim grammar ring: persistent worker + GPU bitmask apply** —
+  `GrammarMaskRing` no longer spawns a thread per accepted token (one
+  persistent daemon worker); `apply_bitmask` transfers only the int32
+  bitmask words and expands bits on the GPU (xgrammar kernel used when
+  importable). Measured -54% vs the prod per-bit manual fallback.
+  `bench_shim_perf.py` grammar baseline fixed from a no-op to the real
+  prod fallback path (was misreported as a +28000% regression). Baseline
+  archived at `benchmarks/reports/shim_perf_20260918.json`.
+- **`gpu_core_count=0` fixed** — hardware probe now reads the physical
+  GPU core count from IORegistry (`AGXAccelerator "gpu-core-count"`) in
+  both the C++ probe and the Python fallback (`utils/hardware.py`
+  `get_gpu_core_count()`, IORegistry-first, ~40x faster than
+  system_profiler). Not faked under `FUSION_SHIM_FORCE_CHIP`.
 
 ### Added
-- **`--cloud-consent` serve flag (#0917)** — explicit consent gate for
-  cloud fallback routing (RT-12). Without it, `--cloud-model` routes
-  nothing to the cloud and only logs suppressed fallbacks; with it,
-  prompts above `--cloud-threshold` may leave the local process.
+- **C++ Shim extension skeleton + Tier-1 safety base (PR-A)** — first PR of
+  the llama.cpp-capability landing roadmap. New `fusion_mlx/shim/` package:
+  nanobind+MLX CMake extension with a Python degrade fallback (`fast.py`),
+  `FUSION_SHIM_ENABLED` master switch (default OFF). Tier-1 safety base:
+  `hardware_probe` (MTLDevice BF16/FP8 MMA + chip gen), `alignas(128)` shared
+  structs, `memory_sentinel` (dispatch_source MEMORYPRESSURE, additive to
+  ProcessMemoryEnforcer), C-ABI exception envelope, `check_metal_spill.sh`
+  L1 gate. Build via `scripts/build_shim.sh`; degrades gracefully when unbuilt.
+- **Tier-1 safety base wired into live system (PR-B)** — `hardware.py`
+  `get_chip_generation()`/`get_mma_capability()` as single source of truth
+  for BF16/FP8 MMA; `fast.py` Python fallback DRY'd to use them. C++
+  `memory_sentinel` wired to `ProcessMemoryEnforcer.start()/stop()` —
+  callback `wake(active=True)` breaks poll sleep on kernel pressure;
+  polling stays authoritative; opt-in via `FUSION_SHIM_ENABLED=1`.
+- **GGUF loader + ASFW layout converter (PR-C)** — `migrate/asfw.py`
+  SIMD32-aligned weight layout converter (splits scales from packed,
+  groups by simdgroup width). `migrate/gguf_loader.py` high-level loader
+  with per-tensor layer format validation + fallback. `FUSION_SHIM_ASFW=1`
+  env switch (default OFF). Supports Q4_0/Q8_0/Q4_K; IQ series falls back.
+- **SamplerChain: DRY + Mirostat v2 stateful samplers (PR-D)** —
+  `utils/sampling.py` adds `make_dry_processor` (suffix-trie repeat penalty)
+  + `make_mirostat_v2_processor` (running-mu surprise ceiling). Both plug
+  into mlx_lm `BatchGenerator.logits_processors` (CPU state, §3.5 CPU/GPU
+  split); the fused `@mx.compile` fast path stays as the degrade for the
+  GPU logit transforms (top_k/top_p/min_p/temp). `request.SamplingParams`
+  + `ChatCompletionRequest`/`CompletionRequest` gain `mirostat_tau/eta/mode`
+  + `dry_multiplier/base/allowed_length/penalty_last_n`. Mirostat disables
+  the fused fast path (dynamic candidate set); DRY keeps it. Also fixes
+  `repetition_penalty` being dropped at the `_common._build_sampling_params`
+  API mapping (pre-existing bug).
+- **Golden Reference alignment harness (PR-F)** — `eval/golden_reference.py`
+  provides deterministic numeric primitives for verifying enhanced code
+  paths (Shim kernels, fused RoPE/RMSNorm, quantized KV, spec decode) match
+  the stock MLX reference: `kl_divergence`/`logits_kl`/`assert_logits_aligned`
+  (default KL tol 1e-6 nats, v2 doc §7 L2), `MemoryGrowthTracker` (psutil RSS
+  sampler, post-warmup slope leak detection, §7 L5), `check_long_text_stability`
+  (NaN-sentinel + repeated-token-stall detection, 32k long-text harness).
+  All primitives deterministic + unit-testable without a real model;
+  real-model tests gated by `FUSION_MLX_REAL_MODEL_TESTS=1` + running server.
+- **Fused RoPE + RMSNorm P0 operators (PR-G)** — `shim/fused_ops.py` adds
+  two P0 bandwidth operators: `fused_rmsnorm_residual` (RMSNorm + residual
+  add in one `@mx.compile` graph, eliminating the separate `+` dispatch;
+  v2 doc §5.6: threadgroup reduction, no global atomic) and `fused_rope`
+  (FP32 position computation + optional YaRN/NTK-by-parts frequency scaling
+  for context extension; stock `mx.fast.rope` has no YaRN path + computes
+  positions in input dtype → fp16 overflow at long context). Both verified
+  against stock MLX via the PR-F golden reference harness (KL < 1e-6).
+  Degrade switches `FUSION_SHIM_FUSED_RMSNORM`/`FUSION_SHIM_FUSED_ROPE`
+  (default OFF).
+- **PagedKVCache two-level addressing + CoW (PR-H)** —
+  `custom_kernels/paged_kv_cow.py` extends `FusionPagedKVCache` with
+  refcounted physical blocks + copy-on-write (`ensure_writable` copies a
+  shared block before mutation), two-level page indirection
+  (`share_pages` adopts physical blocks from a prefix-cache hit with
+  refcount increment, skipping KV recompute), and FA-tile alignment
+  (`align_block_size_to_fa_tile` rounds block_size to the Metal Flash
+  Attention tile granularity). `PrefixPageBinder` binds prefix block
+  hashes to physical pages for donation. Verified vs stock
+  `FusionPagedKVCache` via the PR-F golden harness (KL < 1e-6) on
+  fetch / multi-step / trim / block-boundary-span. Degrade switch
+  `FUSION_SHIM_TWO_LEVEL_KV` (default OFF). Cross-pool production wiring
+  to `BlockAwarePrefixCache` is Tier-2 deferred (adapter interface stable).
+- **Tree-Mask spec-decode verify + Draft Virtual Append Offset (PR-I)** —
+  `speculative/tree_mask.py` adds tree-mask verification: verify multiple
+  draft candidates (a tree, not a chain) in one target forward pass via a
+  causal tree attention mask (`build_tree_attention_mask` /
+  `apply_tree_mask`), returning the longest accepted root-to-leaf path
+  (`verify_tree_logits`). `DraftVirtualAppendOffset` stages draft KV at a
+  virtual offset without committing to the real cache; `commit(n)` advances
+  the real offset atomically, `rollback()` discards staged KV zero-copy
+  (trim-free). Golden check: a chain tree returns the same accepted length
+  + bonus as the stock `dflash/verifier._decide_accepted_prefix` linear
+  first-mismatch. Metal ragged-candidate kernel (true ragged Q packing) is
+  Tier-2 deferred — dense tree mask + stock broadcast attention here; the
+  vendored steel `block_token_mask` is the eventual kernel target.
+  Degrade switch `FUSION_SHIM_TREE_MASK` (default OFF).
+- **C++ EngineRunner Tier-2 prototype (PR-J)** — `shim/csrc/engine_runner.{h,cpp}`
+  adds a dedicated decode thread pinned to P-cores via
+  `pthread_set_qos_class_self_np` (UserInteractive default, read-back of the
+  actual class in `stats()`), with every submitted callable wrapped in the
+  C-ABI exception envelope (§5.4 rule 5: a C++/Python exception in the decode
+  thread is captured as a `(code, message)` result, never propagated raw
+  across the CPython boundary). Blocking `submit(fn)` executes on the worker
+  when running, inline on the calling thread otherwise; results travel via a
+  mutex-guarded `_last_result` (worker TLS last_error is invisible to the
+  caller thread), and the nanobind binding releases the GIL around blocking
+  `start/stop/submit` so the worker can acquire it to run Python callables.
+  Python side: `shim.fast.engine_runner(qos)` factory + `_InlineEngineRunner`
+  fallback (runs inline, exceptions propagate normally) — duck-typed either
+  way. Degrade switch `FUSION_ENGINE_RUNNER` (default OFF).
+- **Q4_0/Q8_0 quantized KV online decompression + FP32 softmax (PR-K)** —
+  `shim/quant_kv.py` adds llama.cpp block-format KV quantization with two
+  attention paths: codecs `q40_quantize/q40_dequantize` (32-elem blocks,
+  fp16 delta, nibble-packed — 18 bytes/block) and `q80_` (34 bytes/block),
+  golden-verified against a numpy reference (exact packing match). Online
+  path: chunk-streamed attention dequantizes one KV chunk at a time and
+  folds it into a running FP32 softmax (streaming max/sum/numerator —
+  §2.2 Softmax 中间 FP32 累加; peak fp16 memory = one chunk, not the whole
+  cache). Degraded path: dequantize-all then stock
+  `mx.fast.scaled_dot_product_attention`. `ShimQuantizedKVCache` stores
+  Q4_0/Q8_0 packs (53% of fp16 at Q8_0, 28% at Q4_0), deliberately without
+  a `bits` attribute so mlx-lm's sdpa wrapper cannot route it into the
+  affine `quantized_matmul` path; attention goes through
+  `cache.attention()` (GQA + causal/additive masks supported). OFF mode:
+  plain fp16 concat cache + stock SDPA — zero behavior change.
+  Degrade switch `FUSION_SHIM_QUANT_KV` (default OFF).
+- **imatrix metadata + IQ/GGUF mixed-quant consumption (PR-L)** —
+  `shim/mixed_quant.py` adds three pieces (v2 doc §3.3): (1) `load_imatrix`
+  parses a llama.cpp imatrix GGUF file (per-tensor F32-array entries,
+  optional chunk-count key) into `ImatrixData`; (2) `build_mixed_plan`
+  scores each tensor by imatrix-weighted relative MSE of a hypothetical
+  Q4_0 requant (`q40_sensitivity`, err_var = d²/12 with d = rowmax/8) and
+  deterministically assigns sensitive tensors to bf16 and the rest to the
+  preferred production format (Q4_0/MXFP4) — no model decisions, pure
+  arithmetic; (3) `dispatch_tensor` maps raw GGUF block data to numpy
+  dequant handlers for the unambiguous layouts (q4_0, q8_0, iq4_nl,
+  mxfp4). iq4_nl is gated behind `FUSION_SHIM_IQ` (default OFF); lattice
+  IQ2/IQ3/IQ1 and Q2_K..Q6_K raise `UnsupportedQuantError` — loud
+  fallback to native mlx_lm, never a silently-wrong decode.
+  Degrade switch `FUSION_SHIM_IQ` (default OFF).
+- **Grammar mask ring prefetch + bucket padding + perf baseline (PR-M)** —
+  (1) `shim/grammar_ring.py`: the stock path computes the grammar DFA
+  bitmask inline on every constrained decode step (CPU work directly on
+  the critical path). `GrammarMaskRing` pipelines it — a worker thread
+  computes the next step's bitmask into a preallocated ring slot
+  immediately after token accept, overlapping CPU mask work with the GPU
+  forward pass; `wrap_processor` wires it at the scheduler's grammar
+  processor construction (sched_thinking), with an epoch guard so
+  abandoned slots are never consumed, and `accept_token` drains any
+  in-flight job before mutating matcher state. Results are identical to
+  the inline path (same matcher, same bitmask bytes). Scheduler
+  isinstance gates now accept ring wrappers via `_is_grammar_processor`.
+  (2) `shim/bucket_pad.py`: deterministic bucket padding (snap sequence
+  lengths up to power-of-two-multiple edges, pad, trim outputs) so
+  mx.compile shape specialization sees a small closed shape set instead
+  of one graph per distinct length. Pure arithmetic, callers opt in.
+  (3) `scripts/bench_shim_perf.py`: headless micro-benchmark of the shim
+  ops vs their stock MLX references (fused RMSNorm+residual, fused RoPE,
+  quantized-KV degraded attention, grammar bitmask apply) with
+  interleaved A/B median timing — the perf baseline artifact for the
+  shim roadmap. Degrade switch `FUSION_SHIM_GRAMMAR_RING` (default OFF).
+- **MoE route dispatch + gather combine (PR-N)** — `shim/moe_dispatch.py`:
+  the deterministic dispatch bookkeeping behind llama.cpp's
+  MUL_MAT_ID + GET_ROWS MoE serving path. `route_dispatch` builds a
+  stable token-reorder plan (composite sort key expert·P + pair_rank)
+  with per-expert counts, segment offsets, and an inverse restore map;
+  `gather_rows` / `mul_mat_id` (mx.gather_mm, SwitchLinear calling
+  convention) / `gather_combine` cover the grouped-matmul round trip;
+  `aligned_offsets` pads expert segments to fixed multiples so padded
+  layouts keep a closed shape set (same idea as PR-M bucket padding);
+  `expert_load_stats` emits deterministic load-balance metrics. Pure mx
+  ops, Tier-2 conditional — no default wiring; the production MoE layers
+  (glm_moe_dsa/deepseek_v4 SwitchGLU) keep their own sort thresholds.
+  Degrade switch `FUSION_SHIM_MOE` (default OFF).
+- **Mamba SSM parallel prefix-scan prototype (PR-O)** — `shim/ssm_scan.py`:
+  3-pass Mamba-2 SSD decomposition of mlx_lm's chunk-serial `ssm_attn`
+  (ssm.py) so per-chunk outputs/states compute independently and only a
+  tiny state prefix scan stays sequential. Padding is identity-decay exact
+  (dtA padded with 0, not -inf); `mask`/`lengths` reject loudly instead of
+  silently disagreeing with `ssm_attn`. Numeric contract verified two
+  ways: 1-2 ulp parity with `ssm_attn` at matching chunk shapes, and a
+  float64 token-recurrence reference on the CPU device (GPU fp32 matmul
+  computes in fp16 — a platform property `ssm_attn` shares). Pure mx ops,
+  Tier-2 conditional, Mamba-only. Degrade switch `FUSION_SHIM_SSM`
+  (default OFF).
+- **Shim full-chain tests + ops docs (PR-P)** — `tests/unit/test_shim_switches.py`
+  (degradation-switch full verification: all 12 `FUSION_SHIM_*`/
+  `FUSION_ENGINE_RUNNER` switches default OFF, literal "0"/"1" parsing,
+  independence, v2 doc §7 L1) and `tests/unit/test_shim_fullchain.py`
+  (MoE→SSM composition vs a float64 recurrence on the CPU device, plus
+  memory gates: 300-iteration active-memory return after
+  `mx.synchronize()`+`mx.clear_cache()`, RSS-slope bound via the PR-F
+  `MemoryGrowthTracker`, v2 doc §7 L2/L5). New `docs/shim.md`: package
+  layout, build, full switch table, verification entry points, perf
+  baseline, ops metrics, upstream notes (PR-E GBNF C++ DFA deferred;
+  MLX GPU fp32 matmul computes in fp16; no
+  scatter_add/bincount/searchsorted in this build). README gains a shim
+  bullet. Tier-3 (IOSurface, persistent threads, global arena)
+  intentionally not built per the v2 doc.
+
+### Fixed
+
+- EngineRunner: stop() no longer hangs a submit() blocked on an in-flight
+  unit — pending work is dropped and the blocked submit returns the new
+  `ShimError::Stopped` (6); submit() refuses after stop begins.
+- Mirostat v2 mu-update attributes `token_ids[-1]` (the token sampled from
+  the cached logits); the stale-token resync corrupted mu every step.
+- fused_ops: removed `maybe_patch_model_rmsnorm` — instance-attribute
+  `__call__` patching is a silent no-op in CPython and the fused math did
+  not match the stock pre-norm block; it had no callers.
+- ASFW q4_K converter parses with the full 144-byte super-block stride
+  (headers and packed quants are interleaved; output was garbage past
+  block 0).
+- memory_sentinel: handlers capture the concrete source/queue (fixes
+  stop-then-start ABA use-after-free); pressure-callback refcount ops now
+  happen only under the GIL.
+- hardware_probe: BF16-MMA gated on Apple9 only — Mac2 (M1-generation
+  desktop) was wrongly reported capable; now agrees with utils/hardware.py.
+- quant_kv: Q8_0 codec is true llama.cpp format (d = amax/127);
+  online_attention no longer NaN-poisons rows whose first chunks are fully
+  masked.
+- DRY: penalizes the extension token after every earlier occurrence
+  (llama.cpp semantics), not only the first.
+- API schema: mirostat_eta gt 0.0, dry_base gt 1.0 (schema-valid 0.0/1.0
+  previously caused a 500).
+- mixed_quant: imatrix basename fallback implemented;
+  MemoryGrowthTracker raises when RSS sampling is unavailable instead of
+  passing the leak gate vacuously; shim hardware_probe() cached;
+  DraftVirtualAppendOffset documented chain-only.
+- **mxfp4 GGUF block size 18 → 17 bytes** — `migrate/gguf_reader.py`
+  `QUANT_BLOCK["mxfp4"]` said (32, 18); ggml `block_mxfp4` is 1 e8m0
+  scale byte + 16 bytes of 4-bit E2M1 = 17 bytes/block. Any tensor-size
+  or stride computation for mxfp4 GGUF data read past the end of the
+  actual block stream.
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
   HF-cache double-hyphen naming convention (`models--org--repo`, e.g.
   `mlx-community--Qwen3.8-27B-4bit`), but the slash→hyphen fallback in

@@ -17,7 +17,7 @@ import time
 import urllib.request
 
 API = "http://127.0.0.1:11434/v1/completions"
-TOKEN = "dahai168"
+TOKEN = "fg-admin-key"
 
 # Per-family chat-template prompts so the target doesn't hit a stop token
 # on the first generated token (the bare bench prompt does for Llama).
@@ -54,6 +54,7 @@ def stream_bench(model, prompt, max_tokens, temperature):
         headers={
             "Authorization": f"Bearer {TOKEN}",
             "Content-Type": "application/json",
+            "X-Fusion-Route": "api",
         },
     )
     t_start = time.perf_counter()

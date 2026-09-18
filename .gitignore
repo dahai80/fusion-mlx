@@ -43,3 +43,9 @@ htmlcov/
 
 # Type stubs generated locally
 *.pyi
+
+# fusion-mlx C++ Shim native build artifacts (scripts/build_shim.sh output)
+fusion_mlx/shim/_ext*.so
+fusion_mlx/shim/*.dylib
+fusion_mlx/shim/*.metallib
+build/shim/

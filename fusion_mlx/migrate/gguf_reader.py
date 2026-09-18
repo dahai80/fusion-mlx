@@ -90,6 +90,62 @@ class GGUFMetadata:
         return any(q in ql for q in ("q2", "q3", "iq2", "iq3", "iq1"))
 
 
+@dataclass
+class TensorInfo:
+    name: str
+    n_dims: int
+    dims: list[int]
+    dtype_id: int
+    dtype_name: str
+    data_offset: int
+    raw_offset: int
+
+
+# Quant block sizes (elements per block) + bytes per block. Used by the
+# ASFW converter to compute tensor data size and stride. Source: ggml.h.
+QUANT_BLOCK: dict[str, tuple[int, int]] = {
+    # dtype_name: (block_size_elements, block_bytes)
+    "f32": (1, 4),
+    "f16": (1, 2),
+    "bf16": (1, 2),
+    "q4_0": (32, 18),  # 1 f16 scale + 16 uint8 (32×4bit)
+    "q4_1": (32, 20),  # 1 f16 scale + 1 f16 min + 16 uint8
+    "q5_0": (32, 22),  # 1 f16 scale + 4 uint8 (5th bits) + 16 uint8
+    "q5_1": (32, 24),  # 1 f16 scale + 1 f16 min + 4 uint8 + 16 uint8
+    "q8_0": (32, 34),  # 1 f16 scale + 32 int8
+    "q8_1": (32, 36),  # 1 f16 scale + 1 f16 min + 32 uint8 (packed)
+    "q2_K": (256, 84),
+    "q3_K": (256, 110),
+    "q4_K": (256, 144),
+    "q5_K": (256, 176),
+    "q6_K": (256, 210),
+    "iq2_xxs": (256, 66),
+    "iq2_xs": (256, 74),
+    "iq3_xxs": (256, 98),
+    "iq3_s": (256, 110),
+    "iq2_s": (256, 82),
+    "iq4_nl": (32, 18),
+    "iq1_s": (256, 66),
+    "iq4_xs": (256, 136),
+    "mxfp4": (32, 17),  # 1 e8m0 scale byte + 16 uint8 (32×4bit)
+}
+
+
+def quant_block_bytes(dtype_name: str, n_elements: int) -> int:
+    """Compute the byte size of a quantized tensor given its dtype + element count."""
+    blk = QUANT_BLOCK.get(dtype_name)
+    if blk is None:
+        raise ValueError(f"Unsupported GGUF quant dtype: {dtype_name}")
+    block_size, block_bytes = blk
+    if n_elements % block_size != 0:
+        raise ValueError(
+            f"Tensor element count {n_elements} not divisible by block size "
+            f"{block_size} for dtype {dtype_name}"
+        )
+    n_blocks = n_elements // block_size
+    return n_blocks * block_bytes
+
+
 class GGUFReader:
     """Stream-parse a GGUF file header (no weight loading)."""
 
@@ -144,9 +200,15 @@ class GGUFReader:
             raise ValueError(f"Unknown GGUF value type {vtype}")
 
     def read_header(self) -> GGUFMetadata:
-        """Parse GGUF header, return extracted metadata."""
+        """Parse GGUF header, return extracted metadata.
+
+        Reads KV metadata + all tensor descriptors. Stores tensor info in
+        self.tensors for later weight loading by read_tensor_data().
+        """
         if not self.path.exists():
             raise FileNotFoundError(f"GGUF file not found: {self.path}")
+
+        self.tensors: list[TensorInfo] = []
 
         with open(self.path, "rb") as f:
             magic = self._read(f, "<I")
@@ -177,24 +239,81 @@ class GGUFReader:
                 raw_kv=kv,
             )
 
-            # Read first tensor dtype to infer quant level
-            if n_tensors > 0:
+            # Read ALL tensor descriptors (not just the first).
+            header_data_offset = 0
+            for i in range(n_tensors):
                 name = self._read_string(f)
                 n_dims = self._read(f, "<I")
-                for _ in range(n_dims):
-                    self._read(f, "<Q")
+                dims = [self._read(f, "<Q") for _ in range(n_dims)]
                 dtype = self._read(f, "<I")
-                meta.quant_level = _DTYPE_NAMES.get(dtype, f"dtype_{dtype}")
+                raw_offset = self._read(f, "<Q")
+                dtype_name = _DTYPE_NAMES.get(dtype, f"dtype_{dtype}")
+                info = TensorInfo(
+                    name=name,
+                    n_dims=n_dims,
+                    dims=list(dims),
+                    dtype_id=dtype,
+                    dtype_name=dtype_name,
+                    data_offset=0,
+                    raw_offset=raw_offset,
+                )
+                self.tensors.append(info)
+                if i == 0:
+                    meta.quant_level = dtype_name
+
+            # GGUF tensor data starts after the header, aligned to 32 bytes.
+            # The raw_offset in each tensor descriptor is relative to the
+            # start of the data section, not the file. We record the data
+            # section start (= current file offset, aligned) for read_tensor_data.
+            self._data_section_offset = self._offset
+            # Align to 32 bytes (GGUF alignment is typically 32).
+            alignment = kv.get("general.alignment", 32)
+            if alignment > 0:
+                pad = (alignment - (self._offset % alignment)) % alignment
+                if pad:
+                    f.read(pad)
+                    self._offset += pad
+                self._data_section_offset = self._offset
+
+            # Patch data_offset for each tensor: data_section_start + raw_offset.
+            for info in self.tensors:
+                info.data_offset = self._data_section_offset + info.raw_offset
+
+            if self.tensors:
                 logger.info(
-                    "GGUF %s: arch=%s ctx=%d quant=%s params=%.1fB",
+                    "GGUF %s: arch=%s ctx=%d quant=%s params=%.1fB tensors=%d",
                     self.path.name,
                     meta.arch,
                     meta.context_length,
                     meta.quant_level,
                     meta.n_params / 1e9,
+                    len(self.tensors),
                 )
 
         return meta
+
+    def read_tensor_data(self, info: TensorInfo) -> bytes:
+        """Read raw weight bytes for a single tensor.
+
+        The caller must have called read_header() first to populate
+        self.tensors + self._data_section_offset. Returns the raw
+        quantized bytes (not dequantized).
+        """
+        if not hasattr(self, "_data_section_offset"):
+            raise RuntimeError("read_header() must be called before read_tensor_data()")
+        n_elements = 1
+        for d in info.dims:
+            n_elements *= d
+        size = quant_block_bytes(info.dtype_name, n_elements)
+        with open(self.path, "rb") as f:
+            f.seek(info.data_offset)
+            data = f.read(size)
+        if len(data) < size:
+            raise EOFError(
+                f"GGUF tensor {info.name} truncated: expected {size} bytes, "
+                f"got {len(data)}"
+            )
+        return data
 
 
 def read_gguf_metadata(path: str | Path) -> GGUFMetadata:

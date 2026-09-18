@@ -161,6 +161,7 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **UMA Radix Latent cache** - repeat I2V requests skip the VAE-encode (model load + forward) via zero-copy `mx.array` reuse on Apple Silicon unified memory; extends the #178 radix cache from text KV to video frame latents (Phase-1: input-image latents, LTX-2 + Wan2.2). The UMA advantage the discrete-GPU CUDA stack cannot replicate. See [cache/LATENT_CACHE.md](fusion_mlx/cache/LATENT_CACHE.md)
 - **Distributed pipeline parallelism** - split a transformer forward at a layer boundary across nodes; `/distributed/load_shard`, `/distributed/pipeline_step`, `/distributed/decode`, `/distributed/sync_weights` endpoints with bit-exact activation serialization (base64 `.npy`), final norm + lm_head decode (#630), and path-traversal confinement. See [docs/distributed-pipeline.md](docs/distributed-pipeline.md)
 - **Public API boundary** - CI guard (`scripts/check_public_api_boundary.py`) that stops internal `fusion_mlx.*` modules from leaking into the public `fusion_mlx` import surface, with a grandparented whitelist for existing comfyui pairs. See [docs/public-api-boundary.md](docs/public-api-boundary.md)
+- **Shim enhancement layer** - opt-in llama.cpp-capability modules under `fusion_mlx/shim/` (fused RoPE/RMSNorm, quantized KV, imatrix/IQ, grammar ring, MoE dispatch, Mamba SSD scan) with per-feature `FUSION_SHIM_*` degrade switches defaulting OFF; C++ extension (hardware probe, memory sentinel) built via `scripts/build_shim.sh`. See [docs/shim.md](docs/shim.md)
 
 ### Advanced Feature Recommendations
 
@@ -358,6 +359,23 @@ fusion-mlx serve qwen3.5-9b-4bit --enable-dspark
 
 # With KV cache quantization (4-bit, 4× less memory traffic)
 fusion-mlx serve qwen3.5-9b-4bit --kv-cache-turboquant
+```
+
+`start.sh` also accepts a model and spec-decode flags (passed through to
+`fusion-mlx serve`), so you don't need to invoke the CLI directly:
+
+```bash
+# Single model with DFlash2 speculative decoding
+./start.sh start qwen3.8-27b-4bit --enable-dflash2 --dflash2-drafter-path z-lab/Qwen3.8-27B-DFlash2
+
+# Single model with DSpark
+./start.sh start qwen3.5-9b-4bit --enable-dspark --dspark-drafter-path dspark_qwen3_8b_block7-mlx
+
+# Discovery mode (no model = auto-discovers all models in model-dir)
+./start.sh start
+
+# Watchdog + model + MTP
+./start.sh start --watchdog qwen3-8b-4bit --enable-mtp
 ```
 
 ### Bench

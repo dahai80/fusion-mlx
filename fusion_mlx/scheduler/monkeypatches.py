@@ -21,6 +21,21 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _is_grammar_processor(proc) -> bool:
+    # Grammar processors OR their PR-M ring wrappers (shim
+    # GrammarMaskRing) — both expose accept_token for the sampled token.
+    if GrammarConstraintProcessor is not None and isinstance(
+        proc, GrammarConstraintProcessor
+    ):
+        return True
+    try:
+        from ..shim.grammar_ring import GrammarMaskRing
+
+        return isinstance(proc, GrammarMaskRing)
+    except ImportError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # UID row registry — tracks the sampler/logits_processors each uid should run.
 # Heterogeneous continuous batching (extend/filter across prompt and
@@ -231,10 +246,8 @@ def _optimized_generation_batch_step(self):
     needs_logprob_norm = True
     token_context = []
     if has_logits_processors:
-        has_grammar = GrammarConstraintProcessor is not None and any(
-            isinstance(p, GrammarConstraintProcessor)
-            for procs in self.logits_processors
-            for p in procs
+        has_grammar = any(
+            _is_grammar_processor(p) for procs in self.logits_processors for p in procs
         )
         token_context = [
             tc.update_and_fetch(inputs[i : i + 1])
@@ -334,9 +347,7 @@ def _optimized_generation_batch_step(self):
         sampled_list = self._next_tokens.tolist()
         for e in range(len(self.uids)):
             for proc in self.logits_processors[e]:
-                if GrammarConstraintProcessor is not None and isinstance(
-                    proc, GrammarConstraintProcessor
-                ):
+                if _is_grammar_processor(proc):
                     proc.accept_token(sampled_list[e])
 
     return input_list, self._current_logprobs

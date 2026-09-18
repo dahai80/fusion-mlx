@@ -7,6 +7,7 @@
 import logging
 import os
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import mlx.core as mx
@@ -32,6 +33,18 @@ EAGLE3_DRAFT_MODELS = {
 ENV_DRAFT_MODEL = "FUSION_EAGLE3_DRAFT_MODEL"
 ENV_DRAFT_TOKENS = "FUSION_EAGLE3_DRAFT_TOKENS"
 ENV_DRAFT_TEMP = "FUSION_EAGLE3_DRAFT_TEMP"
+
+# Adaptive skip: when recent acceptance is below break-even, skip draft
+# generation entirely (return []) so no GPU forward is wasted. Re-probe
+# periodically to detect recovery. Kills the -56% regression in
+# low-acceptance free-generation scenarios — ON matches OFF baseline.
+EAGLE3_ADAPTIVE_WINDOW = int(os.environ.get("FUSION_EAGLE3_ADAPTIVE_WINDOW", "6"))
+EAGLE3_ADAPTIVE_BREAK_EVEN = float(
+    os.environ.get("FUSION_EAGLE3_ADAPTIVE_BREAK_EVEN", "0.15")
+)
+EAGLE3_ADAPTIVE_PROBE_INTERVAL = int(
+    os.environ.get("FUSION_EAGLE3_ADAPTIVE_PROBE_INTERVAL", "8")
+)
 
 
 @dataclass
@@ -65,6 +78,15 @@ class Eagle3Speculator:
         self._loaded = False
         self._total_drafts = 0
         self._total_accepted = 0
+        # Adaptive skip state: recent acceptance window + pause tracking.
+        # When acceptance < break-even over the window, skip draft forwards
+        # (pure overhead in low-acceptance free generation). Re-probe every
+        # EAGLE3_ADAPTIVE_PROBE_INTERVAL skips to detect recovery.
+        self._recent_accept: deque[tuple[int, int]] = deque(
+            maxlen=EAGLE3_ADAPTIVE_WINDOW
+        )
+        self._adaptive_paused = False
+        self._skip_count = 0
 
     @property
     def model_path(self) -> str:
@@ -331,6 +353,11 @@ class Eagle3Speculator:
         self._draft_cache = None
         self._prev_token = None
         self._prefill_hidden = None
+        # Reset adaptive state so a new request starts fresh (acceptance
+        # distribution differs per prompt — don't carry over pause state).
+        self._recent_accept.clear()
+        self._adaptive_paused = False
+        self._skip_count = 0
 
     def on_new_request(self, request_id: str, prompt_tokens: list[int]):
         self.reset()
@@ -371,11 +398,51 @@ class Eagle3Speculator:
                 logger.debug("eagle3: prefill traceback", exc_info=True)
                 self._draft_cache = None
 
+    def _should_skip_draft(self) -> bool:
+        # Adaptive skip: if recent acceptance is below break-even, the
+        # draft forward is pure overhead (0% acceptance = 5 wasted GPU
+        # forwards per step). Skip entirely → matches OFF baseline.
+        if len(self._recent_accept) < EAGLE3_ADAPTIVE_WINDOW:
+            return False
+        total_a = sum(a for a, _ in self._recent_accept)
+        total_t = sum(t for _, t in self._recent_accept)
+        rate = total_a / total_t if total_t > 0 else 0.0
+        if rate < EAGLE3_ADAPTIVE_BREAK_EVEN:
+            if not self._adaptive_paused:
+                self._adaptive_paused = True
+                self._skip_count = 0
+                logger.info(
+                    "eagle3: adaptive pause — acceptance %.1f%% < %.1f%% "
+                    "over %d steps, skipping draft forwards",
+                    rate * 100,
+                    EAGLE3_ADAPTIVE_BREAK_EVEN * 100,
+                    EAGLE3_ADAPTIVE_WINDOW,
+                )
+            return True
+        if self._adaptive_paused:
+            logger.info(
+                "eagle3: adaptive resume — acceptance %.1f%% recovered",
+                rate * 100,
+            )
+            self._adaptive_paused = False
+            self._skip_count = 0
+        return False
+
     def generate_draft_tokens(self, current_token: int) -> list[int]:
         if self.model is None or not self._loaded:
             return []
         if self._draft_cache is None:
             return []
+
+        # Adaptive skip: in low-acceptance scenarios (free generation),
+        # draft forwards are pure overhead. _should_skip_draft checks the
+        # recent window and may pause/resume. When paused, only re-probe
+        # every EAGLE3_ADAPTIVE_PROBE_INTERVAL steps to detect recovery.
+        if self._should_skip_draft():
+            self._skip_count += 1
+            if self._skip_count % EAGLE3_ADAPTIVE_PROBE_INTERVAL != 0:
+                return []
+            logger.debug("eagle3: adaptive re-probe at skip=%d", self._skip_count)
 
         hidden_state = self._get_decode_hidden()
         drafts = []
@@ -413,6 +480,29 @@ class Eagle3Speculator:
 
     def record_accepted(self, n_accepted: int):
         self._total_accepted += n_accepted
+        # Feed adaptive controller: record this step's acceptance. The
+        # draft count is config.num_draft (only called when drafts ran).
+        self._recent_accept.append((n_accepted, self.config.num_draft))
+        # Eager pause check: detect low acceptance immediately when the
+        # window fills, rather than waiting for the next generate call.
+        # This shaves one step of overhead off the pause latency.
+        if (
+            not self._adaptive_paused
+            and len(self._recent_accept) >= EAGLE3_ADAPTIVE_WINDOW
+        ):
+            total_a = sum(a for a, _ in self._recent_accept)
+            total_t = sum(t for _, t in self._recent_accept)
+            rate = total_a / total_t if total_t > 0 else 0.0
+            if rate < EAGLE3_ADAPTIVE_BREAK_EVEN:
+                self._adaptive_paused = True
+                self._skip_count = 0
+                logger.info(
+                    "eagle3: adaptive pause — acceptance %.1f%% < %.1f%% "
+                    "over %d steps (eager)",
+                    rate * 100,
+                    EAGLE3_ADAPTIVE_BREAK_EVEN * 100,
+                    EAGLE3_ADAPTIVE_WINDOW,
+                )
 
     def get_stats(self) -> dict:
         rate = (
@@ -428,4 +518,6 @@ class Eagle3Speculator:
             "total_accepted": self._total_accepted,
             "acceptance_rate": rate,
             "loaded": self._loaded,
+            "adaptive_paused": self._adaptive_paused,
+            "adaptive_skip_count": self._skip_count,
         }

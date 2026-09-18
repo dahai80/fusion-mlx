@@ -426,6 +426,15 @@ class ProcessMemoryEnforcer:
         # already approved. Set/cleared by ImageGenEngine.generate prologue/
         # finally. Thread-safe single-slot (one media job at a time per pool).
         self._media_reservation_bytes: int = 0
+        # C++ dispatch_source MEMORYPRESSURE sentinel (PR-B). Additive to the
+        # 1s polling loop: on a kernel pressure event the sentinel callback
+        # fires immediately and wakes this loop before the next poll tick,
+        # cutting reactive latency from up-to-30s (idle interval) to ~0.
+        # The polling path stays authoritative — the sentinel only triggers
+        # an early re-check; _pressure_level is always recomputed from real
+        # usage in _check_and_enforce. Off when FUSION_SHIM_ENABLED != 1 or
+        # the native _ext is absent (headless CI).
+        self._sentinel_started: bool = False
 
     def update_loaded_model_bytes(self, delta: int) -> None:
         """Adjust tracked loaded model byte count."""
@@ -682,6 +691,8 @@ class ProcessMemoryEnforcer:
 
         self._task = asyncio.create_task(self._enforcement_loop())
 
+        self._start_memory_sentinel()
+
         self._apply_mlx_cache_limit()
 
         logger.info(
@@ -690,6 +701,67 @@ class ProcessMemoryEnforcer:
             f"ceiling={_format_gb(ceiling)}, "
             f"interval={self._active_poll_interval}s)"
         )
+
+    def _start_memory_sentinel(self) -> None:
+        """Start the C++ dispatch_source pressure sentinel (PR-B).
+
+        Additive: the sentinel callback wakes this loop on a kernel pressure
+        event so the next poll runs immediately instead of waiting up to the
+        idle interval. The polling path stays authoritative for the actual
+        soft/hard level decision. No-op when FUSION_SHIM_ENABLED != 1 or the
+        native _ext is absent.
+        """
+        if self._sentinel_started:
+            return
+        if os.environ.get("FUSION_SHIM_ENABLED", "0") != "1":
+            return
+        try:
+            from ..shim import fast as shim_fast
+
+            if not shim_fast.is_native_available():
+                return
+            ok = shim_fast.start_memory_sentinel(self._on_sentinel_pressure)
+            if ok:
+                self._sentinel_started = True
+                logger.info(
+                    "memory_sentinel: C++ dispatch_source started (reactive "
+                    "wake-on-pressure; polling stays authoritative)"
+                )
+            else:
+                logger.debug(
+                    "memory_sentinel: native start returned False; polling stays authoritative"
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "memory_sentinel: start failed: %s; polling stays authoritative", exc
+            )
+
+    def _stop_memory_sentinel(self) -> None:
+        """Stop the C++ pressure sentinel if it was started."""
+        if not self._sentinel_started:
+            return
+        try:
+            from ..shim import fast as shim_fast
+
+            shim_fast.stop_memory_sentinel()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("memory_sentinel: stop failed: %s", exc)
+        self._sentinel_started = False
+
+    def _on_sentinel_pressure(self, level: int, name: str) -> None:
+        """Sentinel callback — fires on the dispatch queue thread.
+
+        ``level``: 0=normal, 1=warning, 2=critical. We only wake the polling
+        loop; the actual pressure level is recomputed from real usage in
+        _check_and_enforce. ``wake(active=True)`` is thread-safe (uses
+        loop.call_soon_threadsafe).
+        """
+        logger.info(
+            "memory_sentinel: kernel pressure event level=%s name=%s; waking enforcer",
+            level,
+            name,
+        )
+        self.wake(active=True)
 
     def wake(self, *, active: bool = False) -> None:
         """Wake the polling loop before its current sleep timeout expires.
@@ -1323,6 +1395,7 @@ class ProcessMemoryEnforcer:
     async def stop(self) -> None:
         """Stop the background enforcement loop."""
         self._running = False
+        self._stop_memory_sentinel()
         if self._wake_event is not None:
             self._wake_event.set()
         if self._task:

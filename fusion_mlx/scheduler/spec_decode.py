@@ -31,14 +31,15 @@ SPEC_WARMUP_STEPS = int(__import__("os").environ.get("FUSION_SPEC_WARMUP_STEPS",
 SPEC_DRAFT_MODEL_ENABLED = (
     __import__("os").environ.get("FUSION_DRAFT_MODEL_ENABLED", "1") == "1"
 )
-# Phase-2 item 3: lower threshold 0.10 -> 0.05 so a marginal draft model
-# is not permanently disabled; the adaptive pause/resume below re-probes
-# periodically instead of giving up after the first low window.
+# Adaptive pause: lowered threshold 0.05 -> 0.10 and window 20 -> 8 so
+# low-acceptance scenarios (free generation) pause FAST instead of
+# burning 20 wasted draft forwards. At 0% acceptance, 8 steps = 8 wasted
+# drafts vs 20 before — 60% less overhead before pause kicks in.
 SPEC_MIN_ACCEPT_RATE = float(
-    __import__("os").environ.get("FUSION_SPEC_MIN_ACCEPT_RATE", "0.05")
+    __import__("os").environ.get("FUSION_SPEC_MIN_ACCEPT_RATE", "0.10")
 )
 SPEC_ADAPTIVE_WINDOW = int(
-    __import__("os").environ.get("FUSION_SPEC_ADAPTIVE_WINDOW", "20")
+    __import__("os").environ.get("FUSION_SPEC_ADAPTIVE_WINDOW", "8")
 )
 # Phase-2 item 3: while paused, re-probe acceptance every N steps so a
 # transient low-acceptance window does not disable spec decode for the
@@ -1052,6 +1053,13 @@ DFLASH2_SPEC_LOG_INTERVAL = 50
 DFLASH2_SPEC_WARMUP_STEPS = 3
 DFLASH2_CIRCUIT_BREAKER_WINDOW = 10
 DFLASH2_CIRCUIT_BREAKER_THRESHOLD = 0.20
+# Re-probe interval: while circuit-tripped, let one spec step through
+# every N steps to check if acceptance recovered. Without this the
+# circuit breaker hard-trips and never resumes within a request —
+# a transient low-acceptance window permanently disables DFlash2.
+DFLASH2_REPROBE_INTERVAL = int(
+    __import__("os").environ.get("FUSION_DFLASH2_REPROBE_INTERVAL", "16")
+)
 
 
 class DFlash2SpecState:
@@ -1090,6 +1098,8 @@ class DFlash2SpecState:
         self._last_request_id = None
         self._recent_rates: list[float] = []
         self._circuit_tripped = False
+        self._paused_steps = 0
+        self._probe_rates: list[float] = []
 
     def on_new_request(self, request_id: str):
         if self._last_request_id != request_id:
@@ -1098,6 +1108,8 @@ class DFlash2SpecState:
             self.total_spec_steps = 0
             self._recent_rates = []
             self._circuit_tripped = False
+            self._paused_steps = 0
+            self._probe_rates = []
             drafter = getattr(self.runtime, "drafter", None)
             if drafter is not None:
                 drafter.reset()
@@ -1107,6 +1119,17 @@ class DFlash2SpecState:
 
     def should_speculate(self) -> bool:
         if self._circuit_tripped:
+            # Re-probe: let one spec step through every DFLASH2_REPROBE_INTERVAL
+            # steps so record_result can collect a fresh acceptance sample
+            # and un-trip if the drafter recovered. Without this the circuit
+            # breaker is a permanent kill switch for the rest of the request.
+            self._paused_steps += 1
+            if self._paused_steps % DFLASH2_REPROBE_INTERVAL == 0:
+                logger.debug(
+                    "dflash2_spec: paused re-probe at step=%d",
+                    self._paused_steps,
+                )
+                return True
             return False
         return self.steps_since_start >= self._warmup
 
@@ -1115,23 +1138,48 @@ class DFlash2SpecState:
         self.total_draft_proposed += n_total
         self.total_draft_accepted += n_accepted
         self.runtime.record_accept(n_accepted)
-        if n_total > 0:
-            rate = n_accepted / n_total
-            self._recent_rates.append(rate)
-            if len(self._recent_rates) > self._cb_window:
-                self._recent_rates.pop(0)
-            if len(self._recent_rates) >= self._cb_window:
-                avg = sum(self._recent_rates) / len(self._recent_rates)
-                if avg < self._cb_threshold:
-                    self._circuit_tripped = True
-                    logger.warning(
-                        "dflash2_spec: circuit breaker tripped "
-                        "(avg accept %.1f%% < %.1f%% over %d steps) — "
-                        "disabling spec for rest of request",
-                        avg * 100,
-                        self._cb_threshold * 100,
-                        len(self._recent_rates),
+        if n_total <= 0:
+            return
+        rate = n_accepted / n_total
+        # While tripped, this record comes from a re-probe step. Accumulate
+        # probe samples and decide un-trip on a small burst rather than the
+        # full window (which still holds the stale low-acceptance records).
+        if self._circuit_tripped:
+            self._probe_rates.append(rate)
+            if len(self._probe_rates) >= 3:
+                probe_avg = sum(self._probe_rates) / len(self._probe_rates)
+                if probe_avg >= self._cb_threshold:
+                    self._circuit_tripped = False
+                    self._paused_steps = 0
+                    self._recent_rates = list(self._probe_rates)
+                    self._probe_rates = []
+                    logger.info(
+                        "dflash2_spec: circuit breaker reset — probe "
+                        "acceptance %.1f%% recovered over %d probes",
+                        probe_avg * 100,
+                        3,
                     )
+                else:
+                    self._probe_rates = []
+            return
+        self._recent_rates.append(rate)
+        if len(self._recent_rates) > self._cb_window:
+            self._recent_rates.pop(0)
+        if len(self._recent_rates) >= self._cb_window:
+            avg = sum(self._recent_rates) / len(self._recent_rates)
+            if avg < self._cb_threshold:
+                self._circuit_tripped = True
+                self._paused_steps = 0
+                self._probe_rates = []
+                logger.info(
+                    "dflash2_spec: circuit breaker paused "
+                    "(avg accept %.1f%% < %.1f%% over %d steps) — "
+                    "re-probing every %d steps",
+                    avg * 100,
+                    self._cb_threshold * 100,
+                    len(self._recent_rates),
+                    DFLASH2_REPROBE_INTERVAL,
+                )
 
     def get_stats(self) -> dict:
         rate = (
@@ -1145,6 +1193,7 @@ class DFlash2SpecState:
             "draft_accepted": self.total_draft_accepted,
             "acceptance_rate": rate,
             "circuit_tripped": self._circuit_tripped,
+            "paused_steps": self._paused_steps,
         }
 
 
@@ -1271,6 +1320,7 @@ def dflash2_spec_step(
     dt = time.perf_counter() - t0
 
     # Cache rollback for rejected tokens. Mirrors dflash_spec_step line 639+.
+    _rb0 = time.perf_counter()
     if cache_tokens_processed > 0 and n_accepted < K:
         n_rejected = cache_tokens_processed - n_accepted
         if non_trimmable_snapshots is not None:
@@ -1285,6 +1335,7 @@ def dflash2_spec_step(
             trim_count = n_rejected
         if trim_count > 0:
             _trim_trimmable(prompt_cache, trim_count)
+    _rollback_ms = (time.perf_counter() - _rb0) * 1000
 
     # Draft cache: after propose the draft advanced by block_size. Trim
     # to match the target's post-step offset (current_offset + n_accepted).
@@ -1304,13 +1355,14 @@ def dflash2_spec_step(
         stats = dflash2_state.get_stats()
         logger.info(
             "dflash2_spec: step=%d, block=%d, accepted=%d/%d (%.1f%%), "
-            "verify=%.1fms, rate=%.1f%%, circuit=%s",
+            "verify=%.1fms rollback=%.1fms, rate=%.1f%%, circuit=%s",
             dflash2_state.total_spec_steps,
             drafter.block_size,
             n_accepted,
             K,
             100.0 * n_accepted / K if K else 0,
             dt * 1000,
+            _rollback_ms,
             stats["acceptance_rate"] * 100,
             stats["circuit_tripped"],
         )

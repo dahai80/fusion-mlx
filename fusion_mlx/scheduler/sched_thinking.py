@@ -176,6 +176,7 @@ def _build_sampler_and_processors(
     if sampling_params.compiled_grammar is not None:
         try:
             from ..api.grammar import GrammarConstraintProcessor
+            from ..shim.grammar_ring import wrap_processor
 
             vocab_size = self._get_model_vocab_size()
             if vocab_size is not None:
@@ -183,6 +184,9 @@ def _build_sampler_and_processors(
                     compiled_grammar=sampling_params.compiled_grammar,
                     vocab_size=vocab_size,
                 )
+                # PR-M: ring prefetch when FUSION_SHIM_GRAMMAR_RING=1;
+                # returns the processor unchanged when OFF.
+                processor = wrap_processor(processor, vocab_size)
                 logits_processors.append(processor)
             else:
                 logger.warning(

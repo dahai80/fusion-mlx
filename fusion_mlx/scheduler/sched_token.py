@@ -318,6 +318,58 @@ def _create_batch_generator(self, sampling_params: SamplingParams) -> BatchGener
         ),
     )
 
+    # DRY + Mirostat v2 stateful processors (v2 doc §3.5 SamplerChain).
+    # CPU-state samplers appended after the penalty processors so they run
+    # on already-penalty-adjusted logits. GPU transforms (top_k/p/min_p/temp)
+    # stay in the sampler closure — the §3.5 CPU/GPU split.
+    from ..utils.sampling import make_dry_processor, make_mirostat_v2_processor
+
+    extra_processors = []
+    if sampling_params.dry_multiplier > 0.0:
+        dry_proc = make_dry_processor(
+            multiplier=sampling_params.dry_multiplier,
+            base=sampling_params.dry_base,
+            allowed_length=sampling_params.dry_allowed_length,
+            penalty_last_n=sampling_params.dry_penalty_last_n,
+        )
+        extra_processors.append(dry_proc)
+        logger.info(
+            "DRY sampler attached: multiplier=%.2f base=%.2f len=%d",
+            sampling_params.dry_multiplier,
+            sampling_params.dry_base,
+            sampling_params.dry_allowed_length,
+        )
+    if sampling_params.mirostat_mode == 2 and sampling_params.mirostat_tau > 0.0:
+        vocab_size = int(getattr(self.model, "vocab_size", 0) or 0)
+        if vocab_size <= 0:
+            # Fall back to the lm_head output dim if vocab_size is unset.
+            try:
+                lm_head = getattr(self.model, "lm_head", None)
+                if lm_head is not None and hasattr(lm_head, "weight"):
+                    vocab_size = int(lm_head.weight.shape[0])
+            except Exception:
+                vocab_size = 0
+        if vocab_size <= 0:
+            logger.warning("Mirostat: vocab_size unresolved; sampler disabled")
+        else:
+            miro_proc = make_mirostat_v2_processor(
+                tau=sampling_params.mirostat_tau,
+                eta=sampling_params.mirostat_eta,
+                vocab_size=vocab_size,
+            )
+            extra_processors.append(miro_proc)
+            logger.info(
+                "Mirostat v2 attached: tau=%.2f eta=%.3f vocab=%d",
+                sampling_params.mirostat_tau,
+                sampling_params.mirostat_eta,
+                vocab_size,
+            )
+
+    if extra_processors:
+        # make_logits_processors returns [] when no penalties are set.
+        base = logits_processors if logits_processors else []
+        logits_processors = list(base) + extra_processors
+
     # Convert stop tokens from Set[int] to Sequence[Sequence[int]]
     # for the new BatchGenerator API (each stop token is a sequence).
     stop_tokens_set = self._get_stop_tokens()
@@ -348,12 +400,22 @@ def _create_batch_generator(self, sampling_params: SamplingParams) -> BatchGener
     # PromptProcessingBatch.generate().
     from .sampler_fast_path import get_or_create_fused_sampler
 
-    fused = get_or_create_fused_sampler(
-        temperature=sampling_params.temperature,
-        top_p=sampling_params.top_p,
-        top_k=sampling_params.top_k,
-        min_p=sampling_params.min_p,
-    )
+    # Mirostat v2 dynamically narrows the candidate set per step via a
+    # stateful logits processor; the compiled fused fast path (which bakes
+    # top_k/top_p/min_p into one graph) would run on already-masked logits
+    # but its cached key ignores the Mirostat state. Disable the fused path
+    # when Mirostat is active so the non-fused make_sampler chain drives
+    # sampling on the Mirostat-filtered distribution. DRY does not need
+    # this (it is a static additive penalty applied before the sampler).
+    if sampling_params.mirostat_mode == 2 and sampling_params.mirostat_tau > 0.0:
+        fused = None
+    else:
+        fused = get_or_create_fused_sampler(
+            temperature=sampling_params.temperature,
+            top_p=sampling_params.top_p,
+            top_k=sampling_params.top_k,
+            min_p=sampling_params.min_p,
+        )
     if fused is not None:
         self.model._fused_sampler = fused
         logger.debug(
