@@ -169,6 +169,20 @@
   computes in fp16 — a platform property `ssm_attn` shares). Pure mx ops,
   Tier-2 conditional, Mamba-only. Degrade switch `FUSION_SHIM_SSM`
   (default OFF).
+- **Shim full-chain tests + ops docs (PR-P)** — `tests/unit/test_shim_switches.py`
+  (degradation-switch full verification: all 12 `FUSION_SHIM_*`/
+  `FUSION_ENGINE_RUNNER` switches default OFF, literal "0"/"1" parsing,
+  independence, v2 doc §7 L1) and `tests/unit/test_shim_fullchain.py`
+  (MoE→SSM composition vs a float64 recurrence on the CPU device, plus
+  memory gates: 300-iteration active-memory return after
+  `mx.synchronize()`+`mx.clear_cache()`, RSS-slope bound via the PR-F
+  `MemoryGrowthTracker`, v2 doc §7 L2/L5). New `docs/shim.md`: package
+  layout, build, full switch table, verification entry points, perf
+  baseline, ops metrics, upstream notes (PR-E GBNF C++ DFA deferred;
+  MLX GPU fp32 matmul computes in fp16; no
+  scatter_add/bincount/searchsorted in this build). README gains a shim
+  bullet. Tier-3 (IOSurface, persistent threads, global arena)
+  intentionally not built per the v2 doc.
 
 ### Fixed
 - **mxfp4 GGUF block size 18 → 17 bytes** — `migrate/gguf_reader.py`
