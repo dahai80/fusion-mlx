@@ -110,6 +110,15 @@ enables another).
 ./scripts/bench_shim_perf.py   # grammar-ring + bucket-pad microbench (PR-M)
 ```
 
+Baseline JSON is archived at `benchmarks/reports/shim_perf_<date>.json`
+(current: `shim_perf_20260918.json`) for across-version comparison. The
+grammar-apply stock column is the prod per-bit manual fallback
+(`api/grammar.py _apply_bitmask_manual`, the active path when xgrammar is
+absent), not a no-op — measured -54% vs stock on M5 Max. The grammar ring
+runs one persistent daemon worker (no per-token thread spawn), and
+`apply_bitmask` transfers only the int32 bitmask words, expanding bits on
+the GPU.
+
 Real-model golden runs: start the server
 (`./start.sh start`), set the desired switches, run the golden harness
 or `fusion-mlx bench <model>`. Compare ON vs OFF for each switch before

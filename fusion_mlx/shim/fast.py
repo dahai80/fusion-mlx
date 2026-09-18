@@ -91,12 +91,24 @@ def _python_hardware_probe() -> dict[str, Any]:
         gen = 0
         mma = {"has_bf16_mma": False, "has_fp8_mma": False}
 
+    # GPU core count is a physical host property (IORegistry
+    # AGXAccelerator "gpu-core-count") — NOT faked under FORCE_CHIP.
+    gpu_cores = 0
+    try:
+        from ..utils.hardware import get_gpu_core_count
+
+        n = get_gpu_core_count()
+        if n:
+            gpu_cores = int(n)
+    except Exception:
+        gpu_cores = 0
+
     return {
         "architecture": architecture,
         "gen": gen,
         "has_bf16_mma": mma["has_bf16_mma"],
         "has_fp8_mma": mma["has_fp8_mma"],
-        "gpu_core_count": 0,
+        "gpu_core_count": gpu_cores,
         "device_name": chip,
     }
 

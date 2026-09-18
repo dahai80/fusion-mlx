@@ -13,7 +13,8 @@ Ops covered:
   - fused_rmsnorm_residual (shim) vs x + rmsnorm residual (stock)
   - fused_rope (shim) vs mlx.nn.RoPE (stock)
   - quantized-KV online attention (shim) vs fp16 stock SDPA
-  - grammar bitmask apply (shim manual) vs stock logits (no mask)
+  - grammar bitmask apply (shim) vs stock per-bit manual apply (prod
+    fallback when xgrammar is absent)
 
 Output: markdown table to stdout, optional JSON file.
 """
@@ -130,8 +131,24 @@ def bench_grammar_apply(iters: int) -> dict:
             np.uint32(mask_np[i // 32]) | np.uint32(1) << np.uint32(i % 32)
         )
 
+    # Honest stock baseline: the prod fallback path when xgrammar is not
+    # installed (GrammarConstraintProcessor._apply_bitmask_manual,
+    # api/grammar.py) — a per-bit Python loop. The previous baseline was
+    # `return logits`, a no-op that made the shim look like a 28000%
+    # regression when it is actually the fast path.
     def stock():
-        return logits
+        neg_inf = float("-inf")
+        allowed = np.zeros(VOCAB, dtype=bool)
+        for i in range(0, min(mask_np.shape[0] * 32, VOCAB), 32):
+            word = int(mask_np[i // 32])
+            for bit in range(32):
+                idx = i + bit
+                if idx >= VOCAB:
+                    break
+                if word & (1 << bit):
+                    allowed[idx] = True
+        mask = np.where(allowed, 0.0, neg_inf).astype(np.float32)
+        return logits + mx.array(mask).reshape(1, -1)
 
     def shim():
         return apply_bitmask(mask_np, logits, VOCAB)

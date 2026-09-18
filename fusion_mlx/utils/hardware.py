@@ -282,7 +282,26 @@ _OWNER_HASH_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 
 def get_gpu_core_count() -> int | None:
-    """Get GPU core count via system_profiler."""
+    """Get GPU core count via IORegistry, falling back to system_profiler.
+
+    IORegistry (AGXAccelerator "gpu-core-count") is the fast authoritative
+    source on Apple Silicon; system_profiler SPDisplaysDataType is the
+    slow fallback for hosts where the IORegistry key is absent.
+    """
+    try:
+        result = subprocess.run(
+            [_IOREG, "-r", "-c", "AGXAccelerator", "-d", "1"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        for line in result.stdout.splitlines():
+            if "gpu-core-count" in line:
+                match = re.search(r'"gpu-core-count"\s*=\s*(\d+)', line)
+                if match:
+                    return int(match.group(1))
+    except Exception:
+        pass
     try:
         result = subprocess.run(
             [_SYSTEM_PROFILER, "SPDisplaysDataType"],

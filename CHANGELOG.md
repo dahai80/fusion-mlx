@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Shim grammar ring: persistent worker + GPU bitmask apply** —
+  `GrammarMaskRing` no longer spawns a thread per accepted token (one
+  persistent daemon worker); `apply_bitmask` transfers only the int32
+  bitmask words and expands bits on the GPU (xgrammar kernel used when
+  importable). Measured -54% vs the prod per-bit manual fallback.
+  `bench_shim_perf.py` grammar baseline fixed from a no-op to the real
+  prod fallback path (was misreported as a +28000% regression). Baseline
+  archived at `benchmarks/reports/shim_perf_20260918.json`.
+- **`gpu_core_count=0` fixed** — hardware probe now reads the physical
+  GPU core count from IORegistry (`AGXAccelerator "gpu-core-count"`) in
+  both the C++ probe and the Python fallback (`utils/hardware.py`
+  `get_gpu_core_count()`, IORegistry-first, ~40x faster than
+  system_profiler). Not faked under `FUSION_SHIM_FORCE_CHIP`.
+
 ### Added
 - **C++ Shim extension skeleton + Tier-1 safety base (PR-A)** — first PR of
   the llama.cpp-capability landing roadmap. New `fusion_mlx/shim/` package:

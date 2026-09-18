@@ -92,6 +92,30 @@ def test_python_fallback_unknown_chip(monkeypatch):
     assert probe["has_bf16_mma"] is False
 
 
+def test_hardware_probe_gpu_core_count_apple_silicon():
+    # IORegistry AGXAccelerator "gpu-core-count" — the native probe must
+    # report the physical core count on real Apple Silicon (was a
+    # hardcoded 0, "IORegistry deferred"). gen==0 covers Intel Macs and
+    # headless CI where the IORegistry key is absent.
+    probe = shim.hardware_probe()
+    if probe["gen"] == 0:
+        pytest.skip("not Apple Silicon hardware (no chip gen)")
+    assert probe["gpu_core_count"] >= 1, (
+        f"gpu_core_count={probe['gpu_core_count']} on {probe['device_name']} — "
+        "IORegistry read broken"
+    )
+
+
+def test_python_fallback_gpu_core_count_apple_silicon(monkeypatch):
+    # Same contract on the fallback (no-_ext) path.
+    monkeypatch.setenv("FUSION_SHIM_FORCE_CHIP", "Apple M4")
+    probe = fast._python_hardware_probe()
+    if probe["gpu_core_count"] == 0 and shim.hardware_probe()["gen"] == 0:
+        pytest.skip("not Apple Silicon hardware (no IORegistry core count)")
+    # Core count is physical — FORCE_CHIP must not zero or fake it.
+    assert probe["gpu_core_count"] == shim.hardware_probe()["gpu_core_count"]
+
+
 def test_memory_sentinel_start_returns_bool():
     # Native: True/False. Fallback: False. Either way it must not raise.
     result = shim.start_memory_sentinel()

@@ -49,28 +49,70 @@ def bitmask_width(vocab_size: int) -> int:
     return (vocab_size + 31) // 32
 
 
+# xgrammar's fused apply kernel, when importable — same fast path the
+# prod GrammarConstraintProcessor tries before its manual fallback.
+_XG_APPLY = None
+_XG_TRIED = False
+
+# GPU expansion constants (cached mx arrays; building them per call costs
+# more than the apply itself).
+_APPLY_CONSTS: tuple | None = None
+
+
+def _get_apply_consts():
+    global _APPLY_CONSTS
+    if _APPLY_CONSTS is None:
+        import mlx.core as mx
+
+        _APPLY_CONSTS = (
+            mx.array(1, mx.uint32),
+            mx.array(float("-inf"), mx.float32),
+            mx.arange(0, 32, dtype=mx.uint32)[None, :],
+        )
+    return _APPLY_CONSTS
+
+
+def _get_xgrammar_apply():
+    global _XG_APPLY, _XG_TRIED
+    if not _XG_TRIED:
+        _XG_TRIED = True
+        try:
+            from xgrammar.kernels.apply_token_bitmask_mlx import (
+                apply_token_bitmask_mlx,
+            )
+
+            _XG_APPLY = apply_token_bitmask_mlx
+        except Exception:
+            _XG_APPLY = None
+            logger.debug("xgrammar apply kernel unavailable; using mx-native expansion")
+    return _XG_APPLY
+
+
 def apply_bitmask(bitmask, logits, vocab_size: int):
     # Same contract as xgrammar's apply_token_bitmask_mlx: bitmask word
     # i holds the allow-bits for tokens [32i, 32i+32); disallowed tokens
-    # get -inf logits. Vectorized manual fallback (the xgrammar kernel
-    # stays the fast path when importable).
+    # get -inf logits. Fast path: the xgrammar kernel when importable.
+    # Otherwise: transfer the int32 words (~4KB at 128k vocab, vs the
+    # 512KB float mask the numpy path moved) and expand the bits on the
+    # GPU — one shift/and/where chain, no per-token Python loop.
     import mlx.core as mx
 
-    flat = np.asarray(bitmask, dtype=np.int32).reshape(-1)
-    n_words = min(flat.shape[0], (vocab_size + 31) // 32)
-    bits = (
-        (
-            flat[:n_words, None].astype(np.uint32)
-            >> np.arange(32, dtype=np.uint32)[None, :]
-        )
-        & 1
-    ).astype(bool)
-    bits = bits.reshape(-1)[:vocab_size]
-    mask = np.where(bits, 0.0, float("-inf")).astype(np.float32)
-    mask_mx = mx.array(mask)
+    flat = np.ascontiguousarray(np.asarray(bitmask, dtype=np.int32).reshape(-1))
+    words = mx.array(flat)
+    kernel = _get_xgrammar_apply()
+    if kernel is not None:
+        try:
+            return kernel(logits, words, vocab_size)
+        except Exception:
+            logger.debug(
+                "xgrammar apply kernel failed; mx-native expansion", exc_info=True
+            )
+    one, neg_inf, shifts = _get_apply_consts()
+    bits = (words[:, None].astype(mx.uint32) >> shifts) & one
+    bits = bits.reshape(-1)[:vocab_size] == one
     if logits.ndim == 2:
-        return logits + mask_mx.reshape(1, -1)
-    return logits + mask_mx
+        return mx.where(bits.reshape(1, -1), logits, neg_inf)
+    return mx.where(bits, logits, neg_inf)
 
 
 class GrammarMaskRing:
@@ -101,6 +143,12 @@ class GrammarMaskRing:
         self._cv = threading.Condition()
         self._job_slot = -1
         self._job_in_flight = False
+        # Persistent daemon worker: spawning a fresh thread per token step
+        # (the old shape) cost ~0.1ms of thread create/teardown jitter on
+        # every accepted token. One worker loops on the condition variable
+        # instead; started lazily on first submit, stopped by stop().
+        self._worker: threading.Thread | None = None
+        self._shutdown = False
         self._stats = {"prefetched": 0, "inline": 0, "submits": 0}
         logger.debug(
             "GrammarMaskRing: depth=%d width=%d vocab=%d",
@@ -128,6 +176,22 @@ class GrammarMaskRing:
             self._job_in_flight = False
             self._cv.notify_all()
 
+    def _worker_loop(self) -> None:
+        # Persistent prefetch worker: wake on a submitted job, run it, and
+        # go back to waiting on the condition variable. Exits on shutdown
+        # (after marking any still-pending job as not-in-flight so
+        # _drain_job cannot hang).
+        while True:
+            with self._cv:
+                while not self._job_in_flight and not self._shutdown:
+                    self._cv.wait()
+                if self._shutdown:
+                    if self._job_in_flight:
+                        self._job_in_flight = False
+                        self._cv.notify_all()
+                    return
+            self._run_job()
+
     def _submit(self) -> None:
         with self._cv:
             if self._terminated or self._job_in_flight:
@@ -140,7 +204,12 @@ class GrammarMaskRing:
             self._ready[slot] = False
             self._job_in_flight = True
             self._stats["submits"] += 1
-        threading.Thread(target=self._run_job, daemon=True).start()
+            if self._worker is None or not self._worker.is_alive():
+                self._worker = threading.Thread(
+                    target=self._worker_loop, daemon=True, name="grammar-ring"
+                )
+                self._worker.start()
+            self._cv.notify_all()
 
     def _wait_ready(self, slot: int, timeout: float = 0.05) -> bool:
         with self._cv:
@@ -222,7 +291,15 @@ class GrammarMaskRing:
 
     def stop(self) -> None:
         self._drain_job()
-        self._terminated = True
+        with self._cv:
+            self._terminated = True
+            self._shutdown = True
+            self._cv.notify_all()
+        worker = self._worker
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=1.0)
+            if worker.is_alive():
+                logger.warning("grammar ring worker did not stop within 1s")
 
 
 def wrap_processor(processor, vocab_size: int, depth: int = 2):

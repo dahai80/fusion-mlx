@@ -216,6 +216,50 @@ class TestGrammarMaskRing:
             or True
         )
 
+    def test_persistent_worker_no_thread_churn(self, monkeypatch):
+        # The old shape spawned a fresh thread per accepted token; the
+        # persistent worker must serve every step with a single thread.
+        monkeypatch.setenv("FUSION_SHIM_GRAMMAR_RING", "1")
+        p = FakeProcessor(VOCAB)
+        ring = GrammarMaskRing(p, VOCAB)
+        logits = _logits()
+        ring([], logits)
+        base = threading.active_count()
+        for step in range(20):
+            ring.accept_token(2 * (step % 8))
+            out = ring([], logits)
+            mx.eval(out)
+        time.sleep(0.05)  # let any wrongly-spawned threads show up
+        assert threading.active_count() - base <= 1
+        assert ring.stats["prefetched"] >= 19  # steady-state all prefetched
+        ring.stop()
+        deadline = time.perf_counter() + 1.0
+        while ring._worker is not None and ring._worker.is_alive():
+            if time.perf_counter() > deadline:
+                pytest.fail("worker thread did not stop within 1s")
+            time.sleep(0.01)
+
+    def test_apply_bitmask_matches_prod_manual_loop(self):
+        # The mx-native GPU expansion must be byte-identical to the prod
+        # per-bit fallback (api/grammar.py _apply_bitmask_manual), including
+        # vocab sizes that are not a multiple of 32.
+        rng = np.random.default_rng(11)
+        for vocab in (512, 517, 4097):
+            width = (vocab + 31) // 32
+            mask = np.zeros(width, dtype=np.int32)
+            for i in np.where(rng.random(vocab) < 0.05)[0]:
+                mask[i // 32] = np.int32(
+                    np.uint32(mask[i // 32]) | np.uint32(1) << np.uint32(i % 32)
+                )
+            logits_np = rng.standard_normal((1, vocab)).astype(np.float32)
+            out = apply_bitmask(mask, mx.array(logits_np), vocab)
+            allowed = np.zeros(vocab, dtype=bool)
+            for i in range(vocab):
+                if np.uint32(mask[i // 32]) & np.uint32(1) << np.uint32(i % 32):
+                    allowed[i] = True
+            ref = np.where(allowed, logits_np[0], float("-inf")).astype(np.float32)
+            np.testing.assert_array_equal(np.asarray(out)[0], ref)
+
 
 class TestNextBucket:
     def test_snap_up(self):

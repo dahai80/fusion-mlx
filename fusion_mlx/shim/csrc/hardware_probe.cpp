@@ -3,6 +3,7 @@
 // from the GPU family rather than the marketing name where possible.
 #include "hardware_probe.h"
 
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 
@@ -60,6 +61,32 @@ HardwareProbe probe_hardware() {
         h.gen = gen_from_name(h.device_name);
     }
 
+    // GPU core count via IORegistry (AGXAccelerator "gpu-core-count").
+    // Physical property of the host — deliberately NOT overridden by
+    // FUSION_SHIM_FORCE_CHIP (forcing a chip name does not change the
+    // number of physical GPU cores). Read once here; 0 = unavailable
+    // (non-Apple host / headless CI), never a guess.
+    {
+        FILE* gp =
+            popen("/usr/sbin/ioreg -r -c AGXAccelerator -d 1 2>/dev/null", "r");
+        if (gp) {
+            std::string ioreg_out;
+            char gbuf[1024];
+            while (std::fgets(gbuf, sizeof(gbuf), gp)) {
+                ioreg_out += gbuf;
+            }
+            pclose(gp);
+            const std::string key = "\"gpu-core-count\" = ";
+            std::size_t pos = ioreg_out.find(key);
+            if (pos != std::string::npos) {
+                int cores = std::atoi(ioreg_out.c_str() + pos + key.size());
+                if (cores > 0) {
+                    h.gpu_core_count = cores;
+                }
+            }
+        }
+    }
+
     // Try MLX Metal device for architecture + GPU family. This block is
     // guarded so a headless build (no Metal) still links.
     try {
@@ -94,7 +121,6 @@ HardwareProbe probe_hardware() {
                 h.has_fp8_mma = true;
             }
             // registry->deviceName returns the marketing name.
-            h.gpu_core_count = 0; // core count needs IORegistry, deferred
             if (h.device_name.empty()) {
                 h.device_name = h.architecture;
             }
