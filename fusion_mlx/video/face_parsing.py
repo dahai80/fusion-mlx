@@ -231,7 +231,7 @@ class FaceParsing:
         self.model.eval()
 
     @classmethod
-    def from_pretrained(cls, weights_dir: str | Path | None = None) -> "FaceParsing":
+    def from_pretrained(cls, weights_dir: str | Path | None = None) -> FaceParsing:
         root = (
             Path(weights_dir)
             if weights_dir
@@ -268,7 +268,7 @@ def _load_safetensors(model: nn.Module, path: Path):
 
         weights = {}
         with safe_open(str(path), framework="numpy") as f:
-            for key in f.keys():
+            for key in f:
                 weights[key] = mx.array(f.get_tensor(key))
         model.load_weights(list(weights.items()))
     except ImportError:

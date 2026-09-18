@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -109,9 +108,7 @@ class SPPBottleneck(nn.Module):
         super().__init__()
         mid = in_c // 2
         self.conv1 = nn.Conv2d(in_c, mid, 1)
-        self.pools = [
-            nn.MaxPool2d(k, stride=1, padding=k // 2) for k in kernels
-        ]
+        self.pools = [nn.MaxPool2d(k, stride=1, padding=k // 2) for k in kernels]
         self.conv2 = nn.Conv2d(mid * (1 + len(kernels)), out_c, 1)
 
     def __call__(self, x):
@@ -166,14 +163,23 @@ class ScaleNorm(nn.Module):
         self.eps = eps
 
     def __call__(self, x):
-        norm = mx.sqrt(mx.mean(x.astype(mx.float32) ** 2, axis=-1, keepdims=True) + self.eps)
+        norm = mx.sqrt(
+            mx.mean(x.astype(mx.float32) ** 2, axis=-1, keepdims=True) + self.eps
+        )
         return self.scale * (x / norm)
 
 
 class RTMCCBlock(nn.Module):
     """Gated Attention Unit (use_rel_bias=False, pos_enc=False → pure tensor ops)."""
 
-    def __init__(self, num_token: int, in_dim: int, out_dim: int, s: int = 128, expansion: int = 2):
+    def __init__(
+        self,
+        num_token: int,
+        in_dim: int,
+        out_dim: int,
+        s: int = 128,
+        expansion: int = 2,
+    ):
         super().__init__()
         self.num_token = num_token
         self.s = s
@@ -191,20 +197,26 @@ class RTMCCBlock(nn.Module):
         e = uv.shape[-1] - self.s
         half = e // 2
         u = uv[..., :half]
-        v = uv[..., half:half * 2]
-        base = uv[..., half * 2:]
+        v = uv[..., half : half * 2]
+        base = uv[..., half * 2 :]
         base = base[:, :, None, :] * self.gamma + self.beta  # (B,K,2,s)
         q, k = base[..., 0, :], base[..., 1, :]  # each (B,K,s)
         qk = mx.matmul(q, mx.transpose(k, (0, 2, 1)))  # (B,K,K)
-        kernel = mx.square(mx.maximum(qk / (self.s ** 0.5), 0.0))
+        kernel = mx.square(mx.maximum(qk / (self.s**0.5), 0.0))
         out = u * mx.matmul(kernel, v)  # (B,K,e/2)
-        return self.out_proj(out) + x if x.shape[-1] == out.shape[-1] else self.out_proj(out)
+        return (
+            self.out_proj(out) + x
+            if x.shape[-1] == out.shape[-1]
+            else self.out_proj(out)
+        )
 
 
 class RTMCCHead(nn.Module):
     """SimCC coordinate-classification head: final_layer conv → flatten → GAU → cls_x/cls_y."""
 
-    def __init__(self, in_channels=1024, out_channels=133, in_featuremap_size=(12, 9), s=128):
+    def __init__(
+        self, in_channels=1024, out_channels=133, in_featuremap_size=(12, 9), s=128
+    ):
         super().__init__()
         fh, fw = in_featuremap_size
         self.flat_dim = fh * fw
@@ -290,9 +302,9 @@ def _bilinear_resize(img, out_h, out_w):
     b = img[y0[:, None], x1[None, :]]
     c = img[y1[:, None], x0[None, :]]
     d = img[y1[:, None], x1[None, :]]
-    return (a * (1 - wx) * (1 - wy) + b * wx * (1 - wy) + c * (1 - wx) * wy + d * wx * wy).astype(
-        np.float32
-    )
+    return (
+        a * (1 - wx) * (1 - wy) + b * wx * (1 - wy) + c * (1 - wx) * wy + d * wx * wy
+    ).astype(np.float32)
 
 
 class DWPose:
@@ -303,8 +315,12 @@ class DWPose:
         self.model.eval()
 
     @classmethod
-    def from_pretrained(cls, weights_dir: str | Path | None = None) -> "DWPose":
-        root = Path(weights_dir) if weights_dir else Path.home() / ".fusion-mlx" / "models" / "dwpose"
+    def from_pretrained(cls, weights_dir: str | Path | None = None) -> DWPose:
+        root = (
+            Path(weights_dir)
+            if weights_dir
+            else Path.home() / ".fusion-mlx" / "models" / "dwpose"
+        )
         model = DWPoseMLX()
         st_path = root / "dw-ll_ucoco_384.safetensors"
         if st_path.exists():
@@ -339,9 +355,10 @@ def _load_safetensors(model: nn.Module, path: Path):
     """Load a safetensors file into the model, flattening torch-style nested keys."""
     try:
         from safetensors.safe_open import safe_open
+
         weights = {}
         with safe_open(str(path), framework="numpy") as f:
-            for key in f.keys():
+            for key in f:
                 weights[key] = mx.array(f.get_tensor(key))
         model.load_weights(list(weights.items()))
     except ImportError:
@@ -364,6 +381,6 @@ def face_bbox_from_keypoints(kpts_133, upper_ratio=0.5):
     upper = float(half_face[1])
     max_y = float(face[:, 1].max())
     x1, x2 = min_x, max_x
-    y1 = (upper + (max_y - upper) * (1.0 - upper_ratio))
+    y1 = upper + (max_y - upper) * (1.0 - upper_ratio)
     y2 = max_y
     return np.array([x1, y1, x2, y2], dtype=np.float32)
