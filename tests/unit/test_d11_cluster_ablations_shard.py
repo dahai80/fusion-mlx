@@ -258,6 +258,11 @@ def test_shard_script_full_coverage():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     all_files = {p.name for p in mod.TESTS_DIR.glob("test_*.py")}
+    # files_for() skips debt_modules (quarantined tests — collect_ignore'd
+    # in conftest, also excluded from shard output). They are intentionally
+    # not claimed by any shard, so subtract them before checking coverage.
+    debt = mod._debt_basenames()
+    all_files -= debt
     sharded: set[str] = set()
     for shard in mod.KNOWN_SHARDS:
         for f in mod.files_for(shard):

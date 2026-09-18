@@ -19,7 +19,9 @@ def scheduler():
     bare instance and seed those attributes directly.
     """
     s = Scheduler.__new__(Scheduler)
-    s.config = MagicMock(max_num_seqs=8)
+    # max_waiting default = max(max_num_seqs*4, 32) (config.py __post_init__).
+    # MagicMock skips __post_init__, so seed the resolved cap explicitly.
+    s.config = MagicMock(max_num_seqs=8, max_waiting=32)
     s.waiting = deque()
     s.requests = {}
     # P3-2: add_request caps waiting+prefilling+running. Seed the active sets
@@ -69,6 +71,7 @@ class TestWaitingQueueCap:
     def test_cap_scales_with_max_num_seqs(self, scheduler):
         # cap = max(max_num_seqs * 4, 32); when max_num_seqs=16, cap=64
         scheduler.config.max_num_seqs = 16
+        scheduler.config.max_waiting = 64
         for i in range(64):
             scheduler.waiting.append(_make_request(f"r{i}"))
         with pytest.raises(SchedulerQueueFullError) as exc:
@@ -78,6 +81,7 @@ class TestWaitingQueueCap:
     def test_cap_floor_at_32(self, scheduler):
         # Tiny max_num_seqs still gets a floor of 32.
         scheduler.config.max_num_seqs = 1
+        scheduler.config.max_waiting = 32
         for i in range(32):
             scheduler.waiting.append(_make_request(f"r{i}"))
         with pytest.raises(SchedulerQueueFullError) as exc:
