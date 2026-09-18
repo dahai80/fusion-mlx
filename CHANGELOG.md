@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.3] — 2026-09-19
+
 ### Fixed
 - **Event-loop wedge on rejected auth requests (#0917)** — the 401
   body-drain loop in `AuthPrecheckMiddleware` spun forever when the client
