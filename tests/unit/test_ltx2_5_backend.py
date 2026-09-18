@@ -17,6 +17,28 @@ from fusion_mlx.engines.video_backends import (
 from fusion_mlx.engines.video_backends.base import VideoGenParams
 
 
+class _FakeHandle:
+    def __init__(self, path):
+        self.path = path
+
+
+class _FakeTempfileCtx:
+    def __init__(self, tmp_path):
+        self._tmp_path = tmp_path
+
+    def __enter__(self):
+        return _FakeHandle(self._tmp_path)
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _fake_tempfile_path(prefix, suffix):
+    import tempfile
+
+    return _FakeTempfileCtx(tempfile.mktemp(prefix=prefix, suffix=suffix))
+
+
 class TestDetect:
     @pytest.mark.parametrize(
         "path",
@@ -221,3 +243,92 @@ class TestGenerate:
         asyncio.run(b.generate(params))
         assert calls["calls"][0]["image"] == "/tmp/frame.png"
         assert calls["calls"][0]["image_strength"] == 0.8
+
+    def test_generate_threads_session_id_to_port(self, monkeypatch):
+        # #0917 followup: session_id must reach _generate_one so the ltx2_5
+        # generate() port can wire session-tail latent cache (GET/PUT).
+        calls = {"calls": []}
+
+        def fake_generate_one(model_repo, pipeline, **kwargs):
+            calls["calls"].append(kwargs)
+            return b"mp4"
+
+        import fusion_mlx.engines.video_backends.ltx2_5 as mod
+
+        monkeypatch.setattr(mod, "_generate_one", fake_generate_one)
+        b = LTX2_5Backend("repo")
+        params = VideoGenParams(
+            prompt="a cat",
+            num_frames=9,
+            width=512,
+            height=320,
+            n=1,
+            seed=0,
+            session_id="sess-ltx25-1",
+        )
+        asyncio.run(b.generate(params))
+        assert calls["calls"][0]["session_id"] == "sess-ltx25-1"
+
+    def test_generate_session_id_absent_when_none(self, monkeypatch):
+        # When session_id is None, _generate_one's gen_kwargs guard must NOT
+        # inject session_id into the generate_video call (keeps the port call
+        # clean). Stub generate_video at the port module to inspect gen_kwargs.
+        captured = {"kwargs": None}
+
+        def fake_generate_video(model_repo, prompt, **kwargs):
+            captured["kwargs"] = kwargs
+            out = kwargs.get("output_path")
+            if out:
+                with open(out, "wb") as f:
+                    f.write(b"mp4")
+            return None
+
+        import fusion_mlx.video.ltx2_5.generate as gen_mod
+
+        monkeypatch.setattr(gen_mod, "generate_video", fake_generate_video)
+        import fusion_mlx.engines.video_backends.ltx2_5 as mod
+
+        monkeypatch.setattr(mod, "managed_tempfile_path", _fake_tempfile_path)
+        mod._generate_one(
+            "repo",
+            "distilled",
+            prompt="a cat",
+            num_frames=9,
+            width=512,
+            height=320,
+            fps=24,
+            seed=0,
+            session_id=None,
+        )
+        assert "session_id" not in captured["kwargs"]
+
+    def test_generate_session_id_present_when_set(self, monkeypatch):
+        # Counterpart: a real session_id reaches generate_video's gen_kwargs.
+        captured = {"kwargs": None}
+
+        def fake_generate_video(model_repo, prompt, **kwargs):
+            captured["kwargs"] = kwargs
+            out = kwargs.get("output_path")
+            if out:
+                with open(out, "wb") as f:
+                    f.write(b"mp4")
+            return None
+
+        import fusion_mlx.video.ltx2_5.generate as gen_mod
+
+        monkeypatch.setattr(gen_mod, "generate_video", fake_generate_video)
+        import fusion_mlx.engines.video_backends.ltx2_5 as mod
+
+        monkeypatch.setattr(mod, "managed_tempfile_path", _fake_tempfile_path)
+        mod._generate_one(
+            "repo",
+            "distilled",
+            prompt="a cat",
+            num_frames=9,
+            width=512,
+            height=320,
+            fps=24,
+            seed=0,
+            session_id="sess-x",
+        )
+        assert captured["kwargs"].get("session_id") == "sess-x"

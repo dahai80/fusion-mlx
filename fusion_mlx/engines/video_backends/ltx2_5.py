@@ -125,6 +125,7 @@ class LTX2_5Backend(VideoBackend):
                     controlnet_image=params.controlnet_image,
                     inpaint_mask=inpaint_mask,
                     init_latent=init_latent,
+                    session_id=params.session_id,
                 )
                 results.append(mp4_bytes)
             return results
@@ -234,6 +235,7 @@ def _generate_one(
     controlnet_image: str | None = None,
     inpaint_mask=None,
     init_latent=None,
+    session_id: str | None = None,
 ) -> bytes:
     from fusion_mlx.video.ltx2_5.config import LTX2_5Variant
     from fusion_mlx.video.ltx2_5.generate import generate_video
@@ -262,6 +264,8 @@ def _generate_one(
     if image is not None:
         gen_kwargs["image"] = image
         gen_kwargs["image_strength"] = image_strength
+    if session_id is not None:
+        gen_kwargs["session_id"] = session_id
     with managed_tempfile_path(prefix="fusion_video_", suffix=".mp4") as handle:
         temp_path = handle.path
         gen_kwargs["output_path"] = temp_path
