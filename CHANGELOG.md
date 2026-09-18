@@ -158,6 +158,17 @@
   ops, Tier-2 conditional — no default wiring; the production MoE layers
   (glm_moe_dsa/deepseek_v4 SwitchGLU) keep their own sort thresholds.
   Degrade switch `FUSION_SHIM_MOE` (default OFF).
+- **Mamba SSM parallel prefix-scan prototype (PR-O)** — `shim/ssm_scan.py`:
+  3-pass Mamba-2 SSD decomposition of mlx_lm's chunk-serial `ssm_attn`
+  (ssm.py) so per-chunk outputs/states compute independently and only a
+  tiny state prefix scan stays sequential. Padding is identity-decay exact
+  (dtA padded with 0, not -inf); `mask`/`lengths` reject loudly instead of
+  silently disagreeing with `ssm_attn`. Numeric contract verified two
+  ways: 1-2 ulp parity with `ssm_attn` at matching chunk shapes, and a
+  float64 token-recurrence reference on the CPU device (GPU fp32 matmul
+  computes in fp16 — a platform property `ssm_attn` shares). Pure mx ops,
+  Tier-2 conditional, Mamba-only. Degrade switch `FUSION_SHIM_SSM`
+  (default OFF).
 
 ### Fixed
 - **mxfp4 GGUF block size 18 → 17 bytes** — `migrate/gguf_reader.py`
