@@ -164,12 +164,51 @@ def _bench_quant_kv_shape(T, iters, label):
     }
 
 
+def _bench_quant_kv_fused(B, T, iters, label):
+    # Fused decode attention (2-pass Metal, on-the-fly dequant) vs stock fp16
+    # SDPA at serving batch sizes. B*H>=16 routes into the fused kernel.
+    from fusion_mlx.shim.quant_kv import (
+        fused_q4_decode_attention,
+        fused_q8_decode_attention,
+        q40_quantize,
+        q80_quantize,
+    )
+
+    rng = np.random.default_rng(5)
+    kv = mx.array(rng.standard_normal((B, 4, T, 128)).astype(np.float16))
+    q = mx.array(rng.standard_normal((B, 4, 1, 128)).astype(np.float16))
+    scale = 1 / 11.3
+    d8, p8 = q80_quantize(kv)
+    d4, p4 = q40_quantize(kv)
+
+    def stock():
+        return mx.fast.scaled_dot_product_attention(q, kv, kv, scale=scale)
+
+    def shim_q8():
+        return fused_q8_decode_attention(q, (d8, p8), (d8, p8), scale)
+
+    def shim_q4():
+        return fused_q4_decode_attention(q, (d4, p4), (d4, p4), scale)
+
+    s8, sh8 = timed_ab(stock, shim_q8, iters)
+    _, sh4 = timed_ab(stock, shim_q4, iters)
+    return {
+        "op": f"quant_kv_fused_decode ({label})",
+        "stock_ms": s8,
+        "shim_ms": sh8,
+        "shim_q4_ms": sh4,
+        "note": "fused 2-pass Metal: on-the-fly dequant, no fp16 KV buffer",
+    }
+
+
 def bench_quant_kv(iters: int) -> dict:
-    # Quant KV value proposition = memory savings (q8 -47%, q4 -72%),
-    # not raw speed (dequant adds compute). Bench at decode + long context.
+    # Quant KV value proposition = memory savings (q8 -47%, q4 -72%).
+    # dequant+SDPA path (B=1): break-even q8, +9% q4 — memory win not speed.
+    # fused decode path: wins at long context (T>=8192, DRAM-bound).
     r_decode = _bench_quant_kv_shape(512, iters, "T=512 decode")
     r_long = _bench_quant_kv_shape(4096, iters, "T=4096 long ctx")
-    return [r_decode, r_long]
+    r_fused = _bench_quant_kv_fused(16, 8192, iters, "B=16 T=8192 long ctx")
+    return [r_decode, r_long, r_fused]
 
 
 def bench_grammar_apply(iters: int) -> dict:

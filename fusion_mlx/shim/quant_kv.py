@@ -209,6 +209,373 @@ def q80_dequantize(d, qs):
     return out
 
 
+# --- fused quantized decode attention (PR-K flash_attn_ext) -----------------
+#
+# Two-pass Metal kernels: dequantize Q8_0/Q4_0 KV on-the-fly per token inside
+# the attention loop, never materializing a full fp16 KV buffer. Pass 1 splits
+# the KV length into T-chunks (one TG per (head, chunk)) for GPU occupancy;
+# pass 2 merges the per-chunk online-softmax partials. For decode (L=1) this
+# halves DRAM traffic (int8/nibble vs fp16) — memory-bound decode wins.
+
+
+_FUSED_CHUNK = 128
+
+
+def _n_chunks(kv_t: int) -> int:
+    return (kv_t + _FUSED_CHUNK - 1) // _FUSED_CHUNK
+
+
+_Q8_PASS1_KERNEL = None
+_Q8_PASS1_SOURCE = """
+uint tg_idx = threadgroup_position_in_grid.x;
+ushort tid = thread_position_in_threadgroup.x;
+uint B=uint(meta[0]),H=uint(meta[1]),Hkv=uint(meta[2]),KvT=uint(meta[3]);
+uint D=uint(meta[4]),Db=uint(meta[5]),r=uint(meta[6]);
+float scale=meta[7];
+uint CHUNK=uint(meta[8]),nC=uint(meta[9]);
+
+uint head = tg_idx / nC;
+uint ci = tg_idx - head * nC;
+uint b = head / H;
+uint h_q = head - b * H;
+uint hkv = h_q / r;
+
+uint q_base = (b * H + h_q) * D;
+uint kq_base = (b * Hkv + hkv) * KvT * D;
+uint kd_base = (b * Hkv + hkv) * KvT * Db;
+uint S = Db;
+uint t_start = ci * CHUNK;
+uint t_end = t_start + CHUNK;
+if (t_end > KvT) t_end = KvT;
+uint part = head * nC + ci;
+
+threadgroup float qsh[256];
+threadgroup float Ksh[256];
+threadgroup float Vsh[256];
+threadgroup float acc[256];
+threadgroup float sg_sums[8];
+
+qsh[tid] = float(q[q_base + tid]) * scale;
+acc[tid] = 0.0f;
+threadgroup_barrier(mem_flags::mem_threadgroup);
+
+float m = -1e30f;
+float l = 0.0f;
+
+for (uint t = t_start; t < t_end; t++) {
+    uint j = tid / 32;
+    float sc = float(kd[kd_base + t * Db + j]);
+    Ksh[tid] = sc * float((int)kq[kq_base + t * D + tid]);
+
+    float partial = qsh[tid] * Ksh[tid];
+    float sg = simd_sum(partial);
+    ushort sid = tid / 32;
+    ushort lane = tid % 32;
+    if (lane == 0) sg_sums[sid] = sg;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (sid == 0) {
+        float v = (lane < S) ? sg_sums[lane] : 0.0f;
+        v = simd_sum(v);
+        if (lane == 0) sg_sums[0] = v;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float score = sg_sums[0];
+
+    float m_new = metal::fmax(m, score);
+    float corr = metal::exp(m - m_new);
+    float p = metal::exp(score - m_new);
+    l = l * corr + p;
+    acc[tid] = acc[tid] * corr;
+    m = m_new;
+
+    float scv = float(vd[kd_base + t * Db + j]);
+    Vsh[tid] = scv * float((int)vq[kq_base + t * D + tid]);
+    acc[tid] = acc[tid] + p * Vsh[tid];
+}
+
+pm[part] = m;
+pl[part] = l;
+pacc[part * D + tid] = acc[tid];
+"""
+
+
+_MERGE_KERNEL = None
+_MERGE_SOURCE = """
+uint head = threadgroup_position_in_grid.x;
+ushort tid = thread_position_in_threadgroup.x;
+uint nC = uint(meta[0]);
+uint D = uint(meta[1]);
+
+float m = -1e30f;
+float l = 0.0f;
+float acc = 0.0f;
+
+for (uint ci = 0; ci < nC; ci++) {
+    float pm_i = pm[head * nC + ci];
+    float pl_i = pl[head * nC + ci];
+    float pa = pacc[(head * nC + ci) * D + tid];
+    float m_new = metal::fmax(m, pm_i);
+    float corr = metal::exp(m - m_new);
+    float p_corr = metal::exp(pm_i - m_new);
+    l = l * corr + pl_i * p_corr;
+    acc = acc * corr + pa * p_corr;
+    m = m_new;
+}
+
+if (l > 0.0f) {
+    out[head * D + tid] = half(acc / l);
+}
+"""
+
+
+def _get_q8_pass1_kernel():
+    global _Q8_PASS1_KERNEL
+    if _Q8_PASS1_KERNEL is None:
+        _Q8_PASS1_KERNEL = mx.fast.metal_kernel(
+            name="q8_fused_pass1",
+            input_names=["q", "kd", "kq", "vd", "vq", "meta"],
+            output_names=["pm", "pl", "pacc"],
+            source=_Q8_PASS1_SOURCE,
+            header="",
+        )
+        logger.debug("q8_fused_pass1 Metal kernel compiled")
+    return _Q8_PASS1_KERNEL
+
+
+def _get_merge_kernel():
+    global _MERGE_KERNEL
+    if _MERGE_KERNEL is None:
+        _MERGE_KERNEL = mx.fast.metal_kernel(
+            name="fused_attn_merge",
+            input_names=["pm", "pl", "pacc", "meta"],
+            output_names=["out"],
+            source=_MERGE_SOURCE,
+            header="",
+        )
+        logger.debug("fused_attn_merge Metal kernel compiled")
+    return _MERGE_KERNEL
+
+
+def fused_q8_decode_attention(q, k_pack, v_pack, scale):
+    kd, kq = k_pack
+    vd, vq = v_pack
+    B, H, L, D = q.shape
+    Hkv = kd.shape[-3]
+    KvT = kd.shape[-2]
+    Db = D // _QK
+    r = H // Hkv
+    nC = _n_chunks(KvT)
+    n_parts = B * H * nC
+    meta1 = mx.array(
+        [
+            float(B),
+            float(H),
+            float(Hkv),
+            float(KvT),
+            float(D),
+            float(Db),
+            float(r),
+            float(scale),
+            float(_FUSED_CHUNK),
+            float(nC),
+        ],
+        mx.float32,
+    )
+    p1 = _get_q8_pass1_kernel()
+    pm, pl, pacc = p1(
+        inputs=[
+            mx.reshape(q, (-1,)),
+            mx.reshape(kd, (-1,)),
+            mx.reshape(kq, (-1,)),
+            mx.reshape(vd, (-1,)),
+            mx.reshape(vq, (-1,)),
+            meta1,
+        ],
+        template=[("T", q.dtype)],
+        grid=(n_parts, 1, 1),
+        threadgroup=(D, 1, 1),
+        output_shapes=[(n_parts,), (n_parts,), (n_parts, D)],
+        output_dtypes=[mx.float32, mx.float32, mx.float32],
+    )
+    meta2 = mx.array([float(nC), float(D)], mx.float32)
+    mk = _get_merge_kernel()
+    out = mk(
+        inputs=[pm, pl, pacc, meta2],
+        template=[("T", q.dtype)],
+        grid=(B * H, 1, 1),
+        threadgroup=(D, 1, 1),
+        output_shapes=[q.shape],
+        output_dtypes=[q.dtype],
+    )[0]
+    logger.debug(
+        "fused_q8_decode_attn: B=%d H=%d Hkv=%d KvT=%d D=%d nC=%d",
+        B,
+        H,
+        Hkv,
+        KvT,
+        D,
+        nC,
+    )
+    return out
+
+
+_Q4_PASS1_KERNEL = None
+_Q4_PASS1_SOURCE = """
+uint tg_idx = threadgroup_position_in_grid.x;
+ushort tid = thread_position_in_threadgroup.x;
+uint B=uint(meta[0]),H=uint(meta[1]),Hkv=uint(meta[2]),KvT=uint(meta[3]);
+uint D=uint(meta[4]),Dp=uint(meta[5]),r=uint(meta[6]);
+float scale=meta[7];
+uint CHUNK=uint(meta[8]),nC=uint(meta[9]);
+
+uint head = tg_idx / nC;
+uint ci = tg_idx - head * nC;
+uint b = head / H;
+uint h_q = head - b * H;
+uint hkv = h_q / r;
+
+uint q_base = (b * H + h_q) * D;
+uint kq_base = (b * Hkv + hkv) * KvT * Dp;
+uint Dblk = D / 32;
+uint kd_base = (b * Hkv + hkv) * KvT * Dblk;
+uint S = Dblk;
+uint t_start = ci * CHUNK;
+uint t_end = t_start + CHUNK;
+if (t_end > KvT) t_end = KvT;
+uint part = head * nC + ci;
+
+threadgroup float qsh[256];
+threadgroup float Ksh[256];
+threadgroup float Vsh[256];
+threadgroup float acc[256];
+threadgroup float sg_sums[8];
+
+qsh[tid] = float(q[q_base + tid]) * scale;
+acc[tid] = 0.0f;
+threadgroup_barrier(mem_flags::mem_threadgroup);
+
+float m = -1e30f;
+float l = 0.0f;
+
+for (uint t = t_start; t < t_end; t++) {
+    uint j = tid / 32;
+    float sc = float(kd[kd_base + t * Dblk + j]);
+    uint byte_idx = tid / 2;
+    uchar byte = kq[kq_base + t * Dp + byte_idx];
+    float nib = ((tid & 1u) == 0u) ? float(byte & 0xFu) : float(byte >> 4);
+    Ksh[tid] = sc * (nib - 8.0f);
+
+    float partial = qsh[tid] * Ksh[tid];
+    float sg = simd_sum(partial);
+    ushort sid = tid / 32;
+    ushort lane = tid % 32;
+    if (lane == 0) sg_sums[sid] = sg;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (sid == 0) {
+        float v = (lane < S) ? sg_sums[lane] : 0.0f;
+        v = simd_sum(v);
+        if (lane == 0) sg_sums[0] = v;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    float score = sg_sums[0];
+
+    float m_new = metal::fmax(m, score);
+    float corr = metal::exp(m - m_new);
+    float p = metal::exp(score - m_new);
+    l = l * corr + p;
+    acc[tid] = acc[tid] * corr;
+    m = m_new;
+
+    float scv = float(vd[kd_base + t * Dblk + j]);
+    uchar vbyte = vq[kq_base + t * Dp + byte_idx];
+    float vnib = ((tid & 1u) == 0u) ? float(vbyte & 0xFu) : float(vbyte >> 4);
+    Vsh[tid] = scv * (vnib - 8.0f);
+    acc[tid] = acc[tid] + p * Vsh[tid];
+}
+
+pm[part] = m;
+pl[part] = l;
+pacc[part * D + tid] = acc[tid];
+"""
+
+
+def _get_q4_pass1_kernel():
+    global _Q4_PASS1_KERNEL
+    if _Q4_PASS1_KERNEL is None:
+        _Q4_PASS1_KERNEL = mx.fast.metal_kernel(
+            name="q4_fused_pass1",
+            input_names=["q", "kd", "kq", "vd", "vq", "meta"],
+            output_names=["pm", "pl", "pacc"],
+            source=_Q4_PASS1_SOURCE,
+            header="",
+        )
+        logger.debug("q4_fused_pass1 Metal kernel compiled")
+    return _Q4_PASS1_KERNEL
+
+
+def fused_q4_decode_attention(q, k_pack, v_pack, scale):
+    kd, kq = k_pack
+    vd, vq = v_pack
+    B, H, L, D = q.shape
+    Hkv = kd.shape[-3]
+    KvT = kd.shape[-2]
+    Dp = D // 2
+    r = H // Hkv
+    nC = _n_chunks(KvT)
+    n_parts = B * H * nC
+    meta1 = mx.array(
+        [
+            float(B),
+            float(H),
+            float(Hkv),
+            float(KvT),
+            float(D),
+            float(Dp),
+            float(r),
+            float(scale),
+            float(_FUSED_CHUNK),
+            float(nC),
+        ],
+        mx.float32,
+    )
+    p1 = _get_q4_pass1_kernel()
+    pm, pl, pacc = p1(
+        inputs=[
+            mx.reshape(q, (-1,)),
+            mx.reshape(kd, (-1,)),
+            mx.reshape(kq, (-1,)),
+            mx.reshape(vd, (-1,)),
+            mx.reshape(vq, (-1,)),
+            meta1,
+        ],
+        template=[("T", q.dtype)],
+        grid=(n_parts, 1, 1),
+        threadgroup=(D, 1, 1),
+        output_shapes=[(n_parts,), (n_parts,), (n_parts, D)],
+        output_dtypes=[mx.float32, mx.float32, mx.float32],
+    )
+    meta2 = mx.array([float(nC), float(D)], mx.float32)
+    mk = _get_merge_kernel()
+    out = mk(
+        inputs=[pm, pl, pacc, meta2],
+        template=[("T", q.dtype)],
+        grid=(B * H, 1, 1),
+        threadgroup=(D, 1, 1),
+        output_shapes=[q.shape],
+        output_dtypes=[q.dtype],
+    )[0]
+    logger.debug(
+        "fused_q4_decode_attn: B=%d H=%d Hkv=%d KvT=%d D=%d nC=%d",
+        B,
+        H,
+        Hkv,
+        KvT,
+        D,
+        nC,
+    )
+    return out
+
+
 # --- attention paths --------------------------------------------------------
 
 
@@ -302,6 +669,27 @@ def degraded_attention(q, k_pack, v_pack, scale, mask=None):
 
 
 def quantized_attention(q, k_pack, v_pack, scale, mask=None, chunk=512):
+    kd, kq = k_pack
+    B, H, L, D = q.shape
+    Hkv = kd.shape[-3]
+    T = kd.shape[-2]
+    # Fused decode path (L==1, D multiple of 32 <=256, no mask): 2-pass Metal
+    # kernel dequantizes KV on-the-fly — halves DRAM traffic vs fp16. Wins at
+    # long context (T>=8192, DRAM-bound) with enough heads for occupancy
+    # (B*H>=16). Below that the chunked dequant+SDPA path is faster (compute
+    # dominates, dequant overhead loses).
+    if (
+        L == 1
+        and D % _QK == 0
+        and D <= 256
+        and H % Hkv == 0
+        and B * H >= 16
+        and T >= 8192
+        and (mask is None or (isinstance(mask, str) and mask == "causal"))
+    ):
+        if kq.dtype == mx.uint8:
+            return fused_q4_decode_attention(q, k_pack, v_pack, scale)
+        return fused_q8_decode_attention(q, k_pack, v_pack, scale)
     return online_attention(q, k_pack, v_pack, scale, mask=mask, chunk=chunk)
 
 
