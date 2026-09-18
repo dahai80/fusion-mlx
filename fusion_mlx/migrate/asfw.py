@@ -240,10 +240,15 @@ class ASFWConverter:
             [("d", np.float16), ("dmin", np.float16), ("scales", np.uint8, 12)],
             align=False,
         )
-        headers = np.frombuffer(raw, dtype=header_dtype, count=n_blocks)
-        packed = np.frombuffer(raw, dtype=np.uint8, count=n_blocks * 128).reshape(
-            n_blocks, 128
-        )
+        # Parse with the FULL 144-byte super-block stride: d/dmin/scales
+        # and packed quants are INTERLEAVED per super-block, so reading
+        # headers and packed data as two contiguous runs from the start
+        # (the pre-fix behavior) produced garbage for every block > 0.
+        raw_u8 = np.frombuffer(raw, dtype=np.uint8, count=n_blocks * block_bytes)
+        raw_u8 = raw_u8.reshape(n_blocks, block_bytes)
+        headers = np.empty(n_blocks, dtype=header_dtype)
+        headers.view(np.uint8).reshape(n_blocks, 16)[:] = raw_u8[:, :16]
+        packed = np.ascontiguousarray(raw_u8[:, 16:block_bytes])
 
         n_groups = (n_blocks + self.simd_width - 1) // self.simd_width
         padded = n_groups * self.simd_width

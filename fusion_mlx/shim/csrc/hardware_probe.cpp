@@ -71,13 +71,14 @@ HardwareProbe probe_hardware() {
         }
         MTL::Device* mtl = d.mtl_device();
         if (mtl) {
-            // GPU family probe. M3+ exposes MTLGPUFamilyApple9 (or
-            // MTLGPUFamilyMac2 on desktop-class). BF16 simdgroup matrix
-            // multiply is available from Apple9 / Mac2 onward.
+            // GPU family probe. MTLGPUFamilyApple9 = M3-generation. BF16
+            // simdgroup matrix multiply is available from Apple9 onward —
+            // MTLGPUFamilyMac2 is the M1-generation desktop family and must
+            // NOT be treated as BF16-capable (matches utils/hardware.py
+            // get_mma_capability: gen >= 3).
             bool apple9 = mtl->supportsFamily(MTL::GPUFamilyApple9);
-            bool mac2 = mtl->supportsFamily(MTL::GPUFamilyMac2);
             bool apple10 = mtl->supportsFamily(MTL::GPUFamilyApple10);
-            if (apple9 || mac2) {
+            if (apple9) {
                 h.has_bf16_mma = true;
             }
             // FP8 throughput: conservative — only M4+ (Apple10+) until

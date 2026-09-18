@@ -300,6 +300,15 @@ def verify_tree_logits(
 class DraftVirtualAppendOffset:
     """Virtual append offset on top of a paged KV cache.
 
+    CHAIN-ONLY: staged draft KV must be a chain layout — commit(n) writes
+    the FIRST n staged steps (a contiguous prefix), which is only the
+    accepted root-to-leaf path when the draft tree is a chain. Branching
+    tree layouts (accepted path = non-contiguous subset of staged nodes)
+    must NOT use commit: it would write rejected siblings' KV into the
+    real cache and drop accepted branch tokens. Branching support needs a
+    node-to-slot map + gather commit and is out of scope for the shim
+    prototype.
+
     Usage:
         voff = DraftVirtualAppendOffset(cache)
         voff.propose(draft_keys, draft_values)  # stage, real offset unmoved

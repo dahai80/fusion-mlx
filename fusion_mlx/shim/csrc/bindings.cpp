@@ -18,19 +18,29 @@ using namespace nb::literals;
 
 namespace {
 
+// Owning slot for the pressure-callback Python object. start/stop run on
+// a Python thread with the GIL, and the dispatch thread only touches the
+// callable under the GIL (gil_scoped_acquire below) — so every refcount
+// mutation is serialized by the GIL. The C++ PressureCallback itself
+// captures a RAW PyObject* so copying/destroying it on the dispatch thread
+// never touches Python refcounts.
+nb::object g_py_pressure_cb;
+
 // Wrap a Python callable into the PressureCallback C++ type. nanobind
 // lets us accept nb::object and call it via nb::handle.
 fusion_mlx::shim::PressureCallback make_pressure_cb(nb::object py_cb) {
     if (py_cb.is_none() || !py_cb.is_valid()) {
         return nullptr;
     }
+    PyObject* raw = py_cb.ptr();
     // Hold a reference to the Python callable so it outlives the dispatch
     // queue. The callback is invoked off the main thread; the GIL is
     // acquired before calling into Python.
-    return [py_cb](int level, std::string name) {
+    return [raw](int level, std::string name) {
         nb::gil_scoped_acquire gil;
         try {
-            py_cb(level, nb::str(name.c_str()));
+            nb::object cb = nb::borrow(raw);
+            cb(level, nb::str(name.c_str()));
         } catch (...) {
             // Swallow — sentinel must never crash the process.
         }
@@ -87,10 +97,18 @@ NB_MODULE(_ext, m) {
     m.def(
         "start_memory_sentinel",
         [](nb::object cb) {
-            return fusion_mlx::shim::start_memory_sentinel(make_pressure_cb(cb));
+            // Assign/clear of the owning slot happens under the GIL (this
+            // binding runs on a Python thread).
+            g_py_pressure_cb = cb.is_none() ? nb::object() : std::move(cb);
+            return fusion_mlx::shim::start_memory_sentinel(make_pressure_cb(g_py_pressure_cb));
         },
         "callback"_a = nb::none());
-    m.def("stop_memory_sentinel", &fusion_mlx::shim::stop_memory_sentinel);
+    m.def(
+        "stop_memory_sentinel",
+        []() {
+            g_py_pressure_cb = nb::object();
+            fusion_mlx::shim::stop_memory_sentinel();
+        });
     m.def(
         "last_memory_pressure",
         []() {

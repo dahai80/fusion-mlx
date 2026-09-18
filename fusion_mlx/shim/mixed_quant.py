@@ -63,6 +63,9 @@ class ImatrixData:
         if tensor_name in self.entries:
             return self.entries[tensor_name]
         short = tensor_name.rsplit(".", 1)[-1]
+        for key, arr in self.entries.items():
+            if key.rsplit(".", 1)[-1] == short:
+                return arr
         return None
 
     @property
@@ -111,9 +114,7 @@ def load_imatrix(path: str | Path) -> ImatrixData:
                 arr.size,
                 n_chunks,
             )
-            entries[key] = arr
-        else:
-            entries[key] = arr
+        entries[key] = arr
 
     data = ImatrixData(entries=entries, n_chunks=n_chunks, source=str(path))
     logger.info(

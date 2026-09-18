@@ -346,10 +346,16 @@ class TestLoadImatrix:
         np.testing.assert_allclose(data.entries["b.bias"], [1.0, 2.0])
         assert data.source == str(p)
 
-    def test_entry_for_exact_only(self):
+    def test_entry_for_exact_then_basename(self):
         im = ImatrixData(entries={"a.weight": np.ones(4, np.float32)})
         assert im.entry_for("a.weight") is not None
-        assert im.entry_for("blk.0.a.weight") is None
+        # Basename fallback: imatrix files often store "blk.0.a.weight"
+        # while a model prefixes tensors differently.
+        assert im.entry_for("blk.0.a.weight") is not None
+        np.testing.assert_allclose(
+            im.entry_for("blk.0.a.weight"), np.ones(4, np.float32)
+        )
+        assert im.entry_for("totally.other") is None
 
     def test_missing_file(self, tmp_path):
         with pytest.raises(FileNotFoundError):

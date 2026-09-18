@@ -44,6 +44,27 @@ class TestMirostatV2:
         assert float(out[0].item()) == -float("inf")
         assert float(out[4].item()) == 20.0
 
+    def test_mu_update_uses_last_token(self):
+        from fusion_mlx.utils.sampling import make_mirostat_v2_processor
+
+        # Regression: mu update must attribute token_ids[-1] (the token
+        # sampled from the cached prev_logits), not a resynced stale token
+        # — the resync computed surprise of a token that predates
+        # prev_logits, corrupting mu every step.
+        proc = make_mirostat_v2_processor(tau=5.0, eta=0.5, vocab_size=5)
+        a = _logits([0.0, 10.0, 0.0, 0.0, 0.0])
+        b = _logits([10.0, 0.0, 0.0, 0.0, 0.0])
+        out1 = proc([], a)  # no update; caches a
+        assert float(out1[1].item()) == 10.0
+        out2 = proc([1], b)  # update with token 1 sampled from a
+        # surprise(1 | a) ~ 0 → mu rises from 10 to ~15 → threshold keeps
+        # all of b. The pre-fix code skipped this update (prev_token None).
+        assert float(out2[0].item()) == 10.0
+        out3 = proc([1, 0], a)  # update with token 0 sampled from b
+        # surprise(0 | b) ~ 0 → mu rises again; all of a stays unmasked.
+        assert float(out3[0].item()) == 0.0
+        assert float(out3[1].item()) == 10.0
+
     def test_mu_updates_after_step(self):
         from fusion_mlx.utils.sampling import make_mirostat_v2_processor
 

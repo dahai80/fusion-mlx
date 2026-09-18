@@ -146,6 +146,24 @@ class TestOnlineAttention:
         b = online_attention(q, (d, p), (d, p), 1 / 8, chunk=1024)
         assert_logits_aligned(b, a, tol=1e-6, label="chunk invariance")
 
+    def test_fully_masked_first_chunk_no_nan(self, monkeypatch):
+        _enable(monkeypatch)
+        # Regression: a caller-supplied bool mask that hides ALL of the
+        # first chunk for every row previously NaN-poisoned the running
+        # softmax (exp(-inf - -inf) = NaN) even though later chunks have
+        # visible keys — full-bleed SDPA would be finite.
+        x = _kv(t=8)
+        d, p = q80_quantize(x)
+        xr = q80_dequantize(d, p)
+        q = _q()
+        L = q.shape[-2]
+        mask = mx.array(np.ones((L, 8), dtype=bool))
+        mask[:, :4] = False
+        out = online_attention(q, (d, p), (d, p), 1 / 8, mask=mask, chunk=4)
+        assert not np.isnan(np.asarray(out)).any()
+        ref = _manual_fp32_attention(q, xr, xr, 1 / 8, mask=mask)
+        assert_logits_aligned(ref, out, tol=1e-6, label="masked-first-chunk")
+
     def test_causal_mask(self, monkeypatch):
         _enable(monkeypatch)
         x = _kv()

@@ -19,6 +19,7 @@ enum class ShimError : int {
     OutOfMemory = 3,
     ShapeMismatch = 4,
     InvalidArgument = 5,
+    Stopped = 6,
     Unknown = 99,
 };
 

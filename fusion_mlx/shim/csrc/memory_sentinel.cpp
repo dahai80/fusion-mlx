@@ -36,6 +36,9 @@ const char* level_name(MemoryPressure p) {
 #if defined(__APPLE__)
 void dispatch_callback(int level) {
     g_last_level.store(level, std::memory_order_release);
+    // The callback holds a RAW PyObject* (no refcount ops on copy/destroy —
+    // bindings.cpp owns the nb::object). Copying here is POD-safe on this
+    // thread; the call itself acquires the GIL inside the lambda.
     PressureCallback cb;
     {
         std::lock_guard<std::mutex> lk(g_mtx);
@@ -48,6 +51,7 @@ void dispatch_callback(int level) {
             // A callback exception must not escape into the dispatch queue.
         }
     }
+    // cb is destroyed here — DECREF still under the GIL scope.
 }
 #endif
 
@@ -74,8 +78,13 @@ bool start_memory_sentinel(PressureCallback callback) {
         return false;
     }
     g_callback = std::move(callback);
-    dispatch_source_set_event_handler(g_source, ^{
-        unsigned long flags = dispatch_source_get_data(g_source);
+    // Capture the concrete source/queue in the blocks — reading the
+    // globals from a handler races with a prompt stop() then start()
+    // reassigning them (use-after-free on the new objects, ABA).
+    dispatch_queue_t queue = g_queue;
+    dispatch_source_t src = g_source;
+    dispatch_source_set_event_handler(src, ^{
+        unsigned long flags = dispatch_source_get_data(src);
         int level = static_cast<int>(MemoryPressure::Normal);
         if (flags & DISPATCH_MEMORYPRESSURE_CRITICAL) {
             level = static_cast<int>(MemoryPressure::Critical);
@@ -84,13 +93,11 @@ bool start_memory_sentinel(PressureCallback callback) {
         }
         dispatch_callback(level);
     });
-    dispatch_source_set_cancel_handler(g_source, ^{
-        if (g_queue) {
-            dispatch_release(g_queue);
-            g_queue = nullptr;
-        }
+    dispatch_source_set_cancel_handler(src, ^{
+        // Release the queue the source was created with — never a global.
+        dispatch_release(queue);
     });
-    dispatch_resume(g_source);
+    dispatch_resume(src);
     return true;
 #else
     // Non-Apple host: sentinel unavailable. Python polling enforcer stays
@@ -111,6 +118,10 @@ void stop_memory_sentinel() {
         // The source stays alive until the cancel handler completes.
         dispatch_source_cancel(src);
         dispatch_release(src);
+        // Cancel handler releases the captured queue asynchronously.
+        // g_queue is nulled here under the lock so a prompt start() never
+        // sees a released queue, and the handler never touches the global.
+        g_queue = nullptr;
     }
     g_callback = nullptr;
     g_last_level.store(static_cast<int>(MemoryPressure::Normal),

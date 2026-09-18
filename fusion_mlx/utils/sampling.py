@@ -225,26 +225,22 @@ def make_mirostat_v2_processor(
     if not (0.0 < eta <= 1.0):
         raise ValueError(f"mirostat_eta must be in (0, 1], got {eta}")
 
-    state = {"mu": 2.0 * tau, "prev_logits": None, "prev_token": None}
+    state = {"mu": 2.0 * tau, "prev_logits": None}
 
     log2 = math.log(2.0)
 
     def processor(token_ids: list[int], logits: mx.array) -> mx.array:
         # Step 1: update mu from the previous step's chosen token.
-        if (
-            state["prev_logits"] is not None
-            and state["prev_token"] is not None
-            and len(token_ids) > 0
-        ):
+        if state["prev_logits"] is not None and len(token_ids) > 0:
             prev_logits = state["prev_logits"]
-            prev_token = state["prev_token"]
-            # Reuse the last token_id the generator produced. token_ids
-            # includes all generated tokens so far; the tail is the one
-            # sampled from prev_logits.
+            # The tail of token_ids is the token produced after the logits
+            # cached last step — i.e. the token sampled from prev_logits
+            # (or a forced stop token, which llama.cpp also feeds back).
+            # Do NOT resync against a stored prev_token: the stored value
+            # is one step older than token_ids[-1] and forcing it back
+            # computes the surprise of a token that predates prev_logits,
+            # corrupting mu on every step.
             chosen = token_ids[-1]
-            if chosen != prev_token:
-                # Generator may have forced a stop/eos token; resync.
-                chosen = prev_token
             prev_f = prev_logits.astype(mx.float32)
             logp = prev_f - mx.logsumexp(prev_f, axis=-1, keepdims=True)
             p_chosen = logp[..., chosen]
@@ -266,7 +262,6 @@ def make_mirostat_v2_processor(
 
         # Cache for next step's mu update.
         state["prev_logits"] = logits
-        state["prev_token"] = int(token_ids[-1]) if len(token_ids) > 0 else None
         return masked
 
     processor.mirostat_tau = tau  # type: ignore[attr-defined]
@@ -350,7 +345,9 @@ def make_dry_processor(
                     prev = penalties.get(ext_tok, 0.0)
                     if penalty > prev:
                         penalties[ext_tok] = penalty
-                    break  # longest match wins for this suffix anchor
+                    # No break: llama.cpp penalizes the extension token
+                    # after EVERY earlier occurrence, not just the first.
+                    # penalties dict keeps the max per token.
 
         if not penalties:
             return logits

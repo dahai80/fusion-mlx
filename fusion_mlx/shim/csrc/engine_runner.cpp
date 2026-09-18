@@ -56,6 +56,13 @@ ShimResult EngineRunner::submit(std::function<void()> fn) {
         return envelope([&fn] { fn(); });
     }
     std::unique_lock<std::mutex> lk(_mtx);
+    if (_stop_flag.load()) {
+        // stop() has begun (or completed) under this same mutex — the
+        // worker may already be gone. Refuse instead of waiting on a
+        // _done_cv notification that will never arrive.
+        _failed.fetch_add(1);
+        return {ShimError::Stopped, "shim: engine runner stopped"};
+    }
     _current = std::move(fn);
     _work_ready.store(true);
     _cv.notify_one();
@@ -125,6 +132,15 @@ void EngineRunner::_run() {
         std::unique_lock<std::mutex> lk(_mtx);
         _cv.wait(lk, [this] { return _work_ready.load() || _stop_flag.load(); });
         if (_stop_flag.load()) {
+            // Drop the pending unit (stop is documented drop-not-drain).
+            // A submit() blocked on this unit must be released, or stop()
+            // hangs that caller forever. The blocked submit reads the
+            // Stopped result below and returns instead of waiting.
+            _current = nullptr;
+            _last_result = ShimResult{
+                ShimError::Stopped, "shim: engine runner stopped, work dropped"};
+            _work_ready.store(false);
+            _done_cv.notify_all();
             break;
         }
         auto unit = std::move(_current);

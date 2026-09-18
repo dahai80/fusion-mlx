@@ -101,14 +101,31 @@ def _python_hardware_probe() -> dict[str, Any]:
     }
 
 
+_PROBE_CACHE: tuple[str, dict[str, Any]] | None = None
+
+
 def hardware_probe() -> dict[str, Any]:
-    if _ext is not None and hasattr(_ext, "hardware_probe_dict"):
+    # Cached at module level, keyed on availability mode ("native" vs
+    # "fallback") so tests / degrade paths that swap _ext to None get the
+    # fallback probe, not a stale native result. The native probe shells
+    # out to sysctl per call and the fallback re-runs chip detection —
+    # neither is free on the status/admin surfaces that poll this.
+    global _PROBE_CACHE
+    mode = "native" if _ext is not None else "fallback"
+    if _PROBE_CACHE is not None and _PROBE_CACHE[0] == mode:
+        return _PROBE_CACHE[1]
+    value = None
+    if mode == "native" and hasattr(_ext, "hardware_probe_dict"):
         try:
-            return _ext.hardware_probe_dict()
+            value = _ext.hardware_probe_dict()
         except Exception as exc:
             logger.warning("shim hardware_probe native failed: %s; using fallback", exc)
             _record_native_error(exc)
-    return _python_hardware_probe()
+    if value is None:
+        mode = "fallback"
+        value = _python_hardware_probe()
+    _PROBE_CACHE = (mode, value)
+    return value
 
 
 # ---------------------------------------------------------------------------

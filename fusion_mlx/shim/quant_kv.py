@@ -53,10 +53,12 @@ def _check_blocks(x):
         )
 
 
-def _scale_blocks(x):
+def _scale_blocks(x, levels: float):
+    # levels = max quantized magnitude: 8 for Q4_0 (symmetric [-8, 8],
+    # stored +8 offset in 4 bits), 127 for Q8_0 (int8 full range).
     _check_blocks(x)
     blocks = x.reshape(*x.shape[:-1], x.shape[-1] // _QK, _QK)
-    d = mx.max(mx.abs(blocks), axis=-1) / 8.0
+    d = mx.max(mx.abs(blocks), axis=-1) / levels
     inv = mx.where(d > 0, 1.0 / mx.maximum(d, 1e-30), 0.0)
     return blocks, d, inv
 
@@ -64,7 +66,7 @@ def _scale_blocks(x):
 def q40_quantize(x):
     # x: (..., N), N % 32 == 0. Returns (d fp16 (..., N/32),
     # packed uint8 (..., N/16)) — llama.cpp block_q4_0 layout.
-    blocks, d, inv = _scale_blocks(x)
+    blocks, d, inv = _scale_blocks(x, 8.0)
     q = mx.clip(mx.round(blocks * mx.expand_dims(inv, -1)).astype(mx.int32) + 8, 0, 15)
     q = q.astype(mx.uint8)
     lo = q[..., 0::2]
@@ -87,8 +89,11 @@ def q40_dequantize(d, packed):
 
 
 def q80_quantize(x):
-    # Returns (d fp16 (..., N/32), qs int8 (..., N)) — block_q8_0 layout.
-    blocks, d, inv = _scale_blocks(x)
+    # Returns (d fp16 (..., N/32), qs int8 (..., N)) — llama.cpp block_q8_0
+    # layout: d = amax/127, qs = round(x/d) int8. Byte-compatible with
+    # GGUF/llama.cpp Q8_0 (the pre-fix /8 scale stored only 17 levels and
+    # was incompatible with real Q8_0 files).
+    blocks, d, inv = _scale_blocks(x, 127.0)
     q = mx.clip(mx.round(blocks * mx.expand_dims(inv, -1)), -128, 127)
     q = mx.reshape(q.astype(mx.int8), (*blocks.shape[:-2], -1))
     return d.astype(mx.float16), q
@@ -168,8 +173,13 @@ def online_attention(q, k_pack, v_pack, scale, mask=None, chunk=512):
             else:
                 s = s + msk.astype(mx.float32)
         m_new = mx.maximum(m, mx.max(s, axis=-1))
-        corr = mx.exp(m - m_new)
-        p = mx.exp(s - mx.expand_dims(m_new, -1))
+        # Rows whose visible scores are still all -inf (fully masked so
+        # far) would hit exp(-inf - -inf) = NaN and poison the running
+        # sum even though later chunks have visible keys. Seed those rows
+        # with 0 so the exp terms are well-defined and contribute zero.
+        m_ref = mx.where(m_new == _INF, 0.0, m_new)
+        corr = mx.exp(m - m_ref)
+        p = mx.exp(s - mx.expand_dims(m_ref, -1))
         l = l * corr + mx.sum(p, axis=-1)
         acc = acc * mx.expand_dims(corr, -1) + p @ vc
         m = m_new

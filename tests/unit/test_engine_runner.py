@@ -8,6 +8,7 @@ non-macOS). Fallback path tests always run.
 from __future__ import annotations
 
 import threading
+import time
 
 import pytest
 
@@ -166,3 +167,42 @@ class TestNativeEngineRunner:
             assert out == list(range(8))
         finally:
             r.stop()
+
+    def test_stop_releases_blocked_submit(self, monkeypatch):
+        _enable(monkeypatch)
+        r = engine_runner()
+        r.start()
+        started = threading.Event()
+        release = threading.Event()
+        res1, res2 = [], []
+
+        def sub_a():
+            res1.append(r.submit(lambda: (started.set(), release.wait(5.0))))
+
+        def sub_b():
+            res2.append(r.submit(lambda: None))
+
+        ta = threading.Thread(target=sub_a)
+        tb = threading.Thread(target=sub_b)
+        try:
+            ta.start()
+            assert started.wait(5.0)
+            tb.start()
+            # Give sub_b a chance to stage while the worker holds the mutex
+            # in unit A. Either interleaving must terminate now (previously
+            # a stop() racing a staged-but-unexecuted submit hung forever).
+            time.sleep(0.05)
+            release.set()
+            r.stop()
+            ta.join(5.0)
+            tb.join(5.0)
+            assert not ta.is_alive()
+            assert not tb.is_alive()
+            assert res1 and res1[0][0] == 0
+            # Executed normally (0) or refused as Stopped (6) depending on
+            # which thread won the mutex — never a hang.
+            assert res2 and res2[0][0] in (0, 6)
+        finally:
+            release.set()
+            if r.is_running():
+                r.stop()

@@ -275,6 +275,53 @@ class TestASFWConverter:
         # Each value: int8(10) * scale(2.0) = 20.0
         assert arr[0] == 20.0
 
+    def test_convert_q4_k_stride_layout(self):
+        from fusion_mlx.migrate.asfw import ASFWConverter
+        from fusion_mlx.migrate.gguf_reader import TensorInfo
+
+        # Q4_K super-block: 2 f16 (d, dmin) + 12 scale bytes + 128 packed.
+        # Regression for the pre-fix reader: headers and packed data are
+        # interleaved per 144-byte super-block, so contiguous parsing
+        # produced garbage for every block after the first.
+        n_blocks = 3
+        d_vals = [1.0, 2.0, 4.0]
+        dmin_vals = [0.5, 1.0, 2.0]
+        raw = b""
+        expected_headers = b""
+        expected_packed = b""
+        for i in range(n_blocks):
+            scales = bytes([i + 1] * 12)
+            qs = bytes([0xAB + i] * 128)
+            raw += struct.pack("<ee", d_vals[i], dmin_vals[i]) + scales + qs
+            expected_headers += struct.pack("<ee", d_vals[i], dmin_vals[i]) + scales
+            expected_packed += qs
+        info = TensorInfo(
+            name="test.q4k",
+            n_dims=2,
+            dims=[n_blocks, 256],
+            dtype_id=12,
+            dtype_name="q4_k",
+            data_offset=0,
+            raw_offset=0,
+        )
+        conv = ASFWConverter()
+        layout = conv.convert(info, raw, dequantize=False)
+        assert layout.dtype_name == "q4_k"
+        assert layout.n_blocks == n_blocks
+        assert layout.f16_array is None  # dequant deferred to PR-K kernel
+        # Headers + packed must be split PER SUPER-BLOCK. simd_width=32 →
+        # 1 group of 32 padded blocks: headers stream then packed stream.
+        asfw = layout.asfw_bytes
+        hdr_len = 32 * 16
+        assert asfw[:hdr_len] == expected_headers + bytes(
+            32 * 16 - len(expected_headers)
+        )
+        packed_at = 32 * 16
+        expected_packed_stream = expected_packed + bytes(
+            32 * 128 - len(expected_packed)
+        )
+        assert asfw[packed_at : packed_at + 32 * 128] == expected_packed_stream
+
     def test_convert_unsupported_dtype_raises(self):
         from fusion_mlx.migrate.asfw import ASFWConverter, UnsupportedQuantError
         from fusion_mlx.migrate.gguf_reader import TensorInfo

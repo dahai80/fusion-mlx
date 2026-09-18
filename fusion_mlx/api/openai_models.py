@@ -335,11 +335,11 @@ class ChatCompletionRequest(BaseModel):
     frequency_penalty: float | None = Field(None, ge=-2.0, le=2.0)
     # Mirostat v2 (v2 doc §3.5). tau=0 or None = off.
     mirostat_tau: float | None = Field(None, ge=0.0, le=10.0)
-    mirostat_eta: float | None = Field(None, ge=0.0, le=1.0)
+    mirostat_eta: float | None = Field(None, gt=0.0, le=1.0)
     mirostat_mode: int | None = Field(None, ge=0, le=2)
     # DRY sampler (v2 doc §3.5). multiplier=0 or None = off.
     dry_multiplier: float | None = Field(None, ge=0.0, le=10.0)
-    dry_base: float | None = Field(None, ge=1.0, le=4.0)
+    dry_base: float | None = Field(None, gt=1.0, le=4.0)
     dry_allowed_length: int | None = Field(None, ge=1, le=64)
     dry_penalty_last_n: int | None = Field(None, ge=-1, le=8192)
     # Tool calling
@@ -631,10 +631,10 @@ class CompletionRequest(BaseModel):
     frequency_penalty: float | None = Field(None, ge=-2.0, le=2.0)
     # Mirostat v2 / DRY (v2 doc §3.5). tau/multiplier None = off.
     mirostat_tau: float | None = Field(None, ge=0.0, le=10.0)
-    mirostat_eta: float | None = Field(None, ge=0.0, le=1.0)
+    mirostat_eta: float | None = Field(None, gt=0.0, le=1.0)
     mirostat_mode: int | None = Field(None, ge=0, le=2)
     dry_multiplier: float | None = Field(None, ge=0.0, le=10.0)
-    dry_base: float | None = Field(None, ge=1.0, le=4.0)
+    dry_base: float | None = Field(None, gt=1.0, le=4.0)
     dry_allowed_length: int | None = Field(None, ge=1, le=64)
     dry_penalty_last_n: int | None = Field(None, ge=-1, le=8192)
     # Seed for reproducible generation (best-effort)

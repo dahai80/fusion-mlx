@@ -61,7 +61,9 @@ public:
     // thread is now running (newly started or already running).
     bool start();
 
-    // Stop the thread (drains pending work, joins). Idempotent.
+    // Stop the thread. Idempotent. Any unit pending or picked up but not
+    // finished is DROPPED (not drained): a submit() blocked on it is
+    // released with a {Stopped, ...} result instead of hanging forever.
     void stop();
 
     bool is_running() const;

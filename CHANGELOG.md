@@ -50,7 +50,6 @@
   for context extension; stock `mx.fast.rope` has no YaRN path + computes
   positions in input dtype → fp16 overflow at long context). Both verified
   against stock MLX via the PR-F golden reference harness (KL < 1e-6).
-  `maybe_patch_model_rmsnorm` patches standard mlx_lm layers in-place.
   Degrade switches `FUSION_SHIM_FUSED_RMSNORM`/`FUSION_SHIM_FUSED_ROPE`
   (default OFF).
 - **PagedKVCache two-level addressing + CoW (PR-H)** —
@@ -185,6 +184,34 @@
   intentionally not built per the v2 doc.
 
 ### Fixed
+
+- EngineRunner: stop() no longer hangs a submit() blocked on an in-flight
+  unit — pending work is dropped and the blocked submit returns the new
+  `ShimError::Stopped` (6); submit() refuses after stop begins.
+- Mirostat v2 mu-update attributes `token_ids[-1]` (the token sampled from
+  the cached logits); the stale-token resync corrupted mu every step.
+- fused_ops: removed `maybe_patch_model_rmsnorm` — instance-attribute
+  `__call__` patching is a silent no-op in CPython and the fused math did
+  not match the stock pre-norm block; it had no callers.
+- ASFW q4_K converter parses with the full 144-byte super-block stride
+  (headers and packed quants are interleaved; output was garbage past
+  block 0).
+- memory_sentinel: handlers capture the concrete source/queue (fixes
+  stop-then-start ABA use-after-free); pressure-callback refcount ops now
+  happen only under the GIL.
+- hardware_probe: BF16-MMA gated on Apple9 only — Mac2 (M1-generation
+  desktop) was wrongly reported capable; now agrees with utils/hardware.py.
+- quant_kv: Q8_0 codec is true llama.cpp format (d = amax/127);
+  online_attention no longer NaN-poisons rows whose first chunks are fully
+  masked.
+- DRY: penalizes the extension token after every earlier occurrence
+  (llama.cpp semantics), not only the first.
+- API schema: mirostat_eta gt 0.0, dry_base gt 1.0 (schema-valid 0.0/1.0
+  previously caused a 500).
+- mixed_quant: imatrix basename fallback implemented;
+  MemoryGrowthTracker raises when RSS sampling is unavailable instead of
+  passing the leak gate vacuously; shim hardware_probe() cached;
+  DraftVirtualAppendOffset documented chain-only.
 - **mxfp4 GGUF block size 18 → 17 bytes** — `migrate/gguf_reader.py`
   `QUANT_BLOCK["mxfp4"]` said (32, 18); ggml `block_mxfp4` is 1 e8m0
   scale byte + 16 bytes of 4-bit E2M1 = 17 bytes/block. Any tensor-size

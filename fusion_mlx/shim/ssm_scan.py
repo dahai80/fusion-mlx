@@ -173,8 +173,6 @@ def ssm_scan_parallel(
     y = mx.concatenate(ys, axis=1)
     if pad:
         y = y[:, :l]
-    else:
-        y = y
     final_state = scanned[-1]
     y = y + x * D.reshape(1, 1, h, 1)
     y = y.astype(x.dtype)

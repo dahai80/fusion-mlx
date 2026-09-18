@@ -247,9 +247,7 @@ def _optimized_generation_batch_step(self):
     token_context = []
     if has_logits_processors:
         has_grammar = any(
-            _is_grammar_processor(p)
-            for procs in self.logits_processors
-            for p in procs
+            _is_grammar_processor(p) for procs in self.logits_processors for p in procs
         )
         token_context = [
             tc.update_and_fetch(inputs[i : i + 1])

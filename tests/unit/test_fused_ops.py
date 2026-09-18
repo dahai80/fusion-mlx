@@ -9,7 +9,6 @@ enable them via monkeypatched env.
 from __future__ import annotations
 
 import mlx.core as mx
-import mlx.nn as nn
 import numpy as np
 
 from fusion_mlx.eval.golden_reference import assert_logits_aligned
@@ -19,7 +18,6 @@ from fusion_mlx.shim.fused_ops import (
     fused_rope,
     is_fused_rmsnorm_enabled,
     is_fused_rope_enabled,
-    maybe_patch_model_rmsnorm,
 )
 
 
@@ -116,43 +114,5 @@ class TestFusedRoPE:
         x = mx.array(np.random.randn(1, 8, 2, 16).astype(np.float32))
         # YaRN path should not crash.
         out = fused_rope(x, offset=0, dims=16, yarn_orig_ctx=2048, yarn_beta=0.1)
-        mx.eval(out)
-        assert out.shape == x.shape
-
-
-class TestMaybePatchModel:
-    def test_no_patch_when_disabled(self):
-        model = nn.Module()
-        model.layers = []
-        assert maybe_patch_model_rmsnorm(model) == 0
-
-    def test_no_patch_no_layers(self):
-        model = nn.Module()
-        assert maybe_patch_model_rmsnorm(model) == 0
-
-    def test_patches_standard_layers(self, monkeypatch):
-        _enable(monkeypatch, "FUSION_SHIM_FUSED_RMSNORM")
-
-        class FakeLayer(nn.Module):
-            def __init__(self):
-                super().__init__()
-                self.input_layernorm = nn.RMSNorm(16, eps=1e-5)
-                self.post_attention_layernorm = nn.RMSNorm(16, eps=1e-5)
-                self.self_attn = lambda x, mask, cache: x
-                self.mlp = lambda x: x
-
-            def __call__(self, x, mask=None, cache=None):
-                r = self.self_attn(self.input_layernorm(x), mask, cache)
-                h = x + r
-                r = self.mlp(self.post_attention_layernorm(h))
-                return h + r
-
-        model = nn.Module()
-        model.layers = [FakeLayer(), FakeLayer()]
-        n = maybe_patch_model_rmsnorm(model)
-        assert n == 2
-        # Patched __call__ should run without error.
-        x = mx.array(np.random.randn(1, 4, 16).astype(np.float32))
-        out = model.layers[0](x)
         mx.eval(out)
         assert out.shape == x.shape

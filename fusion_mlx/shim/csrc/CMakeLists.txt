@@ -27,6 +27,13 @@ execute_process(
   OUTPUT_STRIP_TRAILING_WHITESPACE
   OUTPUT_VARIABLE nanobind_ROOT)
 find_package(nanobind CONFIG REQUIRED)
+# nanobind headers for the ops library too (memory_sentinel.cpp acquires
+# the GIL around callback copy/destroy — Python refcount safety).
+execute_process(
+  COMMAND "${Python_EXECUTABLE}" -c
+          "import nanobind, os; print(os.path.join(os.path.dirname(nanobind.__file__), 'include'))"
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  OUTPUT_VARIABLE NANOBIND_INCLUDE_DIR)
 
 execute_process(
   COMMAND "${Python_EXECUTABLE}" -m mlx --cmake-dir
@@ -51,7 +58,7 @@ target_sources(
   ${CMAKE_CURRENT_LIST_DIR}/engine_runner.cpp)
 target_include_directories(
   fusion_mlx_shim_ops
-  PUBLIC ${CMAKE_CURRENT_LIST_DIR})
+  PUBLIC ${CMAKE_CURRENT_LIST_DIR} ${NANOBIND_INCLUDE_DIR} ${Python_INCLUDE_DIRS})
 target_compile_definitions(
   fusion_mlx_shim_ops
   PUBLIC FUSION_SHIM_KERNEL_SOURCE_DIR="${CMAKE_CURRENT_LIST_DIR}"

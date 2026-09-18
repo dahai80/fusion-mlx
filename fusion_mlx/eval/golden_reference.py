@@ -188,6 +188,14 @@ class MemoryGrowthTracker:
     def report(self) -> GrowthReport:
         if len(self._samples) < 2:
             raise ValueError("need >= 2 samples for a growth report")
+        if all(s.rss_bytes == 0 for s in self._samples):
+            # Fail loudly: an all-zero RSS series means RSS sampling never
+            # worked (psutil missing or failed) — the slope would be 0.0
+            # and the leak gate would pass vacuously on such hosts.
+            raise ValueError(
+                "MemoryGrowthTracker: RSS sampling unavailable (psutil "
+                "missing or failed) — leak gate cannot be evaluated"
+            )
         samples = self._samples
         baseline = samples[0].rss_bytes
         final = samples[-1].rss_bytes
