@@ -69,7 +69,9 @@ class TestResolvePolicy:
         k1 = c.fingerprint(
             "m1", [{"role": "user", "content": "hi"}], response_format=rf.model_dump()
         )
-        k2 = c.fingerprint("m1", [{"role": "user", "content": "hi"}], response_format=None)
+        k2 = c.fingerprint(
+            "m1", [{"role": "user", "content": "hi"}], response_format=None
+        )
         assert k1 != k2
         k3 = c.fingerprint(
             "m1", [{"role": "user", "content": "hi"}], response_format=rf.model_dump()
