@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-09-19
+
+MuseTalk real-time lip-sync pipeline foundations (6-issue batch). Pure-MLX
+backends for pose detection, face parsing, audio context, and Metal-level
+output bridges — no torch at runtime, offline weight conversion only.
+
+### Added
+- **DWPose / RTMPose-L MLX backend (#909)** — whole-body 133-keypoint
+  pose detector. CSPNeXt-L backbone + RTMCCHead (SimCC) pure-MLX port.
+  `fusion_mlx/video/dwpose.py`; offline converter `scripts/convert_dwpose.py`.
+- **BiSeNet face-parsing MLX backend (#910)** — 19-class CelebAMask-HQ
+  segmentation. ResNet18 + spatial/context paths + FFM. Face mask output
+  (skin/nose/lips) for MuseTalk paste region.
+  `fusion_mlx/video/face_parsing.py`; converter `scripts/convert_face_parsing.py`.
+- **SafeGroupNorm + graph_opt (#911)** — FP32-protected GroupNorm
+  (channels-last NHWC) avoiding FP16 variance drift; conv-groupnorm-SiLU
+  fusion pattern registry + `compile_with_custom_pass`.
+  `fusion_mlx/nn_ext/safe_group_norm.py`, `fusion_mlx/graph_opt/`.
+- **Metal ICB batched-encode (#912)** — IndirectCommandBuffer with <=16
+  stage gate + auto-segmentation; native ICB path (shim _ext) or sequential
+  dispatch fallback. `fusion_mlx/metal/icb.py`.
+- **IOSurface zero-copy bridge (#913)** — `MetalZeroCopyBridge`: mlx::array
+  → CVPixelBufferRef (BGRA) for LiveKit RTCVideoFrame. Native zero-copy via
+  shim _ext when built; one-copy CoreVideo C API fallback with explicit ABI.
+  `fusion_mlx/metal/zero_copy.py`.
+- **Audio prefix-context cache (#914)** — Whisper feature extraction
+  splices prior-window tail as left context before zero-padding, returning
+  `(chunks, tail)` for cross-window continuity. Reduces boundary artifacts.
+
 ## [0.9.3] — 2026-09-19
 
 ### Fixed
