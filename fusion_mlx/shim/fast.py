@@ -151,6 +151,68 @@ def last_memory_pressure() -> int:
 
 
 # ---------------------------------------------------------------------------
+# EngineRunner (PR-J) — dedicated decode thread + P-core QoS binding.
+# Python fallback: an inline runner that executes submitted callables on the
+# calling thread (same semantics as the native runner when its thread is
+# not started). Switch: FUSION_ENGINE_RUNNER (default OFF).
+# ---------------------------------------------------------------------------
+
+
+class _InlineEngineRunner:
+    # Degraded EngineRunner: no dedicated thread, every submit runs inline
+    # and never fails (exceptions from the callable propagate to the caller
+    # exactly as they would without the runner).
+
+    def __init__(self, qos: int = 0):
+        self.qos = qos
+
+    def start(self) -> bool:
+        return False
+
+    def stop(self) -> None:
+        return None
+
+    def is_running(self) -> bool:
+        return False
+
+    def submit(self, fn):
+        fn()
+        return 0, ""
+
+    def stats(self) -> dict[str, int]:
+        return {
+            "submitted": 0,
+            "completed": 0,
+            "failed": 0,
+            "thread_started": 0,
+            "thread_stopped": 0,
+            "qos_class": self.qos,
+        }
+
+
+def is_engine_runner_enabled() -> bool:
+    return os.environ.get("FUSION_ENGINE_RUNNER", "0") == "1"
+
+
+def engine_runner(qos: int = 0):
+    # Returns the native runner (dedicated thread + QoS) when the shim
+    # extension is built AND FUSION_ENGINE_RUNNER=1; otherwise the inline
+    # fallback — callers get a duck-typed runner either way.
+    if (
+        _ext is not None
+        and hasattr(_ext, "EngineRunner")
+        and is_engine_runner_enabled()
+    ):
+        return _ext.EngineRunner(qos)
+    logger.debug(
+        "shim engine_runner: using inline fallback (native=%s, enabled=%s)",
+        _ext is not None,
+        is_engine_runner_enabled(),
+    )
+    return _InlineEngineRunner(qos)
+
+
+# ---------------------------------------------------------------------------
 # C-ABI last-error accessor
 # ---------------------------------------------------------------------------
 

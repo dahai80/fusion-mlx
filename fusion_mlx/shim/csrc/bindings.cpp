@@ -6,8 +6,10 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/function.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/tuple.h>
 
 #include "c_abi_envelope.h"
+#include "engine_runner.h"
 #include "hardware_probe.h"
 #include "memory_sentinel.h"
 
@@ -103,4 +105,60 @@ NB_MODULE(_ext, m) {
     m.def("last_error_message", []() {
         return fusion_mlx::shim::last_error_message();
     });
+
+    // PR-J: EngineRunner — dedicated decode thread, P-core QoS binding.
+    nb::class_<fusion_mlx::shim::EngineRunner>(m, "EngineRunner")
+        .def(nb::init<int>(), "qos"_a = 0)
+        .def(
+            "start",
+            [](fusion_mlx::shim::EngineRunner& self) {
+                nb::gil_scoped_release rel;
+                return self.start();
+            })
+        .def(
+            "stop",
+            [](fusion_mlx::shim::EngineRunner& self) {
+                // join() may wait on a worker executing a Python callable
+                // that needs the GIL — must release it here.
+                nb::gil_scoped_release rel;
+                self.stop();
+            })
+        .def("is_running", &fusion_mlx::shim::EngineRunner::is_running)
+        .def(
+            "submit",
+            [](fusion_mlx::shim::EngineRunner& self, nb::object py_fn) {
+                // Hold a reference to the Python callable; acquire GIL on
+                // the decode thread before invoking it. The callable's
+                // return value is ignored — decode steps produce tokens
+                // via side effects (appending to a shared buffer). Any
+                // exception (Python or C++) is caught by the C-ABI
+                // envelope on the decode thread and recorded via
+                // set_last_error — never propagated raw across CPython.
+                auto fn = std::function<void()>([py_fn]() {
+                    nb::gil_scoped_acquire gil;
+                    py_fn();
+                });
+                // Release the GIL while blocking on the decode thread —
+                // the worker must be able to acquire it to run py_fn.
+                fusion_mlx::shim::ShimResult res;
+                {
+                    nb::gil_scoped_release rel;
+                    res = self.submit(std::move(fn));
+                }
+                nb::tuple out = nb::make_tuple(
+                    static_cast<int>(res.code), nb::cast(res.message));
+                return out;
+            },
+            "fn"_a)
+        .def("stats", [](fusion_mlx::shim::EngineRunner& self) {
+            auto s = self.stats();
+            nb::dict d;
+            d["submitted"] = nb::int_(s.submitted);
+            d["completed"] = nb::int_(s.completed);
+            d["failed"] = nb::int_(s.failed);
+            d["thread_started"] = nb::int_(s.thread_started);
+            d["thread_stopped"] = nb::int_(s.thread_stopped);
+            d["qos_class"] = nb::int_(s.qos_class);
+            return d;
+        });
 }

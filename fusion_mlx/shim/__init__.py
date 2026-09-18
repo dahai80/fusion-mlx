@@ -21,8 +21,10 @@ import logging
 import os
 
 from .fast import (
+    engine_runner,
     hardware_probe,
     import_error,
+    is_engine_runner_enabled,
     is_native_available,
     last_error_code,
     last_error_message,
@@ -49,6 +51,8 @@ __all__ = [
     "last_native_error",
     "native_symbols",
     "missing_symbols",
+    "engine_runner",
+    "is_engine_runner_enabled",
 ]
 
 

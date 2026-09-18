@@ -47,7 +47,8 @@ target_sources(
   PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}/hardware_probe.cpp
   ${CMAKE_CURRENT_LIST_DIR}/c_abi_envelope.cpp
-  ${CMAKE_CURRENT_LIST_DIR}/memory_sentinel.cpp)
+  ${CMAKE_CURRENT_LIST_DIR}/memory_sentinel.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/engine_runner.cpp)
 target_include_directories(
   fusion_mlx_shim_ops
   PUBLIC ${CMAKE_CURRENT_LIST_DIR})

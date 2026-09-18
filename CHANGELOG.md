@@ -80,6 +80,20 @@
   Tier-2 deferred — dense tree mask + stock broadcast attention here; the
   vendored steel `block_token_mask` is the eventual kernel target.
   Degrade switch `FUSION_SHIM_TREE_MASK` (default OFF).
+- **C++ EngineRunner Tier-2 prototype (PR-J)** — `shim/csrc/engine_runner.{h,cpp}`
+  adds a dedicated decode thread pinned to P-cores via
+  `pthread_set_qos_class_self_np` (UserInteractive default, read-back of the
+  actual class in `stats()`), with every submitted callable wrapped in the
+  C-ABI exception envelope (§5.4 rule 5: a C++/Python exception in the decode
+  thread is captured as a `(code, message)` result, never propagated raw
+  across the CPython boundary). Blocking `submit(fn)` executes on the worker
+  when running, inline on the calling thread otherwise; results travel via a
+  mutex-guarded `_last_result` (worker TLS last_error is invisible to the
+  caller thread), and the nanobind binding releases the GIL around blocking
+  `start/stop/submit` so the worker can acquire it to run Python callables.
+  Python side: `shim.fast.engine_runner(qos)` factory + `_InlineEngineRunner`
+  fallback (runs inline, exceptions propagate normally) — duck-typed either
+  way. Degrade switch `FUSION_ENGINE_RUNNER` (default OFF).
 
 ### Fixed
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
