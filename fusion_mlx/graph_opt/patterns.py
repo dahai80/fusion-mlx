@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+# Fused Conv+GroupNorm+SiLU pattern for graph_opt (#911).
+#
+# Replaces the 3-kernel sequence Conv2D -> GroupNorm -> SiLU with a single
+# module whose __call__ chains all three, so mx.compile can fuse the elementwise
+# parts (SiLU, affine) into the conv/norm boundary. GroupNorm uses SafeGroupNorm
+# (FP32 stats) to avoid FP16 variance drift — PRD V2 cosine >= 0.98.
+
+from __future__ import annotations
+
+import mlx.core as mx
+import mlx.nn as nn
+
+from ..nn_ext.safe_group_norm import SafeGroupNorm
+
+
+class ConvGroupNormSiLU(nn.Module):
+    """Fused Conv2D + GroupNorm + SiLU (#911).
+
+    Wraps an existing conv and groupnorm (weights reused, not copied) so the
+    sequence executes as one __call__ — mx.compile then fuses the SiLU + affine
+    into the conv boundary. If the passed GroupNorm is a stock nn.GroupNorm it is
+    swapped for a SafeGroupNorm (same weight/bias, FP32 stats) on construction.
+    """
+
+    def __init__(self, conv: nn.Module, groupnorm: nn.Module):
+        super().__init__()
+        self.conv = conv
+        # Upgrade stock GroupNorm to SafeGroupNorm (FP32-protected) if needed.
+        if isinstance(groupnorm, nn.GroupNorm) and not isinstance(
+            groupnorm, SafeGroupNorm
+        ):
+            groups = getattr(groupnorm, "num_groups", None) or getattr(
+                groupnorm, "groups", 4
+            )
+            dims = (
+                groupnorm.dims
+                if hasattr(groupnorm, "dims")
+                else groupnorm.weight.shape[0]
+            )
+            eps = getattr(groupnorm, "eps", 1e-6)
+            safe = SafeGroupNorm(groups, dims, eps=eps, pytorch_compatible=True)
+            safe.weight = groupnorm.weight
+            safe.bias = groupnorm.bias
+            self.groupnorm = safe
+        else:
+            self.groupnorm = groupnorm
+
+    def __call__(self, x):
+        x = self.conv(x)
+        x = self.groupnorm(x)
+        return nn.silu(x)
