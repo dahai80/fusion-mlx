@@ -155,9 +155,16 @@ class AuthPrecheckMiddleware:
         try:
             while True:
                 msg = await receive()
-                if msg.get("type") == "http.request" and not msg.get(
-                    "more_body", False
-                ):
+                msg_type = msg.get("type")
+                if msg_type == "http.disconnect":
+                    # Client is gone — receiving again spins forever on
+                    # http.disconnect (observed as a 100% CPU event-loop
+                    # wedge, issue #899 pattern). Bail out.
+                    logger.debug(
+                        "auth pre-check 401 drain aborted (client disconnected)"
+                    )
+                    break
+                if msg_type == "http.request" and not msg.get("more_body", False):
                     break
         except Exception:
             pass

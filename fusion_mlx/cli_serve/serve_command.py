@@ -917,6 +917,9 @@ def serve_command(args):
         )
         sys.exit(2)
     try:
+        # RT-12 consent gate: --cloud-consent must reach the Server instance
+        # config (load_model stamps it there) so the RequestRouter consent
+        # check actually allows cloud routing (#0917 flag audit).
         load_model(
             args.model,
             scheduler_config=scheduler_config,
@@ -929,6 +932,7 @@ def serve_command(args):
             cloud_threshold=args.cloud_threshold,
             cloud_api_base=args.cloud_api_base,
             cloud_api_key=args.cloud_api_key,
+            cloud_consent=getattr(args, "cloud_consent", False),
             served_model_name=args.served_model_name,
             mtp=args.enable_mtp,
             force_hybrid=getattr(args, "force_hybrid", False),

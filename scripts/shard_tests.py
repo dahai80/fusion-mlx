@@ -207,6 +207,23 @@ SHARDS: dict[str, list[str]] = {
 KNOWN_SHARDS = list(SHARDS) + ["rest"]
 
 TESTS_DIR = Path(__file__).resolve().parent.parent / "tests" / "unit"
+_DEBT_FILE = TESTS_DIR / "debt_modules.txt"
+
+
+def _debt_basenames() -> set[str]:
+    # Same parsing as tests/unit/conftest.py: bare filenames (non-comment,
+    # non-empty lines) are quarantined. pytest's collect_ignore is bypassed
+    # when files are passed as explicit CLI args (the shard invocation
+    # `pytest $(python scripts/shard_tests.py core)`), so the shard emitter
+    # must skip them itself — otherwise CI collection aborts on the first
+    # broken quarantined file (test_server.py etc., see issue main-CI-red).
+    if not _DEBT_FILE.exists():
+        return set()
+    return {
+        line.strip()
+        for line in _DEBT_FILE.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
 
 
 def _shard_for(filename: str) -> str:
@@ -229,7 +246,10 @@ def files_for(shard: str) -> list[str]:
         )
         return []
     files: list[str] = []
+    debt = _debt_basenames()
     for p in sorted(TESTS_DIR.glob("test_*.py")):
+        if p.name in debt:
+            continue
         if _shard_for(p.name) == shard:
             files.append(str(p))
     return files

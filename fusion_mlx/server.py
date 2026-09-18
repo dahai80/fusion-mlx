@@ -830,6 +830,7 @@ def load_model(
     served_model_name: str | None = None,
     mtp: bool = False,
     *,
+    cloud_consent: bool = False,
     max_tokens_is_explicit: bool | None = None,
     force_text: bool = False,
     force_hybrid: bool = False,
@@ -856,6 +857,18 @@ def load_model(
     cfg.model_name = served_model_name or resolved
     if not cfg.model_alias:
         cfg.model_alias = model_name
+    # Wire CLI cloud args into the ServerConfig so Server._startup actually
+    # constructs the CloudRouter. Previously these were staged in
+    # _pending_single_model but never consumed — --cloud-model enabled
+    # nothing and the RT-12 consent gate was unreachable in the live serve
+    # path (#0917 flag audit).
+    if cloud_model:
+        cfg.cloud_router_enabled = True
+        cfg.cloud_router_model = cloud_model
+        cfg.cloud_router_threshold = cloud_threshold
+        cfg.cloud_router_api_key = cloud_api_key
+        if cloud_api_base:
+            cfg.cloud_router_api_base = cloud_api_base
     _pending_single_model = {
         "model_path": resolved,
         "original_name": model_name,
@@ -873,6 +886,7 @@ def load_model(
         "cloud_threshold": cloud_threshold,
         "cloud_api_base": cloud_api_base,
         "cloud_api_key": cloud_api_key,
+        "cloud_consent": cloud_consent,
         "max_tokens": max_tokens,
         "max_tokens_is_explicit": max_tokens_is_explicit,
         "lora_path": lora_path,
@@ -880,6 +894,22 @@ def load_model(
     # Ensure the singleton Server + app exist so _startup will pick up the
     # staged model when uvicorn starts the lifespan.
     get_app()
+    # Stamp cloud args on the LIVE Server instance's config too — Server()
+    # defaults to a fresh ServerConfig() (not the get_config() singleton), so
+    # singleton-only stamping never reached _startup's CloudRouter wiring
+    # (#0917 flag audit: --cloud-model was staged but never consumed).
+    inst = globals().get("_server_instance")
+    if inst is not None and (cloud_model or cloud_consent):
+        icfg = inst.config
+        if cloud_model:
+            icfg.cloud_router_enabled = True
+            icfg.cloud_router_model = cloud_model
+            icfg.cloud_router_threshold = cloud_threshold
+            icfg.cloud_router_api_key = cloud_api_key
+            if cloud_api_base:
+                icfg.cloud_router_api_base = cloud_api_base
+        if cloud_consent:
+            icfg.cloud_fallback_consent = True
     _sync_config()
     logger.info(
         "load_model: staged single model %s (resolved=%s, served=%s)",
@@ -1955,6 +1985,7 @@ class Server:
             self.cloud_router = CloudRouter(
                 cloud_model=cloud_model,
                 api_key=self.config.cloud_router_api_key,
+                api_base=getattr(self.config, "cloud_router_api_base", None),
                 threshold=self.config.cloud_router_threshold,
             )
             logger.info(
@@ -2711,6 +2742,13 @@ def main():
     parser.add_argument(
         "--cloud-router", action="store_true", help="Enable cloud fallback"
     )
+    parser.add_argument(
+        "--cloud-consent",
+        action="store_true",
+        help="Consent to cloud fallback (RT-12 gate). Prompts above the "
+        "cloud router threshold may leave the local process. Required with "
+        "--cloud-router for cloud routing to actually trigger.",
+    )
     parser.add_argument("--cloud-api-key", default=None, help="Cloud router API key")
     parser.add_argument(
         "--cloud-model",
@@ -2755,6 +2793,8 @@ def main():
         )
     config.memory.ssd_cache_enabled = args.ssd_cache
     config.cloud_router_enabled = args.cloud_router
+    if args.cloud_consent:
+        config.cloud_fallback_consent = True
     if args.cloud_api_key:
         config.cloud_router_api_key = args.cloud_api_key
     if args.cloud_model:

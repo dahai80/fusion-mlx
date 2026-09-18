@@ -99,7 +99,14 @@ jobs:
             - name: Run unit tests with coverage
               run: |
                   set -eo pipefail
-                  pytest ${{ steps.shard.outputs.files }} -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-report=xml --cov-fail-under=40 --junitxml=pytest-junit.xml 2>&1 | tee pytest-output.txt
+                  # Per-shard coverage is REPORTED only, not gated: each shard
+                  # exercises only its slice of fusion_mlx/ so a shard's coverage
+                  # is naturally far below the 40% full-suite threshold. The
+                  # pyproject [tool.coverage.report] fail_under=40 applies to the
+                  # full suite; --cov-fail-under=0 overrides it per-shard so the
+                  # gate never fires on a partial run. The xml artifact is still
+                  # uploaded for cross-shard combining if needed.
+                  pytest ${{ steps.shard.outputs.files }} -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-report=xml --cov-fail-under=0 --junitxml=pytest-junit.xml 2>&1 | tee pytest-output.txt
             - name: Guard against excessive skips
               if: always()
               run: |

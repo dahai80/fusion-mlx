@@ -310,6 +310,7 @@ class ServerConfig:
     cloud_router_enabled: bool = False
     cloud_router_model: str | None = None
     cloud_router_api_key: str | None = None
+    cloud_router_api_base: str | None = None
     cloud_router_threshold: int = 32768
     # RT-12 (#0909 audit): consent gate for cloud fallback. Default OFF
     # — prompts must NOT silently leave the local process for a
