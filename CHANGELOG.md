@@ -110,8 +110,27 @@
   `cache.attention()` (GQA + causal/additive masks supported). OFF mode:
   plain fp16 concat cache + stock SDPA — zero behavior change.
   Degrade switch `FUSION_SHIM_QUANT_KV` (default OFF).
+- **imatrix metadata + IQ/GGUF mixed-quant consumption (PR-L)** —
+  `shim/mixed_quant.py` adds three pieces (v2 doc §3.3): (1) `load_imatrix`
+  parses a llama.cpp imatrix GGUF file (per-tensor F32-array entries,
+  optional chunk-count key) into `ImatrixData`; (2) `build_mixed_plan`
+  scores each tensor by imatrix-weighted relative MSE of a hypothetical
+  Q4_0 requant (`q40_sensitivity`, err_var = d²/12 with d = rowmax/8) and
+  deterministically assigns sensitive tensors to bf16 and the rest to the
+  preferred production format (Q4_0/MXFP4) — no model decisions, pure
+  arithmetic; (3) `dispatch_tensor` maps raw GGUF block data to numpy
+  dequant handlers for the unambiguous layouts (q4_0, q8_0, iq4_nl,
+  mxfp4). iq4_nl is gated behind `FUSION_SHIM_IQ` (default OFF); lattice
+  IQ2/IQ3/IQ1 and Q2_K..Q6_K raise `UnsupportedQuantError` — loud
+  fallback to native mlx_lm, never a silently-wrong decode.
+  Degrade switch `FUSION_SHIM_IQ` (default OFF).
 
 ### Fixed
+- **mxfp4 GGUF block size 18 → 17 bytes** — `migrate/gguf_reader.py`
+  `QUANT_BLOCK["mxfp4"]` said (32, 18); ggml `block_mxfp4` is 1 e8m0
+  scale byte + 16 bytes of 4-bit E2M1 = 17 bytes/block. Any tensor-size
+  or stride computation for mxfp4 GGUF data read past the end of the
+  actual block stream.
 - **Slash-form model id load/unload 404 (#0916)** — pool entry keys use the
   HF-cache double-hyphen naming convention (`models--org--repo`, e.g.
   `mlx-community--Qwen3.8-27B-4bit`), but the slash→hyphen fallback in

@@ -127,7 +127,7 @@ QUANT_BLOCK: dict[str, tuple[int, int]] = {
     "iq4_nl": (32, 18),
     "iq1_s": (256, 66),
     "iq4_xs": (256, 136),
-    "mxfp4": (32, 18),  # 1 f8 scale + 16 uint8 (32×4bit)
+    "mxfp4": (32, 17),  # 1 e8m0 scale byte + 16 uint8 (32×4bit)
 }
 
 
