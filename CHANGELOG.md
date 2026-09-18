@@ -145,6 +145,19 @@
   quantized-KV degraded attention, grammar bitmask apply) with
   interleaved A/B median timing — the perf baseline artifact for the
   shim roadmap. Degrade switch `FUSION_SHIM_GRAMMAR_RING` (default OFF).
+- **MoE route dispatch + gather combine (PR-N)** — `shim/moe_dispatch.py`:
+  the deterministic dispatch bookkeeping behind llama.cpp's
+  MUL_MAT_ID + GET_ROWS MoE serving path. `route_dispatch` builds a
+  stable token-reorder plan (composite sort key expert·P + pair_rank)
+  with per-expert counts, segment offsets, and an inverse restore map;
+  `gather_rows` / `mul_mat_id` (mx.gather_mm, SwitchLinear calling
+  convention) / `gather_combine` cover the grouped-matmul round trip;
+  `aligned_offsets` pads expert segments to fixed multiples so padded
+  layouts keep a closed shape set (same idea as PR-M bucket padding);
+  `expert_load_stats` emits deterministic load-balance metrics. Pure mx
+  ops, Tier-2 conditional — no default wiring; the production MoE layers
+  (glm_moe_dsa/deepseek_v4 SwitchGLU) keep their own sort thresholds.
+  Degrade switch `FUSION_SHIM_MOE` (default OFF).
 
 ### Fixed
 - **mxfp4 GGUF block size 18 → 17 bytes** — `migrate/gguf_reader.py`
