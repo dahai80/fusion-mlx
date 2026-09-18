@@ -124,6 +124,27 @@
   IQ2/IQ3/IQ1 and Q2_K..Q6_K raise `UnsupportedQuantError` — loud
   fallback to native mlx_lm, never a silently-wrong decode.
   Degrade switch `FUSION_SHIM_IQ` (default OFF).
+- **Grammar mask ring prefetch + bucket padding + perf baseline (PR-M)** —
+  (1) `shim/grammar_ring.py`: the stock path computes the grammar DFA
+  bitmask inline on every constrained decode step (CPU work directly on
+  the critical path). `GrammarMaskRing` pipelines it — a worker thread
+  computes the next step's bitmask into a preallocated ring slot
+  immediately after token accept, overlapping CPU mask work with the GPU
+  forward pass; `wrap_processor` wires it at the scheduler's grammar
+  processor construction (sched_thinking), with an epoch guard so
+  abandoned slots are never consumed, and `accept_token` drains any
+  in-flight job before mutating matcher state. Results are identical to
+  the inline path (same matcher, same bitmask bytes). Scheduler
+  isinstance gates now accept ring wrappers via `_is_grammar_processor`.
+  (2) `shim/bucket_pad.py`: deterministic bucket padding (snap sequence
+  lengths up to power-of-two-multiple edges, pad, trim outputs) so
+  mx.compile shape specialization sees a small closed shape set instead
+  of one graph per distinct length. Pure arithmetic, callers opt in.
+  (3) `scripts/bench_shim_perf.py`: headless micro-benchmark of the shim
+  ops vs their stock MLX references (fused RMSNorm+residual, fused RoPE,
+  quantized-KV degraded attention, grammar bitmask apply) with
+  interleaved A/B median timing — the perf baseline artifact for the
+  shim roadmap. Degrade switch `FUSION_SHIM_GRAMMAR_RING` (default OFF).
 
 ### Fixed
 - **mxfp4 GGUF block size 18 → 17 bytes** — `migrate/gguf_reader.py`
