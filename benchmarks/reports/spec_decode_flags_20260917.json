@@ -1,0 +1,70 @@
+{
+    "spec_decode_audit": [
+        {
+            "flag": "ngram",
+            "env": "FUSION_NGRAM_SPEC_ENABLED=1 (default ON)",
+            "model": "Qwen3.5-4B-4bit",
+            "scenario": "free generation, short context, no reusable prefix",
+            "off_tok_per_s": 28.06,
+            "on_tok_per_s": 27.11,
+            "delta_pct": -3.4,
+            "median_n": 6,
+            "verdict": "neutral; default ON retained (low overhead, gains on repeated-prefix/multi-turn-TTFT)",
+            "suitable_for": "multi-turn, repeated prefix, cache-hit-heavy traffic"
+        },
+        {
+            "flag": "dflash2",
+            "env": "--enable-dflash2 + 27B drafter (layer tap 5/19/33/47/61)",
+            "model": "Qwen3.8-27B-4bit",
+            "scenario": "free generation, short context, max_tokens=256",
+            "off_tok_per_s": 30.73,
+            "on_tok_per_s": 29.62,
+            "delta_pct": -3.6,
+            "median_n": 6,
+            "verdict": "drafter overhead >= gain on short free-gen; shallow models error (list index out of range, fail-visibly)",
+            "suitable_for": "long context, repeated prefix, multi-shot; requires 27B-compatible target"
+        },
+        {
+            "flag": "eagle3",
+            "env": "FUSION_SPEC_METHOD=eagle3 + yuhuili/EAGLE3-LLaMA3.1-Instruct-8B (0.85GB draft)",
+            "model": "Meta-Llama-3.1-8B-Instruct-4bit",
+            "scenario": "free generation, short context",
+            "off_tok_per_s": 104.84,
+            "on_tok_per_s": 46.05,
+            "delta_pct": -56.0,
+            "median_n": 6,
+            "acceptance_rate": "0-6.7%",
+            "verdict": "SEVERE REGRESSION on free generation; draft acceptance near-zero, every draft forward is pure overhead",
+            "suitable_for": "dialogue/code completion/high-acceptance distributions ONLY; NEVER enable for free generation",
+            "warning": "free-gen -56% tok/s \u2014 do not enable eagle3 for open-ended/creative generation workloads"
+        },
+        {
+            "flag": "dspark",
+            "env": "--enable-dspark --dspark-drafter-path (dspark_qwen3_8b_block7 q8 4.5GB)",
+            "model": "Qwen3-8B-bf16",
+            "scenario": "free generation, max_tokens=256, temp=0",
+            "off_tok_per_s": 31.48,
+            "on_tok_per_s": 53.3,
+            "delta_pct": 69.0,
+            "speedup_x": 1.69,
+            "avg_acceptance_length": "2.4-5.2 (mean 3.65)",
+            "median_n": 6,
+            "verdict": "only spec-decode flag with positive gain on free generation; consistent with historical 1.70x e2e baseline",
+            "suitable_for": "dialogue, code, long-form docs, high-acceptance distributions"
+        },
+        {
+            "flag": "mtp",
+            "env": "--enable-mtp",
+            "model": "n/a",
+            "scenario": "blocked \u2014 no compatible safetensors sidecar checkpoint exists",
+            "off_tok_per_s": null,
+            "on_tok_per_s": null,
+            "delta_pct": null,
+            "verdict": "BLOCKED (not a code defect); needs community safetensors MTP sidecar (model-mtp.safetensors with mtp.* weights)",
+            "suitable_for": "future; code path has unit-test coverage"
+        }
+    ],
+    "source": "fusion-mlx-flag-audit-report-0917.md",
+    "host": "M5 Max",
+    "date": "2026-09-17"
+}

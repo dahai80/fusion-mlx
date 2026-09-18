@@ -131,6 +131,7 @@ def generate_video(
     controlnet_image: str | None = None,
     inpaint_mask=None,
     init_latent=None,
+    session_id: str | None = None,
 ) -> bytes:
     # LTX-2.5 两阶段 distilled T2V 生成。I2V/audio/duration-head 不在本轮路径，
     # 留空 fail visible (Rule 12)。
@@ -291,21 +292,85 @@ def generate_video(
     stage1_image_latent = None
     stage2_image_latent = None
     vae_encoder = None
+    _session_tail_reused = False
     if is_i2v:
-        logger.info("ltx2_5 I2V: encoding image at stage resolutions...")
-        latent_cache = get_image_latent_cache(model_repo)
-        s1_h, s1_w = stage1_h * 32, stage1_w * 32
-        s2_h, s2_w = stage2_h * 32, stage2_w * 32
-        stage1_image_latent, vae_encoder = _encode_image_latent(
-            image, s1_h, s1_w, model_repo, root, model_dtype, latent_cache, vae_encoder
-        )
-        stage2_image_latent, vae_encoder = _encode_image_latent(
-            image, s2_h, s2_w, model_repo, root, model_dtype, latent_cache, vae_encoder
-        )
-        if vae_encoder is not None:
-            del vae_encoder
-            mx.clear_cache()
-        logger.info("ltx2_5 I2V: image latents encoded")
+        # Session-tail latent cache (multi-shot continuity): if a previous
+        # shot in this session left a tail-frame latent, reuse it as the
+        # first-frame image conditioning and skip the VAE image encode
+        # entirely — mirrors wan2/generate.py get_session_tail. The cache
+        # no-ops when FUSION_SESSION_TAIL_CACHE != 1.
+        if session_id is not None:
+            try:
+                from fusion_mlx.cache.latent_cache import get_session_tail
+
+                tail_latent = get_session_tail(session_id, model_repo)
+            except Exception:
+                logger.debug("ltx2_5 session-tail get failed", exc_info=True)
+                tail_latent = None
+            if tail_latent is not None:
+                # tail is [1, 128, 1, H, W] at the final (stage2) latent
+                # resolution. Only reuse if its spatial dims match the current
+                # shot's stage2 grid — a different width/height in a later shot
+                # of the same session must fall back to VAE encode.
+                sh = tuple(tail_latent.shape[-2:])
+                if sh == (stage2_h, stage2_w):
+                    stage2_image_latent = tail_latent.astype(model_dtype)
+                    # stage1 is stage2 downsampled by the spatial_scale stride
+                    # (stage2_h == stage1_h * spatial_scale). Compute the stride
+                    # from the actual dims rather than hardcoding 2x so a
+                    # non-2x upsampler stays correct.
+                    stride_h = stage2_h // stage1_h if stage1_h else 1
+                    stride_w = stage2_w // stage1_w if stage1_w else 1
+                    stage1_image_latent = stage2_image_latent[
+                        :, :, :, ::stride_h, ::stride_w
+                    ]
+                    _session_tail_reused = True
+                    logger.info(
+                        "ltx2_5 I2V: session tail reused (session_id=%s) "
+                        "stage1=%s stage2=%s stride=%dx%d — VAE image encode skipped",
+                        session_id,
+                        stage1_image_latent.shape,
+                        stage2_image_latent.shape,
+                        stride_h,
+                        stride_w,
+                    )
+                else:
+                    logger.info(
+                        "ltx2_5 I2V: session tail shape %s != stage2 %dx%d — "
+                        "falling back to VAE image encode",
+                        sh,
+                        stage2_h,
+                        stage2_w,
+                    )
+        if not _session_tail_reused:
+            logger.info("ltx2_5 I2V: encoding image at stage resolutions...")
+            latent_cache = get_image_latent_cache(model_repo)
+            s1_h, s1_w = stage1_h * 32, stage1_w * 32
+            s2_h, s2_w = stage2_h * 32, stage2_w * 32
+            stage1_image_latent, vae_encoder = _encode_image_latent(
+                image,
+                s1_h,
+                s1_w,
+                model_repo,
+                root,
+                model_dtype,
+                latent_cache,
+                vae_encoder,
+            )
+            stage2_image_latent, vae_encoder = _encode_image_latent(
+                image,
+                s2_h,
+                s2_w,
+                model_repo,
+                root,
+                model_dtype,
+                latent_cache,
+                vae_encoder,
+            )
+            if vae_encoder is not None:
+                del vae_encoder
+                mx.clear_cache()
+            logger.info("ltx2_5 I2V: image latents encoded")
 
     # ---- 7. stage1 denoise ----
     logger.info(
@@ -451,6 +516,25 @@ def generate_video(
     del temporal_up
     mx.clear_cache()
     logger.info("Temporal upsampled -> %s", latents.shape)
+
+    # Session-tail latent cache (multi-shot continuity): store the last
+    # temporal frame of the final denoised latent so the next shot in this
+    # session can reuse it as first-frame conditioning (skips VAE image
+    # encode). Mirrors wan2/generate.py put_session_tail. No-op when
+    # FUSION_SESSION_TAIL_CACHE != 1.
+    if session_id is not None:
+        try:
+            from fusion_mlx.cache.latent_cache import put_session_tail
+
+            tail = latents[:, :, -1:, :, :]
+            put_session_tail(session_id, model_repo, tail)
+            logger.info(
+                "ltx2_5 session tail put: session_id=%s shape=%s",
+                session_id,
+                tail.shape,
+            )
+        except Exception:
+            logger.debug("ltx2_5 session-tail put failed", exc_info=True)
 
     # ---- 11. VAE decode -> frames -> mp4 ----
     logger.info("Decoding latents %s ...", latents.shape)

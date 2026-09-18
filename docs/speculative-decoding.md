@@ -143,6 +143,41 @@ SuffixDecoding on free-form chat costs ~1× (no regression — its D1-match gate
 self-disables), but enabling DFlash/DSpark on free-form chat pays a draft-model
 load and a verify overhead for ~no gain. Match the method to the traffic.
 
+### Workload performance baselines (2026-09-17 flag audit)
+
+Measured on Apple Silicon (M5 Max), median of 6, `max_tokens=256`,
+`temperature=0`, free-generation short-context prompts (no reusable
+prefix). Raw JSON: `benchmarks/reports/spec_decode_flags_20260917.json`.
+
+| Flag | Model | OFF tok/s | ON tok/s | Δ | Acceptance | Free-gen verdict |
+|---|---|---|---|---|---|---|
+| N-gram | Qwen3.5-4B-4bit | 28.06 | 27.11 | -3.4% | n/a | neutral; default ON retained |
+| DFlash2 | Qwen3.8-27B-4bit | 30.73 | 29.62 | -3.6% | draft accepts → ct>256 | neutral (short ctx); gains on long/repeated |
+| **Eagle3** | Llama-3.1-8B-4bit | 104.84 | 46.05 | **-56%** | **0–6.7%** | **severe regression** |
+| DSpark | Qwen3-8B-bf16 | 31.48 | 53.30 | **+69% (1.69×)** | 2.4–5.2 (mean 3.65) | **only positive gain** |
+| MTP | — | — | — | BLOCKED | — | no compatible safetensors sidecar checkpoint |
+
+> ⚠️ **Eagle3 free-generation warning**: Eagle3 shows a **-56% tok/s
+> regression** on free-form / open-ended generation (draft acceptance
+> 0–6.7%, every draft forward is pure overhead). **Do not enable Eagle3
+> for free generation, creative writing, or open-ended chat.** Eagle3 is
+> only appropriate for **high-acceptance distributions** — dialogue with
+> strong prefix reuse, code completion, templated fill-in — where the
+> one-layer drafter can exploit the target's hidden-state continuity.
+> For free generation use DSpark (the only positive-gain flag) or leave
+> spec decode off.
+
+**Scenario recommendations**:
+
+| Workload | Recommended flag | Reason |
+|---|---|---|
+| Free generation / creative / open-ended | none, or DSpark | Eagle3/DFlash2/N-gram all neutral-to-negative; DSpark is the only positive |
+| Multi-turn dialogue / repeated prefix | N-gram (default ON) | low overhead, prefix reuse pays off |
+| Long-document / RAG (≥4k prompt) | DFlash2 | block drafter exploits source-text repetition |
+| Code completion / tool-call / JSON | SuffixDecoding | drafter-free, self-disables on miss |
+| Qwen3 bf16 high-throughput serve | DSpark | +69%, lossless, stable acceptance |
+| Eagle3-compatible high-acceptance chat | Eagle3 | only when acceptance is demonstrably high; benchmark OFF-vs-ON first |
+
 ---
 
 ## The boot-time loading constraint
