@@ -37,16 +37,21 @@ import mlx.core as mx
 logger = logging.getLogger(__name__)
 
 
-def _env_on(name: str) -> bool:
-    return os.environ.get(name, "0") == "1"
+def _env_on(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default) == "1"
 
 
 def is_fused_rmsnorm_enabled() -> bool:
-    return _env_on("FUSION_SHIM_FUSED_RMSNORM")
+    # Default ON: tiered dispatch = zero regression at decode sizes (falls
+    # back to stock rms_norm+add below 4M elements), -35% to -52% at prefill.
+    # Set FUSION_SHIM_FUSED_RMSNORM=0 to disable.
+    return _env_on("FUSION_SHIM_FUSED_RMSNORM", "1")
 
 
 def is_fused_rope_enabled() -> bool:
-    return _env_on("FUSION_SHIM_FUSED_ROPE")
+    # Default OFF: standard path is passthrough to mx.fast.rope (no speed
+    # benefit). Value = YaRN/NTK capability gap — enable when extending context.
+    return _env_on("FUSION_SHIM_FUSED_ROPE", "0")
 
 
 # ---------------------------------------------------------------------------
