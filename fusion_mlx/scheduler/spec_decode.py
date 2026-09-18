@@ -1320,6 +1320,7 @@ def dflash2_spec_step(
     dt = time.perf_counter() - t0
 
     # Cache rollback for rejected tokens. Mirrors dflash_spec_step line 639+.
+    _rb0 = time.perf_counter()
     if cache_tokens_processed > 0 and n_accepted < K:
         n_rejected = cache_tokens_processed - n_accepted
         if non_trimmable_snapshots is not None:
@@ -1334,6 +1335,7 @@ def dflash2_spec_step(
             trim_count = n_rejected
         if trim_count > 0:
             _trim_trimmable(prompt_cache, trim_count)
+    _rollback_ms = (time.perf_counter() - _rb0) * 1000
 
     # Draft cache: after propose the draft advanced by block_size. Trim
     # to match the target's post-step offset (current_offset + n_accepted).
@@ -1353,13 +1355,14 @@ def dflash2_spec_step(
         stats = dflash2_state.get_stats()
         logger.info(
             "dflash2_spec: step=%d, block=%d, accepted=%d/%d (%.1f%%), "
-            "verify=%.1fms, rate=%.1f%%, circuit=%s",
+            "verify=%.1fms rollback=%.1fms, rate=%.1f%%, circuit=%s",
             dflash2_state.total_spec_steps,
             drafter.block_size,
             n_accepted,
             K,
             100.0 * n_accepted / K if K else 0,
             dt * 1000,
+            _rollback_ms,
             stats["acceptance_rate"] * 100,
             stats["circuit_tripped"],
         )

@@ -597,15 +597,30 @@ class BatchedEngine(BaseEngine):
                         else None
                     ),
                 )
-                block_size = (
-                    (
+                # Hybrid (GDN/ArraysCache) models: the preset forces
+                # block_size=2 (replay-on-rejection ≈ verify cost →
+                # break-even ≈ 100% acceptance at larger blocks). The
+                # scheduler_config default (5) would override it via the
+                # `or` chain below, so for hybrid presets we skip the
+                # config default and use the preset's forced block_size
+                # directly. model_settings explicit override still wins.
+                _hybrid_preset = getattr(_preset, "hybrid", False)
+                if _hybrid_preset:
+                    block_size = (
                         getattr(self._model_settings, "dflash2_block_size", None)
                         if self._model_settings
                         else None
+                    ) or _preset.block_size
+                else:
+                    block_size = (
+                        (
+                            getattr(self._model_settings, "dflash2_block_size", None)
+                            if self._model_settings
+                            else None
+                        )
+                        or getattr(scheduler_config, "dflash2_block_size", 0)
+                        or _preset.block_size
                     )
-                    or getattr(scheduler_config, "dflash2_block_size", 0)
-                    or _preset.block_size
-                )
                 draft_bits = (
                     getattr(self._model_settings, "dflash2_draft_bits", None)
                     if self._model_settings
