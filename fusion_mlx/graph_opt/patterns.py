@@ -38,7 +38,11 @@ class ConvGroupNormSiLU(nn.Module):
                 else groupnorm.weight.shape[0]
             )
             eps = getattr(groupnorm, "eps", 1e-6)
-            safe = SafeGroupNorm(groups, dims, eps=eps, pytorch_compatible=True)
+            # Preserve the source GroupNorm's grouping semantics — MLX
+            # nn.GroupNorm(pytorch_compatible=False) groups differently from
+            # the PyTorch layout; mixing them silently breaks parity.
+            compatible = bool(getattr(groupnorm, "pytorch_compatible", False))
+            safe = SafeGroupNorm(groups, dims, eps=eps, pytorch_compatible=compatible)
             safe.weight = groupnorm.weight
             safe.bias = groupnorm.bias
             self.groupnorm = safe

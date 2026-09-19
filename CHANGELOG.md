@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [0.10.3] — 2026-09-19
+
+### Fixed
+- **MuseTalk realtime render spikes from unbounded MLX allocator cache (#920)** —
+  pipeline constructors now cap the Metal allocator cache at 1 GiB by default
+  (p90 1224ms → 304ms measured); env-overridable via
+  `FUSION_MUSETALK_MLX_CACHE_LIMIT` / `FUSION_MUSETALK_MLX_MEMORY_LIMIT` (opt-in,
+  0 = unset). memory_limit is deliberately not capped by default — it is
+  process-global and could OOM an LLM sharing the process.
+- **`compile_with_custom_pass` silently dropped registered patterns (#918)** —
+  patterns were debug-logged and never applied. New `apply_patterns(root)`
+  performs a real structural rewrite (Conv→GroupNorm→SiLU → fused module,
+  weights shared, idempotent) using the MLX dict interface (`root[key]` returns
+  the live stored value; `children()` rebuilds container copies). The fused
+  module now also preserves the source GroupNorm's `pytorch_compatible`
+  grouping semantics — mixing them silently broke output parity.
+
+### Added
+- **SmartConv2d shape-dispatched conv (#919)** — Metal `mx.conv2d` has fp16
+  throughput cliffs at specific shapes (up to 8×; e.g. 64×64 512→512 3×3 at
+  2.4 TFLOPS vs 7.1 for im2col GEMM, M5 Max). `apply_smart_conv(root)` wraps
+  supported k=3 s1 convs and dispatches to an im2col GEMM path at the measured
+  cliff shapes (2× at 64×64 512→512). Opt-in; thresholds regenerate via
+  `scripts/bench_smart_conv.py`.
+
 ## [0.10.2] — 2026-09-19
 
 ### Fixed
