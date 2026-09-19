@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-09-19
+
 ### Fixed
 - **safetensors key mismatch for DWPose/face-parsing checkpoints (#915)** —
   weights silently failed to load (untrained model output). `dwpose.py`
@@ -1318,6 +1320,8 @@ output bridges — no torch at runtime, offline weight conversion only.
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-09-19
+
 ### Added
 - **#4: Phase C quantization kernels wired into the inference load path.**
   Three opt-in post-load transforms, all default OFF, force-enabled via env
@@ -2254,6 +2258,8 @@ Patch release — Hub↔MLX API contract alignment (#646) + client-disconnect me
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-09-19
+
 ## [0.8.38] - 2026-08-25
 
 Patch release — HTTP auth infrastructure fix.
@@ -2854,6 +2860,8 @@ Patch release shipping fixes for #355, #356, #357, a latent converter weight-loa
 - Reformat `tests/unit/test_active_models_visibility.py` (committed unformatted).
 
 ## [Unreleased]
+
+## [0.10.1] — 2026-09-19
 
 ### Security
 - **Path traversal fix.** `control_video`, `control_mask`, `reference_images`, `camera_conditions` in video routes now validated with `is_safe_local_path()` / `is_safe_url_with_dns()` via new `_validate_path_param()` helper.
