@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+- **safetensors key mismatch for DWPose/face-parsing checkpoints (#915)** —
+  weights silently failed to load (untrained model output). `dwpose.py`
+  port now carries BatchNorm layers and module names matching the mmpose
+  source key tree; `face_parsing.py` rewritten to the MuseTalk BiSeNet
+  variant (spatial path deleted, feat_res8 fusion); converters transpose
+  conv OIHW→OHWI and strict-verify against the model parameter tree.
+  `whisper/assets/mel_filters_80.npy` now packaged in the wheel.
+
 ## [0.10.0] — 2026-09-19
 
 MuseTalk real-time lip-sync pipeline foundations (6-issue batch). Pure-MLX
