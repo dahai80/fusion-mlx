@@ -2,6 +2,59 @@
 
 ## [Unreleased]
 
+## [0.10.4] — 2026-09-19
+
+### Changed
+- **Autotuning Metal kernel selection for conv2d (#919)** — `SmartConv2d` now
+  selects between Metal backends per shape at first call instead of using
+  hardcoded rules. For each `(c_in, c_out, hw)` shape it benchmarks
+  `mx.conv2d` (MLX's tuned Metal conv kernel) against `im2col_conv2d` (an
+  im2col gather + MLX matmul Metal kernel), caches the winner, and dispatches
+  subsequent calls with zero overhead. Both candidates are Metal kernels —
+  selection is by measured Metal performance, not a hardcoded rule.
+  Per-machine, per-MLX-version thresholds regenerate with
+  `scripts/bench_smart_conv.py --autotune`.
+  - The previous hardcoded `_IM2COL_RULES` were wrong for M5 Max / MLX 0.32.0:
+    `(512,512,4096)` dispatched 64×64 512→512 to the slower im2col backend
+    (0.675 vs 0.646 ms), and `(256,256,8192)` dispatched 128×128 256-ch to the
+    slower im2col backend (0.692 vs 0.472 ms). They would have slowed the VAE
+    down if wired in.
+  - `scripts/bench_smart_conv.py` was also broken — no `mx.eval` inside the
+    timing loop, so it measured graph-build (~0.016 ms) not compute. The
+    committed rules likely derived from this bug. Fixed; `--autotune` now dumps
+    per-shape winners as a `FUSION_SMART_CONV_RULES` JSON for deterministic
+    CI/repro overrides.
+  - Measured on the actual VAE decoder conv shapes: native-sum 6.66 ms →
+    best-per-shape 4.42 ms (1.51× on convs). im2col wins 5/10 bench shapes
+    (32×32 512→512, 64×64 512→256, 32/16×16 1280→1280).
+
+### Fixed
+- **`bench_smart_conv.py` measured graph-build not compute** — added
+  `mx.eval(fn())` inside both warmup and timing loops (the 0.016 ms numbers
+  were lazy-eval graph construction, not Metal kernel execution).
+
+### Notes
+- **VAE decode already ~20 ms/frame on MLX 0.32.0.** The #919 baseline of
+  58 ms/frame was measured on MLX 0.32.2 — that throughput cliff does not
+  reproduce on the current MLX (0.32.0), where VAE decode at 256×256 runs at
+  20.9 ms/frame. The autotuner still lands a measured ~10% conv speedup
+  (256×256 decode 20.3 → 18.2 ms, no regression at 512×512).
+- **`SmartConv2d` wiring into the MuseTalk VAE is default OFF**
+  (`FUSION_MUSETALK_SMART_CONV=0`). im2col GEMM accumulates in a different
+  order than `mx.conv2d`, so per-conv fp16 drift (~1e-4) compounds through
+  the decoder (mid-block attention + 3 upsample stages) into ~0.4 mean /
+  5.0 max pixel divergence on a [-1,1] output — visible artifacts. The ~10%
+  speedup is not worth the quality regression on a visual output path. Opt in
+  only for perf-critical, drift-tolerant use.
+- A custom scalar/tiled Metal conv kernel via `mx.fast.metal_kernel` was
+  prototyped as a third candidate but measured 10–30× slower than MLX's
+  tuned conv (which uses `simdgroup_matrix` MMA) everywhere; a competitive
+  version would require a `simdgroup_matrix` GEMM kernel (~150-200 lines,
+  uncertain). Dropped per the autotuner-only scope decision — the autotuner
+  already selects between two real Metal kernels.
+
+## [0.10.3] — 2026-09-19
+
 ## [0.10.3] — 2026-09-19
 
 ### Fixed

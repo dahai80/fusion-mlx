@@ -90,6 +90,26 @@ def preprocess_img(img_bgr, half_mask=False, size=RESIZED_IMG):
     return x[None]  # (1,3,256,256)
 
 
+def _apply_smart_conv(vae) -> None:
+    # Wrap VAE Conv2d with SmartConv2d (per-shape Metal kernel autotune, #919).
+    # Default OFF: im2col GEMM accumulates in a different order than mx.conv2d,
+    # so per-conv fp16 drift (~1e-4) compounds through the decoder (mid-block
+    # attention + 3 upsample stages) into ~0.4 mean / 5.0 max pixel divergence
+    # on a [-1,1] output — visible artifacts. VAE decode is already ~20ms/frame
+    # on MLX 0.32.0 (the #919 58ms cliff was 0.32.2-specific), so the ~10%
+    # speedup is not worth the quality regression on a visual output path.
+    # Set FUSION_MUSETALK_SMART_CONV=1 to opt in (perf-critical, drift-tolerant).
+    if os.environ.get("FUSION_MUSETALK_SMART_CONV", "0") != "1":
+        return
+    try:
+        from fusion_mlx.graph_opt import apply_smart_conv
+
+        n = apply_smart_conv(vae)
+        logger.info("[musetalk] apply_smart_conv wrapped %d conv2d (VAE)", n)
+    except Exception as exc:
+        logger.warning("[musetalk] apply_smart_conv skipped: %s", exc)
+
+
 class MuseTalkPipeline:
     def __init__(self, vae, unet, whisper_encoder=None, scaling_factor=None):
         self.vae = vae
@@ -115,6 +135,7 @@ class MuseTalkPipeline:
         vae = AutoencoderKL()
         load_vae_weights(vae, root / "sd-vae-ft-mse")
         vae.eval()
+        _apply_smart_conv(vae)
         unet = UNet2DConditionModel()
         load_unet_weights(unet, root / "MuseTalk" / "musetalkV15" / "unet.pth")
         unet.eval()
@@ -138,6 +159,7 @@ class MuseTalkPipeline:
         vae = AutoencoderKL()
         load_native(vae, dist_dir / "vae.safetensors")
         vae.eval()
+        _apply_smart_conv(vae)
         unet = UNet2DConditionModel()
         q = meta.get("quantization")
         if q:  # quantized UNet: apply nn.quantize before load
