@@ -35,7 +35,13 @@ def apply_pe(x):
 
 
 def get_whisper_chunk(
-    stacked, librosa_length, fps=25, audio_fps=50, sr=16000, pad_left=2, pad_right=2,
+    stacked,
+    librosa_length,
+    fps=25,
+    audio_fps=50,
+    sr=16000,
+    pad_left=2,
+    pad_right=2,
     prefix=None,
 ):
     """stacked: (1, seq, n_hidden, 384) -> (num_frames, (10*n_hidden), 384).

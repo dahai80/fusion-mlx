@@ -9,8 +9,8 @@ import mlx.core as mx
 import mlx.nn as nn
 import pytest
 
-from fusion_mlx.nn_ext import SafeGroupNorm, safe_group_norm
 from fusion_mlx.graph_opt import ConvGroupNormSiLU, fused_conv_groupnorm_silu
+from fusion_mlx.nn_ext import SafeGroupNorm, safe_group_norm
 
 
 def test_safe_group_norm_output_shape_4d():
