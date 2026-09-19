@@ -16,13 +16,23 @@ from .passes import (
     register_pattern,
 )
 from .patterns import ConvGroupNormSiLU
-from .smart_conv import SmartConv2d, apply_smart_conv, im2col_conv2d
+from .smart_conv import (
+    SmartConv2d,
+    apply_smart_conv,
+    clear_autotune_cache,
+    im2col_conv2d,
+    set_backend_rules,
+    set_im2col_rules,
+)
 
 __all__ = [
     "GraphPass",
     "SmartConv2d",
     "apply_smart_conv",
+    "clear_autotune_cache",
     "im2col_conv2d",
+    "set_backend_rules",
+    "set_im2col_rules",
     "apply_patterns",
     "compile_with_custom_pass",
     "register_pattern",

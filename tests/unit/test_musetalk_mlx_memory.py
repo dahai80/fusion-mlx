@@ -77,3 +77,45 @@ def test_constructors_call_tune_mlx_memory(monkeypatch):
     except Exception:
         pass  # loader stubs may still fail on shape mismatch — cap call is what we assert
     assert calls
+
+
+def test_smart_conv_default_off(monkeypatch):
+    # #919: SmartConv2d is NOT applied to the VAE by default — im2col fp16 drift
+    # compounds through the decoder (attention + upsamples) into visible artifacts.
+    monkeypatch.delenv("FUSION_MUSETALK_SMART_CONV", raising=False)
+    monkeypatch.setattr(pipeline_mlx, "tune_mlx_memory", lambda: None)
+    monkeypatch.setattr(
+        pipeline_mlx.Path, "read_text", lambda self, **kw: '{"dtype": "float16"}'
+    )
+    from fusion_mlx.video.musetalk_mlx.utils import weights as weights_mod
+
+    monkeypatch.setattr(weights_mod, "load_native", lambda *a, **k: None)
+    called = []
+    import fusion_mlx.graph_opt as graph_opt
+
+    monkeypatch.setattr(graph_opt, "apply_smart_conv", lambda vae: called.append(1))
+    try:
+        pipeline_mlx.MuseTalkPipeline.from_pretrained_mlx("/tmp/fake-dist")
+    except Exception:
+        pass
+    assert not called  # default OFF — apply_smart_conv not invoked
+
+
+def test_smart_conv_opt_in(monkeypatch):
+    monkeypatch.setenv("FUSION_MUSETALK_SMART_CONV", "1")
+    monkeypatch.setattr(pipeline_mlx, "tune_mlx_memory", lambda: None)
+    monkeypatch.setattr(
+        pipeline_mlx.Path, "read_text", lambda self, **kw: '{"dtype": "float16"}'
+    )
+    from fusion_mlx.video.musetalk_mlx.utils import weights as weights_mod
+
+    monkeypatch.setattr(weights_mod, "load_native", lambda *a, **k: None)
+    called = []
+    import fusion_mlx.graph_opt as graph_opt
+
+    monkeypatch.setattr(graph_opt, "apply_smart_conv", lambda vae: called.append(1))
+    try:
+        pipeline_mlx.MuseTalkPipeline.from_pretrained_mlx("/tmp/fake-dist")
+    except Exception:
+        pass
+    assert called  # opted in — apply_smart_conv invoked
