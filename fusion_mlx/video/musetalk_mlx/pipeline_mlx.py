@@ -11,6 +11,8 @@ Mirrors musetalk/models/vae.py (VAE wrapper) + scripts/inference.py inference lo
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 
 import mlx.core as mx
@@ -34,8 +36,42 @@ from .utils.weights import (
 from .whisper.audio2feature import apply_pe, extract_prefix_tail, get_whisper_chunk
 from .whisper.whisper_encoder import WhisperEncoder
 
+logger = logging.getLogger(__name__)
+
 _NORM_MEAN = 0.5
 _NORM_STD = 0.5
+
+# #920: the Metal allocator cache grows unbounded across a sustained realtime
+# loop (13.55 GB cache / 1.97 GB active observed) and allocator scans over it
+# produce multi-second render spikes. Capping the cache kills the spikes
+# (p90 1224ms -> 304ms measured). memory_limit is NOT capped by default — the
+# limit is process-global and a hard 3 GiB cap can OOM an LLM sharing the
+# process; opt in via FUSION_MUSETALK_MLX_MEMORY_LIMIT.
+_DEFAULT_CACHE_LIMIT = 1024**3
+
+
+def tune_mlx_memory():
+    """Apply default MLX allocator caps for sustained inference (#920).
+
+    cache_limit defaults to 1 GiB; both knobs are env-overridable in bytes
+    (FUSION_MUSETALK_MLX_CACHE_LIMIT / FUSION_MUSETALK_MLX_MEMORY_LIMIT,
+    0 = leave unset). No-op on non-Metal builds (Linux CI).
+    """
+    if not hasattr(mx, "metal") or not hasattr(mx.metal, "set_cache_limit"):
+        logger.debug("[musetalk] mx.metal unavailable — skipping allocator caps")
+        return
+    cache_limit = int(
+        os.environ.get("FUSION_MUSETALK_MLX_CACHE_LIMIT", _DEFAULT_CACHE_LIMIT)
+    )
+    if cache_limit > 0:
+        mx.metal.set_cache_limit(cache_limit)
+        logger.info("[musetalk] MLX allocator cache_limit set to %d bytes", cache_limit)
+    memory_limit = int(os.environ.get("FUSION_MUSETALK_MLX_MEMORY_LIMIT", "0"))
+    if memory_limit > 0 and hasattr(mx.metal, "set_memory_limit"):
+        mx.metal.set_memory_limit(memory_limit)
+        logger.info(
+            "[musetalk] MLX allocator memory_limit set to %d bytes", memory_limit
+        )
 
 
 def get_mask_tensor(size=RESIZED_IMG):
@@ -74,6 +110,7 @@ class MuseTalkPipeline:
 
     @classmethod
     def from_pretrained(cls, weights_root: str | Path):
+        tune_mlx_memory()
         root = Path(weights_root)
         vae = AutoencoderKL()
         load_vae_weights(vae, root / "sd-vae-ft-mse")
@@ -89,6 +126,7 @@ class MuseTalkPipeline:
     @classmethod
     def from_pretrained_mlx(cls, dist_dir: str | Path):
         """Load a published MLX variant (bf16 / q8 / q4) — torch-free, self-contained."""
+        tune_mlx_memory()
         import json
 
         import mlx.nn as nn
