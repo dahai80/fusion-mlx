@@ -75,14 +75,20 @@ DepthwiseSeparableConv = DepthwiseSeparableConvModule
 class CSPNeXtBlock(nn.Module):
     """conv1 (3×3, in→in) + conv2 (DepthwiseSeparable, in→out) + identity residual."""
 
-    def __init__(self, in_c, out_c, expand=0.5):
+    def __init__(self, in_c, out_c, expand=0.5, add_identity=True):
         super().__init__()
         self.conv1 = ConvBNAct(in_c, in_c, 3, padding=1)
         self.conv2 = DepthwiseSeparableConvModule(in_c, out_c)
+        self.add_identity = add_identity
 
     def __call__(self, x):
-        h = self.conv2(nn.silu(self.conv1(x)))
-        return x + h if x.shape[-1] == h.shape[-1] else h
+        # ConvBNAct already applies SiLU — no extra activation between conv1/conv2
+        h = self.conv2(self.conv1(x))
+        # ONNX ground truth (dw-ll_ucoco_384): SPP stage's CSPLayer blocks have
+        # NO residual add (17 Adds for 18 blocks — stage4 contributes none)
+        if not self.add_identity or x.shape[-1] != h.shape[-1]:
+            return h
+        return x + h
 
 
 class ChannelAttention(nn.Module):
@@ -103,11 +109,14 @@ class ChannelAttention(nn.Module):
 class CSPLayer(nn.Module):
     """main_conv + N×CSPNeXtBlock + short_conv → concat → attention → final_conv."""
 
-    def __init__(self, in_c, out_c, num_blocks=3, expand=0.5):
+    def __init__(self, in_c, out_c, num_blocks=3, expand=0.5, add_identity=True):
         super().__init__()
         mid = int(out_c * expand)
         self.main_conv = ConvBNAct(in_c, mid, 1)
-        self.blocks = [CSPNeXtBlock(mid, mid, expand) for _ in range(num_blocks)]
+        self.blocks = [
+            CSPNeXtBlock(mid, mid, expand, add_identity=add_identity)
+            for _ in range(num_blocks)
+        ]
         self.short_conv = ConvBNAct(in_c, mid, 1)
         self.attention = ChannelAttention(mid * 2)
         self.final_conv = ConvBNAct(mid * 2, out_c, 1)
@@ -117,7 +126,8 @@ class CSPLayer(nn.Module):
         for blk in self.blocks:
             main = blk(main)
         short = self.short_conv(x)
-        cat = mx.concatenate([short, main], axis=-1)
+        # mmpose: x_final = torch.cat((x_main, x_short), dim=1) — main first
+        cat = mx.concatenate([main, short], axis=-1)
         cat = self.attention(cat)
         return self.final_conv(cat)
 
@@ -133,10 +143,11 @@ class SPPBottleneck(nn.Module):
         self.conv2 = ConvBNAct(mid * (1 + len(kernels)), out_c, 1)
 
     def __call__(self, x):
-        x = nn.silu(self.conv1(x))
+        x = self.conv1(x)
         outs = [x] + [p(x) for p in self.pools]
         cat = mx.concatenate(outs, axis=-1)
-        return nn.silu(self.conv2(cat))
+        # conv2 is ConvBNAct (act included) — no extra silu (mmpose has none)
+        return self.conv2(cat)
 
 
 _CSPNEXT_P5 = [
@@ -169,7 +180,7 @@ class CSPNeXtBackbone(nn.Module):
         layers = [ConvBNAct(in_c, out_c, 3, stride=2, padding=1)]
         if use_spp:
             layers.append(SPPBottleneck(out_c, out_c))
-        layers.append(CSPLayer(out_c, out_c, n_blocks))
+        layers.append(CSPLayer(out_c, out_c, n_blocks, add_identity=not use_spp))
         return layers
 
     def __call__(self, x):
@@ -184,7 +195,7 @@ class CSPNeXtBackbone(nn.Module):
 class ScaleNorm(nn.Module):
     """L2-norm × g (scalar) — RTMCCHead mlp.0 / gau.ln (param name `g`)."""
 
-    def __init__(self, dim, eps=1e-6):
+    def __init__(self, dim, eps=1e-5):
         super().__init__()
         self.g = mx.ones((1,))
         self.eps = eps
@@ -220,20 +231,20 @@ class RTMCCBlock(nn.Module):
         self.res_scale = ResScale(out_dim)
 
     def __call__(self, x):
-        x = self.ln(x)
-        uv = self.uv(x)
-        e = uv.shape[-1] - self.s
-        half = e // 2
-        u = uv[..., :half]
-        v = uv[..., half : half * 2]
-        base = uv[..., half * 2 :]
+        h = self.ln(x)
+        uv = nn.silu(self.uv(h))
+        e = (uv.shape[-1] - self.s) // 2  # expansion dim
+        u = uv[..., :e]
+        v = uv[..., e : e * 2]
+        base = uv[..., e * 2 :]
         base = base[:, :, None, :] * self.gamma + self.beta  # (B,K,2,s)
         q, k = base[..., 0, :], base[..., 1, :]  # each (B,K,s)
         qk = mx.matmul(q, mx.transpose(k, (0, 2, 1)))  # (B,K,K)
         kernel = mx.square(mx.maximum(qk / (self.s**0.5), 0.0))
-        out = u * mx.matmul(kernel, v)  # (B,K,e/2)
-        out = self.o(out) * self.res_scale.scale
-        return out + x if x.shape[-1] == out.shape[-1] else out
+        out = u * mx.matmul(kernel, v)  # (B,K,e)
+        out = self.o(out)
+        # mmpose: res_scale scales the SHORTCUT, main branch unscaled
+        return x * self.res_scale.scale + out
 
 
 class RTMCCHead(nn.Module):
@@ -306,14 +317,15 @@ def _bilinear_resize(img, out_h, out_w):
     h, w = img.shape[:2]
     if (h, w) == (out_h, out_w):
         return img
-    ys = np.linspace(0, h - 1, out_h)
-    xs = np.linspace(0, w - 1, out_w)
+    # half-pixel centers (cv2.INTER_LINEAR / align_corners=False semantics)
+    ys = (np.arange(out_h) + 0.5) * (h / out_h) - 0.5
+    xs = (np.arange(out_w) + 0.5) * (w / out_w) - 0.5
     y0 = np.clip(np.floor(ys).astype(int), 0, h - 2)
     y1 = y0 + 1
-    wy = (ys - y0)[:, None, None]
+    wy = np.clip(ys - y0, 0.0, 1.0)[:, None, None]
     x0 = np.clip(np.floor(xs).astype(int), 0, w - 2)
     x1 = x0 + 1
-    wx = (xs - x0)[None, :, None]
+    wx = np.clip(xs - x0, 0.0, 1.0)[None, :, None]
     a = img[y0[:, None], x0[None, :]]
     b = img[y0[:, None], x1[None, :]]
     c = img[y1[:, None], x0[None, :]]
@@ -353,10 +365,15 @@ class DWPose:
     def detect(self, frame_bgr):
         import numpy as np
 
+        frame_h, frame_w = frame_bgr.shape[:2]
         x = preprocess(frame_bgr)
         simcc_x, simcc_y = self.model(x)
         locs, scores = decode_simcc(simcc_x[0], simcc_y[0])
-        return np.array(locs), np.array(scores)
+        locs = np.array(locs)
+        # network input is (W=288, H=384); map back to original frame space (#916)
+        locs[:, 0] *= frame_w / _INPUT_W
+        locs[:, 1] *= frame_h / _INPUT_H
+        return locs, np.array(scores)
 
     def face_landmarks(self, frame_bgr):
         locs, _ = self.detect(frame_bgr)

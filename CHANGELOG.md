@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.10.2] — 2026-09-19
+
+### Fixed
+- **DWPose output corrupted despite strict weight load (#917)** — ten forward-pass
+  semantic bugs invisible to key-set verification: RTMCC uv missing SiLU,
+  res_scale applied to wrong branch, CSPLayer concat order (main first), extra
+  SiLU between conv1/conv2 in CSPNeXtBlock and around SPP conv1/conv2, ScaleNorm
+  eps, BN eps (torch default 1e-5, not mmpose norm_cfg 0.001), bilinear resize
+  alignment (half-pixel centers), and SPP-stage CSPLayer blocks having NO
+  residual add (17 Adds for 18 blocks in ONNX ground truth). Forward now matches
+  the official `dw-ll_ucoco_384.onnx` to ≤1px landmark error on full-frame input.
+- **`face_landmarks` returned network-input-space coords (#916)** — detect() now
+  rescales SimCC locations back to original frame space.
+- **Batched-suite GPU test flake** — `test_minimax_h3_vae.py` autouse fixture
+  switched to CPU device without restoring; under pytest-randomly this poisoned
+  later metal_kernel tests ("Only supports the GPU"). Device now restored.
+
 ## [0.10.1] — 2026-09-19
 
 ### Fixed

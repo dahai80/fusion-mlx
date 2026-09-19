@@ -113,7 +113,7 @@ def _python_hardware_probe() -> dict[str, Any]:
     }
 
 
-_PROBE_CACHE: tuple[str, dict[str, Any]] | None = None
+_PROBE_CACHE: tuple[tuple[str, str], dict[str, Any]] | None = None
 
 
 def hardware_probe() -> dict[str, Any]:
@@ -124,7 +124,11 @@ def hardware_probe() -> dict[str, Any]:
     # neither is free on the status/admin surfaces that poll this.
     global _PROBE_CACHE
     mode = "native" if _ext is not None else "fallback"
-    if _PROBE_CACHE is not None and _PROBE_CACHE[0] == mode:
+    # fallback probe honors FUSION_SHIM_FORCE_CHIP — key on it too, else a
+    # forced-chip degrade test can be served a stale real-machine fallback
+    force_chip = os.environ.get("FUSION_SHIM_FORCE_CHIP", "")
+    key = (mode, force_chip)
+    if _PROBE_CACHE is not None and _PROBE_CACHE[0] == key:
         return _PROBE_CACHE[1]
     value = None
     if mode == "native" and hasattr(_ext, "hardware_probe_dict"):
@@ -136,7 +140,7 @@ def hardware_probe() -> dict[str, Any]:
     if value is None:
         mode = "fallback"
         value = _python_hardware_probe()
-    _PROBE_CACHE = (mode, value)
+    _PROBE_CACHE = (key, value)
     return value
 
 

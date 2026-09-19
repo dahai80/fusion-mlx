@@ -21,8 +21,12 @@ from fusion_mlx.video.minimax_h3.vae import (
 
 @pytest.fixture(autouse=True)
 def _fp32():
+    # CPU device for determinism — MUST restore, otherwise all later GPU tests
+    # in the batched suite fail with "[metal_kernel] Only supports the GPU"
+    prev = mx.default_device()
     mx.set_default_device(mx.cpu)
     yield
+    mx.set_default_device(prev)
 
 
 class TestCausalConv3d:
