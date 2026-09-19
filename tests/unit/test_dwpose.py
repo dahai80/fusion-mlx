@@ -1,27 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """#909: DWPose/RTMPose MLX backend tests (synthetic weights — shape/forward parity)."""
 
-import numpy as np
-import pytest
-
 import mlx.core as mx
-import mlx.nn as nn
+import numpy as np
 
 from fusion_mlx.video.dwpose import (
-    DWPose,
-    DWPoseMLX,
-    RTMCCHead,
-    CSPNeXtBackbone,
     ChannelAttention,
     CSPLayer,
-    SPPBottleneck,
+    CSPNeXtBackbone,
     CSPNeXtBlock,
     DepthwiseSeparableConv,
+    DWPose,
+    DWPoseMLX,
     RTMCCBlock,
+    RTMCCHead,
     ScaleNorm,
+    SPPBottleneck,
     decode_simcc,
-    preprocess,
     face_bbox_from_keypoints,
+    preprocess,
 )
 
 
