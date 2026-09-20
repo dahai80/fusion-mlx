@@ -127,6 +127,17 @@ class VideoGenEngine(BaseNonStreamingEngine):
             metadata={"prompt_len": len(prompt), "num_frames": num_frames, "n": n},
         )
 
+        # PRD v1 §4.1: every video task flows through the unified scheduler
+        # so the 3-level memory circuit breaker (90/95/98GB) + dual-model
+        # mutex + NF4 dequant cache bracket the backend generate. The
+        # scheduler may degrade params (reduce steps / drop res / disable
+        # audio) before the backend sees them. begin_task acquires the
+        # video mutex (blocks if another video model is resident).
+        from fusion_mlx.scheduler.video_unified_scheduler import get_video_scheduler
+
+        _sched = get_video_scheduler()
+        _backend_name = getattr(self._backend, "name", "") or self._model_name
+        params = _sched.begin_task(_backend_name, params)
         try:
             try:
                 result = await self._backend.generate(params)
@@ -154,6 +165,7 @@ class VideoGenEngine(BaseNonStreamingEngine):
             logger.info("VideoGen generated %d video(s) in %.2fs", len(result), elapsed)
             return result
         finally:
+            _sched.end_task(_backend_name)
             await self._finish_activity(activity_id)
 
     # ------------------------------------------------------------------

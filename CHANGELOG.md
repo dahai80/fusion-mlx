@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added — PRD v1 unified video base layer
+- **`fusion_mlx/video/common/`** — pure abstract bases `VideoVAEBase`,
+  `UpsampleBase`, `NoiseSchedulerBase` (PRD §4.1: no model-specific ops in
+  the common package; backends conform to the contract).
+- **`fusion_mlx/scheduler/video_unified_scheduler.py`** — three-level
+  memory circuit breaker (L1 ≥90GB reduce steps / L2 ≥95GB drop res+audio /
+  L3 ≥98GB emergency `mx.metal.clear_cache()` + full GC), dual-model mutex
+  (LTX ↔ H3 never co-resident), and `NF4DequantCache` (DiT core weights
+  pre-dequantized for one task lifetime). 98GB red line (tightened from
+  105GB). Wired into `VideoGenEngine.generate()` so every video task is
+  bracketed by `begin_task`/`end_task`.
+- **`fusion_mlx/pipeline/video_router.py`** — smart routing (general/UI →
+  LTX-2.3, short-drama/dialogue → MiniMax H3) with keyword + hint + audio
+  defaults; upper business layer / fusion-autotest entry point.
+- **`fusion_mlx/utils/model_quant.py`** — single NF4 conversion entry;
+  BF16/INT8/FP32 rejected per PRD §6.2 (banned on 128G).
+- **`fusion_mlx/utils/video_audio_export.py`** — unified frame→MP4 +
+  audio normalize + ffmpeg A/V mux extracted from the two backends.
+- Public API: `VideoRouter`, `get_video_router`, `VideoUnifiedScheduler`,
+  `get_video_scheduler`, `DegradationPlan`, `MemoryLevel` exported via
+  `fusion_mlx.public_api`.
+
 ## [0.10.5] — 2026-09-20
 
 ### Changed
