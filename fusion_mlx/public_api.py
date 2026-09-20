@@ -36,8 +36,15 @@ from .image.sr.config import RealESRGANConfig
 from .image.sr.generate import super_resolve
 from .image.sr.rrdb import RRDBNet
 from .model_registry import get_registry, list_available_models
+from .pipeline.video_router import VideoRouter, get_video_router
 from .pool.engine_pool import EnginePool
 from .profile import ServerProfile, profile_from_config, resolve_profile
+from .scheduler.video_unified_scheduler import (
+    DegradationPlan,
+    MemoryLevel,
+    VideoUnifiedScheduler,
+    get_video_scheduler,
+)
 from .server import Server, create_app
 from .video.latentsync_mlx.pipeline import LipsyncPipelineMLX
 from .video.musetalk_mlx import MuseTalkPipeline
@@ -74,6 +81,12 @@ __all__ = [
     "RealESRGANConfig",
     "RRDBNet",
     "super_resolve",
+    "VideoRouter",
+    "get_video_router",
+    "VideoUnifiedScheduler",
+    "get_video_scheduler",
+    "DegradationPlan",
+    "MemoryLevel",
 ]
 
 

@@ -21,6 +21,8 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
+from fusion_mlx.video.common import VideoVAEBase
+
 from .config import H3VAEConfig
 
 logger = logging.getLogger(__name__)
@@ -736,7 +738,9 @@ class DiagonalGaussianDistribution:
 # ============================================================================
 
 
-class MiniMaxH3VideoVAE(nn.Module):
+class MiniMaxH3VideoVAE(nn.Module, VideoVAEBase):
+    name = "minimax_h3"
+
     def __init__(self, config: H3VAEConfig | None = None, **kwargs):
         super().__init__()
         cfg = config or H3VAEConfig()
@@ -895,6 +899,20 @@ class MiniMaxH3VideoVAE(nn.Module):
             result_rows.append(mx.concatenate(result_row, axis=-1))
         dec = mx.concatenate(result_rows, axis=-2)
         return dec
+
+    def decode_tiled(self, latent: mx.array, tile_size: int = 256) -> mx.array:
+        # PRD §4.2 VideoVAEBase contract — delegate to官方 tiled_decode。
+        # tile_size 固定由 self.decoder_tile_size 控制（训练分布对齐），
+        # 忽略入参以保持 ViT3D 解码器 token 数在安全范围。
+        return self.tiled_decode(latent)
+
+    def stats(self) -> dict:
+        return {
+            "vae": self.name,
+            "vae_ratio": self.vae_ratio,
+            "z_channels": self.z_channels,
+            "tile_size": self.decoder_tile_size,
+        }
 
     def encode_base(self, x, process_image=False):
         if x.ndim == 4:
