@@ -8,9 +8,17 @@
 
 from __future__ import annotations
 
+import os
+
 import mlx.nn as nn
 
 from ..nn_ext.safe_group_norm import SafeGroupNorm
+
+
+def _fused_conv_gn_silu_enabled() -> bool:
+    # Env-gated (default OFF): FUSION_FUSED_CONV_GN_SILU=1 opts into the MSL
+    # fused kernel (#924). Off -> the 3-op chain (mx.compile elementwise only).
+    return os.environ.get("FUSION_FUSED_CONV_GN_SILU", "0") == "1"
 
 
 class ConvGroupNormSiLU(nn.Module):
@@ -50,6 +58,24 @@ class ConvGroupNormSiLU(nn.Module):
             self.groupnorm = groupnorm
 
     def __call__(self, x):
+        if _fused_conv_gn_silu_enabled():
+            try:
+                from ..custom_kernels.fused_conv_gn_silu import (
+                    fused_conv_gn_silu as _fused,
+                )
+
+                w = self.conv.weight
+                b = getattr(self.conv, "bias", None)
+                gn = self.groupnorm
+                out = _fused(x, w, b, gn.weight, gn.bias, gn.num_groups, eps=gn.eps)
+                if out is not None:
+                    return out
+            except Exception as e:
+                import logging
+
+                logging.getLogger(__name__).debug(
+                    "[graph_opt] fused_conv_gn_silu unavailable (%s); 3-op chain", e
+                )
         x = self.conv(x)
         x = self.groupnorm(x)
         return nn.silu(x)
