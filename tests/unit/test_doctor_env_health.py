@@ -97,8 +97,15 @@ def test_low_disk_marks_fail():
     ]
 
 
-def test_huge_hf_cache_marks_warn():
+def test_huge_hf_cache_marks_warn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """> 100 GB HF cache → WARN with cleanup hint."""
+    # Isolate from the runner's real HF cache: without this the check
+    # early-returns "HF cache: not present" on runners where
+    # ~/.cache/huggingface does not exist (CI macOS runners) and the
+    # _dir_size_gb mock below is never consulted.
+    cache_dir = tmp_path / "hub"
+    cache_dir.mkdir()
+    monkeypatch.setenv("HF_HUB_CACHE", str(cache_dir))
     with (
         mock.patch.object(eh.platform, "system", return_value="Darwin"),
         mock.patch.object(eh.platform, "machine", return_value="arm64"),

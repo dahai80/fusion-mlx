@@ -152,7 +152,10 @@ jobs:
               run: |
                   set -eo pipefail
                   FILES=$(python scripts/shard_tests.py core)
-                  pytest $FILES -v --tb=short --cov=fusion_mlx --cov-report=term-missing 2>&1 | tee pytest-output.txt
+                  # --cov-fail-under=0: same per-shard rationale as the test job
+                  # above — pyproject fail_under=40 applies to the full suite and
+                  # must never gate a partial shard (14% per-shard otherwise).
+                  pytest $FILES -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-fail-under=0 2>&1 | tee pytest-output.txt
 
     eval:
         # G1/S1: evaluation gate (ADVISORY). Runs perf/coherence/tool-call gates.
