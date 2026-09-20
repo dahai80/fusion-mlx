@@ -79,9 +79,10 @@ def test_constructors_call_tune_mlx_memory(monkeypatch):
     assert calls
 
 
-def test_smart_conv_default_off(monkeypatch):
-    # #919: SmartConv2d is NOT applied to the VAE by default — im2col fp16 drift
-    # compounds through the decoder (attention + upsamples) into visible artifacts.
+def test_smart_conv_default_on(monkeypatch):
+    # #919/#921: SmartConv2d wraps VAE + UNet by default — real-weights A/B
+    # (sd-vae-ft-mse + MuseTalk V15, b2): 80.0 -> 66.8 ms/round, image drift vs
+    # fp32 at or below native-fp16 noise. Opt-out: FUSION_MUSETALK_SMART_CONV=0.
     monkeypatch.delenv("FUSION_MUSETALK_SMART_CONV", raising=False)
     monkeypatch.setattr(pipeline_mlx, "tune_mlx_memory", lambda: None)
     monkeypatch.setattr(
@@ -93,16 +94,17 @@ def test_smart_conv_default_off(monkeypatch):
     called = []
     import fusion_mlx.graph_opt as graph_opt
 
-    monkeypatch.setattr(graph_opt, "apply_smart_conv", lambda vae: called.append(1))
+    monkeypatch.setattr(graph_opt, "apply_smart_conv", lambda net: called.append(net))
     try:
         pipeline_mlx.MuseTalkPipeline.from_pretrained_mlx("/tmp/fake-dist")
     except Exception:
         pass
-    assert not called  # default OFF — apply_smart_conv not invoked
+    assert called  # default ON — applied to vae + unet
+    assert len(called) == 2
 
 
-def test_smart_conv_opt_in(monkeypatch):
-    monkeypatch.setenv("FUSION_MUSETALK_SMART_CONV", "1")
+def test_smart_conv_opt_out(monkeypatch):
+    monkeypatch.setenv("FUSION_MUSETALK_SMART_CONV", "0")
     monkeypatch.setattr(pipeline_mlx, "tune_mlx_memory", lambda: None)
     monkeypatch.setattr(
         pipeline_mlx.Path, "read_text", lambda self, **kw: '{"dtype": "float16"}'
@@ -113,9 +115,9 @@ def test_smart_conv_opt_in(monkeypatch):
     called = []
     import fusion_mlx.graph_opt as graph_opt
 
-    monkeypatch.setattr(graph_opt, "apply_smart_conv", lambda vae: called.append(1))
+    monkeypatch.setattr(graph_opt, "apply_smart_conv", lambda net: called.append(net))
     try:
         pipeline_mlx.MuseTalkPipeline.from_pretrained_mlx("/tmp/fake-dist")
     except Exception:
         pass
-    assert called  # opted in — apply_smart_conv invoked
+    assert not called  # opted out — native path only
