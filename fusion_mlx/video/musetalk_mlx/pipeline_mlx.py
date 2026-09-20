@@ -123,6 +123,11 @@ def _apply_smart_conv(**nets) -> None:
 
 
 class MuseTalkPipeline:
+    # #928: public stable constants. musetalk-mlx previously reached into
+    # config.UNET_TIMESTEP directly; this class attr is the contract surface.
+    # Single-step t=0 inpaint timestep (released generation contract).
+    TIMESTEP = UNET_TIMESTEP
+
     def __init__(self, vae, unet, whisper_encoder=None, scaling_factor=None):
         self.vae = vae
         self.unet = unet
@@ -143,6 +148,12 @@ class MuseTalkPipeline:
                 mx.eval(m.parameters())
         self._dtype = dtype
         return self
+
+    @property
+    def dtype(self):
+        # #928: stable dtype accessor. Replaces the private ``pipe._dtype``
+        # reach-in from musetalk-mlx. Defaults to float32 before astype() runs.
+        return getattr(self, "_dtype", mx.float32)
 
     @classmethod
     def from_pretrained(cls, weights_root: str | Path):
@@ -199,13 +210,23 @@ class MuseTalkPipeline:
         rl = self.scaling_factor * (rp.mean if deterministic else rp.sample())
         return mx.concatenate([ml, rl], axis=1)  # (1,8,32,32) NCHW
 
-    def decode_latents(self, latents):
-        """4-ch latent -> BGR uint8 (B,256,256,3), matching VAE.decode_latents."""
+    def decode_to_array(self, latents):
+        """#928: 4-ch latent -> decoded MX array (B,H,W,3) float [0,1], RGB.
+
+        Pre-readback form for compile-joint paths (unet + vae.decode in one
+        ``mx.compile`` without an eval boundary). ``decode_latents`` does the
+        numpy readback on top of this.
+        """
         img = self.vae.decode(latents / self.scaling_factor)  # NCHW [-1..1]-ish
         img = mx.clip(img / 2 + 0.5, 0, 1)
+        return img.transpose(0, 2, 3, 1)  # NHWC RGB float [0,1]
+
+    def decode_latents(self, latents):
+        """4-ch latent -> BGR uint8 (B,256,256,3), matching VAE.decode_latents."""
+        img = self.decode_to_array(latents)
         # read fp16 directly — the GPU fp32 cast before readback costs an extra
         # full-tensor pass per frame (#921 realtime loop); numpy scales in fp32
-        img = np.array(img.transpose(0, 2, 3, 1))
+        img = np.array(img)
         img = (img * 255).round().astype(np.uint8)
         return img[..., ::-1]  # RGB -> BGR
 
@@ -239,24 +260,56 @@ class MuseTalkPipeline:
         #927: ``steps`` overrides the runtime ``set_ddim_steps`` setting per-call
         (default None = use ``self._ddim_steps``). steps=1 = single-step t=0
         inpaint (released contract); steps>1 = multi-step DDIM loop.
+
+        #928: ``render()`` is the preferred stable public entry; this method is
+        kept for back-compat and delegates to the same unet+decode core.
         """
+        pred = self._run_unet(latent_batch, audio_chunks, steps)
+        # single sync at the final readback — an extra mx.eval(pred) here forces
+        # a second round-trip per frame (#921 realtime loop)
+        return self.decode_latents(pred)
+
+    def _run_unet(self, latent_batch, audio_chunks, steps):
+        # #928: shared unet+DDIM core used by both render() and render_latent().
+        # Returns the predicted latent (MX array, no readback) so the caller can
+        # either decode-to-numpy (render) or stay in-graph (render_latent).
         n = self._ddim_steps if steps is None else steps
         audio = apply_pe(audio_chunks)
         if n <= 1:
-            pred = self.unet(latent_batch, mx.array([UNET_TIMESTEP]), audio)
-            return self.decode_latents(pred)
-        # multi-step DDIM: iterate decreasing t, each step predicts x0 from the
-        # current latent. Single-step t=0 path is the fast case above.
+            return self.unet(latent_batch, mx.array([UNET_TIMESTEP]), audio)
         ts = self._ddim_timesteps(n)
         lat = latent_batch
         for i, t in enumerate(ts):
             pred = self.unet(lat, mx.array([t]), audio)
             if i < len(ts) - 1:
-                # DDIM update toward x0 prediction for next step's input.
-                # Simple deterministic step (alpha=1.0, eta=0): lat = pred.
                 lat = pred
-        # single sync at the final readback — an extra mx.eval(pred) here forces
-        # a second round-trip per frame (#921 realtime loop)
+        return pred
+
+    def render_latent(self, latent_batch, audio_chunks, *, steps=None, dtype=None):
+        """#928: stable public render — returns decoded MX array (B,H,W,3) RGB
+        float [0,1], pre-readback. For compile-joint paths (unet+decode in one
+        ``mx.compile``); does NOT force an ``mx.eval`` boundary.
+
+        ``dtype`` casts inputs to the pipe dtype (or override) before unet.
+        """
+        dt = self.dtype if dtype is None else dtype
+        lat = latent_batch.astype(dt)
+        aud = audio_chunks.astype(dt)
+        pred = self._run_unet(lat, aud, steps)
+        return self.decode_to_array(pred)
+
+    def render(self, latent_batch, audio_chunks, *, steps=None, dtype=None):
+        """#928: stable public render — full path to BGR uint8 (B,256,256,3).
+
+        Encapsulates timestep / apply_pe / dtype / unet / vae.decode internals
+        so downstream (musetalk-mlx) calls one stable method instead of
+        reaching into ``pipe.unet`` / ``apply_pe`` / ``UNET_TIMESTEP`` /
+        ``pipe._dtype``. Renames of those internals become non-breaking.
+        """
+        dt = self.dtype if dtype is None else dtype
+        lat = latent_batch.astype(dt)
+        aud = audio_chunks.astype(dt)
+        pred = self._run_unet(lat, aud, steps)
         return self.decode_latents(pred)
 
     def encode_audio(self, mel, librosa_length, fps=25, prefix=None):
