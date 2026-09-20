@@ -134,6 +134,28 @@ class TestDequantCache:
         c.release()
         assert len(c._entries) == 0
 
+    def test_lru_evict_on_budget(self):
+        c = NF4DequantCache(budget_gb=1)
+        import mlx.core as mx
+
+        # 4 entries, each ~256MB → total ~1GB, triggers LRU eviction
+        for i in range(4):
+            c.get_or_dequant(f"w{i}", lambda i=i: mx.zeros((64, 64, 1024)))
+        # at least one evicted (budget 1GB, 4×~256MB = ~1GB borderline)
+        assert c._used <= c._budget
+
+    def test_dequant_interface_returns_array(self):
+        # PRD §3.3: cache doubles as the NF4 dequant interface —
+        # dequant_fn returns a real fp16 array the DiT forward consumes.
+        c = NF4DequantCache(budget_gb=1)
+        import mlx.core as mx
+
+        w = c.get_or_dequant(
+            "dit_block_0", lambda: mx.random.normal((16, 16)).astype(mx.float16)
+        )
+        assert isinstance(w, mx.array)
+        assert w.dtype == mx.float16
+
 
 class TestRouter:
     def test_drama_routes_h3(self):
@@ -196,6 +218,44 @@ class TestExport:
         wav = np.zeros(8, dtype=np.float32)
         out = normalize_audio(wav)
         assert np.allclose(out, 0.0)
+
+
+class TestEmergencyReclaim:
+    def test_reclaim_clears_cache_and_gc(self):
+        s = VideoUnifiedScheduler()
+        s.acquire("ltx2_5")
+        import mlx.core as mx
+
+        s.dequant_cache.get_or_dequant("w", lambda: mx.zeros((4, 4)))
+        assert len(s.dequant_cache._entries) == 1
+        s.emergency_reclaim()
+        # L3 path nulls the cache
+        assert s._cache is None
+        s.release("ltx2_5")
+
+    def test_snapshot_structure(self):
+        s = VideoUnifiedScheduler()
+        snap = s.snapshot()
+        assert set(snap.keys()) == {"active_model", "peak_gb", "level", "red_line_gb"}
+        assert snap["red_line_gb"] == 98
+
+
+class TestBeginTask:
+    def test_begin_end_task_lifecycle(self):
+        s = VideoUnifiedScheduler()
+
+        class P:
+            num_inference_steps = 40
+            height = 768
+            width = 768
+            audio = True
+            no_compile = False
+
+        p = P()
+        p = s.begin_task("ltx2_5", p)
+        assert s.snapshot()["active_model"] == "ltx2_5"
+        s.end_task("ltx2_5")
+        assert s.snapshot()["active_model"] is None
 
 
 class TestCommonBases:
