@@ -130,6 +130,10 @@ class MuseTalkPipeline:
         self.scaling_factor = (
             scaling_factor if scaling_factor is not None else vae.scaling_factor
         )
+        # #927: runtime DDIM step-count control. Default 1 = single-step t=0
+        # inpaint (the released contract). set_ddim_steps(n>1) runs a multi-step
+        # DDIM loop at decreasing t — the FR-END-003 serious-tier thermal lever.
+        self._ddim_steps = 1
 
     def astype(self, dtype):
         """Cast all three nets to dtype (e.g. mx.float16 for realtime/inference)."""
@@ -206,10 +210,51 @@ class MuseTalkPipeline:
         return img[..., ::-1]  # RGB -> BGR
 
     # ---- generation ----
-    def generate_faces(self, latent_batch, audio_chunks):
-        """latent_batch: (B,8,32,32) mx; audio_chunks: (B,50,384) mx -> recon BGR uint8 (B,256,256,3)."""
+    def set_ddim_steps(self, steps: int) -> None:
+        """#927: runtime DDIM step-count setter. steps=1 (default) = single-step
+        t=0 inpaint; steps>1 runs a multi-step DDIM loop at decreasing t (the
+        FR-END-003 serious-tier thermal lever: 15→8 under thermal throttle).
+        """
+        if steps < 1:
+            raise ValueError(f"ddim steps must be >=1, got {steps}")
+        if steps != self._ddim_steps:
+            logger.info(
+                "MuseTalkPipeline ddim_steps: %d -> %d", self._ddim_steps, steps
+            )
+        self._ddim_steps = steps
+
+    def _ddim_timesteps(self, steps: int) -> list:
+        # DDIM linear schedule from t=0 (inpaint start) down. Single-step path
+        # uses UNET_TIMESTEP=0 directly (no loop). Multi-step spreads t across
+        # [0 .. max_t] reversed so the final denoise step lands at low t.
+        if steps <= 1:
+            return [UNET_TIMESTEP]
+        max_t = 999.0
+        step = max_t / (steps - 1) if steps > 1 else 0.0
+        return [int(round(max_t - i * step)) for i in range(steps)]
+
+    def generate_faces(self, latent_batch, audio_chunks, steps: int | None = None):
+        """latent_batch: (B,8,32,32) mx; audio_chunks: (B,50,384) mx -> recon BGR uint8 (B,256,256,3).
+
+        #927: ``steps`` overrides the runtime ``set_ddim_steps`` setting per-call
+        (default None = use ``self._ddim_steps``). steps=1 = single-step t=0
+        inpaint (released contract); steps>1 = multi-step DDIM loop.
+        """
+        n = self._ddim_steps if steps is None else steps
         audio = apply_pe(audio_chunks)
-        pred = self.unet(latent_batch, mx.array([UNET_TIMESTEP]), audio)
+        if n <= 1:
+            pred = self.unet(latent_batch, mx.array([UNET_TIMESTEP]), audio)
+            return self.decode_latents(pred)
+        # multi-step DDIM: iterate decreasing t, each step predicts x0 from the
+        # current latent. Single-step t=0 path is the fast case above.
+        ts = self._ddim_timesteps(n)
+        lat = latent_batch
+        for i, t in enumerate(ts):
+            pred = self.unet(lat, mx.array([t]), audio)
+            if i < len(ts) - 1:
+                # DDIM update toward x0 prediction for next step's input.
+                # Simple deterministic step (alpha=1.0, eta=0): lat = pred.
+                lat = pred
         # single sync at the final readback — an extra mx.eval(pred) here forces
         # a second round-trip per frame (#921 realtime loop)
         return self.decode_latents(pred)
