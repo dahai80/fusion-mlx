@@ -56,6 +56,13 @@ def tune_mlx_memory():
     cache_limit defaults to 1 GiB; both knobs are env-overridable in bytes
     (FUSION_MUSETALK_MLX_CACHE_LIMIT / FUSION_MUSETALK_MLX_MEMORY_LIMIT,
     0 = leave unset). No-op on non-Metal builds (Linux CI).
+
+    #921 realtime note: the 1 GiB default targets mixed multi-model
+    workloads (where unbounded cache grew to 13.55 GB and caused
+    allocator-scan render spikes). A steady-shape realtime MuseTalk loop
+    re-allocates evicted buffers instead — 104.8 vs 66.4 ms/round b2
+    measured. For sustained realtime serving set
+    FUSION_MUSETALK_MLX_CACHE_LIMIT=0 (or >= 8 GiB).
     """
     if not hasattr(mx, "metal") or not hasattr(mx.metal, "set_cache_limit"):
         logger.debug("[musetalk] mx.metal unavailable — skipping allocator caps")
@@ -90,24 +97,29 @@ def preprocess_img(img_bgr, half_mask=False, size=RESIZED_IMG):
     return x[None]  # (1,3,256,256)
 
 
-def _apply_smart_conv(vae) -> None:
-    # Wrap VAE Conv2d with SmartConv2d (per-shape Metal kernel autotune, #919).
-    # Default OFF: im2col GEMM accumulates in a different order than mx.conv2d,
-    # so per-conv fp16 drift (~1e-4) compounds through the decoder (mid-block
-    # attention + 3 upsample stages) into ~0.4 mean / 5.0 max pixel divergence
-    # on a [-1,1] output — visible artifacts. VAE decode is already ~20ms/frame
-    # on MLX 0.32.0 (the #919 58ms cliff was 0.32.2-specific), so the ~10%
-    # speedup is not worth the quality regression on a visual output path.
-    # Set FUSION_MUSETALK_SMART_CONV=1 to opt in (perf-critical, drift-tolerant).
-    if os.environ.get("FUSION_MUSETALK_SMART_CONV", "0") != "1":
+def _apply_smart_conv(**nets) -> None:
+    # Wrap Conv2d modules with SmartConv2d (per-shape Metal kernel autotune, #919).
+    # Default ON — real-weights A/B (M5 Max, MLX 0.32.0, sd-vae-ft-mse VAE +
+    # MuseTalk V15 UNet, b2): loop 80.0 -> 66.8 ms/round (25.0 -> 30.0 FPS),
+    # image drift vs the fp32 pipeline mean 0.074 / max 0.69 on 0-255 — at or
+    # below native-fp16 noise (native: 0.079 / 0.99). im2col GEMM accumulates
+    # in a different order than mx.conv2d; with in-distribution activations the
+    # compounded fp16 drift stays sub-perceptual (the earlier 5.0-max
+    # divergence was a random-weights artifact). FUSION_MUSETALK_SMART_CONV=0
+    # opts out (deterministic native path).
+    if os.environ.get("FUSION_MUSETALK_SMART_CONV", "1") != "1":
         return
     try:
         from fusion_mlx.graph_opt import apply_smart_conv
-
-        n = apply_smart_conv(vae)
-        logger.info("[musetalk] apply_smart_conv wrapped %d conv2d (VAE)", n)
     except Exception as exc:
-        logger.warning("[musetalk] apply_smart_conv skipped: %s", exc)
+        logger.warning("[musetalk] apply_smart_conv unavailable: %s", exc)
+        return
+    for name, net in nets.items():
+        try:
+            n = apply_smart_conv(net)
+            logger.info("[musetalk] apply_smart_conv wrapped %d conv2d (%s)", n, name)
+        except Exception as exc:
+            logger.warning("[musetalk] apply_smart_conv skipped (%s): %s", name, exc)
 
 
 class MuseTalkPipeline:
@@ -135,10 +147,10 @@ class MuseTalkPipeline:
         vae = AutoencoderKL()
         load_vae_weights(vae, root / "sd-vae-ft-mse")
         vae.eval()
-        _apply_smart_conv(vae)
         unet = UNet2DConditionModel()
         load_unet_weights(unet, root / "MuseTalk" / "musetalkV15" / "unet.pth")
         unet.eval()
+        _apply_smart_conv(vae=vae, unet=unet)
         enc = WhisperEncoder()
         load_whisper_encoder_weights(enc, root / "whisper-tiny")
         enc.eval()
@@ -159,13 +171,13 @@ class MuseTalkPipeline:
         vae = AutoencoderKL()
         load_native(vae, dist_dir / "vae.safetensors")
         vae.eval()
-        _apply_smart_conv(vae)
         unet = UNet2DConditionModel()
         q = meta.get("quantization")
         if q:  # quantized UNet: apply nn.quantize before load
             nn.quantize(unet, group_size=q["group_size"], bits=q["bits"])
         load_native(unet, dist_dir / "unet.safetensors")
         unet.eval()
+        _apply_smart_conv(vae=vae, unet=unet)
         enc = WhisperEncoder()
         load_native(enc, dist_dir / "whisper_encoder.safetensors")
         enc.eval()
@@ -187,9 +199,9 @@ class MuseTalkPipeline:
         """4-ch latent -> BGR uint8 (B,256,256,3), matching VAE.decode_latents."""
         img = self.vae.decode(latents / self.scaling_factor)  # NCHW [-1..1]-ish
         img = mx.clip(img / 2 + 0.5, 0, 1)
-        img = np.array(
-            img.transpose(0, 2, 3, 1).astype(mx.float32)
-        )  # NHWC RGB (fp32 for numpy)
+        # read fp16 directly — the GPU fp32 cast before readback costs an extra
+        # full-tensor pass per frame (#921 realtime loop); numpy scales in fp32
+        img = np.array(img.transpose(0, 2, 3, 1))
         img = (img * 255).round().astype(np.uint8)
         return img[..., ::-1]  # RGB -> BGR
 
@@ -198,7 +210,8 @@ class MuseTalkPipeline:
         """latent_batch: (B,8,32,32) mx; audio_chunks: (B,50,384) mx -> recon BGR uint8 (B,256,256,3)."""
         audio = apply_pe(audio_chunks)
         pred = self.unet(latent_batch, mx.array([UNET_TIMESTEP]), audio)
-        mx.eval(pred)
+        # single sync at the final readback — an extra mx.eval(pred) here forces
+        # a second round-trip per frame (#921 realtime loop)
         return self.decode_latents(pred)
 
     def encode_audio(self, mel, librosa_length, fps=25, prefix=None):

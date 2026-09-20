@@ -60,7 +60,14 @@ class TestServerProfile:
         p = resolve_profile("nonexistent")
         assert p.name == "standard"
 
-    def test_default_is_standard(self):
+    def test_default_is_standard(self, monkeypatch):
+        # Pin hardware auto-detect off: without an explicit flag
+        # resolve_profile() consults RAM/chip detection, which on a small
+        # CI runner (7 GB, virtualized M1) legitimately suggests "lite".
+        # This test pins the no-hardware-data default contract.
+        monkeypatch.setattr(
+            "fusion_mlx.profile.suggest_profile_from_hardware", lambda: None
+        )
         p = resolve_profile()
         assert p.name == "standard"
 
@@ -99,7 +106,14 @@ class TestProfileFromConfig:
         assert p.engine_allowed("image") is False
         assert p.engine_allowed("video") is False
 
-    def test_config_no_profile_defaults_to_standard(self):
+    def test_config_no_profile_defaults_to_standard(self, monkeypatch):
+        # Same pin as test_default_is_standard: config with profile=None
+        # must yield the "standard" default, not a hardware suggestion
+        # (CI runner RAM auto-detect would say "lite").
+        monkeypatch.setattr(
+            "fusion_mlx.profile.suggest_profile_from_hardware", lambda: None
+        )
+
         class FakeConfig:
             profile = None
             disabled_modules = None

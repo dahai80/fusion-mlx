@@ -19,7 +19,10 @@ def _serve_help() -> str:
         [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
-        timeout=30,
+        # 30s flaked on a cold shared CI runner: interpreter + cli import
+        # alone can exceed 30s there. The subprocess exits immediately
+        # once imports finish; the budget only guards a hang.
+        timeout=120,
     )
     # Argparse exits 0 on --help, so a non-zero rc here is a real failure.
     assert proc.returncode == 0, proc.stderr
@@ -101,7 +104,7 @@ def test_serve_rejects_reasoning_plus_legacy_kv_cache_quantization_bits_4():
         ],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
     )
     # Either stderr or stdout will carry the error string depending on
     # python buffering; check both.

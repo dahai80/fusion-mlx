@@ -2,6 +2,54 @@
 
 ## [Unreleased]
 
+## [0.10.5] — 2026-09-20
+
+### Changed
+- **MuseTalk realtime loop reaches 30 FPS GPU-side (#921)** — SmartConv2d
+  autotune is now wired into both the VAE decoder and the UNet by default
+  (`FUSION_MUSETALK_SMART_CONV=0` opts out). Real-weights A/B on M5 Max /
+  MLX 0.32.0 (sd-vae-ft-mse VAE + MuseTalk V15 UNet, batch 2):
+  loop 80.0 → 66.4 ms/round (25.0 → 30.1 FPS) including readback.
+  - Quality: full-pipeline output vs the fp32 pipeline mean 0.122 / max 1.0
+    on 0-255 — at native-fp16 noise level. The earlier "5.0 max divergence"
+    that forced default-OFF was a random-weights artifact; with
+    in-distribution activations the im2col accumulation-order drift stays
+    sub-perceptual (smart-vs-native max 0.87).
+  - `decode_latents` reads fp16 directly instead of casting to fp32 on GPU
+    before readback (one full-tensor pass saved per frame); `generate_faces`
+    syncs once at the final readback instead of an extra mid-path `mx.eval`.
+- **Realtime allocator-cache guidance (#920 follow-up)** — the 1 GiB default
+  cache cap targets mixed multi-model workloads. A steady-shape realtime
+  MuseTalk loop re-allocates evicted buffers instead: 104.8 vs 66.4 ms/round
+  b2 measured. Documented: set `FUSION_MUSETALK_MLX_CACHE_LIMIT=0` (or ≥8 GiB)
+  for sustained realtime serving.
+- **UNet conv dispatch (#919)** — im2col GEMM wins 7/8 representative UNet
+  conv shapes on M5 Max (e.g. 640@32² 1.250→0.532 ms, 1280@8² 0.679→0.400 ms);
+  per-shape autotune wraps 49 UNet + 55 VAE convs in the realtime path.
+
+### Rejected after measurement (do not re-propose without new evidence)
+- **mx.compile on UNet/decode** — unet 29.1→27.3 ms, decode 38.1→34.8 ms
+  (−5 ms), but output diverges from the fp32 pipeline mean 2.97 / max 30 on
+  0-255 (eager: 0.122 / 1.0): compile fuses away the pytorch-compatible
+  SafeGroupNorm fp32-statistics semantics. Not wired; quality gate fails.
+- **GN+SiLU Metal fusion** — GN+SiLU already costs ≈ GN alone in current MLX
+  (512ch@64² b2: 0.832 vs 0.466 ms — within run variance); nothing to fuse.
+- The architecture-doc proposal of a per-pixel-threadgroup MSL
+  FusedConvGroupNormSiLU kernel was mathematically incorrect (GroupNorm
+  statistics are over C/G×H×W, not per-pixel channels) and matches the
+  scalar-conv shape already falsified at 10-30× slower than MLX's tuned conv.
+
+### Fixed
+- **EngineRunner spurious Stopped result on stop() race** — a unit that
+  executed normally could report `{Stopped, "work dropped"}` to its submitter:
+  the worker's stop-drop path overwrote the shared `_last_result` after the
+  unit finished but before its submitter read the result (flaky
+  `test_stop_releases_blocked_submit`, ~1/3 runs). Fixed with a per-submit
+  result slot (`_pending_result` points at the submitter's own stack
+  ShimResult) so a late reader can never observe another submit's drop-path
+  result; the drop path now only emits Stopped for a genuinely staged unit.
+  50/50 stress runs green after the fix.
+
 ## [0.10.4] — 2026-09-19
 
 ### Changed

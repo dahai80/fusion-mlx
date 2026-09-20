@@ -7,6 +7,8 @@ extension has been built inplace. conftest.py mocks mlx.core on Linux CI.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 import fusion_mlx.shim as shim
@@ -97,6 +99,11 @@ def test_hardware_probe_gpu_core_count_apple_silicon():
     # report the physical core count on real Apple Silicon (was a
     # hardcoded 0, "IORegistry deferred"). gen==0 covers Intel Macs and
     # headless CI where the IORegistry key is absent.
+    if os.environ.get("CI") == "true":
+        pytest.skip(
+            "virtualized CI runner: GPU is '(Virtual)', IORegistry exposes "
+            "no gpu-core-count there — physical-core contract needs real HW"
+        )
     probe = shim.hardware_probe()
     if probe["gen"] == 0:
         pytest.skip("not Apple Silicon hardware (no chip gen)")

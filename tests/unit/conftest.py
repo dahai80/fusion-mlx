@@ -410,9 +410,38 @@ if sys.platform == "darwin" and os.environ.get("CI") == "true":
         "test_vlm_native_video_cache.py",
         # deep_nest_dos: tool recursion depth error code mismatch on CI
         "test_deep_nest_dos.py",
+        # svd_unet / t5_encoder: real-MLX forward passes — each ~75s and
+        # Abort trap 6 (exit 134, native virtualized-GPU Metal crash) on
+        # the macos-14 M1 virtual runner, killing the whole pytest process
+        "test_svd_unet.py",
+        "test_t5_encoder.py",
     ]
     collect_ignore += _abs(*_CI_MACOS_SKIP)
     collect_ignore_glob += [f"**/{s}" for s in _CI_MACOS_SKIP]
+
+
+_SKIP_BASENAMES: set[str] = set()
+
+
+def pytest_collection_modifyitems(config, items):
+    # collect_ignore only applies to directory recursion. The CI shards
+    # pass explicit file lists (scripts/shard_tests.py), which bypass it —
+    # so the macOS-CI skip set above never fired on CI. Apply it as skip
+    # markers here, which sees every collected item regardless of how the
+    # file was selected.
+    if not _SKIP_BASENAMES:
+        return
+    for item in items:
+        if item.path.name in _SKIP_BASENAMES:
+            item.add_marker(
+                pytest.mark.skip(
+                    reason="macOS CI runner: real-model/memory/GPU-dependent suite"
+                )
+            )
+
+
+if sys.platform == "darwin" and os.environ.get("CI") == "true":
+    _SKIP_BASENAMES = set(_CI_MACOS_SKIP)
 
 collect_ignore = sorted(set(collect_ignore))
 collect_ignore_glob = sorted(set(collect_ignore_glob))

@@ -120,26 +120,36 @@ class TestHardLimitCalculation:
         hard_limit = enforcer._get_hard_limit_bytes()
         assert hard_limit > 0
 
+    @staticmethod
+    def _pin_ceilings(enforcer, static, dynamic, metal):
+        # Pin the three machine-derived ceilings: without this the
+        # formula asserts below depend on the runner's physical RAM /
+        # Metal cap and break wherever they don't match the dev box
+        # (e.g. a 7 GB virtualized CI runner).
+        enforcer._get_static_ceiling = Mock(return_value=static)
+        enforcer._get_dynamic_ceiling = Mock(return_value=dynamic)
+        enforcer._get_effective_metal_cap_bytes = Mock(return_value=metal)
+
     def test_hard_limit_above_ceiling(self):
         enforcer = _make_enforcer()
+        GIB = 1024**3
+        # Case 1: min(candidates) binds; floor stays below it.
+        self._pin_ceilings(enforcer, static=64 * GIB, dynamic=32 * GIB, metal=48 * GIB)
         breakdown = enforcer._get_ceiling_breakdown()
-        hard_limit = breakdown["hard_limit"]
-        static = breakdown["static"]
-        dynamic = breakdown["dynamic"]
-        metal_cap = breakdown["metal_cap"]
-        assert hard_limit > 0
-        assert static > 0
-        assert dynamic > 0
-        candidates = [static, dynamic]
-        if metal_cap > 0:
-            candidates.append(metal_cap)
-        raw_min = min(candidates)
-        floor = enforcer.get_loaded_model_bytes() + 10 * 1024**3
-        assert hard_limit == max(raw_min, floor), (
-            f"hard_limit {hard_limit:,} != max(min(candidates)={raw_min:,}, "
-            f"floor={floor:,}) [static={static:,} dynamic={dynamic:,} "
-            f"metal_cap={metal_cap:,}]"
+        assert breakdown["hard_limit"] == max(
+            min(64 * GIB, 32 * GIB, 48 * GIB), min(10 * GIB, 48 * GIB)
         )
+        # Case 2: the 10 GB safety floor lifts the hard limit past
+        # min(candidates), capped at the Metal cap (E-8 #811).
+        enforcer = _make_enforcer()
+        self._pin_ceilings(enforcer, static=64 * GIB, dynamic=2 * GIB, metal=64 * GIB)
+        breakdown = enforcer._get_ceiling_breakdown()
+        assert breakdown["hard_limit"] == 10 * GIB
+        # Case 3: metal_cap == 0 → floor capped at static (P1-12).
+        enforcer = _make_enforcer()
+        self._pin_ceilings(enforcer, static=64 * GIB, dynamic=2 * GIB, metal=0)
+        breakdown = enforcer._get_ceiling_breakdown()
+        assert breakdown["hard_limit"] == min(10 * GIB, 64 * GIB)
 
 
 class TestAbortLimitCalculation:
@@ -149,10 +159,20 @@ class TestAbortLimitCalculation:
         assert abort_limit > 0
 
     def test_abort_limit_above_hard_limit(self):
+        # Documented contract (memory_enforcer.py): abort =
+        # min(static, metal) when metal is known, else static. Pin the
+        # ceilings so the assert doesn't depend on runner RAM/Metal.
         enforcer = _make_enforcer()
-        hard_limit = enforcer._get_hard_limit_bytes()
+        GIB = 1024**3
+        enforcer._get_static_ceiling = Mock(return_value=8 * GIB)
+        enforcer._get_effective_metal_cap_bytes = Mock(return_value=12 * GIB)
         abort_limit = enforcer._get_abort_limit_bytes()
-        assert abort_limit >= hard_limit
+        assert abort_limit == min(8 * GIB, 12 * GIB)
+        # metal unknown → abort falls back to static alone.
+        enforcer = _make_enforcer()
+        enforcer._get_static_ceiling = Mock(return_value=8 * GIB)
+        enforcer._get_effective_metal_cap_bytes = Mock(return_value=0)
+        assert enforcer._get_abort_limit_bytes() == 8 * GIB
 
 
 class TestMetalWiredLimit:
