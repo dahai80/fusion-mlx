@@ -92,10 +92,13 @@ private:
     std::atomic<bool> _stop_flag{false};
     std::atomic<bool> _work_ready{false};
     std::function<void()> _current;
-    // Result of the last executed unit, written by the worker under _mtx
-    // before notifying _done_cv (TLS last_error is per-thread — the caller
-    // thread cannot see the worker's TLS entry).
-    ShimResult _last_result{ShimError::Ok, ""};
+    // Per-submit result slot. submit() points this at its own stack
+    // ShimResult before staging; the worker writes the unit's envelope
+    // result (or the drop-path Stopped) through it under _mtx. A shared
+    // _last_result was racy across submitters: a late reader could observe
+    // a NEWER unit's result (e.g. another submit's drop-path Stopped)
+    // instead of its own.
+    ShimResult* _pending_result{nullptr};
 
     // Stats (atomic for cross-thread reads).
     std::atomic<int> _submitted{0};

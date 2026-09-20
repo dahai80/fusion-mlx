@@ -36,7 +36,12 @@ void EngineRunner::stop() {
             return;
         }
         _stop_flag.store(true);
-        _work_ready.store(true);
+        // Do NOT set _work_ready here. The _cv predicate already includes
+        // _stop_flag, so notify alone wakes the worker. Fabricating
+        // _work_ready=true makes the worker's drop path overwrite
+        // _last_result even when no unit is staged — clobbering the Ok
+        // result of a unit that just finished but whose submit() has not
+        // read it yet (spurious Stopped return).
         _cv.notify_all();
     }
     if (_thread.joinable()) {
@@ -64,12 +69,15 @@ ShimResult EngineRunner::submit(std::function<void()> fn) {
         return {ShimError::Stopped, "shim: engine runner stopped"};
     }
     _current = std::move(fn);
+    ShimResult res_slot{ShimError::Ok, ""};
+    _pending_result = &res_slot;
     _work_ready.store(true);
     _cv.notify_one();
-    // Wait for the worker to finish this unit. The result comes from
-    // _last_result (worker TLS is invisible here).
+    // Wait for the worker to finish this unit. The result is written into
+    // res_slot via _pending_result (worker TLS is invisible here).
     _done_cv.wait(lk, [this] { return !_work_ready.load(); });
-    auto res = _last_result;
+    auto res = res_slot;
+    _pending_result = nullptr;
     lk.unlock();
     if (res.code == ShimError::Ok) {
         _completed.fetch_add(1);
@@ -133,14 +141,21 @@ void EngineRunner::_run() {
         _cv.wait(lk, [this] { return _work_ready.load() || _stop_flag.load(); });
         if (_stop_flag.load()) {
             // Drop the pending unit (stop is documented drop-not-drain).
-            // A submit() blocked on this unit must be released, or stop()
-            // hangs that caller forever. The blocked submit reads the
-            // Stopped result below and returns instead of waiting.
-            _current = nullptr;
-            _last_result = ShimResult{
-                ShimError::Stopped, "shim: engine runner stopped, work dropped"};
-            _work_ready.store(false);
-            _done_cv.notify_all();
+            // Only a genuinely staged unit (_work_ready true — set by
+            // submit(), never by stop()) produces a Stopped result for
+            // its blocked submitter. With nothing staged, _last_result
+            // may still hold a just-finished unit's Ok result that its
+            // submit() has not read yet — leave it untouched.
+            if (_work_ready.load()) {
+                _current = nullptr;
+                if (_pending_result) {
+                    *_pending_result = ShimResult{
+                        ShimError::Stopped,
+                        "shim: engine runner stopped, work dropped"};
+                }
+                _work_ready.store(false);
+                _done_cv.notify_all();
+            }
             break;
         }
         auto unit = std::move(_current);
@@ -155,7 +170,9 @@ void EngineRunner::_run() {
         if (res.code != ShimError::Ok) {
             set_last_error(res.code, res.message);
         }
-        _last_result = res;
+        if (_pending_result) {
+            *_pending_result = res;
+        }
         _work_ready.store(false);
         _done_cv.notify_all();
     }
