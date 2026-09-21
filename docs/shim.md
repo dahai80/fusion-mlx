@@ -40,6 +40,28 @@ on product support, Tier-3 items are deliberately not built.
   layout conversion (FUSION_SHIM_ASFW)
 - `custom_kernels/paged_kv_cow.py` — two-level paged KV with CoW
   (FUSION_SHIM_TWO_LEVEL_KV)
+- `custom_kernels/fused_quant_gemv.py` — fused INT4 dequant+GEMV Metal
+  kernel (FUSION_FUSED_QUANT_GEMV, default ON). -Ofast precompiled
+  metallib path: the native-clone algorithm (2 simdgroups x 4 rows/TG,
+  64 threads; shift-elimination + affine factoring + simd_sum — the 3
+  optimizations reverse-engineered from MLX's native `qmv_fast_impl`)
+  compiled offline via `xcrun -sdk macosx metal -std=metal3.2 -Ofast` and
+  loaded through `mx.fast.precompiled_metal_kernel` (MLX-fork API,
+  upstream issue #4541). -Ofast enables fastMath + the offline optimizer
+  that neither JIT (exposes only `math_mode`) nor native `mlx.metallib`
+  (built `-fno-fast-math`, no -O) can reach — the lever that lets a user
+  kernel surpass native. Parity-verified vs `mx.quantized_matmul` (rel
+  diff 2.3e-4 to 4.0e-4, within fp16 precision; abs ~0.1-0.2 at output
+  magnitude ~450-560, < 1 fp16 ulp). Accumulate-200 CSE-defeated bench,
+  31 trials, paired A/B median (the only reliable method — raw loops
+  collapse via CSE, compiled chain min is biased): K=20480 -11.9%,
+  K=28672 -8.0%, K=32768 -9.9%, K=40960 -13.8% vs native. K<20480
+  delegates to native (launch-overhead-bound). NOT tensor cores: native
+  `qmv_fast` is SCALAR (qdot + simd_sum), not MMA — the win is compiler
+  optimization, not tensor cores. When gate ON + precompiled API
+  available: batch==1 AND bits==4 AND K>=20480 -> precompiled -Ofast;
+  everything else -> native (zero regression). On stock PyPI MLX the
+  API-detect check routes to native (zero regression, no win).
 - `speculative/tree_mask.py` — tree-mask verify + virtual append offset
   (FUSION_SHIM_TREE_MASK)
 - `utils/hardware.py` — chip-generation/MMA probe shared by the C++
@@ -64,20 +86,35 @@ runtime via SIGHUP settings reload or test monkeypatching. Defaults:
 |---|---|---|
 | FUSION_SHIM_ENABLED | OFF | Master switch for the C++ extension path |
 | FUSION_ENGINE_RUNNER | OFF | C++ EngineRunner prototype (exclusive decode thread) |
-| FUSION_SHIM_FUSED_RMSNORM | OFF | Fused RMSNorm+residual kernel |
+| FUSION_SHIM_FUSED_RMSNORM | ON | Fused RMSNorm+residual kernel (microbench -47%; see audit — not wired into engine, contract mismatch) |
 | FUSION_SHIM_FUSED_ROPE | OFF | Fused YaRN/NTK RoPE kernel |
 | FUSION_SHIM_TWO_LEVEL_KV | OFF | Two-level paged KV + CoW |
 | FUSION_SHIM_TREE_MASK | OFF | Tree-mask speculative verify |
 | FUSION_SHIM_QUANT_KV | OFF | Q4_0/Q8_0 quantized-KV online decompression |
 | FUSION_SHIM_IQ | OFF | imatrix + IQ/GGUF mixed quant |
 | FUSION_SHIM_ASFW | OFF | ASFW layout conversion at GGUF load |
-| FUSION_SHIM_GRAMMAR_RING | OFF | Grammar bitmask ring + bucket padding |
+| FUSION_SHIM_GRAMMAR_RING | ON | Grammar bitmask ring (wired, -54% end-to-end) |
 | FUSION_SHIM_MOE | OFF | MoE deterministic route dispatch + gather combine |
 | FUSION_SHIM_SSM | OFF | Mamba SSD parallel prefix scan |
+| FUSION_FUSED_QUANT_GEMV | ON | Custom INT4 dequant+GEMV -Ofast precompiled Metal kernel (parity rel<4e-4; -8 to -14% vs native at K>=20480 via accumulate bench; delegates to native on stock PyPI MLX without fork) |
 
-`tests/unit/test_shim_switches.py` enforces the contract: default OFF,
+`tests/unit/test_shim_switches.py` enforces the contract: default values,
 literal "0"/"1" handling, and switch independence (enabling one never
 enables another).
+
+## Production status (audited 2026-09-21)
+
+| Module | Wired? | Production path |
+|---|---|---|
+| grammar_ring | yes (sched_thinking, monkeypatches) | default ON, -54% real |
+| fused_quant_gemv (int4) | yes (patch wired, default ON) | precompiled -Ofast kernel for K>=20480 batch==1 decode (-8 to -14% vs native, parity rel<4e-4) when MLX fork available; native `mx.quantized_matmul` via `nn.QuantizedLinear` on stock PyPI MLX (zero regression) |
+| fused_rmsnorm_residual | no (contract mismatch) | `mx.fast.rms_norm` native (default) |
+| fused_rope | no (slower +6-9%) | `mx.fast.rope` native (default) |
+| quant_kv (shim) | no (redundant w/ turboquant_kv) | `turboquant_kv.py` int4 (default ON) |
+| moe_dispatch | no | native `mx.quantized_matmul` grouped (default) |
+
+See `audit/fusion-mlx-vs-llamacpp-audit-report-0921.md` for the full audit
+and `audit/shim-audit-verified-0921.md` context.
 
 ## Verification
 

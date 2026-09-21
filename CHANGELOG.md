@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed — INT4 fused dequant+GEMV: -Ofast precompiled Metal kernel (surpasses native at K>=20480)
+- **`custom_kernels/fused_quant_gemv.py`**: replaced the prior V12 JIT kernel
+  (whose "compiled chain min wins" were biased measurement artifacts —
+  chain-min selects favorable outliers per shape) with an offline -Ofast
+  precompiled metallib path. The native-clone algorithm (2 simdgroups x 4
+  rows/TG, 64 threads; shift-elimination + affine factoring + simd_sum) is
+  compiled via `xcrun -sdk macosx metal -std=metal3.2 -Ofast` and loaded
+  through `mx.fast.precompiled_metal_kernel` (MLX-fork API exposing the
+  existing-but-unwired `CustomKernel::is_precompiled_` field; upstream
+  issue #4541 filed). -Ofast enables fastMath + the offline optimizer that
+  neither JIT (`MTLDevice::newLibrary` exposes only `math_mode`) nor native
+  `mlx.metallib` (built `-fno-fast-math`, no -O) can reach — the lever that
+  lets a user kernel surpass native.
+- **`custom_kernels/metal/gemv_int4_ofast.metal`** + **`.metallib`**: packaged
+  offline-compiled -Ofast kernel source + metallib. Function name matches
+  MLX's `custom_kernel_<name>_<types>` convention.
+- **Results (M5 Max, accumulate-200 CSE-defeated bench, 31 trials, paired A/B
+  median — the only reliable method)**: K=20480 -11.9%, K=28672 -8.0%,
+  K=32768 -9.9%, K=40960 -13.8% vs native. Parity rel 2.3e-4 to 4.0e-4
+  (within fp16 precision; abs diff ~0.1-0.2 at output magnitude ~450-560,
+  < 1 fp16 ulp). K<20480 launch-overhead-bound, delegates to native.
+- **Measurement discipline**: the accumulate-N bench defeats MLX CSE
+  (raw loops of identical ops collapse — `fn()` 200x with single eval gives
+  fake 0.05ms/op; `acc = acc + fn()` forces N real computes). Compiled
+  chain min-over-N is biased (selects favorable outliers). Single-trial
+  eager swings +-10-15% from compile-cache state. Prior V12 "wins"
+  (-4.7/-7.6/-9.8%) were chain-min artifacts; the real win via accumulate
+  bench is -8 to -14% (larger and reproducible).
+- **`scheduler/__init__.py`**: installs `nn.QuantizedLinear.__call__`
+  monkeypatch at import (idempotent, no-op when gate OFF / Metal absent /
+  precompiled API unavailable). Routes K>=20480 batch==1 int4 decode
+  through the -Ofast precompiled kernel when `FUSION_FUSED_QUANT_GEMV=1`.
+- **Default ON** (`FUSION_FUSED_QUANT_GEMV` default "1"). On machines with
+  the MLX fork installed, the precompiled path activates for K>=20480
+  decode (-8 to -14% vs native). On stock PyPI MLX the API-detect check
+  routes to native `mx.quantized_matmul` (zero regression, no win either).
+  Upstream dependency: MLX issue #4541 (expose `precompiled_metal_kernel`).
+
+
 ## [0.10.6] — 2026-09-21
 
 ### Added — #932 module-level graph patterns
