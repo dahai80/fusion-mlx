@@ -33,6 +33,7 @@ from collections.abc import Callable
 from typing import Any
 
 import mlx.core as mx
+import mlx.nn as nn
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,100 @@ register_pattern(
 )
 
 
-def apply_patterns(root, _seen=None) -> int:
+# --- module-level patterns (#932) ------------------------------------------- #
+# Window patterns above match ADJACENT modules in containers. Modules whose
+# ops are invoked inside a custom __call__ (MuseTalk ResnetBlock2D:
+# conv(silu(norm(x))) on separate attrs) are invisible to window matching.
+# A module pattern replaces a WHOLE module (e.g. a ResnetBlock2D) in its
+# parent list/dict container with a fused-replacement block that reproduces
+# the original __call__ semantics. Opt-in via apply_patterns(
+# enable_module_patterns=True): firing globally would rewrite same-shaped
+# blocks in other model families whose custom __call__ differs (NCHW casts,
+# eps) — only enable for models whose block semantics the rewrite replicates.
+
+_MODULE_PATTERN_REGISTRY: dict[str, dict[str, Any]] = {}
+
+
+def register_module_pattern(
+    name: str, match_module: Callable[..., bool], rewrite_module: Callable[..., Any]
+):
+    """Register a whole-module rewrite pattern (#932).
+
+    ``match_module(mod)`` inspects a single module; ``rewrite_module(mod)``
+    returns a fused replacement with an execution-equivalent ``__call__``.
+    Only consulted by apply_patterns when ``enable_module_patterns=True``.
+    """
+    _MODULE_PATTERN_REGISTRY[name] = {
+        "match": match_module,
+        "rewrite": rewrite_module,
+    }
+    logger.info("[graph_opt] registered module pattern: %s", name)
+
+
+def _match_resnet_block_gn_silu_conv(mod) -> bool:
+    # ResnetBlock2D shape: separate norm1/conv1(/norm2/conv2) module attrs.
+    import mlx.nn as nn
+
+    norm1 = getattr(mod, "norm1", None)
+    conv1 = getattr(mod, "conv1", None)
+    norm2 = getattr(mod, "norm2", None)
+    conv2 = getattr(mod, "conv2", None)
+    if not all(isinstance(m, nn.Module) for m in (norm1, conv1, norm2, conv2)):
+        return False
+    return (
+        isinstance(norm1, nn.GroupNorm)
+        and isinstance(conv1, (nn.Conv2d, nn.Conv1d))
+        and isinstance(norm2, nn.GroupNorm)
+        and isinstance(conv2, (nn.Conv2d, nn.Conv1d))
+    )
+
+
+class _FusedResnetBlock(nn.Module):
+    # Execution-equivalent replacement for a ResnetBlock2D whose __call__ is
+    # ``conv(silu(norm(x)))`` twice (+ optional time-emb add + shortcut).
+    # Covers both signatures: UNet blocks are called block(x, temb), VAE
+    # blocks block(x) — temb defaults to None and the time-emb branch is
+    # skipped when the source block has no time_emb_proj.
+    def __init__(self, block):
+        super().__init__()
+        from .patterns import GroupNormSiLUConv
+
+        self.gn1_conv1 = GroupNormSiLUConv(block.norm1, block.conv1)
+        self.gn2_conv2 = GroupNormSiLUConv(block.norm2, block.conv2)
+        self.time_emb_proj = getattr(block, "time_emb_proj", None)
+        self.conv_shortcut = getattr(block, "conv_shortcut", None)
+
+    def __call__(self, x, temb=None):
+        import mlx.nn as nn
+
+        h = self.gn1_conv1(x)
+        if temb is not None and self.time_emb_proj is not None:
+            h = h + self.time_emb_proj(nn.silu(temb))[:, None, None, :]
+        h = self.gn2_conv2(h)
+        if self.conv_shortcut is not None:
+            x = self.conv_shortcut(x)
+        return x + h
+
+
+def fuse_resnet_block(block):
+    """Build a fused replacement for a ResnetBlock2D-style block (#932).
+
+    Matches the MuseTalk call order GroupNorm->SiLU->Conv on both norm/conv
+    pairs; keeps time_emb_proj + conv_shortcut semantics. Weights shared, not
+    copied. Parameter paths change (norm1/conv1 -> gn1_conv1.*) — apply AFTER
+    weight loading, same caveat as the window patterns.
+    """
+    return _FusedResnetBlock(block)
+
+
+register_module_pattern(
+    "resnet_block_gn_silu_conv",
+    _match_resnet_block_gn_silu_conv,
+    fuse_resnet_block,
+)
+
+
+def apply_patterns(root, _seen=None, enable_module_patterns: bool = False) -> int:
     """Apply registered patterns to the module tree under ``root`` (#918).
 
     Walks container children (nn.Sequential .layers, plain module lists, module
@@ -113,8 +207,12 @@ def apply_patterns(root, _seen=None) -> int:
     number of rewrites. Assumes container order == execution order; code-level
     call sequences (e.g. ``self.conv_out(silu(self.norm(x)))`` inside a custom
     ``__call__``) are NOT visible here — rewrite those by using the fused
-    module directly. Call AFTER weight loading (weights are shared refs, but
-    parameter paths change under the fused module).
+    module directly, or via ``enable_module_patterns=True`` which replaces
+    WHOLE modules (ResnetBlock2D-style) inside list/dict containers with
+    execution-equivalent fused blocks (#932). Opt-in because the rewrite must
+    replicate the target block's custom __call__ semantics. Call AFTER weight
+    loading (weights are shared refs, but parameter paths change under the
+    fused module).
     """
     import mlx.nn as nn
 
@@ -131,10 +229,31 @@ def apply_patterns(root, _seen=None) -> int:
                 return pat["rewrite"](window)
         return None
 
+    def _match_module(mod):
+        for pat in _MODULE_PATTERN_REGISTRY.values():
+            if pat["match"](mod):
+                return pat["rewrite"](mod)
+        return None
+
     def _rewrite(mods, keys=None, container=None):
         # ``keys``/``container`` set: dict-backed — rewrite mirrored by key.
         # ``keys`` and ``mods`` stay index-aligned via lockstep slicing.
         nonlocal applied
+        # module patterns first (#932): replace whole blocks element-wise so
+        # the fused block's inner modules feed the window pass below.
+        if enable_module_patterns and _MODULE_PATTERN_REGISTRY:
+            for idx in range(len(mods)):
+                fused = _match_module(mods[idx])
+                if fused is None:
+                    continue
+                if container is not None:
+                    container[keys[idx]] = fused
+                mods[idx] = fused
+                applied += 1
+                logger.info(
+                    "[graph_opt] fused whole module at %s (module pattern)",
+                    keys[idx] if container is not None else idx,
+                )
         i = 0
         while i <= len(mods) - 3:
             fused = _match_window(mods[i : i + 3])
@@ -164,23 +283,23 @@ def apply_patterns(root, _seen=None) -> int:
                     _rewrite(val)
                 for m in val:
                     if isinstance(m, nn.Module):
-                        applied += apply_patterns(m, _seen)
+                        applied += apply_patterns(m, _seen, enable_module_patterns)
             elif isinstance(val, dict):
                 keys = list(val.keys())
                 mods = [val[k] for k in keys]
                 if mods and all(isinstance(v, nn.Module) for v in mods):
                     _rewrite(mods, keys=keys, container=val)
                 for v in mods:
-                    applied += apply_patterns(v, _seen)
+                    applied += apply_patterns(v, _seen, enable_module_patterns)
             elif isinstance(val, nn.Module):
-                applied += apply_patterns(val, _seen)
+                applied += apply_patterns(val, _seen, enable_module_patterns)
         return applied
     if isinstance(root, list):
         if root and all(isinstance(c, nn.Module) for c in root):
             _rewrite(root)
         for m in root:
             if isinstance(m, nn.Module):
-                applied += apply_patterns(m, _seen)
+                applied += apply_patterns(m, _seen, enable_module_patterns)
         return applied
     if isinstance(root, dict):
         keys = list(root.keys())
@@ -188,7 +307,7 @@ def apply_patterns(root, _seen=None) -> int:
         if mods and all(isinstance(v, nn.Module) for v in mods):
             _rewrite(mods, keys=keys, container=root)
         for v in mods:
-            applied += apply_patterns(v, _seen)
+            applied += apply_patterns(v, _seen, enable_module_patterns)
         return applied
     return applied
 

@@ -21,6 +21,28 @@ def _fused_conv_gn_silu_enabled() -> bool:
     return os.environ.get("FUSION_FUSED_CONV_GN_SILU", "0") == "1"
 
 
+def _upgrade_groupnorm(groupnorm: nn.Module) -> nn.Module:
+    # Shared upgrade: stock GroupNorm -> SafeGroupNorm (FP32 stats), weights
+    # shared not copied. Preserves grouping semantics (pytorch_compatible flag).
+    if isinstance(groupnorm, nn.GroupNorm) and not isinstance(groupnorm, SafeGroupNorm):
+        groups = getattr(groupnorm, "num_groups", None) or getattr(
+            groupnorm, "groups", 4
+        )
+        dims = (
+            groupnorm.dims if hasattr(groupnorm, "dims") else groupnorm.weight.shape[0]
+        )
+        eps = getattr(groupnorm, "eps", 1e-6)
+        # Preserve the source GroupNorm's grouping semantics — MLX
+        # nn.GroupNorm(pytorch_compatible=False) groups differently from
+        # the PyTorch layout; mixing them silently breaks parity.
+        compatible = bool(getattr(groupnorm, "pytorch_compatible", False))
+        safe = SafeGroupNorm(groups, dims, eps=eps, pytorch_compatible=compatible)
+        safe.weight = groupnorm.weight
+        safe.bias = groupnorm.bias
+        return safe
+    return groupnorm
+
+
 class ConvGroupNormSiLU(nn.Module):
     """Fused Conv2D + GroupNorm + SiLU (#911).
 
@@ -33,29 +55,7 @@ class ConvGroupNormSiLU(nn.Module):
     def __init__(self, conv: nn.Module, groupnorm: nn.Module):
         super().__init__()
         self.conv = conv
-        # Upgrade stock GroupNorm to SafeGroupNorm (FP32-protected) if needed.
-        if isinstance(groupnorm, nn.GroupNorm) and not isinstance(
-            groupnorm, SafeGroupNorm
-        ):
-            groups = getattr(groupnorm, "num_groups", None) or getattr(
-                groupnorm, "groups", 4
-            )
-            dims = (
-                groupnorm.dims
-                if hasattr(groupnorm, "dims")
-                else groupnorm.weight.shape[0]
-            )
-            eps = getattr(groupnorm, "eps", 1e-6)
-            # Preserve the source GroupNorm's grouping semantics — MLX
-            # nn.GroupNorm(pytorch_compatible=False) groups differently from
-            # the PyTorch layout; mixing them silently breaks parity.
-            compatible = bool(getattr(groupnorm, "pytorch_compatible", False))
-            safe = SafeGroupNorm(groups, dims, eps=eps, pytorch_compatible=compatible)
-            safe.weight = groupnorm.weight
-            safe.bias = groupnorm.bias
-            self.groupnorm = safe
-        else:
-            self.groupnorm = groupnorm
+        self.groupnorm = _upgrade_groupnorm(groupnorm)
 
     def __call__(self, x):
         if _fused_conv_gn_silu_enabled():
@@ -79,3 +79,23 @@ class ConvGroupNormSiLU(nn.Module):
         x = self.conv(x)
         x = self.groupnorm(x)
         return nn.silu(x)
+
+
+class GroupNormSiLUConv(nn.Module):
+    """Fused GroupNorm + SiLU + Conv2D (#932) — the MuseTalk call order.
+
+    MuseTalk ResnetBlock2D (UNet + VAE) executes ``conv(silu(norm(x)))``:
+    GroupNorm -> SiLU -> Conv. ``ConvGroupNormSiLU`` (conv-first) is the WRONG
+    order for that topology. This module chains gn -> silu -> conv in one
+    __call__ so mx.compile can fuse the norm affine + activation around the
+    conv. GroupNorm upgraded to SafeGroupNorm (FP32 stats) same as
+    ConvGroupNormSiLU.
+    """
+
+    def __init__(self, groupnorm: nn.Module, conv: nn.Module):
+        super().__init__()
+        self.groupnorm = _upgrade_groupnorm(groupnorm)
+        self.conv = conv
+
+    def __call__(self, x):
+        return self.conv(nn.silu(self.groupnorm(x)))

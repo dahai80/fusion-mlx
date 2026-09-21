@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added — #932 module-level graph patterns
+- **`graph_opt` whole-module fusion** (`fusion_mlx/graph_opt/passes.py`):
+  `register_module_pattern` + `_MODULE_PATTERN_REGISTRY` — rewrites a WHOLE
+  module inside its parent list/dict container (execution-equivalent
+  replacement), not just adjacent container windows. Opt-in via
+  `apply_patterns(root, enable_module_patterns=True)`: the rewrite must
+  replicate the target block's custom `__call__`, so it never fires
+  globally. Registered pattern `resnet_block_gn_silu_conv` +
+  `fuse_resnet_block()` — fuses the MuseTalk ResnetBlock2D call order
+  GroupNorm→SiLU→Conv on both norm/conv pairs (window pattern
+  `conv_groupnorm_silu` was conv-first, the wrong order, and blind to
+  attr-invoked modules). New `GroupNormSiLUConv` fused module in
+  `patterns.py` (SafeGroupNorm FP32-stats upgrade preserved).
+- **MuseTalk pipeline wiring** (`pipeline_mlx.py`): both `from_pretrained`
+  loaders run `apply_patterns(net, enable_module_patterns=True)` before
+  `apply_smart_conv` so SmartConv2d wraps the fused blocks' inner convs.
+  Env `FUSION_MUSETALK_GRAPH_PATTERNS=0` opts out.
+- **Real-weights verification** (sd-vae-ft-mse VAE, M5 Max): 24 modules
+  fused; decode latency parity (69.7ms → 69.7ms median); output cosine vs
+  original blocks 1.000000 (fp32) / 0.999957 (fp16) — parity gate ≥0.98.
+
 ### Added — PRD v1 unified video base layer
 - **`fusion_mlx/video/common/`** — pure abstract bases `VideoVAEBase`,
   `UpsampleBase`, `NoiseSchedulerBase` (PRD §4.1: no model-specific ops in
