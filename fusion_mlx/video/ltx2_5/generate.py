@@ -30,6 +30,7 @@ from ..ltx2.conditioning import (
 from ..ltx2.positions import create_position_grid
 from ..ltx2.upsampler import upsample_latents
 from ..ltx2.utils import load_image, prepare_image_for_encoding
+from ..ltx2.video_vae.tiling import TilingConfig
 from .config import LTX2_5Variant
 from .denoise import denoise_distilled_t2v
 from .ltx2_5_model import LTX2_5Model
@@ -38,7 +39,6 @@ from .text_encoder import load_text_encoder
 from .upsampler import load_spatial_upsampler_2_5, load_temporal_upsampler
 from .utils import get_model_path, is_split_layout, resolve_component
 from .video_vae import load_video_decoder, load_video_encoder
-from ..ltx2.video_vae.tiling import TilingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -568,7 +568,11 @@ def generate_video(
         video = vae_decoder.decode_tiled(
             latents,
             tiling_config=tiling_config,
-            tiling_mode=tiling if tiling in ("conservative", "none", "auto", "default", "spatial") else "auto",
+            tiling_mode=(
+                tiling
+                if tiling in ("conservative", "none", "auto", "default", "spatial")
+                else "auto"
+            ),
         )
     else:
         video = vae_decoder(latents)
