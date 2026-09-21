@@ -731,6 +731,10 @@ class LTVideoVAE(nn.Module):
                 )
             )
         if not shards:
+            # #947: ComfyUI single-file (ltxv-*.safetensors) carries vae
+            # weights under the vae.* prefix alongside transformer weights.
+            shards = sorted(glob.glob(str(model_path / "ltxv-*.safetensors")))
+        if not shards:
             raise FileNotFoundError(f"vae: no safetensors in {model_path}")
 
         logger.info(
@@ -744,9 +748,14 @@ class LTVideoVAE(nn.Module):
         )
         raw = {}
         for shard in shards:
-            with safe_open(shard, framework="numpy") as f:
-                for k in f.keys():  # noqa: SIM118
-                    raw[k] = f.get_tensor(k)
+            # #947: mx.load — ltxv-*.safetensors ships bfloat16 weights.
+            raw.update(mx.load(str(shard)))
+        # #947: ComfyUI single-file prefixes vae weights with "vae."; strip
+        # so _map_vae_decoder_weights (expects decoder.*) matches. Transformer
+        # keys (model.diffusion_model.*) are dropped here — VAE loads only its
+        # own slice of the shared checkpoint.
+        if any(k.startswith("vae.") for k in raw):
+            raw = {k[len("vae.") :]: v for k, v in raw.items() if k.startswith("vae.")}
 
         mapped = _map_vae_decoder_weights({k: mx.array(v) for k, v in raw.items()})
         encoder_mapped = _map_vae_encoder_weights(

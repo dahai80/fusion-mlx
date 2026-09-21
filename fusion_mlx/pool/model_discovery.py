@@ -1232,6 +1232,19 @@ def _is_video_model(path: Path) -> bool:
         _has_diffusers_subdir(sub) for sub in ("vae", "transformer", "audio_vae", "dit")
     )
     if _is_task_model(path, "text-to-video"):
+        # #947: model_index.json-declared diffusers pipeline (e.g. LTX-Video
+        # legacy single-file layout, one ltxv-*.safetensors with transformer
+        # + vae weights and no vae/transformer subdirs) is a real video
+        # model — the subdir gate would wrongly reject it. configuration.json
+        # task-manifest models still require the subdir gate (#139: no subdirs
+        # + no broken symlinks = not loadable, fail visible).
+        if (path / "model_index.json").exists():
+            try:
+                with open(path / "model_index.json") as f:
+                    if json.load(f).get("_class_name", "") in DIFFUSERS_PIPELINE_TASKS:
+                        return True
+            except (OSError, json.JSONDecodeError):
+                pass
         return has_diffusers_subdirs
     # Comfy single-file LTX-2.5 layout (#758): no task manifest and no
     # config.json, recognized by diffusion_models/ + vae/ canonical files.
@@ -1466,6 +1479,31 @@ def _has_any_weights(model_dir: Path) -> bool:
 
 def _is_hf_cache_mlx_compatible(model_dir: Path, source_repo_id: str) -> bool:
     """Heuristic for HF cache entries that can be loaded without conversion."""
+    # #947: diffusers single-file video layouts (e.g. Lightricks/LTX-Video
+    # legacy, which ships one ltxv-*.safetensors with transformer+vae weights
+    # and NO vae/transformer subdirs and NO config.json) carry
+    # model_index.json declaring a known DIFFUSERS_PIPELINE_TASKS pipeline
+    # class. _is_model_dir returns False for such layouts (no config.json,
+    # no vae/transformer subdir), short-circuiting below before the #843
+    # model_index.json check is reached. Accept the pipeline class here,
+    # before the _is_model_dir guard, so discovery reaches the video backend,
+    # which decides whether the single-file layout is loadable.
+    index_json = model_dir / "model_index.json"
+    if index_json.exists():
+        try:
+            with open(index_json) as f:
+                class_name = json.load(f).get("_class_name", "")
+            if class_name in DIFFUSERS_PIPELINE_TASKS:
+                logger.info(
+                    f"Accepting HF cache diffusers pipeline layout "
+                    f"({class_name}): {source_repo_id}"
+                )
+                return True
+        except (OSError, json.JSONDecodeError):
+            logger.debug(
+                f"unreadable model_index.json in HF cache entry: {source_repo_id}"
+            )
+
     if not _is_model_dir(model_dir):
         return False
 
@@ -1485,29 +1523,6 @@ def _is_hf_cache_mlx_compatible(model_dir: Path, source_repo_id: str) -> bool:
             f"Accepting HF cache Comfy/flat image/video layout: {source_repo_id}"
         )
         return True
-
-    # #843: diffusers subdir layout (model_index.json + transformer/vae/...
-    # component subdirs). Weights live inside component subdirs, not as root
-    # model*.safetensors, so the LLM-centric glob gate below rejects the
-    # canonical HF-cache layout of black-forest-labs/FLUX.1-dev and similar
-    # raw diffusers repos. The mflux / mlx-video backends load this layout
-    # natively, so accept it when model_index.json declares a known
-    # DIFFUSERS_PIPELINE_TASKS pipeline class.
-    index_json = model_dir / "model_index.json"
-    if index_json.exists():
-        try:
-            with open(index_json) as f:
-                class_name = json.load(f).get("_class_name", "")
-            if class_name in DIFFUSERS_PIPELINE_TASKS:
-                logger.info(
-                    f"Accepting HF cache diffusers pipeline layout "
-                    f"({class_name}): {source_repo_id}"
-                )
-                return True
-        except (OSError, json.JSONDecodeError):
-            logger.debug(
-                f"unreadable model_index.json in HF cache entry: {source_repo_id}"
-            )
 
     # Audio models (STT/TTS/STS) are loaded by mlx_audio, which accepts MLX
     # safetensors, MLX .npz, and HF-format safetensors/bin natively. The
