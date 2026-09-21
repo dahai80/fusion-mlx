@@ -2,41 +2,44 @@
 
 ## [Unreleased]
 
-### Changed — INT4 fused dequant+GEMV Metal kernel V12 (base layer, opt-in)
-- **`custom_kernels/fused_quant_gemv.py`**: V12 simdgroup kernel = native
-  `qmv_fast_impl`'s 3 reverse-engineered optimizations (shift-elimination:
-  pre-scale x DOWN, mask-only dot; affine factoring: scale*accum + sum*bias,
-  2 FMA/group; simdgroup layout: single hardware simd_sum) + 2 structural
-  wins native lacks: (1) 1sg x 2r smaller tile = 4x more threadgroups for
-  GPU saturation at small M (decode batch=1), (2) cross-row interleaved
-  weight loads = 2 outstanding loads from 2 addresses = higher memory-level
-  parallelism. Parity verified vs `mx.quantized_matmul` (max diff 4.8e-7,
-  exact 0.0 across seeds; end-to-end real-model decode produces IDENTICAL
-  tokens). Compiled 32-layer chain min over 5 trials (the cache-stable GPU
-  truth) WINS at large K: -4.7% (K=8K), -7.6% (K=12K), -9.8% (K=14K) vs
-  native. Eager per-op (production path) within ±5% (noise-dominated).
-  13 optimization variants attempted (V2-V13); V12 selected (2-row
-  interleave avoids V11's 4-row reg-pressure explosion; smaller tile
-  saturates GPU where native's 8-row tile under-saturates at small M).
-  NOT tensor cores: native `qmv_fast` is SCALAR (qdot + simd_sum), not
-  MMA — tensor cores irrelevant for batch=1 (vector LHS wastes matrix
-  tiles), which is WHY MLX uses scalar for decode. Dispatch when gate ON:
-  batch==1 AND bits==4 AND K>=8192 -> custom; else native (zero regression).
+### Changed — INT4 fused dequant+GEMV: -Ofast precompiled Metal kernel (surpasses native at K>=20480)
+- **`custom_kernels/fused_quant_gemv.py`**: replaced the prior V12 JIT kernel
+  (whose "compiled chain min wins" were biased measurement artifacts —
+  chain-min selects favorable outliers per shape) with an offline -Ofast
+  precompiled metallib path. The native-clone algorithm (2 simdgroups x 4
+  rows/TG, 64 threads; shift-elimination + affine factoring + simd_sum) is
+  compiled via `xcrun -sdk macosx metal -std=metal3.2 -Ofast` and loaded
+  through `mx.fast.precompiled_metal_kernel` (MLX-fork API exposing the
+  existing-but-unwired `CustomKernel::is_precompiled_` field; upstream
+  issue #4541 filed). -Ofast enables fastMath + the offline optimizer that
+  neither JIT (`MTLDevice::newLibrary` exposes only `math_mode`) nor native
+  `mlx.metallib` (built `-fno-fast-math`, no -O) can reach — the lever that
+  lets a user kernel surpass native.
+- **`custom_kernels/metal/gemv_int4_ofast.metal`** + **`.metallib`**: packaged
+  offline-compiled -Ofast kernel source + metallib. Function name matches
+  MLX's `custom_kernel_<name>_<types>` convention.
+- **Results (M5 Max, accumulate-200 CSE-defeated bench, 31 trials, paired A/B
+  median — the only reliable method)**: K=20480 -11.9%, K=28672 -8.0%,
+  K=32768 -9.9%, K=40960 -13.8% vs native. Parity rel 2.3e-4 to 4.0e-4
+  (within fp16 precision; abs diff ~0.1-0.2 at output magnitude ~450-560,
+  < 1 fp16 ulp). K<20480 launch-overhead-bound, delegates to native.
+- **Measurement discipline**: the accumulate-N bench defeats MLX CSE
+  (raw loops of identical ops collapse — `fn()` 200x with single eval gives
+  fake 0.05ms/op; `acc = acc + fn()` forces N real computes). Compiled
+  chain min-over-N is biased (selects favorable outliers). Single-trial
+  eager swings +-10-15% from compile-cache state. Prior V12 "wins"
+  (-4.7/-7.6/-9.8%) were chain-min artifacts; the real win via accumulate
+  bench is -8 to -14% (larger and reproducible).
 - **`scheduler/__init__.py`**: installs `nn.QuantizedLinear.__call__`
-  monkeypatch at import (idempotent, no-op when gate OFF / Metal absent).
-  Routes large-K decode through the custom kernel when
-  `FUSION_FUSED_QUANT_GEMV=1`.
-- **Default OFF** — V12 wins only at large K in compiled chain; production
-  decode is eager where the gap is within ±5% noise. Native remains the
-  production int4 path (`mx.quantized_matmul` via `nn.QuantizedLinear`,
-  default-ON). Measurement artifact lesson: single-trial eager/chain
-  numbers swing ±10-15% from MLX compile-cache state (primitive cache LRU,
-  CSE folding, thermal); trust ONLY compiled 32-layer chain (CSE-defeated)
-  min over 5 trials. stage-4 C++ graph pass is moot (bottleneck is kernel,
-  not graph).
-- **`docs/shim.md`**: updated fused_quant_gemv entry + production-status
-  table + degrade-switch row with the V12 findings (compiled chain min
-  -5 to -10% at large K, 13 variants, tensor cores irrelevant for batch=1).
+  monkeypatch at import (idempotent, no-op when gate OFF / Metal absent /
+  precompiled API unavailable). Routes K>=20480 batch==1 int4 decode
+  through the -Ofast precompiled kernel when `FUSION_FUSED_QUANT_GEMV=1`.
+- **Default ON** (`FUSION_FUSED_QUANT_GEMV` default "1"). On machines with
+  the MLX fork installed, the precompiled path activates for K>=20480
+  decode (-8 to -14% vs native). On stock PyPI MLX the API-detect check
+  routes to native `mx.quantized_matmul` (zero regression, no win either).
+  Upstream dependency: MLX issue #4541 (expose `precompiled_metal_kernel`).
+
 
 ## [0.10.6] — 2026-09-21
 

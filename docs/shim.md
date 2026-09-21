@@ -41,25 +41,27 @@ on product support, Tier-3 items are deliberately not built.
 - `custom_kernels/paged_kv_cow.py` — two-level paged KV with CoW
   (FUSION_SHIM_TWO_LEVEL_KV)
 - `custom_kernels/fused_quant_gemv.py` — fused INT4 dequant+GEMV Metal
-  kernel (FUSION_FUSED_QUANT_GEMV, default OFF). V12 simdgroup kernel =
-  native `qmv_fast_impl`'s 3 optimizations (shift-elimination, affine
-  factoring, simdgroup layout) + 2 structural wins native lacks: (1) 1sg x
-  2r smaller tile = 4x more threadgroups for GPU saturation at small M
-  (decode batch=1), (2) cross-row interleaved weight loads = 2 outstanding
-  loads from 2 addresses = higher memory-level parallelism. Parity-verified
-  vs `mx.quantized_matmul` (max diff 4.8e-7, exact 0.0 across seeds;
-  end-to-end real-model decode produces IDENTICAL tokens). Compiled 32-layer
-  chain min over 5 trials (the cache-stable GPU truth) WINS at large K:
-  -4.7% (K=8K), -7.6% (K=12K), -9.8% (K=14K) vs native. Eager per-op
-  (production path) within ±5% (noise-dominated — BatchedEngine does not
-  wrap model forward in mx.compile so eager = prod). 13 optimization
-  variants attempted (V2-V13); V12 selected. NOT tensor cores: native
-  `qmv_fast` is SCALAR (qdot + simd_sum), not MMA — tensor cores irrelevant
-  for batch=1 (vector LHS wastes matrix tiles), which is WHY MLX uses
-  scalar for decode. Production int4 quant path = native
-  `mx.quantized_matmul` via `nn.QuantizedLinear` (default-ON). When gate
-  ON: batch==1 AND bits==4 AND K>=8192 -> custom; everything else ->
-  native (zero regression).
+  kernel (FUSION_FUSED_QUANT_GEMV, default ON). -Ofast precompiled
+  metallib path: the native-clone algorithm (2 simdgroups x 4 rows/TG,
+  64 threads; shift-elimination + affine factoring + simd_sum — the 3
+  optimizations reverse-engineered from MLX's native `qmv_fast_impl`)
+  compiled offline via `xcrun -sdk macosx metal -std=metal3.2 -Ofast` and
+  loaded through `mx.fast.precompiled_metal_kernel` (MLX-fork API,
+  upstream issue #4541). -Ofast enables fastMath + the offline optimizer
+  that neither JIT (exposes only `math_mode`) nor native `mlx.metallib`
+  (built `-fno-fast-math`, no -O) can reach — the lever that lets a user
+  kernel surpass native. Parity-verified vs `mx.quantized_matmul` (rel
+  diff 2.3e-4 to 4.0e-4, within fp16 precision; abs ~0.1-0.2 at output
+  magnitude ~450-560, < 1 fp16 ulp). Accumulate-200 CSE-defeated bench,
+  31 trials, paired A/B median (the only reliable method — raw loops
+  collapse via CSE, compiled chain min is biased): K=20480 -11.9%,
+  K=28672 -8.0%, K=32768 -9.9%, K=40960 -13.8% vs native. K<20480
+  delegates to native (launch-overhead-bound). NOT tensor cores: native
+  `qmv_fast` is SCALAR (qdot + simd_sum), not MMA — the win is compiler
+  optimization, not tensor cores. When gate ON + precompiled API
+  available: batch==1 AND bits==4 AND K>=20480 -> precompiled -Ofast;
+  everything else -> native (zero regression). On stock PyPI MLX the
+  API-detect check routes to native (zero regression, no win).
 - `speculative/tree_mask.py` — tree-mask verify + virtual append offset
   (FUSION_SHIM_TREE_MASK)
 - `utils/hardware.py` — chip-generation/MMA probe shared by the C++
@@ -94,7 +96,7 @@ runtime via SIGHUP settings reload or test monkeypatching. Defaults:
 | FUSION_SHIM_GRAMMAR_RING | ON | Grammar bitmask ring (wired, -54% end-to-end) |
 | FUSION_SHIM_MOE | OFF | MoE deterministic route dispatch + gather combine |
 | FUSION_SHIM_SSM | OFF | Mamba SSD parallel prefix scan |
-| FUSION_FUSED_QUANT_GEMV | OFF | Custom INT4 dequant+GEMV Metal kernel (V12; parity PASS; compiled chain min -5 to -10% at large K, eager within ±5% noise — native quantized_matmul is prod path) |
+| FUSION_FUSED_QUANT_GEMV | ON | Custom INT4 dequant+GEMV -Ofast precompiled Metal kernel (parity rel<4e-4; -8 to -14% vs native at K>=20480 via accumulate bench; delegates to native on stock PyPI MLX without fork) |
 
 `tests/unit/test_shim_switches.py` enforces the contract: default values,
 literal "0"/"1" handling, and switch independence (enabling one never
@@ -105,7 +107,7 @@ enables another).
 | Module | Wired? | Production path |
 |---|---|---|
 | grammar_ring | yes (sched_thinking, monkeypatches) | default ON, -54% real |
-| fused_quant_gemv (int4) | opt-in (patch wired, default OFF) | native `mx.quantized_matmul` via `nn.QuantizedLinear` (default ON); V12 custom kernel wins compiled chain min -5 to -10% at large K, eager within ±5% noise (13 variants; V12 = smaller tile + cross-row interleave beat native's instruction scheduling at large K) |
+| fused_quant_gemv (int4) | yes (patch wired, default ON) | precompiled -Ofast kernel for K>=20480 batch==1 decode (-8 to -14% vs native, parity rel<4e-4) when MLX fork available; native `mx.quantized_matmul` via `nn.QuantizedLinear` on stock PyPI MLX (zero regression) |
 | fused_rmsnorm_residual | no (contract mismatch) | `mx.fast.rms_norm` native (default) |
 | fused_rope | no (slower +6-9%) | `mx.fast.rope` native (default) |
 | quant_kv (shim) | no (redundant w/ turboquant_kv) | `turboquant_kv.py` int4 (default ON) |
