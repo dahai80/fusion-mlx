@@ -5,6 +5,7 @@
 import glob
 import json
 import logging
+import math
 import time
 from pathlib import Path
 
@@ -20,17 +21,20 @@ OURS_VAE_CONFIG = {
     "in_channels": 3,
     "out_channels": 3,
     "latent_channels": 128,
+    # #947: LTX-Video 0.9.6 VAE layout — NO res_x_y; channel halving is done
+    # by compress_all (DepthToSpace with multiplier=2). base_channels=1024
+    # so decoder conv_in outputs 1024, then 3 DTS halvings: 1024→512→256→128.
+    # Decoder (reversed): conv_in(1024) → res(5) → DTS(→512) → res(5) →
+    # DTS(→256) → res(5) → DTS(→128) → res(5) → conv_out(48). T2V uses
+    # decoder only; encoder base mismatch is I2V-only (not exercised here).
     "blocks": [
-        ["res_x", 4],
-        ["compress_all", 1],
-        ["res_x_y", 1],
-        ["res_x", 3],
-        ["compress_all", 1],
-        ["res_x_y", 1],
-        ["res_x", 3],
-        ["compress_all", 1],
-        ["res_x", 3],
-        ["res_x", 4],
+        ["res_x", 5],
+        ["compress_all", {"multiplier": 2}],
+        ["res_x", 5],
+        ["compress_all", {"multiplier": 2}],
+        ["res_x", 5],
+        ["compress_all", {"multiplier": 2}],
+        ["res_x", 5],
     ],
     "scaling_factor": 1.0,
     "norm_layer": "pixel_norm",
@@ -38,7 +42,7 @@ OURS_VAE_CONFIG = {
     "latent_log_var": "uniform",
     "use_quant_conv": False,
     "causal_decoder": False,
-    "base_channels": 128,
+    "base_channels": 1024,
 }
 
 DIFFUSERS_VAE_CONFIG = {
@@ -139,6 +143,45 @@ def _pixel_shuffle_nd(x, p1, p2, p3):
     return x
 
 
+def get_timestep_embedding(timesteps, dim=256, max_period=10000):
+    # Sinusoidal timestep embedding (diffusers get_timestep_embedding with
+    # flip_sin_to_cos=True, downscale_freq_shift=0 — matches LTX VAE time_proj).
+    half = dim // 2
+    exponent = -math.log(max_period) * mx.arange(half, dtype=mx.float32)
+    exponent = exponent / half
+    freqs = mx.exp(exponent)
+    args = timesteps.astype(mx.float32).reshape(-1, 1) * freqs.reshape(1, -1)
+    sin = mx.sin(args)
+    cos = mx.cos(args)
+    emb = mx.concatenate([cos, sin], axis=-1)
+    return emb
+
+
+class TimestepEmbedding(nn.Module):
+    def __init__(self, in_channels, time_embed_dim):
+        super().__init__()
+        self.linear_1 = nn.Linear(in_channels, time_embed_dim)
+        self.linear_2 = nn.Linear(time_embed_dim, time_embed_dim)
+
+    def __call__(self, sample):
+        x = self.linear_1(sample)
+        x = nn.silu(x)
+        x = self.linear_2(x)
+        return x
+
+
+class TimeEmbedder(nn.Module):
+    # PixArtAlphaCombinedTimestepSizeEmbeddings (use_additional_conditions=False).
+    # time_proj (no params) + timestep_embedder (Linear 256->dim).
+    def __init__(self, embedding_dim):
+        super().__init__()
+        self.timestep_embedder = TimestepEmbedding(256, embedding_dim)
+
+    def __call__(self, timestep):
+        proj = get_timestep_embedding(timestep, 256)
+        return self.timestep_embedder(proj)
+
+
 class PixelNorm(nn.Module):
     def __init__(self, eps=1e-8):
         super().__init__()
@@ -207,6 +250,7 @@ class ResnetBlock3D(nn.Module):
         norm_layer="pixel_norm",
         eps=1e-6,
         spatial_padding_mode="zeros",
+        timestep_conditioning=True,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -222,12 +266,27 @@ class ResnetBlock3D(nn.Module):
         else:
             self.conv_shortcut = None
             self.norm3 = None
+        # #947: LTX-Video 0.9.6 VAE AdaLayerNorm — scale_shift_table (4, ch).
+        # temb projected by parent block's time_embedder to (batch, 4*ch).
+        self.scale_shift_table = (
+            mx.zeros((4, out_channels)) if timestep_conditioning else None
+        )
 
-    def __call__(self, input_tensor, causal=True):
+    def __call__(self, input_tensor, causal=True, temb=None):
         hidden = self.norm1(input_tensor)
+        if self.scale_shift_table is not None and temb is not None:
+            # temb (batch, 4*ch) -> (batch, 4, ch) + scale_shift_table (4, ch)
+            t = temb.reshape(temb.shape[0], 4, -1) + self.scale_shift_table[None]
+            shift_1 = t[:, 0][:, :, None, None, None]
+            scale_1 = t[:, 1][:, :, None, None, None]
+            shift_2 = t[:, 2][:, :, None, None, None]
+            scale_2 = t[:, 3][:, :, None, None, None]
+            hidden = hidden * (1 + scale_1) + shift_1
         hidden = self.non_linearity(hidden)
         hidden = self.conv1(hidden, causal=causal)
         hidden = self.norm2(hidden)
+        if self.scale_shift_table is not None and temb is not None:
+            hidden = hidden * (1 + scale_2) + shift_2
         hidden = self.non_linearity(hidden)
         hidden = self.conv2(hidden, causal=causal)
         if self.norm3 is not None:
@@ -246,6 +305,7 @@ class UNetMidBlock3D(nn.Module):
         norm_layer="pixel_norm",
         eps=1e-6,
         spatial_padding_mode="zeros",
+        timestep_conditioning=True,
     ):
         super().__init__()
         self.res_blocks = [
@@ -255,14 +315,22 @@ class UNetMidBlock3D(nn.Module):
                 norm_layer=norm_layer,
                 eps=eps,
                 spatial_padding_mode=spatial_padding_mode,
+                timestep_conditioning=timestep_conditioning,
             )
             for _ in range(num_layers)
         ]
         self.attention_blocks = None
+        # #947: per-block time_embedder projects raw timestep -> (batch, 4*ch).
+        self.time_embedder = (
+            TimeEmbedder(in_channels * 4) if timestep_conditioning else None
+        )
 
-    def __call__(self, hidden_states, causal=True):
+    def __call__(self, hidden_states, causal=True, temb=None):
+        projected = None
+        if self.time_embedder is not None and temb is not None:
+            projected = self.time_embedder(temb)
         for resnet in self.res_blocks:
-            hidden_states = resnet(hidden_states, causal=causal)
+            hidden_states = resnet(hidden_states, causal=causal, temb=projected)
         return hidden_states
 
 
@@ -570,13 +638,28 @@ class Decoder(nn.Module):
         self.conv_norm_out = _make_norm(output_channel, norm_layer, eps=1e-6)
         self.conv_act = nn.SiLU()
         self.conv_out = CausalConv3d(output_channel, out_channels, kernel_size=3)
+        # #947: LTX-Video 0.9.6 VAE timestep conditioning for norm_out.
+        self.timestep_scale_multiplier = mx.array(1000.0)
+        self.last_time_embedder = TimeEmbedder(output_channel * 2)
+        self.last_scale_shift_table = mx.zeros((2, output_channel))
 
-    def __call__(self, sample, target_shape=None):
+    def __call__(self, sample, target_shape=None, temb=None):
         assert target_shape is not None, "vae: target_shape must be provided"
         sample = self.conv_in(sample, causal=self.causal)
+        if temb is not None:
+            temb = temb * self.timestep_scale_multiplier
         for up_block in self.up_blocks:
-            sample = up_block(sample, causal=self.causal)
+            if hasattr(up_block, "time_embedder"):
+                sample = up_block(sample, causal=self.causal, temb=temb)
+            else:
+                sample = up_block(sample, causal=self.causal)
         sample = self.conv_norm_out(sample)
+        if temb is not None:
+            projected = self.last_time_embedder(temb)
+            t = projected.reshape(projected.shape[0], 2, -1) + self.last_scale_shift_table[None]
+            shift = t[:, 0][:, :, None, None, None]
+            scale = t[:, 1][:, :, None, None, None]
+            sample = sample * (1 + scale) + shift
         sample = self.conv_act(sample)
         sample = self.conv_out(sample, causal=self.causal)
         sample = _pixel_shuffle_nd(sample, 1, self.patch_size, self.patch_size)
@@ -672,10 +755,10 @@ class LTVideoVAE(nn.Module):
         self.mean_of_means: mx.array | None = None
         self.std_of_means: mx.array | None = None
 
-    def decode(self, z, target_shape=None):
+    def decode(self, z, target_shape=None, temb=None):
         if target_shape is None:
             target_shape = z.shape
-        return self.decoder(z, target_shape=target_shape)
+        return self.decoder(z, target_shape=target_shape, temb=temb)
 
     def encode(self, x):
         # x: (B, C, D, H, W) — pad D to be divisible by temporal compression factor 8
@@ -702,8 +785,8 @@ class LTVideoVAE(nn.Module):
             z = (z - m) / s
         return z
 
-    def __call__(self, z, target_shape=None):
-        return self.decode(z, target_shape=target_shape)
+    def __call__(self, z, target_shape=None, temb=None):
+        return self.decode(z, target_shape=target_shape, temb=temb)
 
     @classmethod
     def from_pretrained(cls, model_path, dtype=mx.float32) -> "LTVideoVAE":

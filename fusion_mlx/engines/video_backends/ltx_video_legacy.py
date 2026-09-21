@@ -459,7 +459,9 @@ def _generate_one(
     latents_5d = latents.reshape(1, lf, lh, lw, latent_shape[1])
     latents_5d = mx.transpose(latents_5d, (0, 4, 1, 2, 3)).astype(dtype)
     target_shape = (1, 3, lf * temporal_s, lh * spatial_s, lw * spatial_s)
-    decoded = vae.decode(latents_5d, target_shape=target_shape)
+    # #947: LTX-Video 0.9.6 VAE uses timestep conditioning at decode_timestep=0.0.
+    decode_temb = mx.array([0.0], dtype=mx.float32)
+    decoded = vae.decode(latents_5d, target_shape=target_shape, temb=decode_temb)
     mx.eval(decoded)
     # bf16 mlx arrays expose a PEP 3118 buffer whose item size mismatches
     # float32, so cast to float32 on the mlx side before handing to numpy.
