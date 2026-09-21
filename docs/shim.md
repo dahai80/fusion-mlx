@@ -41,19 +41,28 @@ on product support, Tier-3 items are deliberately not built.
 - `custom_kernels/paged_kv_cow.py` — two-level paged KV with CoW
   (FUSION_SHIM_TWO_LEVEL_KV)
 - `custom_kernels/fused_quant_gemv.py` — fused INT4 dequant+GEMV Metal
-  kernel (FUSION_FUSED_QUANT_GEMV, default OFF). Parity-verified vs
-  `mx.quantized_matmul` (max diff 4.8e-7; end-to-end real-model decode
-  produces IDENTICAL tokens). Custom kernel is SLOWER than native across
-  ALL measurement methods (corrected 2026-09-21 — prior "isolated-chain
-  -16% win" was a measurement artifact): eager per-op +0.8% to +11%,
-  compiled chain +84%, pure-GPU +89% (native kernel is genuinely ~1.9x
-  faster GPU code — MLX uses tensor-core MMA / register tiling this
-  hand-written kernel lacks). Production decode is EAGER (BatchedEngine
-  does not wrap the model forward in mx.compile). Kept as opt-in base-layer
-  Metal capability demonstration + foundation for future work. Production
-  int4 quant path = native `mx.quantized_matmul` via `nn.QuantizedLinear`
-  (default-ON). When gate ON: batch==1 AND bits==4 AND K>=8192 -> custom;
-  everything else -> native (zero regression).
+  kernel (FUSION_FUSED_QUANT_GEMV, default OFF). V2 simdgroup kernel
+  adopts the 3 optimizations reverse-engineered from MLX's native
+  `qmv_fast_impl` (shift-elimination, affine factoring, simdgroup
+  layout). Parity-verified vs `mx.quantized_matmul` (max diff 4.8e-7,
+  exact 0.0 across seeds after OOB-fix; end-to-end real-model decode
+  produces IDENTICAL tokens). V2 closed the gap from the prior NSX
+  kernel (+89% pure-GPU) to +11.4% eager per-op (production path) and
+  PARITY in compiled 32-layer chain at large K (-0.7% K=8K, +0.0%
+  K=11K). Native still wins eager by ~11% (instruction-scheduling edge
+  on a memory-latency-bound op — 45 GB/s = 11% of M5's 400 GB/s peak).
+  NOT tensor cores: native `qmv_fast` itself is SCALAR (qdot + simd_sum),
+  not MMA — tensor cores are irrelevant for batch=1 (vector LHS wastes
+  matrix tiles), which is WHY MLX uses scalar for the decode path. 7
+  optimization variants attempted (V2-V6: uint32 wider loads, 4-simdgroup,
+  1-simdgroup, async double-buffer) — all rejected (precision fail, scale-
+  indexing fail, or slower). V2 is the achievable best; cannot surpass
+  native in-session. Production decode is EAGER (BatchedEngine does not
+  wrap the model forward in mx.compile). Kept as opt-in base-layer Metal
+  capability demonstration. Production int4 quant path = native
+  `mx.quantized_matmul` via `nn.QuantizedLinear` (default-ON). When gate
+  ON: batch==1 AND bits==4 AND K>=8192 -> custom; everything else ->
+  native (zero regression).
 - `speculative/tree_mask.py` — tree-mask verify + virtual append offset
   (FUSION_SHIM_TREE_MASK)
 - `utils/hardware.py` — chip-generation/MMA probe shared by the C++
@@ -88,7 +97,7 @@ runtime via SIGHUP settings reload or test monkeypatching. Defaults:
 | FUSION_SHIM_GRAMMAR_RING | ON | Grammar bitmask ring (wired, -54% end-to-end) |
 | FUSION_SHIM_MOE | OFF | MoE deterministic route dispatch + gather combine |
 | FUSION_SHIM_SSM | OFF | Mamba SSD parallel prefix scan |
-| FUSION_FUSED_QUANT_GEMV | OFF | Custom INT4 dequant+GEMV Metal kernel (parity PASS; slower than native +0.8% to +89% — native ~1.9x faster GPU code; native quantized_matmul is prod path) |
+| FUSION_FUSED_QUANT_GEMV | OFF | Custom INT4 dequant+GEMV Metal kernel (V2; parity PASS; +11.4% slower than native eager, parity compiled large-K — native quantized_matmul is prod path) |
 
 `tests/unit/test_shim_switches.py` enforces the contract: default values,
 literal "0"/"1" handling, and switch independence (enabling one never
@@ -99,7 +108,7 @@ enables another).
 | Module | Wired? | Production path |
 |---|---|---|
 | grammar_ring | yes (sched_thinking, monkeypatches) | default ON, -54% real |
-| fused_quant_gemv (int4) | opt-in (patch wired, default OFF) | native `mx.quantized_matmul` via `nn.QuantizedLinear` (default ON); custom kernel slower than native (+0.8% to +89% across methods — native ~1.9x faster GPU code) |
+| fused_quant_gemv (int4) | opt-in (patch wired, default OFF) | native `mx.quantized_matmul` via `nn.QuantizedLinear` (default ON); V2 custom kernel +11.4% slower eager, parity compiled large-K (closed 89%→11% gap; native instruction-scheduling edge on latency-bound op) |
 | fused_rmsnorm_residual | no (contract mismatch) | `mx.fast.rms_norm` native (default) |
 | fused_rope | no (slower +6-9%) | `mx.fast.rope` native (default) |
 | quant_kv (shim) | no (redundant w/ turboquant_kv) | `turboquant_kv.py` int4 (default ON) |

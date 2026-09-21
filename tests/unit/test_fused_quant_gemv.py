@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for fused INT4 dequant+GEMV Metal kernel.
+"""Tests for fused INT4 dequant+GEMV Metal kernel (V2 simdgroup kernel).
 
-Parity verified vs mx.quantized_matmul (max diff 4.8e-7). End-to-end real
-model decode (Qwen3-8B-4bit) produces IDENTICAL tokens. Custom kernel wins
-in isolated compiled MLP chains (-5% to -16% on large-K) but mx.compile
-graph opacity prevents a reliable end-to-end win -> default OFF, opt-in.
+Parity verified vs mx.quantized_matmul (max diff 4.8e-7, exact 0.0 across
+seeds). V2 adopts native qmv_fast_impl's 3 optimizations (shift-elimination,
+affine factoring, simdgroup layout) — closed the gap from prior NSX kernel
+(+89% pure-GPU) to +11.4% eager per-op (production path) and PARITY in
+compiled 32-layer chain at large K. Native still wins eager by ~11%
+(instruction-scheduling edge on latency-bound op; tensor cores irrelevant
+for batch=1 — native qmv_fast is scalar, not MMA). Default OFF, opt-in.
 """
 
 import mlx.core as mx

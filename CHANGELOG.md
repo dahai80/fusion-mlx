@@ -2,32 +2,41 @@
 
 ## [Unreleased]
 
-### Changed — INT4 fused dequant+GEMV Metal kernel (base layer, opt-in)
-- **`custom_kernels/fused_quant_gemv.py`**: rewritten no-shared-x kernel
-  (supports any K, no 4096 cap). Parity verified vs `mx.quantized_matmul`
-  (max diff 4.8e-7; end-to-end real-model decode Qwen3-8B-4bit produces
-  IDENTICAL tokens). Custom kernel is SLOWER than native across all
-  measurement methods (corrected: prior "isolated-chain -16% win" was a
-  measurement artifact from thermal drift + a K>4096 guard bug that ran
-  native on both sides). Honest numbers: eager per-op +0.8% to +11%,
-  compiled 32-layer chain +84%, pure-GPU per-iter +89% (native ~1.9x
-  faster GPU code — MLX uses tensor-core MMA / register tiling this
-  hand-written kernel lacks). Production decode is EAGER (BatchedEngine
-  does not wrap the model forward in mx.compile). Dispatch when gate ON:
-  batch==1 AND bits==4 AND K>=8192 -> custom; else native (zero regression).
+### Changed — INT4 fused dequant+GEMV Metal kernel V2 (base layer, opt-in)
+- **`custom_kernels/fused_quant_gemv.py`**: V2 simdgroup kernel adopting
+  the 3 optimizations reverse-engineered from MLX's native `qmv_fast_impl`
+  (quantized.h L757): shift-elimination (pre-scale x DOWN, mask-only dot),
+  affine factoring (scale*accum + sum*bias, 2 FMA/group), simdgroup layout
+  (2 simdgroups x 4 rows, single hardware simd_sum). Parity verified vs
+  `mx.quantized_matmul` (max diff 4.8e-7, exact 0.0 across seeds after
+  OOB-fix; end-to-end real-model decode produces IDENTICAL tokens). V2
+  closed the gap from the prior NSX kernel (+89% pure-GPU) to +11.4%
+  eager per-op (production path) and PARITY in compiled 32-layer chain at
+  large K (-0.7% K=8K, +0.0% K=11K). Native still wins eager by ~11%
+  (instruction-scheduling edge on a memory-latency-bound op: 45 GB/s =
+  11% of M5's 400 GB/s peak). NOT tensor cores: native `qmv_fast` is
+  SCALAR (qdot + simd_sum), not MMA — tensor cores are irrelevant for
+  batch=1 (vector LHS wastes matrix tiles), which is WHY MLX uses scalar
+  for decode. 7 variants attempted (V2-V6: uint32 wider loads, 4-simdgroup,
+  1-simdgroup, async double-buffer) — all rejected (precision fail, scale-
+  indexing fail, or slower). V2 is the achievable best; cannot surpass
+  native in-session. Dispatch when gate ON: batch==1 AND bits==4 AND
+  K>=8192 -> custom; else native (zero regression).
 - **`scheduler/__init__.py`**: installs `nn.QuantizedLinear.__call__`
   monkeypatch at import (idempotent, no-op when gate OFF / Metal absent).
   Routes large-K decode through the custom kernel when
   `FUSION_FUSED_QUANT_GEMV=1`.
-- **Default OFF** because slower than native. Production int4 path remains
-  native `mx.quantized_matmul` via `nn.QuantizedLinear` (default-ON).
-  5th confirmation handwriting Metal kernels beating MLX native is not
-  achievable in-session for ops MLX already optimizes (prior: smart-conv
-  10-30x slower, sdpa 86% roofline, RMSNorm microbench-only, int4 GEMV
-  now 1.9x slower). No graph-opacity issue — native kernel is genuinely
-  faster GPU code. stage-4 C++ graph pass is moot (fixes a non-problem).
+- **Default OFF** because slower than native eager. Production int4 path
+  remains native `mx.quantized_matmul` via `nn.QuantizedLinear` (default-ON).
+  5th confirmation handwriting Metal beating MLX native is not achievable
+  in-session for ops MLX already optimizes (prior: smart-conv 10-30x
+  slower, sdpa 86% roofline, RMSNorm microbench-only, int4 GEMV). Native
+  wins on ops it optimizes. Custom wins only for capability gaps (YaRN
+  rope) or fusion patterns native cannot do. stage-4 C++ graph pass is
+  moot (fixes a non-problem — the bottleneck is the kernel, not the graph).
 - **`docs/shim.md`**: updated fused_quant_gemv entry + production-status
-  table with the isolated-win / end-to-end-graph-opacity finding.
+  table + degrade-switch row with the V2 findings (closed 89%→11% gap,
+  parity compiled, tensor cores irrelevant for batch=1).
 
 ## [0.10.6] — 2026-09-21
 
