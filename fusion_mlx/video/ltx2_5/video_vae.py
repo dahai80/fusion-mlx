@@ -23,6 +23,8 @@ from pathlib import Path
 import mlx.core as mx
 from mlx.utils import tree_flatten
 
+from fusion_mlx.video.common import VideoVAEBase
+
 from ..ltx2.config import VideoEncoderModelConfig
 from ..ltx2.video_vae import VideoEncoder
 from ..ltx2.video_vae.decoder import LTX2VideoDecoder
@@ -302,6 +304,64 @@ def load_video_decoder(weights_path: str | Path) -> LTX2VideoDecoder:
     prefixed.update({f"vae.{k}": v for k, v in stats.items()})
     sanitized = model.sanitize(prefixed)
     return _audit_and_load(model, sanitized, "video-decoder", strict=True)
+
+
+class LTX2_5VideoVAE(VideoVAEBase):
+    # #gap5: adopt the unified VideoVAEBase contract (PRD v1 §4.2). Wraps the
+    # existing function-loaded VideoEncoder + LTX2VideoDecoder so the unified
+    # scheduler/router can treat LTX2_5 polymorphically with MiniMaxH3VideoVAE
+    # without rewriting the loaders. Thin delegation — no kernel changes.
+    name = "ltx2_5"
+
+    def __init__(self, encoder=None, decoder=None):
+        self.encoder = encoder
+        self.decoder = decoder
+
+    @classmethod
+    def from_dir(cls, vae_conv_path: str | Path) -> LTX2_5VideoVAE:
+        # Load both encoder + decoder from the single conv VAE file. Use the
+        # existing loaders (they handle MLX<->PyTorch layout + sanitize).
+        enc = load_video_encoder(vae_conv_path)
+        dec = load_video_decoder(vae_conv_path)
+        return cls(enc, dec)
+
+    def encode(self, pixels: mx.array) -> mx.array:
+        if self.encoder is None:
+            raise RuntimeError("LTX2_5VideoVAE: encoder not loaded")
+        return self.encoder(pixels)
+
+    def decode(self, latent: mx.array) -> mx.array:
+        if self.decoder is None:
+            raise RuntimeError("LTX2_5VideoVAE: decoder not loaded")
+        return self.decoder(latent)
+
+    def decode_tiled(self, latent: mx.array, tile_size: int = 256) -> mx.array:
+        # Delegate to the decoder's own tiled path (TilingConfig auto). The
+        # base signature takes a pixel-space tile_size; map to the decoder's
+        # TilingConfig via the default factory (spatial tile in pixels).
+        if self.decoder is None:
+            raise RuntimeError("LTX2_5VideoVAE: decoder not loaded")
+        try:
+            from ..ltx2.video_vae.decoder import TilingConfig
+        except Exception as exc:
+            logger.warning("ltx2_5 tiled decode: TilingConfig unavailable: %s", exc)
+            return self.decoder(latent)
+        cfg = TilingConfig.default()
+        try:
+            cfg.spatial_config.tile_size_in_pixels = tile_size
+        except Exception:
+            pass
+        return self.decoder.decode_tiled(latent, tiling_config=cfg)
+
+    def stats(self) -> dict:
+        out = {"vae": self.name}
+        if self.decoder is not None and hasattr(self.decoder, "per_channel_statistics"):
+            pcs = self.decoder.per_channel_statistics
+            if hasattr(pcs, "mean"):
+                out["latent_mean"] = pcs.mean
+            if hasattr(pcs, "std"):
+                out["latent_std"] = pcs.std
+        return out
 
 
 __all__ = [

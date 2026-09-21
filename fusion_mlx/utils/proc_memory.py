@@ -22,6 +22,8 @@ import logging
 import os
 import sys
 
+import mlx.core as mx
+
 logger = logging.getLogger(__name__)
 
 
@@ -116,3 +118,19 @@ def get_phys_footprint(pid: int | None = None) -> int:
     if rc != 0:
         return 0
     return info.ri_phys_footprint
+
+
+def clear_metal_cache() -> None:
+    # Version-compatible MLX allocator cache clear. MLX 0.32+ deprecates
+    # mx.metal.clear_cache() in favor of mx.clear_cache(); keep the metal
+    # fallback for older builds. No-op if neither exists (non-Metal CI).
+    if hasattr(mx, "clear_cache"):
+        try:
+            mx.clear_cache()
+        except Exception:
+            pass
+    elif hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
+        try:
+            mx.metal.clear_cache()
+        except Exception:
+            pass
