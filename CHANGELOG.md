@@ -2,21 +2,27 @@
 
 ## [Unreleased]
 
-### Added — INT4 fused dequant+GEMV Metal kernel (base layer)
-- **`custom_kernels/fused_quant_gemv.py`**: custom Metal kernel that fuses
-  INT4 dequant + GEMV in one pass (packed uint32 unpack, affine per-group
-  dequant, register-tiled accumulation). Parity verified vs
-  `mx.quantized_matmul` (max diff 4.8e-7 on Qwen 4096×11008 shape).
-  Opt-in via `FUSION_FUSED_QUANT_GEMV=1` (default OFF — measured slower
-  than MLX native across 8 optimization variants). Kept as base-layer
-  Metal capability demonstration + foundation for future M5 NAx /
-  heterogeneous CPU+GPU work (PRD stage-2/3).
-- **Audit verification**: confirmed int4 fused dequant+matmul feature is
-  already default-ON in production via `nn.QuantizedLinear` →
-  `mx.quantized_matmul` (112 layers in a typical 4-bit model, end-to-end
-  verified with Llama-3.2-1B-4bit).
-- **`docs/shim.md`**: corrected stale default-ON/OFF table, added
-  production-status table documenting which shim ops are wired vs dead code.
+### Changed — INT4 fused dequant+GEMV Metal kernel (base layer, opt-in)
+- **`custom_kernels/fused_quant_gemv.py`**: rewritten no-shared-x kernel
+  (supports any K, no 4096 cap). Parity verified vs `mx.quantized_matmul`
+  (max diff 4.8e-7; end-to-end real-model decode Qwen3-8B-4bit produces
+  IDENTICAL tokens). Custom kernel WINS in isolated compiled MLP chains
+  (-5% to -16% on large-K: Qwen2.5-7B down_proj K=18944 -16.1%, square
+  D=8192 -4.7% to -15.8%). Dispatch: batch==1 AND bits==4 AND K>=8192 ->
+  custom; everything else -> native (zero regression).
+- **`scheduler/__init__.py`**: installs `nn.QuantizedLinear.__call__`
+  monkeypatch at import (idempotent, no-op when gate OFF / Metal absent).
+  Routes large-K decode through the custom kernel when
+  `FUSION_FUSED_QUANT_GEMV=1`.
+- **End-to-end limit (honest)**: `mx.fast.metal_kernel` is opaque to
+  `mx.compile`. In a full model forward the opaque kernel fragments
+  compiler scheduling, erasing the isolated-chain win. Real Qwen3-8B-4bit
+  decode (ON vs OFF, parity IDENTICAL) tok/s within run-to-run noise
+  (18-30 tok/s) — no reliable end-to-end win. Breaking through needs PRD
+  stage-4 (C++ graph-optimizer pass). Default OFF; opt-in for isolated
+  chains / experimentation.
+- **`docs/shim.md`**: updated fused_quant_gemv entry + production-status
+  table with the isolated-win / end-to-end-graph-opacity finding.
 
 ## [0.10.6] — 2026-09-21
 

@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Scheduler subpackage."""
 
+import logging
+
 import mlx.core as mx  # noqa: F401  (backward-compat: tests patch scheduler.mx)
 
 # Install the M5 single-stream compat shim (#404/#617) before any submodule
@@ -13,6 +15,17 @@ import mlx.core as mx  # noqa: F401  (backward-compat: tests patch scheduler.mx)
 from .. import _mlx_compat
 
 _mlx_compat.install()
+
+try:
+    from ..custom_kernels.fused_quant_gemv import (
+        install_fused_quant_gemv_patch,
+    )
+
+    install_fused_quant_gemv_patch()
+except Exception:
+    logging.getLogger(__name__).debug(
+        "fused_quant_gemv patch install skipped", exc_info=True
+    )
 
 from ..cache.paged_ssd_cache import PagedSSDCacheManager  # noqa: F401
 from ..speculative.vlm_mtp import run_vlm_mtp_decode  # noqa: F401

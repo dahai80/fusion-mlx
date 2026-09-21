@@ -41,13 +41,20 @@ on product support, Tier-3 items are deliberately not built.
 - `custom_kernels/paged_kv_cow.py` — two-level paged KV with CoW
   (FUSION_SHIM_TWO_LEVEL_KV)
 - `custom_kernels/fused_quant_gemv.py` — fused INT4 dequant+GEMV Metal
-  kernel (FUSION_FUSED_QUANT_GEMV). Parity-verified vs
-  `mx.quantized_matmul` (max diff 4.8e-7). Measured slower than native
-  across 8 optimization variants (+6% to +246%); kept as opt-in base-layer
-  capability demo + foundation for future M5 NAx / heterogeneous work.
-  Production int4 quant path = native `mx.quantized_matmul` via
-  `nn.QuantizedLinear` (already default-ON, 112 layers in a typical 4-bit
-  model).
+  kernel (FUSION_FUSED_QUANT_GEMV, default OFF). Parity-verified vs
+  `mx.quantized_matmul` (max diff 4.8e-7; end-to-end real-model decode
+  produces IDENTICAL tokens). Custom kernel WINS in isolated compiled
+  MLP chains (-5% to -16% on large-K, e.g. Qwen2.5-7B down_proj K=18944
+  -16.1%), but `mx.fast.metal_kernel` is opaque to `mx.compile` — in a
+  full model forward (attention+RMSNorm+RoPE+MLP one graph) the opaque
+  kernel fragments compiler scheduling, erasing the isolated win. Real
+  Qwen3-8B-4bit decode (ON vs OFF, parity IDENTICAL) tok/s within
+  run-to-run noise (18-30 tok/s) — no reliable end-to-end win. Kept as
+  opt-in base-layer capability + foundation for PRD stage-4 (C++ graph
+  pass registering dequant+GEMV as a fused primitive). Production int4
+  quant path = native `mx.quantized_matmul` via `nn.QuantizedLinear`
+  (default-ON). When gate ON: batch==1 AND bits==4 AND K>=8192 ->
+  custom; everything else -> native (zero regression).
 - `speculative/tree_mask.py` — tree-mask verify + virtual append offset
   (FUSION_SHIM_TREE_MASK)
 - `utils/hardware.py` — chip-generation/MMA probe shared by the C++
@@ -82,7 +89,7 @@ runtime via SIGHUP settings reload or test monkeypatching. Defaults:
 | FUSION_SHIM_GRAMMAR_RING | ON | Grammar bitmask ring (wired, -54% end-to-end) |
 | FUSION_SHIM_MOE | OFF | MoE deterministic route dispatch + gather combine |
 | FUSION_SHIM_SSM | OFF | Mamba SSD parallel prefix scan |
-| FUSION_FUSED_QUANT_GEMV | OFF | Custom INT4 dequant+GEMV Metal kernel (parity PASS, slower than native; native quantized_matmul is prod path) |
+| FUSION_FUSED_QUANT_GEMV | OFF | Custom INT4 dequant+GEMV Metal kernel (parity PASS; isolated-chain -5% to -16% win, end-to-end within noise due to mx.compile opacity; native quantized_matmul is prod path) |
 
 `tests/unit/test_shim_switches.py` enforces the contract: default values,
 literal "0"/"1" handling, and switch independence (enabling one never
@@ -93,7 +100,7 @@ enables another).
 | Module | Wired? | Production path |
 |---|---|---|
 | grammar_ring | yes (sched_thinking, monkeypatches) | default ON, -54% real |
-| fused_quant_gemv (int4) | opt-in (slower than native) | native `mx.quantized_matmul` via `nn.QuantizedLinear` (default ON) |
+| fused_quant_gemv (int4) | opt-in (patch wired, default OFF) | native `mx.quantized_matmul` via `nn.QuantizedLinear` (default ON); custom kernel wins isolated chains -5%/-16% but no end-to-end win (mx.compile opacity) |
 | fused_rmsnorm_residual | no (contract mismatch) | `mx.fast.rms_norm` native (default) |
 | fused_rope | no (slower +6-9%) | `mx.fast.rope` native (default) |
 | quant_kv (shim) | no (redundant w/ turboquant_kv) | `turboquant_kv.py` int4 (default ON) |
