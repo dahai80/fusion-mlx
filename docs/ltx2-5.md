@@ -174,25 +174,42 @@ cross-tile randomness/statistics dependency.
 ### Distilled T2V nondeterminism (#946)
 
 Distilled T2V produces black/noise frames in ~5/6 runs; same seed → different
-results (1 run good, rerun black). Root cause: **nondeterministic bf16
-reduction order in `mx.fast.scaled_dot_product_attention`**, accumulated
-across 48 layers × 11 distilled steps, amplified by q8→bf16
-`mx.quantized_matmul` in every Linear + single-seed/no-reseed two-stage
-structure. NOT sigma (#942 falsified), NOT `mx.compile(transformer)`
-(default OFF).
+results (1 run good, rerun black).
 
-Mitigation + diagnosis env vars (all default OFF):
+**Root cause (FOUND via `FUSION_LTX_DEBUG_LATENTS=1` real-model A/B)**: the
+NaN originates in the **q8 Gemma4-12b text encoder output** (`te_video_features`
+NaN), NOT the transformer attention. Debug evidence (25f @ 512x320,
+`dgrauet--ltx-2.5-mlx-q8`, seed 42):
 
-- **`FUSION_LTX_DETERMINISTIC_ATTN=1`** — routes SDPA through fp32 un-fused
-  math (`softmax(Q@K^T * scale) @ V` in fp32, cast back to bf16). Deterministic
-  reduction. Slower — opt-in. If 6/6 same-seed runs produce stable real
-  content, root cause confirmed = bf16 reduction order.
-- **`FUSION_LTX_DEBUG_LATENTS=1`** — logs `mx.abs(latents).max()` + NaN/Inf
-  after stage1 and stage2 denoise.
-- Stage2 now re-seeds (`seed + 1`) before its noise draw.
+```
+te_video_features  max_abs=nan nan=True   # <- NaN born here (TE)
+stage1_in          max_abs=3.89 nan=False  # initial latents finite
+context_in         max_abs=nan nan=True   # connector propagates NaN
+stage1_out         max_abs=nan nan=True   # transformer propagates NaN
+stage2_out         max_abs=nan nan=True   # -> black frames (std=0)
+```
 
-Full fix requires upstream MLX deterministic SDPA. Issue to be filed
-(ml-explore/mlx). #946 stays open until real-model A/B confirms 6/6 stable.
+The transformer attention, connector, and q8 transformer weights are innocent —
+they propagate the TE's NaN. The prior theory (bf16 transformer SDPA) was
+**falsified**: `FUSION_LTX_DETERMINISTIC_ATTN=1` (fp32 transformer SDPA) did
+not eliminate the NaN. The nondeterminism (1/6 good) comes from the TE's own
+Gemma4 attention (bf16 SDPA inside mlx_lm DecoderLayers) sometimes not
+overflowing.
+
+Diagnostic env vars (all default OFF):
+
+- **`FUSION_LTX_DEBUG_LATENTS=1`** — logs `mx.abs(latents).max()` + NaN/Inf at
+  `te_video_features`, `stage1_in`, `context_in`, `stage1_out`, `stage2_out`.
+  This is the diagnostic that FOUND the root cause.
+- **`FUSION_LTX_DETERMINISTIC_ATTN=1`** — fp32 un-fused SDPA in the
+  **transformer** attention. Does NOT fix #946 (NaN is upstream in the TE);
+  kept as a diagnostic tool.
+- Stage2 re-seeds (`seed + 1`) before its noise draw (harmless good-practice).
+
+**Fix direction (NOT yet landed — #946 open)**: the q8 Gemma4-12b TE forward
+must be made numerically stable — either dequantize TE weights to fp32, or
+patch the TE's Gemma4 attention to a deterministic fp32 path. New
+investigation; no half-fix landed.
 
 ### Fail-visible guards
 

@@ -281,6 +281,7 @@ def generate_video(
     )
     model_dtype = video_features.dtype
     mx.eval(video_features, additive_mask)
+    _debug_log_latents("te_video_features", video_features)
     logger.info(
         "Text encoder loaded: video_features=%s mask=%s",
         video_features.shape,
@@ -490,6 +491,8 @@ def generate_video(
         )
         mx.eval(latents)
 
+    _debug_log_latents("stage1_in", latents)
+    _debug_log_latents("context_in", context)
     latents = denoise_distilled_t2v(
         latents,
         positions,
