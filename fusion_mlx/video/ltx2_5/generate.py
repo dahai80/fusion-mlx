@@ -38,6 +38,7 @@ from .text_encoder import load_text_encoder
 from .upsampler import load_spatial_upsampler_2_5, load_temporal_upsampler
 from .utils import get_model_path, is_split_layout, resolve_component
 from .video_vae import load_video_decoder, load_video_encoder
+from ..ltx2.video_vae.tiling import TilingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -537,8 +538,40 @@ def generate_video(
             logger.debug("ltx2_5 session-tail put failed", exc_info=True)
 
     # ---- 11. VAE decode -> frames -> mp4 ----
-    logger.info("Decoding latents %s ...", latents.shape)
-    video = vae_decoder(latents)
+    # Tiled decode for large latents (mirrors the ltx2 path). Untiled full
+    # decode of long clips spikes process memory past the enforcer hard
+    # watermark and gets the job aborted (#936).
+    if tiling == "none":
+        tiling_config = None
+    elif tiling == "auto":
+        tiling_config = TilingConfig.auto(height, width, num_frames)
+    elif tiling == "default":
+        tiling_config = TilingConfig.default()
+    elif tiling == "aggressive":
+        tiling_config = TilingConfig.aggressive()
+    elif tiling == "conservative":
+        tiling_config = TilingConfig.conservative()
+    elif tiling == "spatial":
+        tiling_config = TilingConfig.spatial_only()
+    elif tiling == "temporal":
+        tiling_config = TilingConfig.temporal_only()
+    else:
+        logger.warning("Unknown tiling mode '%s', using auto", tiling)
+        tiling_config = TilingConfig.auto(height, width, num_frames)
+
+    logger.info(
+        "Decoding latents %s (tiling=%s) ...",
+        latents.shape,
+        tiling if tiling_config is None else "tiled",
+    )
+    if tiling_config is not None:
+        video = vae_decoder.decode_tiled(
+            latents,
+            tiling_config=tiling_config,
+            tiling_mode=tiling if tiling in ("conservative", "none", "auto", "default", "spatial") else "auto",
+        )
+    else:
+        video = vae_decoder(latents)
     mx.eval(video)
     mx.clear_cache()
     del vae_decoder
