@@ -30,7 +30,6 @@ from ..ltx2.conditioning import (
 from ..ltx2.positions import create_position_grid
 from ..ltx2.upsampler import upsample_latents
 from ..ltx2.utils import load_image, prepare_image_for_encoding
-from ..ltx2.video_vae.tiling import TilingConfig
 from .config import LTX2_5Variant
 from .denoise import denoise_distilled_t2v
 from .ltx2_5_model import LTX2_5Model
@@ -538,44 +537,8 @@ def generate_video(
             logger.debug("ltx2_5 session-tail put failed", exc_info=True)
 
     # ---- 11. VAE decode -> frames -> mp4 ----
-    # Tiled decode for large latents (mirrors the ltx2 path). Untiled full
-    # decode of long clips spikes process memory past the enforcer hard
-    # watermark and gets the job aborted (#936).
-    if tiling == "none":
-        tiling_config = None
-    elif tiling == "auto":
-        tiling_config = TilingConfig.auto(height, width, num_frames)
-    elif tiling == "default":
-        tiling_config = TilingConfig.default()
-    elif tiling == "aggressive":
-        tiling_config = TilingConfig.aggressive()
-    elif tiling == "conservative":
-        tiling_config = TilingConfig.conservative()
-    elif tiling == "spatial":
-        tiling_config = TilingConfig.spatial_only()
-    elif tiling == "temporal":
-        tiling_config = TilingConfig.temporal_only()
-    else:
-        logger.warning("Unknown tiling mode '%s', using auto", tiling)
-        tiling_config = TilingConfig.auto(height, width, num_frames)
-
-    logger.info(
-        "Decoding latents %s (tiling=%s) ...",
-        latents.shape,
-        tiling if tiling_config is None else "tiled",
-    )
-    if tiling_config is not None:
-        video = vae_decoder.decode_tiled(
-            latents,
-            tiling_config=tiling_config,
-            tiling_mode=(
-                tiling
-                if tiling in ("conservative", "none", "auto", "default", "spatial")
-                else "auto"
-            ),
-        )
-    else:
-        video = vae_decoder(latents)
+    logger.info("Decoding latents %s ...", latents.shape)
+    video = vae_decoder(latents)
     mx.eval(video)
     mx.clear_cache()
     del vae_decoder
