@@ -3,16 +3,21 @@
 # Reference: Conv -> SafeGroupNorm(FP32 stats) -> SiLU (3-op chain).
 # Fused: mx.fast.metal_kernel two-stage. Gate: cosine >= 0.98 (PRD V2 tier-2).
 
-import os
 
 import mlx.core as mx
 import numpy as np
 import pytest
 
-os.environ.setdefault("FUSION_FUSED_CONV_GN_SILU", "1")
-
 from fusion_mlx.custom_kernels.fused_conv_gn_silu import fused_conv_gn_silu
 from fusion_mlx.nn_ext.safe_group_norm import SafeGroupNorm
+
+
+@pytest.fixture(autouse=True)
+def _fused_kernel_env(monkeypatch):
+    # Module-scope os.environ leaked into the rest of the suite and flipped
+    # every ConvGroupNormSiLU onto the fp16 MSL kernel path. Set per-test,
+    # auto-restored.
+    monkeypatch.setenv("FUSION_FUSED_CONV_GN_SILU", "1")
 
 
 def _reference(x, w, b, gamma, beta, num_groups, eps):

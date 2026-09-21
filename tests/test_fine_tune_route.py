@@ -38,6 +38,8 @@ def mock_pool():
     pool.get_entry = MagicMock(return_value=None)
     pool.get_engine = AsyncMock(return_value=MagicMock())
     pool.unload_engine_async = AsyncMock()
+    # AS-6: route reads via `await pool.iter_entries()`, not `_entries` directly
+    pool.iter_entries = AsyncMock(return_value=[])
     pool._entries = {}
     return pool
 
@@ -232,6 +234,7 @@ class TestModelEndpoint:
         entry = MagicMock(model_type="llm", model_path="/tmp/qwen3")
         entry.engine = None
         mock_pool._entries = {"qwen3": entry}
+        mock_pool.iter_entries = AsyncMock(return_value=[("qwen3", entry)])
         resp = client.get("/api/fine-tune/models")
         assert resp.status_code == 200
         data = resp.json()
@@ -241,6 +244,7 @@ class TestModelEndpoint:
     def test_list_models_filters_non_text(self, client, mock_pool):
         entry = MagicMock(model_type="diffusion", model_path="/tmp/sd")
         mock_pool._entries = {"sd3": entry}
+        mock_pool.iter_entries = AsyncMock(return_value=[("sd3", entry)])
         resp = client.get("/api/fine-tune/models")
         assert resp.status_code == 200
         assert resp.json() == []
