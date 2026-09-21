@@ -97,6 +97,26 @@ def preprocess_img(img_bgr, half_mask=False, size=RESIZED_IMG):
     return x[None]  # (1,3,256,256)
 
 
+def _apply_graph_patterns(**nets) -> None:
+    # #932: whole-module graph fusion on ResnetBlock2D-style blocks (GN->SiLU->Conv
+    # pairs fused inside an execution-equivalent block). Runs BEFORE
+    # _apply_smart_conv so SmartConv2d wraps the fused blocks' inner convs.
+    # Default ON; FUSION_MUSETALK_GRAPH_PATTERNS=0 opts out (original blocks).
+    if os.environ.get("FUSION_MUSETALK_GRAPH_PATTERNS", "1") != "1":
+        return
+    try:
+        from fusion_mlx.graph_opt import apply_patterns
+    except Exception as exc:
+        logger.warning("[musetalk] apply_patterns unavailable: %s", exc)
+        return
+    for name, net in nets.items():
+        try:
+            n = apply_patterns(net, enable_module_patterns=True)
+            logger.info("[musetalk] apply_patterns fused %d modules (%s)", n, name)
+        except Exception as exc:
+            logger.warning("[musetalk] apply_patterns skipped (%s): %s", name, exc)
+
+
 def _apply_smart_conv(**nets) -> None:
     # Wrap Conv2d modules with SmartConv2d (per-shape Metal kernel autotune, #919).
     # Default ON — real-weights A/B (M5 Max, MLX 0.32.0, sd-vae-ft-mse VAE +
@@ -165,6 +185,7 @@ class MuseTalkPipeline:
         unet = UNet2DConditionModel()
         load_unet_weights(unet, root / "MuseTalk" / "musetalkV15" / "unet.pth")
         unet.eval()
+        _apply_graph_patterns(vae=vae, unet=unet)
         _apply_smart_conv(vae=vae, unet=unet)
         enc = WhisperEncoder()
         load_whisper_encoder_weights(enc, root / "whisper-tiny")
@@ -192,6 +213,7 @@ class MuseTalkPipeline:
             nn.quantize(unet, group_size=q["group_size"], bits=q["bits"])
         load_native(unet, dist_dir / "unet.safetensors")
         unet.eval()
+        _apply_graph_patterns(vae=vae, unet=unet)
         _apply_smart_conv(vae=vae, unet=unet)
         enc = WhisperEncoder()
         load_native(enc, dist_dir / "whisper_encoder.safetensors")

@@ -12,10 +12,12 @@ from .passes import (
     GraphPass,
     apply_patterns,
     compile_with_custom_pass,
+    fuse_resnet_block,
     fused_conv_groupnorm_silu,
+    register_module_pattern,
     register_pattern,
 )
-from .patterns import ConvGroupNormSiLU
+from .patterns import ConvGroupNormSiLU, GroupNormSiLUConv
 from .smart_conv import (
     SmartConv2d,
     apply_smart_conv,
@@ -36,6 +38,9 @@ __all__ = [
     "apply_patterns",
     "compile_with_custom_pass",
     "register_pattern",
+    "register_module_pattern",
     "fused_conv_groupnorm_silu",
+    "fuse_resnet_block",
     "ConvGroupNormSiLU",
+    "GroupNormSiLUConv",
 ]

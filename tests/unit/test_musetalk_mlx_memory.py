@@ -79,7 +79,56 @@ def test_constructors_call_tune_mlx_memory(monkeypatch):
     assert calls
 
 
-def test_smart_conv_default_on(monkeypatch):
+def test_graph_patterns_default_on(monkeypatch):
+    # #932: module-pattern fusion runs before smart_conv by default.
+    # Opt-out: FUSION_MUSETALK_GRAPH_PATTERNS=0.
+    monkeypatch.delenv("FUSION_MUSETALK_GRAPH_PATTERNS", raising=False)
+    monkeypatch.setattr(pipeline_mlx, "tune_mlx_memory", lambda: None)
+    monkeypatch.setattr(
+        pipeline_mlx.Path, "read_text", lambda self, **kw: '{"dtype": "float16"}'
+    )
+    from fusion_mlx.video.musetalk_mlx.utils import weights as weights_mod
+
+    monkeypatch.setattr(weights_mod, "load_native", lambda *a, **k: None)
+    called = []
+    import fusion_mlx.graph_opt as graph_opt
+
+    monkeypatch.setattr(
+        graph_opt,
+        "apply_patterns",
+        lambda net, enable_module_patterns=False: called.append(enable_module_patterns),
+    )
+    try:
+        pipeline_mlx.MuseTalkPipeline.from_pretrained_mlx("/tmp/fake-dist")
+    except Exception:
+        pass
+    assert called  # default ON — applied to vae + unet
+    assert len(called) == 2
+    assert all(c is True for c in called)
+
+
+def test_graph_patterns_opt_out(monkeypatch):
+    monkeypatch.setenv("FUSION_MUSETALK_GRAPH_PATTERNS", "0")
+    monkeypatch.setattr(pipeline_mlx, "tune_mlx_memory", lambda: None)
+    monkeypatch.setattr(
+        pipeline_mlx.Path, "read_text", lambda self, **kw: '{"dtype": "float16"}'
+    )
+    from fusion_mlx.video.musetalk_mlx.utils import weights as weights_mod
+
+    monkeypatch.setattr(weights_mod, "load_native", lambda *a, **k: None)
+    called = []
+    import fusion_mlx.graph_opt as graph_opt
+
+    monkeypatch.setattr(
+        graph_opt,
+        "apply_patterns",
+        lambda net, enable_module_patterns=False: called.append(net),
+    )
+    try:
+        pipeline_mlx.MuseTalkPipeline.from_pretrained_mlx("/tmp/fake-dist")
+    except Exception:
+        pass
+    assert not called  # opt-out — no fusion
     # #919/#921: SmartConv2d wraps VAE + UNet by default — real-weights A/B
     # (sd-vae-ft-mse + MuseTalk V15, b2): 80.0 -> 66.8 ms/round, image drift vs
     # fp32 at or below native-fp16 noise. Opt-out: FUSION_MUSETALK_SMART_CONV=0.
