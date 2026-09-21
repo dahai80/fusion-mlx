@@ -13,47 +13,50 @@ PRODUCTION STATUS (measured 2026-09-21, M5 Max, MLX 0.31.2):
   Parity: PASS (max diff 4.8e-7 vs mx.quantized_matmul; end-to-end real
   model decode produces IDENTICAL tokens — verified on Qwen3-8B-4bit).
 
-  Isolated compiled MLP chain (up->down x16 pairs = 32 layers, @mx.compile,
-  single eval — no CSE possible since each layer feeds the next):
-    | model               | hidden | inter  | delta vs native |
-    |---------------------|--------|--------|-----------------|
-    | Qwen2.5-7B          | 3584   | 18944  | -16.1%  (WIN)   |
-    | Qwen3-8B            | 4096   | 12288  |  -2.7%  (marginal) |
-    | Llama-3.2-1B        | 2048   | 8192   |  +2.8%  (noise) |
-  Square-shape compiled chain D=8192: custom -4.7% to -15.8% (reproducible).
-  The win scales with K (input_dims): larger K = bandwidth-bound = custom
-  wins more. Small-K layers are within noise of native -> dispatch native.
+  PERFORMANCE: custom kernel is SLOWER than native across ALL measurement
+  methods (corrected 2026-09-21 — prior "isolated-chain -16% win" was a
+  measurement artifact from thermal drift + a K>4096 guard bug that
+  silently ran native on both sides):
+    | method                        | native   | custom   | delta  |
+    |-------------------------------|----------|----------|--------|
+    | eager per-op (production)     | 2.08ms   | 2.10ms   | +0.8%  |
+    | compiled 32-layer chain       | 16.1ms   | 29.6ms   | +83.8% |
+    | pure-GPU per-iter (compiled)  | 14.4ms   | 27.1ms   | +88.6% |
+  Native wins everywhere. Production decode is EAGER (fusion-mlx
+  BatchedEngine does NOT wrap the model forward in mx.compile — verified
+  in engines/batched.py; only embedding/reranker/image_gen/sampler
+  compile). So the eager per-op number is the production-relevant one:
+  native is faster even there (+0.8% to +11% across shapes).
 
-  END-TO-END LIMIT (why default OFF, not a production win): mx.fast.
-  metal_kernel is OPAQUE to mx.compile. In an isolated all-QuantizedLinear
-  chain there is nothing else to fuse, so the kernel's raw speed wins
-  (-5% to -16%). In a FULL model forward (attention + RMSNorm + RoPE +
-  MLP in one compiled graph) the opaque kernel call fragments the
-  compiler's scheduling across ALL ops, erasing the isolated win. Real
-  Qwen3-8B-4bit decode (patch ON vs OFF, parity IDENTICAL) shows tok/s
-  within run-to-run noise (18-30 tok/s) — no reliable end-to-end win.
-  Breaking through needs PRD stage-4: a C++ graph-optimizer pass that
-  registers dequant+GEMV as a fused graph primitive (not metal_kernel).
+  ROOT CAUSE (corrected): NOT mx.compile graph opacity. The native
+  quantized_matmul Metal kernel is genuinely ~1.9x faster GPU code
+  (pure-GPU measurement: native 14.4ms vs custom 27.1ms per 32-layer
+  iter). MLX's kernel uses tensor-core MMA / register tiling / async
+  prefetch that this hand-written kernel does not. No graph pass fixes a
+  slower kernel — stage-4 C++ graph-optimizer work is MOOT here.
 
   This is the 5th confirmation that handwriting Metal kernels beating MLX
-  native end-to-end is blocked by mx.compile graph opacity (prior:
-  smart-conv 10-30x slower, sdpa 86% roofline, RMSNorm microbench-only,
-  int4 GEMV now). Native wins on ops it already optimizes as graph
-  primitives. Custom wins only for capability gaps or isolated chains.
+  native is not achievable in-session for ops MLX already optimizes
+  (prior: smart-conv 10-30x slower, sdpa 86% roofline, RMSNorm
+  microbench-only, int4 GEMV now 1.9x slower). Native wins on ops it
+  already optimizes. Custom wins only for capability gaps (YaRN rope) or
+  fusion patterns native cannot do.
 
-  Dispatch (when gate ON): batch==1 AND bits==4 AND K>=_WIN_K_THRESHOLD
+  Dispatch (when gate ON): batch==1 AND bits==4 AND K>=_CUSTOM_K_THRESHOLD
   (8192) -> custom kernel. Everything else -> native mx.quantized_matmul.
-  Zero correctness regression outside the win zone (parity IDENTICAL).
+  Zero correctness regression (parity IDENTICAL). Kept as opt-in base-layer
+  Metal capability demonstration + foundation for future work. Default OFF
+  because slower than native — native is the production path.
 
 Wiring: install_fused_quant_gemv_patch() monkeypatches
 nn.QuantizedLinear.__call__ to route large-K decode through the custom
 kernel. Called at scheduler import (idempotent, no-op when gate OFF or
-Metal unavailable). Safe: only activates in the narrow isolated-win zone;
-everywhere else passthrough to stock mx.quantized_matmul.
+Metal unavailable).
 
 Degrade switch: FUSION_FUSED_QUANT_GEMV (default "0" = OFF).
-  "1" = opt-in custom kernel (isolated-chain win, end-to-end within noise).
-  Default OFF because no reliable end-to-end win (mx.compile opacity).
+  "1" = opt-in custom kernel (slower than native; for experimentation).
+  Default OFF because native is faster. Production int4 path = native
+  mx.quantized_matmul via nn.QuantizedLinear (default-ON).
 """
 
 from __future__ import annotations
@@ -68,7 +71,7 @@ logger = logging.getLogger(__name__)
 
 _FUSED_QUANT_GEMV_KERNEL = None
 
-_WIN_K_THRESHOLD = 8192
+_CUSTOM_K_THRESHOLD = 8192
 
 _CONFIG = {
     8192: (4, 128),
@@ -119,8 +122,9 @@ def fused_dequant_gemv_int4(
 
     weight: (M, K//8) uint32 packed int4. x: (1, K) or (K,). out: (1, M).
     Custom kernel used only when: gate ON, bits==4, batch==1, K>=8192
-    (bandwidth-bound win zone). Otherwise delegates to
-    mx.quantized_matmul (zero regression).
+    (large-K exercise zone; custom is slower than native, gate is opt-in
+    for experimentation). Otherwise delegates to mx.quantized_matmul
+    (zero regression).
     """
     K = scales.shape[1] * group_size
     use_custom = (
@@ -128,7 +132,7 @@ def fused_dequant_gemv_int4(
         and bits == 4
         and x.ndim == 2
         and x.shape[0] == 1
-        and K >= _WIN_K_THRESHOLD
+        and K >= _CUSTOM_K_THRESHOLD
         and mx.metal.is_available()
     )
     if not use_custom:
@@ -207,9 +211,9 @@ def install_fused_quant_gemv_patch():
     nn.QuantizedLinear.__call__ = _patched_quantized_linear_call
     _patch_installed = True
     logger.info(
-        "fused_quant_gemv: patched nn.QuantizedLinear (custom kernel for "
-        "batch==1 int4 K>=%d decode, native elsewhere)",
-        _WIN_K_THRESHOLD,
+        "fused_quant_gemv: patched nn.QuantizedLinear (opt-in custom kernel "
+        "for batch==1 int4 K>=%d; slower than native, for experimentation)",
+        _CUSTOM_K_THRESHOLD,
     )
 
 
