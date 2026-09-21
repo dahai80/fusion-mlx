@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.6] — 2026-09-21
 
 ### Added — #932 module-level graph patterns
 - **`graph_opt` whole-module fusion** (`fusion_mlx/graph_opt/passes.py`):
