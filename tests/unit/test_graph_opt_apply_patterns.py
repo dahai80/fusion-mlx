@@ -66,7 +66,10 @@ def test_apply_patterns_skips_non_triples():
     assert len(m.partial) == 2
 
 
-def test_apply_patterns_output_parity_and_weight_sharing():
+def test_apply_patterns_output_parity_and_weight_sharing(monkeypatch):
+    # Parity target is the 3-op chain path; pin env so an externally-set
+    # FUSION_FUSED_CONV_GN_SILU=1 (fp16 MSL kernel) cannot flip the path.
+    monkeypatch.delenv("FUSION_FUSED_CONV_GN_SILU", raising=False)
     m = TripleHolder()
     x = mx.random.normal((1, 8, 8, 4))
     mx.eval(m.parameters())

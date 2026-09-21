@@ -72,7 +72,10 @@ def test_conv_groupnorm_silu_fusion_output_shape():
     assert out.shape == (1, 8, 8, 16)
 
 
-def test_conv_groupnorm_silu_matches_unfused_fp32():
+def test_conv_groupnorm_silu_matches_unfused_fp32(monkeypatch):
+    # Parity target is the 3-op chain path; pin env so an externally-set
+    # FUSION_FUSED_CONV_GN_SILU=1 (fp16 MSL kernel) cannot flip the path.
+    monkeypatch.delenv("FUSION_FUSED_CONV_GN_SILU", raising=False)
     conv = nn.Conv2d(8, 16, 3, padding=1)
     gn = nn.GroupNorm(4, 16, pytorch_compatible=True, eps=1e-6)
     fused = ConvGroupNormSiLU(conv, gn)

@@ -6,18 +6,20 @@
 # current gap so a future tiled-conv rewrite can prove a speedup.
 # Marked slow; not in the default CI fast path.
 
-import os
-
-import pytest
-
-os.environ.setdefault("FUSION_FUSED_CONV_GN_SILU", "1")
-
 import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
+import pytest
 
 from fusion_mlx.custom_kernels.fused_conv_gn_silu import fused_conv_gn_silu
 from fusion_mlx.nn_ext.safe_group_norm import SafeGroupNorm
+
+
+@pytest.fixture(autouse=True)
+def _fused_kernel_env(monkeypatch):
+    # Module-scope os.environ leaked into the rest of the suite; same fix as
+    # test_fused_conv_gn_silu.py — set per-test, auto-restored.
+    monkeypatch.setenv("FUSION_FUSED_CONV_GN_SILU", "1")
 
 
 def _bench(fused_fn, ref_fn, x, n=30):
