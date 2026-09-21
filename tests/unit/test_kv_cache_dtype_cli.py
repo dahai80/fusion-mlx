@@ -9,6 +9,7 @@ landed.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -23,6 +24,7 @@ def _serve_help() -> str:
         # alone can exceed 30s there. The subprocess exits immediately
         # once imports finish; the budget only guards a hang.
         timeout=120,
+        env=dict(os.environ, HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1"),
     )
     # Argparse exits 0 on --help, so a non-zero rc here is a real failure.
     assert proc.returncode == 0, proc.stderr
@@ -105,6 +107,10 @@ def test_serve_rejects_reasoning_plus_legacy_kv_cache_quantization_bits_4():
         capture_output=True,
         text=True,
         timeout=120,
+        # CI mac runners cannot reach hf-mirror; without offline env the CLI
+        # boot path stalls in HF retry loops and blows the 120s budget
+        # (observed 3 consecutive runs). The rejection itself is offline-safe.
+        env=dict(os.environ, HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1"),
     )
     # Either stderr or stdout will carry the error string depending on
     # python buffering; check both.
