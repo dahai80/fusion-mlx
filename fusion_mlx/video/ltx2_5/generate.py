@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 
@@ -101,6 +102,79 @@ def _build_i2v_conditionings(
             )
         )
     return conditionings
+
+
+_LTX2_5_TEMPORAL_TILE_FRAMES = 128
+_LTX2_5_TEMPORAL_OVERLAP_FRAMES = 64
+_LTX2_5_AUTO_TILING_FRAME_THRESHOLD = 65
+
+
+def _resolve_ltx2_5_tiling_config(tiling: str, num_frames: int):
+    # Map tiling string -> TilingConfig for ltx2_5 conv VAE decoder.
+    # ltx2_5 CausalConv3d REFLECT padding at spatial tile edges produces visible
+    # color seams (#937 reverted -> #939). Spatial tiling DISABLED for ltx2_5:
+    # every config with spatial_config -> spatial_config=None (temporal-only).
+    # Temporal-only keeps full spatial intact -> no spatial seams; chunks frames
+    # with overlap+blend -> bounds memory. NOT bit-exact vs full decode (temporal
+    # RF ~40 latent frames; 64f overlap only partially masks boundary drift) but
+    # avoids the hard OOM crash that #945 reports.
+    from ..ltx2.video_vae.tiling import TilingConfig
+
+    if tiling == "none":
+        return None
+    needs_temporal = num_frames > _LTX2_5_AUTO_TILING_FRAME_THRESHOLD
+    if tiling == "auto":
+        if not needs_temporal:
+            return None
+        return TilingConfig.temporal_only(
+            tile_size=_LTX2_5_TEMPORAL_TILE_FRAMES,
+            overlap=_LTX2_5_TEMPORAL_OVERLAP_FRAMES,
+        )
+    if tiling == "temporal":
+        return TilingConfig.temporal_only(
+            tile_size=_LTX2_5_TEMPORAL_TILE_FRAMES,
+            overlap=_LTX2_5_TEMPORAL_OVERLAP_FRAMES,
+        )
+    if tiling in ("default", "aggressive", "conservative", "spatial"):
+        logger.warning(
+            "ltx2_5: tiling=%s requests spatial tiling, but spatial tiling is "
+            "disabled for ltx2_5 (conv decoder REFLECT seams, #937/#939). "
+            "Falling back to temporal-only.",
+            tiling,
+        )
+        return TilingConfig.temporal_only(
+            tile_size=_LTX2_5_TEMPORAL_TILE_FRAMES,
+            overlap=_LTX2_5_TEMPORAL_OVERLAP_FRAMES,
+        )
+    logger.warning("Unknown tiling mode %r, using auto", tiling)
+    if needs_temporal:
+        return TilingConfig.temporal_only(
+            tile_size=_LTX2_5_TEMPORAL_TILE_FRAMES,
+            overlap=_LTX2_5_TEMPORAL_OVERLAP_FRAMES,
+        )
+    return None
+
+
+def _debug_log_latents(stage: str, latents: mx.array) -> None:
+    # #946 diagnostic: log latent magnitude + NaN/Inf after each denoise stage.
+    # Gate on FUSION_LTX_DEBUG_LATENTS=1 (default OFF, no prod overhead).
+    if os.environ.get("FUSION_LTX_DEBUG_LATENTS", "0") != "1":
+        return
+    try:
+        mx.eval(latents)
+        mag = float(mx.max(mx.abs(latents)))
+        has_nan = bool(mx.any(mx.isnan(latents)))
+        has_inf = bool(mx.any(mx.isinf(latents)))
+        logger.info(
+            "ltx2_5 debug latent[%s]: shape=%s max_abs=%.6f nan=%s inf=%s",
+            stage,
+            latents.shape,
+            mag,
+            has_nan,
+            has_inf,
+        )
+    except Exception:
+        logger.debug("ltx2_5 debug latent[%s] log failed", stage, exc_info=True)
 
 
 def generate_video(
@@ -429,6 +503,7 @@ def generate_video(
         state=state1,
     )
     mx.eval(latents)
+    _debug_log_latents("stage1_out", latents)
     mx.clear_cache()
 
     # ---- 8. spatial upsample (stage1 -> stage2) ----
@@ -450,6 +525,11 @@ def generate_video(
     mx.eval(positions)
 
     state2 = None
+    # #946: re-seed before stage2 noise draw. Stage1 output drift (bf16 SDPA
+    # nondeterminism) feeds stage2 input, but the stage2 noise RNG should not
+    # also drift from accumulated RNG state. Deterministic offset removes one
+    # confounder for the nondeterminism diagnosis.
+    mx.random.seed(seed + 1)
     if is_i2v and stage2_image_latent is not None:
         # stage2 从 stage1 上采样 latents 出发; 同样注入条件帧 clean_latent,
         # 按 denoise_mask 重新加噪到 STAGE_2_SIGMAS[0]。
@@ -494,6 +574,7 @@ def generate_video(
         state=state2,
     )
     mx.eval(latents)
+    _debug_log_latents("stage2_out", latents)
     del transformer
     mx.clear_cache()
 
@@ -537,8 +618,28 @@ def generate_video(
             logger.debug("ltx2_5 session-tail put failed", exc_info=True)
 
     # ---- 11. VAE decode -> frames -> mp4 ----
-    logger.info("Decoding latents %s ...", latents.shape)
-    video = vae_decoder(latents)
+    # #945: wire the (previously dead) tiling param. Temporal-only tiling
+    # bounds peak memory on long high-res videos that otherwise OOM via
+    # memory_enforcer. Spatial tiling disabled for ltx2_5 conv decoder
+    # (REFLECT seam artifacts, #937/#939). NOT bit-exact vs full decode at
+    # chunk boundaries (temporal RF > overlap) but avoids the hard crash.
+    tiling_config = _resolve_ltx2_5_tiling_config(tiling, num_frames)
+    if tiling_config is not None:
+        t_info = (
+            f"{tiling_config.temporal_config.tile_size_in_frames}f"
+            if tiling_config.temporal_config
+            else "none"
+        )
+        logger.info(
+            "Decoding latents %s (temporal-only tiling=%s tile=%s)...",
+            latents.shape,
+            tiling,
+            t_info,
+        )
+        video = vae_decoder.decode_tiled(latents, tiling_config=tiling_config)
+    else:
+        logger.info("Decoding latents %s (full decode, tiling=none)...", latents.shape)
+        video = vae_decoder(latents)
     mx.eval(video)
     mx.clear_cache()
     del vae_decoder

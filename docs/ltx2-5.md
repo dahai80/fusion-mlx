@@ -146,6 +146,54 @@ The isotropic conv with padding=1 preserves spatial dims; a `(3,1,1)` conv
 would load a shape-mismatched weight under `strict=False` and shrink H/W by 2
 (kernel-1). VAE then decodes to the correct resolution.
 
+### VAE decode tiling (#945)
+
+`generate_video`'s `tiling` param (`"auto"` default) controls peak memory
+during VAE decode. Long high-res videos (e.g. 233 frames @ 1920×1088) OOM via
+`memory_enforcer` on a full-tensor `vae_decoder(latents)`.
+
+- **`"auto"`** — temporal-only tiled decode (`TilingConfig.temporal_only`,
+  128-frame tile, 64-frame overlap) activates when output frame count exceeds
+  the threshold (65), else full decode. Spatial stays intact.
+- **`"none"`** — full decode (A/B / small videos).
+- **`"temporal"`** — explicit temporal-only.
+- **`"spatial"` / `"aggressive"` / `"conservative"` / `"default"`** — fall
+  back to temporal-only with a warning. **Spatial tiling is disabled for
+  ltx2_5**: PR #937 tried the default config (spatial 512px + temporal 64f)
+  and produced black frames + colored spatial tile-seams (CausalConv3d REFLECT
+  padding at spatial tile edges, 64px overlap << spatial RF), reverted in #939.
+
+**Honest limit**: temporal-only is NOT bit-exact vs full decode. The temporal
+receptive field (~40 latent frames) exceeds the 64-frame overlap, so soft
+temporal continuity glitches are possible at chunk boundaries. Acceptable for
+the OOM-fix use case (current alternative = hard crash). The decoder is
+deterministic (`timestep_conditioning=False`, no `mx.random` in path) and
+uses stored per-channel normalization constants, so tiling is safe from
+cross-tile randomness/statistics dependency.
+
+### Distilled T2V nondeterminism (#946)
+
+Distilled T2V produces black/noise frames in ~5/6 runs; same seed → different
+results (1 run good, rerun black). Root cause: **nondeterministic bf16
+reduction order in `mx.fast.scaled_dot_product_attention`**, accumulated
+across 48 layers × 11 distilled steps, amplified by q8→bf16
+`mx.quantized_matmul` in every Linear + single-seed/no-reseed two-stage
+structure. NOT sigma (#942 falsified), NOT `mx.compile(transformer)`
+(default OFF).
+
+Mitigation + diagnosis env vars (all default OFF):
+
+- **`FUSION_LTX_DETERMINISTIC_ATTN=1`** — routes SDPA through fp32 un-fused
+  math (`softmax(Q@K^T * scale) @ V` in fp32, cast back to bf16). Deterministic
+  reduction. Slower — opt-in. If 6/6 same-seed runs produce stable real
+  content, root cause confirmed = bf16 reduction order.
+- **`FUSION_LTX_DEBUG_LATENTS=1`** — logs `mx.abs(latents).max()` + NaN/Inf
+  after stage1 and stage2 denoise.
+- Stage2 now re-seeds (`seed + 1`) before its noise draw.
+
+Full fix requires upstream MLX deterministic SDPA. Issue to be filed
+(ml-explore/mlx). #946 stays open until real-model A/B confirms 6/6 stable.
+
 ### Fail-visible guards
 
 I2V (`image`), single-stage (`two_stage=False`), and duration-head-driven

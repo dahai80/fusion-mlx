@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+### Fixed — #945: LTX-2.5 VAE decode OOM on long high-res videos (temporal-only tiled decode)
+- **`video/ltx2_5/generate.py`**: wired the previously-dead `tiling` param
+  (declared but ignored; full-tensor `vae_decoder(latents)` ran unconditionally
+  and OOM'd via `memory_enforcer` on long high-res videos, e.g. 233 frames @
+  1920x1088). Now maps `tiling` string to a `TilingConfig` and calls
+  `vae_decoder.decode_tiled` when tiling is enabled.
+- **Temporal-only** (`spatial_config=None` always): PR #937 tried
+  `decode_tiled` with the default config (spatial 512px + temporal 64f) and
+  produced black frames + colored spatial tile-seams (CausalConv3d REFLECT
+  padding at spatial tile edges with 64px overlap << spatial RF), reverted in
+  #939. Spatial tiling is disabled for ltx2_5 — `"spatial"`,
+  `"aggressive"`, `"conservative"`, `"default"` all fall back to temporal-only
+  with a warning. Full spatial stays intact -> no spatial seams; frames are
+  chunked with overlap+blend to bound peak memory.
+- **Default `"auto"`**: temporal-only tiling (128f tile, 64f overlap) activates
+  only when output frame count exceeds the threshold (65), else full decode.
+  `"none"` = full decode (A/B / small videos).
+- **Honest limit**: NOT bit-exact vs full decode — temporal RF (~40 latent
+  frames) exceeds the 64f overlap, so soft temporal continuity glitches are
+  possible at chunk boundaries. Acceptable for the OOM-fix use case (the
+  current alternative is a hard crash). Decoder is deterministic
+  (`timestep_conditioning=False`, no `mx.random` in path) and uses stored
+  normalization constants -> tiling is safe from cross-tile randomness/statistics
+  dependency.
+
+### Diagnostics — #946: LTX-2.5 distilled T2V nondeterministic black/noise frames
+- **Root cause (diagnosed)**: nondeterministic bf16 reduction order in
+  `mx.fast.scaled_dot_product_attention` (`video/ltx2_5/attention.py`),
+  accumulated across 48 transformer layers x 11 distilled steps, amplified by
+  q8->bf16 `mx.quantized_matmul` in every Linear + single-seed/no-reseed
+  two-stage structure. Same seed produces real content in 1/6 runs, black/noise
+  in 5/6. NOT sigma (#942 falsified), NOT `mx.compile(transformer)` (default OFF).
+- **`FUSION_LTX_DETERMINISTIC_ATTN=1`** (`attention.py`): opt-in fp32 un-fused
+  SDPA path (`softmax(Q@K^T * scale) @ V` in fp32, cast back to bf16).
+  Deterministic reduction. Slower (not prod default) — diagnostic + opt-in
+  stability mitigation. If 6/6 same-seed runs produce stable real content with
+  this on, root cause confirmed = bf16 reduction order; the prod fix is either
+  accept the perf cost or wait for upstream MLX deterministic SDPA.
+- **`FUSION_LTX_DEBUG_LATENTS=1`** (`generate.py`): logs `mx.abs(latents).max()`
+  + NaN/Inf after stage1 and stage2 denoise. Confirms whether drift originates
+  in stage1 DiT (attention) vs later. Default OFF (no prod overhead).
+- **Re-seed before stage2** (`generate.py`): `mx.random.seed(seed + 1)` before
+  the stage2 noise draw. Stage1-output drift still feeds stage2 input, but the
+  stage2 noise RNG no longer drifts from accumulated state — narrows the
+  diagnosis variable space.
+- **Upstream dependency**: full fix requires a deterministic attention kernel
+  in MLX itself. Upstream issue to be filed (ml-explore/mlx). #946 stays open
+  with honest status until real-model A/B confirms 6/6 stable.
+
 ### Changed — INT4 fused dequant+GEMV: -Ofast precompiled Metal kernel (surpasses native at K>=20480)
 - **`custom_kernels/fused_quant_gemv.py`**: replaced the prior V12 JIT kernel
   (whose "compiled chain min wins" were biased measurement artifacts —
