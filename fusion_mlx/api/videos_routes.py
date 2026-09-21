@@ -19,11 +19,100 @@ from ..engines import VideoGenEngine
 from ..engines.video_backends import constraints_for, validate_params
 from ..exceptions import InsufficientMemoryError, ModelNotFoundError, ModelTooLargeError
 from ..middleware.auth import check_rate_limit, verify_api_key
+from ..pipeline.video_router import get_video_router
 from ..pool import EnginePool
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/videos", tags=["videos"])
+
+
+def _resolve_video_model(prompt: str, audio: bool, requested: str | None) -> str:
+    # #gap4: wire VideoRouter into the generate path. When the caller omits
+    # ``model``, consult the smart router (PRD v1 §7.1) to pick the intended
+    # backend (ltx2_5 general / minimax_h3 drama). Returns a model_id to
+    # acquire from the pool — falls back to the first loaded video engine if
+    # the routed backend isn't loaded (hot-swap of a 42GB+ model per-request
+    # is not feasible; the routing decision is logged for observability).
+    if requested:
+        return requested
+    routed = get_video_router().route(prompt, audio=audio)
+    loaded = _pool.get_loaded_model_ids() if _pool is not None else []
+    for mid in loaded:
+        entry = _pool.get_entry(mid)  # type: ignore[union-attr]
+        if entry is None or entry.engine is None:
+            continue
+        eng = entry.engine
+        if not isinstance(eng, VideoGenEngine):
+            continue
+        bname = getattr(getattr(eng, "_backend", None), "name", "") or mid
+        if bname == routed:
+            logger.info("video router -> %s (matched loaded model %s)", routed, mid)
+            return mid
+    # routed backend not loaded — fall back to first loaded video engine, or
+    # the routed backend's default alias so the 404 path explains the intent.
+    for mid in loaded:
+        entry = _pool.get_entry(mid)  # type: ignore[union-attr]
+        if (
+            entry
+            and entry.engine is not None
+            and isinstance(entry.engine, VideoGenEngine)
+        ):
+            logger.warning(
+                "video router -> %s but backend not loaded; falling back to "
+                "loaded video model %s (load %s to honor routing)",
+                routed,
+                mid,
+                routed,
+            )
+            return mid
+    # nothing loaded — return a default so the existing 404 fires with context.
+    return "ltx-2" if routed != "minimax_h3" else "minimax-h3"
+
+
+class VideoRouteRequest(BaseModel):
+    prompt: str
+    scene: str | None = None
+    model_hint: str | None = None
+    audio: bool = False
+
+
+class VideoRouteResponse(BaseModel):
+    backend: str
+    reason: str = "keyword/hint routing"
+    loaded: bool
+    loaded_model: str | None = None
+
+
+@router.post("/route")
+async def route_video(
+    request: VideoRouteRequest, _auth: bool = Depends(verify_api_key)
+) -> VideoRouteResponse:
+    # #gap4: expose the smart routing decision (PRD v1 §7.1) so fusion-autotest
+    # and clients can query which backend a prompt would route to without
+    # generating. Returns the routed backend + whether it is currently loaded.
+    backend = get_video_router().route(
+        request.prompt,
+        scene=request.scene,
+        model_hint=request.model_hint,
+        audio=request.audio,
+    )
+    loaded_model: str | None = None
+    loaded = False
+    if _pool is not None:
+        for mid in _pool.get_loaded_model_ids():
+            entry = _pool.get_entry(mid)
+            if entry is None or entry.engine is None:
+                continue
+            eng = entry.engine
+            if isinstance(eng, VideoGenEngine):
+                bname = getattr(getattr(eng, "_backend", None), "name", "") or mid
+                if bname == backend:
+                    loaded = True
+                    loaded_model = mid
+                    break
+    return VideoRouteResponse(backend=backend, loaded=loaded, loaded_model=loaded_model)
+
 
 _pool: EnginePool | None = None
 
@@ -236,7 +325,11 @@ async def generate_video(
         if _pool is None:
             raise HTTPException(503, "Engine pool not initialized")
 
-        model_name = request.model or "ltx-2"
+        model_name = _resolve_video_model(
+            request.prompt,
+            bool(request.audio) if request.audio is not None else False,
+            request.model,
+        )
 
         # Backend-aware constraint validation (422 on violation).
         try:

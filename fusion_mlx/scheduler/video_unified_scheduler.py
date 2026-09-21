@@ -150,10 +150,13 @@ class NF4DequantCache:
         if n:
             logger.info("dequant cache released (%d entries)", n)
         gc.collect()
+        # #gap6: version-compatible cache clear (mx.clear_cache w/ metal fallback).
+        from fusion_mlx.utils.proc_memory import clear_metal_cache
+
         try:
-            mx.metal.clear_cache()
-        except Exception:
-            pass
+            clear_metal_cache()
+        except Exception as exc:
+            logger.debug("dequant cache metal clear failed: %s", exc)
 
 
 class VideoUnifiedScheduler:
@@ -183,6 +186,14 @@ class VideoUnifiedScheduler:
             return int(mx.metal.get_active_memory())
         except Exception:
             return 0
+
+    @staticmethod
+    def _clear_cache() -> None:
+        # #gap6: mx.metal.clear_cache deprecated in MLX 0.32+; use the
+        # version-compatible helper (mx.clear_cache with metal fallback).
+        from fusion_mlx.utils.proc_memory import clear_metal_cache
+
+        clear_metal_cache()
 
     def probe_level(self) -> MemoryLevel:
         b = self._current_bytes()
@@ -229,7 +240,7 @@ class VideoUnifiedScheduler:
         t0 = time.monotonic()
         gc.collect()
         try:
-            mx.metal.clear_cache()
+            self._clear_cache()
         except Exception:
             pass
         if self._cache is not None:
@@ -265,7 +276,7 @@ class VideoUnifiedScheduler:
             self._cache = None
         gc.collect()
         try:
-            mx.metal.clear_cache()
+            self._clear_cache()
         except Exception:
             pass
         self._active_model = None

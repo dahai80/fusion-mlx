@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from functools import partial
 
 import mlx.core as mx
 
@@ -15,6 +17,43 @@ from ..ltx2.conditioning import LatentState, apply_denoise_mask
 from .transformer import Modality
 
 logger = logging.getLogger(__name__)
+
+# #gap1: LTX-2.5 latency fast path. Two levers, both env-gated:
+#   FUSION_LTX_FAST_PATH (default 0): drop the 2 redundant per-step mx.eval
+#     (velocity, denoised) — keep only the final per-step latents eval. Lets
+#     MLX fuse the velocity->x0->renoise math across the step. OPT-IN: on
+#     720P/8s (921K tokens) measured 2× SLOWER than 3-eval baseline — the
+#     uncompiled transformer graph stays lazy across the fused step and MLX
+#     re-traverses it; the per-step evals bound graph size. Win only on small
+#     token counts (short low-res clips). Leave OFF for production.
+#   FUSION_LTX_COMPILE_TRANSFORMER (default 0): mx.compile the DiT __call__
+#     (Metal kernel fusion: RMSNorm+attn+FFN elementwise fused, fewer launch
+#     round-trips). Opt-in — skyreels_v3 found whole-__call__ compile can
+#     degrade for xfuser-injected DiTs; LTX-2.5 has no xfuser so expected to
+#     help, but needs real-model A/B (42GB load) to confirm. First call pays
+#     a one-time compile (~seconds), cached per shape for the remaining steps.
+_FAST_PATH = os.environ.get("FUSION_LTX_FAST_PATH", "0") == "1"
+_COMPILE_TRANSFORMER = os.environ.get("FUSION_LTX_COMPILE_TRANSFORMER", "0") == "1"
+
+
+@partial(mx.compile, inputs=(), outputs=())
+def _step_update(
+    latents_flat_f32, timesteps_f32, velocity_f32, sigma_f32, sigma_next_f32
+):
+    # Compiled per-step update (state=None path): x0 = latent - t*velocity,
+    # then DDIM renoise toward sigma_next, fused into 1 Metal kernel.
+    # mx.where (not Python if) — can't branch on array values inside compile.
+    x0 = latents_flat_f32 - timesteps_f32 * velocity_f32
+    renoised = x0 + sigma_next_f32 * (latents_flat_f32 - x0) / sigma_f32
+    return mx.where(sigma_next_f32 > 0, renoised, x0)
+
+
+@partial(mx.compile, inputs=(), outputs=())
+def _x0_only(latents_flat_f32, timesteps_f32, velocity_f32):
+    # Compiled x0 prediction (state path): apply_denoise_mask must insert
+    # between x0 and renoise, so we can't fuse renoise here. Still fuses the
+    # subtract+mul into 1 kernel and avoids a separate velocity eval.
+    return latents_flat_f32 - timesteps_f32 * velocity_f32
 
 
 def denoise_distilled_t2v(
@@ -54,10 +93,43 @@ def denoise_distilled_t2v(
     if verbose:
         logger.info("Denoising T2V: %d steps", num_steps)
     logger.info(
-        "ltx2_5 denoise: inpaint=%s controlnet=%s",
+        "ltx2_5 denoise: inpaint=%s controlnet=%s fast_path=%s compile_xf=%s",
         inpaint_mask is not None,
         controlnet_image is not None,
+        _FAST_PATH,
+        _COMPILE_TRANSFORMER,
     )
+
+    # #gap1: optionally compile the DiT forward (Metal kernel fusion). mx.compile
+    # requires array-tree args, but transformer.__call__ takes a Modality object
+    # → compile a wrapper that takes the raw array fields and builds the Modality
+    # inside. Caches per (shape, dtype) so all N steps reuse one compiled graph.
+    _xf = transformer
+    if _COMPILE_TRANSFORMER:
+        _raw_xf = transformer
+
+        def _xf_forward(latent, timesteps_a, positions_a, context, sigma_b):
+            vm = Modality(
+                latent=latent,
+                timesteps=timesteps_a,
+                positions=positions_a,
+                context=context,
+                context_mask=None,
+                enabled=True,
+                sigma=sigma_b,
+            )
+            return _raw_xf(video=vm, audio=None)
+
+        try:
+            _xf = mx.compile(_xf_forward)
+            logger.info("ltx2_5 denoise: DiT __call__ compiled (Metal fusion)")
+        except Exception as exc:
+            logger.warning(
+                "ltx2_5 denoise: mx.compile(transformer) failed (%s) — "
+                "falling back to uncompiled forward",
+                exc,
+            )
+            _xf = transformer
 
     for i in range(num_steps):
         sigma, sigma_next = sigmas[i], sigmas[i + 1]
@@ -76,39 +148,78 @@ def denoise_distilled_t2v(
         else:
             timesteps = mx.full((b, num_tokens), sigma, dtype=dtype)
 
-        video_modality = Modality(
-            latent=latents_flat,
-            timesteps=timesteps,
-            positions=positions,
-            context=text_embeddings,
-            context_mask=None,
-            enabled=True,
-            sigma=mx.full((b,), sigma, dtype=dtype),
-        )
-
-        velocity, _audio_velocity = transformer(video=video_modality, audio=None)
-        mx.eval(velocity)
+        sigma_b = mx.full((b,), sigma, dtype=dtype)
+        if _COMPILE_TRANSFORMER and _xf is not transformer:
+            velocity, _audio_velocity = _xf(
+                latents_flat, timesteps, positions, text_embeddings, sigma_b
+            )
+        else:
+            video_modality = Modality(
+                latent=latents_flat,
+                timesteps=timesteps,
+                positions=positions,
+                context=text_embeddings,
+                context_mask=None,
+                enabled=True,
+                sigma=sigma_b,
+            )
+            velocity, _audio_velocity = _xf(video=video_modality, audio=None)
 
         sigma_f32 = mx.array(sigma, dtype=mx.float32)
+        sigma_next_f32 = mx.array(sigma_next, dtype=mx.float32)
         latents_flat_f32 = mx.transpose(mx.reshape(latents, (b, c, -1)), (0, 2, 1))
         timesteps_f32 = mx.expand_dims(timesteps.astype(mx.float32), axis=-1)
-        x0_f32 = latents_flat_f32 - timesteps_f32 * velocity.astype(mx.float32)
-        denoised = mx.reshape(mx.transpose(x0_f32, (0, 2, 1)), (b, c, f, h, w))
 
-        if state is not None:
-            denoised = apply_denoise_mask(
-                denoised, state.clean_latent.astype(mx.float32), state.denoise_mask
-            )
-
-        mx.eval(denoised)
-
-        if sigma_next > 0:
-            sigma_next_f32 = mx.array(sigma_next, dtype=mx.float32)
-            latents = denoised + sigma_next_f32 * (latents - denoised) / sigma_f32
+        if _FAST_PATH:
+            # #gap1: single per-step eval (was 3). state=None fuses x0+renoise
+            # into 1 kernel via _step_update; state path fuses x0 via _x0_only
+            # then masks + renoises outside (mask must insert pre-renoise).
+            if state is None:
+                renoised_flat = _step_update(
+                    latents_flat_f32,
+                    timesteps_f32,
+                    velocity.astype(mx.float32),
+                    sigma_f32,
+                    sigma_next_f32,
+                )
+                latents = mx.reshape(
+                    mx.transpose(renoised_flat, (0, 2, 1)), (b, c, f, h, w)
+                )
+            else:
+                x0_f32 = _x0_only(
+                    latents_flat_f32, timesteps_f32, velocity.astype(mx.float32)
+                )
+                denoised = mx.reshape(mx.transpose(x0_f32, (0, 2, 1)), (b, c, f, h, w))
+                denoised = apply_denoise_mask(
+                    denoised,
+                    state.clean_latent.astype(mx.float32),
+                    state.denoise_mask,
+                )
+                if sigma_next > 0:
+                    latents = (
+                        denoised + sigma_next_f32 * (latents - denoised) / sigma_f32
+                    )
+                else:
+                    latents = denoised
+            mx.eval(latents)
         else:
-            latents = denoised
+            # original path: 3 evals/step, uncompiled math (bit-exact baseline)
+            mx.eval(velocity)
+            x0_f32 = latents_flat_f32 - timesteps_f32 * velocity.astype(mx.float32)
+            denoised = mx.reshape(mx.transpose(x0_f32, (0, 2, 1)), (b, c, f, h, w))
+            if state is not None:
+                denoised = apply_denoise_mask(
+                    denoised,
+                    state.clean_latent.astype(mx.float32),
+                    state.denoise_mask,
+                )
+            mx.eval(denoised)
+            if sigma_next > 0:
+                latents = denoised + sigma_next_f32 * (latents - denoised) / sigma_f32
+            else:
+                latents = denoised
+            mx.eval(latents)
 
-        mx.eval(latents)
         if inpaint_mask is not None and init_latent is not None:
             latents = apply_inpaint_mask(latents, init_latent, inpaint_mask)
             mx.eval(latents)
