@@ -14,16 +14,37 @@ import logging
 import mlx.core as mx
 
 from ..ltx2.denoise import denoise_dev_av, denoise_distilled, denoise_res2s_av
-from ..ltx2.generate import STAGE_1_SIGMAS, STAGE_2_SIGMAS
 from ..ltx2.scheduler import ltx2_scheduler
 
 logger = logging.getLogger(__name__)
 
-# 两阶段 distilled sigma 列表（复用 ltx2 STAGE_1/2，AR §4.6）。
-# stage1 用 STAGE_1_SIGMAS，stage2 用 STAGE_2_SIGMAS，
-# stage2 noise_scale = STAGE_2_SIGMAS[0]。
-DISTILLED_STAGE_1_SIGMAS = list(STAGE_1_SIGMAS)
-DISTILLED_STAGE_2_SIGMAS = list(STAGE_2_SIGMAS)
+# 两阶段 distilled sigma 列表。
+# LTX-2.5 模型配 RectifiedFlowScheduler + LinearQuadratic sampler
+# （embedded_config.json scheduler.sampler="LinearQuadratic"），
+# sigma 须由 linear_quadratic_schedule(num_steps) 动态算，非复用 LTX-2 硬编码值。
+# 根因（issue #942）：旧值复用 LTX-2 STAGE_2_SIGMAS[0]=0.909375（部分加噪），
+# 正确值 Stage2 从 1.0 full-noise 起步。高分辨率/中等 T 崩溃即此错配所致。
+#
+# linear_quadratic_schedule 移植自 Lightricks/ltx-video rf.py（同公式）：
+#   threshold_noise=0.025, linear_steps=num_steps//2, 末尾补 0.0 作终止符。
+def _linear_quadratic_schedule(num_steps: int, threshold_noise: float = 0.025) -> list[float]:
+    if num_steps == 1:
+        return [1.0, 0.0]
+    linear_steps = num_steps // 2
+    linear_sigma = [i * threshold_noise / linear_steps for i in range(linear_steps)]
+    quad_steps = num_steps - linear_steps
+    diff = linear_steps - threshold_noise * num_steps
+    q_coef = diff / (linear_steps * quad_steps**2)
+    l_coef = threshold_noise / linear_steps - 2 * diff / (quad_steps**2)
+    const = q_coef * (linear_steps**2)
+    quad_sigma = [q_coef * (i**2) + l_coef * i + const for i in range(linear_steps, num_steps)]
+    sched = linear_sigma + quad_sigma + [1.0]
+    sched = [1.0 - x for x in sched]
+    return sched[:-1] + [0.0]  # 末尾 0.0 终止符（denoise 循环 num_steps=len-1）
+
+# Stage1=8 步，Stage2=3 步（ltx2_5 generate.py 硬编码步数）
+DISTILLED_STAGE_1_SIGMAS = _linear_quadratic_schedule(8)
+DISTILLED_STAGE_2_SIGMAS = _linear_quadratic_schedule(3)
 
 # dev 变体 sigma 列表（P9 后续）：真实模型首跑后从 diffusers main 提取，
 # 当前为 None 表示 dev 路径未启用（fail visible）。
