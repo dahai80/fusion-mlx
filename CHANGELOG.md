@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Added — INT4 fused dequant+GEMV Metal kernel (base layer)
+- **`custom_kernels/fused_quant_gemv.py`**: custom Metal kernel that fuses
+  INT4 dequant + GEMV in one pass (packed uint32 unpack, affine per-group
+  dequant, register-tiled accumulation). Parity verified vs
+  `mx.quantized_matmul` (max diff 4.8e-7 on Qwen 4096×11008 shape).
+  Opt-in via `FUSION_FUSED_QUANT_GEMV=1` (default OFF — measured slower
+  than MLX native across 8 optimization variants). Kept as base-layer
+  Metal capability demonstration + foundation for future M5 NAx /
+  heterogeneous CPU+GPU work (PRD stage-2/3).
+- **Audit verification**: confirmed int4 fused dequant+matmul feature is
+  already default-ON in production via `nn.QuantizedLinear` →
+  `mx.quantized_matmul` (112 layers in a typical 4-bit model, end-to-end
+  verified with Llama-3.2-1B-4bit).
+- **`docs/shim.md`**: corrected stale default-ON/OFF table, added
+  production-status table documenting which shim ops are wired vs dead code.
+
 ## [0.10.6] — 2026-09-21
 
 ### Added — #932 module-level graph patterns

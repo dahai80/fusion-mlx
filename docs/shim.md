@@ -40,6 +40,14 @@ on product support, Tier-3 items are deliberately not built.
   layout conversion (FUSION_SHIM_ASFW)
 - `custom_kernels/paged_kv_cow.py` — two-level paged KV with CoW
   (FUSION_SHIM_TWO_LEVEL_KV)
+- `custom_kernels/fused_quant_gemv.py` — fused INT4 dequant+GEMV Metal
+  kernel (FUSION_FUSED_QUANT_GEMV). Parity-verified vs
+  `mx.quantized_matmul` (max diff 4.8e-7). Measured slower than native
+  across 8 optimization variants (+6% to +246%); kept as opt-in base-layer
+  capability demo + foundation for future M5 NAx / heterogeneous work.
+  Production int4 quant path = native `mx.quantized_matmul` via
+  `nn.QuantizedLinear` (already default-ON, 112 layers in a typical 4-bit
+  model).
 - `speculative/tree_mask.py` — tree-mask verify + virtual append offset
   (FUSION_SHIM_TREE_MASK)
 - `utils/hardware.py` — chip-generation/MMA probe shared by the C++
@@ -64,20 +72,35 @@ runtime via SIGHUP settings reload or test monkeypatching. Defaults:
 |---|---|---|
 | FUSION_SHIM_ENABLED | OFF | Master switch for the C++ extension path |
 | FUSION_ENGINE_RUNNER | OFF | C++ EngineRunner prototype (exclusive decode thread) |
-| FUSION_SHIM_FUSED_RMSNORM | OFF | Fused RMSNorm+residual kernel |
+| FUSION_SHIM_FUSED_RMSNORM | ON | Fused RMSNorm+residual kernel (microbench -47%; see audit — not wired into engine, contract mismatch) |
 | FUSION_SHIM_FUSED_ROPE | OFF | Fused YaRN/NTK RoPE kernel |
 | FUSION_SHIM_TWO_LEVEL_KV | OFF | Two-level paged KV + CoW |
 | FUSION_SHIM_TREE_MASK | OFF | Tree-mask speculative verify |
 | FUSION_SHIM_QUANT_KV | OFF | Q4_0/Q8_0 quantized-KV online decompression |
 | FUSION_SHIM_IQ | OFF | imatrix + IQ/GGUF mixed quant |
 | FUSION_SHIM_ASFW | OFF | ASFW layout conversion at GGUF load |
-| FUSION_SHIM_GRAMMAR_RING | OFF | Grammar bitmask ring + bucket padding |
+| FUSION_SHIM_GRAMMAR_RING | ON | Grammar bitmask ring (wired, -54% end-to-end) |
 | FUSION_SHIM_MOE | OFF | MoE deterministic route dispatch + gather combine |
 | FUSION_SHIM_SSM | OFF | Mamba SSD parallel prefix scan |
+| FUSION_FUSED_QUANT_GEMV | OFF | Custom INT4 dequant+GEMV Metal kernel (parity PASS, slower than native; native quantized_matmul is prod path) |
 
-`tests/unit/test_shim_switches.py` enforces the contract: default OFF,
+`tests/unit/test_shim_switches.py` enforces the contract: default values,
 literal "0"/"1" handling, and switch independence (enabling one never
 enables another).
+
+## Production status (audited 2026-09-21)
+
+| Module | Wired? | Production path |
+|---|---|---|
+| grammar_ring | yes (sched_thinking, monkeypatches) | default ON, -54% real |
+| fused_quant_gemv (int4) | opt-in (slower than native) | native `mx.quantized_matmul` via `nn.QuantizedLinear` (default ON) |
+| fused_rmsnorm_residual | no (contract mismatch) | `mx.fast.rms_norm` native (default) |
+| fused_rope | no (slower +6-9%) | `mx.fast.rope` native (default) |
+| quant_kv (shim) | no (redundant w/ turboquant_kv) | `turboquant_kv.py` int4 (default ON) |
+| moe_dispatch | no | native `mx.quantized_matmul` grouped (default) |
+
+See `audit/fusion-mlx-vs-llamacpp-audit-report-0921.md` for the full audit
+and `audit/shim-audit-verified-0921.md` context.
 
 ## Verification
 
