@@ -26,6 +26,71 @@ from ..speculative.ngram_predictor import NGramPredictor
 
 logger = logging.getLogger(__name__)
 
+# Predictor backend: "suffix" (SuffixDecodingDrafter — variable-length suffix
+# + majority vote + confidence truncation, higher acceptance) or "ngram"
+# (basic fixed-order NGramPredictor). Suffix wins on repetitive output because
+# it matches longer context and votes across all occurrences instead of
+# most-frequent-continuation. Env-gated for A/B.
+NGRAM_SPEC_PREDICTOR = __import__("os").environ.get(
+    "FUSION_NGRAM_SPEC_PREDICTOR", "suffix"
+)
+NGRAM_SPEC_SUFFIX_MAX_DRAFT = int(
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_SUFFIX_MAX_DRAFT", "4")
+)
+NGRAM_SPEC_SUFFIX_MAX_LEN = int(
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_SUFFIX_MAX_LEN", "8")
+)
+NGRAM_SPEC_SUFFIX_MIN_CONF = float(
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_SUFFIX_MIN_CONF", "0.3")
+)
+
+
+class SuffixDrafterAdapter:
+    # NGramPredictor-compatible shim over SuffixDecodingDrafter. Exposes the
+    # exact surface NGramSpecState calls (reset/add_token/add_tokens/predict/
+    # predict_top1/record_accepted/get_stats/num_draft) so the spec verify path
+    # is predictor-agnostic. Suffix drafter's majority-vote + confidence
+    # truncation yields higher per-step acceptance than fixed-order most-frequent
+    # continuation, directly raising decode_tps on repetitive output.
+    def __init__(self, num_draft: int, max_suffix_len: int, min_conf: float):
+        from ..speculative.suffix_decoding import SuffixDecodingDrafter
+
+        self._drafter = SuffixDecodingDrafter(
+            max_draft_tokens=num_draft,
+            max_suffix_len=max_suffix_len,
+            min_confidence=min_conf,
+        )
+        self.num_draft = num_draft
+        self.order = max_suffix_len
+
+    def reset(self):
+        d = self._drafter
+        d._tokens.clear()
+        d._shift = 0
+        for bucket in d._suffix_index:
+            bucket.clear()
+        d.stats = type(d.stats)()
+
+    def add_token(self, token: int):
+        self._drafter.add_generated_token(token)
+
+    def add_tokens(self, tokens: list[int]):
+        self._drafter.add_prompt_tokens(tokens)
+
+    def predict(self, context: list[int] | None = None) -> list[int]:
+        return self._drafter.get_draft()
+
+    def predict_top1(self, context: list[int] | None = None) -> int | None:
+        draft = self._drafter.get_draft()
+        return draft[0] if draft else None
+
+    def record_accepted(self, n_accepted: int):
+        self._drafter.record_acceptance(n_accepted)
+
+    def get_stats(self) -> dict:
+        return self._drafter.stats_dict()
+
+
 NGRAM_SPEC_ENABLED = (
     __import__("os").environ.get("FUSION_NGRAM_SPEC_ENABLED", "1") == "1"
 )
@@ -68,10 +133,7 @@ class NGramSpecState:
         num_draft: int | None = None,
         break_even: float | None = None,
     ):
-        self.predictor = predictor or NGramPredictor(
-            order=order if order is not None else NGRAM_SPEC_ORDER,
-            num_draft=num_draft if num_draft is not None else NGRAM_SPEC_NUM_DRAFT,
-        )
+        self.predictor = predictor or self._make_predictor(order, num_draft)
         self._break_even_default = (
             break_even if break_even is not None else NGRAM_SPEC_DEFAULT_BREAK_EVEN
         )
@@ -114,6 +176,32 @@ class NGramSpecState:
             __import__("os").environ.get("FUSION_NGRAM_SPEC_VERIFY_WARMUP", "5")
         )
 
+    @staticmethod
+    def _make_predictor(order: int | None, num_draft: int | None):
+        import os
+
+        backend = os.environ.get("FUSION_NGRAM_SPEC_PREDICTOR", "suffix")
+        nd = num_draft if num_draft is not None else NGRAM_SPEC_NUM_DRAFT
+        if backend == "suffix":
+            # order maps to max_suffix_len when explicitly given (config plumbing);
+            # otherwise fall back to the suffix module default.
+            msl = (
+                order
+                if order is not None
+                else int(os.environ.get("FUSION_NGRAM_SPEC_SUFFIX_MAX_LEN", "8"))
+            )
+            return SuffixDrafterAdapter(
+                num_draft=nd,
+                max_suffix_len=msl,
+                min_conf=float(
+                    os.environ.get("FUSION_NGRAM_SPEC_SUFFIX_MIN_CONF", "0.3")
+                ),
+            )
+        return NGramPredictor(
+            order=order if order is not None else NGRAM_SPEC_ORDER,
+            num_draft=nd,
+        )
+
     def reset(self):
         self.predictor.reset()
         self.steps = 0
@@ -124,6 +212,9 @@ class NGramSpecState:
             self.predictor.reset()
             self._last_request_id = request_id
             self.steps = 0
+            self.total_spec_steps = 0
+            self.total_draft_proposed = 0
+            self.total_draft_accepted = 0
             self._paused = False
             self._recent_rates.clear()
             self._d1_rates.clear()
@@ -533,18 +624,26 @@ def ngram_spec_step(
         decode_dt=scheduler._last_decode_dt,
     )
 
-    if spec_state.total_spec_steps % 50 == 1:
+    if spec_state.total_spec_steps % 25 == 1:
         stats = spec_state.get_stats()
+        fire_rate = spec_state.total_spec_steps / max(spec_state.steps, 1)
+        v_ratio = (spec_state._verify_dt_ema or 0) / max(
+            spec_state._decode_dt_ema or 1e-6, 1e-6
+        )
         logger.info(
-            "ngram_spec: step=%d, K=%d, accepted=%d/%d (%.1f%%), "
-            "verify=%.1fms, rate=%.1f%%",
+            "ngram_spec: step=%d/%d fire=%.0f%% K=%d acc=%d/%d "
+            "verify=%.1fms dec=%.1fms V=%.2fx rate=%.1f%% be=%.1f%%",
             spec_state.total_spec_steps,
+            spec_state.steps,
+            fire_rate * 100,
             K,
             n_accepted,
             K,
-            100.0 * n_accepted / K if K else 0,
             dt * 1000,
+            (scheduler._last_decode_dt or 0) * 1000,
+            v_ratio,
             stats["acceptance_rate"] * 100,
+            spec_state._break_even() * 100,
         )
 
     if not verified:
