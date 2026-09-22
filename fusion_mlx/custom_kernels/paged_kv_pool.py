@@ -514,6 +514,7 @@ class MergedPagedCacheView:
         new = MergedPagedCacheView.__new__(MergedPagedCacheView)
         new.constituents = [_copy.deepcopy(c) for c in self.constituents]
         new._offset_override = self._offset_override
+        new._right_padding = getattr(self, "_right_padding", None)
         return new
 
     def extract(self, idx):
@@ -729,22 +730,15 @@ class FusionPagedRequestCache:
         # split() (prefill->generation transition). The pool is a shared
         # singleton with an unpicklable mlx.core.Dtype, and MUST stay shared.
         #
-        # ADOPT (move) the original's physical blocks into the copy instead
-        # of alloc+copy. The prior alloc+copy path allocated 336 fresh
-        # blocks (4 req x 28 layer x 3 blocks) during a single split,
-        # exhausting the 512-block pool and triggering LRU eviction of an
-        # ACTIVE concurrent request (pool_N namespace mismatch in
-        # set_active_ids left all pool requests evictable). The evict
-        # callback invalidate_request then cleared the victim's
-        # block_table + offset mid-deepcopy -> the copy received an empty
-        # cache -> decode garbage (#955 root cause).
-        #
-        # Adopt is safe because the scheduler gate (6feae2da) forces every
-        # prompt through external prefill -> 1-token insert -> immediate
-        # all-split (indices_left empty) -> the original prompt-batch is
-        # discarded right after _copy(). The original's block_table is
-        # detached (emptied) so it cannot free or corrupt the adopted
-        # blocks. No alloc -> no eviction -> no invalidate_request.
+        # SHARE (not move) flat buffer + block_table. MLX arrays are
+        # immutable — slice-assignment creates a new array, so each party
+        # gets copy-on-write semantics. After split().filter(), the two
+        # parties hold disjoint constituent sets, so freeing one party's
+        # blocks never touches the other's. The prior adopt (move) pattern
+        # null'd the original's flat buffer, which corrupted non-split
+        # constituents when variable-length prompts caused partial splits
+        # (the scheduler gate masked this by forcing all-split). With the
+        # gate removed, sharing is required for correctness.
         cls = self.__class__
         new = cls.__new__(cls)
         new.pool = self.pool
@@ -764,18 +758,10 @@ class FusionPagedRequestCache:
         new._flat_keys = self._flat_keys
         new._flat_values = self._flat_values
         new.block_table = list(self.block_table)
-        _moved = len(new.block_table)
-        # Detach the original: it is discarded after split, so its
-        # block_table must not reference (and thus free) the adopted blocks.
-        # Flat buffer is also moved (adopted) — original discards it.
-        self.block_table = []
-        self.offset = 0
-        self._flat_keys = None
-        self._flat_values = None
-        logger.info(
-            "paged_kv __deepcopy__ adopt req=%s moved=%d blocks (no alloc)",
+        logger.debug(
+            "paged_kv __deepcopy__ share req=%s blocks=%d",
             self.request_id,
-            _moved,
+            len(new.block_table),
         )
         return new
 
