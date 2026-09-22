@@ -1795,6 +1795,33 @@ class ProcessMemoryEnforcer:
                                 else:
                                     emergency_current = 0
                                 if emergency and emergency_current >= ceiling:
+                                    # #951-downstream: a video generation runs
+                                    # in a separate executor thread and is NOT
+                                    # in the LLM scheduler's request list, so
+                                    # _abort_loaded_requests_for_memory_emergency
+                                    # cannot reach it. The per-step
+                                    # check_step_pressure probe (~8s granularity)
+                                    # is too coarse — a 49-frame 1344x768 run
+                                    # spikes DURING a step eval and jetsams
+                                    # before the next boundary. Signal the video
+                                    # abort event here (1s poll granularity) so
+                                    # the backend's next step boundary raises
+                                    # VideoMemoryPressureError -> 507 instead of
+                                    # the unrecoverable fatal_exit / jetsam kill.
+                                    try:
+                                        from ..scheduler.video_unified_scheduler import (
+                                            signal_video_abort,
+                                        )
+
+                                        signal_video_abort(
+                                            f"enforcer emergency pressure "
+                                            f"current={_format_gb(emergency_current)} "
+                                            f">= ceiling={_format_gb(ceiling)}"
+                                        )
+                                    except Exception as exc:
+                                        logger.debug(
+                                            "video abort signal failed: %s", exc
+                                        )
                                     aborted = (
                                         await self._abort_loaded_requests_for_memory_emergency()
                                     )

@@ -70,7 +70,64 @@ class VideoMemoryPressureError(RuntimeError):
     # 2B DiT has no temporal upsampler so per-step attention memory scales
     # linearly with latent frames; a long/high-res request can cross the
     # ceiling mid-denoise even when begin_task's pre-probe saw OK memory.
+    #
+    # #951-downstream: also raised when an EXTERNAL abort signal is set —
+    # either by the ProcessMemoryEnforcer (1s poll granularity, finer than
+    # the per-step ~8s check_step_pressure boundary) or by the parent
+    # watchdog when macOS jetsam kills the supervisor shell mid-generation.
+    # Without this, a 49-frame 1344x768 run dies at step ~26 because jetsam
+    # kills the parent shell -> the serve child self-SIGTERMs (orphan path)
+    # before the next step-boundary probe fires. The abort event is the
+    # 1s-granularity trip wire that reaches the video thread at the next
+    # step boundary and converts the death into a clean 507.
     pass
+
+
+# #951-downstream: process-global abort event. Set by the enforcer (emergency
+# pressure while a video generation is in-flight) or by the parent watchdog
+# (orphaned mid-generation). The video backend's step callback checks this at
+# each denoise step boundary via check_abort() and raises
+# VideoMemoryPressureError if set — converting a process-killing jetsam /
+# fatal_exit into a clean 507 Retry-After. threading.Event is thread-safe
+# and safe to set from the enforcer/watchdog threads.
+_VIDEO_ABORT_EVENT = threading.Event()
+_VIDEO_ABORT_REASON: list[str] = []
+
+
+def signal_video_abort(reason: str) -> bool:
+    # Returns True if this call newly armed the abort (i.e. a video generation
+    # is in-flight and will pick it up). False if no generation is in-flight
+    # (caller — enforcer/watchdog — can then proceed with its own hard path).
+    sched = _singleton
+    generating = sched is not None and sched._active_model is not None
+    if not generating:
+        return False
+    _VIDEO_ABORT_REASON.append(reason)
+    _VIDEO_ABORT_EVENT.set()
+    logger.warning(
+        "video abort signaled (in-flight model=%s): %s",
+        sched._active_model,
+        reason,
+    )
+    return True
+
+
+def is_video_generating() -> bool:
+    sched = _singleton
+    return sched is not None and sched._active_model is not None
+
+
+def wait_video_generation_done(timeout: float = 12.0) -> bool:
+    # Used by the parent watchdog orphan path: after signaling abort, wait for
+    # the video thread to raise VideoMemoryPressureError and exit the
+    # generation (releasing the mutex) before self-terminating. Returns True
+    # if the generation ended within the grace window.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not is_video_generating():
+            return True
+        time.sleep(0.25)
+    return not is_video_generating()
 
 
 class MemoryLevel(IntEnum):
@@ -264,6 +321,25 @@ class VideoUnifiedScheduler:
             )
         return DegradationPlan(level=MemoryLevel.OK)
 
+    def check_abort(self) -> None:
+        # #951-downstream: raise VideoMemoryPressureError if an external actor
+        # (enforcer 1s poll / parent watchdog orphan path) armed the abort
+        # event during the last denoise step. Called at every step boundary
+        # by the backend's step callback (before the per-step pressure probe).
+        if _VIDEO_ABORT_EVENT.is_set():
+            reason = (
+                _VIDEO_ABORT_REASON[-1]
+                if _VIDEO_ABORT_REASON
+                else ("external abort signal (enforcer/watchdog)")
+            )
+            _VIDEO_ABORT_EVENT.clear()
+            _VIDEO_ABORT_REASON.clear()
+            raise VideoMemoryPressureError(
+                f"video generation aborted by external memory signal: {reason} "
+                f"(#951-downstream). The server stays alive; reduce "
+                f"num_frames / resolution and retry."
+            )
+
     # -- PRD §3.4 L3: 1s emergency reclaim -------------------------------
     def emergency_reclaim(self) -> None:
         t0 = time.monotonic()
@@ -286,6 +362,14 @@ class VideoUnifiedScheduler:
         # VideoMemoryPressureError so the backend aborts the generation (clean
         # 507) instead of the ProcessMemoryEnforcer fatal_exit killing the
         # whole server. Returns the post-reclaim level on success.
+        #
+        # #951-downstream: check the external abort event FIRST — the enforcer
+        # (1s poll) or the parent watchdog may have armed it between step
+        # boundaries when this probe's own footprint sample is momentarily
+        # below L3 (MLX releases cache between steps). Without this, a 49-frame
+        # run whose pressure spikes DURING a step eval (not at the boundary)
+        # escapes the per-step guard and dies to jetsam/fatal_exit.
+        self.check_abort()
         lvl = self.probe_level()
         if lvl is not MemoryLevel.L3_CIRCUIT:
             return lvl
@@ -319,6 +403,10 @@ class VideoUnifiedScheduler:
         try:
             self._active_model = model_name
             self._cache = NF4DequantCache()
+            # #951-downstream: clear any stale abort from a prior task so the
+            # new generation starts clean.
+            _VIDEO_ABORT_EVENT.clear()
+            _VIDEO_ABORT_REASON.clear()
             logger.info("video scheduler acquired by %s", model_name)
         except Exception:
             self._video_mtx.release()
@@ -334,6 +422,10 @@ class VideoUnifiedScheduler:
         except Exception:
             pass
         self._active_model = None
+        # #951-downstream: disarm the abort event so a waiter (parent watchdog)
+        # sees the generation as ended.
+        _VIDEO_ABORT_EVENT.clear()
+        _VIDEO_ABORT_REASON.clear()
         try:
             self._video_mtx.release()
         except RuntimeError:
