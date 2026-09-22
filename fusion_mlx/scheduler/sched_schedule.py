@@ -812,6 +812,30 @@ def _schedule_waiting(
                 not _force_inline
                 and len(tokens_to_process) > _INLINE_PREFILL_TOKEN_LIMIT
             )
+            # P0-paged-concurrency: when the paged-KV pool is active, force the
+            # non-chunked external-prefill path. The chunked path advances
+            # self.prefilling inside the SAME step() that decodes running
+            # requests, so both land in the BatchGenerator's next() and
+            # MergedPagedCacheView receives mixed-phase constituents (e.g.
+            # offset 7 mid-prefill next to offset 46 decode) — corrupting KV.
+            # Routing every prompt through _do_external_prefill (a separate
+            # forward outside BatchGenerator) means BatchGenerator only ever
+            # sees fully-prefilled decode-phase caches. Cost: long prompts
+            # block running decode for the full prompt length (native mlx_lm
+            # semantics, no interleaving). The per-row variable-step fix in
+            # MergedPagedCacheView is tracked as a follow-up to restore
+            # interleaving safely.
+            if (
+                _use_chunked
+                and getattr(self.model, "_fusion_paged_pool", None) is not None
+            ):
+                _use_chunked = False
+                logger.info(
+                    "paged-pool active: forcing external prefill (no chunked+decode "
+                    "mixed forward) for %s tokens=%d",
+                    request.request_id,
+                    len(tokens_to_process),
+                )
             if (
                 _use_chunked
                 and vlm_embeds is None
@@ -1016,6 +1040,14 @@ def _schedule_waiting(
         # detokenization/stop-state that rely on the full prompt history.
         prompt_ids = request.prompt_token_ids
         seed_prefix = prompt_ids[: len(prompt_ids) - len(tokens_to_process)]
+        if cache_to_use:
+            logger.info(
+                "sched insert request=%s cache_type=%s off=%s ncache=%d",
+                request.request_id,
+                type(cache_to_use[0]).__name__,
+                getattr(cache_to_use[0], "offset", "?"),
+                len(cache_to_use),
+            )
         uids = self.batch_generator.insert(
             [tokens_to_process],
             max_tokens=[request.sampling_params.max_tokens],
