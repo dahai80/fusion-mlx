@@ -1242,7 +1242,20 @@ def _is_video_model(path: Path) -> bool:
             try:
                 with open(path / "model_index.json") as f:
                     if json.load(f).get("_class_name", "") in DIFFUSERS_PIPELINE_TASKS:
-                        return True
+                        # Stray-manifest guard: a model_index.json alone (no
+                        # weights, no subdirs) is not loadable — e.g. an H3
+                        # dir that lost its transformer/video_vae subdirs.
+                        # Require at least one weight file (.safetensors/.bin)
+                        # so the LTX-Video legacy single-file layout (which
+                        # ships ltxv-*.safetensors) is accepted but a bare
+                        # manifest is rejected (Rule 12, #948 test).
+                        has_weights = any(
+                            p.suffix in (".safetensors", ".bin")
+                            for p in path.iterdir()
+                            if p.is_file()
+                        )
+                        if has_weights:
+                            return True
             except (OSError, json.JSONDecodeError):
                 pass
         return has_diffusers_subdirs
