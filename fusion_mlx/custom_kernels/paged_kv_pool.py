@@ -616,6 +616,57 @@ class MergedPagedCacheView:
         self._left_padding = mx.concatenate([slp, olp])
         self._bidx = max_idx
 
+    def _extend_single(self, other):
+        max_idx = max(self._bidx, other.offset)
+        flat_k = getattr(other, "_flat_keys", None)
+        flat_v = getattr(other, "_flat_values", None)
+        other_len = flat_k.shape[2] if flat_k is not None else 0
+        L1 = self._bkeys.shape[2] if self._bkeys is not None else 0
+        max_size = max(L1, max_idx, other_len)
+        if self._bkeys is None:
+            return
+        H = self._bkeys.shape[1]
+        Dk = self._bkeys.shape[3]
+        Dv = self._bvalues.shape[3]
+        dt = self._bkeys.dtype
+
+        def pad_self():
+            k, v = self._bkeys, self._bvalues
+            left = max_idx - self._bidx
+            right = max_size - k.shape[2] - left
+            if right < 0:
+                k = k[..., :right, :]
+                v = v[..., :right, :]
+                right = 0
+            if left != 0 or right != 0:
+                pw = [(0, 0), (0, 0), (left, right), (0, 0)]
+                k = mx.pad(k, pw)
+                v = mx.pad(v, pw)
+            lp = self._left_padding + left
+            return k, v, lp
+
+        def build_other():
+            left = max_idx - other.offset
+            right = max_size - other_len - left
+            if right < 0:
+                right = 0
+            if flat_k is not None and other_len > 0:
+                pw = [(0, 0), (0, 0), (left, right), (0, 0)]
+                nk = mx.pad(flat_k[..., :other_len, :], pw)
+                nv = mx.pad(flat_v[..., :other_len, :], pw)
+            else:
+                nk = mx.zeros((1, H, max_size, Dk), dtype=dt)
+                nv = mx.zeros((1, H, max_size, Dv), dtype=dt)
+            olp = mx.array([left])
+            return nk, nv, olp
+
+        sk, sv, slp = pad_self()
+        nk, nv, olp = build_other()
+        self._bkeys = mx.concatenate([sk, nk], axis=0)
+        self._bvalues = mx.concatenate([sv, nv], axis=0)
+        self._left_padding = mx.concatenate([slp, olp])
+        self._bidx = max_idx
+
     def extend(self, other):
         if isinstance(other, MergedPagedCacheView):
             if (
@@ -632,12 +683,15 @@ class MergedPagedCacheView:
                 self._left_padding = other._left_padding
             self.constituents.extend(other.constituents)
         elif other is not None:
+            if self._bkeys is not None and self._left_padding is not None:
+                self._extend_single(other)
             self.constituents.append(other)
         self._offset_override = None
         logger.debug(
-            "MergedPagedCacheView.extend: n_constituents=%d bidx=%d",
+            "MergedPagedCacheView.extend: n_constituents=%d bidx=%d " "bkeys_B=%s",
             len(self.constituents),
             self._bidx,
+            self._bkeys.shape[0] if self._bkeys is not None else None,
         )
 
     def __deepcopy__(self, memo):
