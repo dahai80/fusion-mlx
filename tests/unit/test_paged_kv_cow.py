@@ -472,6 +472,66 @@ class TestCoWPagedRequestCacheParity:
         assert_logits_aligned(os_[0], oc[0], tol=1e-6, label="cow pool multi-step K")
         assert cow.offset == stock.offset
 
+    def test_d9_instance_scoped_free_survives_peer(self):
+        # D9 regression: two layer caches of one request share request_id.
+        # clear()/free_all() must free ONLY the caller's own block_table
+        # blocks, NOT pool.free_request(request_id) which would free every
+        # peer's blocks mid-generation and corrupt live KV (phys collision
+        # from stale block_table referencing freed-then-reallocated slabs).
+        from fusion_mlx.custom_kernels.paged_kv_pool import (
+            FusionPagedKVPool,
+            FusionPagedRequestCache,
+        )
+
+        pool = FusionPagedKVPool(
+            block_size=4, num_blocks=16, n_kv_heads=2, head_dim=8
+        )
+        layer_a = FusionPagedRequestCache(pool, "req_1")
+        layer_b = FusionPagedRequestCache(pool, "req_1")
+        ka, va = _kv(steps=6)
+        kb, vb = _kv(steps=6)
+        layer_a.update_and_fetch(ka, va)
+        layer_b.update_and_fetch(kb, vb)
+        mx.eval([pool.keys_pool, pool.values_pool])
+        phys_b = list(layer_b.block_table)
+        fetched_b_before = layer_b.state[0]
+        mx.eval(fetched_b_before)
+        before_vals = fetched_b_before[0, 0, :2, :4].tolist()
+        # Free layer A mid-generation — must NOT touch layer B's blocks.
+        freed = layer_a.free_all()
+        assert freed == len(phys_b)
+        assert layer_a.block_table == []
+        assert layer_a.offset == 0
+        # layer B's blocks must still be live in the pool (refcount intact).
+        for pb in phys_b:
+            assert pool._refcount.get(pb, 0) >= 1
+            assert pb in pool.in_use
+        # layer B's KV must be unchanged (no retroactive mutation).
+        fetched_b_after = layer_b.state[0]
+        mx.eval(fetched_b_after)
+        after_vals = fetched_b_after[0, 0, :2, :4].tolist()
+        assert before_vals == after_vals
+        # layer B can still append (block 3 alloc must not collide with freed).
+        kc, vc = _kv(steps=4)
+        layer_b.update_and_fetch(kc, vc)
+        mx.eval(layer_b.state[0])
+        assert layer_b.offset == 10
+        # Same for clear().
+        layer_c = FusionPagedRequestCache(pool, "req_1")
+        kc2, vc2 = _kv(steps=6)
+        layer_c.update_and_fetch(kc2, vc2)
+        mx.eval([pool.keys_pool, pool.values_pool])
+        phys_b2 = list(layer_b.block_table)
+        before2 = layer_b.state[0]
+        mx.eval(before2)
+        before2_vals = before2[0, 0, :2, :4].tolist()
+        layer_c.clear()
+        for pb in phys_b2:
+            assert pool._refcount.get(pb, 0) >= 1
+        after2 = layer_b.state[0]
+        mx.eval(after2)
+        assert before2_vals == after2[0, 0, :2, :4].tolist()
+
 
 class TestPoolDonation:
     """Concurrent donation: donor -> receiver refcount-shared, CoW on write."""

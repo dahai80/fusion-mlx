@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 import os
 
+import mlx.core as mx
+
 from .paged_kv_cache import FusionPagedKVCache
 from .paged_kv_pool import FusionPagedKVPool, FusionPagedRequestCache
 
@@ -250,6 +252,15 @@ class CoWPagedRequestCache(FusionPagedRequestCache):
         self._cow_copies = 0
         self._shared_pages = 0
 
+    def __deepcopy__(self, memo):
+        # Parent __deepcopy__ allocates fresh blocks + copies contents; it
+        # does not know about CoW-specific counters. Set them so stats() /
+        # ensure_writable never AttributeError on a split copy.
+        new = super().__deepcopy__(memo)
+        new._cow_copies = self._cow_copies
+        new._shared_pages = self._shared_pages
+        return new
+
     def adopt_donated(self, phys_blocks: list[int]) -> int:
         """Pre-populate this cache's block_table with donated (refcount-shared)
         physical blocks from a concurrent donor. Called by the scheduler on a
@@ -289,6 +300,17 @@ class CoWPagedRequestCache(FusionPagedRequestCache):
         end = prev + num_steps
         first_block = self._logical_to_block(prev)
         last_block = self._logical_to_block(end - 1)
+        if num_steps <= 2:
+            logger.debug(
+                "cow_uf req=%s B=%d nsteps=%d prev=%d end=%d bt_len=%d bt=%s",
+                self.request_id,
+                B,
+                num_steps,
+                prev,
+                end,
+                len(self.block_table),
+                self.block_table[:6],
+            )
 
         allocated_this_call: list[int] = []
         try:
@@ -336,7 +358,15 @@ class CoWPagedRequestCache(FusionPagedRequestCache):
             self._block_table_len_before = len(self.block_table)
 
         self.offset = end
-        return self._fetch_logical(end)
+        fetched = self._fetch_logical(end)
+        # Force eval of the written slabs so the fetch reads materialized
+        # data, not a lazy view that could be overwritten by a later in-place
+        # write to the same pool slab (silent KV corruption).
+        try:
+            mx.eval(fetched[0], fetched[1])
+        except Exception as e:
+            logger.warning("CoWPagedRequestCache eval fetched failed: %s", e)
+        return fetched
 
     def stats(self) -> dict:
         s = super().stats()

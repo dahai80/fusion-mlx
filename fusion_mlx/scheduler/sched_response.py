@@ -370,19 +370,32 @@ def _release_paged_cache_for_request(self, request_id: str) -> None:
 
 def _free_paged_pool_cache(self, request) -> int:
     prompt_cache = getattr(request, "prompt_cache", None)
-    if not prompt_cache:
-        return 0
     from fusion_mlx.custom_kernels.paged_kv_pool import (
         FusionPagedRequestCache,
     )
 
     freed = 0
-    for c in prompt_cache:
-        if isinstance(c, FusionPagedRequestCache):
+    if prompt_cache:
+        for c in prompt_cache:
+            if isinstance(c, FusionPagedRequestCache):
+                try:
+                    freed += c.free_all()
+                except Exception as e:
+                    logger.warning("paged_kv pool free failed: %s", e)
+    # Namespace fix (#955): when the paged-pool path is active, the cache
+    # handles live inside BatchGenerator (request.prompt_cache is None at
+    # finish time — never back-written from the local cache_to_use). The
+    # pool-side id (pool_N) was stored on the request as _fusion_pool_id at
+    # insert time. Free directly through the pool so blocks recycle instead
+    # of leaking (pool exhaustion across ~10 requests without this).
+    if freed == 0:
+        pool = getattr(self.model, "_fusion_paged_pool", None)
+        pool_id = getattr(request, "_fusion_pool_id", None)
+        if pool is not None and pool_id:
             try:
-                freed += c.free_all()
+                freed = pool.free_request(pool_id)
             except Exception as e:
-                logger.warning("paged_kv pool free failed: %s", e)
+                logger.warning("paged_kv pool free_request failed: %s", e)
     if freed:
         logger.info(
             "paged_kv pool released %d blocks for request %s",

@@ -330,6 +330,204 @@ class FusionPagedKVPool:
         }
 
 
+class MergedPagedCacheView:
+    # Batched view over B per-sequence FusionPagedRequestCache handles.
+    # mlx_lm _merge_caches calls cache.merge([c[i] for c in caches]) to batch
+    # per-request layer caches, then runs the batched forward pass
+    # (prefill) and -- after split() -- generation appends via
+    # update_and_fetch on the MERGED cache. The prior merge returned a
+    # read-only materialized snapshot (_is_merged=True) which crashed on
+    # the first generation append ("cannot update a merged cache"). This
+    # view delegates update_and_fetch per-sequence to each constituent's
+    # own paged blocks, so generation appends land in the right
+    # per-sequence slab. filter/split only reindex the constituent list
+    # (no slab reorg) -- each sequence keeps its own block_table. CoW
+    # (ensure_writable) handles divergence on the underlying blocks.
+
+    def __init__(self, constituents: list | None = None):
+        self.constituents: list = list(constituents) if constituents else []
+        self._offset_override: int | None = None
+
+    @property
+    def pool(self):
+        return self.constituents[0].pool if self.constituents else None
+
+    @property
+    def offset(self):
+        if self._offset_override is not None:
+            return self._offset_override
+        return max((c.offset for c in self.constituents), default=0)
+
+    @offset.setter
+    def offset(self, v):
+        self._offset_override = v
+        for c in self.constituents:
+            c.offset = v
+
+    def update_and_fetch(self, keys, values):
+        B = keys.shape[0]
+        if len(self.constituents) != B:
+            raise RuntimeError(
+                f"MergedPagedCacheView.update_and_fetch: batch mismatch "
+                f"B={B} constituents={len(self.constituents)}"
+            )
+        fetched = []
+        for i in range(B):
+            k_i = keys[i : i + 1]
+            v_i = values[i : i + 1]
+            fk, fv = self.constituents[i].update_and_fetch(k_i, v_i)
+            fetched.append((fk, fv))
+        max_len = max(fk.shape[-2] for fk, _ in fetched)
+        k_head_dim = fetched[0][0].shape[-1]
+        v_head_dim = fetched[0][1].shape[-1]
+        n_kv_heads = fetched[0][0].shape[1]
+        dt = fetched[0][0].dtype
+        out_k = mx.zeros((B, n_kv_heads, max_len, k_head_dim), dtype=dt)
+        out_v = mx.zeros((B, n_kv_heads, max_len, v_head_dim), dtype=dt)
+        for i, (fk, fv) in enumerate(fetched):
+            L = fk.shape[-2]
+            out_k[i : i + 1, :, :L, :] = fk
+            out_v[i : i + 1, :, :L, :] = fv
+        return out_k, out_v
+
+    @property
+    def state(self):
+        if not self.constituents:
+            d = 1
+            return mx.zeros((1, 1, 0, d)), mx.zeros((1, 1, 0, d))
+        states = [c.state for c in self.constituents]
+        max_len = max(s[0].shape[-2] for s in states)
+        k_head_dim = states[0][0].shape[-1]
+        v_head_dim = states[0][1].shape[-1]
+        n_kv_heads = states[0][0].shape[1]
+        dt = states[0][0].dtype
+        B = len(states)
+        out_k = mx.zeros((B, n_kv_heads, max_len, k_head_dim), dtype=dt)
+        out_v = mx.zeros((B, n_kv_heads, max_len, v_head_dim), dtype=dt)
+        for i, (sk, sv) in enumerate(states):
+            L = sk.shape[-2]
+            out_k[i : i + 1, :, :L, :] = sk
+            out_v[i : i + 1, :, :L, :] = sv
+        return out_k, out_v
+
+    @state.setter
+    def state(self, v):
+        if v is None or not self.constituents:
+            return
+        keys, values = v
+        B = keys.shape[0]
+        for i in range(min(B, len(self.constituents))):
+            self.constituents[i].state = (
+                keys[i : i + 1],
+                values[i : i + 1],
+            )
+
+    @property
+    def meta_state(self):
+        return [getattr(c, "meta_state", None) for c in self.constituents]
+
+    @meta_state.setter
+    def meta_state(self, v):
+        if not isinstance(v, (list, tuple)):
+            return
+        for i, ms in enumerate(v):
+            if i < len(self.constituents):
+                c = self.constituents[i]
+                if hasattr(c, "meta_state"):
+                    try:
+                        c.meta_state = ms
+                    except Exception:
+                        pass
+
+    def is_trimmable(self):
+        return True
+
+    def size(self):
+        return self.offset
+
+    def trim(self, n):
+        for c in self.constituents:
+            try:
+                c.trim(n)
+            except Exception as e:
+                logger.debug("MergedPagedCacheView.trim constituent failed: %s", e)
+        return n
+
+    def filter(self, keep):
+        if not keep and self.constituents:
+            self.clear()
+            return
+        self.constituents = [self.constituents[i] for i in keep]
+
+    def clear(self):
+        for c in self.constituents:
+            try:
+                c.clear()
+            except Exception as e:
+                logger.debug("MergedPagedCacheView.clear constituent failed: %s", e)
+        self.constituents = []
+        self._offset_override = None
+
+    def empty(self):
+        return all(c.empty() for c in self.constituents) if self.constituents else True
+
+    @property
+    def nbytes(self):
+        return sum(c.nbytes for c in self.constituents)
+
+    def free_all(self):
+        freed = 0
+        for c in self.constituents:
+            try:
+                freed += c.free_all()
+            except Exception as e:
+                logger.debug("MergedPagedCacheView.free_all constituent failed: %s", e)
+        self.constituents = []
+        self._offset_override = None
+        return freed
+
+    def make_mask(self, *args, **kwargs):
+        from mlx_lm.models.cache import create_attention_mask
+
+        return create_attention_mask(*args, offset=self.offset, **kwargs)
+
+    def __deepcopy__(self, memo):
+        import copy as _copy
+
+        new = MergedPagedCacheView.__new__(MergedPagedCacheView)
+        new.constituents = [_copy.deepcopy(c) for c in self.constituents]
+        new._offset_override = self._offset_override
+        return new
+
+    def extract(self, idx):
+        # mlx_lm BatchGenerator.extract_cache calls c.extract(idx) to pull the
+        # idx-th sequence's cache out of the batched cache. For the view this
+        # is just the idx-th constituent (already per-sequence).
+        return self.constituents[idx]
+
+    def prepare(self, lengths=None, right_padding=None, **kwargs):
+        # mlx_lm calls c.prepare(lengths=, right_padding=) when batched
+        # prompts have different lengths (padding). Each constituent is
+        # per-sequence so it needs no padding prep; the view's
+        # update_and_fetch already delegates per-sequence with correct
+        # offsets. No-op keeps the batched prefill path from AttributeError.
+        pass
+
+    def to_quantized(self, *args, **kwargs):
+        raise NotImplementedError(
+            "MergedPagedCacheView.to_quantized not supported "
+            "(pool paged-KV is non-quantized)"
+        )
+
+    def stats(self) -> dict:
+        return {
+            "merged": True,
+            "n_constituents": len(self.constituents),
+            "offset": self.offset,
+            "constituent_stats": [c.stats() for c in self.constituents],
+        }
+
+
 class FusionPagedRequestCache:
     def __init__(self, pool: FusionPagedKVPool, request_id: str):
         self.pool = pool
@@ -370,6 +568,15 @@ class FusionPagedRequestCache:
         end = prev + num_steps
         first_block = self._logical_to_block(prev)
         last_block = self._logical_to_block(end - 1)
+        if num_steps <= 2:
+            logger.debug(
+                "paged_kv UF req=%s prev=%d end=%d nsteps=%d bt_len=%d",
+                self.request_id,
+                prev,
+                end,
+                num_steps,
+                len(self.block_table),
+            )
 
         # D3 (audit): track blocks newly allocated in THIS call so a
         # mid-operation alloc failure (pool exhausted after some blocks
@@ -426,7 +633,15 @@ class FusionPagedRequestCache:
             self._block_table_len_before = len(self.block_table)
 
         self.offset = end
-        return self._fetch_logical(end)
+        fetched = self._fetch_logical(end)
+        # Force eval of the written slabs so the fetch reads materialized
+        # data, not a lazy view that could be overwritten by a later
+        # in-place write to the same pool slab (silent KV corruption).
+        try:
+            mx.eval(fetched[0], fetched[1])
+        except Exception:
+            pass
+        return fetched
 
     def _fetch_logical(self, length: int):
         if self._is_merged:
@@ -456,35 +671,62 @@ class FusionPagedRequestCache:
     def __deepcopy__(self, memo):
         # mlx_lm BatchGenerator._copy() deepcopies prompt_cache on every
         # split() (prefill->generation transition). The pool is a shared
-        # singleton with an unpicklable mlx.core.Dtype, and MUST stay shared
-        # (copying it would fragment the phys address space). Share the pool
-        # reference; copy the per-request block_table + offset so the split
-        # copy co-owns the same phys blocks. CoW (ensure_writable) handles
-        # divergence on first write. For B>1 batched filter, see .filter().
+        # singleton with an unpicklable mlx.core.Dtype, and MUST stay shared.
+        #
+        # ADOPT (move) the original's physical blocks into the copy instead
+        # of alloc+copy. The prior alloc+copy path allocated 336 fresh
+        # blocks (4 req x 28 layer x 3 blocks) during a single split,
+        # exhausting the 512-block pool and triggering LRU eviction of an
+        # ACTIVE concurrent request (pool_N namespace mismatch in
+        # set_active_ids left all pool requests evictable). The evict
+        # callback invalidate_request then cleared the victim's
+        # block_table + offset mid-deepcopy -> the copy received an empty
+        # cache -> decode garbage (#955 root cause).
+        #
+        # Adopt is safe because the scheduler gate (6feae2da) forces every
+        # prompt through external prefill -> 1-token insert -> immediate
+        # all-split (indices_left empty) -> the original prompt-batch is
+        # discarded right after _copy(). The original's block_table is
+        # detached (emptied) so it cannot free or corrupt the adopted
+        # blocks. No alloc -> no eviction -> no invalidate_request.
         cls = self.__class__
         new = cls.__new__(cls)
         new.pool = self.pool
         new.request_id = self.request_id
-        new.block_table = list(self.block_table)
         new.offset = self.offset
         new._n_kv_heads = self._n_kv_heads
         new._k_head_dim = self._k_head_dim
         new._v_head_dim = self._v_head_dim
         new._dtype = self._dtype
         new._B = self._B
-        new._is_merged = self._is_merged
-        new._merged_keys = self._merged_keys
-        new._merged_values = self._merged_values
-        new._merged_padding = list(self._merged_padding)
+        new._is_merged = False
+        new._merged_keys = None
+        new._merged_values = None
+        new._merged_padding = []
         new._block_table_len_before = getattr(self, "_block_table_len_before", 0)
-        for pb in self.block_table:
-            try:
-                self.pool.share_block(self.request_id, pb)
-            except Exception as e:
-                logger.debug(
-                    "paged_kv __deepcopy__ share_block phys=%d failed: %s", pb, e
-                )
+        new.block_table = list(self.block_table)
+        _moved = len(new.block_table)
+        # Detach the original: it is discarded after split, so its
+        # block_table must not reference (and thus free) the adopted blocks.
+        self.block_table = []
+        self.offset = 0
+        logger.info(
+            "paged_kv __deepcopy__ adopt req=%s moved=%d blocks (no alloc)",
+            self.request_id,
+            _moved,
+        )
         return new
+
+    def extract(self, idx):
+        # mlx_lm BatchGenerator.extract_cache calls c.extract(idx). A
+        # per-sequence FusionPagedRequestCache is already single-sequence
+        # (B=1), so extract(0) returns self; idx!=0 is invalid.
+        return self
+
+    def prepare(self, lengths=None, right_padding=None, **kwargs):
+        # mlx_lm calls prepare for batched padding. Per-sequence B=1 cache
+        # needs no padding prep.
+        pass
 
     def filter(self, keep):
         # mlx_lm BatchGenerator.filter reindexes the batch dim. For B==1 the
@@ -503,12 +745,24 @@ class FusionPagedRequestCache:
         )
 
     def clear(self):
-        # mlx_lm calls clear() when all sequences leave the batch. Free this
-        # request's blocks back to the pool (refcount-aware) and reset.
-        try:
-            self.pool.free_request(self.request_id)
-        except Exception as e:
-            logger.debug("paged_kv clear free_request failed: %s", e)
+        # mlx_lm calls clear() when all sequences leave the batch. Free ONLY
+        # this cache's own block_table blocks (instance-scoped via free_block),
+        # NOT pool.free_request(request_id) — all 28 layer caches of one
+        # request share request_id, so free_request would free every layer's
+        # blocks mid-generation and corrupt the live peers (D9: phys collision
+        # from stale block_table referencing freed-then-reallocated slabs).
+        if self.offset > 0 or self.block_table:
+            logger.debug(
+                "paged_kv clear req=%s offset=%d bt_len=%d",
+                self.request_id,
+                self.offset,
+                len(self.block_table),
+            )
+        for pb in self.block_table:
+            try:
+                self.pool.free_block(pb, self.request_id)
+            except Exception as e:
+                logger.debug("paged_kv clear free_block phys=%d failed: %s", pb, e)
         self.block_table = []
         self.offset = 0
         self._is_merged = False
@@ -624,7 +878,17 @@ class FusionPagedRequestCache:
             self._is_merged = False
             self.offset = 0
             return freed
-        freed = self.pool.free_request(self.request_id)
+        # D9: instance-scoped free — free ONLY this cache's block_table blocks.
+        # pool.free_request(request_id) would free every layer cache sharing
+        # this request_id (all 28 layers of one request), corrupting live peers
+        # when free_all is called mid-generation on a single layer.
+        freed = 0
+        for pb in self.block_table:
+            try:
+                self.pool.free_block(pb, self.request_id)
+                freed += 1
+            except Exception as e:
+                logger.debug("paged_kv free_all free_block phys=%d failed: %s", pb, e)
         self.block_table = []
         self.offset = 0
         return freed
@@ -636,37 +900,23 @@ class FusionPagedRequestCache:
 
     @classmethod
     def merge(cls, caches):
-        lengths = [c.size() for c in caches]
-        max_length = max(lengths)
-        if max_length == 0:
-            return cls(pool=caches[0].pool, request_id="__merged_empty__")
-        padding = [max_length - l for l in lengths]
-        B = len(caches)
-        n_kv_heads = caches[0]._n_kv_heads
-        k_head_dim = caches[0]._k_head_dim
-        v_head_dim = caches[0]._v_head_dim
-        dt = caches[0]._dtype
-        keys = mx.zeros((B, n_kv_heads, max_length, k_head_dim), dtype=dt)
-        values = mx.zeros((B, n_kv_heads, max_length, v_head_dim), dtype=dt)
-        for i, (p, c) in enumerate(zip(padding, caches)):
-            if c.offset == 0:
-                continue
-            ck, cv = c.state
-            keys[i : i + 1, :, p : p + c.offset, :] = ck[..., : c.offset, :]
-            values[i : i + 1, :, p : p + c.offset, :] = cv[..., : c.offset, :]
-        merged = cls(pool=caches[0].pool, request_id="__merged__")
-        merged._merged_keys = keys
-        merged._merged_values = values
-        merged._merged_padding = padding
-        merged.offset = max_length
-        merged._is_merged = True
+        # Return a writable batched VIEW over the per-sequence caches, NOT a
+        # read-only materialized snapshot. mlx_lm runs update_and_fetch on
+        # the merged cache during generation (after split); the view
+        # delegates per-sequence so appends land in the right slab. The old
+        # materialized-snapshot path (_is_merged=True) crashed on the first
+        # generation append. filter/split reindex the constituent list.
+        if not caches:
+            return MergedPagedCacheView([])
+        if len(caches) == 1:
+            return caches[0]
+        view = MergedPagedCacheView(list(caches))
         logger.info(
-            "paged_kv merge: B=%d max_length=%d padding=%s",
-            B,
-            max_length,
-            padding,
+            "paged_kv merge(view): B=%d offsets=%s",
+            len(caches),
+            [c.offset for c in caches],
         )
-        return merged
+        return view
 
     def stats(self) -> dict:
         return {

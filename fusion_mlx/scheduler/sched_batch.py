@@ -799,6 +799,14 @@ def _insert_prefilled_request(
     # via ``prompts``). Mirrors the all_tokens seed in _schedule_waiting.
     prompt_ids = request.prompt_token_ids
     seed_prefix = prompt_ids[: len(prompt_ids) - len(state.last_token)]
+    if state.cache:
+        logger.info(
+            "batch insert request=%s cache_type=%s off=%s ncache=%d",
+            request.request_id,
+            type(state.cache[0]).__name__,
+            getattr(state.cache[0], "offset", "?"),
+            len(state.cache),
+        )
     uids = self.batch_generator.insert(
         [state.last_token],
         max_tokens=[request.sampling_params.max_tokens],
@@ -821,6 +829,14 @@ def _insert_prefilled_request(
         request.last_activity_at = now
         self.running[request.request_id] = request
         scheduled.append(request)
+
+        # Namespace fix (#955): store pool-side request id (pool_N) on the
+        # scheduler Request so _sync_paged_pool_active builds the correct
+        # active_ids set. pool tags blocks with pool_N, NOT scheduler UUID.
+        if state.cache:
+            _pc_rid = getattr(state.cache[0], "request_id", None)
+            if _pc_rid is not None:
+                request._fusion_pool_id = _pc_rid
 
         # CoW donor registration: record this request's prefilled prefix
         # chain-hash -> per-layer GPU phys block ids so a later same-prefix

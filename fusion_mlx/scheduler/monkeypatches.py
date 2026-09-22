@@ -448,24 +448,15 @@ try:
             _ng_src = ""
         # Only patch if the source contains the stream context manager.
         if "mx.stream" in _ng_src:
-
-            def _patched_next_generated(self):
-                # Inline the stock logic without the stream context manager.
-                # Stock: with mx.stream(self._stream): <body>
-                # We just run <body> directly since we're already on the
-                # correct stream thread.
-                while True:
-                    prompt_resp, gen_resp = self._next()
-                    if gen_resp or prompt_resp:
-                        yield from gen_resp
-                        return
-                    if not self._prompt_batch and not self._unprocessed_sequences:
-                        yield from gen_resp
-                        return
-
-            _BatchGenerator.next_generated = _patched_next_generated
+            # NOTE: do NOT strip the `with mx.stream(self._stream):` context.
+            # The fusion-mlx engine runs each request on its own worker
+            # thread; the BatchGenerator._stream (set at construction on the
+            # scheduler thread) is NOT the worker's thread-local default
+            # stream. Stripping the context leaves generation on the wrong
+            # stream -> "There is no Stream(gpu, N) in current thread" +
+            # empty logits under concurrent (N>1) requests. Keep stock as-is.
             logger.debug(
-                "Patched BatchGenerator.next_generated to skip mx.stream context"
+                "BatchGenerator.next_generated stream context kept (concurrency-safe)"
             )
 
     # Also patch BatchGenerator._next to skip its own mx.stream wrapper.

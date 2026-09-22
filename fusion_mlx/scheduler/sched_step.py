@@ -60,7 +60,21 @@ def _sync_paged_pool_active(self) -> None:
             from ..custom_kernels.fusion_paged_kv import invalidate_request
 
             pool.set_evict_callback(invalidate_request)
-        pool.set_active_ids(set(self.running.keys()))
+        # Namespace fix (#955): the pool tags blocks with the per-request
+        # pool id (pool_N from _fusion_make_cache_pool), NOT the scheduler
+        # request_id (UUID). Passing UUIDs to set_active_ids left every
+        # pool request evictable (evictable = owners - active_ids never
+        # matched), so LRU eviction reclaimed ACTIVE concurrent requests
+        # during the split deepcopy -> invalidate_request cleared their
+        # block_table mid-deepcopy -> decode garbage. The pool_N id is
+        # stored on each running request as _fusion_pool_id at insert
+        # time (sched_schedule._schedule_waiting / sched_batch._insert).
+        active_pool_ids: set[str] = set()
+        for req in self.running.values():
+            _pid = getattr(req, "_fusion_pool_id", None)
+            if _pid:
+                active_pool_ids.add(_pid)
+        pool.set_active_ids(active_pool_ids)
         pool.touch_active()
         # D2 (audit): reclaim registry entries for requests no longer in
         # the running set (aborted/crashed/forgotten). Without this the
@@ -69,7 +83,7 @@ def _sync_paged_pool_active(self) -> None:
         # full active set (running keys) so sweep drops stale entries.
         from ..custom_kernels.fusion_paged_kv import sweep_registry
 
-        sweep_registry(set(self.running.keys()))
+        sweep_registry(active_pool_ids)
     except Exception as e:
         logger.debug("paged_kv pool active-sync failed: %s", e)
 

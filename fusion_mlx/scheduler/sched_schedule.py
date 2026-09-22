@@ -1071,6 +1071,17 @@ def _schedule_waiting(
             self.running[request.request_id] = request
             scheduled.append(request)
 
+            # Namespace fix (#955): store the pool-side request id (pool_N)
+            # on the scheduler Request so _sync_paged_pool_active can build
+            # the correct active_ids set. The pool tags blocks with pool_N
+            # (from _fusion_make_cache_pool), NOT the scheduler UUID.
+            # Passing UUIDs to set_active_ids left every pool request
+            # evictable -> LRU reclaimed active concurrent requests.
+            if cache_to_use:
+                _pc_rid = getattr(cache_to_use[0], "request_id", None)
+                if _pc_rid is not None:
+                    request._fusion_pool_id = _pc_rid
+
             # CoW donor registration (mirror of _insert_prefilled_request):
             # record prefix chain-hash -> per-layer GPU phys blocks for
             # concurrent same-prefix donation. No-op when CoW is OFF.
