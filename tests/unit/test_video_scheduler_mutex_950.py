@@ -14,6 +14,8 @@ import threading
 import pytest
 
 from fusion_mlx.scheduler.video_unified_scheduler import (
+    MemoryLevel,
+    VideoMemoryPressureError,
     VideoMutexBusyError,
     VideoUnifiedScheduler,
 )
@@ -76,3 +78,39 @@ def test_concurrent_thread_cannot_steal_lock():
     assert "busy" in result
     assert "ok" not in result
     sched.release("model_a")
+
+
+# #951: mid-denoise memory guard — check_step_pressure must abort the
+# generation (VideoMemoryPressureError -> 507) when sustained L3 circuit
+# pressure cannot be reclaimed, instead of letting ProcessMemoryEnforcer
+# fatal_exit kill the whole server.
+
+
+def test_check_step_pressure_ok_when_below_l3(monkeypatch):
+    sched = VideoUnifiedScheduler()
+    monkeypatch.setattr(sched, "_current_bytes", lambda: 50 * 1024**3)
+    assert sched.check_step_pressure() is MemoryLevel.OK
+
+
+def test_check_step_pressure_aborts_when_sustained_l3(monkeypatch):
+    sched = VideoUnifiedScheduler()
+    # Sustained L3: probe stays >=98GB even after emergency_reclaim.
+    monkeypatch.setattr(sched, "_current_bytes", lambda: 99 * 1024**3)
+    with pytest.raises(VideoMemoryPressureError) as exc_info:
+        sched.check_step_pressure()
+    assert "98" in str(exc_info.value) or "red line" in str(exc_info.value)
+
+
+def test_check_step_pressure_recovers_after_reclaim(monkeypatch):
+    sched = VideoUnifiedScheduler()
+    calls = {"n": 0}
+
+    def _fake_bytes():
+        calls["n"] += 1
+        # first probe (pre-reclaim): L3; second probe (post-reclaim): OK
+        return 99 * 1024**3 if calls["n"] == 1 else 50 * 1024**3
+
+    monkeypatch.setattr(sched, "_current_bytes", _fake_bytes)
+    # emergency_reclaim must not crash (no real cache allocated).
+    level = sched.check_step_pressure()
+    assert level is MemoryLevel.OK

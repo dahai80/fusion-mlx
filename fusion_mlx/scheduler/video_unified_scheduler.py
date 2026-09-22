@@ -61,6 +61,18 @@ class VideoMutexBusyError(RuntimeError):
     pass
 
 
+class VideoMemoryPressureError(RuntimeError):
+    # #951: raised mid-denoise when sustained memory pressure crosses the L3
+    # circuit red line (>=98GB) and emergency_reclaim cannot bring it back
+    # below the ceiling. Aborts the in-flight generation with a clean 507
+    # Retry-After so the SERVER survives — instead of the ProcessMemoryEnforcer
+    # fatal_exit killing the whole process (+ any co-tenant LLM). The legacy
+    # 2B DiT has no temporal upsampler so per-step attention memory scales
+    # linearly with latent frames; a long/high-res request can cross the
+    # ceiling mid-denoise even when begin_task's pre-probe saw OK memory.
+    pass
+
+
 class MemoryLevel(IntEnum):
     OK = 0
     L1_WARN = 1
@@ -265,6 +277,32 @@ class VideoUnifiedScheduler:
             self._cache = None
         elapsed = time.monotonic() - t0
         logger.warning("emergency reclaim done in %.3fs", elapsed)
+
+    def check_step_pressure(self) -> MemoryLevel:
+        # #951: mid-denoise memory guard. Called between denoise steps (via the
+        # backend's step callback). If pressure is L3_CIRCUIT (>=98GB), fire
+        # emergency_reclaim first (clear Metal cache + release dequant cache +
+        # GC — may drop enough to continue). Re-probe: if STILL L3, raise
+        # VideoMemoryPressureError so the backend aborts the generation (clean
+        # 507) instead of the ProcessMemoryEnforcer fatal_exit killing the
+        # whole server. Returns the post-reclaim level on success.
+        lvl = self.probe_level()
+        if lvl is not MemoryLevel.L3_CIRCUIT:
+            return lvl
+        logger.warning(
+            "mid-denoise L3 circuit pressure (%.1fGB) — emergency reclaim",
+            self._current_bytes() / _GB,
+        )
+        self.emergency_reclaim()
+        post = self.probe_level()
+        if post is MemoryLevel.L3_CIRCUIT:
+            raise VideoMemoryPressureError(
+                f"sustained memory pressure {self._current_bytes() / _GB:.1f}GB "
+                f">= {_L3_CIRCUIT_GB}GB red line mid-denoise after emergency "
+                f"reclaim; aborting generation to keep the server alive (#951). "
+                f"Reduce num_frames / resolution and retry."
+            )
+        return post
 
     # -- dual-model mutex (PRD §3.2) -------------------------------------
     def acquire(self, model_name: str) -> None:
