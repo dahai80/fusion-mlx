@@ -453,6 +453,68 @@ class FusionPagedRequestCache:
         all_v = mx.concatenate(v_parts, axis=-2) if len(v_parts) > 1 else v_parts[0]
         return all_k, all_v
 
+    def __deepcopy__(self, memo):
+        # mlx_lm BatchGenerator._copy() deepcopies prompt_cache on every
+        # split() (prefill->generation transition). The pool is a shared
+        # singleton with an unpicklable mlx.core.Dtype, and MUST stay shared
+        # (copying it would fragment the phys address space). Share the pool
+        # reference; copy the per-request block_table + offset so the split
+        # copy co-owns the same phys blocks. CoW (ensure_writable) handles
+        # divergence on first write. For B>1 batched filter, see .filter().
+        cls = self.__class__
+        new = cls.__new__(cls)
+        new.pool = self.pool
+        new.request_id = self.request_id
+        new.block_table = list(self.block_table)
+        new.offset = self.offset
+        new._n_kv_heads = self._n_kv_heads
+        new._k_head_dim = self._k_head_dim
+        new._v_head_dim = self._v_head_dim
+        new._dtype = self._dtype
+        new._B = self._B
+        new._is_merged = self._is_merged
+        new._merged_keys = self._merged_keys
+        new._merged_values = self._merged_values
+        new._merged_padding = list(self._merged_padding)
+        new._block_table_len_before = getattr(self, "_block_table_len_before", 0)
+        for pb in self.block_table:
+            try:
+                self.pool.share_block(self.request_id, pb)
+            except Exception as e:
+                logger.debug(
+                    "paged_kv __deepcopy__ share_block phys=%d failed: %s", pb, e
+                )
+        return new
+
+    def filter(self, keep):
+        # mlx_lm BatchGenerator.filter reindexes the batch dim. For B==1 the
+        # only keep is [0] (no-op) or [] (caller should clear instead). B>1
+        # batched filter would require reorganizing the batch dim across
+        # every allocated slab, which this paged-KV batched model does not
+        # support — fail visibly rather than silently corrupt.
+        if not keep:
+            return
+        if len(keep) == self._B and list(keep) == list(range(self._B)):
+            return
+        raise RuntimeError(
+            f"FusionPagedRequestCache.filter: batched reindex not supported "
+            f"(B={self._B}, keep={keep}); paged-KV pool mode requires B=1 "
+            f"per cache (non-batched continuous batching)"
+        )
+
+    def clear(self):
+        # mlx_lm calls clear() when all sequences leave the batch. Free this
+        # request's blocks back to the pool (refcount-aware) and reset.
+        try:
+            self.pool.free_request(self.request_id)
+        except Exception as e:
+            logger.debug("paged_kv clear free_request failed: %s", e)
+        self.block_table = []
+        self.offset = 0
+        self._is_merged = False
+        self._merged_keys = None
+        self._merged_values = None
+
     @property
     def state(self):
         if self._is_merged:
