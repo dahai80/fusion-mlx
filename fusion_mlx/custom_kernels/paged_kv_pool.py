@@ -333,21 +333,23 @@ class FusionPagedKVPool:
 
 class MergedPagedCacheView:
     # Batched view over B per-sequence FusionPagedRequestCache handles.
-    # mlx_lm _merge_caches calls cache.merge([c[i] for c in caches]) to batch
-    # per-request layer caches, then runs the batched forward pass
-    # (prefill) and -- after split() -- generation appends via
-    # update_and_fetch on the MERGED cache. The prior merge returned a
-    # read-only materialized snapshot (_is_merged=True) which crashed on
-    # the first generation append ("cannot update a merged cache"). This
-    # view delegates update_and_fetch per-sequence to each constituent's
-    # own paged blocks, so generation appends land in the right
-    # per-sequence slab. filter/split only reindex the constituent list
-    # (no slab reorg) -- each sequence keeps its own block_table. CoW
-    # (ensure_writable) handles divergence on the underlying blocks.
+    # Maintains a SINGLE batched KV buffer (_bkeys/_bvalues) matching stock
+    # BatchKVCache: one slice-assign + zero-copy view return per step — no
+    # per-sequence loop, no concatenate. Left-padding aligns variable-length
+    # sequences to the same write position. Constituents are kept for pool
+    # management (block_table, free_all); their flat buffers are synced only
+    # on extract (split to standalone generation).
+
+    _bstep = 256
 
     def __init__(self, constituents: list | None = None):
         self.constituents: list = list(constituents) if constituents else []
         self._offset_override: int | None = None
+        self._bkeys = None
+        self._bvalues = None
+        self._bidx: int = 0
+        self._left_padding = None
+        self._right_padding = None
 
     @property
     def pool(self):
@@ -355,6 +357,8 @@ class MergedPagedCacheView:
 
     @property
     def offset(self):
+        if self._bkeys is not None:
+            return self._bidx
         if self._offset_override is not None:
             return self._offset_override
         return max((c.offset for c in self.constituents), default=0)
@@ -362,8 +366,58 @@ class MergedPagedCacheView:
     @offset.setter
     def offset(self, v):
         self._offset_override = v
+        if self._bkeys is not None:
+            self._bidx = v
         for c in self.constituents:
             c.offset = v
+
+    def _build_batched(self, keys, values):
+        B = len(self.constituents)
+        offsets = [c.offset for c in self.constituents]
+        max_off = max(offsets) if offsets else 0
+        _, n_kv_heads, _, k_head_dim = keys.shape
+        v_head_dim = values.shape[3]
+        dt = keys.dtype
+        left_padding = [max_off - o for o in offsets]
+        self._left_padding = mx.array(left_padding)
+        total = max_off + keys.shape[2]
+        n_steps = (self._bstep + total - 1) // self._bstep
+        cap = n_steps * self._bstep
+        self._bkeys = mx.zeros((B, n_kv_heads, cap, k_head_dim), dtype=dt)
+        self._bvalues = mx.zeros((B, n_kv_heads, cap, v_head_dim), dtype=dt)
+        for i, c in enumerate(self.constituents):
+            if c._flat_keys is not None and c.offset > 0:
+                lp = left_padding[i]
+                self._bkeys[i : i + 1, :, lp : lp + c.offset, :] = c._flat_keys[
+                    ..., : c.offset, :
+                ]
+                self._bvalues[i : i + 1, :, lp : lp + c.offset, :] = c._flat_values[
+                    ..., : c.offset, :
+                ]
+        self._bidx = max_off
+        logger.debug(
+            "paged_kv _build_batched B=%d max_off=%d cap=%d left_pad=%s",
+            B,
+            max_off,
+            cap,
+            left_padding,
+        )
+
+    def _grow_batched(self, need, keys, values):
+        _, n_kv_heads, _, k_head_dim = keys.shape
+        v_head_dim = values.shape[3]
+        dt = keys.dtype
+        B = self._bkeys.shape[0]
+        n_steps = (self._bstep + need - 1) // self._bstep
+        cap = n_steps * self._bstep
+        new_k = mx.zeros((B, n_kv_heads, cap, k_head_dim), dtype=dt)
+        new_v = mx.zeros((B, n_kv_heads, cap, v_head_dim), dtype=dt)
+        prev = self._bidx
+        if prev > 0:
+            new_k[..., :prev, :] = self._bkeys[..., :prev, :]
+            new_v[..., :prev, :] = self._bvalues[..., :prev, :]
+        self._bkeys = new_k
+        self._bvalues = new_v
 
     def update_and_fetch(self, keys, values):
         B = keys.shape[0]
@@ -372,32 +426,24 @@ class MergedPagedCacheView:
                 f"MergedPagedCacheView.update_and_fetch: batch mismatch "
                 f"B={B} constituents={len(self.constituents)}"
             )
-        fetched = []
-        for i in range(B):
-            k_i = keys[i : i + 1]
-            v_i = values[i : i + 1]
-            fk, fv = self.constituents[i].update_and_fetch(k_i, v_i)
-            fetched.append((fk, fv))
-        lengths = [fk.shape[-2] for fk, _ in fetched]
-        if len(set(lengths)) == 1:
-            out_k = mx.concatenate([fk for fk, _ in fetched], axis=0)
-            out_v = mx.concatenate([fv for _, fv in fetched], axis=0)
-        else:
-            max_len = max(lengths)
-            k_head_dim = fetched[0][0].shape[-1]
-            v_head_dim = fetched[0][1].shape[-1]
-            n_kv_heads = fetched[0][0].shape[1]
-            dt = fetched[0][0].dtype
-            out_k = mx.zeros((B, n_kv_heads, max_len, k_head_dim), dtype=dt)
-            out_v = mx.zeros((B, n_kv_heads, max_len, v_head_dim), dtype=dt)
-            for i, (fk, fv) in enumerate(fetched):
-                L = fk.shape[-2]
-                out_k[i : i + 1, :, :L, :] = fk
-                out_v[i : i + 1, :, :L, :] = fv
-        return out_k, out_v
+        if self._bkeys is None:
+            self._build_batched(keys, values)
+        prev = self._bidx
+        add = keys.shape[2]
+        if (prev + add) > self._bkeys.shape[2]:
+            self._grow_batched(prev + add, keys, values)
+        self._bkeys[..., prev : prev + add, :] = keys
+        self._bvalues[..., prev : prev + add, :] = values
+        self._bidx = prev + add
+        return self._bkeys[..., : self._bidx, :], self._bvalues[..., : self._bidx, :]
 
     @property
     def state(self):
+        if self._bkeys is not None:
+            return (
+                self._bkeys[..., : self._bidx, :],
+                self._bvalues[..., : self._bidx, :],
+            )
         if not self.constituents:
             d = 1
             return mx.zeros((1, 1, 0, d)), mx.zeros((1, 1, 0, d))
@@ -452,6 +498,8 @@ class MergedPagedCacheView:
         return self.offset
 
     def trim(self, n):
+        if self._bkeys is not None:
+            self._bidx = max(0, self._bidx - n)
         for c in self.constituents:
             try:
                 c.trim(n)
@@ -464,6 +512,17 @@ class MergedPagedCacheView:
             self.clear()
             return
         self.constituents = [self.constituents[i] for i in keep]
+        if self._bkeys is not None and self._left_padding is not None:
+            keep_mx = mx.array(keep)
+            self._bkeys = self._bkeys[keep_mx]
+            self._bvalues = self._bvalues[keep_mx]
+            self._left_padding = self._left_padding[keep_mx]
+            min_lp = self._left_padding.min().item()
+            if min_lp > 0:
+                self._bkeys = self._bkeys[..., min_lp:, :]
+                self._bvalues = self._bvalues[..., min_lp:, :]
+                self._bidx -= min_lp
+                self._left_padding = self._left_padding - min_lp
 
     def clear(self):
         for c in self.constituents:
@@ -473,12 +532,21 @@ class MergedPagedCacheView:
                 logger.debug("MergedPagedCacheView.clear constituent failed: %s", e)
         self.constituents = []
         self._offset_override = None
+        self._bkeys = None
+        self._bvalues = None
+        self._bidx = 0
+        self._left_padding = None
+        self._right_padding = None
 
     def empty(self):
+        if self._bkeys is not None:
+            return self._bidx == 0
         return all(c.empty() for c in self.constituents) if self.constituents else True
 
     @property
     def nbytes(self):
+        if self._bkeys is not None:
+            return self._bkeys.nbytes + self._bvalues.nbytes
         return sum(c.nbytes for c in self.constituents)
 
     def free_all(self):
@@ -490,22 +558,86 @@ class MergedPagedCacheView:
                 logger.debug("MergedPagedCacheView.free_all constituent failed: %s", e)
         self.constituents = []
         self._offset_override = None
+        self._bkeys = None
+        self._bvalues = None
+        self._bidx = 0
+        self._left_padding = None
+        self._right_padding = None
         return freed
 
     def make_mask(self, *args, **kwargs):
+        if self._bkeys is not None and self._left_padding is not None:
+            from mlx_lm.models.cache import create_causal_mask
+
+            return_array = kwargs.pop("return_array", False)
+            window_size = kwargs.pop("window_size", None)
+            N = args[0] if args else kwargs.pop("N", 1)
+            if N == 1:
+                return None
+            return create_causal_mask(
+                N,
+                offset=self._bidx,
+                left_padding=self._left_padding,
+                window_size=window_size,
+            )
         from mlx_lm.models.cache import create_attention_mask
 
         return create_attention_mask(*args, offset=self.offset, **kwargs)
 
+    def _extend_batched(self, other):
+        max_idx = max(self._bidx, other._bidx)
+        L1 = self._bkeys.shape[2] if self._bkeys is not None else 0
+        L2 = other._bkeys.shape[2] if other._bkeys is not None else 0
+        max_size = max(L1, L2)
+        H = self._bkeys.shape[1]
+        Dk = self._bkeys.shape[3]
+        Dv = self._bvalues.shape[3]
+
+        def pad_buf(view):
+            k, v = view._bkeys, view._bvalues
+            Bv = k.shape[0]
+            left = max_idx - view._bidx
+            right = max_size - k.shape[2] - left
+            if right < 0:
+                k = k[..., :right, :]
+                v = v[..., :right, :]
+                right = 0
+            if left != 0 or right != 0:
+                pw = [(0, 0), (0, 0), (left, right), (0, 0)]
+                k = mx.pad(k, pw)
+                v = mx.pad(v, pw)
+            lp = view._left_padding + left
+            return k, v, lp
+
+        sk, sv, slp = pad_buf(self)
+        ok, ov, olp = pad_buf(other)
+        self._bkeys = mx.concatenate([sk, ok], axis=0)
+        self._bvalues = mx.concatenate([sv, ov], axis=0)
+        self._left_padding = mx.concatenate([slp, olp])
+        self._bidx = max_idx
+
     def extend(self, other):
         if isinstance(other, MergedPagedCacheView):
+            if (
+                self._bkeys is not None
+                and other._bkeys is not None
+                and self._left_padding is not None
+                and other._left_padding is not None
+            ):
+                self._extend_batched(other)
+            elif other._bkeys is not None:
+                self._bkeys = other._bkeys
+                self._bvalues = other._bvalues
+                self._bidx = other._bidx
+                self._left_padding = other._left_padding
             self.constituents.extend(other.constituents)
         elif other is not None:
             self.constituents.append(other)
         self._offset_override = None
         logger.debug(
-            "MergedPagedCacheView.extend: n_constituents=%d",
+            "MergedPagedCacheView.extend: n_constituents=%d bidx=%d",
             len(self.constituents),
+            self._bidx,
         )
 
     def __deepcopy__(self, memo):
@@ -514,21 +646,39 @@ class MergedPagedCacheView:
         new = MergedPagedCacheView.__new__(MergedPagedCacheView)
         new.constituents = [_copy.deepcopy(c) for c in self.constituents]
         new._offset_override = self._offset_override
-        new._right_padding = getattr(self, "_right_padding", None)
+        new._right_padding = self._right_padding
+        new._bkeys = self._bkeys
+        new._bvalues = self._bvalues
+        new._bidx = self._bidx
+        new._left_padding = self._left_padding
         return new
 
     def extract(self, idx):
-        # mlx_lm BatchGenerator.extract_cache calls c.extract(idx) to pull the
-        # idx-th sequence's cache out of the batched cache. For the view this
-        # is just the idx-th constituent (already per-sequence).
-        return self.constituents[idx]
+        c = self.constituents[idx]
+        if self._bkeys is not None and self._left_padding is not None:
+            lp = int(self._left_padding[idx].item())
+            c._flat_keys = mx.contiguous(
+                self._bkeys[idx : idx + 1, :, lp : self._bidx, :]
+            )
+            c._flat_values = mx.contiguous(
+                self._bvalues[idx : idx + 1, :, lp : self._bidx, :]
+            )
+            c.offset = self._bidx - lp
+        return c
 
     def prepare(self, lengths=None, right_padding=None, **kwargs):
         self._right_padding = right_padding
 
     def finalize(self):
-        rp = getattr(self, "_right_padding", None)
-        if rp:
+        rp = self._right_padding
+        if rp is not None and self._bkeys is not None and max(rp) > 0:
+            from mlx_lm.models.cache import dynamic_roll
+
+            rp_arr = mx.array(rp)
+            self._bkeys = dynamic_roll(self._bkeys, rp_arr[:, None], axis=2)
+            self._bvalues = dynamic_roll(self._bvalues, rp_arr[:, None], axis=2)
+            self._left_padding = self._left_padding + rp_arr
+        elif rp is not None:
             for i, c in enumerate(self.constituents):
                 if i < len(rp) and rp[i] > 0:
                     c.offset -= rp[i]
@@ -545,6 +695,7 @@ class MergedPagedCacheView:
             "merged": True,
             "n_constituents": len(self.constituents),
             "offset": self.offset,
+            "batched": self._bkeys is not None,
             "constituent_stats": [c.stats() for c in self.constituents],
         }
 
