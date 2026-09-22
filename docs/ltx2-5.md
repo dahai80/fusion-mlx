@@ -176,25 +176,40 @@ cross-tile randomness/statistics dependency.
 Distilled T2V produces black/noise frames in ~5/6 runs; same seed → different
 results (1 run good, rerun black).
 
-**Root cause (FOUND via `FUSION_LTX_DEBUG_LATENTS=1` real-model A/B)**: the
-NaN originates in the **q8 Gemma4-12b text encoder output** (`te_video_features`
-NaN), NOT the transformer attention. Debug evidence (25f @ 512x320,
+**Root cause (FOUND via per-layer bisect)**: the q8 Gemma4-12b text encoder
+overflows in **bf16 activations**. Embed output is finite (max 43), but layer 0
+output is NaN in bf16. The NaN propagates through connector + transformer →
+black frames (std=0, 3/3 runs). Debug evidence (25f @ 512x320,
 `dgrauet--ltx-2.5-mlx-q8`, seed 42):
 
 ```
-te_video_features  max_abs=nan nan=True   # <- NaN born here (TE)
+te_video_features  max_abs=nan nan=True   # <- NaN born here (TE bf16 overflow)
 stage1_in          max_abs=3.89 nan=False  # initial latents finite
 context_in         max_abs=nan nan=True   # connector propagates NaN
 stage1_out         max_abs=nan nan=True   # transformer propagates NaN
 stage2_out         max_abs=nan nan=True   # -> black frames (std=0)
 ```
 
-The transformer attention, connector, and q8 transformer weights are innocent —
-they propagate the TE's NaN. The prior theory (bf16 transformer SDPA) was
-**falsified**: `FUSION_LTX_DETERMINISTIC_ATTN=1` (fp32 transformer SDPA) did
-not eliminate the NaN. The nondeterminism (1/6 good) comes from the TE's own
-Gemma4 attention (bf16 SDPA inside mlx_lm DecoderLayers) sometimes not
-overflowing.
+**Falsified hypotheses** (4 theories tested, all insufficient alone):
+1. bf16 transformer SDPA → fp32 transformer attention: NaN persisted.
+2. bf16 TE Gemma4 attention → fp32 TE attention: NaN persisted.
+3. q8 QuantizedLinear reduction → dequant to bf16: NaN persisted.
+4. fp32 weights + fp32 attention but bf16 activations: NaN persisted.
+
+The bisect proved: **fp32 activations** (via `set_dtype(mx.float32)`) are
+necessary and sufficient. Layer 0 sub-step bisect: input_layernorm (max 3695)
+→ self_attn (max 6.2) → post_attn_norm (max 51) → residual+attn (max 43) →
+mlp (max 52) — all finite in fp32. The bf16 overflow happens in the activation
+arithmetic, not the weights or attention kernel.
+
+**Fix (DEFAULT ON — LANDED)**: `generate.py` dequantizes the q8 TE to
+`nn.Linear` (`dequantize_te` in `text_encoder.py`), then
+`text_encoder.set_dtype(mx.float32)` to run the full TE forward in fp32.
+Memory cost ~12b fp32 (48GB) transient — TE freed after encode. Verified
+real-model (M5 Max, 3/3 runs identical: frame0_std=10.76, temporal_diff=2.72,
+no NaN). Baseline (fix OFF): 3/3 black (std=0). Opt out with
+`FUSION_LTX_TE_DEQUANT=0` for memory-constrained debug only (produces black
+frames — not usable).
 
 Diagnostic env vars (all default OFF):
 
@@ -202,14 +217,9 @@ Diagnostic env vars (all default OFF):
   `te_video_features`, `stage1_in`, `context_in`, `stage1_out`, `stage2_out`.
   This is the diagnostic that FOUND the root cause.
 - **`FUSION_LTX_DETERMINISTIC_ATTN=1`** — fp32 un-fused SDPA in the
-  **transformer** attention. Does NOT fix #946 (NaN is upstream in the TE);
-  kept as a diagnostic tool.
+  **transformer** + TE attention. Falsified as a standalone fix; kept as a
+  diagnostic tool.
 - Stage2 re-seeds (`seed + 1`) before its noise draw (harmless good-practice).
-
-**Fix direction (NOT yet landed — #946 open)**: the q8 Gemma4-12b TE forward
-must be made numerically stable — either dequantize TE weights to fp32, or
-patch the TE's Gemma4 attention to a deterministic fp32 path. New
-investigation; no half-fix landed.
 
 ### Fail-visible guards
 
@@ -224,8 +234,9 @@ must be divisible by 32.
   against real 22B-distilled weights. Forward smoke finite (min -2.92,
   max 3.03, no NaN).
 - **E2E generation: LANDED (T2V distilled).** Real-model verified: 25 frames
-  512×320 @ 24 fps in ~26 s, non-trivial content (frame0 std 11.0, temporal
-  std across frames 10.6). 135 tests pass, ruff + black clean.
+  512×320 @ 24 fps in ~28 s, non-trivial content (frame0 std 10.76, temporal
+  diff 2.72, 3/3 deterministic). #945 VAE tiling + #946 bf16-overflow fix
+  landed. 209 tests pass, ruff + black clean.
 - **Not yet wired:** I2V, audio, duration-head `num_frames` inference, backend
   rewire. Fail-visible `NotImplementedError` (Rule 12).
 

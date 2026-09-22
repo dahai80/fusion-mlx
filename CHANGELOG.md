@@ -27,37 +27,39 @@
   normalization constants -> tiling is safe from cross-tile randomness/statistics
   dependency.
 
-### Diagnostics — #946: LTX-2.5 distilled T2V nondeterministic black/noise frames
-- **Root cause (FOUND via `FUSION_LTX_DEBUG_LATENTS=1`, real-model A/B)**: the
-  NaN originates in the **q8 Gemma4-12b text encoder output** (`te_video_features`
-  NaN), NOT in the transformer attention. Debug log evidence (25f @ 512x320,
-  `dgrauet--ltx-2.5-mlx-q8`, seed 42, 2 runs identical):
-  `te_video_features max_abs=nan` → `context_in nan` → `stage1_out nan` →
-  `stage2_out nan` → black frames (std=0). Initial latents (`stage1_in`) are
-  finite (3.89) — the NaN is injected by the TE, propagated through connector
-  + transformer. The transformer attention, connector, and q8 transformer
-  weights are innocent.
-- **Falsified hypothesis**: the prior theory (bf16 `mx.fast.scaled_dot_product_attention`
-  reduction in the transformer) was tested with `FUSION_LTX_DETERMINISTIC_ATTN=1`
-  (fp32 un-fused SDPA in `attention.py`) — **NaN persisted**. The transformer
-  attention is NOT the source. The env var remains as a diagnostic but does NOT
-  fix #946.
-- **Nondeterminism (1/6 good, 5/6 black)**: the TE's own Gemma4 attention
-  (bf16 SDPA inside mlx_lm DecoderLayers) is nondeterministic — sometimes does
-  not overflow → finite context → real content; usually overflows → NaN → black.
+### Fixed — #946: LTX-2.5 distilled T2V black/noise frames (bf16 overflow in q8 Gemma4-12b text encoder)
+- **Root cause (FOUND via per-layer bisect)**: the q8 Gemma4-12b text encoder
+  overflows in **bf16 activations** — embed output is finite (max 43), but layer
+  0 output is NaN in bf16. The NaN propagates: `te_video_features max_abs=nan`
+  → `context_in nan` → `stage1_out nan` → `stage2_out nan` → black frames
+  (std=0, 3/3 runs). Initial latents (`stage1_in`) are finite (3.89) — the NaN
+  is born in the TE, not the transformer.
+- **Falsified hypotheses** (documented for posterity):
+  1. bf16 transformer SDPA — `FUSION_LTX_DETERMINISTIC_ATTN=1` fp32 transformer
+     attention: NaN persisted.
+  2. bf16 TE Gemma4 attention — monkeypatched mlx_vlm gemma4 SDPA to fp32: NaN
+     persisted.
+  3. q8 QuantizedLinear reduction overflow — dequantized TE weights to bf16:
+     NaN persisted (bf16 activations still overflow).
+  4. fp32 weights + fp32 attention but bf16 activations — NaN persisted.
+  The bisect proved: fp32 **activations** (via `set_dtype(mx.float32)`) are the
+  necessary and sufficient fix.
+- **Fix (DEFAULT ON)**: `generate.py` dequantizes the q8 TE to `nn.Linear`
+  (`dequantize_te` in `text_encoder.py`), then `text_encoder.set_dtype(mx.float32)`
+  to run the full TE forward in fp32. Memory cost ~12b fp32 (48GB) transient —
+  TE is freed after encode (`del text_encoder` + `mx.clear_cache`). Verified
+  real-model (M5 Max, `dgrauet--ltx-2.5-mlx-q8`, 25f @ 512x320, seed 42):
+  3/3 runs identical (frame0_std=10.76, temporal_diff=2.72, no NaN). Baseline
+  (fix OFF): 3/3 black (std=0). Opt out with `FUSION_LTX_TE_DEQUANT=0` for
+  memory-constrained debug only (produces black frames — not usable).
 - **`FUSION_LTX_DEBUG_LATENTS=1`** (`generate.py`): logs `mx.abs(latents).max()`
   + NaN/Inf at `te_video_features`, `stage1_in`, `context_in`, `stage1_out`,
-  `stage2_out`. This is the diagnostic that FOUND the root cause. Default OFF.
-- **`FUSION_LTX_DETERMINISTIC_ATTN=1`** (`attention.py`): opt-in fp32 un-fused
-  SDPA in the **transformer** attention. Does NOT fix #946 (NaN is upstream in
-  the TE). Kept as a diagnostic tool. Default OFF.
+  `stage2_out`. Diagnostic that found the root cause. Default OFF.
+- **`FUSION_LTX_DETERMINISTIC_ATTN=1`** (`attention.py` + `text_encoder.py`):
+  opt-in fp32 SDPA in transformer + TE attention. Falsified as a standalone
+  fix; kept as a diagnostic tool. Default OFF.
 - **Re-seed before stage2** (`generate.py`): `mx.random.seed(seed + 1)` before
-  the stage2 noise draw. Harmless good-practice; does not fix #946.
-- **Fix direction (NOT yet landed — #946 stays open)**: the TE forward must be
-  made numerically stable — either run the q8 Gemma4-12b TE in fp32 (dequantize
-  TE weights), or patch the TE's Gemma4 attention to a deterministic fp32 path.
-  This is a new investigation; no half-fix is landed. The diagnostic env vars
-  above are landed (they found the root cause) but are not a fix.
+  the stage2 noise draw. Harmless good-practice.
 
 ### Changed — INT4 fused dequant+GEMV: -Ofast precompiled Metal kernel (surpasses native at K>=20480)
 - **`custom_kernels/fused_quant_gemv.py`**: replaced the prior V12 JIT kernel

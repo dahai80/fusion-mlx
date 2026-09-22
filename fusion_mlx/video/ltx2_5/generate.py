@@ -273,6 +273,26 @@ def generate_video(
             )
     text_encoder = load_text_encoder(te_path, projection_weights_path=te_conn_path)
     mx.eval(text_encoder.parameters())
+    # #946: the q8 Gemma4-12b TE overflows in bf16 activations -> NaN
+    # video_features -> black frames (3/3 runs, std=0). Root-caused via per-layer
+    # bisect: embed is finite (max 43), layer 0 output NaN in bf16; fp32
+    # activations + fp32 weights + fp32 attention -> layer 0 finite,
+    # video_features finite (max_abs 24.2). Fix (DEFAULT ON): dequant q8 ->
+    # Linear, then set_dtype fp32. Memory cost ~12b fp32 (48GB) transient — TE
+    # freed after encode (del + mx.clear_cache at L307). Opt OUT with
+    # FUSION_LTX_TE_DEQUANT=0 only for memory-constrained debug (produces black
+    # frames — not a usable mode).
+    if os.environ.get("FUSION_LTX_TE_DEQUANT", "1") == "1":
+        from .text_encoder import dequantize_te
+
+        n = dequantize_te(text_encoder)
+        text_encoder.set_dtype(mx.float32)
+        mx.eval(text_encoder.parameters())
+        logger.info(
+            "TE dequantized %d layers + set_dtype fp32 (default ON, "
+            "FUSION_LTX_TE_DEQUANT=0 to opt out) — #946 NaN fix",
+            n,
+        )
     # encode 返回 pre-connector (video_features[4096], audio_features[2048])。
     # connector 在 transformer 内, generate 显式运行。T2V 只需 video。
     # return_audio_embeddings=False 时 encode 返回 (video_features, additive_mask)。
