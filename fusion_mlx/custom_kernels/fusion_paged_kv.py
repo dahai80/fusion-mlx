@@ -8,6 +8,11 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from .paged_kv_cache import FusionPagedKVCache
+from .paged_kv_cow import (
+    CoWPagedRequestCache,
+    PoolPrefixPageBinder,
+    is_two_level_kv_enabled,
+)
 from .paged_kv_pool import FusionPagedKVPool, FusionPagedRequestCache
 
 logger = logging.getLogger(__name__)
@@ -16,6 +21,7 @@ _INSTALLED_ATTR = "_fusion_paged_kv_installed"
 _CACHE_REGISTRY_ATTR = "_fusion_paged_kv_registry"
 _POOL_ATTR = "_fusion_paged_pool"
 _POOL_SEQ_ATTR = "_fusion_paged_pool_seq"
+_BINDER_ATTR = "_fusion_paged_binder"
 
 # D1 (audit): module-level registry mutated from make_cache (event-loop
 # thread), evict_request / evict_request_by_id / invalidate_request
@@ -102,6 +108,14 @@ def install_paged_kv(model: nn.Module, config: Any) -> None:
             )
             setattr(model, _POOL_ATTR, pool)
             setattr(model, _POOL_SEQ_ATTR, 0)
+            cow_on = is_two_level_kv_enabled()
+            if cow_on:
+                binder = PoolPrefixPageBinder(pool)
+                setattr(model, _BINDER_ATTR, binder)
+                logger.info(
+                    "install_paged_kv: CoW two-level KV ON — "
+                    "CoWPagedRequestCache + PoolPrefixPageBinder attached"
+                )
 
             def _fusion_make_cache_pool():
                 pool_obj = getattr(model, _POOL_ATTR, None)
@@ -116,6 +130,8 @@ def install_paged_kv(model: nn.Module, config: Any) -> None:
                         dtype=model_dtype_l,
                     )
                     setattr(model, _POOL_ATTR, pool_obj)
+                    if is_two_level_kv_enabled():
+                        setattr(model, _BINDER_ATTR, PoolPrefixPageBinder(pool_obj))
                     logger.info(
                         "install_paged_kv: pool lazily constructed cap=%d",
                         pool_num_blocks,
@@ -124,24 +140,32 @@ def install_paged_kv(model: nn.Module, config: Any) -> None:
                 request_id = f"pool_{seq}"
                 setattr(model, _POOL_SEQ_ATTR, seq + 1)
                 num_layers = _detect_num_layers(model)
-                handles = [
-                    FusionPagedRequestCache(pool_obj, request_id)
-                    for _ in range(num_layers)
-                ]
+                if is_two_level_kv_enabled():
+                    handles = [
+                        CoWPagedRequestCache(pool_obj, request_id)
+                        for _ in range(num_layers)
+                    ]
+                else:
+                    handles = [
+                        FusionPagedRequestCache(pool_obj, request_id)
+                        for _ in range(num_layers)
+                    ]
                 with _REGISTRY_LOCK:
                     _GLOBAL_CACHE_REGISTRY[request_id] = handles
                 logger.info(
-                    "install_paged_kv: pool make_cache request_id=%s layers=%d",
+                    "install_paged_kv: pool make_cache request_id=%s layers=%d cow=%s",
                     request_id,
                     num_layers,
+                    is_two_level_kv_enabled(),
                 )
                 return handles
 
             model.make_cache = _fusion_make_cache_pool
             logger.info(
-                "install_paged_kv: pool mode installed cap=%d block_size=%d",
+                "install_paged_kv: pool mode installed cap=%d block_size=%d cow=%s",
                 pool_num_blocks,
                 block_size,
+                cow_on,
             )
         else:
 

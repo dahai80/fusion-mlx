@@ -39,6 +39,13 @@ class FusionPagedKVPool:
         )
         self.free_list: deque[int] = deque(range(num_blocks - 1, -1, -1))
         self.in_use: dict[int, str] = {}
+        # CoW pool refcount: phys block -> share count. Always-on (cheap dict
+        # ops); non-CoW path never calls share_block so every block stays
+        # refcount=1 and free_block behaves identically to the prior immediate
+        # free. CoWPagedRequestCache raises refcount>1 via share_block +
+        # ensure_writable copies on shared write.
+        self._refcount: dict[int, int] = {}
+        self._owners: dict[int, set[str]] = {}
         self._step: int = 0
         self._last_access: dict[str, int] = {}
         self._active_ids: set[str] | None = None
@@ -127,6 +134,8 @@ class FusionPagedKVPool:
                     )
             pb = self.free_list.pop()
             self.in_use[pb] = request_id
+            self._refcount[pb] = 1
+            self._owners[pb] = {request_id}
             avail = len(self.free_list)
         logger.debug(
             "paged_kv pool alloc block=%d request=%s available=%d",
@@ -136,34 +145,156 @@ class FusionPagedKVPool:
         )
         return pb
 
+    def share_block(self, request_id: str, phys: int) -> None:
+        """CoW: adopt an already-allocated physical block for a second owner.
+        Increments refcount and registers request_id as a co-owner. The block
+        is NOT copied — both owners read the same GPU slab until one writes
+        (ensure_writable copies on write). Called by CoWPagedRequestCache on a
+        prefix-page donation hit.
+        """
+        with self._lock:
+            rc = self._refcount.get(phys, 0)
+            if rc <= 0:
+                raise RuntimeError(
+                    f"paged_kv pool share_block: phys {phys} not allocated (rc={rc}) "
+                    f"— refusing to share a freed/foreign block (CoW D5)"
+                )
+            self._refcount[phys] = rc + 1
+            owners = self._owners.setdefault(phys, set())
+            owners.add(request_id)
+            new_rc = self._refcount[phys]
+        logger.info(
+            "paged_kv pool share_block phys=%d request=%s refcount=%d",
+            phys,
+            request_id,
+            new_rc,
+        )
+
+    def ensure_writable(self, request_id: str, phys: int) -> int:
+        """CoW: if phys is shared (refcount>1), copy it to a fresh slab,
+        decrement the original refcount, and return the new physical id. If
+        sole owner (refcount==1), return phys unchanged. Called by
+        CoWPagedRequestCache before writing into a block.
+        """
+        with self._lock:
+            rc = self._refcount.get(phys, 0)
+            if rc <= 1:
+                return phys
+            if not self.free_list:
+                owners = set(self.in_use.values())
+                evictable = owners - (self._active_ids or {request_id})
+                if evictable:
+                    victim = min(
+                        evictable,
+                        key=lambda rid: self._last_access.get(rid, 0),
+                    )
+                    self._free_request_locked(victim)
+                else:
+                    raise RuntimeError(
+                        "paged_kv pool ensure_writable exhausted (no free slab "
+                        "for CoW copy)"
+                    )
+            new_phys = self.free_list.pop()
+            self.keys_pool[new_phys] = self.keys_pool[phys]
+            self.values_pool[new_phys] = self.values_pool[phys]
+            self.in_use[new_phys] = request_id
+            self._refcount[new_phys] = 1
+            self._owners[new_phys] = {request_id}
+            self._refcount[phys] = rc - 1
+            self._owners[phys].discard(request_id)
+            if not self._owners[phys]:
+                self._owners.pop(phys, None)
+        logger.debug(
+            "paged_kv pool CoW copy phys=%d (rc=%d) -> %d request=%s",
+            phys,
+            rc,
+            new_phys,
+            request_id,
+        )
+        return new_phys
+
     def free_request(self, request_id: str) -> int:
         with self._lock:
             return self._free_request_locked(request_id)
 
     def _free_request_locked(self, request_id: str) -> int:
         # D1: caller MUST hold self._lock (RLock). Returns freed block count.
+        # CoW-refcount-aware: a block co-owned by request_id is decremented,
+        # not freed, when other owners remain. Only returns to free_list when
+        # the last owner releases. Primary in_use tag is dropped only when the
+        # allocator (primary owner) is the one freed.
         freed = [pb for pb, rid in self.in_use.items() if rid == request_id]
+        shared_touched = 0
         for pb in freed:
             self.in_use.pop(pb, None)
-            self.free_list.append(pb)
+            rc = self._refcount.pop(pb, 1)
+            owners = self._owners.pop(pb, set())
+            owners.discard(request_id)
+            if not owners:
+                self.free_list.append(pb)
+            else:
+                # still co-owned by another request: keep block live, restore
+                # bookkeeping under a remaining owner (pick any).
+                remaining = next(iter(owners))
+                self.in_use[pb] = remaining
+                self._refcount[pb] = max(rc - 1, len(owners))
+                self._owners[pb] = owners
+                shared_touched += 1
+        # also release co-ownership on blocks where request_id is a secondary
+        # owner (in_use tag held by a different request).
+        for pb, owners in list(self._owners.items()):
+            if request_id in owners and pb not in freed:
+                owners.discard(request_id)
+                rc = self._refcount.get(pb, 1)
+                if not owners:
+                    self._owners.pop(pb, None)
+                    self._refcount.pop(pb, None)
+                    self.in_use.pop(pb, None)
+                    self.free_list.append(pb)
+                    freed.append(pb)
+                else:
+                    self._refcount[pb] = max(rc - 1, len(owners))
+                shared_touched += 1
         if freed:
             self._last_access.pop(request_id, None)
         logger.info(
-            "paged_kv pool free request=%s blocks=%d available=%d",
+            "paged_kv pool free request=%s blocks_freed=%d shared_decremented=%d "
+            "available=%d",
             request_id,
             len(freed),
+            shared_touched,
             len(self.free_list),
         )
         return len(freed)
 
-    def free_block(self, pb: int) -> None:
-        # D6 (audit): single-block free used by FusionPagedRequestCache.trim
-        # so it no longer bypasses the lock / refcount path by mutating
-        # in_use + free_list directly. Caller routes through here so the
-        # pool's bookkeeping (in_use, free_list, _last_access) stays
-        # consistent under the lock.
+    def free_block(self, pb: int, request_id: str | None = None) -> None:
+        # D6 (audit): single-block free used by FusionPagedRequestCache.trim /
+        # state.setter so they no longer bypass the lock / refcount path by
+        # mutating in_use + free_list directly. CoW-aware: if request_id is
+        # given and the block is shared, only decrement that owner's share
+        # (block stays live for remaining owners); only return to free_list
+        # when the last owner releases.
         with self._lock:
+            rc = self._refcount.get(pb, 0)
+            if rc <= 0:
+                logger.debug("paged_kv pool free_block phys=%d already free (skip)", pb)
+                return
+            owners = self._owners.get(pb, set())
+            if request_id is not None and owners and len(owners) > 1:
+                owners.discard(request_id)
+                self._refcount[pb] = max(rc - 1, len(owners))
+                if request_id == self.in_use.get(pb):
+                    self.in_use[pb] = next(iter(owners))
+                logger.debug(
+                    "paged_kv pool free_block phys=%d decremented rc=%d owners=%d",
+                    pb,
+                    self._refcount[pb],
+                    len(owners),
+                )
+                return
             self.in_use.pop(pb, None)
+            self._refcount.pop(pb, None)
+            self._owners.pop(pb, None)
             self.free_list.append(pb)
 
     def available(self) -> int:
@@ -282,7 +413,7 @@ class FusionPagedRequestCache:
             # and no dangling allocated blocks leak.
             while self.block_table and self.block_table[-1] in allocated_this_call:
                 pb = self.block_table.pop()
-                self.pool.free_block(pb)
+                self.pool.free_block(pb, self.request_id)
             logger.warning(
                 "paged_kv update_and_fetch rolled back %d blocks for request=%s "
                 "after alloc/write failure (offset unchanged at %d)",
@@ -347,7 +478,7 @@ class FusionPagedRequestCache:
         # cleared block_table=[] and rebuilt free_list full (standalone) or
         # leaked (pool-shared) — physical block ids were silently lost.
         for pb in self.block_table:
-            self.pool.free_block(pb)
+            self.pool.free_block(pb, self.request_id)
         self.block_table = []
         self.offset = 0
         num_blocks_needed = (length + self.pool.block_size - 1) // self.pool.block_size
@@ -409,7 +540,7 @@ class FusionPagedRequestCache:
         # (if CoW were routed through the pool) the refcount path.
         while len(self.block_table) > new_num_blocks:
             pb = self.block_table.pop()
-            self.pool.free_block(pb)
+            self.pool.free_block(pb, self.request_id)
         return n
 
     def empty(self):

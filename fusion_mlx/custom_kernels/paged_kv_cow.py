@@ -24,6 +24,7 @@ import logging
 import os
 
 from .paged_kv_cache import FusionPagedKVCache
+from .paged_kv_pool import FusionPagedKVPool, FusionPagedRequestCache
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +233,198 @@ class CoWPagedKVCache(FusionPagedKVCache):
         return s
 
 
+class CoWPagedRequestCache(FusionPagedRequestCache):
+    """Pool-backed FusionPagedRequestCache + CoW ensure_writable on write.
+
+    trim / state.setter / free_all are inherited unchanged — they already
+    route through pool.free_block(pb, request_id) / pool.free_request which
+    are refcount-aware (decrement-and-defer when shared). Only update_and_fetch
+    is overridden: before writing into a block, ensure_writable copies it if
+    the block is shared (refcount>1) so the donor's KV is not mutated.
+
+    Constructed by install_paged_kv (pool branch) when FUSION_SHIM_TWO_LEVEL_KV=1.
+    """
+
+    def __init__(self, pool: FusionPagedKVPool, request_id: str):
+        super().__init__(pool, request_id)
+        self._cow_copies = 0
+        self._shared_pages = 0
+
+    def adopt_donated(self, phys_blocks: list[int]) -> int:
+        """Pre-populate this cache's block_table with donated (refcount-shared)
+        physical blocks from a concurrent donor. Called by the scheduler on a
+        prefix-donation hit. Sets offset to the donated prefix length so the
+        engine skips prefill for those tokens. Returns number of blocks adopted.
+        """
+        if not phys_blocks:
+            return 0
+        for phys in phys_blocks:
+            self.pool.share_block(self.request_id, phys)
+            self.block_table.append(phys)
+            self._shared_pages += 1
+        self.offset = len(self.block_table) * self.pool.block_size
+        logger.info(
+            "CoWPagedRequestCache adopt_donated request=%s blocks=%d offset=%d",
+            self.request_id,
+            len(phys_blocks),
+            self.offset,
+        )
+        return len(phys_blocks)
+
+    def update_and_fetch(self, keys, values):
+        if self._is_merged:
+            raise RuntimeError("cannot update a merged CoWPagedRequestCache")
+        B, n_kv_heads, num_steps, k_head_dim = keys.shape
+        v_head_dim = values.shape[-1]
+        dtype = keys.dtype
+        if dtype != self.pool.dtype:
+            self.pool._adapt_dtype(dtype)
+        self._B = B
+        self._n_kv_heads = n_kv_heads
+        self._k_head_dim = k_head_dim
+        self._v_head_dim = v_head_dim
+        self._dtype = dtype
+
+        prev = self.offset
+        end = prev + num_steps
+        first_block = self._logical_to_block(prev)
+        last_block = self._logical_to_block(end - 1)
+
+        allocated_this_call: list[int] = []
+        try:
+            for lb in range(first_block, last_block + 1):
+                while len(self.block_table) <= lb:
+                    pb = self.pool.alloc_block(self.request_id)
+                    self.block_table.append(pb)
+                    allocated_this_call.append(pb)
+
+            for lb in range(first_block, last_block + 1):
+                block_start_logical = lb * self.pool.block_size
+                block_end_logical = block_start_logical + self.pool.block_size
+                s_start = max(prev, block_start_logical) - prev
+                s_end = min(end, block_end_logical) - prev
+                n = s_end - s_start
+                if n <= 0:
+                    continue
+                phys = self.block_table[lb]
+                # CoW: copy shared block before writing (donor's KV protected).
+                new_phys = self.pool.ensure_writable(self.request_id, phys)
+                if new_phys != phys:
+                    self._cow_copies += 1
+                    self.block_table[lb] = new_phys
+                    phys = new_phys
+                pos_start = self._pos_in_block(max(prev, block_start_logical))
+                self.pool.keys_pool[phys, ..., pos_start : pos_start + n, :] = keys[
+                    ..., s_start:s_end, :
+                ]
+                self.pool.values_pool[phys, ..., pos_start : pos_start + n, :] = values[
+                    ..., s_start:s_end, :
+                ]
+        except Exception:
+            while self.block_table and self.block_table[-1] in allocated_this_call:
+                pb = self.block_table.pop()
+                self.pool.free_block(pb, self.request_id)
+            logger.warning(
+                "CoWPagedRequestCache update_and_fetch rolled back %d blocks "
+                "request=%s offset unchanged at %d",
+                len(allocated_this_call),
+                self.request_id,
+                self.offset,
+            )
+            raise
+        finally:
+            self._block_table_len_before = len(self.block_table)
+
+        self.offset = end
+        return self._fetch_logical(end)
+
+    def stats(self) -> dict:
+        s = super().stats()
+        s["cow_copies"] = self._cow_copies
+        s["shared_pages"] = self._shared_pages
+        s["refcount_total"] = sum(self.pool._refcount.values())
+        s["two_level_enabled"] = is_two_level_kv_enabled()
+        return s
+
+
+class PoolPrefixPageBinder:
+    """Pool-level prefix page binder: maps a prefix chain-hash to the GPU
+    physical block ids a concurrent donor request allocated, so a later
+    same-prefix request can donate (refcount-share) those slabs instead of
+    recomputing prefill.
+
+    GPU-resident hot layer parallel to the SSD-backed BlockAwarePrefixCache
+    index. Reuses compute_block_hash (same chain hash) so donation aligns
+    with the existing prefix index. Concurrent-donation scope only: a donor
+    must still be active (slabs resident) when the receiver is admitted; if
+    the donor was evicted (refcount=0 / block reused), donate returns [] and
+    the receiver falls through to the SSD-reconstruct path.
+    """
+
+    def __init__(self, pool: FusionPagedKVPool, max_prefixes: int = 256):
+        self.pool = pool
+        from collections import OrderedDict
+
+        self._hash_to_pages: OrderedDict[bytes, list[int]] = OrderedDict()
+        self._max_prefixes = max_prefixes
+
+    def register_prefix(self, block_hash: bytes, physical_blocks: list[int]) -> None:
+        if not physical_blocks:
+            return
+        self._hash_to_pages[block_hash] = list(physical_blocks)
+        self._hash_to_pages.move_to_end(block_hash)
+        while len(self._hash_to_pages) > self._max_prefixes:
+            evicted_hash, _ = self._hash_to_pages.popitem(last=False)
+            logger.debug(
+                "pool_prefix_binder: LRU evicted hash %s (cap=%d)",
+                (
+                    evicted_hash.hex()[:16]
+                    if isinstance(evicted_hash, bytes)
+                    else str(evicted_hash)
+                ),
+                self._max_prefixes,
+            )
+        logger.debug(
+            "pool_prefix_binder: registered hash %s -> %d pages",
+            block_hash.hex()[:16] if isinstance(block_hash, bytes) else str(block_hash),
+            len(physical_blocks),
+        )
+
+    def lookup(self, block_hash: bytes) -> list[int] | None:
+        pages = self._hash_to_pages.get(block_hash)
+        if pages is None:
+            return None
+        self._hash_to_pages.move_to_end(block_hash)
+        return list(pages)
+
+    def donate(self, block_hash: bytes, request_id: str) -> list[int]:
+        """Return the donor's physical block ids for block_hash, validating
+        each is still resident (refcount>0). If any block was evicted/reused
+        (refcount==0 or not in pool._refcount), the entry is stale — drop it
+        and return [] so the caller falls back to SSD reconstruct.
+        """
+        pages = self.lookup(block_hash)
+        if pages is None:
+            return []
+        with self.pool._lock:
+            for phys in pages:
+                if self.pool._refcount.get(phys, 0) <= 0:
+                    logger.info(
+                        "pool_prefix_binder: donate miss — phys %d evicted, "
+                        "dropping stale hash entry",
+                        phys,
+                    )
+                    self._hash_to_pages.pop(block_hash, None)
+                    return []
+        logger.info(
+            "pool_prefix_binder: donate hash %s -> %d pages request=%s",
+            block_hash.hex()[:16] if isinstance(block_hash, bytes) else str(block_hash),
+            len(pages),
+            request_id,
+        )
+        return pages
+
+
 class PrefixPageBinder:
     """Binds prefix-cache block hashes to FusionPagedKVCache physical pages.
 
@@ -304,7 +497,9 @@ class PrefixPageBinder:
 
 __all__ = [
     "CoWPagedKVCache",
+    "CoWPagedRequestCache",
     "PrefixPageBinder",
+    "PoolPrefixPageBinder",
     "align_block_size_to_fa_tile",
     "is_two_level_kv_enabled",
 ]
