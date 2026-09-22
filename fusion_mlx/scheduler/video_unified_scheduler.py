@@ -50,6 +50,17 @@ _L3_CIRCUIT_GB = 98
 _GB = 1024**3
 
 
+class VideoMutexBusyError(RuntimeError):
+    # #950: raised when a second video model requests the mutex while another
+    # is resident + generating. Maps to HTTP 503 Retry-After (NOT 500) so the
+    # client retries and the in-flight generation is NOT killed. The prior
+    # design used threading.RLock (reentrant) which let the asyncio event-loop
+    # thread re-acquire the lock, bypassing the timeout=0 guard and hitting
+    # the "mutex invariant violated" RuntimeError — that crashed the server
+    # and aborted the running task.
+    pass
+
+
 class MemoryLevel(IntEnum):
     OK = 0
     L1_WARN = 1
@@ -167,7 +178,13 @@ class VideoUnifiedScheduler:
 
     def __init__(self, red_line_gb: int = _RED_LINE_GB):
         self.red_line_bytes = red_line_gb * _GB
-        self._video_mtx = threading.RLock()
+        # #950: non-reentrant Lock (not RLock). The asyncio event-loop thread
+        # calls begin_task (acquire) for model A, then while A generates in an
+        # executor thread, B's request calls begin_task on the same event-loop
+        # thread. RLock would re-acquire (reentrant) and hit the invariant
+        # check -> 500 + premature release killing A. Lock + timeout=0 fails
+        # immediately -> VideoMutexBusyError -> 503 Retry-After (A survives).
+        self._video_mtx = threading.Lock()
         self._active_model: str | None = None
         self._cache: NF4DequantCache | None = None
         logger.info("VideoUnifiedScheduler ready (red_line=%dGB)", red_line_gb)
@@ -251,18 +268,17 @@ class VideoUnifiedScheduler:
 
     # -- dual-model mutex (PRD §3.2) -------------------------------------
     def acquire(self, model_name: str) -> None:
+        # #950: non-reentrant Lock + timeout=0. If another video model is
+        # resident (lock held), fail fast with VideoMutexBusyError -> 503
+        # Retry-After. The in-flight generation is NOT killed.
         if not self._video_mtx.acquire(timeout=0):
             other = self._active_model or "unknown"
-            raise RuntimeError(
+            raise VideoMutexBusyError(
                 f"video model {model_name} cannot load: {other} is resident "
-                f"(dual-model mutex, PRD §3.2). Queue and retry."
+                f"(dual-model mutex, PRD §3.2). Retry after the current "
+                f"generation completes."
             )
         try:
-            if self._active_model is not None and self._active_model != model_name:
-                raise RuntimeError(
-                    f"mutex invariant violated: {self._active_model} resident, "
-                    f"requested {model_name}"
-                )
             self._active_model = model_name
             self._cache = NF4DequantCache()
             logger.info("video scheduler acquired by %s", model_name)

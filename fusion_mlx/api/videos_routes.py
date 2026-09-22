@@ -571,6 +571,14 @@ async def generate_video(
         logger.warning("Video generation memory admission failed: %s", exc)
         raise HTTPException(507, str(exc), headers={"Retry-After": "5"}) from exc
     except Exception as exc:
+        # #950: dual-model mutex contention — another video model is resident
+        # and generating. Return 503 Retry-After (NOT 500) so the client
+        # retries and the in-flight generation is NOT killed.
+        from fusion_mlx.scheduler.video_unified_scheduler import VideoMutexBusyError
+
+        if isinstance(exc, VideoMutexBusyError):
+            logger.warning("Video generation mutex busy: %s", exc)
+            raise HTTPException(503, str(exc), headers={"Retry-After": "10"}) from exc
         logger.exception("Video generation failed")
         raise HTTPException(500, "Internal server error")
 
