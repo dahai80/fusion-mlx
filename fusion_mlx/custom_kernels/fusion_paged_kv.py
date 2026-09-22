@@ -199,6 +199,116 @@ def _detect_num_layers(model: nn.Module) -> int:
     return 0
 
 
+def get_prefix_binder(model: Any) -> Any:
+    """Return the pool-level PrefixPageBinder attached by install_paged_kv
+    when CoW two-level KV is ON, else None. Scheduler donation hooks guard on
+    this so the CoW path is dead code in normal (non-CoW) prod.
+    """
+    return getattr(model, _BINDER_ATTR, None)
+
+
+def _compute_pool_prefix_hash(
+    tokens: list[int],
+    block_size: int,
+    model_name: str | None,
+    extra_keys: tuple | None,
+) -> bytes | None:
+    if block_size <= 0 or len(tokens) < block_size:
+        return None
+    from ..cache.paged_cache import compute_block_hash
+
+    parent_hash = None
+    n_full = len(tokens) - (len(tokens) % block_size)
+    for start in range(0, n_full, block_size):
+        block_tokens = tokens[start : start + block_size]
+        parent_hash = compute_block_hash(
+            parent_hash,
+            block_tokens,
+            extra_keys=extra_keys,
+            model_name=model_name,
+        )
+    return parent_hash
+
+
+def register_donor_prefix(
+    model: Any,
+    cache_list: list,
+    tokens: list[int],
+    block_size: int,
+    model_name: str | None = None,
+    extra_keys: tuple | None = None,
+) -> None:
+    """Donor side: after a request's prefill completes, record its prefix
+    chain-hash -> per-layer GPU phys block ids so a later same-prefix request
+    can donate. Only full (block-aligned) blocks are registered. No-op when
+    no binder is attached (non-CoW prod).
+    """
+    binder = get_prefix_binder(model)
+    if binder is None or not cache_list:
+        return
+    h = _compute_pool_prefix_hash(tokens, block_size, model_name, extra_keys)
+    if h is None:
+        return
+    n_full_blocks = (len(tokens) - (len(tokens) % block_size)) // block_size
+    layer_pages = []
+    for c in cache_list:
+        bt = getattr(c, "block_table", None)
+        if bt is None:
+            continue
+        layer_pages.append(list(bt[:n_full_blocks]))
+    if not layer_pages or not layer_pages[0]:
+        return
+    binder.register_prefix(h, layer_pages)
+    logger.debug(
+        "register_donor_prefix: hash=%s layers=%d blocks/layer=%d",
+        h.hex()[:16] if isinstance(h, bytes) else str(h),
+        len(layer_pages),
+        len(layer_pages[0]),
+    )
+
+
+def try_donate_prefix(
+    model: Any,
+    request_id: str,
+    tokens: list[int],
+    block_size: int,
+    model_name: str | None = None,
+    extra_keys: tuple | None = None,
+) -> tuple[list, int] | None:
+    """Receiver side: on admission, if a concurrent donor with the same prefix
+    chain-hash is still resident, donate its GPU slabs (refcount-shared) into
+    fresh CoWPagedRequestCache handles. Returns (handles, n_donated_tokens) or
+    None (no binder / no live donor -> fall back to SSD reconstruct).
+    """
+    binder = get_prefix_binder(model)
+    if binder is None:
+        return None
+    h = _compute_pool_prefix_hash(tokens, block_size, model_name, extra_keys)
+    if h is None:
+        return None
+    donated = binder.donate(h, request_id)
+    if not donated:
+        return None
+    handles = model.make_cache()
+    if len(handles) != len(donated):
+        logger.warning(
+            "try_donate_prefix: layer mismatch handles=%d donated=%d (skip)",
+            len(handles),
+            len(donated),
+        )
+        return None
+    for handle, layer_pages in zip(handles, donated):
+        handle.adopt_donated(layer_pages)
+    n_donated_tokens = len(donated[0]) * block_size
+    logger.info(
+        "try_donate_prefix: donated %d layers / %d tokens to request=%s",
+        len(donated),
+        n_donated_tokens,
+        request_id,
+    )
+    return handles, n_donated_tokens
+
+
 def uninstall_paged_kv(model: nn.Module) -> None:
     try:
         if getattr(model, _INSTALLED_ATTR, False):

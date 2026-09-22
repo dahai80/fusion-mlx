@@ -588,7 +588,9 @@ class TestPoolDonation:
         pages = list(donor.block_table)
         binder.register_prefix(b"hash1", pages)
         got = binder.donate(b"hash1", "receiver")
-        assert got == pages
+        # per-layer: single layer wrapped
+        assert got == [pages]
+        assert len(got) == 1
 
     def test_pool_binder_cap_evicts_oldest(self):
         pool = self._pool()

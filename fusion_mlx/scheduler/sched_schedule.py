@@ -1039,6 +1039,31 @@ def _schedule_waiting(
             self.running[request.request_id] = request
             scheduled.append(request)
 
+            # CoW donor registration (mirror of _insert_prefilled_request):
+            # record prefix chain-hash -> per-layer GPU phys blocks for
+            # concurrent same-prefix donation. No-op when CoW is OFF.
+            if cache_to_use is not None:
+                try:
+                    from ..custom_kernels.fusion_paged_kv import register_donor_prefix
+
+                    pool = getattr(self.model, "_fusion_paged_pool", None)
+                    bs = pool.block_size if pool is not None else 0
+                    bac_name = getattr(self.block_aware_cache, "model_name", None)
+                    register_donor_prefix(
+                        self.model,
+                        cache_to_use,
+                        request.prompt_token_ids,
+                        bs,
+                        model_name=bac_name,
+                        extra_keys=request.vlm_extra_keys_for_cache,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "CoW register_donor_prefix skipped for %s: %s",
+                        request.request_id,
+                        exc,
+                    )
+
             # Register per-UID rope_delta for mRoPE decode.
             if hasattr(self.model, "register_rope_delta"):
                 self.model.register_rope_delta(uid, request.rope_deltas)

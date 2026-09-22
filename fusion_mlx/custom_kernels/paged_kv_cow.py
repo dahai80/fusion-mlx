@@ -365,13 +365,31 @@ class PoolPrefixPageBinder:
         self.pool = pool
         from collections import OrderedDict
 
-        self._hash_to_pages: OrderedDict[bytes, list[int]] = OrderedDict()
+        self._hash_to_pages: OrderedDict[bytes, list[list[int]]] = OrderedDict()
         self._max_prefixes = max_prefixes
 
-    def register_prefix(self, block_hash: bytes, physical_blocks: list[int]) -> None:
+    @staticmethod
+    def _normalize(physical_blocks: list) -> list[list[int]]:
+        # Accept flat list[int] (single layer) or nested list[list[int]]
+        # (per-layer) and return per-layer form.
         if not physical_blocks:
+            return []
+        if isinstance(physical_blocks[0], list):
+            return [list(layer) for layer in physical_blocks]
+        return [list(physical_blocks)]
+
+    @staticmethod
+    def _flatten(layer_pages: list[list[int]]) -> list[int]:
+        out = []
+        for layer in layer_pages:
+            out.extend(layer)
+        return out
+
+    def register_prefix(self, block_hash: bytes, physical_blocks: list) -> None:
+        layer_pages = self._normalize(physical_blocks)
+        if not layer_pages:
             return
-        self._hash_to_pages[block_hash] = list(physical_blocks)
+        self._hash_to_pages[block_hash] = layer_pages
         self._hash_to_pages.move_to_end(block_hash)
         while len(self._hash_to_pages) > self._max_prefixes:
             evicted_hash, _ = self._hash_to_pages.popitem(last=False)
@@ -385,29 +403,32 @@ class PoolPrefixPageBinder:
                 self._max_prefixes,
             )
         logger.debug(
-            "pool_prefix_binder: registered hash %s -> %d pages",
+            "pool_prefix_binder: registered hash %s -> %d layers / %d pages",
             block_hash.hex()[:16] if isinstance(block_hash, bytes) else str(block_hash),
-            len(physical_blocks),
+            len(layer_pages),
+            len(self._flatten(layer_pages)),
         )
 
-    def lookup(self, block_hash: bytes) -> list[int] | None:
+    def lookup(self, block_hash: bytes) -> list[list[int]] | None:
         pages = self._hash_to_pages.get(block_hash)
         if pages is None:
             return None
         self._hash_to_pages.move_to_end(block_hash)
-        return list(pages)
+        return [list(layer) for layer in pages]
 
-    def donate(self, block_hash: bytes, request_id: str) -> list[int]:
-        """Return the donor's physical block ids for block_hash, validating
-        each is still resident (refcount>0). If any block was evicted/reused
-        (refcount==0 or not in pool._refcount), the entry is stale — drop it
-        and return [] so the caller falls back to SSD reconstruct.
+    def donate(self, block_hash: bytes, request_id: str) -> list[list[int]]:
+        """Return the donor's per-layer physical block ids for block_hash,
+        validating each is still resident (refcount>0). If any block was
+        evicted/reused (refcount==0 or not in pool._refcount), the entry is
+        stale — drop it and return [] so the caller falls back to SSD
+        reconstruct. Returns per-layer list[list[int]] (one list per layer).
         """
         pages = self.lookup(block_hash)
         if pages is None:
             return []
+        flat = self._flatten(pages)
         with self.pool._lock:
-            for phys in pages:
+            for phys in flat:
                 if self.pool._refcount.get(phys, 0) <= 0:
                     logger.info(
                         "pool_prefix_binder: donate miss — phys %d evicted, "
@@ -417,9 +438,10 @@ class PoolPrefixPageBinder:
                     self._hash_to_pages.pop(block_hash, None)
                     return []
         logger.info(
-            "pool_prefix_binder: donate hash %s -> %d pages request=%s",
+            "pool_prefix_binder: donate hash %s -> %d layers / %d pages request=%s",
             block_hash.hex()[:16] if isinstance(block_hash, bytes) else str(block_hash),
             len(pages),
+            len(flat),
             request_id,
         )
         return pages

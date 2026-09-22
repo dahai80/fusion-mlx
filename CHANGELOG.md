@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added — CoW paged-KV pool wiring (concurrent prefix donation, opt-in)
+- **`custom_kernels/paged_kv_pool.py`**: `FusionPagedKVPool` gained a CoW
+  refcount layer (`_refcount`/`_owners`, `share_block`, `ensure_writable`,
+  refcount-aware `free_block`/`_free_request_locked` that decrement-and-defer
+  when a block is shared, `alloc_block` eviction skips blocks shared with an
+  active request). Refcount is always-on but inert (refcount=1) unless
+  `share_block` is called. New `CoWPagedRequestCache(FusionPagedRequestCache)`
+  overrides `update_and_fetch` to `ensure_writable` before writing into a
+  shared block; `adopt_donated()` pre-populates the block_table with donated
+  (refcount-shared) physical slabs.
+- **`custom_kernels/paged_kv_cow.py`**: new `PoolPrefixPageBinder` — pool-level
+  hash→GPU-phys index (LRU cap 256) for concurrent prefix-page donation.
+  Reuses `compute_block_hash` (same chain hash as `BlockAwarePrefixCache`).
+  `donate()` detects stale entries (donor evicted) and returns `[]` so the
+  receiver falls back to SSD reconstruct.
+- **`custom_kernels/fusion_paged_kv.py`**: pool branch constructs
+  `CoWPagedRequestCache` + attaches `PoolPrefixPageBinder` when
+  `FUSION_SHIM_TWO_LEVEL_KV=1`.
+- **Scope**: concurrent same-prefix requests only (donor still active). Cross-
+  session SSD bridge (donate after donor finished) deferred. Verification
+  pending real-model A/B; outcome decides keep-vs-delete per audit §6.4.
+
 ### Fixed — #945: LTX-2.5 VAE decode OOM on long high-res videos (temporal-only tiled decode)
 - **`video/ltx2_5/generate.py`**: wired the previously-dead `tiling` param
   (declared but ignored; full-tensor `vae_decoder(latents)` ran unconditionally

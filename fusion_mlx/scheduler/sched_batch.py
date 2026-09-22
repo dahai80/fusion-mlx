@@ -822,6 +822,32 @@ def _insert_prefilled_request(
         self.running[request.request_id] = request
         scheduled.append(request)
 
+        # CoW donor registration: record this request's prefilled prefix
+        # chain-hash -> per-layer GPU phys block ids so a later same-prefix
+        # concurrent request can donate (refcount-share) instead of
+        # recomputing prefill. No-op when CoW two-level KV is OFF (no binder).
+        if state.cache is not None:
+            try:
+                from ..custom_kernels.fusion_paged_kv import register_donor_prefix
+
+                pool = getattr(self.model, "_fusion_paged_pool", None)
+                block_size = pool.block_size if pool is not None else 0
+                bac_name = getattr(self.block_aware_cache, "model_name", None)
+                register_donor_prefix(
+                    self.model,
+                    state.cache,
+                    request.prompt_token_ids,
+                    block_size,
+                    model_name=bac_name,
+                    extra_keys=request.vlm_extra_keys_for_cache,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "CoW register_donor_prefix skipped for %s: %s",
+                    request.request_id,
+                    exc,
+                )
+
         if hasattr(self.model, "register_rope_delta"):
             self.model.register_rope_delta(uid, request.rope_deltas)
 
