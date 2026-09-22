@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections import deque
 from typing import Any
 
@@ -42,6 +43,14 @@ class FusionPagedKVPool:
         self._last_access: dict[str, int] = {}
         self._active_ids: set[str] | None = None
         self._evict_cb = None
+        # D1 (audit): the scheduler calls set_active_ids / set_evict_callback
+        # from the asyncio event-loop thread while request executor threads
+        # call alloc_block / free_request. Without a lock, concurrent alloc
+        # can pop the same deque element and the LRU victim selection iterates
+        # in_use while another thread mutates it -> dict-changed-size RuntimeError
+        # or wrong victim (silent KV corruption). RLock: alloc_block calls
+        # free_request (reentrant) during eviction.
+        self._lock = threading.RLock()
         logger.info(
             "paged_kv pool init: cap=%d block_size=%d n_kv=%d head_dim=%d/%d",
             num_blocks,
@@ -52,77 +61,87 @@ class FusionPagedKVPool:
         )
 
     def set_active_ids(self, ids: set[str] | None) -> None:
-        self._active_ids = set(ids) if ids else None
+        with self._lock:
+            self._active_ids = set(ids) if ids else None
         logger.debug("paged_kv pool set_active_ids=%s", self._active_ids or set())
 
     def touch_active(self) -> None:
-        if not self._active_ids:
-            return
-        self._step += 1
-        for rid in self._active_ids:
-            self._last_access[rid] = self._step
-        logger.debug(
-            "paged_kv pool touch_active n=%d step=%d",
-            len(self._active_ids),
-            self._step,
-        )
+        with self._lock:
+            if not self._active_ids:
+                return
+            self._step += 1
+            for rid in self._active_ids:
+                self._last_access[rid] = self._step
+            n = len(self._active_ids)
+            step = self._step
+        logger.debug("paged_kv pool touch_active n=%d step=%d", n, step)
 
     def set_evict_callback(self, cb) -> None:
-        self._evict_cb = cb
+        with self._lock:
+            self._evict_cb = cb
 
     def touch(self, request_id: str) -> None:
-        self._step += 1
-        self._last_access[request_id] = self._step
-        logger.debug("paged_kv pool touch request=%s step=%d", request_id, self._step)
+        with self._lock:
+            self._step += 1
+            self._last_access[request_id] = self._step
+            step = self._step
+        logger.debug("paged_kv pool touch request=%s step=%d", request_id, step)
 
     def alloc_block(self, request_id: str, *, active_ids: set | None = None) -> int:
-        self._step += 1
-        self._last_access[request_id] = self._step
-        if active_ids is None:
-            active_ids = self._active_ids if self._active_ids else {request_id}
-        if not self.free_list:
-            owners = set(self.in_use.values())
-            evictable = owners - active_ids
-            if evictable:
-                victim = min(
-                    evictable,
-                    key=lambda rid: self._last_access.get(rid, 0),
-                )
-                self.free_request(victim)
-                if self._evict_cb is not None:
-                    try:
-                        self._evict_cb(victim)
-                    except Exception as e:
-                        logger.warning(
-                            "paged_kv pool evict_cb failed for %s: %s",
-                            victim,
-                            e,
-                        )
-                logger.warning(
-                    "paged_kv LRU evicting idle request=%s available=%d",
-                    victim,
-                    len(self.free_list),
-                )
-            else:
-                logger.error(
-                    "paged_kv pool exhausted for request=%s (no evictable idle)",
-                    request_id,
-                )
-                raise RuntimeError(
-                    f"paged_kv pool exhausted (cap={self.num_blocks}); "
-                    f"reject request or raise pool_num_blocks"
-                )
-        pb = self.free_list.pop()
-        self.in_use[pb] = request_id
+        with self._lock:
+            self._step += 1
+            self._last_access[request_id] = self._step
+            if active_ids is None:
+                active_ids = self._active_ids if self._active_ids else {request_id}
+            if not self.free_list:
+                owners = set(self.in_use.values())
+                evictable = owners - active_ids
+                if evictable:
+                    victim = min(
+                        evictable,
+                        key=lambda rid: self._last_access.get(rid, 0),
+                    )
+                    self._free_request_locked(victim)
+                    if self._evict_cb is not None:
+                        try:
+                            self._evict_cb(victim)
+                        except Exception as e:
+                            logger.warning(
+                                "paged_kv pool evict_cb failed for %s: %s",
+                                victim,
+                                e,
+                            )
+                    logger.warning(
+                        "paged_kv LRU evicting idle request=%s available=%d",
+                        victim,
+                        len(self.free_list),
+                    )
+                else:
+                    logger.error(
+                        "paged_kv pool exhausted for request=%s (no evictable idle)",
+                        request_id,
+                    )
+                    raise RuntimeError(
+                        f"paged_kv pool exhausted (cap={self.num_blocks}); "
+                        f"reject request or raise pool_num_blocks"
+                    )
+            pb = self.free_list.pop()
+            self.in_use[pb] = request_id
+            avail = len(self.free_list)
         logger.debug(
             "paged_kv pool alloc block=%d request=%s available=%d",
             pb,
             request_id,
-            len(self.free_list),
+            avail,
         )
         return pb
 
     def free_request(self, request_id: str) -> int:
+        with self._lock:
+            return self._free_request_locked(request_id)
+
+    def _free_request_locked(self, request_id: str) -> int:
+        # D1: caller MUST hold self._lock (RLock). Returns freed block count.
         freed = [pb for pb, rid in self.in_use.items() if rid == request_id]
         for pb in freed:
             self.in_use.pop(pb, None)
@@ -137,28 +156,40 @@ class FusionPagedKVPool:
         )
         return len(freed)
 
+    def free_block(self, pb: int) -> None:
+        # D6 (audit): single-block free used by FusionPagedRequestCache.trim
+        # so it no longer bypasses the lock / refcount path by mutating
+        # in_use + free_list directly. Caller routes through here so the
+        # pool's bookkeeping (in_use, free_list, _last_access) stays
+        # consistent under the lock.
+        with self._lock:
+            self.in_use.pop(pb, None)
+            self.free_list.append(pb)
+
     def available(self) -> int:
-        return len(self.free_list)
+        with self._lock:
+            return len(self.free_list)
 
     def _adapt_dtype(self, dtype: Any) -> None:
         if dtype == self.dtype:
             return
-        if self.in_use:
-            logger.warning(
-                "paged_kv pool cannot adapt dtype %s -> %s with blocks in_use; "
-                "keeping existing storage",
+        with self._lock:
+            if self.in_use:
+                logger.warning(
+                    "paged_kv pool cannot adapt dtype %s -> %s with blocks in_use; "
+                    "keeping existing storage",
+                    self.dtype,
+                    dtype,
+                )
+                return
+            logger.info(
+                "paged_kv pool adapting dtype %s -> %s (model compute dtype)",
                 self.dtype,
                 dtype,
             )
-            return
-        logger.info(
-            "paged_kv pool adapting dtype %s -> %s (model compute dtype)",
-            self.dtype,
-            dtype,
-        )
-        self.dtype = dtype
-        self.keys_pool = mx.zeros(self.keys_pool.shape, dtype=dtype)
-        self.values_pool = mx.zeros(self.values_pool.shape, dtype=dtype)
+            self.dtype = dtype
+            self.keys_pool = mx.zeros(self.keys_pool.shape, dtype=dtype)
+            self.values_pool = mx.zeros(self.values_pool.shape, dtype=dtype)
 
     def stats(self) -> dict:
         return {
@@ -209,33 +240,59 @@ class FusionPagedRequestCache:
         first_block = self._logical_to_block(prev)
         last_block = self._logical_to_block(end - 1)
 
-        for lb in range(first_block, last_block + 1):
-            while len(self.block_table) <= lb:
-                pb = self.pool.alloc_block(self.request_id)
-                self.block_table.append(pb)
-                logger.debug(
-                    "paged_kv request=%s block_table grow lb=%d pb=%d",
-                    self.request_id,
-                    lb,
-                    pb,
-                )
+        # D3 (audit): track blocks newly allocated in THIS call so a
+        # mid-operation alloc failure (pool exhausted after some blocks
+        # appended) rolls them back — otherwise block_table holds dangling
+        # allocated blocks with a stale offset, and free_all only reclaims
+        # them if the request_id is later evicted.
+        allocated_this_call: list[int] = []
+        try:
+            for lb in range(first_block, last_block + 1):
+                while len(self.block_table) <= lb:
+                    pb = self.pool.alloc_block(self.request_id)
+                    self.block_table.append(pb)
+                    allocated_this_call.append(pb)
+                    logger.debug(
+                        "paged_kv request=%s block_table grow lb=%d pb=%d",
+                        self.request_id,
+                        lb,
+                        pb,
+                    )
 
-        for lb in range(first_block, last_block + 1):
-            block_start_logical = lb * self.pool.block_size
-            block_end_logical = block_start_logical + self.pool.block_size
-            s_start = max(prev, block_start_logical) - prev
-            s_end = min(end, block_end_logical) - prev
-            n = s_end - s_start
-            if n <= 0:
-                continue
-            pb = self.block_table[lb]
-            pos_start = self._pos_in_block(max(prev, block_start_logical))
-            self.pool.keys_pool[pb, ..., pos_start : pos_start + n, :] = keys[
-                ..., s_start:s_end, :
-            ]
-            self.pool.values_pool[pb, ..., pos_start : pos_start + n, :] = values[
-                ..., s_start:s_end, :
-            ]
+            for lb in range(first_block, last_block + 1):
+                block_start_logical = lb * self.pool.block_size
+                block_end_logical = block_start_logical + self.pool.block_size
+                s_start = max(prev, block_start_logical) - prev
+                s_end = min(end, block_end_logical) - prev
+                n = s_end - s_start
+                if n <= 0:
+                    continue
+                pb = self.block_table[lb]
+                pos_start = self._pos_in_block(max(prev, block_start_logical))
+                self.pool.keys_pool[pb, ..., pos_start : pos_start + n, :] = keys[
+                    ..., s_start:s_end, :
+                ]
+                self.pool.values_pool[pb, ..., pos_start : pos_start + n, :] = values[
+                    ..., s_start:s_end, :
+                ]
+        except Exception:
+            # D3 (audit): rollback blocks allocated this call that sit at the
+            # tail of block_table (purely appended, not overwriting pre-existing
+            # entries). Frees them back to the pool so offset stays consistent
+            # and no dangling allocated blocks leak.
+            while self.block_table and self.block_table[-1] in allocated_this_call:
+                pb = self.block_table.pop()
+                self.pool.free_block(pb)
+            logger.warning(
+                "paged_kv update_and_fetch rolled back %d blocks for request=%s "
+                "after alloc/write failure (offset unchanged at %d)",
+                len(allocated_this_call),
+                self.request_id,
+                self.offset,
+            )
+            raise
+        finally:
+            self._block_table_len_before = len(self.block_table)
 
         self.offset = end
         return self._fetch_logical(end)
@@ -285,6 +342,12 @@ class FusionPagedRequestCache:
         self._k_head_dim = k_head_dim
         self._v_head_dim = v_head_dim
         self._dtype = keys.dtype
+        # D8 (audit): free the old block_table's physical blocks BEFORE
+        # resetting, so they return to the pool free-list. The prior code
+        # cleared block_table=[] and rebuilt free_list full (standalone) or
+        # leaked (pool-shared) — physical block ids were silently lost.
+        for pb in self.block_table:
+            self.pool.free_block(pb)
         self.block_table = []
         self.offset = 0
         num_blocks_needed = (length + self.pool.block_size - 1) // self.pool.block_size
@@ -340,10 +403,13 @@ class FusionPagedRequestCache:
         new_num_blocks = (
             self.offset + self.pool.block_size - 1
         ) // self.pool.block_size
+        # D6 (audit): route through pool.free_block so the pool's lock +
+        # bookkeeping stay consistent. The prior code mutated
+        # pool.in_use / pool.free_list directly, bypassing the lock and
+        # (if CoW were routed through the pool) the refcount path.
         while len(self.block_table) > new_num_blocks:
             pb = self.block_table.pop()
-            self.pool.in_use.pop(pb, None)
-            self.pool.free_list.append(pb)
+            self.pool.free_block(pb)
         return n
 
     def empty(self):

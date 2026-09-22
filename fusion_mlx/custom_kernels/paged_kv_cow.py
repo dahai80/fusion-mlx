@@ -132,15 +132,21 @@ class CoWPagedKVCache(FusionPagedKVCache):
         if not is_two_level_kv_enabled():
             logger.debug("paged_kv_cow share_pages: disabled, skip")
             return []
+        # D5 (audit): cross-pool share silently reads garbage — physical
+        # indices are meaningless in a different pool's tensor. A block
+        # not in this cache's _refcount is either foreign (cross-pool) or
+        # already freed (evicted) — both mean stale/garbage data. Fail
+        # visibly instead of silently adopting wrong data.
+        for phys in physical_blocks:
+            if phys not in self._refcount:
+                raise RuntimeError(
+                    f"paged_kv_cow share_pages: phys {phys} not owned by this "
+                    f"cache (cross-pool or freed block) — refusing to adopt "
+                    f"to prevent silent KV corruption (D5)"
+                )
         adopted = []
         for phys in physical_blocks:
-            rc = self._refcount.get(phys, 0)
-            if rc == 0:
-                logger.warning(
-                    "paged_kv_cow share_pages: phys %d not in pool, skip", phys
-                )
-                continue
-            self._refcount[phys] = rc + 1
+            self._refcount[phys] = self._refcount[phys] + 1
             lb = len(self.block_table)
             self.block_table.append(phys)
             self._shared_pages += 1
@@ -239,13 +245,31 @@ class PrefixPageBinder:
     so a future cross-pool bridge can drop in.
     """
 
-    def __init__(self, cache: CoWPagedKVCache):
+    def __init__(self, cache: CoWPagedKVCache, max_prefixes: int = 256):
         self.cache = cache
-        self._hash_to_pages: dict[bytes, list[int]] = {}
+        # D7 (audit): cap the prefix dict so it does not grow unbounded.
+        # OrderedDict so we can LRU-evict the oldest entry on overflow.
+        from collections import OrderedDict
+
+        self._hash_to_pages: OrderedDict[bytes, list[int]] = OrderedDict()
+        self._max_prefixes = max_prefixes
 
     def register_prefix(self, block_hash: bytes, physical_blocks: list[int]) -> None:
         """Register a completed prefix's block hash -> physical pages."""
+        # D7: move-to-end on re-register so LRU order reflects recency.
         self._hash_to_pages[block_hash] = list(physical_blocks)
+        self._hash_to_pages.move_to_end(block_hash)
+        while len(self._hash_to_pages) > self._max_prefixes:
+            evicted_hash, _ = self._hash_to_pages.popitem(last=False)
+            logger.debug(
+                "prefix_page_binder: LRU evicted hash %s (cap=%d)",
+                (
+                    evicted_hash.hex()[:16]
+                    if isinstance(evicted_hash, bytes)
+                    else str(evicted_hash)
+                ),
+                self._max_prefixes,
+            )
         logger.debug(
             "prefix_page_binder: registered hash %s -> %d pages",
             block_hash.hex()[:16] if isinstance(block_hash, bytes) else str(block_hash),
@@ -257,6 +281,8 @@ class PrefixPageBinder:
         pages = self._hash_to_pages.get(block_hash)
         if pages is None:
             return None
+        # D7: refresh LRU recency on hit.
+        self._hash_to_pages.move_to_end(block_hash)
         logger.debug(
             "prefix_page_binder: hit hash %s -> %d pages",
             block_hash.hex()[:16] if isinstance(block_hash, bytes) else str(block_hash),

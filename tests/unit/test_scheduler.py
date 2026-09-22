@@ -1979,6 +1979,10 @@ class TestSchedulerBoundarySnapshots:
         scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer, config=config)
         scheduler.block_aware_cache = MagicMock()
         scheduler.paged_cache_manager = None
+        # Force synchronous store_cache path so the assertion observes the
+        # call inline (default init creates an async executor that defers
+        # store_cache to a worker thread).
+        scheduler._store_cache_executor = None
 
         request = Request(
             request_id="req-reasoning",
@@ -2010,6 +2014,7 @@ class TestSchedulerBoundarySnapshots:
         scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer, config=config)
         scheduler.block_aware_cache = MagicMock()
         scheduler.paged_cache_manager = None
+        scheduler._store_cache_executor = None
 
         request = Request(
             request_id="req-nonreasoning",
@@ -2039,6 +2044,7 @@ class TestSchedulerBoundarySnapshots:
         scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer, config=config)
         scheduler.block_aware_cache = MagicMock()
         scheduler.paged_cache_manager = None
+        scheduler._store_cache_executor = None
 
         request = Request(
             request_id="req-partial",

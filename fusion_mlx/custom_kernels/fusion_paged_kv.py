@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 import mlx.core as mx
@@ -16,7 +17,13 @@ _CACHE_REGISTRY_ATTR = "_fusion_paged_kv_registry"
 _POOL_ATTR = "_fusion_paged_pool"
 _POOL_SEQ_ATTR = "_fusion_paged_pool_seq"
 
+# D1 (audit): module-level registry mutated from make_cache (event-loop
+# thread), evict_request / evict_request_by_id / invalidate_request
+# (enforcer + pool evict-callback threads). Without a lock, concurrent
+# make_cache + evict -> dict race. RLock: invalidate_request reads while
+# evict_request_by_id pops (reentrant not required, but harmless).
 _GLOBAL_CACHE_REGISTRY: dict = {}
+_REGISTRY_LOCK = threading.RLock()
 
 
 def is_paged_kv_available() -> bool:
@@ -121,7 +128,8 @@ def install_paged_kv(model: nn.Module, config: Any) -> None:
                     FusionPagedRequestCache(pool_obj, request_id)
                     for _ in range(num_layers)
                 ]
-                _GLOBAL_CACHE_REGISTRY[request_id] = handles
+                with _REGISTRY_LOCK:
+                    _GLOBAL_CACHE_REGISTRY[request_id] = handles
                 logger.info(
                     "install_paged_kv: pool make_cache request_id=%s layers=%d",
                     request_id,
@@ -186,7 +194,8 @@ def register_cache(model: nn.Module, request_id: str, caches: list) -> None:
     if reg is None:
         return
     reg[request_id] = caches
-    _GLOBAL_CACHE_REGISTRY[request_id] = caches
+    with _REGISTRY_LOCK:
+        _GLOBAL_CACHE_REGISTRY[request_id] = caches
 
 
 def evict_request(model: nn.Module, request_id: str) -> int:
@@ -195,21 +204,23 @@ def evict_request(model: nn.Module, request_id: str) -> int:
     if reg is not None:
         caches = reg.pop(request_id, None)
     if caches is None:
-        caches = _GLOBAL_CACHE_REGISTRY.pop(request_id, None)
+        with _REGISTRY_LOCK:
+            caches = _GLOBAL_CACHE_REGISTRY.pop(request_id, None)
     if not caches:
         return 0
     freed = 0
     for c in caches:
         try:
             freed += c.free_all()
-        except Exception:
-            pass
+        except Exception as e:  # D15 (audit): log, don't swallow silently
+            logger.warning("evict_request: free_all failed for %s: %s", request_id, e)
     logger.info("evict_request: freed %d blocks for %s", freed, request_id)
     return freed
 
 
 def evict_request_by_id(request_id: str) -> int:
-    caches = _GLOBAL_CACHE_REGISTRY.pop(request_id, None)
+    with _REGISTRY_LOCK:
+        caches = _GLOBAL_CACHE_REGISTRY.pop(request_id, None)
     if not caches:
         logger.debug("evict_request_by_id: no caches for %s", request_id)
         return 0
@@ -217,10 +228,40 @@ def evict_request_by_id(request_id: str) -> int:
     for c in caches:
         try:
             freed += c.free_all()
-        except Exception:
-            pass
+        except Exception as e:  # D15 (audit): log, don't swallow silently
+            logger.warning(
+                "evict_request_by_id: free_all failed for %s: %s", request_id, e
+            )
     logger.info("evict_request_by_id: freed %d blocks for %s", freed, request_id)
     return freed
+
+
+def sweep_registry(active_request_ids: set[str]) -> int:
+    # D2 (audit): the registry leaks permanently when a request aborts
+    # without an explicit evict (crash, exception path, forgotten cleanup)
+    # — its cache handles + pool blocks never free. No TTL/weakref existed.
+    # Called periodically by the scheduler step sync with the set of
+    # currently-active request ids; drops registry entries whose request is
+    # no longer active, freeing their blocks back to the pool. Returns the
+    # number of stale entries reclaimed.
+    if not active_request_ids:
+        return 0
+    stale: list[str] = []
+    with _REGISTRY_LOCK:
+        stale = [rid for rid in _GLOBAL_CACHE_REGISTRY if rid not in active_request_ids]
+    if not stale:
+        return 0
+    reclaimed = 0
+    for rid in stale:
+        reclaimed += evict_request_by_id(rid)
+    if reclaimed:
+        logger.warning(
+            "sweep_registry: reclaimed %d stale request(s) from paged-KV "
+            "registry (leak guard): %s",
+            len(stale),
+            stale,
+        )
+    return len(stale)
 
 
 def invalidate_request(request_id: str) -> int:
@@ -236,9 +277,11 @@ def invalidate_request(request_id: str) -> int:
     corrupting. The registry entry stays so the victim's eventual
     completion/abort path still finds + frees it cleanly.
     """
-    caches = _GLOBAL_CACHE_REGISTRY.get(request_id)
-    if not caches:
-        return 0
+    with _REGISTRY_LOCK:
+        caches = _GLOBAL_CACHE_REGISTRY.get(request_id)
+        if not caches:
+            return 0
+        caches = list(caches)
     cleared = 0
     for c in caches:
         try:
@@ -267,5 +310,6 @@ __all__ = [
     "register_cache",
     "evict_request",
     "evict_request_by_id",
+    "sweep_registry",
     "invalidate_request",
 ]

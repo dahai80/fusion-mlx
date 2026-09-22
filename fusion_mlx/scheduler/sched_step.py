@@ -62,6 +62,14 @@ def _sync_paged_pool_active(self) -> None:
             pool.set_evict_callback(invalidate_request)
         pool.set_active_ids(set(self.running.keys()))
         pool.touch_active()
+        # D2 (audit): reclaim registry entries for requests no longer in
+        # the running set (aborted/crashed/forgotten). Without this the
+        # _GLOBAL_CACHE_REGISTRY leaks cache handles + pool blocks forever
+        # on any request that exits without an explicit evict. Pass the
+        # full active set (running keys) so sweep drops stale entries.
+        from ..custom_kernels.fusion_paged_kv import sweep_registry
+
+        sweep_registry(set(self.running.keys()))
     except Exception as e:
         logger.debug("paged_kv pool active-sync failed: %s", e)
 

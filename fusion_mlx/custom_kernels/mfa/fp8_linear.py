@@ -1,6 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # FP8 linear layer - W8A8 block-scaled quantization for memory-efficient inference.
 # Based on xDiT's xFuserFP8BlockScaleLinear and mlx_mfa FP8 quantization.
+#
+# D10 (audit): this is the block-scaled W8A8 variant (uint8 storage +
+# per-128-block scales). It is DISTINCT from the top-level
+# custom_kernels/fp8_linear.py FP8Linear which uses true mx.float8_e4m3fn
+# storage. Import directly from this module where the W8A8 algorithm is
+# needed; do not re-export via mfa/__init__.py (two FP8Linear surfaces from
+# one package is the Rule-7 conflict the audit flagged).
 
 from __future__ import annotations
 

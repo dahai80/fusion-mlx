@@ -8,6 +8,7 @@ and KL alignment vs stock FusionPagedKVCache (golden reference < 1e-6).
 from __future__ import annotations
 
 import hashlib
+from unittest.mock import MagicMock
 
 import mlx.core as mx
 import numpy as np
@@ -252,3 +253,101 @@ class TestStats:
         assert "two_level_enabled" in s
         assert s["two_level_enabled"] is True
         assert s["cow_copies"] == 0
+
+
+class TestAuditSafetyFixes:
+    """D1-D8 audit fixes: cross-pool raise, rollback, cap, sweep."""
+
+    def test_d5_share_pages_raises_on_foreign_block(self, monkeypatch):
+        _enable(monkeypatch)
+        cow = CoWPagedKVCache(block_size=4, num_blocks=8)
+        # phys 999 not in this cache's _refcount -> cross-pool/freed -> raise
+        with pytest.raises(RuntimeError, match="not owned by this cache"):
+            cow.share_pages([999])
+
+    def test_d5_share_pages_raises_on_any_foreign_in_list(self, monkeypatch):
+        _enable(monkeypatch)
+        cow = CoWPagedKVCache(block_size=4, num_blocks=8)
+        k, v = _kv(steps=4)
+        cow.update_and_fetch(k, v)
+        mx.eval([cow.keys_pool, cow.values_pool])
+        owned = list(cow._refcount.keys())
+        # one owned + one foreign -> raise (no partial adoption)
+        with pytest.raises(RuntimeError, match="not owned"):
+            cow.share_pages([owned[0], 12345])
+
+    def test_d3_rollback_on_alloc_exhaustion_standalone(self):
+        # standalone cache: exhaust pool mid-update -> rollback tail blocks
+        cache = FusionPagedKVCache(block_size=4, num_blocks=2)
+        k1, v1 = _kv(steps=4)
+        cache.update_and_fetch(k1, v1)  # fills 1 block
+        mx.eval([cache.keys_pool, cache.values_pool])
+        offset_before = cache.offset
+        # second 4-step update needs another block but pool has only 2;
+        # use 8 steps to force >2 blocks -> exhaust on 3rd
+        k2, v2 = _kv(steps=8)
+        with pytest.raises(RuntimeError, match="pool exhausted"):
+            cache.update_and_fetch(k2, v2)
+        # offset unchanged after rollback
+        assert cache.offset == offset_before
+
+    def test_d7_prefix_binder_cap_evicts_oldest(self, monkeypatch):
+        _enable(monkeypatch)
+        cow = CoWPagedKVCache(block_size=4, num_blocks=64)
+        binder = PrefixPageBinder(cow, max_prefixes=3)
+        for i in range(5):
+            binder.register_prefix(hashlib.sha256(str(i).encode()).digest(), [i])
+        # cap enforced
+        assert len(binder._hash_to_pages) == 3
+        # oldest (i=0,1) evicted
+        assert binder.lookup(hashlib.sha256(b"0").digest()) is None
+        # newest (i=4) present
+        assert binder.lookup(hashlib.sha256(b"4").digest()) is not None
+
+    def test_d1_standalone_lock_is_rlock(self):
+        cache = FusionPagedKVCache(block_size=4, num_blocks=8)
+        # RLock: reentrant — acquire twice without deadlock
+        cache._lock.acquire()
+        cache._lock.acquire()
+        cache._lock.release()
+        cache._lock.release()
+
+    def test_d1_pool_lock_is_rlock(self):
+        from fusion_mlx.custom_kernels.paged_kv_pool import FusionPagedKVPool
+
+        pool = FusionPagedKVPool(block_size=4, num_blocks=8, n_kv_heads=2, head_dim=8)
+        pool._lock.acquire()
+        pool._lock.acquire()
+        pool._lock.release()
+        pool._lock.release()
+
+    def test_d2_sweep_registry_reclaims_stale(self, monkeypatch):
+        from fusion_mlx.custom_kernels import fusion_paged_kv as mod
+
+        monkeypatch.setattr(mod, "_GLOBAL_CACHE_REGISTRY", {})
+        # simulate two requests, one stale
+        fake_active = MagicMock()
+        fake_active.free_all = lambda: 4
+        fake_stale = MagicMock()
+        fake_stale.free_all = lambda: 2
+        with mod._REGISTRY_LOCK:
+            mod._GLOBAL_CACHE_REGISTRY["active"] = [fake_active]
+            mod._GLOBAL_CACHE_REGISTRY["stale"] = [fake_stale]
+        reclaimed = mod.sweep_registry({"active"})
+        assert reclaimed == 1
+        assert "stale" not in mod._GLOBAL_CACHE_REGISTRY
+        assert "active" in mod._GLOBAL_CACHE_REGISTRY
+
+    def test_d8_state_setter_frees_old_blocks(self):
+        cache = FusionPagedKVCache(block_size=4, num_blocks=8)
+        k1, v1 = _kv(steps=4)
+        cache.update_and_fetch(k1, v1)
+        mx.eval([cache.keys_pool, cache.values_pool])
+        used_before = len(cache.block_table)
+        free_before = len(cache.free_list)
+        # set state with new content -> old blocks freed, not lost
+        k2, v2 = _kv(steps=8)
+        cache.state = (k2, v2)
+        # total blocks conserved: used + free == num_blocks
+        assert len(cache.block_table) + len(cache.free_list) == cache.num_blocks
+        assert len(cache.block_table) >= 2  # 8 steps / 4 block_size = 2 blocks
