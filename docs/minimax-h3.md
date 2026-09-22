@@ -298,3 +298,39 @@ Quantization scheme (minimal precision loss):
 Verified: quantized 256×256 std=112.3 vs bf16 113.6 (1% drift); 512×512 and
 768×448 configs that OOM-killed under bf16 run end-to-end with `dit8_te4`.
 
+## ddalcu 4bit pre-quantized checkpoint (#948)
+
+`ddalcu/MiniMax-H3-FL2VA-MLX-Serve-4bit` ships a **pre-quantized** 4bit
+checkpoint (TE ~15GB + DiT ~18GB + VAE ~5GB on disk) that fits a 128GB box
+without runtime quantization. Two format quirks required loader fixes (#948):
+
+- **Stripped `language_model.` prefix** (text_encoder): keys are `model.*` /
+  `visual.*` with no `language_model.` / `vision_tower.` prefix, and
+  `config.json` has no `quantization_config`. `load_text_encoder` /
+  `load_multimodal_text_encoder` detect this via `_detect_ddalcu` (peeks
+  safetensors keys), then `_load_vlm_remapped` rewrites keys
+  (`model.*`->`language_model.model.*`, `visual.*`->`vision_tower.*`), injects
+  `quantization={group_size=64,bits=4,mode=affine}`, trims `num_hidden_layers`
+  to the checkpoint's actual range (ddalcu stores layers 0..49 since H3 reads
+  layer 49; config declares 64), and loads `strict=False` for the unused
+  `lm_head` / `final_norm`.
+- **Partially-4bit DiT**: 260 group-quantized linears + dense layers.
+  `load_dit_from_pretrained` detects 4bit paths via `.scales` keys and
+  `nn.quantize`s exactly those via `class_predicate`. The
+  `reorder_interleaved_qkv` row permutation is applied to `.scales` /
+  `.biases` too (not just `.weight`) so dequant reads correct per-group scales.
+
+Use it like any other H3 model id (no `quantize=` needed — already 4bit):
+
+```bash
+curl -s http://127.0.0.1:11434/v1/videos/generate \
+  -H "Authorization: Bearer $FUSION_MLX_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"models--ddalcu--MiniMax-H3-FL2VA-MLX-Serve-4bit",
+       "prompt":"a cat playing piano","num_frames":9,
+       "width":512,"height":512,"seed":42}'
+```
+
+Verified E2E (M5 Max, 128GB): HTTP 200, valid mp4, frame0 std 8.49
+(real content), ~85s for 12 frames 512×512.
+

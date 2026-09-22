@@ -2,6 +2,155 @@
 
 ## [Unreleased]
 
+### Fixed — #945: LTX-2.5 VAE decode OOM on long high-res videos (temporal-only tiled decode)
+- **`video/ltx2_5/generate.py`**: wired the previously-dead `tiling` param
+  (declared but ignored; full-tensor `vae_decoder(latents)` ran unconditionally
+  and OOM'd via `memory_enforcer` on long high-res videos, e.g. 233 frames @
+  1920x1088). Now maps `tiling` string to a `TilingConfig` and calls
+  `vae_decoder.decode_tiled` when tiling is enabled.
+- **Temporal-only** (`spatial_config=None` always): PR #937 tried
+  `decode_tiled` with the default config (spatial 512px + temporal 64f) and
+  produced black frames + colored spatial tile-seams (CausalConv3d REFLECT
+  padding at spatial tile edges with 64px overlap << spatial RF), reverted in
+  #939. Spatial tiling is disabled for ltx2_5 — `"spatial"`,
+  `"aggressive"`, `"conservative"`, `"default"` all fall back to temporal-only
+  with a warning. Full spatial stays intact -> no spatial seams; frames are
+  chunked with overlap+blend to bound peak memory.
+- **Default `"auto"`**: temporal-only tiling (128f tile, 64f overlap) activates
+  only when output frame count exceeds the threshold (65), else full decode.
+  `"none"` = full decode (A/B / small videos).
+- **Honest limit**: NOT bit-exact vs full decode — temporal RF (~40 latent
+  frames) exceeds the 64f overlap, so soft temporal continuity glitches are
+  possible at chunk boundaries. Acceptable for the OOM-fix use case (the
+  current alternative is a hard crash). Decoder is deterministic
+  (`timestep_conditioning=False`, no `mx.random` in path) and uses stored
+  normalization constants -> tiling is safe from cross-tile randomness/statistics
+  dependency.
+
+### Fixed — #946: LTX-2.5 distilled T2V black/noise frames (bf16 overflow in q8 Gemma4-12b text encoder)
+- **Root cause (FOUND via per-layer bisect)**: the q8 Gemma4-12b text encoder
+  overflows in **bf16 activations** — embed output is finite (max 43), but layer
+  0 output is NaN in bf16. The NaN propagates: `te_video_features max_abs=nan`
+  → `context_in nan` → `stage1_out nan` → `stage2_out nan` → black frames
+  (std=0, 3/3 runs). Initial latents (`stage1_in`) are finite (3.89) — the NaN
+  is born in the TE, not the transformer.
+- **Falsified hypotheses** (documented for posterity):
+  1. bf16 transformer SDPA — `FUSION_LTX_DETERMINISTIC_ATTN=1` fp32 transformer
+     attention: NaN persisted.
+  2. bf16 TE Gemma4 attention — monkeypatched mlx_vlm gemma4 SDPA to fp32: NaN
+     persisted.
+  3. q8 QuantizedLinear reduction overflow — dequantized TE weights to bf16:
+     NaN persisted (bf16 activations still overflow).
+  4. fp32 weights + fp32 attention but bf16 activations — NaN persisted.
+  The bisect proved: fp32 **activations** (via `set_dtype(mx.float32)`) are the
+  necessary and sufficient fix.
+- **Fix (DEFAULT ON)**: `generate.py` dequantizes the q8 TE to `nn.Linear`
+  (`dequantize_te` in `text_encoder.py`), then `text_encoder.set_dtype(mx.float32)`
+  to run the full TE forward in fp32. Memory cost ~12b fp32 (48GB) transient —
+  TE is freed after encode (`del text_encoder` + `mx.clear_cache`). Verified
+  real-model (M5 Max, `dgrauet--ltx-2.5-mlx-q8`, 25f @ 512x320, seed 42):
+  3/3 runs identical (frame0_std=10.76, temporal_diff=2.72, no NaN). Baseline
+  (fix OFF): 3/3 black (std=0). Opt out with `FUSION_LTX_TE_DEQUANT=0` for
+  memory-constrained debug only (produces black frames — not usable).
+- **`FUSION_LTX_DEBUG_LATENTS=1`** (`generate.py`): logs `mx.abs(latents).max()`
+  + NaN/Inf at `te_video_features`, `stage1_in`, `context_in`, `stage1_out`,
+  `stage2_out`. Diagnostic that found the root cause. Default OFF.
+- **`FUSION_LTX_DETERMINISTIC_ATTN=1`** (`attention.py` + `text_encoder.py`):
+  opt-in fp32 SDPA in transformer + TE attention. Falsified as a standalone
+  fix; kept as a diagnostic tool. Default OFF.
+- **Re-seed before stage2** (`generate.py`): `mx.random.seed(seed + 1)` before
+  the stage2 noise draw. Harmless good-practice.
+
+### Fixed — #951: legacy LTX-Video 2B mid-denoise OOM — abort generation (507) instead of fatal_exit
+- **Root cause**: legacy 2B DiT has no temporal upsampler
+  (`lf = num_frames // 8 + 1`), so per-step attention memory scales linearly
+  with latent frames. A long/high-res request (e.g. 1344×768×49) crosses the
+  98GB L3 red line mid-denoise (~step 29/40), and the `ProcessMemoryEnforcer`
+  `fatal_exit`s the whole server + any co-tenant LLM. `begin_task`'s pre-probe
+  sees OK memory (generation not started yet), so it cannot catch the
+  mid-denoise spike.
+- **Fix**: `VideoUnifiedScheduler.check_step_pressure()` — called between
+  denoise steps via the backend's step callback. On `L3_CIRCUIT` (>=98GB),
+  fire `emergency_reclaim` (Metal cache clear + dequant cache release + GC)
+  first; if **still** L3, raise `VideoMemoryPressureError` so the backend
+  aborts the generation cleanly (→ HTTP 507 Retry-After) instead of
+  `fatal_exit` killing the server.
+- **Wired** into `LegacyLTXBackend.generate` via a per-step callback that
+  probes the scheduler between steps (combined with the user `on_step`
+  callback). `videos_routes.py` maps `VideoMemoryPressureError` → 507
+  Retry-After.
+- **Tests**: `check_step_pressure` OK when below L3, aborts
+  (`VideoMemoryPressureError`) when sustained L3 after reclaim, recovers (OK)
+  when reclaim brings it below. Verified E2E: 25-frame 768×512 legacy gen
+  succeeds (7.4MB mp4, real video) — guard does not fire spuriously.
+
+### Fixed — #947 regression: stray-manifest guard for model_index.json pipeline discovery
+- **Regression**: the #947 fix made `_is_video_model` return `True` for any
+  `model_index.json` with a known `DIFFUSERS_PIPELINE_TASKS` class, breaking
+  `test_h3_model_index_without_subdirs_returns_false` (an H3 dir with a bare
+  `model_index.json` + no weights/subdirs must be `False`). Added a
+  weight-file guard: accept the `model_index.json`-no-subdirs case only when a
+  `.safetensors`/`.bin` is present (LTX-Video legacy ships `ltxv-*.safetensors`;
+  a bare stray manifest does not).
+- **#952 filed**: `OURS_VAE_CONFIG` `base_channels=1024` is not materialized
+  (decoder builds at 16/32/64ch, 9.3M params vs expected ~238M). #947 left
+  VAE config + key-map alignment as a follow-up. `test_constructs_and_param_count`
+  marked `xfail` (strict=False) pointing to #952 — assertion not weakened for
+  a broken config.
+
+### Fixed — #950: video scheduler dual-model mutex invariant violation (non-reentrant Lock + 503)
+- **Root cause**: `VideoUnifiedScheduler.acquire` used `threading.RLock()`
+  (reentrant). Under asyncio, the event-loop thread could re-acquire the lock
+  it already held, bypassing the `timeout=0` non-blocking acquire and hitting
+  `threading`'s "mutex invariant violated" `RuntimeError` -> HTTP 500 + a
+  premature `release()` that aborted the in-flight generation task. A
+  concurrent different-model request killed the running job instead of being
+  rejected.
+- **Fix**: switched to a non-reentrant `threading.Lock()`. A second model
+  now raises `VideoMutexBusyError` ("video model X cannot load: Y is resident")
+  instead of violating the mutex. `videos_routes.py` maps the error to HTTP
+  **503** with `Retry-After: 10` so callers back off cleanly. Same-model
+  re-acquire-after-release still works; `release()` clears `_active_model`.
+- **Tests** (`tests/unit/test_video_scheduler_mutex_950.py`): second-model
+  raises busy (not invariant violation), same-model reacquire, release clears
+  active model, lock is non-reentrant (`not isinstance(RLock)`), concurrent
+  thread cannot steal the lock.
+
+### Fixed — #948: MiniMax-H3 ddalcu 4bit checkpoint loading (TE prefix remap + DiT QuantizedLinear)
+- **Symptom**: `ddalcu/MiniMax-H3-FL2VA-MLX-Serve-4bit` (4bit pre-quantized H3)
+  failed to load -> 500. Two distinct breakages in the same checkpoint format.
+- **#948a — text_encoder (`video/minimax_h3/text_encoder.py`)**: the ddalcu
+  text_encoder checkpoint ships with the `language_model.` prefix **stripped**
+  (keys are `model.*` / `visual.*`) and `config.json` has **no**
+  `quantization_config`. mlx-vlm `load_model` expects
+  `language_model.model.*` / `vision_tower.*` + a quant config -> 1780
+  unmatched parameters + no `nn.quantize` -> weight shape mismatch. Fix:
+  `_detect_ddalcu` peeks safetensors keys (no tensor load); on stripped
+  layout, `_remap_ddalcu_keys` rewrites `model.*`->`language_model.model.*`
+  and `visual.*`->`vision_tower.*`, injects `quantization={g64,b4,affine}`,
+  trims `num_hidden_layers` to the checkpoint's actual layer range (ddalcu
+  only stores layers 0..49 since H3 reads layer 49; config declares 64), and
+  loads `strict=False` for the unused `lm_head` / `final_norm` (H3 reads raw
+  layer-49 hidden states, never touches norm/lm_head).
+- **#948b — DiT transformer (`video/minimax_h3/transformer.py`)**: the ddalcu
+  DiT checkpoint is also partially 4bit (260 group-quantized linears + dense).
+  `load_dit_from_pretrained` built plain `nn.Linear` modules -> the 4bit
+  `.weight` (uint32) was shape-mismatched -> random fp32 init -> 118GB memory
+  explosion -> hard memory pressure cancelled generation (500). Fix: detect
+  4bit layers via `.scales` keys, `nn.quantize` exactly those paths via
+  `class_predicate`, and apply the `reorder_interleaved_qkv` row permutation
+  to `.scales` / `.biases` too (not just `.weight`) so dequant reads the
+  correct per-group scales. Result: 260 QuantizedLinear, 1054/1056 params
+  matched (2 pre-existing unmatched: `rope.inv_freq`, `final_layer.norm`).
+- **Verified E2E** (M5 Max, 128GB): `POST /v1/videos/generate` with the
+  ddalcu 4bit H3 model -> HTTP 200, valid mp4, real video content
+  (frame0 std 8.49, 12 frames 512x512, ~85s). The TE + DiT fixes together
+  make ddalcu 4bit H3 generation work end-to-end on a 128GB box.
+- **Tests** (`tests/unit/test_minimax_h3_te_ddalcu_948.py`): ddalcu stripped
+  detection (model./visual. prefixes, no language_model.), standard-layout
+  negative, remap model.->language_model.model. + visual.->vision_tower.,
+  unrecognized keys preserved, total-key invariant.
+
 ### Changed — INT4 fused dequant+GEMV: -Ofast precompiled Metal kernel (surpasses native at K>=20480)
 - **`custom_kernels/fused_quant_gemv.py`**: replaced the prior V12 JIT kernel
   (whose "compiled chain min wins" were biased measurement artifacts —

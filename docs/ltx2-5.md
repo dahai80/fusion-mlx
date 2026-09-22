@@ -146,6 +146,81 @@ The isotropic conv with padding=1 preserves spatial dims; a `(3,1,1)` conv
 would load a shape-mismatched weight under `strict=False` and shrink H/W by 2
 (kernel-1). VAE then decodes to the correct resolution.
 
+### VAE decode tiling (#945)
+
+`generate_video`'s `tiling` param (`"auto"` default) controls peak memory
+during VAE decode. Long high-res videos (e.g. 233 frames @ 1920×1088) OOM via
+`memory_enforcer` on a full-tensor `vae_decoder(latents)`.
+
+- **`"auto"`** — temporal-only tiled decode (`TilingConfig.temporal_only`,
+  128-frame tile, 64-frame overlap) activates when output frame count exceeds
+  the threshold (65), else full decode. Spatial stays intact.
+- **`"none"`** — full decode (A/B / small videos).
+- **`"temporal"`** — explicit temporal-only.
+- **`"spatial"` / `"aggressive"` / `"conservative"` / `"default"`** — fall
+  back to temporal-only with a warning. **Spatial tiling is disabled for
+  ltx2_5**: PR #937 tried the default config (spatial 512px + temporal 64f)
+  and produced black frames + colored spatial tile-seams (CausalConv3d REFLECT
+  padding at spatial tile edges, 64px overlap << spatial RF), reverted in #939.
+
+**Honest limit**: temporal-only is NOT bit-exact vs full decode. The temporal
+receptive field (~40 latent frames) exceeds the 64-frame overlap, so soft
+temporal continuity glitches are possible at chunk boundaries. Acceptable for
+the OOM-fix use case (current alternative = hard crash). The decoder is
+deterministic (`timestep_conditioning=False`, no `mx.random` in path) and
+uses stored per-channel normalization constants, so tiling is safe from
+cross-tile randomness/statistics dependency.
+
+### Distilled T2V nondeterminism (#946)
+
+Distilled T2V produces black/noise frames in ~5/6 runs; same seed → different
+results (1 run good, rerun black).
+
+**Root cause (FOUND via per-layer bisect)**: the q8 Gemma4-12b text encoder
+overflows in **bf16 activations**. Embed output is finite (max 43), but layer 0
+output is NaN in bf16. The NaN propagates through connector + transformer →
+black frames (std=0, 3/3 runs). Debug evidence (25f @ 512x320,
+`dgrauet--ltx-2.5-mlx-q8`, seed 42):
+
+```
+te_video_features  max_abs=nan nan=True   # <- NaN born here (TE bf16 overflow)
+stage1_in          max_abs=3.89 nan=False  # initial latents finite
+context_in         max_abs=nan nan=True   # connector propagates NaN
+stage1_out         max_abs=nan nan=True   # transformer propagates NaN
+stage2_out         max_abs=nan nan=True   # -> black frames (std=0)
+```
+
+**Falsified hypotheses** (4 theories tested, all insufficient alone):
+1. bf16 transformer SDPA → fp32 transformer attention: NaN persisted.
+2. bf16 TE Gemma4 attention → fp32 TE attention: NaN persisted.
+3. q8 QuantizedLinear reduction → dequant to bf16: NaN persisted.
+4. fp32 weights + fp32 attention but bf16 activations: NaN persisted.
+
+The bisect proved: **fp32 activations** (via `set_dtype(mx.float32)`) are
+necessary and sufficient. Layer 0 sub-step bisect: input_layernorm (max 3695)
+→ self_attn (max 6.2) → post_attn_norm (max 51) → residual+attn (max 43) →
+mlp (max 52) — all finite in fp32. The bf16 overflow happens in the activation
+arithmetic, not the weights or attention kernel.
+
+**Fix (DEFAULT ON — LANDED)**: `generate.py` dequantizes the q8 TE to
+`nn.Linear` (`dequantize_te` in `text_encoder.py`), then
+`text_encoder.set_dtype(mx.float32)` to run the full TE forward in fp32.
+Memory cost ~12b fp32 (48GB) transient — TE freed after encode. Verified
+real-model (M5 Max, 3/3 runs identical: frame0_std=10.76, temporal_diff=2.72,
+no NaN). Baseline (fix OFF): 3/3 black (std=0). Opt out with
+`FUSION_LTX_TE_DEQUANT=0` for memory-constrained debug only (produces black
+frames — not usable).
+
+Diagnostic env vars (all default OFF):
+
+- **`FUSION_LTX_DEBUG_LATENTS=1`** — logs `mx.abs(latents).max()` + NaN/Inf at
+  `te_video_features`, `stage1_in`, `context_in`, `stage1_out`, `stage2_out`.
+  This is the diagnostic that FOUND the root cause.
+- **`FUSION_LTX_DETERMINISTIC_ATTN=1`** — fp32 un-fused SDPA in the
+  **transformer** + TE attention. Falsified as a standalone fix; kept as a
+  diagnostic tool.
+- Stage2 re-seeds (`seed + 1`) before its noise draw (harmless good-practice).
+
 ### Fail-visible guards
 
 I2V (`image`), single-stage (`two_stage=False`), and duration-head-driven
@@ -159,8 +234,9 @@ must be divisible by 32.
   against real 22B-distilled weights. Forward smoke finite (min -2.92,
   max 3.03, no NaN).
 - **E2E generation: LANDED (T2V distilled).** Real-model verified: 25 frames
-  512×320 @ 24 fps in ~26 s, non-trivial content (frame0 std 11.0, temporal
-  std across frames 10.6). 135 tests pass, ruff + black clean.
+  512×320 @ 24 fps in ~28 s, non-trivial content (frame0 std 10.76, temporal
+  diff 2.72, 3/3 deterministic). #945 VAE tiling + #946 bf16-overflow fix
+  landed. 209 tests pass, ruff + black clean.
 - **Not yet wired:** I2V, audio, duration-head `num_frames` inference, backend
   rewire. Fail-visible `NotImplementedError` (Rule 12).
 

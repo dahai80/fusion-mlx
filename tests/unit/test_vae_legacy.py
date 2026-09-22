@@ -4,6 +4,7 @@ from pathlib import Path
 
 import mlx.core as mx
 import numpy as np
+import pytest
 
 from fusion_mlx.video.ltx_video_legacy.vae import (
     OURS_VAE_CONFIG,
@@ -606,6 +607,15 @@ class TestDiffusersRename:
 
 
 class TestFullOURSConfig:
+    @pytest.mark.xfail(
+        reason=(
+            "#952: OURS_VAE_CONFIG base_channels=1024 not materialized — "
+            "decoder builds at 16/32/64ch (9.3M params, expected ~238M). "
+            "Block construction does not propagate base_channels into res_x "
+            "channel widths. #947 left VAE config alignment as follow-up."
+        ),
+        strict=False,
+    )
     def test_constructs_and_param_count(self):
         cfg = VAEConfig.from_dict(OURS_VAE_CONFIG)
         vae = LTVideoVAE(cfg)

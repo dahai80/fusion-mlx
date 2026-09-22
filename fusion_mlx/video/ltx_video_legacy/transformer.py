@@ -27,7 +27,6 @@ from pathlib import Path
 
 import mlx.core as mx
 import mlx.nn as nn
-from safetensors import safe_open
 
 logger = logging.getLogger(__name__)
 
@@ -475,8 +474,13 @@ class Transformer3DModel(nn.Module):
         cfg_file = model_path / "config.json"
         if not cfg_file.exists():
             cfg_file = model_path / "transformer" / "config.json"
-        cfg = json.loads(cfg_file.read_text())
-        config = Transformer3DConfig.from_hf_config(cfg)
+        if cfg_file.exists():
+            cfg = json.loads(cfg_file.read_text())
+            config = Transformer3DConfig.from_hf_config(cfg)
+        else:
+            # #947: ComfyUI single-file layout (ltxv-*.safetensors) ships no
+            # transformer/config.json; LTX-Video 2B defaults are correct.
+            config = Transformer3DConfig()
         model = cls(config)
 
         shards = sorted(
@@ -493,6 +497,11 @@ class Transformer3DModel(nn.Module):
                 )
             )
         if not shards:
+            # #947: ComfyUI single-file (ltxv-*.safetensors) carries
+            # transformer + vae weights together; _map_transformer_weights
+            # strips the model.diffusion_model. prefix and ignores vae.* keys.
+            shards = sorted(glob.glob(str(model_path / "ltxv-*.safetensors")))
+        if not shards:
             raise FileNotFoundError(f"transformer: no safetensors in {model_path}")
 
         logger.info(
@@ -506,12 +515,12 @@ class Transformer3DModel(nn.Module):
         )
         raw = {}
         for shard in shards:
-            with safe_open(shard, framework="numpy") as f:
-                for k in f.keys():  # noqa: SIM118 - safe_open is not iterable
-                    raw[k] = f.get_tensor(k)
+            # #947: mx.load (not safe_open numpy) — ltxv-*.safetensors ships
+            # bfloat16 weights which numpy cannot represent.
+            raw.update(mx.load(str(shard)))
 
         mapped = _map_transformer_weights(raw)
-        pairs = [(k, mx.array(v).astype(dtype)) for k, v in mapped.items()]
+        pairs = [(k, v.astype(dtype)) for k, v in mapped.items()]
         n_params = sum(int(p[1].size) for p in pairs)
         model.load_weights(pairs, strict=False)
         mx.eval(model.parameters())
@@ -537,6 +546,13 @@ def _map_transformer_weights(raw):
         nk = k
         if nk.startswith("transformer."):
             nk = nk[len("transformer.") :]
+        # #947: ComfyUI single-file prefix (ltxv-*.safetensors).
+        if nk.startswith("model.diffusion_model."):
+            nk = nk[len("model.diffusion_model.") :]
+        # vae.* keys from the shared single-file are ignored (VAE loads its
+        # own copy); they fall through as unexpected under strict=False.
+        if nk.startswith("vae."):
+            continue
         for src, dst in _TRANSFORMER_KEYS_RENAME.items():
             if nk == src or nk.startswith(src + "."):
                 nk = dst + nk[len(src) :]

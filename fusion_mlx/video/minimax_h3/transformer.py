@@ -469,6 +469,13 @@ def _remap_transformer_weights(params, config):
         if k.endswith(".attn.qkv_proj.weight"):
             reordered = reorder_interleaved_qkv(v, config.num_heads, config.head_dim)
             out[k] = reordered
+        elif k.endswith(".attn.qkv_proj.scales") or k.endswith(".attn.qkv_proj.biases"):
+            # #948-followup: ddalcu DiT 4bit checkpoint 的 qkv_proj.scales/.biases
+            # 与 .weight 同行序（行数 = num_heads*3*head_dim）。.weight 已做行重排
+            # （Q/K/V interleave），scales/.biases 须做同一行置换，否则 4bit
+            # 反量化时 scales 行与 weight 行错配 -> 垃圾输出。
+            reordered = reorder_interleaved_qkv(v, config.num_heads, config.head_dim)
+            out[k] = reordered
         else:
             out[k] = v
     return out
@@ -490,6 +497,35 @@ def load_dit_from_pretrained(model_path, config=None):
         all_params.update(mx.load(sf))
     mapped = _remap_transformer_weights(all_params, config)
     from mlx.utils import tree_flatten, tree_unflatten
+
+    # #948-followup: ddalcu DiT 4bit checkpoint —— 部分线性层是 group-quantized
+    # （.weight uint32 + .scales + .biases，g64/b4/affine）。模型默认建 nn.Linear
+    # -> 形状错配 -> 随机 fp32 初始化 -> 内存爆炸 + 垃圾输出。检测有 .scales 的层，
+    # 先 nn.quantize 成 QuantizedLinear（class_predicate 只量化 checkpoint 里有
+    # .scales 的线性层），再 load_weights 即可匹配 uint32/scales/biases 三键。
+    quant_paths = {k[: -len(".scales")] for k in mapped if k.endswith(".scales")}
+    if quant_paths:
+        _DIT_QUANT = {"group_size": 64, "bits": 4, "mode": "affine"}
+
+        def _qkv_predicate(path, module):
+            if not hasattr(module, "to_quantized"):
+                return False
+            if isinstance(module, nn.Embedding):
+                return False
+            return path in quant_paths
+
+        nn.quantize(
+            model,
+            group_size=_DIT_QUANT["group_size"],
+            bits=_DIT_QUANT["bits"],
+            mode=_DIT_QUANT["mode"],
+            class_predicate=_qkv_predicate,
+        )
+        logger.info(
+            "minimax_h3 dit: 4bit checkpoint detected, quantized %d linears "
+            "(g64 b4 affine)",
+            len(quant_paths),
+        )
 
     flat_model = tree_flatten(model.parameters())
     flat_keys = {k for k, _ in flat_model}

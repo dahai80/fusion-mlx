@@ -140,7 +140,27 @@ class LegacyLTXBackend(VideoBackend):
             return results
 
         loop = asyncio.get_running_loop()
-        sync_cb = make_sync_step_callback(params.on_step, loop)
+        user_cb = make_sync_step_callback(params.on_step, loop)
+        # #951: mid-denoise memory guard. Probe the unified scheduler's memory
+        # level between steps; if sustained L3 (>=98GB) after emergency_reclaim,
+        # raise VideoMemoryPressureError to abort the generation cleanly (507)
+        # instead of the ProcessMemoryEnforcer fatal_exit killing the server.
+        # The legacy 2B DiT has no temporal upsampler so attention memory scales
+        # linearly with latent frames; a long/high-res request can cross the
+        # ceiling mid-denoise even when begin_task's pre-probe saw OK memory.
+        from fusion_mlx.scheduler.video_unified_scheduler import get_video_scheduler
+
+        _sched = get_video_scheduler()
+
+        def _mem_probe_cb(step: int, total: int) -> None:
+            try:
+                _sched.check_step_pressure()
+            except RuntimeError:
+                raise
+            if user_cb is not None:
+                user_cb(step, total)
+
+        sync_cb = _mem_probe_cb
         return await asyncio.wait_for(
             loop.run_in_executor(get_executor("video"), _generate), timeout=600.0
         )
@@ -459,7 +479,9 @@ def _generate_one(
     latents_5d = latents.reshape(1, lf, lh, lw, latent_shape[1])
     latents_5d = mx.transpose(latents_5d, (0, 4, 1, 2, 3)).astype(dtype)
     target_shape = (1, 3, lf * temporal_s, lh * spatial_s, lw * spatial_s)
-    decoded = vae.decode(latents_5d, target_shape=target_shape)
+    # #947: LTX-Video 0.9.6 VAE uses timestep conditioning at decode_timestep=0.0.
+    decode_temb = mx.array([0.0], dtype=mx.float32)
+    decoded = vae.decode(latents_5d, target_shape=target_shape, temb=decode_temb)
     mx.eval(decoded)
     # bf16 mlx arrays expose a PEP 3118 buffer whose item size mismatches
     # float32, so cast to float32 on the mlx side before handing to numpy.

@@ -21,6 +21,7 @@ import dataclasses
 import json
 import logging
 import math
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -29,6 +30,116 @@ import mlx.core as mx
 import mlx.nn as nn
 
 logger = logging.getLogger(__name__)
+
+
+def _install_te_deterministic_attention():
+    # #946: the q8 Gemma4-12b text encoder produces NaN in video_features,
+    # which propagates through connector + transformer -> black frames.
+    # Root-caused via FUSION_LTX_DEBUG_LATENTS=1: te_video_features max_abs=nan
+    # while stage1_in (initial latents) is finite (3.89). The NaN is born in
+    # the TE, NOT the transformer (transformer fp32 attention did not fix it).
+    # This monkeypatch wraps the TE's own Gemma4 attention (mlx_vlm
+    # gemma4.language.scaled_dot_product_attention) to compute in fp32 —
+    # deterministic reduction, no bf16 overflow. mlx_vlm is an upstream
+    # package (not modified); monkeypatched at runtime in fusion-mlx.
+    if os.environ.get("FUSION_LTX_DETERMINISTIC_ATTN", "0") != "1":
+        return
+    try:
+        import mlx_vlm.models.gemma4.language as _gemma4_lang
+    except Exception:
+        logger.debug(
+            "te_deterministic_attn: mlx_vlm.gemma4 not importable, skip", exc_info=True
+        )
+        return
+    _orig = getattr(_gemma4_lang, "scaled_dot_product_attention", None)
+    if _orig is None or getattr(_orig, "_te_fp32_wrapped", False):
+        return
+
+    def _fp32_sdpa(queries, keys, values, cache, scale, mask, sinks=None):
+        orig_dtype = queries.dtype
+        q = queries.astype(mx.float32)
+        k = keys.astype(mx.float32)
+        v = values.astype(mx.float32)
+        m = mask.astype(mx.float32) if mask is not None else None
+        out = _orig(q, k, v, cache=cache, scale=scale, mask=m, sinks=sinks)
+        return out.astype(orig_dtype)
+
+    _fp32_sdpa._te_fp32_wrapped = True
+    _gemma4_lang.scaled_dot_product_attention = _fp32_sdpa
+    logger.info(
+        "te_deterministic_attn: wrapped mlx_vlm gemma4 attention to fp32 "
+        "(FUSION_LTX_DETERMINISTIC_ATTN=1) — #946 NaN mitigation"
+    )
+
+
+_install_te_deterministic_attention()
+
+
+def dequantize_te(lm: nn.Module) -> int:
+    # #946: the q8 Gemma4-12b TE overflows in bf16 activations -> NaN
+    # video_features -> black frames. Root-caused via per-layer bisect: embed
+    # finite (max 43), layer 0 output NaN in bf16; fp32 activations + fp32
+    # weights + fp32 attention -> finite (max_abs 24.2). This walks the TE
+    # module tree, replaces every QuantizedLinear with a regular nn.Linear
+    # holding dequantized bf16 weights. The caller then set_dtype(fp32) to
+    # eliminate the bf16 activation overflow. Returns count of replaced layers.
+    # Memory cost: 12b q8 (~6GB) -> fp32 (~48GB) transient; TE freed after
+    # encode. Default ON in generate.py (FUSION_LTX_TE_DEQUANT=0 to opt out).
+    def _to_linear(module):
+        w = module.weight
+        s = module.scales
+        b = module.biases
+        gs = module.group_size
+        bits = module.bits
+        mode = getattr(module, "mode", "affine")
+        dq = mx.dequantize(w, s, b, gs, bits, mode=mode).astype(mx.bfloat16)
+        if dq.ndim != 2:
+            dq = dq.reshape(dq.shape[-2], dq.shape[-1])
+        # QuantizedLinear stores per-GROUP quantization biases (shape
+        # out x n_groups) in .biases — consumed by dequantize, NOT a Linear
+        # bias. The per-output Linear bias (if any) lives in module["bias"].
+        out_bias = module.get("bias") if hasattr(module, "get") else None
+        has_bias = out_bias is not None
+        new_lin = nn.Linear(dq.shape[1], dq.shape[0], bias=has_bias)
+        new_lin.weight = dq
+        if has_bias:
+            new_lin.bias = out_bias.astype(mx.bfloat16)
+        return new_lin
+
+    def _resolve(module, parts):
+        for p in parts:
+            if isinstance(module, (list, nn.Module)):
+                try:
+                    idx = int(p)
+                    module = module[idx]
+                    continue
+                except (ValueError, IndexError):
+                    pass
+            module = getattr(module, p)
+        return module
+
+    count = 0
+    for path, module in list(lm.named_modules()):
+        if not isinstance(module, nn.QuantizedLinear):
+            continue
+        parts = path.split(".")
+        parent = _resolve(lm, parts[:-1])
+        leaf = parts[-1]
+        try:
+            idx = int(leaf)
+            parent[idx] = _to_linear(module)
+        except (ValueError, IndexError):
+            setattr(parent, leaf, _to_linear(module))
+        count += 1
+    if count:
+        mx.eval(lm.parameters())
+        logger.info(
+            "dequantize_te: replaced %d QuantizedLinear -> Linear "
+            "(#946 bf16 overflow fix)",
+            count,
+        )
+    return count
+
 
 # Gemma4-12b 文本编码维度 (AR doc §2.1)。
 LTX2_5_CAPTION_CHANNELS = 3840

@@ -3,6 +3,7 @@
 # 独立目录：has_gate_logits 在 2.5 全部 attn 上开启（prompt-adaln）。
 # Phase 4 LTX-2 direct-MLX port: model-layer foundation.
 import math
+import os
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -69,6 +70,22 @@ def scaled_dot_product_attention(
         out = fast_attn(q, k, v, step, scale=scale, mask=mask, batch_size=batch_size)
     elif _mfa_available is not None and _mfa_available():
         out = _mfa_flash_attention(q, k, v, scale=scale, mask=mask)
+    elif os.environ.get("FUSION_LTX_DETERMINISTIC_ATTN", "0") == "1":
+        # #946: bf16 mx.fast.scaled_dot_product_attention has nondeterministic
+        # reduction order across runs (Metal buffer placement / threadgroup
+        # scheduling dependent). Accumulated across 48 layers x 11 distilled
+        # steps it causes cascade divergence -> black/noise frames in 5/6 runs.
+        # fp32 un-fused math path is deterministic (explicit matmul + softmax).
+        # Slower (not prod default); opt-in diagnostic + stability mitigation.
+        orig_dtype = q.dtype
+        q_f = q.astype(mx.float32)
+        k_f = k.astype(mx.float32)
+        v_f = v.astype(mx.float32)
+        attn = mx.matmul(q_f, mx.swapaxes(k_f, -2, -1)) * scale
+        if mask is not None:
+            attn = attn + mask
+        attn = mx.softmax(attn, axis=-1)
+        out = mx.matmul(attn, v_f).astype(orig_dtype)
     else:
         out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
 

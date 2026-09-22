@@ -50,6 +50,29 @@ _L3_CIRCUIT_GB = 98
 _GB = 1024**3
 
 
+class VideoMutexBusyError(RuntimeError):
+    # #950: raised when a second video model requests the mutex while another
+    # is resident + generating. Maps to HTTP 503 Retry-After (NOT 500) so the
+    # client retries and the in-flight generation is NOT killed. The prior
+    # design used threading.RLock (reentrant) which let the asyncio event-loop
+    # thread re-acquire the lock, bypassing the timeout=0 guard and hitting
+    # the "mutex invariant violated" RuntimeError — that crashed the server
+    # and aborted the running task.
+    pass
+
+
+class VideoMemoryPressureError(RuntimeError):
+    # #951: raised mid-denoise when sustained memory pressure crosses the L3
+    # circuit red line (>=98GB) and emergency_reclaim cannot bring it back
+    # below the ceiling. Aborts the in-flight generation with a clean 507
+    # Retry-After so the SERVER survives — instead of the ProcessMemoryEnforcer
+    # fatal_exit killing the whole process (+ any co-tenant LLM). The legacy
+    # 2B DiT has no temporal upsampler so per-step attention memory scales
+    # linearly with latent frames; a long/high-res request can cross the
+    # ceiling mid-denoise even when begin_task's pre-probe saw OK memory.
+    pass
+
+
 class MemoryLevel(IntEnum):
     OK = 0
     L1_WARN = 1
@@ -167,7 +190,13 @@ class VideoUnifiedScheduler:
 
     def __init__(self, red_line_gb: int = _RED_LINE_GB):
         self.red_line_bytes = red_line_gb * _GB
-        self._video_mtx = threading.RLock()
+        # #950: non-reentrant Lock (not RLock). The asyncio event-loop thread
+        # calls begin_task (acquire) for model A, then while A generates in an
+        # executor thread, B's request calls begin_task on the same event-loop
+        # thread. RLock would re-acquire (reentrant) and hit the invariant
+        # check -> 500 + premature release killing A. Lock + timeout=0 fails
+        # immediately -> VideoMutexBusyError -> 503 Retry-After (A survives).
+        self._video_mtx = threading.Lock()
         self._active_model: str | None = None
         self._cache: NF4DequantCache | None = None
         logger.info("VideoUnifiedScheduler ready (red_line=%dGB)", red_line_gb)
@@ -249,20 +278,45 @@ class VideoUnifiedScheduler:
         elapsed = time.monotonic() - t0
         logger.warning("emergency reclaim done in %.3fs", elapsed)
 
+    def check_step_pressure(self) -> MemoryLevel:
+        # #951: mid-denoise memory guard. Called between denoise steps (via the
+        # backend's step callback). If pressure is L3_CIRCUIT (>=98GB), fire
+        # emergency_reclaim first (clear Metal cache + release dequant cache +
+        # GC — may drop enough to continue). Re-probe: if STILL L3, raise
+        # VideoMemoryPressureError so the backend aborts the generation (clean
+        # 507) instead of the ProcessMemoryEnforcer fatal_exit killing the
+        # whole server. Returns the post-reclaim level on success.
+        lvl = self.probe_level()
+        if lvl is not MemoryLevel.L3_CIRCUIT:
+            return lvl
+        logger.warning(
+            "mid-denoise L3 circuit pressure (%.1fGB) — emergency reclaim",
+            self._current_bytes() / _GB,
+        )
+        self.emergency_reclaim()
+        post = self.probe_level()
+        if post is MemoryLevel.L3_CIRCUIT:
+            raise VideoMemoryPressureError(
+                f"sustained memory pressure {self._current_bytes() / _GB:.1f}GB "
+                f">= {_L3_CIRCUIT_GB}GB red line mid-denoise after emergency "
+                f"reclaim; aborting generation to keep the server alive (#951). "
+                f"Reduce num_frames / resolution and retry."
+            )
+        return post
+
     # -- dual-model mutex (PRD §3.2) -------------------------------------
     def acquire(self, model_name: str) -> None:
+        # #950: non-reentrant Lock + timeout=0. If another video model is
+        # resident (lock held), fail fast with VideoMutexBusyError -> 503
+        # Retry-After. The in-flight generation is NOT killed.
         if not self._video_mtx.acquire(timeout=0):
             other = self._active_model or "unknown"
-            raise RuntimeError(
+            raise VideoMutexBusyError(
                 f"video model {model_name} cannot load: {other} is resident "
-                f"(dual-model mutex, PRD §3.2). Queue and retry."
+                f"(dual-model mutex, PRD §3.2). Retry after the current "
+                f"generation completes."
             )
         try:
-            if self._active_model is not None and self._active_model != model_name:
-                raise RuntimeError(
-                    f"mutex invariant violated: {self._active_model} resident, "
-                    f"requested {model_name}"
-                )
             self._active_model = model_name
             self._cache = NF4DequantCache()
             logger.info("video scheduler acquired by %s", model_name)
