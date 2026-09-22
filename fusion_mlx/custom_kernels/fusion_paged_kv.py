@@ -109,6 +109,7 @@ def install_paged_kv(model: nn.Module, config: Any) -> None:
             setattr(model, _POOL_ATTR, pool)
             setattr(model, _POOL_SEQ_ATTR, 0)
             cow_on = is_two_level_kv_enabled()
+            pool._cow_enabled = cow_on
             if cow_on:
                 binder = PoolPrefixPageBinder(pool)
                 setattr(model, _BINDER_ATTR, binder)

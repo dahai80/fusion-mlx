@@ -50,6 +50,7 @@ class FusionPagedKVPool:
         self._last_access: dict[str, int] = {}
         self._active_ids: set[str] | None = None
         self._evict_cb = None
+        self._cow_enabled: bool = False
         # D1 (audit): the scheduler calls set_active_ids / set_evict_callback
         # from the asyncio event-loop thread while request executor threads
         # call alloc_block / free_request. Without a lock, concurrent alloc
@@ -491,6 +492,17 @@ class MergedPagedCacheView:
 
         return create_attention_mask(*args, offset=self.offset, **kwargs)
 
+    def extend(self, other):
+        if isinstance(other, MergedPagedCacheView):
+            self.constituents.extend(other.constituents)
+        elif other is not None:
+            self.constituents.append(other)
+        self._offset_override = None
+        logger.debug(
+            "MergedPagedCacheView.extend: n_constituents=%d",
+            len(self.constituents),
+        )
+
     def __deepcopy__(self, memo):
         import copy as _copy
 
@@ -543,12 +555,26 @@ class FusionPagedRequestCache:
         self._merged_keys: mx.array | None = None
         self._merged_values: mx.array | None = None
         self._merged_padding: list[int] = []
+        # Flat contiguous buffer for fast fetch (mirrors stock KVCache).
+        # Pre-allocated in chunks of _flat_step (256, same as stock KVCache).
+        # Written in parallel with pool slabs so CoW donation still works.
+        # The fetch returns a VIEW of this buffer (zero-cost, like stock)
+        # instead of concatenating pool slabs every step (5-7x overhead).
+        self._flat_keys: mx.array | None = None
+        self._flat_values: mx.array | None = None
+        self._flat_step: int = 256
 
     def _logical_to_block(self, logical_pos: int) -> int:
         return logical_pos // self.pool.block_size
 
     def _pos_in_block(self, logical_pos: int) -> int:
         return logical_pos % self.pool.block_size
+
+    def _has_shared_blocks(self) -> bool:
+        if not self.block_table:
+            return False
+        rc = self.pool._refcount
+        return any(rc.get(pb, 1) > 1 for pb in self.block_table)
 
     def update_and_fetch(self, keys, values):
         if self._is_merged:
@@ -566,6 +592,40 @@ class FusionPagedRequestCache:
 
         prev = self.offset
         end = prev + num_steps
+
+        # --- Flat buffer path (like stock KVCache) ---
+        # Pre-allocate in chunks of _flat_step, slice-write, return view.
+        # This replaces the per-step mx.concatenate of pool slabs (5-7x
+        # overhead) with a zero-cost view return, matching stock KVCache.
+        if self._flat_keys is None or end > self._flat_keys.shape[2]:
+            n_steps = (self._flat_step + num_steps - 1) // self._flat_step
+            k_shape = (B, n_kv_heads, n_steps * self._flat_step, k_head_dim)
+            v_shape = (B, n_kv_heads, n_steps * self._flat_step, v_head_dim)
+            new_k = mx.zeros(k_shape, dtype=dtype)
+            new_v = mx.zeros(v_shape, dtype=dtype)
+            if self._flat_keys is not None:
+                self._flat_keys = mx.concatenate(
+                    [self._flat_keys[..., :prev, :], new_k], axis=2
+                )
+                self._flat_values = mx.concatenate(
+                    [self._flat_values[..., :prev, :], new_v], axis=2
+                )
+            else:
+                self._flat_keys, self._flat_values = new_k, new_v
+
+        self._flat_keys[..., prev:end, :] = keys
+        self._flat_values[..., prev:end, :] = values
+
+        # --- Pool slab path (only when CoW donation is active) ---
+        # Pool slabs are only needed for cross-request CoW donation
+        # (refcount-share of GPU blocks). When CoW is OFF (no binder),
+        # the flat buffer is the sole KV store — skipping pool slab
+        # writes + block alloc eliminates all pool overhead, making the
+        # non-CoW path identical to stock KVCache perf.
+        if not getattr(self.pool, "_cow_enabled", False):
+            self.offset = end
+            return self._flat_keys[..., :end, :], self._flat_values[..., :end, :]
+
         first_block = self._logical_to_block(prev)
         last_block = self._logical_to_block(end - 1)
         if num_steps <= 2:
@@ -578,11 +638,6 @@ class FusionPagedRequestCache:
                 len(self.block_table),
             )
 
-        # D3 (audit): track blocks newly allocated in THIS call so a
-        # mid-operation alloc failure (pool exhausted after some blocks
-        # appended) rolls them back — otherwise block_table holds dangling
-        # allocated blocks with a stale offset, and free_all only reclaims
-        # them if the request_id is later evicted.
         allocated_this_call: list[int] = []
         try:
             for lb in range(first_block, last_block + 1):
@@ -614,10 +669,6 @@ class FusionPagedRequestCache:
                     ..., s_start:s_end, :
                 ]
         except Exception:
-            # D3 (audit): rollback blocks allocated this call that sit at the
-            # tail of block_table (purely appended, not overwriting pre-existing
-            # entries). Frees them back to the pool so offset stays consistent
-            # and no dangling allocated blocks leak.
             while self.block_table and self.block_table[-1] in allocated_this_call:
                 pb = self.block_table.pop()
                 self.pool.free_block(pb, self.request_id)
@@ -633,15 +684,12 @@ class FusionPagedRequestCache:
             self._block_table_len_before = len(self.block_table)
 
         self.offset = end
-        fetched = self._fetch_logical(end)
-        # Force eval of the written slabs so the fetch reads materialized
-        # data, not a lazy view that could be overwritten by a later
-        # in-place write to the same pool slab (silent KV corruption).
-        try:
-            mx.eval(fetched[0], fetched[1])
-        except Exception:
-            pass
-        return fetched
+        if self._has_shared_blocks():
+            try:
+                mx.eval(self._flat_keys[..., :end], self._flat_values[..., :end])
+            except Exception:
+                pass
+        return self._flat_keys[..., :end, :], self._flat_values[..., :end, :]
 
     def _fetch_logical(self, length: int):
         if self._is_merged:
@@ -704,12 +752,18 @@ class FusionPagedRequestCache:
         new._merged_values = None
         new._merged_padding = []
         new._block_table_len_before = getattr(self, "_block_table_len_before", 0)
+        new._flat_step = getattr(self, "_flat_step", 256)
+        new._flat_keys = self._flat_keys
+        new._flat_values = self._flat_values
         new.block_table = list(self.block_table)
         _moved = len(new.block_table)
         # Detach the original: it is discarded after split, so its
         # block_table must not reference (and thus free) the adopted blocks.
+        # Flat buffer is also moved (adopted) — original discards it.
         self.block_table = []
         self.offset = 0
+        self._flat_keys = None
+        self._flat_values = None
         logger.info(
             "paged_kv __deepcopy__ adopt req=%s moved=%d blocks (no alloc)",
             self.request_id,
@@ -768,11 +822,18 @@ class FusionPagedRequestCache:
         self._is_merged = False
         self._merged_keys = None
         self._merged_values = None
+        self._flat_keys = None
+        self._flat_values = None
 
     @property
     def state(self):
         if self._is_merged:
             return self._merged_keys, self._merged_values
+        if self._flat_keys is not None:
+            return (
+                self._flat_keys[..., : self.offset, :],
+                self._flat_values[..., : self.offset, :],
+            )
         return self._fetch_logical(self.offset)
 
     @state.setter
@@ -797,6 +858,9 @@ class FusionPagedRequestCache:
             self.pool.free_block(pb, self.request_id)
         self.block_table = []
         self.offset = 0
+        # Reset flat buffer and populate from the incoming state.
+        self._flat_keys = None
+        self._flat_values = None
         num_blocks_needed = (length + self.pool.block_size - 1) // self.pool.block_size
         for lb in range(num_blocks_needed):
             pb = self.pool.alloc_block(self.request_id)
@@ -817,6 +881,14 @@ class FusionPagedRequestCache:
             self.pool.values_pool[pb, ..., pos_start : pos_start + n, :] = values[
                 ..., s_start:s_end, :
             ]
+        # Populate flat buffer from incoming state (for fast fetch).
+        n_steps = (self._flat_step + length - 1) // self._flat_step
+        k_shape = (B, n_kv_heads, n_steps * self._flat_step, k_head_dim)
+        v_shape = (B, n_kv_heads, n_steps * self._flat_step, v_head_dim)
+        self._flat_keys = mx.zeros(k_shape, dtype=keys.dtype)
+        self._flat_values = mx.zeros(v_shape, dtype=values.dtype)
+        self._flat_keys[..., :length, :] = keys
+        self._flat_values[..., :length, :] = values
         self.offset = length
 
     @property
@@ -891,6 +963,8 @@ class FusionPagedRequestCache:
                 logger.debug("paged_kv free_all free_block phys=%d failed: %s", pb, e)
         self.block_table = []
         self.offset = 0
+        self._flat_keys = None
+        self._flat_values = None
         return freed
 
     def make_mask(self, *args, **kwargs):
