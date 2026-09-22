@@ -101,6 +101,18 @@ class NGramSpecState:
         self._probe_interval = 64
         self._probe_counter = 0
         self._probing = False
+        # Verify-timing warmup: the first few verify forwards include
+        # one-time Metal kernel JIT compile + cache-fill cost (observed
+        # 80ms cold vs 13ms warm — 6x). If these cold samples feed the
+        # verify_dt EMA, break_even spikes to its 0.9 cap, spec pauses,
+        # no further verify runs, the EMA never decays, and spec stays
+        # paused for the entire request. Discard the first
+        # _verify_warmup_target verify timings and do not pause during
+        # warmup so enough warm samples accumulate to initialize the EMA.
+        self._verify_warmup_count = 0
+        self._verify_warmup_target = int(
+            __import__("os").environ.get("FUSION_NGRAM_SPEC_VERIFY_WARMUP", "5")
+        )
 
     def reset(self):
         self.predictor.reset()
@@ -148,6 +160,12 @@ class NGramSpecState:
     def should_speculate(self) -> bool:
         if self.steps < NGRAM_SPEC_WARMUP:
             return False
+        # Verify-timing warmup: force spec on (ignore D1 gate and pause
+        # state) until enough warm verify samples accumulate to initialize
+        # the EMA. Cold-start verify is Metal JIT (~6x warm cost) and would
+        # otherwise spike break_even to 0.9, pause spec, and freeze the EMA.
+        if self._verify_warmup_count < self._verify_warmup_target:
+            return True
         # D1 gate: until we have enough cheap D1 samples, stay off (no GPU
         # spent probing). Once we do, require D1 rate >= break-even.
         if len(self._d1_rates) >= self._d1_min_samples:
@@ -167,17 +185,19 @@ class NGramSpecState:
         return self.predictor.predict()
 
     def _break_even(self) -> float:
-        """Acceptance threshold below which spec regresses.
-
-        Spec wins iff n_accepted > V where V = T_verify / T_decode. Per-step
-        acceptance = n_accepted / K, so the break-even rate = V / K. Until
-        both timings are measured, fall back to a conservative default so
-        spec stays off on mediocre-D1 workloads instead of probing blindly.
-        """
+        # Spec wins iff (n_accepted + 1) / V > 1, because the verify forward
+        # produces n_accepted matched drafts PLUS one bonus token (the first
+        # mismatch or, on full-accept, the extra query). So the break-even is
+        # n_accepted > V - 1, and per-step acceptance rate = (V - 1) / K.
+        # K = configured num_draft (the typical verify batch), NOT the
+        # oscillating _last_K (which swings 1/2/4 and makes the threshold
+        # jump between 0.9-cap and 0.15 — pausing spec at 70% acceptance
+        # where it wins, or running at 40% where it loses).
+        K = self.predictor.num_draft
         if self._verify_dt_ema is None or self._decode_dt_ema is None:
             return self._break_even_default
         v = self._verify_dt_ema / max(self._decode_dt_ema, 1e-6)
-        return min(0.9, max(NGRAM_SPEC_MIN_ACCEPT, v / max(self._last_K, 1)))
+        return min(0.9, max(NGRAM_SPEC_MIN_ACCEPT, (v - 1) / max(K, 1)))
 
     def record_result(
         self,
@@ -194,7 +214,12 @@ class NGramSpecState:
         if n_total > 0:
             self._last_K = n_total
         if verify_dt is not None and verify_dt > 0:
-            if self._verify_dt_ema is None:
+            # Discard cold-start verify timings (Metal JIT compile +
+            # cache fill). The first _verify_warmup_target samples are
+            # ~6x the warm cost and would poison the EMA.
+            if self._verify_warmup_count < self._verify_warmup_target:
+                self._verify_warmup_count += 1
+            elif self._verify_dt_ema is None:
                 self._verify_dt_ema = verify_dt
             else:
                 self._verify_dt_ema = (

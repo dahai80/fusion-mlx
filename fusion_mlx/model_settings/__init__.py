@@ -68,7 +68,7 @@ class ModelSettings:
     guided_grammar_enabled: bool = False
     guided_grammar: str | None = None
 
-    turboquant_kv_enabled: bool = False
+    turboquant_kv_enabled: bool | None = None
     turboquant_kv_bits: float = 4
     turboquant_skip_last: bool = True
 

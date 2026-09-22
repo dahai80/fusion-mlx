@@ -38,10 +38,14 @@ from mlx_vlm.turboquant import (
 
 logger = logging.getLogger(__name__)
 
-# A4: apply TurboQuantKVCache.merge monkey-patch on lazy import
+# A4: TurboQuantKVCache.merge monkey-patch.
+# NOTE: applied at END of module (see bottom), not here — calling before
+# BatchTurboQuantKVCache (below) is defined triggers a self-referential
+# import inside _apply_turboquant_merge_patch that raises ImportError
+# (partial module, name not yet bound), silently swallowed by the
+# function's `except ImportError: pass` → patch never applied →
+# "does not yet support batching with history" crash at runtime.
 from .scheduler.monkeypatches import _apply_turboquant_merge_patch
-
-_apply_turboquant_merge_patch()
 
 __all__ = [
     "TurboQuantConfig",
@@ -527,3 +531,12 @@ class BatchTurboQuantKVCache(TurboQuantKVCache):
 
         batch.offset += max_length
         return batch
+
+
+# A4: apply TurboQuantKVCache.merge monkey-patch now that
+# BatchTurboQuantKVCache (referenced inside the patch function) is defined.
+_apply_turboquant_merge_patch()
+logger.debug(
+    "turboquant merge patch applied: TurboQuantKVCache.merge=%s",
+    hasattr(TurboQuantKVCache, "merge"),
+)

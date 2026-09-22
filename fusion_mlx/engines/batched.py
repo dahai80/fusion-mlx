@@ -475,6 +475,28 @@ class BatchedEngine(BaseEngine):
                         "TurboQuant K8V4 mode requested — live KV cache uses V4 "
                         "(mlx_vlm); K8V4 applies to prefix cache storage only."
                     )
+                # Apply the TurboQuant attention patch so mlx_lm's SDPA routes
+                # to the cache's quantized kernels. Without this, update_and_fetch
+                # returns _QuantizedStateProxy objects that the stock
+                # scaled_dot_product_attention cannot subscript → TypeError.
+                try:
+                    from ..patches.turboquant_attention import (
+                        apply_turboquant_attention_patch,
+                    )
+
+                    if apply_turboquant_attention_patch():
+                        logger.info(
+                            "TurboQuant attention patch applied (bits=%s, mode=%s)",
+                            tq_bits,
+                            tq_mode,
+                        )
+                except Exception as e:
+                    logger.error(
+                        "TurboQuant attention patch FAILED: %s — KV cache will "
+                        "crash on first attention call",
+                        e,
+                        exc_info=True,
+                    )
                 if not tq_explicit:
                     logger.info(
                         "TurboQuant KV cache auto-enabled (4-bit) — no explicit "
