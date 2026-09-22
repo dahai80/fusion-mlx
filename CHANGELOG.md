@@ -61,6 +61,43 @@
 - **Re-seed before stage2** (`generate.py`): `mx.random.seed(seed + 1)` before
   the stage2 noise draw. Harmless good-practice.
 
+### Fixed — #951: legacy LTX-Video 2B mid-denoise OOM — abort generation (507) instead of fatal_exit
+- **Root cause**: legacy 2B DiT has no temporal upsampler
+  (`lf = num_frames // 8 + 1`), so per-step attention memory scales linearly
+  with latent frames. A long/high-res request (e.g. 1344×768×49) crosses the
+  98GB L3 red line mid-denoise (~step 29/40), and the `ProcessMemoryEnforcer`
+  `fatal_exit`s the whole server + any co-tenant LLM. `begin_task`'s pre-probe
+  sees OK memory (generation not started yet), so it cannot catch the
+  mid-denoise spike.
+- **Fix**: `VideoUnifiedScheduler.check_step_pressure()` — called between
+  denoise steps via the backend's step callback. On `L3_CIRCUIT` (>=98GB),
+  fire `emergency_reclaim` (Metal cache clear + dequant cache release + GC)
+  first; if **still** L3, raise `VideoMemoryPressureError` so the backend
+  aborts the generation cleanly (→ HTTP 507 Retry-After) instead of
+  `fatal_exit` killing the server.
+- **Wired** into `LegacyLTXBackend.generate` via a per-step callback that
+  probes the scheduler between steps (combined with the user `on_step`
+  callback). `videos_routes.py` maps `VideoMemoryPressureError` → 507
+  Retry-After.
+- **Tests**: `check_step_pressure` OK when below L3, aborts
+  (`VideoMemoryPressureError`) when sustained L3 after reclaim, recovers (OK)
+  when reclaim brings it below. Verified E2E: 25-frame 768×512 legacy gen
+  succeeds (7.4MB mp4, real video) — guard does not fire spuriously.
+
+### Fixed — #947 regression: stray-manifest guard for model_index.json pipeline discovery
+- **Regression**: the #947 fix made `_is_video_model` return `True` for any
+  `model_index.json` with a known `DIFFUSERS_PIPELINE_TASKS` class, breaking
+  `test_h3_model_index_without_subdirs_returns_false` (an H3 dir with a bare
+  `model_index.json` + no weights/subdirs must be `False`). Added a
+  weight-file guard: accept the `model_index.json`-no-subdirs case only when a
+  `.safetensors`/`.bin` is present (LTX-Video legacy ships `ltxv-*.safetensors`;
+  a bare stray manifest does not).
+- **#952 filed**: `OURS_VAE_CONFIG` `base_channels=1024` is not materialized
+  (decoder builds at 16/32/64ch, 9.3M params vs expected ~238M). #947 left
+  VAE config + key-map alignment as a follow-up. `test_constructs_and_param_count`
+  marked `xfail` (strict=False) pointing to #952 — assertion not weakened for
+  a broken config.
+
 ### Fixed — #950: video scheduler dual-model mutex invariant violation (non-reentrant Lock + 503)
 - **Root cause**: `VideoUnifiedScheduler.acquire` used `threading.RLock()`
   (reentrant). Under asyncio, the event-loop thread could re-acquire the lock
