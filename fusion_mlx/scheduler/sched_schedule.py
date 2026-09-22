@@ -825,9 +825,13 @@ def _schedule_waiting(
             # semantics, no interleaving). The per-row variable-step fix in
             # MergedPagedCacheView is tracked as a follow-up to restore
             # interleaving safely.
+            _paged_chunked_block = (
+                os.environ.get("FUSION_PAGED_CHUNKED_BLOCK", "") == "1"
+            )
             if (
                 _use_chunked
                 and getattr(self.model, "_fusion_paged_pool", None) is not None
+                and _paged_chunked_block
             ):
                 _use_chunked = False
                 logger.info(

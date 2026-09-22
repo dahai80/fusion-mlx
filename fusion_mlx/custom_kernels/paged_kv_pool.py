@@ -378,17 +378,22 @@ class MergedPagedCacheView:
             v_i = values[i : i + 1]
             fk, fv = self.constituents[i].update_and_fetch(k_i, v_i)
             fetched.append((fk, fv))
-        max_len = max(fk.shape[-2] for fk, _ in fetched)
-        k_head_dim = fetched[0][0].shape[-1]
-        v_head_dim = fetched[0][1].shape[-1]
-        n_kv_heads = fetched[0][0].shape[1]
-        dt = fetched[0][0].dtype
-        out_k = mx.zeros((B, n_kv_heads, max_len, k_head_dim), dtype=dt)
-        out_v = mx.zeros((B, n_kv_heads, max_len, v_head_dim), dtype=dt)
-        for i, (fk, fv) in enumerate(fetched):
-            L = fk.shape[-2]
-            out_k[i : i + 1, :, :L, :] = fk
-            out_v[i : i + 1, :, :L, :] = fv
+        lengths = [fk.shape[-2] for fk, _ in fetched]
+        if len(set(lengths)) == 1:
+            out_k = mx.concatenate([fk for fk, _ in fetched], axis=0)
+            out_v = mx.concatenate([fv for _, fv in fetched], axis=0)
+        else:
+            max_len = max(lengths)
+            k_head_dim = fetched[0][0].shape[-1]
+            v_head_dim = fetched[0][1].shape[-1]
+            n_kv_heads = fetched[0][0].shape[1]
+            dt = fetched[0][0].dtype
+            out_k = mx.zeros((B, n_kv_heads, max_len, k_head_dim), dtype=dt)
+            out_v = mx.zeros((B, n_kv_heads, max_len, v_head_dim), dtype=dt)
+            for i, (fk, fv) in enumerate(fetched):
+                L = fk.shape[-2]
+                out_k[i : i + 1, :, :L, :] = fk
+                out_v[i : i + 1, :, :L, :] = fv
         return out_k, out_v
 
     @property
@@ -518,12 +523,15 @@ class MergedPagedCacheView:
         return self.constituents[idx]
 
     def prepare(self, lengths=None, right_padding=None, **kwargs):
-        # mlx_lm calls c.prepare(lengths=, right_padding=) when batched
-        # prompts have different lengths (padding). Each constituent is
-        # per-sequence so it needs no padding prep; the view's
-        # update_and_fetch already delegates per-sequence with correct
-        # offsets. No-op keeps the batched prefill path from AttributeError.
-        pass
+        self._right_padding = right_padding
+
+    def finalize(self):
+        rp = getattr(self, "_right_padding", None)
+        if rp:
+            for i, c in enumerate(self.constituents):
+                if i < len(rp) and rp[i] > 0:
+                    c.offset -= rp[i]
+        self._right_padding = None
 
     def to_quantized(self, *args, **kwargs):
         raise NotImplementedError(
