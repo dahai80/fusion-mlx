@@ -11,7 +11,6 @@ from pathlib import Path
 
 import mlx.core as mx
 import mlx.nn as nn
-from safetensors import safe_open
 
 logger = logging.getLogger(__name__)
 
@@ -656,7 +655,10 @@ class Decoder(nn.Module):
         sample = self.conv_norm_out(sample)
         if temb is not None:
             projected = self.last_time_embedder(temb)
-            t = projected.reshape(projected.shape[0], 2, -1) + self.last_scale_shift_table[None]
+            t = (
+                projected.reshape(projected.shape[0], 2, -1)
+                + self.last_scale_shift_table[None]
+            )
             shift = t[:, 0][:, :, None, None, None]
             scale = t[:, 1][:, :, None, None, None]
             sample = sample * (1 + scale) + shift

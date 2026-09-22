@@ -27,7 +27,6 @@ from pathlib import Path
 
 import mlx.core as mx
 import mlx.nn as nn
-from safetensors import safe_open
 
 logger = logging.getLogger(__name__)
 
