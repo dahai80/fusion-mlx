@@ -22,6 +22,7 @@ from .auto_router import (
     METHOD_DFLASH2,
     METHOD_DSPARK,
     METHOD_EAGLE3,
+    METHOD_MEDUSA,
     METHOD_MTP,
     METHOD_NGRAM,
     RouteSignals,
@@ -41,6 +42,7 @@ def loaded_methods(
     dflash2: bool = False,
     dspark: bool = False,
     mtp: bool = False,
+    medusa: bool = False,
 ) -> dict[str, bool]:
     return {
         METHOD_NGRAM: suffix,
@@ -49,6 +51,7 @@ def loaded_methods(
         METHOD_DFLASH2: dflash2,
         METHOD_DSPARK: dspark,
         METHOD_MTP: mtp,
+        METHOD_MEDUSA: medusa,
     }
 
 

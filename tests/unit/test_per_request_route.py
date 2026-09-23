@@ -7,6 +7,7 @@ from fusion_mlx.speculative.auto_router import (
     METHOD_DFLASH2,
     METHOD_DSPARK,
     METHOD_EAGLE3,
+    METHOD_MEDUSA,
     METHOD_MTP,
     METHOD_NGRAM,
     SpecAutoRouter,
@@ -134,9 +135,22 @@ class TestSelectActiveMethod:
 
     def test_dspark_alone_loaded_picks_dspark(self):
         loaded = loaded_methods(dspark=True)
-        # no suffix/dflash/mtp -> degenerate path returns dspark (in available)
         result = select_active_method(100, loaded)
         assert result == METHOD_DSPARK
+
+    def test_medusa_loaded_qwen3_picks_medusa(self):
+        loaded = loaded_methods(medusa=True, suffix=True)
+        result = select_active_method(
+            100, loaded, model_family="qwen3", has_mtp=False
+        )
+        assert result == METHOD_MEDUSA
+
+    def test_medusa_loaded_non_qwen3_falls_through(self):
+        loaded = loaded_methods(medusa=True, suffix=True)
+        result = select_active_method(
+            100, loaded, model_family="llama3", has_mtp=False
+        )
+        assert result == METHOD_NGRAM
 
 
 class TestLoadedMethods:
@@ -148,6 +162,7 @@ class TestLoadedMethods:
             METHOD_DFLASH2: False,
             METHOD_DSPARK: False,
             METHOD_MTP: False,
+            METHOD_MEDUSA: False,
         }
 
     def test_selective_true(self):
@@ -184,6 +199,7 @@ class TestSchedulerLoadedAssembly:
             METHOD_DFLASH2: False,
             METHOD_DSPARK: False,
             METHOD_MTP: False,
+            METHOD_MEDUSA: False,
         }
 
     def test_assembles_from_scheduler_attrs(self):

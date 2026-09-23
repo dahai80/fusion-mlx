@@ -765,6 +765,11 @@ def _loaded_spec_methods(self) -> dict[str, bool]:
         and self._spec_decode_state.draft_model is not None
         and type(self._spec_decode_state.draft_model).__name__ == "Eagle3Speculator"
     )
+    medusa_loaded = (
+        self._spec_decode_state is not None
+        and self._spec_decode_state.draft_model is not None
+        and type(self._spec_decode_state.draft_model).__name__ == "MedusaSpeculator"
+    )
     return loaded_methods(
         suffix=self._ngram_spec_state is not None,
         eagle3=eagle3_loaded,
@@ -772,6 +777,7 @@ def _loaded_spec_methods(self) -> dict[str, bool]:
         dflash2=getattr(self, "_dflash2_runtime", None) is not None,
         dspark=self._dspark_runtime is not None,
         mtp=bool(getattr(self.model, "_fusion_mlx_mtp_decode_enabled", False)),
+        medusa=medusa_loaded,
     )
 
 
@@ -845,6 +851,7 @@ def _try_spec_decode(
         METHOD_DFLASH2,
         METHOD_DSPARK,
         METHOD_EAGLE3,
+        METHOD_MEDUSA,
         METHOD_NGRAM,
     )
 
@@ -872,7 +879,9 @@ def _try_spec_decode(
         result = ngram_spec_step(self, output, current_token, request_id)
         if result:
             return result
-    elif method == METHOD_EAGLE3 and self._spec_decode_state is not None:
+    elif (
+        method in (METHOD_EAGLE3, METHOD_MEDUSA) and self._spec_decode_state is not None
+    ):
         from .spec_decode import spec_decode_step
 
         result = spec_decode_step(self, output, current_token, request_id)
@@ -901,9 +910,13 @@ def _try_spec_decode(
     # METHOD_MTP (handled inside bg._next) and "" (no method) fall through.
 
     # Draft-model spec decode (GPU-side, requires loaded draft model) - not
-    # router-controlled; kept as fallback after the chosen heuristic.
+    # router-controlled; kept as fallback after the chosen heuristic. Skip
+    # when the router already picked a draft-model method (eagle3/medusa):
+    # that branch above already called spec_decode_step, and re-calling it
+    # here double-counts steps and re-reads a stale capture.
     if (
-        self._spec_decode_state is not None
+        method not in (METHOD_EAGLE3, METHOD_MEDUSA)
+        and self._spec_decode_state is not None
         and self._spec_decode_state.draft_model is not None
     ):
         from .spec_decode import spec_decode_step
