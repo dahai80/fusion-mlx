@@ -212,7 +212,7 @@ class MedusaSpeculator:
             self._skip_count = 0
         return False
 
-    def _get_post_norm_hidden(self) -> mx.array | None:
+    def _get_post_norm_hidden(self, pos: int | None = None) -> mx.array | None:
         if self._hidden_capture is None or self._norm is None:
             return None
         captured = self._hidden_capture.get_captured()
@@ -220,21 +220,17 @@ class MedusaSpeculator:
             return None
         last_idx = max(captured.keys())
         h = captured[last_idx]
-        h_last = h[:, -1:, :]
-        h_post = self._norm(h_last)
+        if pos is None:
+            h_sel = h[:, -1:, :]
+        else:
+            seq_len = h.shape[1] if h.ndim >= 2 else 1
+            if pos < 0 or pos >= seq_len:
+                pos = seq_len - 1
+            h_sel = h[:, pos : pos + 1, :]
+        h_post = self._norm(h_sel)
         return h_post
 
-    def generate_draft_tokens(self, current_token: int) -> list[int]:
-        if not self._loaded or self._frozen_w is None:
-            return []
-        if self._should_skip_draft():
-            self._skip_count += 1
-            if self._skip_count % ADAPTIVE_PROBE != 0:
-                return []
-            logger.debug("medusa: adaptive re-probe at skip=%d", self._skip_count)
-        h_post = self._get_post_norm_hidden()
-        if h_post is None:
-            return []
+    def _draft_from_hidden(self, h_post: mx.array) -> list[int]:
         try:
             with mx.stream(mx.default_stream(mx.gpu)):
                 h = h_post.reshape(-1)
@@ -255,6 +251,32 @@ class MedusaSpeculator:
             logger.warning("medusa: generate failed: %s", e, exc_info=True)
             self.reset()
             return []
+
+    def generate_draft_tokens(self, current_token: int) -> list[int]:
+        if not self._loaded or self._frozen_w is None:
+            return []
+        if self._should_skip_draft():
+            self._skip_count += 1
+            if self._skip_count % ADAPTIVE_PROBE != 0:
+                return []
+            logger.debug("medusa: adaptive re-probe at skip=%d", self._skip_count)
+        h_post = self._get_post_norm_hidden()
+        if h_post is None:
+            return []
+        return self._draft_from_hidden(h_post)
+
+    def fused_draft(self, pos: int) -> list[int]:
+        # Fused-verify: draft from hidden captured at a specific position
+        # (the last ACCEPTED position from the previous verify forward),
+        # not the last-fed position. Avoids the off-by-one that doomed the
+        # prior medusa_fused_step (which drafted from the current forward's
+        # trailing hidden, predicting the current token instead of next).
+        if not self._loaded or self._frozen_w is None:
+            return []
+        h_post = self._get_post_norm_hidden(pos)
+        if h_post is None:
+            return []
+        return self._draft_from_hidden(h_post)
 
     def record_accepted(self, n_accepted: int):
         self._total_accepted += n_accepted
