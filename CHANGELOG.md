@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added — Native MTP spec-decode (opt-in, +15-78% tok/s on Qwen3.8-27B)
+- **`speculative/mtp/`**: wired native Multi-Token Prediction (mlx-lm PR#990)
+  into the `fusion-mlx serve` path. Opt-in via `--spec-decode mtp
+  --mtp-sidecar <repo-or-dir>`. First spec-decode path to surpass native MLX
+  decode on Qwen3.8-27B-4bit (hybrid GDN: KVCache + ArraysCache). Verified
+  end-to-end: token-for-token lossless parity, 67-87% draft accept rate,
+  +15% (short) / +62% (medium) / +78% (code) tok/s vs stock (cache-busted
+  N=5). MTP head overhead 5.6% of backbone.
+- **`speculative/mtp/head.py`**: fixed MTP fc concat order to
+  `[embed, hidden]` matching Qwen3.5 convention (was `[hidden, embed]`,
+  produced garbage drafts).
+- **`engine/batched/_mtp_dispatch.py`**: install `batch_generator.apply()`
+  hot-loop after sidecar inject. Root cause of "MTP never ran": the
+  pre-load `apply_mlx_lm_mtp_patch()` only fired on the oQ offline-quant
+  path, never during `fusion-mlx serve`.
+- **`speculative/mtp/qwen3_5_inject.py`**: class-swap outer model wrapper
+  (instance-attr `__call__` ignored by Python `()`); apply real PR#990 GDN
+  patches (`_patch_gated_delta_net` + `_patch_decoder_layer` +
+  `cache_rollback.apply`) replacing the no-op `cache_patch` stub that never
+  wrote `rollback_state` (root cause of corrupt output on reject); forward
+  `n_confirmed` to linear-attn layers.
+
 ### Added — CoW paged-KV pool wiring (concurrent prefix donation, opt-in)
 - **`custom_kernels/paged_kv_pool.py`**: `FusionPagedKVPool` gained a CoW
   refcount layer (`_refcount`/`_owners`, `share_block`, `ensure_writable`,
