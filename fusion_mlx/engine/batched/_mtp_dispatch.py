@@ -79,6 +79,7 @@ def _run_dispatch_mtp_inject(
         allow_random_init=allow_random_init,
     )
     if ok:
+        _install_mtp_hot_loop()
         logger.debug(
             "[MTP-dispatch] attached model_type=%s sidecar=%s",
             effective,
@@ -87,6 +88,23 @@ def _run_dispatch_mtp_inject(
         return _DISPATCH_ATTACHED
     logger.debug("[MTP-dispatch] injector refused model_type=%s -> REJECTED", effective)
     return _DISPATCH_REJECTED
+
+
+def _install_mtp_hot_loop() -> None:
+    try:
+        from ...patches.mlx_lm_mtp import batch_generator as _bg
+
+        if _bg.apply():
+            logger.info("[MTP-dispatch] batch_generator hot-loop installed")
+        else:
+            logger.warning(
+                "[MTP-dispatch] batch_generator.apply() refused; "
+                "MTP draft/verify loop will NOT run (decode falls back to stock)"
+            )
+    except Exception as e:
+        logger.warning(
+            "[MTP-dispatch] failed to install batch_generator hot-loop: %s", e
+        )
 
 
 def _decide_mtp_dispatch_action(
