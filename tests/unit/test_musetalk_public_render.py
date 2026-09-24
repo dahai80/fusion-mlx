@@ -221,3 +221,20 @@ def test_generate_faces_no_chunk_when_memory_plentiful(monkeypatch):
     aud = mx.zeros((5, 50, 384))
     pipe.generate_faces(lat, aud)
     assert len(pipe.unet.calls) == 1  # single batch, no chunking
+
+
+# ---- #954: memory observability ----
+
+
+def test_memory_stats_returns_dict_with_keys():
+    pipe = _make_pipe()
+    s = pipe.memory_stats()
+    assert "active_mb" in s
+    assert "peak_mb" in s
+    assert "cache_mb" in s
+    assert "free_mb" in s
+
+
+def test_reset_memory_peak_no_error():
+    pipe = _make_pipe()
+    pipe.reset_memory_peak()  # must not raise on any build

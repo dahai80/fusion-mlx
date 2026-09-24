@@ -253,6 +253,41 @@ class MuseTalkPipeline:
         return img[..., ::-1]  # RGB -> BGR
 
     # ---- generation ----
+    def memory_stats(self) -> dict:
+        """#954: structured MLX allocator introspection for the realtime loop.
+
+        Returns active / peak / cache (MiB) + free unified memory (MiB). The
+        realtime loop can poll this per N frames to detect the linear active
+        growth documented in #954 (root cause: upstream MLX graph/allocator
+        retention in a long-running compiled loop — NOT fusion-mlx per-call
+        state; see issue comment). ``reset_peak`` zeroes the high-water mark.
+
+        No-op fields (None) on non-Metal builds (Linux CI).
+        """
+        out = {"active_mb": None, "peak_mb": None, "cache_mb": None, "free_mb": None}
+        if hasattr(mx, "metal"):
+            try:
+                out["active_mb"] = mx.metal.get_active_memory() // (1024**2)
+                out["peak_mb"] = mx.metal.get_peak_memory() // (1024**2)
+                out["cache_mb"] = mx.metal.get_cache_memory() // (1024**2)
+            except Exception:
+                pass
+        try:
+            import psutil
+
+            out["free_mb"] = psutil.virtual_memory().available // (1024**2)
+        except Exception:
+            pass
+        return out
+
+    def reset_memory_peak(self) -> None:
+        """#954: zero the MLX allocator peak-memory high-water mark."""
+        if hasattr(mx, "metal") and hasattr(mx.metal, "reset_peak_memory"):
+            try:
+                mx.metal.reset_peak_memory()
+            except Exception:
+                pass
+
     def set_ddim_steps(self, steps: int) -> None:
         """#927: runtime DDIM step-count setter. steps=1 (default) = single-step
         t=0 inpaint; steps>1 runs a multi-step DDIM loop at decreasing t (the
