@@ -505,7 +505,7 @@ def _generate_one(
     frames = []
     for fi in range(f_out):
         frame = decoded[0, :, fi, :h_out, :w_out]  # (3, H, W)
-        frame = np.clip(frame, 0.0, 1.0)
+        frame = np.clip(frame * 0.5 + 0.5, 0.0, 1.0)
         frame = np.transpose(frame, (1, 2, 0))  # (H, W, 3)
         frame = (frame * 255.0).astype(np.uint8)
         frames.append(frame)
