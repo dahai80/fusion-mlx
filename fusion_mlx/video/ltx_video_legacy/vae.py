@@ -430,7 +430,9 @@ class VAEConfig:
             latent_log_var=cfg.get("latent_log_var", "uniform"),
             use_quant_conv=cfg.get("use_quant_conv", False),
             causal_decoder=cfg.get("causal_decoder", False),
-            base_channels=cfg.get("decoder_base_channels", 128),
+            base_channels=cfg.get(
+                "base_channels", cfg.get("decoder_base_channels", 128)
+            ),
         )
 
 

@@ -4,7 +4,6 @@ from pathlib import Path
 
 import mlx.core as mx
 import numpy as np
-import pytest
 
 from fusion_mlx.video.ltx_video_legacy.vae import (
     OURS_VAE_CONFIG,
@@ -607,15 +606,6 @@ class TestDiffusersRename:
 
 
 class TestFullOURSConfig:
-    @pytest.mark.xfail(
-        reason=(
-            "#952: OURS_VAE_CONFIG base_channels=1024 not materialized — "
-            "decoder builds at 16/32/64ch (9.3M params, expected ~238M). "
-            "Block construction does not propagate base_channels into res_x "
-            "channel widths. #947 left VAE config alignment as follow-up."
-        ),
-        strict=False,
-    )
     def test_constructs_and_param_count(self):
         cfg = VAEConfig.from_dict(OURS_VAE_CONFIG)
         vae = LTVideoVAE(cfg)
@@ -629,15 +619,16 @@ class TestFullOURSConfig:
             return int(tree.size)
 
         n_params = _count(vae.decoder.parameters())
-        # LTX-Video 0.9.x VAE decoder: 512-channel peak, ~238M params
-        # (3D 3x3x3 convs at 512ch dominate; consistent with ~500MB bf16 on disk)
-        assert n_params > 200_000_000, f"param count too low: {n_params / 1e6:.1f}M"
-        assert n_params < 280_000_000, f"param count too high: {n_params / 1e6:.1f}M"
+        # LTX-Video 0.9.6 VAE decoder: 1024-channel peak (conv_in 128->1024),
+        # 3 DTS halvings 1024->512->256->128, ~553M params (verified against
+        # ltxv-2b-0.9.6-dev checkpoint: decoder 552.8M, conv_in 1024x128).
+        assert n_params > 500_000_000, f"param count too low: {n_params / 1e6:.1f}M"
+        assert n_params < 600_000_000, f"param count too high: {n_params / 1e6:.1f}M"
         # every decoder key is a conv/norm weight we expect
         assert "conv_in.conv.weight" in keys
         assert "conv_out.conv.weight" in keys
         assert any(k.startswith("up_blocks.0.res_blocks") for k in keys)
-        assert any(k.startswith("up_blocks.9.res_blocks") for k in keys)
+        assert any(k.startswith("up_blocks.6.res_blocks") for k in keys)
 
     def test_tiny_forward_shape(self):
         cfg = VAEConfig.from_dict(OURS_VAE_CONFIG)
