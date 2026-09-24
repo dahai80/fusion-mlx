@@ -211,14 +211,29 @@ def inject_mtp_support(
             "do not use in production."
         )
 
-    # --- Step 4: Install global ArraysCache + GatedDeltaNet patches ---
-    from .cache_patch import (
-        patch_arrays_cache_rollback_state,
-        patch_gated_delta_net_for_mtp,
-    )
+    # --- Step 4: Install real PR#990 GDN + DecoderLayer + cache patches ---
+    # The stub cache_patch.patch_gated_delta_net_for_mtp was a no-op: it
+    # called original_call unconditionally and never wrote
+    # cache.rollback_state, so GDN reject-rollback silently dropped the
+    # confirmed token and the draft loop re-derived from stale SSM state
+    # (degenerate repetition on Qwen3.8-27B). Apply the real patches from
+    # patches/mlx_lm_mtp/qwen35_model instead: _patch_gated_delta_net
+    # splits confirmed/draft chunks and snapshots (conv_c, ssm_c) onto
+    # cache.rollback_state; _patch_decoder_layer forwards n_confirmed to
+    # linear_attn. cache_rollback.apply installs the ArraysCache.rollback_state
+    # slot + RotatingKVCache undo log.
+    from ...patches.mlx_lm_mtp import qwen35_model as _q35
+    from ...patches.mlx_lm_mtp.cache_rollback import apply as _cr_apply
 
-    patch_arrays_cache_rollback_state()
-    patch_gated_delta_net_for_mtp()
+    try:
+        from mlx_lm.models import qwen3_5 as _q35_mod
+
+        _q35._patch_gated_delta_net(_q35_mod)
+        _q35._patch_decoder_layer(_q35_mod)
+        logger.info("[mtp.inject] Applied real GDN + DecoderLayer PR#990 patches")
+    except Exception as e:
+        logger.warning("[mtp.inject] Failed to apply GDN patches: %s", e)
+    _cr_apply()
 
     # --- Step 5: Attach + monkey-patch TextModel class ---
     inner.mtp = mtp
@@ -253,7 +268,12 @@ def inject_mtp_support(
                 ssm_mask = create_ssm_mask(hidden_states, cache[inner_m.ssm_idx])
                 for layer, c in zip(inner_m.layers, cache):
                     mask = ssm_mask if layer.is_linear else fa_mask
-                    hidden_states = layer(hidden_states, mask=mask, cache=c)
+                    if n_confirmed and layer.is_linear:
+                        hidden_states = layer(
+                            hidden_states, mask=mask, cache=c, n_confirmed=n_confirmed
+                        )
+                    else:
+                        hidden_states = layer(hidden_states, mask=mask, cache=c)
             finally:
                 if n_confirmed > 0:
                     for c in cache:
