@@ -140,16 +140,12 @@ class TestSelectActiveMethod:
 
     def test_medusa_loaded_qwen3_picks_medusa(self):
         loaded = loaded_methods(medusa=True, suffix=True)
-        result = select_active_method(
-            100, loaded, model_family="qwen3", has_mtp=False
-        )
+        result = select_active_method(100, loaded, model_family="qwen3", has_mtp=False)
         assert result == METHOD_MEDUSA
 
     def test_medusa_loaded_non_qwen3_falls_through(self):
         loaded = loaded_methods(medusa=True, suffix=True)
-        result = select_active_method(
-            100, loaded, model_family="llama3", has_mtp=False
-        )
+        result = select_active_method(100, loaded, model_family="llama3", has_mtp=False)
         assert result == METHOD_NGRAM
 
 
