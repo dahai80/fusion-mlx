@@ -823,3 +823,46 @@ class TestApplyChatTemplatePartialMode:
         # continue_final_message=True (not add_generation_prompt=True).
         assert count_kwargs["continue_final_message"] is True
         assert count_kwargs["add_generation_prompt"] is False
+
+
+class TestBatchedEnginePrewarm:
+    """Tests for BatchedEngine._prewarm (cold-start kernel compile)."""
+
+    def test_prewarm_env_gate_default_on(self, monkeypatch):
+        """FUSION_MLX_PREWARM default '1' → prewarm eligible; '0' disables."""
+        import os
+
+        monkeypatch.delenv("FUSION_MLX_PREWARM", raising=False)
+        assert os.getenv("FUSION_MLX_PREWARM", "1") != "0"
+
+        monkeypatch.setenv("FUSION_MLX_PREWARM", "0")
+        assert os.getenv("FUSION_MLX_PREWARM", "1") == "0"
+
+    def test_prewarm_nonfatal_on_exception(self, monkeypatch):
+        """_prewarm must not raise if make_prompt_cache fails (non-fatal optimization)."""
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
+        from fusion_mlx.engines.batched import BatchedEngine
+
+        engine = BatchedEngine(model_name="test-model")
+        mock_tok = MagicMock()
+        mock_tok.encode.return_value = [1]
+        mock_tok.eos_token_id = 0
+        engine._model = MagicMock()
+        engine._tokenizer = mock_tok
+        engine._model_load_executor = ThreadPoolExecutor(max_workers=1)
+
+        def _boom(model):
+            raise RuntimeError("make_prompt_cache boom")
+
+        monkeypatch.setattr(
+            "mlx_lm.models.cache.make_prompt_cache", _boom, raising=False
+        )
+
+        async def _call():
+            loop = asyncio.get_running_loop()
+            await engine._prewarm(loop)
+
+        asyncio.run(_call())
+        engine._model_load_executor.shutdown(wait=True)

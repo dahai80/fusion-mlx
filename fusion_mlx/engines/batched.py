@@ -739,6 +739,52 @@ class BatchedEngine(BaseEngine):
         register_llm_engine()
         logger.info(f"BatchedEngine loaded: {self._model_name}")
 
+        # Pre-warm: run a 1-token forward on the load thread (same thread as
+        # prefill/decode, #KV-0) so mx.compile graphs + Metal kernels JIT at
+        # load time. Without this the first real request pays compilation on
+        # its prefill (measured 438ms cold vs ~52ms warm — 8x penalty). Env
+        # FUSION_MLX_PREWARM=0 disables; failures are non-fatal (optimization
+        # only, must not block serving).
+        if os.getenv("FUSION_MLX_PREWARM", "1") != "0":
+            await self._prewarm(loop)
+
+    async def _prewarm(self, loop) -> None:
+        model = self._model
+        tokenizer = self._tokenizer
+
+        def _prewarm_sync():
+            import time as _t
+
+            import mlx.core as mx
+            from mlx_lm.models.cache import make_prompt_cache
+
+            t0 = _t.perf_counter()
+            try:
+                ids = tokenizer.encode("hi", add_special_tokens=True)
+                if not ids:
+                    ids = [tokenizer.eos_token_id or 0]
+                arr = mx.array([ids[:1]])
+                cache = make_prompt_cache(model)
+                model(arr, cache=cache)
+                mx.eval([c.state for c in cache])
+                dt = (_t.perf_counter() - t0) * 1000
+                logger.info(
+                    "prewarm: 1-token forward compiled in %.0fms (model=%s)",
+                    dt,
+                    self._model_name,
+                )
+            except Exception as e:
+                logger.warning(
+                    "prewarm skipped for %s (non-fatal): %s",
+                    self._model_name,
+                    e,
+                )
+
+        try:
+            await loop.run_in_executor(self._model_load_executor, _prewarm_sync)
+        except Exception as e:
+            logger.warning("prewarm executor failed for %s: %s", self._model_name, e)
+
     async def stop(self) -> None:
         # P2-12 (#0909 audit): set _loaded=False first to close the window
         # where new requests see _loaded=True but _engine is already None.
