@@ -315,43 +315,43 @@ def _patch_outer_model(outer: Any, inner: Any) -> None:
 
     outer._fusion_mlx_mtp_decode_enabled = True
 
-    original_call = outer.__call__
+    original_class = type(outer)
 
-    def patched_call(
-        inputs,
-        cache=None,
-        input_embeddings=None,
-        return_hidden: bool = False,
-        n_confirmed: int = 0,
-        **kwargs,
-    ):
-        return inner(
+    class _OuterMTPWrapper(original_class):  # type: ignore[valid-type, misc]
+        @property
+        def mtp(self):
+            return getattr(self.language_model, "mtp", None)
+
+        def __call__(  # type: ignore[override]
+            self,
             inputs,
-            cache=cache,
-            input_embeddings=input_embeddings,
-            return_hidden=return_hidden,
-            n_confirmed=n_confirmed,
-        )
+            cache=None,
+            input_embeddings=None,
+            return_hidden: bool = False,
+            n_confirmed: int = 0,
+            **kwargs,
+        ):
+            return self.language_model(
+                inputs,
+                cache=cache,
+                input_embeddings=input_embeddings,
+                return_hidden=return_hidden,
+                n_confirmed=n_confirmed,
+            )
 
-    @property
-    def mtp(self):
-        return getattr(inner, "mtp", None)
+        def mtp_forward(self, hidden_states, next_token_ids, mtp_cache):
+            return self.language_model.mtp_forward(
+                hidden_states, next_token_ids, mtp_cache
+            )
 
-    def mtp_forward(self, hidden_states, next_token_ids, mtp_cache):
-        return inner.mtp_forward(hidden_states, next_token_ids, mtp_cache)
+        def make_mtp_cache(self):
+            return self.language_model.make_mtp_cache()
 
-    def make_mtp_cache(self):
-        return inner.make_mtp_cache()
-
-    outer.__call__ = patched_call
-    # Use type() to set property on the instance's class, not the Module dict
-    type(outer).mtp = mtp
-    outer.mtp_forward = mtp_forward
-    outer.make_mtp_cache = make_mtp_cache
+    outer.__class__ = _OuterMTPWrapper
     outer._fusion_mlx_mtp_outer_patched = True
     logger.info(
         "[mtp.inject] Patched outer %s with MTP pass-throughs.",
-        type(outer).__name__,
+        original_class.__name__,
     )
 
 
