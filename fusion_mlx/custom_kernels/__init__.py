@@ -5,6 +5,11 @@
 # m5_optimizer.py:116 引用 fusion_mlx.custom_kernels.fp8_linear,
 # 原 __init__.py 空导出致 ImportError, 补导让 FP8 量化路径真生效
 # nvfp4: NVFP4 (E2M1+E4M3 block scale) 权重读取器, load 时软件反量化为 bf16 (issue #179)
-from . import flash_kda, fp8_linear, nvfp4, quantize  # noqa: F401
+from . import fp8_linear, nvfp4, quantize  # noqa: F401
 
-__all__ = ["flash_kda", "fp8_linear", "nvfp4", "quantize"]
+# D13 (audit): flash_kda has zero prod callers — removed from the export
+# surface so the package __all__ does not advertise a dead capability.
+# The module remains importable directly (fusion_mlx.custom_kernels.flash_kda)
+# for tests/experimental use.
+
+__all__ = ["fp8_linear", "nvfp4", "quantize"]

@@ -28,6 +28,49 @@ from .types import _CacheFreshnessWait, _InflightStoreInfo
 # stream when no per-engine stream is provided.
 
 
+def _try_cow_donate(self, request: Request) -> bool:
+    """CoW concurrent-donation fast path. If a live donor request shares this
+    request's prefix chain-hash and its GPU slabs are still resident, adopt
+    them (refcount-shared) into fresh CoWPagedRequestCache handles and skip
+    the SSD fetch+reconstruct path. Returns True on donation, False otherwise
+    (no binder / no live donor). No-op when CoW two-level KV is OFF.
+    """
+    pool = getattr(self.model, "_fusion_paged_pool", None)
+    binder = getattr(self.model, "_fusion_paged_binder", None)
+    if pool is None or binder is None:
+        return False
+    bs = pool.block_size
+    bac_name = getattr(self.block_aware_cache, "model_name", None)
+    try:
+        from ..custom_kernels.fusion_paged_kv import try_donate_prefix
+
+        result = try_donate_prefix(
+            self.model,
+            request.request_id,
+            request.prompt_token_ids,
+            bs,
+            model_name=bac_name,
+            extra_keys=request.vlm_extra_keys_for_cache,
+        )
+    except Exception as exc:
+        logger.debug("CoW try_donate_prefix failed for %s: %s", request.request_id, exc)
+        return False
+    if result is None:
+        return False
+    handles, n_donated = result
+    request.prompt_cache = handles
+    request.cached_tokens = n_donated
+    request.shared_prefix_blocks = (n_donated // bs) if bs else 0
+    request.remaining_tokens = request.prompt_token_ids[n_donated:]
+    request.block_table = None
+    logger.info(
+        "CoW donate hit for %s: %d tokens donated (GPU slabs, skipped SSD)",
+        request.request_id,
+        n_donated,
+    )
+    return True
+
+
 def add_request(self, request: Request) -> None:
     """
     Add a new request to the scheduler.
@@ -94,6 +137,15 @@ def add_request(self, request: Request) -> None:
     # concurrently (RT-03). _should_defer registers a freshness wait for
     # relevant stores (above thresholds); either way prep is deferred to
     # _schedule_waiting.
+    elif self._try_cow_donate(request):
+        # CoW concurrent donation succeeded — request.prompt_cache /
+        # cached_tokens / remaining_tokens set in the helper. SSD
+        # fetch+reconstruct skipped. Falls through to enqueue below.
+        logger.debug(
+            "CoW donation path taken for %s (%d cached tokens)",
+            request.request_id,
+            request.cached_tokens,
+        )
     elif self._inflight_store_futures:
         self._should_defer_for_cache_freshness(request)
         request.remaining_tokens = request.prompt_token_ids
@@ -615,6 +667,12 @@ def _should_defer_for_cache_freshness(self, request: Request) -> bool:
 
 def _prepare_prefix_cache_for_request(self, request: Request) -> None:
     if request.request_id in self._prefix_cache_prepared:
+        return
+
+    # CoW concurrent-donation fast path (mirror of add_request): if a live
+    # donor shares this prefix, adopt GPU slabs and skip SSD fetch+reconstruct.
+    if self._try_cow_donate(request):
+        self._prefix_cache_prepared.add(request.request_id)
         return
 
     if self.block_aware_cache is not None:

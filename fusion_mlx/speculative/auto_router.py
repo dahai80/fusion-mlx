@@ -48,6 +48,7 @@ METHOD_EAGLE3 = "eagle3"
 METHOD_DFLASH = "ddtree"
 METHOD_DFLASH2 = "dflash2"
 METHOD_MTP = "mtp"
+METHOD_MEDUSA = "medusa"
 
 
 # D2.6/G10/L13: spec-route decision jsonl logger. Append-only, size-guarded
@@ -102,6 +103,7 @@ DEFAULT_AVAILABLE: frozenset[str] = frozenset(
         METHOD_DFLASH,
         METHOD_DFLASH2,
         METHOD_MTP,
+        METHOD_MEDUSA,
         METHOD_DSPARK,
         METHOD_DFLY,
     }
@@ -195,6 +197,11 @@ _SPEC_ROUTING_TABLE: list[SpecRouteEntry] = [
         family="qwen3",
         methods=(METHOD_MTP,),
         constraints=(),
+    ),
+    SpecRouteEntry(
+        family="qwen3",
+        methods=(METHOD_MEDUSA,),
+        constraints=("not_recurrent",),
     ),
     SpecRouteEntry(
         family="qwen3",

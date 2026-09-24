@@ -2367,11 +2367,18 @@ class EnginePool:
                 )
                 await asyncio.sleep(1.0)
             active_after = mx.get_active_memory()
-            if active_after > self._current_model_memory + 8 * 1024**3:
+            # #951-downstream: the residual margin was a flat +8GB, which
+            # under-warns for video latents (a 49-frame 1344x768 run leaves
+            # ~16GB residual after reclaim). Scale the tolerance with the
+            # model's own footprint so video-class workloads do not log a
+            # spurious "high residual" warning on every reclaim. The floor
+            # stays 8GB for small LLMs.
+            _residual_tol = max(8 * 1024**3, int(self._current_model_memory * 0.20))
+            if active_after > self._current_model_memory + _residual_tol:
                 logger.warning(
                     f"Emergency reclaim high residual for '{model_id}': "
                     f"active_memory={format_size(active_after)} "
-                    f"(expected ≤{format_size(self._current_model_memory + 8 * 1024**3)})"
+                    f"(expected ≤{format_size(self._current_model_memory + _residual_tol)})"
                 )
             else:
                 logger.info(

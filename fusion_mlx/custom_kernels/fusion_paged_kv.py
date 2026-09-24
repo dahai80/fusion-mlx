@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
 
 from .paged_kv_cache import FusionPagedKVCache
+from .paged_kv_cow import (
+    CoWPagedRequestCache,
+    PoolPrefixPageBinder,
+    is_two_level_kv_enabled,
+)
 from .paged_kv_pool import FusionPagedKVPool, FusionPagedRequestCache
 
 logger = logging.getLogger(__name__)
@@ -15,8 +21,15 @@ _INSTALLED_ATTR = "_fusion_paged_kv_installed"
 _CACHE_REGISTRY_ATTR = "_fusion_paged_kv_registry"
 _POOL_ATTR = "_fusion_paged_pool"
 _POOL_SEQ_ATTR = "_fusion_paged_pool_seq"
+_BINDER_ATTR = "_fusion_paged_binder"
 
+# D1 (audit): module-level registry mutated from make_cache (event-loop
+# thread), evict_request / evict_request_by_id / invalidate_request
+# (enforcer + pool evict-callback threads). Without a lock, concurrent
+# make_cache + evict -> dict race. RLock: invalidate_request reads while
+# evict_request_by_id pops (reentrant not required, but harmless).
 _GLOBAL_CACHE_REGISTRY: dict = {}
+_REGISTRY_LOCK = threading.RLock()
 
 
 def is_paged_kv_available() -> bool:
@@ -95,6 +108,15 @@ def install_paged_kv(model: nn.Module, config: Any) -> None:
             )
             setattr(model, _POOL_ATTR, pool)
             setattr(model, _POOL_SEQ_ATTR, 0)
+            cow_on = is_two_level_kv_enabled()
+            pool._cow_enabled = cow_on
+            if cow_on:
+                binder = PoolPrefixPageBinder(pool)
+                setattr(model, _BINDER_ATTR, binder)
+                logger.info(
+                    "install_paged_kv: CoW two-level KV ON — "
+                    "CoWPagedRequestCache + PoolPrefixPageBinder attached"
+                )
 
             def _fusion_make_cache_pool():
                 pool_obj = getattr(model, _POOL_ATTR, None)
@@ -109,6 +131,8 @@ def install_paged_kv(model: nn.Module, config: Any) -> None:
                         dtype=model_dtype_l,
                     )
                     setattr(model, _POOL_ATTR, pool_obj)
+                    if is_two_level_kv_enabled():
+                        setattr(model, _BINDER_ATTR, PoolPrefixPageBinder(pool_obj))
                     logger.info(
                         "install_paged_kv: pool lazily constructed cap=%d",
                         pool_num_blocks,
@@ -117,23 +141,32 @@ def install_paged_kv(model: nn.Module, config: Any) -> None:
                 request_id = f"pool_{seq}"
                 setattr(model, _POOL_SEQ_ATTR, seq + 1)
                 num_layers = _detect_num_layers(model)
-                handles = [
-                    FusionPagedRequestCache(pool_obj, request_id)
-                    for _ in range(num_layers)
-                ]
-                _GLOBAL_CACHE_REGISTRY[request_id] = handles
+                if is_two_level_kv_enabled():
+                    handles = [
+                        CoWPagedRequestCache(pool_obj, request_id)
+                        for _ in range(num_layers)
+                    ]
+                else:
+                    handles = [
+                        FusionPagedRequestCache(pool_obj, request_id)
+                        for _ in range(num_layers)
+                    ]
+                with _REGISTRY_LOCK:
+                    _GLOBAL_CACHE_REGISTRY[request_id] = handles
                 logger.info(
-                    "install_paged_kv: pool make_cache request_id=%s layers=%d",
+                    "install_paged_kv: pool make_cache request_id=%s layers=%d cow=%s",
                     request_id,
                     num_layers,
+                    is_two_level_kv_enabled(),
                 )
                 return handles
 
             model.make_cache = _fusion_make_cache_pool
             logger.info(
-                "install_paged_kv: pool mode installed cap=%d block_size=%d",
+                "install_paged_kv: pool mode installed cap=%d block_size=%d cow=%s",
                 pool_num_blocks,
                 block_size,
+                cow_on,
             )
         else:
 
@@ -167,6 +200,116 @@ def _detect_num_layers(model: nn.Module) -> int:
     return 0
 
 
+def get_prefix_binder(model: Any) -> Any:
+    """Return the pool-level PrefixPageBinder attached by install_paged_kv
+    when CoW two-level KV is ON, else None. Scheduler donation hooks guard on
+    this so the CoW path is dead code in normal (non-CoW) prod.
+    """
+    return getattr(model, _BINDER_ATTR, None)
+
+
+def _compute_pool_prefix_hash(
+    tokens: list[int],
+    block_size: int,
+    model_name: str | None,
+    extra_keys: tuple | None,
+) -> bytes | None:
+    if block_size <= 0 or len(tokens) < block_size:
+        return None
+    from ..cache.paged_cache import compute_block_hash
+
+    parent_hash = None
+    n_full = len(tokens) - (len(tokens) % block_size)
+    for start in range(0, n_full, block_size):
+        block_tokens = tokens[start : start + block_size]
+        parent_hash = compute_block_hash(
+            parent_hash,
+            block_tokens,
+            extra_keys=extra_keys,
+            model_name=model_name,
+        )
+    return parent_hash
+
+
+def register_donor_prefix(
+    model: Any,
+    cache_list: list,
+    tokens: list[int],
+    block_size: int,
+    model_name: str | None = None,
+    extra_keys: tuple | None = None,
+) -> None:
+    """Donor side: after a request's prefill completes, record its prefix
+    chain-hash -> per-layer GPU phys block ids so a later same-prefix request
+    can donate. Only full (block-aligned) blocks are registered. No-op when
+    no binder is attached (non-CoW prod).
+    """
+    binder = get_prefix_binder(model)
+    if binder is None or not cache_list:
+        return
+    h = _compute_pool_prefix_hash(tokens, block_size, model_name, extra_keys)
+    if h is None:
+        return
+    n_full_blocks = (len(tokens) - (len(tokens) % block_size)) // block_size
+    layer_pages = []
+    for c in cache_list:
+        bt = getattr(c, "block_table", None)
+        if bt is None:
+            continue
+        layer_pages.append(list(bt[:n_full_blocks]))
+    if not layer_pages or not layer_pages[0]:
+        return
+    binder.register_prefix(h, layer_pages)
+    logger.debug(
+        "register_donor_prefix: hash=%s layers=%d blocks/layer=%d",
+        h.hex()[:16] if isinstance(h, bytes) else str(h),
+        len(layer_pages),
+        len(layer_pages[0]),
+    )
+
+
+def try_donate_prefix(
+    model: Any,
+    request_id: str,
+    tokens: list[int],
+    block_size: int,
+    model_name: str | None = None,
+    extra_keys: tuple | None = None,
+) -> tuple[list, int] | None:
+    """Receiver side: on admission, if a concurrent donor with the same prefix
+    chain-hash is still resident, donate its GPU slabs (refcount-shared) into
+    fresh CoWPagedRequestCache handles. Returns (handles, n_donated_tokens) or
+    None (no binder / no live donor -> fall back to SSD reconstruct).
+    """
+    binder = get_prefix_binder(model)
+    if binder is None:
+        return None
+    h = _compute_pool_prefix_hash(tokens, block_size, model_name, extra_keys)
+    if h is None:
+        return None
+    donated = binder.donate(h, request_id)
+    if not donated:
+        return None
+    handles = model.make_cache()
+    if len(handles) != len(donated):
+        logger.warning(
+            "try_donate_prefix: layer mismatch handles=%d donated=%d (skip)",
+            len(handles),
+            len(donated),
+        )
+        return None
+    for handle, layer_pages in zip(handles, donated):
+        handle.adopt_donated(layer_pages)
+    n_donated_tokens = len(donated[0]) * block_size
+    logger.info(
+        "try_donate_prefix: donated %d layers / %d tokens to request=%s",
+        len(donated),
+        n_donated_tokens,
+        request_id,
+    )
+    return handles, n_donated_tokens
+
+
 def uninstall_paged_kv(model: nn.Module) -> None:
     try:
         if getattr(model, _INSTALLED_ATTR, False):
@@ -186,7 +329,8 @@ def register_cache(model: nn.Module, request_id: str, caches: list) -> None:
     if reg is None:
         return
     reg[request_id] = caches
-    _GLOBAL_CACHE_REGISTRY[request_id] = caches
+    with _REGISTRY_LOCK:
+        _GLOBAL_CACHE_REGISTRY[request_id] = caches
 
 
 def evict_request(model: nn.Module, request_id: str) -> int:
@@ -195,21 +339,23 @@ def evict_request(model: nn.Module, request_id: str) -> int:
     if reg is not None:
         caches = reg.pop(request_id, None)
     if caches is None:
-        caches = _GLOBAL_CACHE_REGISTRY.pop(request_id, None)
+        with _REGISTRY_LOCK:
+            caches = _GLOBAL_CACHE_REGISTRY.pop(request_id, None)
     if not caches:
         return 0
     freed = 0
     for c in caches:
         try:
             freed += c.free_all()
-        except Exception:
-            pass
+        except Exception as e:  # D15 (audit): log, don't swallow silently
+            logger.warning("evict_request: free_all failed for %s: %s", request_id, e)
     logger.info("evict_request: freed %d blocks for %s", freed, request_id)
     return freed
 
 
 def evict_request_by_id(request_id: str) -> int:
-    caches = _GLOBAL_CACHE_REGISTRY.pop(request_id, None)
+    with _REGISTRY_LOCK:
+        caches = _GLOBAL_CACHE_REGISTRY.pop(request_id, None)
     if not caches:
         logger.debug("evict_request_by_id: no caches for %s", request_id)
         return 0
@@ -217,10 +363,40 @@ def evict_request_by_id(request_id: str) -> int:
     for c in caches:
         try:
             freed += c.free_all()
-        except Exception:
-            pass
+        except Exception as e:  # D15 (audit): log, don't swallow silently
+            logger.warning(
+                "evict_request_by_id: free_all failed for %s: %s", request_id, e
+            )
     logger.info("evict_request_by_id: freed %d blocks for %s", freed, request_id)
     return freed
+
+
+def sweep_registry(active_request_ids: set[str]) -> int:
+    # D2 (audit): the registry leaks permanently when a request aborts
+    # without an explicit evict (crash, exception path, forgotten cleanup)
+    # — its cache handles + pool blocks never free. No TTL/weakref existed.
+    # Called periodically by the scheduler step sync with the set of
+    # currently-active request ids; drops registry entries whose request is
+    # no longer active, freeing their blocks back to the pool. Returns the
+    # number of stale entries reclaimed.
+    if not active_request_ids:
+        return 0
+    stale: list[str] = []
+    with _REGISTRY_LOCK:
+        stale = [rid for rid in _GLOBAL_CACHE_REGISTRY if rid not in active_request_ids]
+    if not stale:
+        return 0
+    reclaimed = 0
+    for rid in stale:
+        reclaimed += evict_request_by_id(rid)
+    if reclaimed:
+        logger.warning(
+            "sweep_registry: reclaimed %d stale request(s) from paged-KV "
+            "registry (leak guard): %s",
+            len(stale),
+            stale,
+        )
+    return len(stale)
 
 
 def invalidate_request(request_id: str) -> int:
@@ -236,9 +412,11 @@ def invalidate_request(request_id: str) -> int:
     corrupting. The registry entry stays so the victim's eventual
     completion/abort path still finds + frees it cleanly.
     """
-    caches = _GLOBAL_CACHE_REGISTRY.get(request_id)
-    if not caches:
-        return 0
+    with _REGISTRY_LOCK:
+        caches = _GLOBAL_CACHE_REGISTRY.get(request_id)
+        if not caches:
+            return 0
+        caches = list(caches)
     cleared = 0
     for c in caches:
         try:
@@ -267,5 +445,6 @@ __all__ = [
     "register_cache",
     "evict_request",
     "evict_request_by_id",
+    "sweep_registry",
     "invalidate_request",
 ]

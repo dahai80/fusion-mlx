@@ -60,8 +60,30 @@ def _sync_paged_pool_active(self) -> None:
             from ..custom_kernels.fusion_paged_kv import invalidate_request
 
             pool.set_evict_callback(invalidate_request)
-        pool.set_active_ids(set(self.running.keys()))
+        # Namespace fix (#955): the pool tags blocks with the per-request
+        # pool id (pool_N from _fusion_make_cache_pool), NOT the scheduler
+        # request_id (UUID). Passing UUIDs to set_active_ids left every
+        # pool request evictable (evictable = owners - active_ids never
+        # matched), so LRU eviction reclaimed ACTIVE concurrent requests
+        # during the split deepcopy -> invalidate_request cleared their
+        # block_table mid-deepcopy -> decode garbage. The pool_N id is
+        # stored on each running request as _fusion_pool_id at insert
+        # time (sched_schedule._schedule_waiting / sched_batch._insert).
+        active_pool_ids: set[str] = set()
+        for req in self.running.values():
+            _pid = getattr(req, "_fusion_pool_id", None)
+            if _pid:
+                active_pool_ids.add(_pid)
+        pool.set_active_ids(active_pool_ids)
         pool.touch_active()
+        # D2 (audit): reclaim registry entries for requests no longer in
+        # the running set (aborted/crashed/forgotten). Without this the
+        # _GLOBAL_CACHE_REGISTRY leaks cache handles + pool blocks forever
+        # on any request that exits without an explicit evict. Pass the
+        # full active set (running keys) so sweep drops stale entries.
+        from ..custom_kernels.fusion_paged_kv import sweep_registry
+
+        sweep_registry(active_pool_ids)
     except Exception as e:
         logger.debug("paged_kv pool active-sync failed: %s", e)
 
@@ -743,6 +765,11 @@ def _loaded_spec_methods(self) -> dict[str, bool]:
         and self._spec_decode_state.draft_model is not None
         and type(self._spec_decode_state.draft_model).__name__ == "Eagle3Speculator"
     )
+    medusa_loaded = (
+        self._spec_decode_state is not None
+        and self._spec_decode_state.draft_model is not None
+        and type(self._spec_decode_state.draft_model).__name__ == "MedusaSpeculator"
+    )
     return loaded_methods(
         suffix=self._ngram_spec_state is not None,
         eagle3=eagle3_loaded,
@@ -750,6 +777,7 @@ def _loaded_spec_methods(self) -> dict[str, bool]:
         dflash2=getattr(self, "_dflash2_runtime", None) is not None,
         dspark=self._dspark_runtime is not None,
         mtp=bool(getattr(self.model, "_fusion_mlx_mtp_decode_enabled", False)),
+        medusa=medusa_loaded,
     )
 
 
@@ -823,6 +851,7 @@ def _try_spec_decode(
         METHOD_DFLASH2,
         METHOD_DSPARK,
         METHOD_EAGLE3,
+        METHOD_MEDUSA,
         METHOD_NGRAM,
     )
 
@@ -850,7 +879,9 @@ def _try_spec_decode(
         result = ngram_spec_step(self, output, current_token, request_id)
         if result:
             return result
-    elif method == METHOD_EAGLE3 and self._spec_decode_state is not None:
+    elif (
+        method in (METHOD_EAGLE3, METHOD_MEDUSA) and self._spec_decode_state is not None
+    ):
         from .spec_decode import spec_decode_step
 
         result = spec_decode_step(self, output, current_token, request_id)
@@ -879,9 +910,13 @@ def _try_spec_decode(
     # METHOD_MTP (handled inside bg._next) and "" (no method) fall through.
 
     # Draft-model spec decode (GPU-side, requires loaded draft model) - not
-    # router-controlled; kept as fallback after the chosen heuristic.
+    # router-controlled; kept as fallback after the chosen heuristic. Skip
+    # when the router already picked a draft-model method (eagle3/medusa):
+    # that branch above already called spec_decode_step, and re-calling it
+    # here double-counts steps and re-reads a stale capture.
     if (
-        self._spec_decode_state is not None
+        method not in (METHOD_EAGLE3, METHOD_MEDUSA)
+        and self._spec_decode_state is not None
         and self._spec_decode_state.draft_model is not None
     ):
         from .spec_decode import spec_decode_step

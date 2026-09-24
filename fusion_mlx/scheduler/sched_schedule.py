@@ -812,6 +812,34 @@ def _schedule_waiting(
                 not _force_inline
                 and len(tokens_to_process) > _INLINE_PREFILL_TOKEN_LIMIT
             )
+            # P0-paged-concurrency: when the paged-KV pool is active, force the
+            # non-chunked external-prefill path. The chunked path advances
+            # self.prefilling inside the SAME step() that decodes running
+            # requests, so both land in the BatchGenerator's next() and
+            # MergedPagedCacheView receives mixed-phase constituents (e.g.
+            # offset 7 mid-prefill next to offset 46 decode) — corrupting KV.
+            # Routing every prompt through _do_external_prefill (a separate
+            # forward outside BatchGenerator) means BatchGenerator only ever
+            # sees fully-prefilled decode-phase caches. Cost: long prompts
+            # block running decode for the full prompt length (native mlx_lm
+            # semantics, no interleaving). The per-row variable-step fix in
+            # MergedPagedCacheView is tracked as a follow-up to restore
+            # interleaving safely.
+            _paged_chunked_block = (
+                os.environ.get("FUSION_PAGED_CHUNKED_BLOCK", "") == "1"
+            )
+            if (
+                _use_chunked
+                and getattr(self.model, "_fusion_paged_pool", None) is not None
+                and _paged_chunked_block
+            ):
+                _use_chunked = False
+                logger.info(
+                    "paged-pool active: forcing external prefill (no chunked+decode "
+                    "mixed forward) for %s tokens=%d",
+                    request.request_id,
+                    len(tokens_to_process),
+                )
             if (
                 _use_chunked
                 and vlm_embeds is None
@@ -1016,6 +1044,14 @@ def _schedule_waiting(
         # detokenization/stop-state that rely on the full prompt history.
         prompt_ids = request.prompt_token_ids
         seed_prefix = prompt_ids[: len(prompt_ids) - len(tokens_to_process)]
+        if cache_to_use:
+            logger.info(
+                "sched insert request=%s cache_type=%s off=%s ncache=%d",
+                request.request_id,
+                type(cache_to_use[0]).__name__,
+                getattr(cache_to_use[0], "offset", "?"),
+                len(cache_to_use),
+            )
         uids = self.batch_generator.insert(
             [tokens_to_process],
             max_tokens=[request.sampling_params.max_tokens],
@@ -1038,6 +1074,42 @@ def _schedule_waiting(
             request.last_activity_at = now
             self.running[request.request_id] = request
             scheduled.append(request)
+
+            # Namespace fix (#955): store the pool-side request id (pool_N)
+            # on the scheduler Request so _sync_paged_pool_active can build
+            # the correct active_ids set. The pool tags blocks with pool_N
+            # (from _fusion_make_cache_pool), NOT the scheduler UUID.
+            # Passing UUIDs to set_active_ids left every pool request
+            # evictable -> LRU reclaimed active concurrent requests.
+            if cache_to_use:
+                _pc_rid = getattr(cache_to_use[0], "request_id", None)
+                if _pc_rid is not None:
+                    request._fusion_pool_id = _pc_rid
+
+            # CoW donor registration (mirror of _insert_prefilled_request):
+            # record prefix chain-hash -> per-layer GPU phys blocks for
+            # concurrent same-prefix donation. No-op when CoW is OFF.
+            if cache_to_use is not None:
+                try:
+                    from ..custom_kernels.fusion_paged_kv import register_donor_prefix
+
+                    pool = getattr(self.model, "_fusion_paged_pool", None)
+                    bs = pool.block_size if pool is not None else 0
+                    bac_name = getattr(self.block_aware_cache, "model_name", None)
+                    register_donor_prefix(
+                        self.model,
+                        cache_to_use,
+                        request.prompt_token_ids,
+                        bs,
+                        model_name=bac_name,
+                        extra_keys=request.vlm_extra_keys_for_cache,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "CoW register_donor_prefix skipped for %s: %s",
+                        request.request_id,
+                        exc,
+                    )
 
             # Register per-UID rope_delta for mRoPE decode.
             if hasattr(self.model, "register_rope_delta"):

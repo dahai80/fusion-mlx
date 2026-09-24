@@ -94,10 +94,11 @@ def video_transformer_block(*args, **kwargs):
     return VideoTransformerBlock(*args, **kwargs)
 
 
-def fp8_linear(*args, **kwargs):
-    from .fp8_linear import FP8Linear
-
-    return FP8Linear(*args, **kwargs)
+# D10 (audit): the mfa/fp8_linear.FP8Linear (block-scaled W8A8, uint8
+# storage) is a DISTINCT algorithm from custom_kernels/fp8_linear.FP8Linear
+# (true mx.float8_e4m3fn storage). The mfa variant is imported directly by
+# tests/where needed — no factory re-export here to avoid advertising two
+# conflicting FP8Linear surfaces from one package.
 
 
 __all__ = [

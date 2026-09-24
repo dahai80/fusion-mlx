@@ -38,8 +38,22 @@ on product support, Tier-3 items are deliberately not built.
   (hardware probe, memory sentinel, C-ABI envelope)
 - `migrate/asfw.py`, `migrate/gguf_loader.py` — GGUF loader + ASFW
   layout conversion (FUSION_SHIM_ASFW)
-- `custom_kernels/paged_kv_cow.py` — two-level paged KV with CoW
-  (FUSION_SHIM_TWO_LEVEL_KV)
+- `custom_kernels/paged_kv_cow.py` — pool-level CoW paged KV with
+  concurrent prefix donation (FUSION_SHIM_TWO_LEVEL_KV). When ON and the
+  paged pool is enabled, `make_cache` returns `CoWPagedRequestCache`
+  handles backed by the shared `FusionPagedKVPool` (refcount +
+  `_owners`). A pool-level `PoolPrefixPageBinder` maps the prefix
+  chain-hash (same `compute_block_hash` the SSD prefix index uses) to
+  per-layer GPU physical block ids. On admission, a request whose prefix
+  matches a still-resident concurrent donor adopts the donor's slabs via
+  `pool.share_block` (refcount-increment, zero copy) and skips prefill
+  for those tokens; on divergence `ensure_writable` copies only the
+  written block. Donation scope is **concurrent same-prefix requests
+  only** (donor still decoding, slabs resident). Cross-session donation
+  after the donor finishes (materializing SSD blocks into resident GPU
+  slabs) is a documented future extension, not in this scope. The
+  standalone `CoWPagedKVCache` prototype is retained as a test/golden
+  reference only.
 - `custom_kernels/fused_quant_gemv.py` — fused INT4 dequant+GEMV Metal
   kernel (FUSION_FUSED_QUANT_GEMV, default ON). -Ofast precompiled
   metallib path: the native-clone algorithm (2 simdgroups x 4 rows/TG,
@@ -88,7 +102,7 @@ runtime via SIGHUP settings reload or test monkeypatching. Defaults:
 | FUSION_ENGINE_RUNNER | OFF | C++ EngineRunner prototype (exclusive decode thread) |
 | FUSION_SHIM_FUSED_RMSNORM | ON | Fused RMSNorm+residual kernel (microbench -47%; see audit — not wired into engine, contract mismatch) |
 | FUSION_SHIM_FUSED_ROPE | OFF | Fused YaRN/NTK RoPE kernel |
-| FUSION_SHIM_TWO_LEVEL_KV | OFF | Two-level paged KV + CoW |
+| FUSION_SHIM_TWO_LEVEL_KV | OFF | Pool-level CoW paged KV + concurrent prefix donation (requires paged pool ON) |
 | FUSION_SHIM_TREE_MASK | OFF | Tree-mask speculative verify |
 | FUSION_SHIM_QUANT_KV | OFF | Q4_0/Q8_0 quantized-KV online decompression |
 | FUSION_SHIM_IQ | OFF | imatrix + IQ/GGUF mixed quant |

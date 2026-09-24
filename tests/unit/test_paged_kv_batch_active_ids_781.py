@@ -18,13 +18,15 @@ from fusion_mlx.custom_kernels.paged_kv_pool import (
 
 
 def _make_pool(cap: int = 4) -> FusionPagedKVPool:
-    return FusionPagedKVPool(
+    pool = FusionPagedKVPool(
         block_size=2,
         num_blocks=cap,
         n_kv_heads=1,
         head_dim=4,
         dtype=mx.float32,
     )
+    pool._cow_enabled = True
+    return pool
 
 
 class TestBatchWideActiveIds:

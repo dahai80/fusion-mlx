@@ -86,7 +86,14 @@ def w4a8_fused_matmul(
             bits,
             act_bits,
         )
-    logger.debug("phase_c w4a8 fallback to mx.quantized_matmul (fp16 activations)")
+    # D4 (audit): fallback is W4-only — the A8 activation-quant upside is
+    # NOT realized. Log loudly (not debug) so callers know the native
+    # kernel is absent and the matmul is not actually fused-quant.
+    logger.warning(
+        "phase_c w4a8_fused_matmul: native kernel unavailable — falling "
+        "back to mx.quantized_matmul (W4-only, A8 activation quant NOT "
+        "active)"
+    )
     return mx.quantized_matmul(
         w_quantized,
         w_scales,

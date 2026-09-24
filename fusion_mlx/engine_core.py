@@ -714,6 +714,11 @@ class EngineCore:
 
                     draft = Eagle3Speculator()
                     logger.info("Speculative decode: using EAGLE3 method")
+                elif spec_method == "medusa":
+                    from .speculative.medusa import MedusaSpeculator
+
+                    draft = MedusaSpeculator()
+                    logger.info("Speculative decode: using MEDUSA method")
                 else:
                     from .speculative.draft_model import DraftModelDecoder
 
@@ -744,9 +749,6 @@ class EngineCore:
                         target_embed = getattr(model.model, "embed_tokens", None)
                         if target_embed is not None:
                             draft.bind_target_embed_from_model(target_embed)
-                        # P3-08 (#0909 audit): set target model layer count
-                        # so capture_layers scales to the actual depth
-                        # instead of hardcoded 32-layer [8, 16, 31].
                         _target_layers = getattr(model.model, "layers", None)
                         _num_layers = (
                             len(_target_layers) if _target_layers is not None else 0
@@ -765,6 +767,29 @@ class EngineCore:
                             "Speculative decode: eagle3 hidden_capture installed layers=%s",
                             capture_layers,
                         )
+                    elif spec_method == "medusa" and hasattr(model, "model"):
+                        draft.bind_target(model)
+                        _target_layers = getattr(model.model, "layers", None)
+                        _num_layers = (
+                            len(_target_layers) if _target_layers is not None else 0
+                        )
+                        if _num_layers > 0 and hasattr(draft, "set_target_num_layers"):
+                            draft.set_target_num_layers(_num_layers)
+                        capture_layers = getattr(draft, "capture_layers", [])
+                        if capture_layers:
+                            from .speculative.hidden_capture import (
+                                HiddenStateCapture,
+                            )
+
+                            hidden_capture = HiddenStateCapture(
+                                model, layer_ids=capture_layers
+                            )
+                            hidden_capture.install()
+                            draft.set_hidden_capture(hidden_capture)
+                            logger.info(
+                                "Speculative decode: medusa hidden_capture installed layers=%s",
+                                capture_layers,
+                            )
                     self.scheduler._spec_decode_state = SpecDecodeState(
                         draft_model_decoder=draft,
                         hidden_capture=hidden_capture,

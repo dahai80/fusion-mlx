@@ -208,7 +208,10 @@ def _make_paged_decode_attention_kernel_tiled():
     )
 
 
+import threading as _threading
+
 _logged_compile = False
+_logged_compile_lock = _threading.Lock()
 
 
 def paged_decode_attention(
@@ -269,7 +272,15 @@ def paged_decode_attention(
     use_tiled = tile_elems <= _TILE_SHARED_MEM_LIMIT
 
     global _logged_compile
-    if not _logged_compile:
+    # D16 (audit): guard the one-shot compile log with a lock so two
+    # concurrent first-callers don't both log.
+    with _logged_compile_lock:
+        if _logged_compile:
+            already_logged = True
+        else:
+            _logged_compile = True
+            already_logged = False
+    if not already_logged:
         if use_tiled:
             logger.info(
                 "paged fused decode kernel: tiled path grid=(%d) threadgroup=(%d) "
@@ -302,7 +313,6 @@ def paged_decode_attention(
                 max_kv,
                 max_blocks,
             )
-        _logged_compile = True
 
     if use_tiled:
         kernel = _make_paged_decode_attention_kernel_tiled()

@@ -163,6 +163,35 @@ def _default_on_orphan(expected_ppid: int, observed_ppid: int) -> None:
         f"observed PPID {observed_ppid} — self-terminating",
         file=sys.stderr,
     )
+    # #951-downstream: macOS jetsam kills the supervisor shell (parent) first
+    # under memory pressure — the serve child then detects the PPID change and
+    # self-SIGTERMs here, BEFORE the video step-boundary check_step_pressure
+    # can fire, so a 49-frame 1344x768 run dies at step ~26 with no 507. If a
+    # video generation is in-flight, arm the video abort event and give the
+    # video thread a short grace window to raise VideoMemoryPressureError
+    # (clean 507, server survives the request) before we self-terminate. The
+    # self-SIGTERM is deferred, not skipped — once the generation ends (or the
+    # grace expires) we proceed with the normal shutdown path below.
+    try:
+        from fusion_mlx.scheduler.video_unified_scheduler import (
+            is_video_generating,
+            signal_video_abort,
+            wait_video_generation_done,
+        )
+
+        if is_video_generating():
+            signal_video_abort(
+                f"parent process died (ppid {expected_ppid} -> "
+                f"{observed_ppid}), likely jetsam; aborting in-flight video "
+                f"to 507 before self-terminate"
+            )
+            logger.warning(
+                "[rapid-mlx] parent watchdog: video generation in-flight on "
+                "orphan — armed abort, waiting up to 12s for 507 before exit"
+            )
+            wait_video_generation_done(timeout=12.0)
+    except Exception as exc:
+        logger.debug("parent watchdog video-abort hook failed: %s", exc)
     try:
         os.kill(os.getpid(), signal.SIGTERM)
     except OSError:

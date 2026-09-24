@@ -35,6 +35,7 @@ def test_pool_free_request_returns_blocks():
 
 def test_pool_exhausted_raises():
     pool = FusionPagedKVPool(block_size=4, num_blocks=2, n_kv_heads=2, head_dim=8)
+    pool._cow_enabled = True
     a = FusionPagedRequestCache(pool, request_id="a")
     _fill(a, 8)  # fills 2 blocks
     with pytest.raises(RuntimeError, match="pool exhausted"):

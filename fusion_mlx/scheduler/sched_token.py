@@ -476,6 +476,15 @@ def _apply_turboquant_kv_empty(self, prompt_cache: list[Any]) -> None:
     from mlx_lm.models.cache import CacheList, KVCache
     from mlx_vlm.turboquant import TurboQuantKVCache
 
+    # Ensure TurboQuantKVCache.merge monkey-patch is applied before creating
+    # instances — the patch is normally applied on import of
+    # fusion_mlx.turboquant_kv, but this function imports TurboQuantKVCache
+    # directly from mlx_vlm, so the patch may not have fired yet. Without it,
+    # _merge_caches() raises "does not yet support batching with history".
+    from ..turboquant_kv import _apply_turboquant_merge_patch  # noqa: F401
+
+    _apply_turboquant_merge_patch()
+
     kv_indices = [i for i, c in enumerate(prompt_cache) if isinstance(c, KVCache)]
     skip_last = self._turboquant_skip_last and len(kv_indices) > 1
     last_kv_idx = kv_indices[-1] if skip_last else -1
@@ -517,6 +526,10 @@ def _apply_turboquant_kv_convert(self, prompt_cache: list[Any]) -> None:
     """
     from mlx_lm.models.cache import CacheList, KVCache
     from mlx_vlm.turboquant import TurboQuantKVCache
+
+    from ..turboquant_kv import _apply_turboquant_merge_patch  # noqa: F401
+
+    _apply_turboquant_merge_patch()
 
     kv_indices = [i for i, c in enumerate(prompt_cache) if isinstance(c, KVCache)]
     skip_last = self._turboquant_skip_last and len(kv_indices) > 1

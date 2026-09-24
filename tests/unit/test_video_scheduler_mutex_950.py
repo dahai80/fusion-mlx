@@ -114,3 +114,104 @@ def test_check_step_pressure_recovers_after_reclaim(monkeypatch):
     # emergency_reclaim must not crash (no real cache allocated).
     level = sched.check_step_pressure()
     assert level is MemoryLevel.OK
+
+
+# #951-downstream: external abort signal (enforcer 1s poll / parent watchdog
+# orphan path) must convert a process-killing jetsam/fatal_exit into a clean
+# 507 VideoMemoryPressureError at the next step boundary.
+def test_signal_video_abort_raises_when_generating():
+    from fusion_mlx.scheduler import video_unified_scheduler as mod
+
+    mod._singleton = None
+    sched = mod.get_video_scheduler()
+    mod._VIDEO_ABORT_EVENT.clear()
+    mod._VIDEO_ABORT_REASON.clear()
+    sched.acquire("ltx_video_legacy")
+    try:
+        # enforcer/watchdog arms the event from another thread
+        armed = mod.signal_video_abort("enforcer emergency pressure test")
+        assert armed is True
+        assert mod.is_video_generating() is True
+        with pytest.raises(VideoMemoryPressureError) as exc_info:
+            sched.check_abort()
+        assert "enforcer emergency pressure test" in str(exc_info.value)
+        # event cleared after raising
+        assert mod._VIDEO_ABORT_EVENT.is_set() is False
+    finally:
+        sched.release("ltx_video_legacy")
+        mod._singleton = None
+
+
+def test_signal_video_abort_noop_when_not_generating():
+    from fusion_mlx.scheduler import video_unified_scheduler as mod
+
+    mod._singleton = None
+    mod._VIDEO_ABORT_EVENT.clear()
+    mod._VIDEO_ABORT_REASON.clear()
+    # no generation in-flight -> signal returns False (caller proceeds hard)
+    armed = mod.signal_video_abort("orphan but no video")
+    assert armed is False
+    # check_abort is a no-op (no active model, but event not set anyway)
+    assert mod._VIDEO_ABORT_EVENT.is_set() is False
+
+
+def test_check_step_pressure_checks_abort_event_first():
+    # #951-downstream: check_step_pressure must check the external abort event
+    # BEFORE its own footprint probe — the enforcer (1s) sees the spike during
+    # a step eval; this probe runs at the boundary where footprint momentarily
+    # dipped below L3 (MLX cache released between steps). Without checking the
+    # event first, the 49-frame run escapes the guard.
+    from fusion_mlx.scheduler import video_unified_scheduler as mod
+
+    mod._singleton = None
+    sched = mod.get_video_scheduler()
+    mod._VIDEO_ABORT_EVENT.clear()
+    mod._VIDEO_ABORT_REASON.clear()
+    sched.acquire("ltx_video_legacy")
+    try:
+        mod.signal_video_abort("watchdog orphan")
+        # force footprint to read OK (below L3) — proves abort is checked first
+        sched._current_bytes = lambda: 0
+        with pytest.raises(VideoMemoryPressureError):
+            sched.check_step_pressure()
+    finally:
+        sched.release("ltx_video_legacy")
+        mod._singleton = None
+
+
+def test_abort_event_cleared_on_acquire_release_isolation():
+    from fusion_mlx.scheduler import video_unified_scheduler as mod
+
+    mod._singleton = None
+    sched = mod.get_video_scheduler()
+    # stale abort from a prior task
+    mod._VIDEO_ABORT_EVENT.set()
+    mod._VIDEO_ABORT_REASON.append("stale")
+    sched.acquire("model_a")
+    try:
+        assert mod._VIDEO_ABORT_EVENT.is_set() is False
+    finally:
+        sched.release("model_a")
+    assert mod._VIDEO_ABORT_EVENT.is_set() is False
+    mod._singleton = None
+
+
+def test_wait_video_generation_done_returns_when_released():
+    from fusion_mlx.scheduler import video_unified_scheduler as mod
+
+    mod._singleton = None
+    sched = mod.get_video_scheduler()
+    sched.acquire("model_a")
+
+    def _release_after():
+        import time as _t
+
+        _t.sleep(0.4)
+        sched.release("model_a")
+
+    t = threading.Thread(target=_release_after)
+    t.start()
+    ok = mod.wait_video_generation_done(timeout=3.0)
+    t.join()
+    assert ok is True
+    mod._singleton = None
