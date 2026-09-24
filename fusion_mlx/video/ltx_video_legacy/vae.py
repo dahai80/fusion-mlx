@@ -762,6 +762,13 @@ class LTVideoVAE(nn.Module):
     def decode(self, z, target_shape=None, temb=None):
         if target_shape is None:
             target_shape = z.shape
+        # Mirror encode(): denoise runs in per-channel-normalized latent space,
+        # so decode must invert it (latents * std + mean) before the VAE —
+        # matches diffusers _denormalize_latents.
+        if self.mean_of_means is not None and self.std_of_means is not None:
+            m = self.mean_of_means.reshape(1, -1, 1, 1, 1)
+            s = self.std_of_means.reshape(1, -1, 1, 1, 1)
+            z = z * s + m
         return self.decoder(z, target_shape=target_shape, temb=temb)
 
     def encode(self, x):
