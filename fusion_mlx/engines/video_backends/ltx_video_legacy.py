@@ -436,8 +436,8 @@ def _generate_one(
     if negative_prompt:
         neg_embeds, neg_mask = _encode_prompt(t5, tokenizer, negative_prompt)
     else:
-        neg_embeds = mx.zeros_like(prompt_embeds)
-        neg_mask = mx.zeros_like(prompt_mask)
+        # 官方行为：无 negative_prompt 时仍走 T5 编码空串（BOS/EOS token），而非全零嵌入
+        neg_embeds, neg_mask = _encode_prompt(t5, tokenizer, "")
 
     logger.info(
         "legacy-ltx generate: prompt_len=%d frames=%d %dx%d@%dfps seed=%d "
