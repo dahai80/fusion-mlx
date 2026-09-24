@@ -276,6 +276,71 @@ class MuseTalkPipeline:
         step = max_t / (steps - 1) if steps > 1 else 0.0
         return [int(round(max_t - i * step)) for i in range(steps)]
 
+    # #956: per-frame GPU activation cost (UNet res_samples + VAE decode at
+    # 256x256). Measured on M5 Max @ fp16: a 58-frame batch peaks at ~26.6 GiB
+    # incl ~1.7 GiB weights -> ~430 MiB/frame incremental. Rounded up to 500 MiB
+    # (fp16) / 1000 MiB (fp32) so the estimate never undershoots the real cost
+    # (undershoot -> oversized batch -> the corrupted 272 GB metal::malloc that
+    # aborts the host process via libc++abi, uncatchable from Python).
+    _PER_FRAME_MB_FP16 = 500
+    _PER_FRAME_MB_FP32 = 1000
+    _OOM_HEADROOM = 0.5
+    _MIN_SAFE_FREE_MB = 600  # below this even a 1-frame batch is refused
+
+    def _available_bytes(self) -> int:
+        # Free unified memory (Apple Silicon shared GPU/CPU). macOS does NOT
+        # expose SC_AVPHYS_PAGES, so prefer psutil, then parse vm_stat, then
+        # fall back to total physical RAM (conservative) — never the bogus 4 GiB.
+        try:
+            import psutil
+
+            return int(psutil.virtual_memory().available)
+        except Exception:
+            pass
+        try:
+            import subprocess
+
+            out = subprocess.run(
+                ["vm_stat"], capture_output=True, text=True, timeout=2
+            ).stdout
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            free = 0
+            for line in out.splitlines():
+                low = line.lower()
+                if "free" in low or "inactive" in low or "purgeable" in low:
+                    n = int(line.split(":")[-1].strip().rstrip("."))
+                    free += n * page_size
+            if free > 0:
+                return free
+        except Exception:
+            pass
+        try:
+            return os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+        except (ValueError, OSError, AttributeError):
+            return 4 * 1024**3
+
+    def _per_frame_mb(self) -> int:
+        return (
+            self._PER_FRAME_MB_FP32
+            if self.dtype == mx.float32
+            else self._PER_FRAME_MB_FP16
+        )
+
+    def safe_batch_size(self, n_frames: int) -> int:
+        # #956: largest batch that fits the current free-memory budget. Public so
+        # callers can pre-split a stack before invoking render/generate_faces.
+        free_mb = self._available_bytes() // (1024 * 1024)
+        if free_mb < self._MIN_SAFE_FREE_MB:
+            raise RuntimeError(
+                f"MuseTalk OOM preflight: only {free_mb} MiB free (< "
+                f"{self._MIN_SAFE_FREE_MB} MiB floor). Stop co-resident GPU"
+                f" workloads (e.g. fusion-mlx service) or reduce n_frames."
+            )
+        budget_mb = int(free_mb * self._OOM_HEADROOM)
+        per = self._per_frame_mb()
+        safe = max(1, budget_mb // per)
+        return min(safe, max(1, n_frames))
+
     def generate_faces(self, latent_batch, audio_chunks, steps: int | None = None):
         """latent_batch: (B,8,32,32) mx; audio_chunks: (B,50,384) mx -> recon BGR uint8 (B,256,256,3).
 
@@ -285,11 +350,39 @@ class MuseTalkPipeline:
 
         #928: ``render()`` is the preferred stable public entry; this method is
         kept for back-compat and delegates to the same unet+decode core.
+
+        #956: auto-chunks when the requested batch exceeds the GPU free-memory
+        budget so a long TTS clip (750+ frames) co-resident with the fusion-mlx
+        service no longer triggers an uncatchable metal::malloc abort.
         """
+        n = int(latent_batch.shape[0])
+        if n <= 0:
+            return np.empty((0, 256, 256, 3), dtype=np.uint8)
+        safe = self.safe_batch_size(n)
+        if n <= safe:
+            return self._generate_faces_core(latent_batch, audio_chunks, steps)
+        logger.info(
+            "musetalk generate_faces #956: auto-chunk n=%d safe_batch=%d per_frame=%dMB",
+            n,
+            safe,
+            self._per_frame_mb(),
+        )
+        return self._chunked_generate(latent_batch, audio_chunks, safe, steps)
+
+    def _generate_faces_core(self, latent_batch, audio_chunks, steps):
         pred = self._run_unet(latent_batch, audio_chunks, steps)
         # single sync at the final readback — an extra mx.eval(pred) here forces
         # a second round-trip per frame (#921 realtime loop)
         return self.decode_latents(pred)
+
+    def _chunked_generate(self, latent_batch, audio_chunks, batch_size, steps):
+        n = int(latent_batch.shape[0])
+        out = []
+        for i in range(0, n, batch_size):
+            lb = latent_batch[i : i + batch_size]
+            cb = audio_chunks[i : i + batch_size]
+            out.append(self._generate_faces_core(lb, cb, steps))
+        return np.concatenate(out, axis=0)
 
     def _run_unet(self, latent_batch, audio_chunks, steps):
         # #928: shared unet+DDIM core used by both render() and render_latent().
@@ -313,12 +406,30 @@ class MuseTalkPipeline:
         ``mx.compile``); does NOT force an ``mx.eval`` boundary.
 
         ``dtype`` casts inputs to the pipe dtype (or override) before unet.
+
+        #956: auto-chunks when the batch exceeds the GPU free-memory budget
+        (returns the concatenated MX array, semantics preserved).
         """
         dt = self.dtype if dtype is None else dtype
-        lat = latent_batch.astype(dt)
-        aud = audio_chunks.astype(dt)
-        pred = self._run_unet(lat, aud, steps)
-        return self.decode_to_array(pred)
+        n = int(latent_batch.shape[0])
+        if n <= 0:
+            return mx.zeros((0, 256, 256, 3))
+        safe = self.safe_batch_size(n)
+        if n <= safe:
+            lat = latent_batch.astype(dt)
+            aud = audio_chunks.astype(dt)
+            pred = self._run_unet(lat, aud, steps)
+            return self.decode_to_array(pred)
+        logger.info(
+            "musetalk render_latent #956: auto-chunk n=%d safe_batch=%d", n, safe
+        )
+        parts = []
+        for i in range(0, n, safe):
+            lat = latent_batch[i : i + safe].astype(dt)
+            aud = audio_chunks[i : i + safe].astype(dt)
+            pred = self._run_unet(lat, aud, steps)
+            parts.append(self.decode_to_array(pred))
+        return mx.concatenate(parts, axis=0)
 
     def render(self, latent_batch, audio_chunks, *, steps=None, dtype=None):
         """#928: stable public render — full path to BGR uint8 (B,256,256,3).
@@ -327,12 +438,27 @@ class MuseTalkPipeline:
         so downstream (musetalk-mlx) calls one stable method instead of
         reaching into ``pipe.unet`` / ``apply_pe`` / ``UNET_TIMESTEP`` /
         ``pipe._dtype``. Renames of those internals become non-breaking.
+
+        #956: auto-chunks when the batch exceeds the GPU free-memory budget.
         """
         dt = self.dtype if dtype is None else dtype
-        lat = latent_batch.astype(dt)
-        aud = audio_chunks.astype(dt)
-        pred = self._run_unet(lat, aud, steps)
-        return self.decode_latents(pred)
+        n = int(latent_batch.shape[0])
+        if n <= 0:
+            return np.empty((0, 256, 256, 3), dtype=np.uint8)
+        safe = self.safe_batch_size(n)
+        if n <= safe:
+            lat = latent_batch.astype(dt)
+            aud = audio_chunks.astype(dt)
+            pred = self._run_unet(lat, aud, steps)
+            return self.decode_latents(pred)
+        logger.info("musetalk render #956: auto-chunk n=%d safe_batch=%d", n, safe)
+        out = []
+        for i in range(0, n, safe):
+            lat = latent_batch[i : i + safe].astype(dt)
+            aud = audio_chunks[i : i + safe].astype(dt)
+            pred = self._run_unet(lat, aud, steps)
+            out.append(self.decode_latents(pred))
+        return np.concatenate(out, axis=0)
 
     def encode_audio(self, mel, librosa_length, fps=25, prefix=None):
         """mel (1,80,3000) -> per-frame cross-attn chunks (num_frames,50,384).
@@ -378,7 +504,7 @@ class MuseTalkPipeline:
         for i in range(0, n, batch_size):
             lb = latent_stack[i : i + batch_size].astype(dtype)
             cb = chunk_stack[i : i + batch_size].astype(dtype)
-            out.append(self.generate_faces(lb, cb))
+            out.append(self._generate_faces_core(lb, cb))
         return np.concatenate(out, axis=0)
 
 
