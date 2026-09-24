@@ -514,6 +514,12 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # specific llama-server executable. Pure integration-endpoint
         # knob — where the external binary lives, never engine routing.
         "FUSION_MLX_LLAMA_SERVER",
+        # Metal kernel prewarm at model load (engines/batched.py:748).
+        # Default ON — issues a 1-token forward on the load thread so the
+        # first real request skips cold-kernel compile latency. Pure
+        # cold-start TTFT optimization — never selects model / parser /
+        # tier; the forward output is discarded and failures are non-fatal.
+        "FUSION_MLX_PREWARM",
     }
 )
 
