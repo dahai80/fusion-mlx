@@ -98,7 +98,7 @@ def build_mtp_module(args: Any, num_layers: int) -> tuple[type, type]:
             h_normed = self.pre_fc_norm_hidden(hidden_states)
             next_embed = embed_tokens(next_token_ids)
             e_normed = self.pre_fc_norm_embedding(next_embed)
-            combined = mx.concatenate([h_normed, e_normed], axis=-1)
+            combined = mx.concatenate([e_normed, h_normed], axis=-1)
             x = self.fc(combined)
             for i, layer in enumerate(self.layers):
                 c = mtp_cache[i] if mtp_cache is not None else None
