@@ -483,9 +483,7 @@ class TestCoWPagedRequestCacheParity:
             FusionPagedRequestCache,
         )
 
-        pool = FusionPagedKVPool(
-            block_size=4, num_blocks=16, n_kv_heads=2, head_dim=8
-        )
+        pool = FusionPagedKVPool(block_size=4, num_blocks=16, n_kv_heads=2, head_dim=8)
         layer_a = FusionPagedRequestCache(pool, "req_1")
         layer_b = FusionPagedRequestCache(pool, "req_1")
         ka, va = _kv(steps=6)
