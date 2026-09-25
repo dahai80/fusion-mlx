@@ -150,15 +150,23 @@ K>1 需扩展为：head 串行应用 K 次 → draft K token → 单次 backbone
 注意：compile/手写 kernel 攻击的是算力维度，对 U 无贡献（已证伪）。
 U 的提升需 **Metal async blit+compute 编码**，这是 oMLX/compile 不触及的层面。
 
-### 3.3 精度摊销 P（草稿路径低精度）
+### 3.3 精度摊销 P（草稿路径低精度）——仅适用于独立草稿模型，MTP 证伪
 
 2bit 全模型质量垃圾——但**草稿是可抛弃的**。rejected draft 不影响输出，只有 verify 路径需精确。
-因此：
+因此（**原假设，适用于独立草稿模型如 EAGLE/llama.cpp**）：
 - **draft path**：2bit 权重（7GB，读取减半）——质量差但可抛弃
 - **verify path**：4bit 权重（14GB，精确）——决定输出
 
 P=2（草稿权重减半）。结合 K=4 chain：4 次 draft 读 7GB + 1 次 verify 读 14GB =
 (4×7+14)/5 = 8.4GB/token，相比 stock 14GB，减 40%。
+
+**⚠️ 证伪修正（2026-09-25 实测）：** P=2 的"7GB 草稿读取"假设草稿是**独立小模型**（独立权重）。
+但 fusion-mlx 的 MTP head 是**共享 backbone 的 1 层**（253MB @ 4bit，占 14GB backbone 的 1.8%），
+`mtp_forward` 复用 backbone 的 embedding + KV，draft 仅额外读 253MB，非 7GB。
+2bit head → 126MB，K=1 时节省 127MB / 14GB = **0.9% 带宽**；K=4 时 4×127MB / (14+1)GB = **3.4%**。
+即使 2bit head 保持 100% 接受率，速度收益 <1%——P 维度对 MTP 结构性无效。
+独立草稿模型路径（EAGLE/Medusa）在 MLX 上已证伪（d1sync -25%，§2），故 **P 维度在 fusion-mlx 上死锁**。
+§3.4 表中 "MTP K=4 + 流水线 + 2bit draft" 行的 P=1.67 与 12.3x 目标**不可达**。
 
 ### 3.4 三维乘积
 
@@ -223,14 +231,14 @@ P=2（草稿权重减半）。结合 K=4 chain：4 次 draft 读 7GB + 1 次 ver
 - MTP chain：head 串行应用 K 次（同 GPU stream，无跨 stream 同步）→ 1 次 verify forward
 - head 极小（1 层，~500MB），K 次 head forward 的权重读取可驻 SRAM（见维度三）
 
-### 4.3 维度二：Metal Async Blit+Compute 层间流水线（空间摊销）
+### 4.3 维度二：Metal Async Blit+Compute 层间流水线（空间摊销）——证伪
 
 **目标**：将 U 从 0.44 提至 0.80。
 
 **现状**：mlx-lm 的 backbone forward 逐层串行：读 layer N 权重 → 计算 layer N → 读 layer N+1 权重 → ...
 权重读取与计算无重叠，GPU 在等待内存时闲置。
 
-**设计**：Metal 3 双命令编码器
+**设计（原）**：Metal 3 双命令编码器
 ```
 for layer in range(64):
     blit_encoder.copy(layer_weights[N+1], sram_buffer)   # async 预取下一层
@@ -242,25 +250,50 @@ for layer in range(64):
 - blit 与 compute 在不同 engine 上并发（Apple Silicon GPU 有独立 blit engine）
 - 预期：权重读取时间隐藏在计算时间内，U→0.80
 
-**实现挑战**：
+**⚠️ 实测证伪（2026-09-25 PoC）：**
+1. **Stream overlap 真实存在**：`mx.new_stream` + `mx.new_thread_unsafe_stream` 在 M5 上确有 blit/compute engine 并发——compute-bound matmul 3.4x 加速，decode GEMV 1.77x 加速。基元可用。
+2. **但 prefetch 是 3x 浪费流量（决定性）**：L2 residency 测试——
+   - GEMV 仅读 W：4.73ms
+   - prefetch W→buf + GEMV 读 buf：14.39ms（**3x 慢**，buf 读取不比 W 快）
+   - prefetch W→buf + GEMV 读 W(原始)：14.47ms（3x 慢，prefetch 无助益）
+   prefetch copy 每层加 2.5GB 读 + 2.5GB 写 = 5GB 浪费流量，GEMV 读 prefetched buf 不比读原始 W 快 → **无 L2 加速**。
+3. **根因：L2 64MB << 层 219MB**（3.4x 尺寸失配），层无法 residency。Apple Silicon 统一内存下权重无需 host→VRAM 拷贝（已在统一内存），"prefetch" 只是把统一内存拷到统一内存的另一处——纯开销。
+4. **1.77x overlap 假象**：PoC 的 1.77x 测的是 GEMV || 无用 copy，copy 不加速 GEMV（GEMV 读统一内存，与 copy 是否并发无关）。真实层流水线：layer N GEMV || prefetch W_{N+1}→buf，layer N+1 GEMV 读 W_{N+1}（原始，非 buf）→ prefetch 全程浪费 → 3x 慢。
+
+**U=0.38→0.80 headroom 的真实来源（非 blit/compute overlap）：**
+- (a) 4bit gs=64 strided gather → 非流式访存（需 quant 布局重排，非 blit，未试，高风险独立路径）
+- (b) kernel launch 间隙 → fusion（compile，已证伪 -2.5%）
+- (c) KV/weight 交替 → KV 仅 1.8%，minor
+- (d) Python dispatch → compile（已证伪）
+
+四个 U 杠杆中三个已证伪（compile 路径），剩 (a) quant 布局重排是独立高风险路径，不在 Phase D 范围。
+**结论：blit+compute 层流水线对 decode 带宽墙无效（3x 负面），不接线。**
+
+**实现挑战（原，现已 moot）**：
 - mlx-lm 的 `model(x, cache=...)` 是 Python 层逐层调用，不暴露 Metal encoder
 - 需 monkey-patch 为"层调度器"，将逐层 forward 重写为双 encoder 流水线
 - 或：mx.compile 的 fuse 无法跨层，需自定义 `mx.fast.metal_kernel` 编排层间依赖
 
-### 4.4 维度三：草稿路径 2bit 驻留（精度摊销）
+### 4.4 维度三：草稿路径 2bit 驻留（精度摊销）——证伪
 
-**设计**：
+**设计（原）**：
 - MTP head（1 层）权重 ~500MB，2bit 量化后 ~125MB，可永久驻留 GPU SRAM
 - draft forward（K 次 head 应用）从不命中主存 → 草稿生成近乎免费（compute-only）
 - verify path 仍用 4bit backbone（14GB，精确）
 
-**质量保证**：
+**⚠️ 实测证伪（2026-09-25）：** MTP head 实测 **253MB**（4bit，非原估 500MB），占 14GB backbone 的 1.8%。
+即使 2bit 量化（126MB）并 SRAM 驻留，节省 127MB/cycle，K=1 时占 14GB 的 **0.9%**。
+"草稿生成近乎免费"的直觉错在：head 本就只占 1.8% 带宽——免费化 1.8% 不改变带宽墙格局。
+原 §3.3 P=2 的 40% 节省假设独立草稿模型（7GB 读），MTP head 不满足该前提。
+**结论：P 维度对 MTP 结构性无效，不加载 2bit head，不实测接受率（带宽数学已判死）。**
+
+**质量保证（原，现已 moot）**：
 - 2bit 仅用于 draft head，不影响 verify（输出由 4bit backbone 决定）
 - draft head 质量影响接受率，但不影响输出正确性
 - 接受率可能从 90%（4bit draft）降至 60-70%（2bit draft），但 K 摊销仍净赢
 
 **风险**：2bit draft head 接受率过低（<30%）时 K 摊销被低接受率抵消。
-需实测 2bit MTP head 的接受率下界。
+需实测 2bit MTP head 的接受率下界。（**未执行**——带宽 saving <1%，无需实测。）
 
 ## 5. 关键创新点
 
@@ -318,22 +351,32 @@ KV 主导）有本质不同。这推导出：**hybrid GDN 模型的优化必须�
 - 预期：接受率 75-85%（K=2 比 K=1 略降），tok/s 60-80（K=1 的 1.3-1.5x）
 - 风险：GDN rollback 在 K=2 的边界条件（已有 PR#965 基础）
 
-**阶段 B：MTP K=4 chain（时间摊销，中风险）**
+**阶段 B：MTP K=4 chain（时间摊销，中风险）——已证伪 2026-09-25**
 - 若 A 成功，推至 K=4
 - 预期：接受率 60-70%，tok/s 90-130
-- 风险：接受率随 K 衰减；需 tree-mask attention 支持（MLX 原生 tree mask 在 `speculative/tree_mask.py`）
+- **实测：接受率 0-36%，tok/s 5-23（比 K=1 慢 2-9x），证伪**
+- 根因：head hidden 随链深度漂移 + head forward 开销累积（200ms/cycle）；§4.2 "head 近免费"假设错误
+- tree-mask 不会救——线性链 verify 已是正确 causal，失败在 head 质量非 verify 形状
+- 结论：MTP chain 甜点 K≤2，K 维度封顶。代码已 K 参数化（env `FUSION_MLX_MTP_CHAIN_K`，clamp [1,4]），
+  K=4 留 opt-in 不推荐，默认 K=1
 
-**阶段 C：2bit draft head（精度摊销，中风险）**
+**阶段 C：2bit draft head（精度摊销，中风险）——证伪 2026-09-25（结构分析）**
 - MTP head 2bit 量化 + SRAM 驻留
 - 实测 2bit draft 接受率下界
 - 预期：接受率 50-65%，但 draft 近免费（SRAM 驻留）→ 净赢
 - 风险：2bit head 接受率 <30% 则放弃此维度
+- **实测结果：未加载 2bit head。MTP head 实测 253MB = 1.8% backbone，2bit 节省 <1% 带宽。
+  原 P=2 假设独立草稿模型（7GB 读），MTP head 不满足。P 维度结构死锁，证伪。**
 
-**阶段 D：Metal async blit+compute 层间流水线（空间摊销，高风险高回报）**
+**阶段 D：Metal async blit+compute 层间流水线（空间摊销，高风险高回报）——证伪 2026-09-25（PoC）**
 - monkey-patch mlx-lm 层调度为双 encoder 流水线
 - 实测 U（有效带宽利用率）
 - 预期：U 0.44→0.65-0.80
 - 风险：mlx-lm Python 层抽象不暴露 encoder；可能需 fork mlx-lm（上游 issue + PR 流程）
+- **实测结果：Stream overlap 真实（3.4x compute-bound / 1.77x GEMV），但 prefetch 是 3x 浪费流量——
+  L2 64MB << 层 219MB，无 residency 加速。GEMV 读 prefetched buf 不比读原始 W 快。
+  U headroom 真实来源是 strided gather 访存模式（非 blit/compute overlap），且 compile 路径已证伪。
+  Phase D 3x 负面，不接线。无上游 issue（物理约束 L2 尺寸，非 API 缺口）。**
 
 ### 6.2 基线对比
 
@@ -381,13 +424,19 @@ opt-in flag `--mtp-chain-k <N>`，不默认开启，不影响 11434 生产。
 
 ### 7.3 诚实声明
 
-1. **K>1 chain 尚未实测**——本文论证其可行性（自回归无 d1sync），但未实证。阶段 A 是第一验证点。
+1. **K>1 chain 实测修正（2026-09-25）**——阶段 A (K=2) 实测 +32% over K=1（49.6 vs 45 tok/s，accept 33-68%，
+   lossless parity 通过，PR#969 merged）。但阶段 B (K=4) **证伪**：accept 崩至 0-36%，tps 5-23（比 K=1 的 45 慢
+   2-9x），backbone/cycle 爆至 364-424ms（stock 18ms/tok）。根因有二：(a) head hidden 质量随链深度漂移——
+   draft 2-4 喂 head forward 非 backbone hidden，第 3-4 个 draft 时 head 状态已发散；(b) head forward 开销累积
+   （K=4 时 4×49ms=200ms/cycle mtp 开销）。本文 §4.2 "head 极小，K 次 forward 近免费"的假设**错误**——
+   head 体积小不等于 hidden 质量稳。MTP chain 在 hybrid GDN 上的甜点是 K≤2，非线性可放大。
 2. **U=0.80 是估计**——层间流水线的实际收益取决于 M5 GPU blit/compute engine 的并发度与 SRAM 容量，
    需 Metal kernel profiling 实测。
-3. **不保证超越所有对手一个量级**——若 K=2 接受率崩至 50% 以下、U 仅提至 0.55、2bit head 失败，
-   保守组合仍有 2-3x（vs stock），即 45-65 tok/s，仍超 oMLX/rapid-mlx/llama.cpp，但非"一个量级"。
+3. **不保证超越所有对手一个量级**——K 维度已在 K=2 封顶（K=4 证伪），12x 目标（K=4+U0.8+P2）不可达。
+   现实上限 = K=2 + U + P。若 U 仅提至 0.55、2bit head 失败，保守组合 2-3x（vs stock）即 45-65 tok/s，
+   仍超 oMLX/rapid-mlx/llama.cpp，但非"一个量级"。
 4. **本文不伪造数据**——所有实测数字来自 fusion-mlx 真实加载 Qwen3.8-27B-4bit（端口 11433/11435），
-   记录在 memory 与 CHANGELOG 中。理论数字明确标注"预期/理论"。
+   记录在 memory 与 CHANGELOG 中。理论数字明确标注"预期/理论"。K=4 证伪数据如实记录，不掩盖。
 
 ### 7.4 与现有工作的关系
 
@@ -455,9 +504,21 @@ oMLX/compile/手写 kernel 攻击算力——选错了维度。唯一有效方�
 即三维摊销（K 时间 / U 空间 / P 精度）。MTP K=1 已证此路可行（+86%），
 K>1 chain + 带宽利用率提升 + 精度非对称是未被证伪的乘法放大路径。
 
-AWSD 不是单一 trick，而是将分散的优化统一为正交乘积的框架。即便保守落地（K=2 + U=0.6），
-仍有 3-4x 提升（66-88 tok/s），足以超越 oMLX/rapid-mlx/llama.cpp。
-若三维全开（K=4 + U=0.8 + P=2），理论 12x（~250 tok/s）——这需分阶段验证，
-每阶段 lossless parity 是硬约束。
+**⚠️ 验证后修正（2026-09-25，四阶段全部实证完毕）：**
 
-下一步：阶段 A（MTP K=2 chain）实证。
+阶段 A (K=2) **通过**：+32% over K=1（49.6 tok/s），lossless parity，PR#969 merged。
+但阶段 B/C/D **全部证伪**：
+- **B (K=4)**：accept 崩至 0-36%，tps 5-23（比 K=1 慢 2-9x）。head hidden 随链深度漂移 + head forward 开销累积。K 维度封顶于 2。
+- **C (2bit draft head)**：MTP head 实测 253MB = 1.8% backbone，2bit 节省 <1% 带宽。原 P=2 假设独立草稿模型（7GB 读），MTP head 不满足。P 维度结构死锁。
+- **D (Metal blit+compute)**：stream overlap 真实（1.77x GEMV），但 prefetch 是 3x 浪费流量（L2 64MB << 层 219MB，无 residency）。U headroom 真实来源是 strided gather 访存模式，非 blit/compute overlap；且 compile 路径已证伪。
+
+**最终诚实结论：**
+- 三维放大路径全部证伪。AWSD 现实上限 = **Phase A only：K=1 MTP +86%（45 tok/s），K=2 +32% over K1（49.6 tok/s）**。
+- 论文 12x 目标（K=4+U0.8+P2）不可达。保守 3-4x（K=2+U0.6）也不达——U 提升路径被 compile 证伪 + blit+compute 3x 负面封死。
+- **唯一未证伪的 U 杠杆**：4bit gs=64 quant 布局重排（连续打包消除 strided gather），独立高风险路径，需全模型 re-quant + parity 验证，本文未覆盖，留作后续。
+- fusion-mlx 的 K=1/K=2（+86%/+125% over stock）仍是 MLX 解码的诚实 state-of-art，超越 oMLX/rapid-mlx/llama.cpp。带宽墙在当前 MLX/Metal 原语下不可进一步突破。
+
+**本文价值重定位**：AWSD 的贡献不是"12x 加速"，而是 (1) 带宽墙第一性原理论证（§1，算术强度 3.86 << 37.5 交叉点，已验证），(2) 穷尽矩阵（§2，14 路径实证，唯一赢家 MTP K=1），(3) hybrid GDN 架构带宽主导性论证（§5.4，KV 占比 96%+），(4) 同步税感知的推测范式选择（§5.1，自回归链式 vs 并行树）。三维摊销框架作为理论模型保留，但其放大上限被实证封顶于 K≤2。
+
+下一步：quant 布局重排（strided gather → 连续打包）作为唯一未穷尽的 U 杠杆，独立验证。
+
