@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 
 import mlx.core as mx
+import numpy as np
 
 from ..ltx2.denoise import denoise_dev_av, denoise_distilled, denoise_res2s_av
 from ..ltx2.generate import STAGE_1_SIGMAS, STAGE_2_SIGMAS
@@ -81,6 +82,29 @@ def resolve_distilled_sigmas(stage: int) -> list[float]:
     if stage == 2:
         return DISTILLED_STAGE_2_SIGMAS
     raise ValueError(f"unknown distilled stage {stage!r}, expect 1 or 2")
+
+
+# dev（Full/SFT）变体调度：官方无 baked 表（diffusers main ltx2 pipeline 不传
+# sigmas，走 FlowMatchEulerDiscreteScheduler 动态 shifting）。此函数是
+# set_timesteps(use_dynamic_shifting=True, mu=calculate_shift(tokens)) 的精确
+# MLX 侧移植（对拍验证：与 diffusers 0.39 输出逐值一致）。
+# 官方 anchors 来自 LTX-2.5-Diffusers scheduler_config.json（base/max_shift
+# 与 distilled 一致，1024→4096 token 锚点）。
+def dev_sigmas(steps: int, num_tokens: int | None = None) -> list[float]:
+    import math as _math
+
+    tokens = num_tokens if num_tokens is not None else MAX_SHIFT_ANCHOR
+    base_seq, max_seq = 1024, 4096
+    base_shift, max_shift = 0.95, 2.05
+    m = (max_shift - base_shift) / (max_seq - base_seq)
+    mu = tokens * m + (base_shift - m * base_seq)
+
+    # sigma_max=1.0, sigma_min=1/1000（FlowMatchEuler 初始化约定），
+    # timesteps = linspace(1000, 1, steps) -> sigmas = t/1000
+    sig = np.linspace(1.0, 0.001, steps)
+    sig = _math.exp(mu) / (_math.exp(mu) + (1 / sig - 1))  # exponential time shift, sigma=1
+    sig = np.concatenate([sig, [0.0]])
+    return [float(s) for s in sig]
 
 
 def resolve_dev_sigmas(stage: int) -> list[float]:

@@ -118,6 +118,7 @@ class LTX2_5Backend(VideoBackend):
                     seed=base_seed + i,
                     num_inference_steps=params.num_inference_steps,
                     cfg_scale=params.cfg_scale,
+                    negative_prompt=params.negative_prompt,
                     tiling=params.tiling,
                     image=params.image,
                     image_strength=params.image_strength,
@@ -228,6 +229,7 @@ def _generate_one(
     seed: int,
     num_inference_steps: int | None = None,
     cfg_scale: float | None = None,
+    negative_prompt: str | None = None,
     tiling: str | None = None,
     image: str | None = None,
     image_strength: float = 1.0,
@@ -259,6 +261,8 @@ def _generate_one(
         gen_kwargs["num_inference_steps"] = num_inference_steps
     if cfg_scale is not None:
         gen_kwargs["cfg_scale"] = cfg_scale
+    if negative_prompt is not None:
+        gen_kwargs["negative_prompt"] = negative_prompt
     if tiling is not None:
         gen_kwargs["tiling"] = tiling
     if image is not None:

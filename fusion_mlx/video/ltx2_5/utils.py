@@ -5,6 +5,7 @@
 # latent_upscale_models/. We resolve either a local dir or an HF snapshot.
 import logging
 import math
+import os
 from pathlib import Path
 
 import mlx.core as mx
@@ -213,6 +214,14 @@ def resolve_component(
     # mlxcomm 不含 transformer (在独立 dit 仓, 调用方须显式传 transformer_weights)。
     if key == "transformer":
         key = "transformer_distilled" if variant == "distilled" else "transformer_dev"
+        # FUSION_LTX25_TRANSFORMER_DEV: 显式 dev transformer 路径覆盖。dev bf16
+        # (42GB) 与 distilled 同仓会让目录足迹翻倍触发内存护栏 507（两变体
+        # 实际从不同时驻留）；放快照外由 env 指路可保持足迹只算一份。
+        if key == "transformer_dev":
+            env_path = os.environ.get("FUSION_LTX25_TRANSFORMER_DEV")
+            if env_path and Path(env_path).exists():
+                logger.info("transformer_dev overridden by env: %s", env_path)
+                return Path(env_path)
     layout = detect_layout(root)
     if layout == _LAYOUT_FLAT:
         files = _LTX2_5_FLAT_FILES
@@ -232,6 +241,16 @@ def resolve_component(
         raise ValueError(f"unknown LTX-2.5 component key: {key!r}")
     rel = files[key]
     candidate = root / rel
+    # .ref 指针：期望位置旁的同名 .ref 文本文件（一行=真实权重路径）。让重变体
+    # （dev bf16 42GB）驻留在模型目录之外——目录足迹型内存护栏（507）按目录内
+    # safetensors 计重，dev 与 distilled 实际从不同时驻留，同仓两份会虚增一倍
+    # 足迹误触 507。
+    ref_file = candidate.with_suffix(".ref")
+    if not candidate.exists() and ref_file.exists():
+        target = Path(ref_file.read_text().strip())
+        if target.exists():
+            logger.info("ltx2_5 component %s resolved via %s -> %s", key, ref_file.name, target)
+            return target
     if not candidate.exists():
         logger.warning("ltx2_5 component %s not found at %s", key, candidate)
     return candidate

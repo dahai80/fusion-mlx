@@ -67,6 +67,8 @@ def denoise_distilled_t2v(
     inpaint_mask=None,
     init_latent=None,
     state: LatentState | None = None,
+    negative_context: mx.array | None = None,
+    cfg_scale: float = 1.0,
 ) -> mx.array:
     # 两阶段 distilled T2V/I2V 去噪。latents (b,c,f,h,w), sigmas 降序 -> 0。
     # 每步: 展平 latent -> Modality(context=text_embeddings) -> transformer ->
@@ -149,10 +151,16 @@ def denoise_distilled_t2v(
             timesteps = mx.full((b, num_tokens), sigma, dtype=dtype)
 
         sigma_b = mx.full((b,), sigma, dtype=dtype)
+        use_cfg = negative_context is not None and cfg_scale != 1.0
         if _COMPILE_TRANSFORMER and _xf is not transformer:
             velocity, _audio_velocity = _xf(
                 latents_flat, timesteps, positions, text_embeddings, sigma_b
             )
+            if use_cfg:
+                v_neg, _ = _xf(
+                    latents_flat, timesteps, positions, negative_context, sigma_b
+                )
+                velocity = v_neg + cfg_scale * (velocity - v_neg)
         else:
             video_modality = Modality(
                 latent=latents_flat,
@@ -164,6 +172,18 @@ def denoise_distilled_t2v(
                 sigma=sigma_b,
             )
             velocity, _audio_velocity = _xf(video=video_modality, audio=None)
+            if use_cfg:
+                neg_modality = Modality(
+                    latent=latents_flat,
+                    timesteps=timesteps,
+                    positions=positions,
+                    context=negative_context,
+                    context_mask=None,
+                    enabled=True,
+                    sigma=sigma_b,
+                )
+                v_neg, _ = _xf(video=neg_modality, audio=None)
+                velocity = v_neg + cfg_scale * (velocity - v_neg)
 
         sigma_f32 = mx.array(sigma, dtype=mx.float32)
         sigma_next_f32 = mx.array(sigma_next, dtype=mx.float32)
