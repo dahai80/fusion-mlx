@@ -2442,6 +2442,34 @@ class EnginePool:
         except AttributeError:
             return None
 
+    @staticmethod
+    def _model_memory_plan(entry: EngineEntry) -> object | None:
+        if entry.engine is None:
+            return None
+        scheduler = EnginePool._resolve_scheduler_from_engine(entry.engine)
+        if scheduler is None:
+            return None
+        getter = getattr(scheduler, "get_memory_plan", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _model_memory_plan_dict(entry: EngineEntry) -> dict | None:
+        plan = EnginePool._model_memory_plan(entry)
+        if plan is None:
+            return None
+        to_dict = getattr(plan, "to_dict", None)
+        if callable(to_dict):
+            try:
+                return to_dict()
+            except Exception:
+                return None
+        return None
+
     def _is_idle_for_prefill_eviction(self, entry: EngineEntry) -> bool:
         engine = entry.engine
         if engine is None or entry.is_pinned or entry.is_loading or entry.in_use > 0:
@@ -3328,6 +3356,7 @@ class EnginePool:
                     "thinking_default": e.thinking_default,
                     "preserve_thinking_default": e.preserve_thinking_default,
                     "last_access": e.last_access if e.last_access > 0 else None,
+                    "memory_plan": self._model_memory_plan_dict(e),
                 }
                 for mid, e in sorted(self._entries.items())
             ],

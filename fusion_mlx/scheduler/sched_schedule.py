@@ -546,6 +546,7 @@ def _schedule_waiting(
                     finished=True,
                     finish_reason="error",
                     error=preflight_rejection.message,
+                    error_code="prefill_memory_exceeded",
                     error_metadata={
                         "estimated_bytes": preflight_rejection.estimated_bytes,
                         "limit_bytes": preflight_rejection.limit_bytes,
@@ -553,6 +554,13 @@ def _schedule_waiting(
                 )
             )
             continue
+
+        # L2: clamp max_tokens to the per-model KV token ceiling so a
+        # request with a large max_tokens (default 65536) cannot grow KV
+        # past the hard memory limit mid-decode. No-op when the plan is
+        # unavailable or the request already fits. Borrowed from splash's
+        # maximumContextTokens clamping.
+        self.clamp_max_tokens_to_kv_ceiling(request)
 
         # SpecPrefill: replace tokens with selected subset and pre-fill
         # cache via sparse_prefill before inserting into BatchGenerator.
