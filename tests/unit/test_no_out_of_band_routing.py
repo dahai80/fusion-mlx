@@ -509,6 +509,12 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # budget MLX's cache_limit may claim. Never selects model /
         # parser / tier.
         "FUSION_MLX_CACHE_LIMIT_FRACTION",
+        # Metal cache_limit hard cap (pool/memory_enforcer.py). The cap
+        # scales the reuse pool with physical RAM so 27B-class working sets
+        # survive idle OS reclaim. MAX_GB is an explicit override; MAX_FRACTION
+        # is the RAM fraction. Pure memory-capacity knobs, never routing.
+        "FUSION_MLX_CACHE_LIMIT_MAX_GB",
+        "FUSION_MLX_CACHE_LIMIT_MAX_FRACTION",
         # llama.cpp backend bridge: llama-server binary override
         # (engines/llama_cpp_backend.py:32). Points the bridge at a
         # specific llama-server executable. Pure integration-endpoint

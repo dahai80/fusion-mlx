@@ -98,9 +98,17 @@ _PHYSICAL_RAM_WIRED_CAP_FRACTION = 0.80
 _MLX_CACHE_LIMIT_FRACTION = float(
     os.environ.get("FUSION_MLX_CACHE_LIMIT_FRACTION", "0.5") or "0.5"
 )
-_MLX_CACHE_LIMIT_MAX_BYTES = (
-    8 * 1024**3
-)  # cap so 0.5× doesn't over-allocate on huge RAM
+# Cap as a fraction of physical RAM, evaluated lazily at first apply (module
+# load order means settings.get_system_memory may not be ready here). The old
+# hardcoded 8GB starved 27B-class models (working set ~16GB): idle periods let
+# the OS reclaim wired pages, then the next request re-allocated the model's
+# whole working set per step, inflating backbone forward time 7.5x (38ms ->
+# 288ms/cycle). Scaling with RAM keeps the reuse pool large enough to hold the
+# active working set on big Macs while staying bounded on small ones. Env
+# FUSION_MLX_CACHE_LIMIT_MAX_GB overrides for explicit tuning.
+_MLX_CACHE_LIMIT_MAX_FRACTION = float(
+    os.environ.get("FUSION_MLX_CACHE_LIMIT_MAX_FRACTION", "0.5") or "0.5"
+)
 _MLX_CACHE_LIMIT_FLOOR_BYTES = 1 * 1024**3
 
 # Backward-compat alias: the old static 1 GB limit. Kept for tests / callers
@@ -633,16 +641,28 @@ class ProcessMemoryEnforcer:
     def _apply_mlx_cache_limit(self) -> None:
         """Set MLX compile cache / buffer pool hard top.
 
-        O3.1: dynamic limit = clamp(working_set × fraction, floor, max).
+        O3.1: dynamic limit = clamp(working_set × fraction, floor, cap).
         Without this, mx.get_cache_memory() grows monotonically — only
         released by explicit mx.clear_cache().
+
+        The cap scales with physical RAM so large Macs get a reuse pool big
+        enough to hold a 27B-class working set across idle gaps (a hardcoded
+        8GB forced re-allocation stalls after the OS reclaimed wired pages).
+        Env FUSION_MLX_CACHE_LIMIT_MAX_GB overrides the computed cap.
         """
         working_set = _get_max_metal_working_set_bytes()
         if working_set > 0:
             raw = int(working_set * _MLX_CACHE_LIMIT_FRACTION)
+            env_max_gb = os.environ.get("FUSION_MLX_CACHE_LIMIT_MAX_GB", "")
+            if env_max_gb:
+                cap = int(float(env_max_gb) * 1024**3)
+            else:
+                from .settings import get_system_memory
+
+                cap = int(get_system_memory() * _MLX_CACHE_LIMIT_MAX_FRACTION)
             limit = max(
                 _MLX_CACHE_LIMIT_FLOOR_BYTES,
-                min(raw, _MLX_CACHE_LIMIT_MAX_BYTES),
+                min(raw, cap),
             )
         else:
             limit = _MLX_CACHE_LIMIT_FLOOR_BYTES
