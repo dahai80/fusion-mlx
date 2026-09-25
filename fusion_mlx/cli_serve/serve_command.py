@@ -90,11 +90,19 @@ def serve_command(args):
     # AWSD Phase A: --mtp-chain-k → env for the MTP hot-loop. The env is
     # read at batch_generator import time (apply_mlx_lm_mtp_patch, called
     # during load_model below), so it must be stamped before load_model.
-    _chain_k = getattr(args, "mtp_chain_k", 1) or 1
-    if _chain_k > 1:
-        os.environ["FUSION_MLX_MTP_CHAIN_K"] = str(_chain_k)
+    # Always stamp (even K=1) so an explicit operator opt-out
+    # (--mtp-chain-k 1) overrides the env default of 2.
+    _chain_k = getattr(args, "mtp_chain_k", 2) or 2
+    _chain_k = max(1, min(4, _chain_k))
+    os.environ["FUSION_MLX_MTP_CHAIN_K"] = str(_chain_k)
+    if _chain_k >= 2:
         logging.getLogger(__name__).info(
-            "MTP chain-of-K enabled: K=%d (AWSD Phase A)", _chain_k
+            "MTP chain-of-K enabled: K=%d (AWSD Phase A, production default)",
+            _chain_k,
+        )
+    else:
+        logging.getLogger(__name__).info(
+            "MTP chain-of-K: K=%d (operator opt-out, stock MTP)", _chain_k
         )
     # Set process title to a bare "fusion-mlx-server" so ps/top/Activity
     # Monitor show just the server name (not "python", not a wall of serve

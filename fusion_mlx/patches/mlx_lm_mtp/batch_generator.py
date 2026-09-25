@@ -85,15 +85,17 @@ logger = logging.getLogger(__name__)
 def _resolve_chain_k() -> int:
     """AWSD Phase A: read the chain-of-K depth from the environment.
 
-    ``FUSION_MLX_MTP_CHAIN_K`` (default 1). K=1 = stock MTP (zero
-    regression). K>=2 = autoregressive chain: head applied K times
-    serially, single backbone forward verifies K+1 positions. Clamped to
-    [1, 4] — K>4 is Phase B territory (accept-rate collapse risk).
+    ``FUSION_MLX_MTP_CHAIN_K`` (default 2). K=2 = production-default
+    autoregressive chain (+52% single-stream throughput, lossless,
+    proven on Qwen3.8-27B-4bit, PR#969). K=1 = stock MTP (operator
+    opt-out via --mtp-chain-k 1). K>=2: head applied K times serially,
+    single backbone forward verifies K+1 positions. Clamped to [1, 4]
+    — K>4 is Phase B territory (accept-rate collapse, falsified).
     """
     try:
-        k = int(os.environ.get("FUSION_MLX_MTP_CHAIN_K", "1") or "1")
+        k = int(os.environ.get("FUSION_MLX_MTP_CHAIN_K", "2") or "2")
     except ValueError:
-        k = 1
+        k = 2
     return max(1, min(4, k))
 
 

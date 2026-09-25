@@ -703,11 +703,11 @@ Examples:
         "--mtp-chain-k",
         dest="mtp_chain_k",
         type=int,
-        default=1,
+        default=2,
         help=(
             "AWSD Phase A: MTP autoregressive chain-of-K depth. "
-            "K=1 (default) = stock MTP, one draft / verify cycle. "
-            "K=2 drafts 2 tokens by applying the MTP head twice "
+            "K=2 (default, production) drafts 2 tokens by applying "
+            "the MTP head twice "
             "serially (no GPU sync tax, unlike EAGLE/Medusa parallel "
             "heads), then verifies all 3 positions in one backbone "
             "forward — amortises the 14GB weight read over ~3 tokens. "
