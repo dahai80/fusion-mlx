@@ -615,7 +615,13 @@ def generate_video(
         temporal_scale,
         latents.shape,
     )
-    latents = temporal_up(latents)
+    # Mirror the spatial wrapper in upsample_latents(): the upsampler operates
+    # in raw (denormalized) latent space, so denorm -> upsample -> renorm.
+    # Feeding normalized-space latents bare produces 6-7 sigma outliers that
+    # burn into the VAE decode as grid artifacts + oversaturation.
+    t_mean = latent_mean.reshape(1, -1, 1, 1, 1)
+    t_std = latent_std.reshape(1, -1, 1, 1, 1)
+    latents = (temporal_up(latents * t_std + t_mean) - t_mean) / t_std
     mx.eval(latents)
     del temporal_up
     mx.clear_cache()
