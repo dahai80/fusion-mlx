@@ -358,7 +358,9 @@ KV 主导）有本质不同。这推导出：**hybrid GDN 模型的优化必须�
 - 根因：head hidden 随链深度漂移 + head forward 开销累积（200ms/cycle）；§4.2 "head 近免费"假设错误
 - tree-mask 不会救——线性链 verify 已是正确 causal，失败在 head 质量非 verify 形状
 - 结论：MTP chain 甜点 K≤2，K 维度封顶。代码已 K 参数化（env `FUSION_MLX_MTP_CHAIN_K`，clamp [1,4]），
-  K=4 留 opt-in 不推荐，默认 K=1
+  K=4 留 opt-in 不推荐。**K=2 已翻转为生产默认（PR#974），`--spec-decode mtp` 用户自动获得 +52% single-stream。
+  所有其他解码优化杠杆均已证伪（compile -2.5%、blit+compute 3x negative、strided-gather 已 coalesced、
+  residual-add MLX 已 lazy-fuse、4bit GEMM 已 Steel+MMA、KV quant 带宽数学判死）。K=2 是 MLX 解码优化的天花板。**
 
 **阶段 C：2bit draft head（精度摊销，中风险）——证伪 2026-09-25（结构分析）**
 - MTP head 2bit 量化 + SRAM 驻留
@@ -380,16 +382,19 @@ KV 主导）有本质不同。这推导出：**hybrid GDN 模型的优化必须�
 
 ### 6.2 基线对比
 
-| 引擎 | 路径 | 预期 tok/s (27B-4bit) |
+| 引擎 | 路径 | 实测 tok/s (27B-4bit) |
 |---|---|---|
 | native mlx-lm | stock | 22 |
 | llama.cpp | draft-model spec | 30-40 |
-| oMLX | compile | 22（无解码收益） |
+| oMLX | compile | 22（无解码收益，证伪） |
 | rapid-mlx | continuous batching | 25-30 |
-| fusion-mlx 现状 | MTP K=1 | 45 |
-| **fusion-mlx AWSD-A** | **MTP K=2** | **60-80** |
-| **fusion-mlx AWSD-B** | **MTP K=4** | **90-130** |
-| **fusion-mlx AWSD-ABCD** | **K=4+U0.8+P2** | **150-250** |
+| fusion-mlx | MTP K=1 (opt-out) | 40 |
+| **fusion-mlx 生产默认** | **MTP K=2 (PR#974)** | **50 single-stream (+52% vs stock)** |
+| ~~fusion-mlx AWSD-B~~ | ~~MTP K=4~~ | ~~证伪（accept 0-36%，tps 5-23）~~ |
+| ~~fusion-mlx AWSD-ABCD~~ | ~~K=4+U0.8+P2~~ | ~~证伪（三维度全 falsified）~~ |
+
+**结论：MLX 解码优化空间已穷尽。K=2 (+52% single-stream / +125% over stock) 是 Apple Silicon
+解码的状态艺术天花板。残余 U=0.38→0.73 gap 是结构性 launch-tax，需 oMLX 单核 fork（known-blocked）。**
 
 ### 6.3 正确性验证（lossless 硬约束）
 
@@ -400,7 +405,9 @@ MTP 是 lossless 的（rejected draft rollback，只 emit verified token）—�
 ### 6.4 端到端验证（生产接线）
 
 遵循项目规则：每阶段端到端完成（`fusion-mlx serve` + HTTP A/B bench + parity）才报完成。
-opt-in flag `--mtp-chain-k <N>`，不默认开启，不影响 11434 生产。
+**K=2 已为生产默认（PR#974）：`--spec-decode mtp` 自动 K=2，opt-out 用 `--mtp-chain-k 1`。
+验证 11433：default K=2 = 49.7 tok/s，K=1 opt-out = 40.0 tok/s（+24% under contention），
+lossless parity 保持（同 #969 K=2 代码路径）。**
 
 ## 7. 风险、边界与诚实声明
 
