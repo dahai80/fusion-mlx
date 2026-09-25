@@ -1165,7 +1165,9 @@ def _rollback_after_reject(
     if gdn_states is not None and hasattr(model, "rollback_speculative_cache"):
         model.rollback_speculative_cache(prompt_cache, gdn_states, accepted, block_size)
         return True
-    return _restore_or_trim_caches(prompt_cache, accepted=accepted, block_size=block_size)
+    return _restore_or_trim_caches(
+        prompt_cache, accepted=accepted, block_size=block_size
+    )
 
 
 def _call_backbone(
@@ -1762,9 +1764,11 @@ def _run_verify_cycle_chain(gen_batch: Any, state: _MtpState) -> None:
     draft_tokens = [state.draft_tok]
     draft_lps = [state.draft_lp]
     draft_accept_lps = [
-        state.draft_accept_lp
-        if state.draft_accept_lp is not None
-        else _accept_lp_for(sampler, state.draft_lp)
+        (
+            state.draft_accept_lp
+            if state.draft_accept_lp is not None
+            else _accept_lp_for(sampler, state.draft_lp)
+        )
     ]
     draft_ids = [state.draft_id]
     head_hiddens = [state.draft_head_hidden]
@@ -1816,8 +1820,7 @@ def _run_verify_cycle_chain(gen_batch: Any, state: _MtpState) -> None:
     pos_logits = [logits[:, i, :] for i in range(K + 1)]
     if procs is not None:
         pos_logits = [
-            _apply_processors(procs, prev_bufs[i], pos_logits[i])
-            for i in range(K + 1)
+            _apply_processors(procs, prev_bufs[i], pos_logits[i]) for i in range(K + 1)
         ]
     combined_logits = mx.concatenate(pos_logits, axis=0)  # (K+1, vocab)
     combined_lp = combined_logits - mx.logsumexp(
