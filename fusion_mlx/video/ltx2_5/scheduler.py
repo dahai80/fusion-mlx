@@ -90,10 +90,13 @@ def resolve_distilled_sigmas(stage: int) -> list[float]:
 # MLX 侧移植（对拍验证：与 diffusers 0.39 输出逐值一致）。
 # 官方 anchors 来自 LTX-2.5-Diffusers scheduler_config.json（base/max_shift
 # 与 distilled 一致，1024→4096 token 锚点）。
+_MAX_SHIFT_ANCHOR = 4096
+
+
 def dev_sigmas(steps: int, num_tokens: int | None = None) -> list[float]:
     import math as _math
 
-    tokens = num_tokens if num_tokens is not None else MAX_SHIFT_ANCHOR
+    tokens = num_tokens if num_tokens is not None else _MAX_SHIFT_ANCHOR
     base_seq, max_seq = 1024, 4096
     base_shift, max_shift = 0.95, 2.05
     m = (max_shift - base_shift) / (max_seq - base_seq)
@@ -102,7 +105,9 @@ def dev_sigmas(steps: int, num_tokens: int | None = None) -> list[float]:
     # sigma_max=1.0, sigma_min=1/1000（FlowMatchEuler 初始化约定），
     # timesteps = linspace(1000, 1, steps) -> sigmas = t/1000
     sig = np.linspace(1.0, 0.001, steps)
-    sig = _math.exp(mu) / (_math.exp(mu) + (1 / sig - 1))  # exponential time shift, sigma=1
+    sig = _math.exp(mu) / (
+        _math.exp(mu) + (1 / sig - 1)
+    )  # exponential time shift, sigma=1
     sig = np.concatenate([sig, [0.0]])
     return [float(s) for s in sig]
 

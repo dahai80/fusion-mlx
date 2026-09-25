@@ -249,7 +249,9 @@ def resolve_component(
     if not candidate.exists() and ref_file.exists():
         target = Path(ref_file.read_text().strip())
         if target.exists():
-            logger.info("ltx2_5 component %s resolved via %s -> %s", key, ref_file.name, target)
+            logger.info(
+                "ltx2_5 component %s resolved via %s -> %s", key, ref_file.name, target
+            )
             return target
     if not candidate.exists():
         logger.warning("ltx2_5 component %s not found at %s", key, candidate)
