@@ -149,6 +149,9 @@ class VideoGenerateRequest(BaseModel):
     last_frame_image: str | None = None
     # Optional backend-specific generation knobs (forwarded only when set)
     negative_prompt: str | None = None
+    # Diffusion steps. Honored by multi-step backends (wan2, ltx2 dev, ...).
+    # LTX-2.5 *distilled* ignores it (fixed 8+3=11 baked sigma schedule) and
+    # logs a warning; use pipeline=dev for step control (issue #968).
     num_inference_steps: int | None = Field(default=None, ge=1, le=200)
     scheduler: str | None = None
     cfg_scale: float | None = None

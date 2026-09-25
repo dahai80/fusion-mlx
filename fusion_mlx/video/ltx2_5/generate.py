@@ -255,6 +255,17 @@ def generate_video(
         )
     var_str = variant.value
 
+    # #968 part 2: num_inference_steps is a no-op on the distilled pipeline —
+    # the sigma tables are baked (stage1=8, stage2=3, 11 total). Surface this
+    # loudly instead of silently ignoring (the dev variant will honor steps
+    # once its sigma table is extracted; see resolve_dev_sigmas).
+    if num_inference_steps is not None and var_str == "distilled":
+        logger.warning(
+            "ltx2_5: num_inference_steps=%d ignored on distilled variant "
+            "(fixed 8+3=11 steps; use pipeline=dev for step control).",
+            num_inference_steps,
+        )
+
     # ---- 1. text encoder (Gemma4-12b) ----
     te_path = (
         Path(text_encoder_weights)
