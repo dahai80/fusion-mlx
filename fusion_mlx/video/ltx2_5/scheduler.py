@@ -25,6 +25,24 @@ logger = logging.getLogger(__name__)
 DISTILLED_STAGE_1_SIGMAS = list(STAGE_1_SIGMAS)
 DISTILLED_STAGE_2_SIGMAS = list(STAGE_2_SIGMAS)
 
+# #968 EXPERIMENT (default OFF — verified to NOT improve semantics, kept for
+# reproducibility): swap in the densified distilled tables (2x steps per stage,
+# linear midpoint interpolation). The distilled transformer is step-count
+# agnostic (velocity -> x0 -> renoise), so densification only trades time for
+# finer sigma resolution.
+import os as _os
+
+if _os.environ.get("FUSION_LTX25_DENSIFY_SIGMAS") == "1":
+    from ..ltx2.generate import STAGE_1_SIGMAS_DENSE, STAGE_2_SIGMAS_DENSE
+
+    DISTILLED_STAGE_1_SIGMAS = list(STAGE_1_SIGMAS_DENSE)
+    DISTILLED_STAGE_2_SIGMAS = list(STAGE_2_SIGMAS_DENSE)
+    logger.info(
+        "ltx2_5: DENSIFIED sigma tables active (stage1=%d steps, stage2=%d steps)",
+        len(DISTILLED_STAGE_1_SIGMAS) - 1,
+        len(DISTILLED_STAGE_2_SIGMAS) - 1,
+    )
+
 # dev 变体 sigma 列表（P9 后续）：真实模型首跑后从 diffusers main 提取，
 # 当前为 None 表示 dev 路径未启用（fail visible）。
 DEV_SIGMA_VALUES: list[float] | None = None
