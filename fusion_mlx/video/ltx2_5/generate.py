@@ -34,7 +34,11 @@ from ..ltx2.utils import load_image, prepare_image_for_encoding
 from .config import LTX2_5Variant
 from .denoise import denoise_distilled_t2v
 from .ltx2_5_model import LTX2_5Model
-from .scheduler import DISTILLED_STAGE_1_SIGMAS, DISTILLED_STAGE_2_SIGMAS
+from .scheduler import (
+    DISTILLED_STAGE_1_SIGMAS,
+    DISTILLED_STAGE_2_SIGMAS,
+    dev_sigmas,
+)
 from .text_encoder import load_text_encoder
 from .upsampler import load_spatial_upsampler_2_5, load_temporal_upsampler
 from .utils import get_model_path, is_split_layout, resolve_component
@@ -195,6 +199,7 @@ def generate_video(
     seed: int = 42,
     num_inference_steps: int | None = None,
     cfg_scale: float = 4.0,
+    negative_prompt: str | None = None,
     image: str | None = None,
     image_strength: float = 1.0,
     image_frame_idx: int = 0,
@@ -318,6 +323,16 @@ def generate_video(
         video_features.shape,
         additive_mask.shape,
     )
+    # dev CFG：负向 prompt 也过 TE（distilled guidance_scale=1 用不到）。
+    # 空串必须走真实编码（#957 教训：零填充 embedding ≠ 空串编码）。
+    negative_video_features = None
+    negative_additive_mask = None
+    if var_str == "dev" and cfg_scale != 1.0:
+        negative_video_features, negative_additive_mask = text_encoder.encode(
+            negative_prompt or "", return_audio_embeddings=False
+        )
+        mx.eval(negative_video_features, negative_additive_mask)
+        logger.info("Negative prompt encoded: %s", negative_video_features.shape)
     del text_encoder
     mx.clear_cache()
 
@@ -348,7 +363,14 @@ def generate_video(
         context.shape,
         context_mask.shape,
     )
-    del video_features, additive_mask
+    negative_context = None
+    if negative_video_features is not None:
+        negative_context, _ = transformer.video_embeddings_connector(
+            negative_video_features.astype(model_dtype), negative_additive_mask
+        )
+        mx.eval(negative_context)
+        logger.info("Negative connector run: context=%s", negative_context.shape)
+    del video_features, additive_mask, negative_video_features, negative_additive_mask
     mx.clear_cache()
 
     # ---- 4. dims ----
@@ -389,6 +411,72 @@ def generate_video(
     latent_mean = vae_decoder.per_channel_statistics.mean
     latent_std = vae_decoder.per_channel_statistics.std
     logger.info("VAE decoder loaded")
+
+    # ---- 6.2 dev single-stage path (Full/SFT DiT, 官方 diffusers 形态) ----
+    # dev 无 baked sigma 表、无 spatial/temporal upsampler：全分辨率单阶段
+    # 去噪（schedule 由 dev_sigmas() 按 token 数动态 shift，对拍 diffusers
+    # max|Δ|<3e-8），CFG 走真实负向分支（guidance_scale>1 有意义）。
+    if var_str == "dev":
+        if image is not None:
+            raise NotImplementedError(
+                "ltx2_5 dev: I2V single-stage conditioning not wired yet "
+                "(#968 follow-up) — use pipeline=distilled for I2V."
+            )
+        dev_steps = num_inference_steps if num_inference_steps else 20
+        dev_h, dev_w = height // 32, width // 32
+        dev_tokens = latent_frames * dev_h * dev_w
+        sig = dev_sigmas(dev_steps, num_tokens=dev_tokens)
+        logger.info(
+            "dev single-stage: %dx%d (%d steps, tokens=%d, cfg=%s)",
+            dev_w * 32,
+            dev_h * 32,
+            dev_steps,
+            dev_tokens,
+            cfg_scale,
+        )
+        mx.random.seed(seed)
+        positions = create_position_grid(1, latent_frames, dev_h, dev_w)
+        mx.eval(positions)
+        latents = mx.random.normal(
+            (1, 128, latent_frames, dev_h, dev_w), dtype=model_dtype
+        )
+        mx.eval(latents)
+        latents = denoise_distilled_t2v(
+            latents,
+            positions,
+            context,
+            transformer,
+            sig,
+            verbose=verbose,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
+            negative_context=negative_context,
+            cfg_scale=cfg_scale,
+        )
+        mx.eval(latents)
+        mx.clear_cache()
+        del transformer
+        mx.clear_cache()
+        logger.info("Decoding latents %s (full decode)...", latents.shape)
+        video = vae_decoder(latents)
+        mx.eval(video)
+        mx.clear_cache()
+        del vae_decoder
+        video = mx.squeeze(video, axis=0)
+        video = mx.transpose(video, (1, 2, 3, 0))
+        video = mx.clip((video + 1.0) / 2.0, 0.0, 1.0)
+        video = (video * 255).astype(mx.uint8)
+        video_np = np.array(video)
+        logger.info(
+            "Decoded %d frames %dx%d",
+            video_np.shape[0],
+            video_np.shape[2],
+            video_np.shape[1],
+        )
+        mp4_bytes = _write_mp4(video_np, fps, output_path)
+        logger.info("ltx2_5 dev generate_video: %.1fs", time.time() - start_time)
+        return mp4_bytes
 
     # ---- 6.5 I2V image encode (#782) ----
     # 两阶段 distilled 各分辨率独立 VAE-encode 同一图像: stage1 半分辨率,

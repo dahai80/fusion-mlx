@@ -719,6 +719,39 @@ class LTX2_5Model(nn.Module):
 
         if config is None:
             config = default_ltx2_5_config(variant)
+            # 数据驱动配置覆盖：checkpoint 旁的 embedded_config.json（Lightricks
+            # 原生布局，flat/Comfy 快照根均有）是架构事实来源。rope_type 尤其
+            # 关键——官方 LTX-2.5 为 "split"，而 MLX 默认是 INTERLEAVED；RoPE
+            # 错配权重形状不变（strict 加载照过），但位置语义全错：T2V 迭代
+            # 退化为纯色/纹理噪声（单步 velocity 审计健康，极具迷惑性）。
+            _emb_cfg = weights_path.parent / "embedded_config.json"
+            if not _emb_cfg.exists():
+                # Comfy 单文件分发（权重可与 config 分目录）——向上找一层
+                _emb_cfg = weights_path.parent.parent / "embedded_config.json"
+            if _emb_cfg.exists():
+                try:
+                    import json as _json
+
+                    _rt = (
+                        _json.loads(_emb_cfg.read_text())
+                        .get("transformer", {})
+                        .get("rope_type")
+                    )
+                    if _rt and _rt != config.rope_type.value:
+                        config.rope_type = LTXRopeType(_rt)
+                        logger.info(
+                            "ltx2_5 from_pretrained: rope_type overridden to "
+                            "'%s' per %s",
+                            _rt,
+                            _emb_cfg.name,
+                        )
+                except Exception:
+                    logger.warning(
+                        "ltx2_5 from_pretrained: failed to parse %s — "
+                        "keeping default rope_type",
+                        _emb_cfg,
+                        exc_info=True,
+                    )
         logger.info(
             "ltx2_5 from_pretrained: weights=%s variant=%s layers=%d caption=%d",
             weights_path.name,
