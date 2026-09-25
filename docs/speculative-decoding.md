@@ -75,6 +75,48 @@ misuse never silently falls back.
 --enable-dspark            # DSpark lossless block spec-decode (serial mode)
 ```
 
+#### MTP chain-of-K (`--mtp-chain-k`)
+
+The native MTP path (`--spec-decode mtp`) defaults to K=1 (one draft token
+verified alongside the bonus token — the +86% winner from PR #965). Opt-in
+to an autoregressive draft chain with `--mtp-chain-k 2`:
+
+```bash
+fusion-mlx serve mlx-community/Qwen3.8-27B-4bit \
+  --spec-decode mtp --mtp-sidecar mlx-community/Qwen3.8-27B-MTP-4bit \
+  --mtp-chain-k 2 --port 11434 --text-only
+```
+
+K=2 drafts 2 tokens serially off the head's hidden state and verifies 3
+positions in one backbone forward, amortizing one weight read over ~3
+tokens instead of ~1.8. On the hybrid GDN architecture (Qwen3.8-27B: 48
+GatedDeltaNet + 16 full-attention layers), correct partial-accept rollback
+requires per-position SSM snapshots: the patched `GatedDeltaNet.__call__`
+processes the draft chunk position-by-position when D>1 and stores
+`(conv, ssm)` after each draft position on `cache.rollback_state_list`; on
+a partial accept r, `rollback_state_list[r-1]` restores the recurrent state
+(exact, not approximate). K=1 is unchanged (single snapshot, no list).
+
+Measured on Qwen3.8-27B-4bit (text-only, greedy temp=0, median of 5 ×
+200-token continuations):
+
+| config | tok/s | vs stock | vs K=1 |
+|---|---|---|---|
+| stock (no spec) | 30.2 | — | — |
+| MTP K=1 | 37.5 | +24% | — |
+| MTP K=2 | 49.6 | +64% | +32% |
+
+K=2 accept rate is 33-68% per request (lower than K=1's ~90% — two drafts
+must both be right for full accept), but a partial accept (r=1) still
+yields 2 tokens/forward, so the net speedup is positive. K=2 output is
+token-for-token identical to K=1 (lossless vs the shipped path) on all
+tested prompts; the known hybrid-model temp=0 numerical divergence vs the
+plain greedy path (documented above for DFlash2, same argmax-flip
+mechanism) is inherited unchanged from K=1. K>2 is deferred to Phase B.
+
+Text-only serve path only — the VLM serve path blocks MTP
+(`VLMModelAdapter` has no `mtp_forward` surface).
+
 ### Method-specific knobs
 
 | Flag | Default | Purpose |

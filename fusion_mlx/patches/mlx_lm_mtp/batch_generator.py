@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from collections import deque
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -79,6 +80,26 @@ from typing import Any
 from . import cache_rollback as _rollback_mod
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_chain_k() -> int:
+    """AWSD Phase A: read the chain-of-K depth from the environment.
+
+    ``FUSION_MLX_MTP_CHAIN_K`` (default 1). K=1 = stock MTP (zero
+    regression). K>=2 = autoregressive chain: head applied K times
+    serially, single backbone forward verifies K+1 positions. Clamped to
+    [1, 4] — K>4 is Phase B territory (accept-rate collapse risk).
+    """
+    try:
+        k = int(os.environ.get("FUSION_MLX_MTP_CHAIN_K", "1") or "1")
+    except ValueError:
+        k = 1
+    return max(1, min(4, k))
+
+
+_CHAIN_K = _resolve_chain_k()
+if _CHAIN_K >= 2:
+    logger.info("[mtp.chain] AWSD Phase A chain-of-K enabled, K=%d", _CHAIN_K)
 
 # ---------------------------------------------------------------------------
 # Public entry point
@@ -465,6 +486,10 @@ class _MtpStats:
     mtp_head_ms: float = 0.0  # cumulative time inside MTP-head forwards
     sample_ms: float = 0.0  # cumulative time in sampling + acceptance check
     cache_ops_ms: float = 0.0  # cumulative time in trim / rollback restore
+    # AWSD Phase A: chain-of-K accept-depth histogram. index j = number of
+    # draft tokens accepted in a cycle (0..K). K=1 path only uses j in {0,1}.
+    chain_k: int = 1  # K observed this sequence (1 = stock MTP, no chain)
+    accept_depth: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -501,8 +526,18 @@ class _MtpState:
     # GPU→CPU sync (`int(draft_tok.tolist()[0])` would force a stall).
     draft_id: int = -1
 
+    # AWSD Phase A: head-hidden that produced draft_tok. Stashed so a K>=2
+    # chain cycle can draft token 1..K-1 off it without re-running the head
+    # for draft 0. None on the K=1 path (no chain consumer).
+    draft_head_hidden: Any = None
+
     # Accept-rate / throughput counters. Surfaced via logger.info on finish.
     stats: _MtpStats = field(default_factory=_MtpStats)
+
+    # AWSD Phase A: chain-of-K depth. K=1 = stock MTP (one draft / verify
+    # cycle, zero regression). K>=2 = autoregressive chain: head applied K
+    # times serially, single backbone forward verifies K+1 positions.
+    chain_k: int = 1
 
 
 @dataclass
@@ -1033,37 +1068,69 @@ def _trim_token_buffer(gen_batch: Any, n: int) -> None:
     buf._size = max(0, buf._size - n)
 
 
-def _restore_or_trim_caches(prompt_cache: list[Any]) -> bool:
-    """Roll back one token from each layer cache after a draft rejection.
+def _rollback_snapshot_for(c: Any, accepted: int) -> tuple[Any, Any] | None:
+    """Return the (conv, ssm) snapshot to restore for ``accepted`` drafts.
 
-    SSM / linear-attention layers expose ``rollback_state`` populated by the
-    patched ``GatedDeltaNet.__call__``; we restore that snapshot. Standard
-    KV cache layers (full-attention) expose ``trim`` and ``is_trimmable``;
-    we trim by 1. Layers that support neither cause the entire MTP step to
-    fall back to the standard path.
+    accepted == 0 → pre-draft snapshot (``rollback_state``, confirmed only).
+    accepted >= 1 → ``rollback_state_list[accepted - 1]`` (state after
+    ``accepted`` drafts). Returns None if no snapshot is available.
+    """
+    if accepted >= 1:
+        snap_list = getattr(c, "rollback_state_list", None)
+        if snap_list is not None and accepted - 1 < len(snap_list):
+            return snap_list[accepted - 1]
+    return getattr(c, "rollback_state", None)
+
+
+def _has_rollback_for(c: Any, accepted: int) -> bool:
+    return _rollback_snapshot_for(c, accepted) is not None
+
+
+def _restore_or_trim_caches(
+    prompt_cache: list[Any],
+    accepted: int = 0,
+    block_size: int = 2,
+) -> bool:
+    """Roll back per-layer cache state after a draft rejection.
+
+    SSM / linear-attention layers expose ``rollback_state`` (K=1, pre-draft)
+    or ``rollback_state_list`` (chain-of-K, per-position) populated by the
+    patched ``GatedDeltaNet.__call__``; we restore the snapshot matching
+    ``accepted`` drafts kept. Standard KV cache layers (full-attention)
+    expose ``trim`` / ``is_trimmable``; we trim by ``block_size -
+    (accepted + 1)`` = positions to drop. Layers that support neither cause
+    the entire MTP step to fall back to the standard path.
 
     All layers are checked before anything is mutated: a partial rollback
     (early layers trimmed, a later layer refusing) leaves per-layer KV
-    lengths desynchronised by one position and corrupts every subsequent
-    forward (the shared attention mask is built from the first layer's
-    cache, so the mismatch surfaces as a broadcast error on DeepSeek-V4
-    compressed-attention layers).
+    lengths desynchronised and corrupts every subsequent forward (the shared
+    attention mask is built from the first layer's cache, so the mismatch
+    surfaces as a broadcast error on DeepSeek-V4 compressed-attention layers).
     """
+    n_to_trim = block_size - (accepted + 1)
+    if n_to_trim < 0:
+        logger.warning(
+            "[mtp.rollback] invalid accepted=%d block_size=%d (n_to_trim<0)",
+            accepted,
+            block_size,
+        )
+        return False
     for c in prompt_cache:
-        if getattr(c, "rollback_state", None) is not None:
+        if _has_rollback_for(c, accepted):
             continue
         if hasattr(c, "is_trimmable") and c.is_trimmable():
             continue
         return False
     for c in prompt_cache:
-        rollback = getattr(c, "rollback_state", None)
-        if rollback is not None:
-            conv_snap, ssm_snap = rollback
+        snap = _rollback_snapshot_for(c, accepted)
+        if snap is not None:
+            conv_snap, ssm_snap = snap
             c[0] = conv_snap
             c[1] = ssm_snap
             c.rollback_state = None
+            c.rollback_state_list = None
             continue
-        c.trim(1)
+        c.trim(n_to_trim)
     return True
 
 
@@ -1098,7 +1165,7 @@ def _rollback_after_reject(
     if gdn_states is not None and hasattr(model, "rollback_speculative_cache"):
         model.rollback_speculative_cache(prompt_cache, gdn_states, accepted, block_size)
         return True
-    return _restore_or_trim_caches(prompt_cache)
+    return _restore_or_trim_caches(prompt_cache, accepted=accepted, block_size=block_size)
 
 
 def _call_backbone(
@@ -1153,6 +1220,8 @@ def _clear_rollback(prompt_cache: list[Any]) -> None:
     for c in prompt_cache:
         if hasattr(c, "rollback_state") and c.rollback_state is not None:
             c.rollback_state = None
+        if getattr(c, "rollback_state_list", None) is not None:
+            c.rollback_state_list = None
         if getattr(c, "_mtp_undo", None) is not None:
             c._mtp_undo = None
         for sub in getattr(c, "caches", ()):
@@ -1229,7 +1298,17 @@ def _post_init_mtp(gen_batch: Any) -> None:
     mtp_cache = gen_batch.model.make_mtp_cache()
     hidden_at_main = hidden[:, -1:, :]  # (1, 1, H)
     next_ids = next_main_tok.reshape(1, 1)
-    mtp_logits = gen_batch.model.mtp_forward(hidden_at_main, next_ids, mtp_cache)
+    chain_k = _CHAIN_K
+    mtp_result = gen_batch.model.mtp_forward(
+        hidden_at_main,
+        next_ids,
+        mtp_cache,
+        return_hidden=chain_k >= 2,
+    )
+    if chain_k >= 2:
+        mtp_logits, mtp_head_hidden = mtp_result
+    else:
+        mtp_logits, mtp_head_hidden = mtp_result, None
     mtp_logits_2d = mtp_logits[:, -1, :]
     if procs is not None:
         prev_with_main_and_next = mx.concatenate(
@@ -1250,11 +1329,16 @@ def _post_init_mtp(gen_batch: Any) -> None:
     # while the array is already evaluated to avoid re-syncing in cycle 1.
     state = _MtpState(uid=gen_batch.uids[0])
     state.mtp_cache = mtp_cache
+    state.chain_k = chain_k
     state.next_main = _ensure_uint32(next_main_tok)
     state.draft_tok = _ensure_uint32(draft_tok)
     state.draft_lp = draft_lp_2d.squeeze(0)
     state.draft_accept_lp = draft_accept_lp_2d.squeeze(0)
     state.draft_id = int(draft_tok.tolist()[0])
+    if chain_k >= 2:
+        mx.eval(mtp_head_hidden)
+        state.draft_head_hidden = mtp_head_hidden[:, -1:, :]
+        state.stats.chain_k = chain_k
     state.queue.append((int(main_tok.tolist()[0]), main_lp, "init"))
     state.queue.append(
         (int(next_main_tok.tolist()[0]), next_main_lp.squeeze(0), "init")
@@ -1453,9 +1537,11 @@ def _bump_emit_stat(state: _MtpState, source: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _run_verify_cycle(gen_batch: Any, state: _MtpState) -> None:
-    """Run one verify cycle. Populates ``state.queue`` with 1 (reject) or 2
-    (accept) tokens for upcoming emit calls. Updates ``state.next_main`` and
+def _run_verify_cycle_k1(gen_batch: Any, state: _MtpState) -> None:
+    """K=1 verify cycle (stock MTP, zero regression).
+
+    Populates ``state.queue`` with 1 (reject) or 2 (accept) tokens for
+    upcoming emit calls. Updates ``state.next_main`` and
     ``state.draft_tok`` / ``state.draft_lp`` for the cycle after that.
     """
     import time
@@ -1561,12 +1647,13 @@ def _run_verify_cycle(gen_batch: Any, state: _MtpState) -> None:
         state.stats.cache_ops_ms += (time.perf_counter() - t0) * 1000
 
         # --- MTP head forward for next draft (timed inside _step_mtp) ---
-        new_draft, new_draft_lp = _step_mtp(
+        new_draft, new_draft_lp, new_head_hidden = _step_mtp(
             gen_batch,
             hidden_at_draft,
             _ensure_uint32(bonus_tok),
             prev_buf=prev_draft if procs is not None else None,
             stats=state.stats,
+            want_hidden=state.chain_k >= 2,
         )
         # Queue the two emitted tokens. Per PR 990: the accepted draft uses
         # the *MTP head's* original draft distribution as its logprobs; the
@@ -1576,6 +1663,7 @@ def _run_verify_cycle(gen_batch: Any, state: _MtpState) -> None:
         state.next_main = _ensure_uint32(bonus_tok)
         state.draft_tok = new_draft
         state.draft_lp = new_draft_lp
+        state.draft_head_hidden = new_head_hidden
         return
 
     # Reject path.
@@ -1611,18 +1699,239 @@ def _run_verify_cycle(gen_batch: Any, state: _MtpState) -> None:
         emit_lp = verify_lp_2d.squeeze(0)
 
     emit_tok = mx.array([emit_id], dtype=mx.uint32)
-    new_draft, new_draft_lp = _step_mtp(
+    new_draft, new_draft_lp, new_head_hidden = _step_mtp(
         gen_batch,
         hidden_at_confirmed,
         emit_tok,
         prev_buf=prev_main if procs is not None else None,
         stats=state.stats,
+        want_hidden=state.chain_k >= 2,
     )
 
     state.queue.append((emit_id, emit_lp, "verify"))
     state.next_main = emit_tok
     state.draft_tok = new_draft
     state.draft_lp = new_draft_lp
+    state.draft_head_hidden = new_head_hidden
+
+
+def _run_verify_cycle(gen_batch: Any, state: _MtpState) -> None:
+    """Run one verify cycle. Dispatches on ``state.chain_k``.
+
+    K=1 (default): draft 1 token, verify 2 in one backbone forward. Zero
+    regression vs pre-AWSD code path.
+    K>=2 (AWSD Phase A): autoregressive chain — head applied K times
+    serially, single backbone forward verifies K+1 positions, accept-prefix
+    rollback on the hybrid GDN model uses per-position SSM snapshots.
+    """
+    if state.chain_k >= 2:
+        _run_verify_cycle_chain(gen_batch, state)
+        return
+    _run_verify_cycle_k1(gen_batch, state)
+
+
+def _run_verify_cycle_chain(gen_batch: Any, state: _MtpState) -> None:
+    """K>=2 autoregressive chain verify cycle (AWSD Phase A).
+
+    Drafts K tokens by applying the MTP head K times serially (no d1sync —
+    same GPU stream, head cache grows autoregressively), then verifies all
+    K+1 positions in a single backbone forward. Accept-prefix: emits
+    accepted drafts + (bonus if all accepted, else residual at the reject
+    point). Rolls back the rejected suffix via per-position GDN snapshots
+    (rollback_state_list) + KV trim.
+
+    inputs = [next_main, d0, d1, ..., d{K-1}]  (K+1 tokens)
+    logits[i] (i<K) verifies draft d{i}; logits[K] is the bonus.
+    """
+    import time
+
+    import mlx.core as mx
+
+    K = state.chain_k
+    if state.next_main is None or state.draft_tok is None:
+        raise _MtpStepFallback("chain verify cycle entered without next_main / draft")
+    if state.draft_head_hidden is None:
+        raise _MtpStepFallback("chain cycle entered without draft_head_hidden seed")
+
+    sampler = _resolve_sampler(gen_batch)
+    procs = _proc_list(gen_batch)
+    is_greedy = _is_greedy(gen_batch)
+
+    # draft[0] = state.draft_tok (produced at end of the prior cycle with
+    # want_hidden so state.draft_head_hidden holds its head-hidden).
+    draft_tokens = [state.draft_tok]
+    draft_lps = [state.draft_lp]
+    draft_accept_lps = [
+        state.draft_accept_lp
+        if state.draft_accept_lp is not None
+        else _accept_lp_for(sampler, state.draft_lp)
+    ]
+    draft_ids = [state.draft_id]
+    head_hiddens = [state.draft_head_hidden]
+
+    # Token-buffer fetches for processors: position i's verify logits use
+    # the buffer up to inputs[i]. Fetch next_main first, then each draft as
+    # it is produced (mirrors K=1 fetching prev_main + prev_draft pre-backbone).
+    prev_bufs: list[Any] = []
+    if procs is not None:
+        prev_bufs.append(gen_batch._token_context[0].update_and_fetch(state.next_main))
+        prev_bufs.append(gen_batch._token_context[0].update_and_fetch(state.draft_tok))
+
+    # Chain drafts 1..K-1 off each prior draft's head-hidden (serial, same
+    # GPU stream — no d1sync, unlike EAGLE/Medusa parallel heads).
+    for i in range(1, K):
+        prev_buf = prev_bufs[-1] if procs is not None else None
+        d_tok, d_lp, d_hidden = _step_mtp(
+            gen_batch,
+            head_hiddens[-1],
+            draft_tokens[-1],
+            prev_buf=prev_buf,
+            stats=state.stats,
+            want_hidden=True,
+        )
+        draft_tokens.append(d_tok)
+        draft_lps.append(d_lp)
+        draft_accept_lps.append(state.draft_accept_lp)
+        draft_ids.append(state.draft_id)
+        head_hiddens.append(d_hidden)
+        if procs is not None:
+            prev_bufs.append(gen_batch._token_context[0].update_and_fetch(d_tok))
+
+    # inputs = [next_main, d0, ..., d{K-1}]  (K+1 tokens)
+    inputs = mx.concatenate([state.next_main] + draft_tokens)
+
+    # --- backbone forward (K+1 positions, n_confirmed=1) ---
+    t0 = time.perf_counter()
+    logits, hidden, gdn_states = _call_backbone(
+        gen_batch.model,
+        inputs[None, :],
+        gen_batch.prompt_cache,
+        n_confirmed=1,
+    )
+    mx.eval(logits)
+    state.stats.backbone_ms += (time.perf_counter() - t0) * 1000
+
+    # Per-position verify logits (0..K-1) + bonus (K).
+    t0 = time.perf_counter()
+    pos_logits = [logits[:, i, :] for i in range(K + 1)]
+    if procs is not None:
+        pos_logits = [
+            _apply_processors(procs, prev_bufs[i], pos_logits[i])
+            for i in range(K + 1)
+        ]
+    combined_logits = mx.concatenate(pos_logits, axis=0)  # (K+1, vocab)
+    combined_lp = combined_logits - mx.logsumexp(
+        combined_logits, axis=-1, keepdims=True
+    )
+    verify_lp = [combined_lp[i : i + 1] for i in range(K)]  # K verify positions
+    bonus_lp_2d = combined_lp[K : K + 1]
+    verify_tok = [sampler(verify_lp[i]) for i in range(K)]
+    bonus_tok = sampler(bonus_lp_2d)
+    mx.eval(*verify_tok, bonus_tok)
+
+    verify_ids = [int(t.tolist()[0]) for t in verify_tok]
+    bonus_id = int(bonus_tok.tolist()[0])
+    verify_accept_lps = [_accept_lp_for(sampler, verify_lp[i]) for i in range(K)]
+
+    # Accept-prefix: find first reject index r (0..K). r==K = all accepted.
+    accepts = []
+    for i in range(K):
+        if is_greedy:
+            accepts.append(verify_ids[i] == draft_ids[i])
+        else:
+            log_accept = (
+                verify_accept_lps[i][0, draft_ids[i]].item()
+                - draft_accept_lps[i][draft_ids[i]].item()
+            )
+            accepts.append(
+                log_accept >= 0
+                or float(mx.random.uniform(shape=()).item()) < math.exp(log_accept)
+            )
+    r = 0
+    while r < K and accepts[r]:
+        r += 1
+    state.stats.sample_ms += (time.perf_counter() - t0) * 1000
+
+    state.stats.cycles += 1
+    state.stats.accept_depth.append(r)
+
+    if r == K:
+        # All drafts accepted — emit d0..d{K-1} + bonus, clear rollback.
+        state.stats.accepts += 1
+        t0 = time.perf_counter()
+        _clear_rollback(gen_batch.prompt_cache)
+        state.stats.cache_ops_ms += (time.perf_counter() - t0) * 1000
+
+        for i in range(K):
+            state.queue.append((draft_ids[i], draft_lps[i], "draft"))
+        state.queue.append((bonus_id, bonus_lp_2d.squeeze(0), "bonus"))
+
+        # Seed next cycle: draft off the bonus-position hidden (hidden[K]).
+        next_main_tok = _ensure_uint32(bonus_tok)
+        prev_buf = prev_bufs[K] if procs is not None else None
+        new_draft, new_draft_lp, new_head_hidden = _step_mtp(
+            gen_batch,
+            hidden[:, K : K + 1, :],
+            next_main_tok,
+            prev_buf=prev_buf,
+            stats=state.stats,
+            want_hidden=True,
+        )
+        state.next_main = next_main_tok
+        state.draft_tok = new_draft
+        state.draft_lp = new_draft_lp
+        state.draft_head_hidden = new_head_hidden
+        return
+
+    # Partial / full reject (r < K): emit d0..d{r-1} + residual at r.
+    state.stats.rejects += 1
+    t0 = time.perf_counter()
+    # accepted=r drafts kept; block_size=K+1 positions written. Trim the
+    # rejected suffix (K-r positions) from KV; restore GDN snapshot for the
+    # accepted prefix (rollback_state_list[r-1] if r>=1, else rollback_state).
+    if not _rollback_after_reject(
+        gen_batch.model,
+        gen_batch.prompt_cache,
+        gdn_states,
+        accepted=r,
+        block_size=K + 1,
+    ):
+        if procs is not None:
+            _trim_token_buffer(gen_batch, K)
+        raise _MtpStepFallback("cache layer rejects chain rollback")
+    if procs is not None:
+        _trim_token_buffer(gen_batch, K - r)
+    state.stats.cache_ops_ms += (time.perf_counter() - t0) * 1000
+
+    for i in range(r):
+        state.queue.append((draft_ids[i], draft_lps[i], "draft"))
+
+    # Residual / verify token at the reject point.
+    if is_greedy:
+        emit_id = verify_ids[r]
+        emit_lp = verify_lp[r].squeeze(0)
+    else:
+        emit_id, _ = _residual_sample(verify_accept_lps[r], draft_accept_lps[r])
+        emit_lp = verify_lp[r].squeeze(0)
+    state.queue.append((emit_id, emit_lp, "verify"))
+
+    # Seed next cycle: draft off the reject-position hidden (hidden[r] =
+    # backbone hidden after next_main + d0..d{r-1}, the new confirmed prefix).
+    emit_tok = mx.array([emit_id], dtype=mx.uint32)
+    next_main_tok = emit_tok
+    prev_buf = prev_bufs[r] if procs is not None else None
+    new_draft, new_draft_lp, new_head_hidden = _step_mtp(
+        gen_batch,
+        hidden[:, r : r + 1, :],
+        next_main_tok,
+        prev_buf=prev_buf,
+        stats=state.stats,
+        want_hidden=True,
+    )
+    state.next_main = next_main_tok
+    state.draft_tok = new_draft
+    state.draft_lp = new_draft_lp
+    state.draft_head_hidden = new_head_hidden
 
 
 # ---------------------------------------------------------------------------
@@ -1636,12 +1945,18 @@ def _step_mtp(
     next_main_tok: Any,
     prev_buf: Any | None,
     stats: _MtpStats | None = None,
-) -> tuple[Any, Any]:
-    """Run one MTP-head forward + sample. Returns ``(draft_tok, draft_lp)``.
+    want_hidden: bool = False,
+) -> tuple[Any, Any, Any | None]:
+    """Run one MTP-head forward + sample.
+
+    Returns ``(draft_tok, draft_lp, draft_hidden)``. ``draft_hidden`` is the
+    head's pre-lm_head hidden state (needed to chain a second draft off the
+    first in AWSD chain-of-K), or None when ``want_hidden`` is False.
 
     Side effect: caches the host-side int copy of the new draft on
     ``gen_batch._fusion_mlx_mtp_state.draft_id`` so the next verify cycle's
-    accept check is sync-free.
+    accept check is sync-free. When ``want_hidden`` is True the head's
+    hidden is evaluated alongside the draft id on the same host sync.
     """
     import time
 
@@ -1653,27 +1968,38 @@ def _step_mtp(
 
     t0 = time.perf_counter()
     next_ids = next_main_tok.reshape(1, 1)
-    mtp_logits = gen_batch.model.mtp_forward(
-        hidden_at_position, next_ids, state.mtp_cache
+    mtp_result = gen_batch.model.mtp_forward(
+        hidden_at_position,
+        next_ids,
+        state.mtp_cache,
+        return_hidden=want_hidden,
     )
+    if want_hidden:
+        mtp_logits, mtp_hidden = mtp_result
+    else:
+        mtp_logits, mtp_hidden = mtp_result, None
     mtp_logits_2d = mtp_logits[:, -1, :]
     if procs is not None and prev_buf is not None:
         prev_with_next = mx.concatenate([prev_buf, _ensure_uint32(next_main_tok)])
         mtp_logits_2d = _apply_processors(procs, prev_with_next, mtp_logits_2d)
     new_lp = _logprobs(mtp_logits_2d)
     new_tok = sampler(new_lp)
-    # Filtered draft lp — what the sampler actually drew from. The next
-    # verify cycle's acceptance ratio uses this so the math matches the
-    # sampling distribution rather than raw softmax (PR 990 alignment).
     new_accept_lp = _accept_lp_for(sampler, new_lp)
     # ``.tolist()`` forces evaluation; replaces the explicit ``mx.eval`` and
-    # piggybacks the host-side int caching on the same sync.
+    # piggybacks the host-side int caching on the same sync. When chaining,
+    # also eval the hidden so the next head forward sees a materialised
+    # input (lazy graphs spanning K head forwards would fuse into one stall).
     draft_id_int = int(new_tok.tolist()[0])
     state.draft_id = draft_id_int
     state.draft_accept_lp = new_accept_lp.squeeze(0)
+    if mtp_hidden is not None:
+        mx.eval(mtp_hidden)
+        draft_hidden_out = mtp_hidden[:, -1:, :]
+    else:
+        draft_hidden_out = None
     if stats is not None:
         stats.mtp_head_ms += (time.perf_counter() - t0) * 1000
-    return _ensure_uint32(new_tok), new_lp.squeeze(0)
+    return _ensure_uint32(new_tok), new_lp.squeeze(0), draft_hidden_out
 
 
 def _residual_sample(verify_lp_2d: Any, draft_lp_1d: Any) -> tuple[int, Any]:

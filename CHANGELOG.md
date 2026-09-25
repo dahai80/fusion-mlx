@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added — AWSD Phase A: MTP chain-of-K=2 (--mtp-chain-k 2), +32% over K=1
+- **`patches/mlx_lm_mtp/batch_generator.py`**: new `_run_verify_cycle_chain`
+  hot-loop drafting K=2 tokens autoregressively off the head's hidden state
+  and verifying 3 positions in one backbone forward (amortizing one 14GB
+  weight read over ~3 tokens). Per-position GDN SSM snapshots
+  (`rollback_state_list`) enable correct partial-accept rollback on the
+  hybrid GDN architecture (Qwen3.8-27B: 48 GatedDeltaNet + 16 full-attention).
+  Default K=1 (zero regression); K=2 opt-in via `--mtp-chain-k 2`.
+- **`patches/mlx_lm_mtp/qwen35_model.py`**: GDN `__call__` processes the
+  draft chunk position-by-position when D>1, snapshotting `(conv, ssm)` after
+  each draft position. K=1 path unchanged.
+- **`patches/mlx_lm_mtp/cache_rollback.py`**: `ArraysCache.rollback_state_list`
+  slot + generalized undo stash guard (`>=2`).
+- **`cli.py` / `cli_serve/serve_command.py`**: `--mtp-chain-k <N>` flag
+  (default 1), wired via `FUSION_MLX_MTP_CHAIN_K` env (set before model load).
+- Measured on Qwen3.8-27B-4bit (text-only path, greedy temp=0): K=2 49.6
+  tok/s vs K=1 37.5 (+32%) vs stock 30.2 (+64%), lossless token-for-token
+  parity vs K=1 on all test prompts. Accept rate 33-68% (lower than K=1's
+  90%, but partial-accept still yields 2 tokens/forward). See
+  `docs/innovation-weight-amortized-spec-decode.md`.
+
 ### Added — Per-model KV token ceiling memory plan (L2)
 - **`memory_plan.py`**: `ModelMemoryPlan` (kv_bytes_per_token,
   kv_token_ceiling, max_context_per_request, deficit_bytes) lazily computed
@@ -19,7 +40,7 @@
   the `RequestOutput`, so `engine_core._raise_request_output_error` fell
   through to a generic `RuntimeError` → 500. Now stamps
   `error_code="prefill_memory_exceeded"` → `PrefillMemoryExceededError` →
-  HTTP 413 (the existing handler fires correctly).
+  HTTP 413 (the existing handler fires correctly).)
 
 ### Fixed — MLX metal cache cap starved 27B-class models (intermittent decode stalls)
 - **`pool/memory_enforcer.py`**: replaced the hardcoded 8GB
