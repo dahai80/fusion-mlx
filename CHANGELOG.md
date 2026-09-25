@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added — Per-model KV token ceiling memory plan (L2)
+- **`memory_plan.py`**: `ModelMemoryPlan` (kv_bytes_per_token,
+  kv_token_ceiling, max_context_per_request, deficit_bytes) lazily computed
+  from memory_monitor geometry + the propagated hard limit, cached on the
+  scheduler. Borrowed from splash's offline `EngineMemoryBreakdown`.
+- **`Scheduler.get_memory_plan()` / `clamp_max_tokens_to_kv_ceiling()`**:
+  clamp request `max_tokens` so prompt+generation fits the KV budget,
+  preventing decode-phase OOM. No-op when the plan is unavailable or the
+  request already fits. Mirrors splash's `maximumContextTokens` clamping.
+- **`/v1/models/status`**: exposes `memory_plan` per loaded model for
+  operator visibility.
+
+### Fixed — Preflight memory rejection now surfaces HTTP 413 (was 500)
+- `_schedule_waiting` preflight-rejection path stamped no `error_code` on
+  the `RequestOutput`, so `engine_core._raise_request_output_error` fell
+  through to a generic `RuntimeError` → 500. Now stamps
+  `error_code="prefill_memory_exceeded"` → `PrefillMemoryExceededError` →
+  HTTP 413 (the existing handler fires correctly).
+
 ### Fixed — MLX metal cache cap starved 27B-class models (intermittent decode stalls)
 - **`pool/memory_enforcer.py`**: replaced the hardcoded 8GB
   `_MLX_CACHE_LIMIT_MAX_BYTES` cap with a physical-RAM-relative fraction

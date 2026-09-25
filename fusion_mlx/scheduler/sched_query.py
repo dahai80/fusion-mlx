@@ -469,6 +469,62 @@ def _preflight_memory_check(self, request: "Request") -> _PreflightRejection | N
     return None
 
 
+def get_memory_plan(self):
+    """Lazily compute and cache the per-model ``ModelMemoryPlan``.
+
+    Borrowed from splash's offline ``EngineMemoryBreakdown``: a view of
+    the KV token budget for the loaded model, used to cap request
+    context on admission and surfaced to operators via /status.
+    Computed once (when memory_monitor geometry + the propagated hard
+    limit are available) and cached on ``self._memory_plan``.
+    """
+    cached = getattr(self, "_memory_plan", None)
+    if cached is not None:
+        return cached
+    try:
+        from ..memory_plan import compute_model_memory_plan
+
+        plan = compute_model_memory_plan(self)
+    except Exception as e:
+        logger.debug("get_memory_plan failed: %s", e)
+        plan = None
+    self._memory_plan = plan
+    return plan
+
+
+def clamp_max_tokens_to_kv_ceiling(self, request: "Request") -> bool:
+    """Clamp ``request.max_tokens`` so prompt+generation fits the KV budget.
+
+    Prevents decode-phase OOM when a request's ``max_tokens`` (default
+    65536) would grow KV past the hard memory limit. Returns True if the
+    ceiling was applied (max_tokens was reduced), False otherwise.
+    Mirrors splash's ``maximumContextTokens`` clamping. No-op when the
+    plan is unavailable or the request already fits.
+    """
+    plan = self.get_memory_plan()
+    if plan is None or plan.kv_token_ceiling <= 0:
+        return False
+    prompt_tokens = request.num_prompt_tokens or 0
+    max_tokens = request.max_tokens
+    if prompt_tokens + max_tokens <= plan.kv_token_ceiling:
+        return False
+    clamped = max(1, plan.kv_token_ceiling - prompt_tokens)
+    if clamped >= max_tokens:
+        return False
+    logger.warning(
+        "Clamped max_tokens for %s: %d -> %d "
+        "(prompt=%d, kv_token_ceiling=%d, kv_bytes_per_token=%d)",
+        request.request_id,
+        max_tokens,
+        clamped,
+        prompt_tokens,
+        plan.kv_token_ceiling,
+        plan.kv_bytes_per_token,
+    )
+    request.sampling_params.max_tokens = clamped
+    return True
+
+
 def _estimate_prefill_peak(self, new_tokens: int) -> int:
     """Estimate worst-case peak memory for a prefill chunk.
 
