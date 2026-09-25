@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed — MLX metal cache cap starved 27B-class models (intermittent decode stalls)
+- **`pool/memory_enforcer.py`**: replaced the hardcoded 8GB
+  `_MLX_CACHE_LIMIT_MAX_BYTES` cap with a physical-RAM-relative fraction
+  (`_MLX_CACHE_LIMIT_MAX_FRACTION`, default 0.5, env
+  `FUSION_MLX_CACHE_LIMIT_MAX_GB` / `FUSION_MLX_CACHE_LIMIT_MAX_FRACTION`).
+  On a 128GB Mac the reuse pool rose 8GB -> 64GB, large enough to hold the
+  Qwen3.8-27B-4bit working set (~16GB) across idle gaps. Root cause: during
+  idle periods the OS reclaimed wired pages; the next request re-allocated
+  the whole model working set per step, inflating MTP backbone forward time
+  7.5x (38ms -> 288ms/cycle) and dropping tok/s 49 -> 6 on an 8s-paced
+  sequence, with intermittent 45 -> 32 dips on a 1s-paced sequence. After
+  fix: 47 tok/s rock-stable (backbone 4035-4230ms, accept ratio unchanged
+  79.3%, lossless parity intact, RSS unchanged). Stock no-MTP path also
+  benefits (the cap gated every model, not just MTP).
+
 ### Added — Native MTP spec-decode (opt-in, +15-78% tok/s on Qwen3.8-27B)
 - **`speculative/mtp/`**: wired native Multi-Token Prediction (mlx-lm PR#990)
   into the `fusion-mlx serve` path. Opt-in via `--spec-decode mtp
