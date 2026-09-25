@@ -87,6 +87,15 @@ def serve_command(args):
     import os
     import sys
 
+    # AWSD Phase A: --mtp-chain-k → env for the MTP hot-loop. The env is
+    # read at batch_generator import time (apply_mlx_lm_mtp_patch, called
+    # during load_model below), so it must be stamped before load_model.
+    _chain_k = getattr(args, "mtp_chain_k", 1) or 1
+    if _chain_k > 1:
+        os.environ["FUSION_MLX_MTP_CHAIN_K"] = str(_chain_k)
+        logging.getLogger(__name__).info(
+            "MTP chain-of-K enabled: K=%d (AWSD Phase A)", _chain_k
+        )
     # Set process title to a bare "fusion-mlx-server" so ps/top/Activity
     # Monitor show just the server name (not "python", not a wall of serve
     # args). A bare title carries no flags for `fusion-mlx ps` to parse, so

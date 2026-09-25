@@ -515,6 +515,12 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # is the RAM fraction. Pure memory-capacity knobs, never routing.
         "FUSION_MLX_CACHE_LIMIT_MAX_GB",
         "FUSION_MLX_CACHE_LIMIT_MAX_FRACTION",
+        # AWSD Phase A: MTP chain-of-K depth (patches/mlx_lm_mtp/
+        # batch_generator.py). K>=2 extends the MTP verify cycle to draft
+        # K tokens serially + verify K+1 in one backbone forward. Pure
+        # spec-decode depth knob on the already-selected --spec-decode mtp
+        # path; never selects/routes an engine.
+        "FUSION_MLX_MTP_CHAIN_K",
         # llama.cpp backend bridge: llama-server binary override
         # (engines/llama_cpp_backend.py:32). Points the bridge at a
         # specific llama-server executable. Pure integration-endpoint

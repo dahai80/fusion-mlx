@@ -323,7 +323,6 @@ def _patch_gated_delta_net(q35: Any) -> None:
 
         if n_confirmed > 0 and n_confirmed < S:
             mask_c = mask[:, :n_confirmed] if mask is not None else None
-            mask_d = mask[:, n_confirmed:] if mask is not None else None
             out_c, conv_c, ssm_c = self._process_chunk(
                 qkv[:, :n_confirmed],
                 a[:, :n_confirmed],
@@ -332,16 +331,49 @@ def _patch_gated_delta_net(q35: Any) -> None:
                 ssm_state,
                 mask_c,
             )
+            D = S - n_confirmed
+            mask_d = mask[:, n_confirmed:] if mask is not None else None
             if cache is not None:
                 cache.rollback_state = (conv_c, ssm_c)
-            out_d, conv_f, ssm_f = self._process_chunk(
-                qkv[:, n_confirmed:],
-                a[:, n_confirmed:],
-                b[:, n_confirmed:],
-                conv_c,
-                ssm_c,
-                mask_d,
-            )
+            if D > 1:
+                # AWSD Phase A: per-position draft snapshots for chain-of-K
+                # partial-accept rollback on hybrid GDN models. The draft
+                # chunk (D positions) is processed position-by-position so
+                # each accepted prefix 1..D-1 has an exact (conv, ssm)
+                # snapshot to restore on a mid-chain reject. snap_list[j]
+                # = state after j+1 drafts accepted. The final position
+                # (all-accepted) needs no snapshot — it IS conv_f/ssm_f.
+                out_d_list = []
+                cur_conv = conv_c
+                cur_ssm = ssm_c
+                snap_list = []
+                for i in range(D):
+                    p = n_confirmed + i
+                    mask_i = mask[:, p : p + 1] if mask is not None else None
+                    out_i, cur_conv, cur_ssm = self._process_chunk(
+                        qkv[:, p : p + 1],
+                        a[:, p : p + 1],
+                        b[:, p : p + 1],
+                        cur_conv,
+                        cur_ssm,
+                        mask_i,
+                    )
+                    out_d_list.append(out_i)
+                    if i < D - 1:
+                        snap_list.append((cur_conv, cur_ssm))
+                out_d = mx.concatenate(out_d_list, axis=1)
+                conv_f, ssm_f = cur_conv, cur_ssm
+                if cache is not None:
+                    cache.rollback_state_list = snap_list
+            else:
+                out_d, conv_f, ssm_f = self._process_chunk(
+                    qkv[:, n_confirmed:],
+                    a[:, n_confirmed:],
+                    b[:, n_confirmed:],
+                    conv_c,
+                    ssm_c,
+                    mask_d,
+                )
             out = mx.concatenate([out_c, out_d], axis=1)
         else:
             lengths = cache.lengths if cache is not None else None

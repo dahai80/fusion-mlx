@@ -699,6 +699,24 @@ Examples:
             "if the model doesn't qualify so misuse fails loud."
         ),
     )
+    serve_parser.add_argument(
+        "--mtp-chain-k",
+        dest="mtp_chain_k",
+        type=int,
+        default=1,
+        help=(
+            "AWSD Phase A: MTP autoregressive chain-of-K depth. "
+            "K=1 (default) = stock MTP, one draft / verify cycle. "
+            "K=2 drafts 2 tokens by applying the MTP head twice "
+            "serially (no GPU sync tax, unlike EAGLE/Medusa parallel "
+            "heads), then verifies all 3 positions in one backbone "
+            "forward — amortises the 14GB weight read over ~3 tokens. "
+            "Only active with --spec-decode mtp on the singleton "
+            "(single-request) text path; hybrid GDN models use "
+            "per-position SSM snapshots for partial-accept rollback. "
+            "Clamped to [1, 4]. Lossless: rejected drafts roll back."
+        ),
+    )
     # R15-P1 #313: DFlash drafter HF path override. Empty by default
     # so the side-registry's per-alias binding wins; an operator who
     # wants to swap the default drafter for a fine-tuned variant can

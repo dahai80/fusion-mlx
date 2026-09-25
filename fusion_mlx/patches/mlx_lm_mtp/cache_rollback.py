@@ -65,8 +65,11 @@ def _wrap_rotating(cls, fields) -> None:
     def update_and_fetch(self, keys, values):
         # Only armed verify-sized updates are undoable: S == 1 uses the
         # in-place ring write (setitem invalidates reference snapshots) and
-        # prompt chunks have no rollback consumer.
-        if keys.shape[2] == 2 and _is_undo_armed():
+        # prompt chunks have no rollback consumer. S >= 2 (K=1 verify is
+        # S=2; AWSD chain-of-K verify is S=K+1) always takes the
+        # _update_concat path which only rebinds keys/values, so stashing
+        # the pre-update attribute references gives an exact undo.
+        if keys.shape[2] >= 2 and _is_undo_armed():
             snap = {}
             for f in fields:
                 v = getattr(self, f)
@@ -148,8 +151,16 @@ def apply() -> bool:
     if hasattr(ArraysCache, "rollback_state"):
         # Upstream may have added it natively (e.g. once PR 990 lands).
         ArraysCache._fusion_mlx_rollback_attached = "upstream"
-        return True
+    else:
+        ArraysCache.rollback_state = None
+        ArraysCache._fusion_mlx_rollback_attached = "patch"
 
-    ArraysCache.rollback_state = None
-    ArraysCache._fusion_mlx_rollback_attached = "patch"
+    # AWSD Phase A: per-position draft snapshot list for chain-of-K
+    # partial-accept rollback on hybrid GDN models. Populated by the patched
+    # GatedDeltaNet.__call__ when the draft chunk length > 1. Index j holds
+    # the (conv_state, ssm_state) snapshot after j+1 drafts accepted, so a
+    # mid-chain reject at draft index r restores rollback_state_list[r-1].
+    # Default None = K=1 path (single rollback_state, zero regression).
+    if not hasattr(ArraysCache, "rollback_state_list"):
+        ArraysCache.rollback_state_list = None
     return True
