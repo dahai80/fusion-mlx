@@ -65,7 +65,25 @@ STAGE_2_SIGMAS = [0.909375, 0.725, 0.421875, 0.0]
 # interpolation, 2x steps per stage. Verified experimentally to NOT improve
 # distilled semantics (16/6 steps vs 8/3 stock -> zero difference, ~2x slower);
 # kept only for reproducibility. Opt-in via FUSION_LTX25_DENSIFY_SIGMAS=1.
-STAGE_1_SIGMAS_DENSE = [1.0, 0.996875, 0.99375, 0.990625, 0.9875, 0.984375, 0.98125, 0.978125, 0.975, 0.9421875, 0.909375, 0.8171875, 0.725, 0.5734375, 0.421875, 0.2109375, 0.0]
+STAGE_1_SIGMAS_DENSE = [
+    1.0,
+    0.996875,
+    0.99375,
+    0.990625,
+    0.9875,
+    0.984375,
+    0.98125,
+    0.978125,
+    0.975,
+    0.9421875,
+    0.909375,
+    0.8171875,
+    0.725,
+    0.5734375,
+    0.421875,
+    0.2109375,
+    0.0,
+]
 STAGE_2_SIGMAS_DENSE = [0.909375, 0.8171875, 0.725, 0.5734375, 0.421875, 0.2109375, 0.0]
 
 
