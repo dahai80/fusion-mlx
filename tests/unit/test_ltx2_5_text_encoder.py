@@ -110,9 +110,12 @@ class TestLTX2_5TextEncoder:
 
     def test_encode_video_audio(self):
         enc = self._make_encoder()
-        video, audio = enc.encode("hi", max_length=8, return_audio_embeddings=True)
+        video, audio, additive_mask = enc.encode(
+            "hi", max_length=8, return_audio_embeddings=True
+        )
         assert video.shape == (1, 8, 4096)
         assert audio.shape == (1, 8, 2048)
+        assert additive_mask.shape == (1, 1, 1, 8)
 
     def test_encode_video_only_returns_additive_mask(self):
         enc = self._make_encoder()
@@ -129,10 +132,11 @@ class TestLTX2_5TextEncoder:
 
     def test_call_alias(self):
         enc = self._make_encoder()
-        v1, a1 = enc("hi", max_length=8)
-        v2, a2 = enc.encode("hi", max_length=8)
+        v1, a1, m1 = enc("hi", max_length=8, return_audio_embeddings=True)
+        v2, a2, m2 = enc.encode("hi", max_length=8, return_audio_embeddings=True)
         assert v1.shape == v2.shape
         assert a1.shape == a2.shape
+        assert m1.shape == m2.shape
 
     def test_caption_channels_field(self):
         enc = self._make_encoder(caption_channels=3840)

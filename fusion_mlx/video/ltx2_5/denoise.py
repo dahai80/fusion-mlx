@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-# LTX-2.5 distilled 去噪 (T2V-only path)。
+# LTX-2.5 distilled 去噪 (T2V + A/V paths)。
 # 与 ltx2 denoise_distilled 的差异: 使用 ltx2_5.Modality (跨模块 Modality 类不兼容,
 # 见 GOTCHA: ltx2_5.Modality is not ltx2.Modality) 并调 LTX2_5Model。
-# audio / I2V conditioning (state) 不在本轮 T2V 路径, 留空 fail visible。
+# I2V conditioning (state) 走 latent-level 注入; audio 走联合 Modality 前向。
 from __future__ import annotations
 
 import logging
@@ -249,4 +249,262 @@ def denoise_distilled_t2v(
     return latents.astype(mx.float32)
 
 
-__all__ = ["denoise_distilled_t2v"]
+def denoise_distilled_av(
+    video_latents: mx.array,
+    audio_latents: mx.array,
+    video_positions: mx.array,
+    audio_positions: mx.array,
+    video_embeddings: mx.array,
+    audio_embeddings: mx.array,
+    transformer,
+    sigmas: list,
+    verbose: bool = True,
+    controlnet_image=None,
+    inpaint_mask=None,
+    init_latent=None,
+    video_state: LatentState | None = None,
+    audio_frozen: bool = False,
+) -> tuple[mx.array, mx.array]:
+    # 两阶段 distilled A/V 去噪。与 denoise_distilled_t2v 同构 (baked sigma 表,
+    # 无 CFG — distilled 已烘焙 guidance), 增 audio Modality 联合前向。
+    # audio_latents (1,8,audio_frames,16) 跨 stage1->stage2 流转, 每步重新加噪。
+    # audio_frozen=True (A2V) 时 audio_timesteps=0, audio 不更新 (输入音频条件)。
+    # I2V: video_state 开启 latent-level 条件注入 (同 denoise_distilled_t2v)。
+    if controlnet_image is not None:
+        raise RuntimeError(
+            "ltx2_5: ControlNet (Surface B) not available for this backend — "
+            "no per-backend ControlNet model (see issue #735 follow-up). "
+            "Refusing to silently degrade to T2V (#735)."
+        )
+    dtype = video_latents.dtype
+    if video_state is not None:
+        video_latents = video_state.latent
+    video_latents = video_latents.astype(mx.float32)
+    audio_latents = audio_latents.astype(mx.float32)
+    num_steps = len(sigmas) - 1
+    if verbose:
+        mode = "frozen" if audio_frozen else "joint"
+        logger.info("Denoising A/V (%s): %d steps", mode, num_steps)
+    logger.info(
+        "ltx2_5 denoise_av: inpaint=%s controlnet=%s fast_path=%s compile_xf=%s "
+        "audio_frozen=%s",
+        inpaint_mask is not None,
+        controlnet_image is not None,
+        _FAST_PATH,
+        _COMPILE_TRANSFORMER,
+        audio_frozen,
+    )
+
+    _xf = transformer
+    if _COMPILE_TRANSFORMER:
+        _raw_xf = transformer
+
+        def _xf_forward_av(
+            v_latent,
+            v_timesteps,
+            v_positions,
+            v_context,
+            v_sigma,
+            a_latent,
+            a_timesteps,
+            a_positions,
+            a_context,
+            a_sigma,
+        ):
+            vm = Modality(
+                latent=v_latent,
+                timesteps=v_timesteps,
+                positions=v_positions,
+                context=v_context,
+                context_mask=None,
+                enabled=True,
+                sigma=v_sigma,
+            )
+            am = Modality(
+                latent=a_latent,
+                timesteps=a_timesteps,
+                positions=a_positions,
+                context=a_context,
+                context_mask=None,
+                enabled=True,
+                sigma=a_sigma,
+            )
+            return _raw_xf(video=vm, audio=am)
+
+        try:
+            _xf = mx.compile(_xf_forward_av)
+            logger.info("ltx2_5 denoise_av: DiT __call__ compiled (Metal fusion)")
+        except Exception as exc:
+            logger.warning(
+                "ltx2_5 denoise_av: mx.compile(transformer) failed (%s) — "
+                "falling back to uncompiled forward",
+                exc,
+            )
+            _xf = transformer
+
+    for i in range(num_steps):
+        sigma, sigma_next = sigmas[i], sigmas[i + 1]
+
+        b, c, f, h, w = video_latents.shape
+        num_video_tokens = f * h * w
+        video_flat = mx.transpose(
+            mx.reshape(video_latents, (b, c, -1)), (0, 2, 1)
+        ).astype(dtype)
+
+        ab, ac, at, af = audio_latents.shape
+        audio_flat = mx.transpose(audio_latents, (0, 2, 1, 3))
+        audio_flat = mx.reshape(audio_flat, (ab, at, ac * af)).astype(dtype)
+
+        if video_state is not None:
+            denoise_mask_flat = mx.reshape(video_state.denoise_mask, (b, 1, f, 1, 1))
+            denoise_mask_flat = mx.broadcast_to(denoise_mask_flat, (b, 1, f, h, w))
+            denoise_mask_flat = mx.reshape(denoise_mask_flat, (b, num_video_tokens))
+            video_timesteps = mx.array(sigma, dtype=dtype) * denoise_mask_flat
+        else:
+            video_timesteps = mx.full((b, num_video_tokens), sigma, dtype=dtype)
+
+        audio_timesteps = (
+            mx.zeros((ab, at), dtype=dtype)
+            if audio_frozen
+            else mx.full((ab, at), sigma, dtype=dtype)
+        )
+        sigma_b = mx.full((b,), sigma, dtype=dtype)
+        audio_sigma_b = (
+            mx.zeros((ab,), dtype=dtype)
+            if audio_frozen
+            else mx.full((ab,), sigma, dtype=dtype)
+        )
+
+        if _COMPILE_TRANSFORMER and _xf is not transformer:
+            video_vel, audio_vel = _xf(
+                video_flat,
+                video_timesteps,
+                video_positions,
+                video_embeddings,
+                sigma_b,
+                audio_flat,
+                audio_timesteps,
+                audio_positions,
+                audio_embeddings,
+                audio_sigma_b,
+            )
+        else:
+            video_modality = Modality(
+                latent=video_flat,
+                timesteps=video_timesteps,
+                positions=video_positions,
+                context=video_embeddings,
+                context_mask=None,
+                enabled=True,
+                sigma=sigma_b,
+            )
+            audio_modality = Modality(
+                latent=audio_flat,
+                timesteps=audio_timesteps,
+                positions=audio_positions,
+                context=audio_embeddings,
+                context_mask=None,
+                enabled=True,
+                sigma=audio_sigma_b,
+            )
+            video_vel, audio_vel = _xf(video=video_modality, audio=audio_modality)
+
+        sigma_f32 = mx.array(sigma, dtype=mx.float32)
+        sigma_next_f32 = mx.array(sigma_next, dtype=mx.float32)
+        video_flat_f32 = mx.transpose(mx.reshape(video_latents, (b, c, -1)), (0, 2, 1))
+        video_timesteps_f32 = mx.expand_dims(
+            video_timesteps.astype(mx.float32), axis=-1
+        )
+        audio_flat_f32 = mx.reshape(
+            mx.transpose(audio_latents, (0, 2, 1, 3)), (ab, at, ac * af)
+        )
+        audio_timesteps_f32 = mx.expand_dims(
+            audio_timesteps.astype(mx.float32), axis=-1
+        )
+
+        if _FAST_PATH:
+            if video_state is None:
+                renoised_flat = _step_update(
+                    video_flat_f32,
+                    video_timesteps_f32,
+                    video_vel.astype(mx.float32),
+                    sigma_f32,
+                    sigma_next_f32,
+                )
+                video_latents = mx.reshape(
+                    mx.transpose(renoised_flat, (0, 2, 1)), (b, c, f, h, w)
+                )
+            else:
+                x0_f32 = _x0_only(
+                    video_flat_f32,
+                    video_timesteps_f32,
+                    video_vel.astype(mx.float32),
+                )
+                video_denoised = mx.reshape(
+                    mx.transpose(x0_f32, (0, 2, 1)), (b, c, f, h, w)
+                )
+                video_denoised = apply_denoise_mask(
+                    video_denoised,
+                    video_state.clean_latent.astype(mx.float32),
+                    video_state.denoise_mask,
+                )
+                if sigma_next > 0:
+                    video_latents = (
+                        video_denoised
+                        + sigma_next_f32 * (video_latents - video_denoised) / sigma_f32
+                    )
+                else:
+                    video_latents = video_denoised
+            mx.eval(video_latents)
+        else:
+            mx.eval(video_vel, audio_vel)
+            x0_f32 = video_flat_f32 - video_timesteps_f32 * video_vel.astype(mx.float32)
+            video_denoised = mx.reshape(
+                mx.transpose(x0_f32, (0, 2, 1)), (b, c, f, h, w)
+            )
+            if video_state is not None:
+                video_denoised = apply_denoise_mask(
+                    video_denoised,
+                    video_state.clean_latent.astype(mx.float32),
+                    video_state.denoise_mask,
+                )
+            mx.eval(video_denoised)
+            if sigma_next > 0:
+                video_latents = (
+                    video_denoised
+                    + sigma_next_f32 * (video_latents - video_denoised) / sigma_f32
+                )
+            else:
+                video_latents = video_denoised
+            mx.eval(video_latents)
+
+        if not audio_frozen:
+            # Re-noise in flat space (ab, at, ac*af) — same layout as
+            # audio_flat_f32 / audio_vel. Then reshape back to 5D (ab, ac, at, af)
+            # so audio_latents stays in the original (1,8,at,16) layout the next
+            # step's flat-transpose expects.
+            audio_x0_f32 = audio_flat_f32 - audio_timesteps_f32 * audio_vel.astype(
+                mx.float32
+            )
+            if sigma_next > 0:
+                audio_next_flat = (
+                    audio_x0_f32
+                    + sigma_next_f32 * (audio_flat_f32 - audio_x0_f32) / sigma_f32
+                )
+            else:
+                audio_next_flat = audio_x0_f32
+            audio_latents = mx.reshape(
+                mx.transpose(audio_next_flat, (0, 2, 1)), (ab, ac, at, af)
+            )
+            mx.eval(audio_latents)
+
+        if inpaint_mask is not None and init_latent is not None:
+            video_latents = apply_inpaint_mask(video_latents, init_latent, inpaint_mask)
+            mx.eval(video_latents)
+        if verbose:
+            logger.info("step %d/%d", i + 1, num_steps)
+
+    return video_latents.astype(mx.float32), audio_latents.astype(mx.float32)
+
+
+__all__ = ["denoise_distilled_t2v", "denoise_distilled_av"]

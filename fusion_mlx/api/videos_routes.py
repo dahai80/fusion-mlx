@@ -203,7 +203,16 @@ class VideoGenerateRequest(BaseModel):
     quantize: str | None = None
     # MiniMax-H3 native audio (issue #588): joint audio+video generation.
     # True → muxed MP4 (A/V). False → video-only. Other backends ignore it.
+    # LTX-2.5 (#982): True → joint A/V distilled denoise + 48kHz wav muxed in。
     audio: bool | None = None
+    # audio_frozen=True → A2V (audio-to-video): input audio fixed, video only.
+    # LTX-2.5 only (audio_vae_latent param provides the input audio latent)。
+    audio_frozen: bool | None = None
+    # LTX-2.5 (#982): path to audio VAE weights (audio_vae.safetensors). The
+    # dgrauet q8 repo lacks audio_vae; pass the Lightricks bf16 repo path or a
+    # local file path. None → backend resolves via resolve_component (Comfy/
+    # mlx-community repos that ship audio_vae.safetensors).
+    audio_vae_weights: str | None = None
 
 
 class VideoOutput(BaseModel):
@@ -473,6 +482,10 @@ async def generate_video(
                 gen_kwargs["pipeline"] = request.pipeline
             if request.audio is not None:
                 gen_kwargs["audio"] = request.audio
+            if request.audio_frozen is not None:
+                gen_kwargs["audio_frozen"] = request.audio_frozen
+            if request.audio_vae_weights is not None:
+                gen_kwargs["audio_vae_weights"] = request.audio_vae_weights
 
             video_bytes_list = await engine.generate(**gen_kwargs)
             outputs = [

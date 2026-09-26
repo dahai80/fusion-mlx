@@ -627,20 +627,22 @@ class LTX2_5TextEncoder(nn.Module):
             audio_features = self.feature_extractor_v2(
                 all_hidden_states, attention_mask, mode="audio"
             )
-            audio_mask = self._make_additive_mask(attention_mask, audio_features.dtype)
             logger.debug(
                 "LTX2_5TextEncoder.encode: video=%s audio=%s",
                 video_features.shape,
                 audio_features.shape,
             )
-            return video_features, audio_features
+            # 3-tuple: video/audio features + shared additive mask (same
+            # attention_mask → same validity for both modalities). Caller
+            # (generate.py) runs video/audio connectors with this mask.
+            return video_features, audio_features, additive_mask
         logger.debug(
             "LTX2_5TextEncoder.encode: video=%s (audio skipped)",
             video_features.shape,
         )
         return video_features, additive_mask
 
-    def __call__(self, prompt: str, **kwargs) -> tuple[mx.array, mx.array]:
+    def __call__(self, prompt: str, **kwargs):
         return self.encode(prompt, **kwargs)
 
 

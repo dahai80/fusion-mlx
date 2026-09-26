@@ -68,7 +68,15 @@ def scaled_dot_product_attention(
 
     if fast_attn is not None:
         out = fast_attn(q, k, v, step, scale=scale, mask=mask, batch_size=batch_size)
-    elif _mfa_available is not None and _mfa_available():
+    elif _mfa_available is not None and _mfa_available() and q_seq_len > 32:
+        # MFA bridge _normalize_qkv_layout heuristic (mfa/attention.py) misfires
+        # when q_seq_len <= 32: it transposes the already-correct (B,H,N,D)
+        # layout, mistaking a small seq dim for a head dim. Audio self-attn
+        # (seq=9) + tiny-res video (seq<=32) hit this -> n_heads/n_kv_heads
+        # mismatch crash. q,k,v are already (B,H,N,D) after swapaxes above; for
+        # small seq we bypass the bridge and call mx.fast.sdpa directly (no perf
+        # loss — MFA kernel has no benefit at small seq). Video prod (tokens>32)
+        # keeps the MFA Metal kernel.
         out = _mfa_flash_attention(q, k, v, scale=scale, mask=mask)
     elif os.environ.get("FUSION_LTX_DETERMINISTIC_ATTN", "0") == "1":
         # #946: bf16 mx.fast.scaled_dot_product_attention has nondeterministic

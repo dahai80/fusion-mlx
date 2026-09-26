@@ -28,11 +28,24 @@ from ..ltx2.conditioning import (
     VideoConditionByLatentIndex,
     apply_conditioning,
 )
-from ..ltx2.positions import create_position_grid
+from ..ltx2.positions import (
+    AUDIO_LATENT_CHANNELS,
+    AUDIO_MEL_BINS,
+    compute_audio_frames,
+    create_audio_position_grid,
+    create_position_grid,
+)
 from ..ltx2.upsampler import upsample_latents
 from ..ltx2.utils import load_image, prepare_image_for_encoding
+from .audio import (
+    decode_audio,
+    load_audio_decoder,
+    load_vocoder_model,
+    mux_video_audio,
+    save_audio,
+)
 from .config import LTX2_5Variant
-from .denoise import denoise_distilled_t2v
+from .denoise import denoise_distilled_av, denoise_distilled_t2v
 from .ltx2_5_model import LTX2_5Model
 from .scheduler import (
     DISTILLED_STAGE_1_SIGMAS,
@@ -225,6 +238,7 @@ def generate_video(
     duration_head_weights: str | Path | None = None,
     spatial_upscaler_weights: str | Path | None = None,
     temporal_upscaler_weights: str | Path | None = None,
+    audio_vae_weights: str | Path | None = None,
     variant: LTX2_5Variant | str = LTX2_5Variant.DISTILLED,
     num_frames: int | None = None,
     width: int = 768,
@@ -245,9 +259,11 @@ def generate_video(
     inpaint_mask=None,
     init_latent=None,
     session_id: str | None = None,
+    audio: bool = False,
+    audio_frozen: bool = False,
 ) -> bytes:
-    # LTX-2.5 两阶段 distilled T2V 生成。I2V/audio/duration-head 不在本轮路径，
-    # 留空 fail visible (Rule 12)。
+    # LTX-2.5 两阶段 distilled 生成。audio=True 走联合 A/V denoise (denoise_distilled_av),
+    # 生成视频 + 48kHz 立体声 wav, ffmpeg mux 进 mp4。audio_frozen=True (A2V) 冻结输入音频。
     start_time = time.time()
     variant = LTX2_5Variant.from_str(variant)
     logger.info(
@@ -345,27 +361,52 @@ def generate_video(
         )
     # encode 返回 pre-connector (video_features[4096], audio_features[2048])。
     # connector 在 transformer 内, generate 显式运行。T2V 只需 video。
-    # return_audio_embeddings=False 时 encode 返回 (video_features, additive_mask)。
-    video_features, additive_mask = text_encoder.encode(
-        prompt, return_audio_embeddings=False
-    )
+    # audio=True 时 encode 返回 3-tuple (video, audio, additive_mask)。
+    audio_features = None
+    if audio:
+        video_features, audio_features, additive_mask = text_encoder.encode(
+            prompt, return_audio_embeddings=True
+        )
+    else:
+        video_features, additive_mask = text_encoder.encode(
+            prompt, return_audio_embeddings=False
+        )
     model_dtype = video_features.dtype
     mx.eval(video_features, additive_mask)
     _debug_log_latents("te_video_features", video_features)
-    logger.info(
-        "Text encoder loaded: video_features=%s mask=%s",
-        video_features.shape,
-        additive_mask.shape,
-    )
+    if audio_features is not None:
+        mx.eval(audio_features)
+        _debug_log_latents("te_audio_features", audio_features)
+        logger.info(
+            "Text encoder loaded: video_features=%s audio_features=%s mask=%s",
+            video_features.shape,
+            audio_features.shape,
+            additive_mask.shape,
+        )
+    else:
+        logger.info(
+            "Text encoder loaded: video_features=%s mask=%s",
+            video_features.shape,
+            additive_mask.shape,
+        )
     # dev CFG：负向 prompt 也过 TE（distilled guidance_scale=1 用不到）。
     # 空串必须走真实编码（#957 教训：零填充 embedding ≠ 空串编码）。
     negative_video_features = None
     negative_additive_mask = None
+    negative_audio_features = None
     if var_str == "dev" and cfg_scale != 1.0:
-        negative_video_features, negative_additive_mask = text_encoder.encode(
-            negative_prompt or "", return_audio_embeddings=False
-        )
-        mx.eval(negative_video_features, negative_additive_mask)
+        if audio:
+            (
+                negative_video_features,
+                negative_audio_features,
+                negative_additive_mask,
+            ) = text_encoder.encode(negative_prompt or "", return_audio_embeddings=True)
+            mx.eval(negative_video_features, negative_audio_features)
+        else:
+            negative_video_features, negative_additive_mask = text_encoder.encode(
+                negative_prompt or "", return_audio_embeddings=False
+            )
+            mx.eval(negative_video_features, negative_additive_mask)
         logger.info("Negative prompt encoded: %s", negative_video_features.shape)
     del text_encoder
     mx.clear_cache()
@@ -404,13 +445,39 @@ def generate_video(
         )
         mx.eval(negative_context)
         logger.info("Negative connector run: context=%s", negative_context.shape)
+
+    # ---- 3b. audio connector (audio=True only) ----
+    # audio_embeddings_connector 与 video 同构 (Embeddings1DConnector, inner_dim=2048)。
+    # 返回 (audio_context, audio_context_mask) -> audio Modality.context。
+    audio_context = None
+    audio_context_mask = None
+    negative_audio_context = None
+    if audio and audio_features is not None:
+        audio_context, audio_context_mask = transformer.audio_embeddings_connector(
+            audio_features.astype(model_dtype), additive_mask
+        )
+        mx.eval(audio_context, audio_context_mask)
+        logger.info(
+            "Audio connector run: context=%s mask=%s",
+            audio_context.shape,
+            audio_context_mask.shape,
+        )
+        if negative_audio_features is not None:
+            negative_audio_context, _ = transformer.audio_embeddings_connector(
+                negative_audio_features.astype(model_dtype), negative_additive_mask
+            )
+            mx.eval(negative_audio_context)
     del video_features, additive_mask, negative_video_features, negative_additive_mask
+    del audio_features, negative_audio_features
     mx.clear_cache()
 
     # ---- 4. dims ----
     # stage1 在半分辨率生成, spatial upsampler x2 -> stage2 全分辨率。
     stage1_h, stage1_w = height // 2 // 32, width // 2 // 32
     latent_frames = 1 + (num_frames - 1) // 8
+    # audio latent frames: 25 latent-frames/sec * duration (arch-agnostic, ltx2 reuse)。
+    audio_frames = compute_audio_frames(num_frames, fps) if audio else 0
+    audio_positions = create_audio_position_grid(1, audio_frames) if audio else None
 
     # ---- 5. spatial upsampler (stage1 -> stage2) ----
     spatial_path = (
@@ -451,6 +518,18 @@ def generate_video(
     # 去噪（schedule 由 dev_sigmas() 按 token 数动态 shift，对拍 diffusers
     # max|Δ|<3e-8），CFG 走真实负向分支（guidance_scale>1 有意义）。
     if var_str == "dev":
+        if image is not None:
+            raise NotImplementedError(
+                "ltx2_5 dev: I2V single-stage conditioning not wired yet "
+                "(#968 follow-up) — use pipeline=distilled for I2V."
+            )
+        if audio:
+            # dev AV 需 CFG 联合去噪路径 (denoise_dev_av, 含 audio_cfg_scale +
+            # modality_scale), 本轮仅接 distilled A/V。Fail visible (Rule 12)。
+            raise NotImplementedError(
+                "ltx2_5 dev: A/V path not wired yet (needs CFG joint denoise) — "
+                "use pipeline=distilled for audio."
+            )
         dev_steps = num_inference_steps if num_inference_steps else 20
         dev_h, dev_w = height // 32, width // 32
         dev_tokens = latent_frames * dev_h * dev_w
@@ -681,19 +760,55 @@ def generate_video(
 
     _debug_log_latents("stage1_in", latents)
     _debug_log_latents("context_in", context)
-    latents = denoise_distilled_t2v(
-        latents,
-        positions,
-        context,
-        transformer,
-        DISTILLED_STAGE_1_SIGMAS,
-        verbose=verbose,
-        controlnet_image=controlnet_image,
-        inpaint_mask=inpaint_mask,
-        init_latent=init_latent,
-        state=state1,
-    )
+    # audio latent init: (1, 8, audio_frames, 16) noise。audio_frozen (A2V) 时由
+    # 调用方预填条件音频 latent (本轮 T2V audio 生成路径走随机噪声)。
+    audio_latents = None
+    if audio:
+        audio_latents = mx.random.normal(
+            (1, AUDIO_LATENT_CHANNELS, audio_frames, AUDIO_MEL_BINS),
+            dtype=model_dtype,
+        )
+        mx.eval(audio_latents, audio_positions)
+        logger.info(
+            "Audio latents init: %s frames=%d (frozen=%s)",
+            audio_latents.shape,
+            audio_frames,
+            audio_frozen,
+        )
+
+    if audio:
+        latents, audio_latents = denoise_distilled_av(
+            latents,
+            audio_latents,
+            positions,
+            audio_positions,
+            context,
+            audio_context,
+            transformer,
+            DISTILLED_STAGE_1_SIGMAS,
+            verbose=verbose,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
+            video_state=state1,
+            audio_frozen=audio_frozen,
+        )
+    else:
+        latents = denoise_distilled_t2v(
+            latents,
+            positions,
+            context,
+            transformer,
+            DISTILLED_STAGE_1_SIGMAS,
+            verbose=verbose,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
+            state=state1,
+        )
     mx.eval(latents)
+    if audio_latents is not None:
+        mx.eval(audio_latents)
     _debug_log_latents("stage1_out", latents)
     mx.clear_cache()
 
@@ -752,19 +867,51 @@ def generate_video(
         latents = noise * noise_scale + latents.astype(mx.float32) * one_minus_scale
         mx.eval(latents)
 
-    latents = denoise_distilled_t2v(
-        latents,
-        positions,
-        context,
-        transformer,
-        DISTILLED_STAGE_2_SIGMAS,
-        verbose=verbose,
-        controlnet_image=controlnet_image,
-        inpaint_mask=inpaint_mask,
-        init_latent=init_latent,
-        state=state2,
-    )
+    # audio 重新加噪到 STAGE_2_SIGMAS[0] (同 video, 镜像 ltx2 generate stage2)。
+    # audio_frozen (A2V) 不加噪 — 输入音频跨阶段保持干净。
+    if audio and audio_latents is not None and not audio_frozen:
+        audio_noise_scale = mx.array(DISTILLED_STAGE_2_SIGMAS[0], dtype=mx.float32)
+        audio_one_minus = mx.array(1.0 - DISTILLED_STAGE_2_SIGMAS[0], dtype=mx.float32)
+        audio_noise = mx.random.normal(audio_latents.shape).astype(mx.float32)
+        audio_latents = (
+            audio_noise * audio_noise_scale
+            + audio_latents.astype(mx.float32) * audio_one_minus
+        )
+        mx.eval(audio_latents)
+
+    if audio:
+        latents, audio_latents = denoise_distilled_av(
+            latents,
+            audio_latents,
+            positions,
+            audio_positions,
+            context,
+            audio_context,
+            transformer,
+            DISTILLED_STAGE_2_SIGMAS,
+            verbose=verbose,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
+            video_state=state2,
+            audio_frozen=audio_frozen,
+        )
+    else:
+        latents = denoise_distilled_t2v(
+            latents,
+            positions,
+            context,
+            transformer,
+            DISTILLED_STAGE_2_SIGMAS,
+            verbose=verbose,
+            controlnet_image=controlnet_image,
+            inpaint_mask=inpaint_mask,
+            init_latent=init_latent,
+            state=state2,
+        )
     mx.eval(latents)
+    if audio_latents is not None:
+        mx.eval(audio_latents)
     _debug_log_latents("stage2_out", latents)
     del transformer
     mx.clear_cache()
@@ -853,10 +1000,76 @@ def generate_video(
         video_np.shape[1],
     )
 
-    mp4_bytes = _write_mp4(video_np, fps, output_path)
+    if audio and audio_latents is not None:
+        mp4_bytes = _write_mp4_av(
+            video_np,
+            fps,
+            audio_latents,
+            root,
+            audio_vae_weights,
+            var_str,
+            output_path,
+        )
+    else:
+        mp4_bytes = _write_mp4(video_np, fps, output_path)
 
     logger.info("ltx2_5 generate_video: %.1fs", time.time() - start_time)
     return mp4_bytes
+
+
+def _write_mp4_av(
+    video_np: np.ndarray,
+    fps: int,
+    audio_latents: mx.array,
+    root: Path,
+    audio_vae_weights: str | Path | None,
+    var_str: str,
+    output_path: str | None,
+) -> bytes:
+    # video -> temp mp4 (no audio) + audio_latents -> wav -> ffmpeg mux -> final。
+    # output_path 给定写最终, 否则写 temp 最终再读 bytes (清理过程文件, Rule)。
+    import tempfile
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="ltx2_5_av_"))
+    try:
+        video_tmp = tmp_dir / "video_only.mp4"
+        _write_mp4(video_np, fps, str(video_tmp))
+        logger.info("AV mux: video-only written to %s", video_tmp)
+
+        audio_vae_path = (
+            Path(audio_vae_weights)
+            if audio_vae_weights
+            else resolve_component(root, "audio_vae", variant=var_str)
+        )
+        if not audio_vae_path.exists():
+            raise FileNotFoundError(
+                f"LTX-2.5 audio VAE weights not found at {audio_vae_path}"
+            )
+        logger.info("Loading audio decoder + vocoder: %s", audio_vae_path.name)
+        decoder = load_audio_decoder(audio_vae_path)
+        vocoder = load_vocoder_model(audio_vae_path)
+        mx.eval(decoder.parameters(), vocoder.parameters())
+        audio_np = decode_audio(audio_latents, decoder, vocoder)
+        del decoder, vocoder
+        mx.clear_cache()
+        wav_tmp = tmp_dir / "audio.wav"
+        save_audio(audio_np, str(wav_tmp))
+        logger.info("AV mux: audio wav written to %s", wav_tmp)
+
+        if output_path is not None:
+            final_path = Path(output_path)
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+            mux_video_audio(video_tmp, wav_tmp, str(final_path))
+            logger.info("AV mux: final written to %s", final_path)
+            return final_path.read_bytes()
+        final_tmp = tmp_dir / "final.mp4"
+        mux_video_audio(video_tmp, wav_tmp, str(final_tmp))
+        return final_tmp.read_bytes()
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        logger.info("AV mux: temp dir cleaned")
 
 
 def _write_mp4(video_np: np.ndarray, fps: int, output_path: str | None) -> bytes:
