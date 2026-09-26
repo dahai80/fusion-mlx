@@ -86,8 +86,10 @@ from .routes_internal.health import probe_router as health_probe_router
 from .routes_internal.health import router as health_router
 from .routes_internal.metrics import router as metrics_router
 from .routes_internal.models import set_models_context
+from .routes_internal.parity import router as parity_router
 from .routes_internal.responses import router as responses_router
 from .routes_internal.responses import set_responses_context
+from .routes_internal.responses_store import router as responses_store_router
 from .routes_internal.runtime_config import router as runtime_config_router
 from .server_metrics import get_server_metrics
 from .settings import Settings
@@ -1352,6 +1354,8 @@ class Server:
             ("health", health_router, None),
             ("health_admin", health_admin_router, None),
             ("metrics", metrics_router, None),
+            ("parity", parity_router, None),
+            ("responses_store", responses_store_router, "llm"),
             ("cache", cache_router, None),
             ("gc", gc_router, None),
             ("config_reload", config_reload_router, None),

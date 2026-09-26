@@ -8,7 +8,7 @@ Provides FastAPI routes for:
 import base64
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
 from ..engines import ImageGenEngine
@@ -278,3 +278,84 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
     except Exception as exc:
         logger.exception("Image generation failed")
         raise HTTPException(500, "Internal server error")
+
+
+async def _upload_to_b64(upload: UploadFile | None) -> str | None:
+    if upload is None:
+        return None
+    raw = await upload.read()
+    if not raw:
+        return None
+    return base64.b64encode(raw).decode()
+
+
+@router.post(
+    "/edits",
+    dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
+)
+async def edit_image(
+    image: list[UploadFile] = File(...),
+    prompt: str = Form(...),
+    mask: UploadFile | None = File(None),
+    model: str = Form("flux-2"),
+    n: int = Form(1),
+    size: str | None = Form(None),
+    response_format: str = Form("b64_json"),
+    guidance: float | None = Form(None),
+    negative_prompt: str | None = Form(None),
+) -> ImageGenerateResponse:
+    """OpenAI SDK multipart shape for image edits (client.images.edit).
+
+    Accepts one or more ``image[]`` file uploads plus an optional ``mask``
+    and a text ``prompt``. Files are base64-encoded and routed through the
+    existing edit_image flow (Flux Fill / Kontext). The first image is the
+    edit target; extra images become multi-reference inputs.
+    """
+    if _pool is None:
+        raise HTTPException(450, "Engine pool not initialized")
+    if not image:
+        raise HTTPException(400, "at least one image file is required")
+
+    images_b64 = []
+    for up in image:
+        b64 = await _upload_to_b64(up)
+        if b64:
+            images_b64.append(b64)
+    if not images_b64:
+        raise HTTPException(400, "image file(s) were empty or unreadable")
+
+    mask_b64 = await _upload_to_b64(mask)
+
+    width, height = 1024, 1024
+    if size:
+        try:
+            w, h = size.lower().split("x")
+            width, height = int(w), int(h)
+        except Exception:
+            raise HTTPException(
+                422, f"invalid size '{size}', expect WxH e.g. 1024x1024"
+            )
+
+    request = ImageGenerateRequest(
+        prompt=prompt,
+        model=model,
+        n=n,
+        width=width,
+        height=height,
+        guidance=guidance,
+        negative_prompt=negative_prompt,
+        response_format=response_format,
+    )
+    request.edit_image = images_b64[0]
+    if len(images_b64) > 1:
+        request.reference_images = images_b64[1:]
+    if mask_b64:
+        request.mask_image = mask_b64
+    logger.info(
+        "images/edit multipart prompt_len=%d images=%d mask=%s model=%s",
+        len(prompt),
+        len(images_b64),
+        bool(mask_b64),
+        model,
+    )
+    return await generate_image(request)
