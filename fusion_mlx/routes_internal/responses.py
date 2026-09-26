@@ -352,6 +352,11 @@ async def create_response(request: Request):
     if isinstance(current_input, list):
         resolved_input = resolved_input + list(current_input)
     elif isinstance(current_input, str):
+        if not current_input.strip() and not prev_id:
+            raise HTTPException(
+                status_code=400,
+                detail="input must not be empty",
+            )
         resolved_input = resolved_input + [
             {"type": "message", "role": "user", "content": current_input}
         ]

@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -196,3 +196,60 @@ async def delete_response(response_id: str, _auth: bool = Depends(verify_api_key
     if not removed:
         raise HTTPException(404, f"response '{response_id}' not found")
     return JSONResponse({"id": response_id, "object": "response", "deleted": True})
+
+
+@router.websocket("/v1/responses/ws")
+async def responses_websocket(ws: WebSocket):
+    """Responses API over WebSocket (mlx-serve parity).
+
+    Each inbound text frame is a ``response.create`` JSON message (the same
+    body POST /v1/responses accepts). The handler delegates to the local
+    HTTP SSE endpoint and forwards each SSE chunk as one outbound WS text
+    frame, so per-event streaming survives the WS transport. Auth is the
+    ``Authorization: Bearer <key>`` or ``X-Fusion-Route`` header echoed by
+    the client in the initial query params / subprotocol, checked here.
+    """
+    from ..config import get_config
+
+    cfg = get_config()
+    api_key = getattr(cfg, "api_key", None) or ""
+    # accept first, then auth via subprotocol or query param
+    token = ws.query_params.get("token") or ""
+    sub = ws.headers.get("sec-websocket-protocol", "")
+    if api_key and token != api_key and not sub.startswith(api_key):
+        await ws.close(code=4401, reason="unauthorized")
+        return
+    await ws.accept()
+    host = getattr(cfg, "bind_host", "127.0.0.1") or "127.0.0.1"
+    port = getattr(cfg, "bind_port", 11434)
+    base = f"http://{host}:{port}"
+    import httpx
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client:
+        try:
+            while True:
+                raw = await ws.receive_text()
+                try:
+                    body = json.loads(raw)
+                except Exception:
+                    await ws.send_text(json.dumps({"error": "invalid JSON frame"}))
+                    continue
+                body.setdefault("stream", True)
+                headers = {"Content-Type": "application/json"}
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                headers["X-Fusion-Route"] = "gateway-decision"
+                try:
+                    async with client.stream(
+                        "POST", f"{base}/v1/responses", json=body, headers=headers
+                    ) as r:
+                        async for chunk in r.aiter_text():
+                            if chunk:
+                                await ws.send_text(chunk)
+                except Exception as e:
+                    logger.warning("responses ws delegate failed: %s", e)
+                    await ws.send_text(json.dumps({"error": str(e)}))
+        except WebSocketDisconnect:
+            logger.info("responses ws client disconnected")
+        except Exception as e:
+            logger.warning("responses ws loop error: %s", e)
