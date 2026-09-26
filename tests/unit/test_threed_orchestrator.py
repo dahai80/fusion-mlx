@@ -13,7 +13,7 @@ _HUNYUAN3D_DIR = Path(
 _REAL = (
     _HUNYUAN3D_DIR.exists()
     and (_HUNYUAN3D_DIR / "conditioner.safetensors").exists()
-    and (_HUNYUAN3D_DIR / "diffusion.safetensors").exists()
+    and (_HUNYUAN3D_DIR / "dit.safetensors").exists()
     and (_HUNYUAN3D_DIR / "vae.safetensors").exists()
     and (_HUNYUAN3D_DIR / "paint").exists()
 )
@@ -67,17 +67,25 @@ def test_orchestrator_e2e_glb(tmp_path):
     from fusion_mlx.threed.orchestrator import load_threed_orchestrator
 
     orch = load_threed_orchestrator(str(_HUNYUAN3D_DIR))
-    # small 318x318 random RGB normalized.
+    # Structured synthetic image (dark ellipse on white) — DINOv2 needs a
+    # real-ish shape; randn noise decodes to an empty (all-negative) SDF grid.
     import numpy as np
 
-    arr = np.random.randn(1, 3, 518, 518).astype(np.float32) * 0.5
-    ref = mx.array(arr)
+    px = np.full((518, 518, 3), 255, np.uint8)
+    yy, xx = np.mgrid[0:518, 0:518]
+    mask = ((yy - 259) / 140) ** 2 + ((xx - 259) / 100) ** 2 < 1
+    px[mask] = [60, 100, 160]
+    arr = px.astype(np.float32) / 255.0
+    mean = np.array([0.485, 0.456, 0.406], np.float32)
+    std = np.array([0.229, 0.224, 0.225], np.float32)
+    arr = (arr - mean) / std
+    ref = mx.array(arr.transpose(2, 0, 1))[None]
     out = str(tmp_path / "out.glb")
     orch.generate_textured_glb(
         ref,
         out,
-        shape_steps=4,
-        paint_steps=4,
+        shape_steps=20,
+        paint_steps=8,
         grid_res=64,
         raster_res=64,
         atlas_res=128,
@@ -87,4 +95,11 @@ def test_orchestrator_e2e_glb(tmp_path):
     trimesh = pytest.importorskip("trimesh")
     m = trimesh.load(out)
     assert m is not None
-    assert len(m.vertices) > 0
+    # GLB may load as Scene (multi-geometry) or Trimesh; count total verts.
+    if hasattr(m, "geometry"):
+        nverts = sum(
+            len(g.vertices) for g in m.geometry.values() if hasattr(g, "vertices")
+        )
+    else:
+        nverts = len(m.vertices) if hasattr(m, "vertices") else 0
+    assert nverts > 0

@@ -184,8 +184,19 @@ async def generate_3d(
     import trimesh
 
     m = trimesh.load(io.BytesIO(glb_bytes), file_type="glb")
-    n_verts = int(len(m.vertices)) if hasattr(m, "vertices") else 0
-    n_faces = int(len(m.faces)) if hasattr(m, "faces") else 0
+    # GLB may load as a Scene (multi-geometry) or a Trimesh; sum children.
+    if hasattr(m, "geometry"):
+        n_verts = sum(
+            int(len(g.vertices)) for g in m.geometry.values() if hasattr(g, "vertices")
+        )
+        n_faces = sum(
+            int(len(g.faces)) for g in m.geometry.values() if hasattr(g, "faces")
+        )
+    elif hasattr(m, "vertices"):
+        n_verts = int(len(m.vertices))
+        n_faces = int(len(m.faces)) if hasattr(m, "faces") else 0
+    else:
+        n_verts = n_faces = 0
     logger.info(
         "/v1/3d/generate done in %.1fs (%d verts, %d tris, %d bytes)",
         time.time() - t0,

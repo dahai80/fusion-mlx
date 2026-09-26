@@ -74,7 +74,7 @@ class ThreeDOrchestrator:
     @property
     def dit(self):
         if self._dit is None:
-            p = self.model_dir / "diffusion.safetensors"
+            p = self.model_dir / "dit.safetensors"
             self._dit = load_dit(str(p), self.shape_cfg)
         return self._dit
 
