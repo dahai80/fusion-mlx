@@ -28,6 +28,7 @@ from ..ltx2.conditioning import (
     VideoConditionByLatentIndex,
     apply_conditioning,
 )
+from ..ltx2.denoise import denoise_dev_av
 from ..ltx2.positions import (
     AUDIO_LATENT_CHANNELS,
     AUDIO_MEL_BINS,
@@ -518,25 +519,24 @@ def generate_video(
     # 去噪（schedule 由 dev_sigmas() 按 token 数动态 shift，对拍 diffusers
     # max|Δ|<3e-8），CFG 走真实负向分支（guidance_scale>1 有意义）。
     if var_str == "dev":
-        if audio:
-            # dev AV 需 CFG 联合去噪路径 (denoise_dev_av, 含 audio_cfg_scale +
-            # modality_scale), 本轮仅接 distilled A/V。Fail visible (Rule 12)。
-            raise NotImplementedError(
-                "ltx2_5 dev: A/V path not wired yet (needs CFG joint denoise) — "
-                "use pipeline=distilled for audio."
-            )
+        # #995: dev single-stage A/V. denoise_dev_av does real CFG per-modality
+        # (video cfg_scale + audio_cfg_scale=7.0 default, mirrors distilled) on a
+        # shared sigma grid. Negative audio context = empty-prompt encode (zeros
+        # negative convention, #964). Video branch bit-identical to audio-off run
+        # when modality_scale=1.0 (no cross-modal skip pass).
         dev_steps = num_inference_steps if num_inference_steps else 20
         dev_h, dev_w = height // 32, width // 32
         dev_tokens = latent_frames * dev_h * dev_w
         sig = dev_sigmas(dev_steps, num_tokens=dev_tokens)
         logger.info(
-            "dev single-stage: %dx%d (%d steps, tokens=%d, cfg=%s, i2v=%s)",
+            "dev single-stage: %dx%d (%d steps, tokens=%d, cfg=%s, i2v=%s, audio=%s)",
             dev_w * 32,
             dev_h * 32,
             dev_steps,
             dev_tokens,
             cfg_scale,
             image is not None,
+            audio,
         )
         mx.random.seed(seed)
         positions = create_position_grid(1, latent_frames, dev_h, dev_w)
@@ -583,21 +583,59 @@ def generate_video(
                 (1, 128, latent_frames, dev_h, dev_w), dtype=model_dtype
             )
         mx.eval(latents)
-        latents = denoise_distilled_t2v(
-            latents,
-            positions,
-            context,
-            transformer,
-            sig,
-            verbose=verbose,
-            controlnet_image=controlnet_image,
-            inpaint_mask=inpaint_mask,
-            init_latent=init_latent,
-            state=dev_state,
-            negative_context=negative_context,
-            cfg_scale=cfg_scale,
-        )
+        # audio latent init: (1, 8, audio_frames, 16) noise. audio_frozen (A2V)
+        # caller pre-fills condition audio; T2V audio path uses random noise.
+        audio_latents = None
+        if audio:
+            audio_latents = mx.random.normal(
+                (1, AUDIO_LATENT_CHANNELS, audio_frames, AUDIO_MEL_BINS),
+                dtype=model_dtype,
+            )
+            mx.eval(audio_latents, audio_positions)
+            logger.info(
+                "dev audio latents init: %s frames=%d (frozen=%s)",
+                audio_latents.shape,
+                audio_frames,
+                audio_frozen,
+            )
+        if audio:
+            latents, audio_latents = denoise_dev_av(
+                latents,
+                audio_latents,
+                positions,
+                audio_positions,
+                context,
+                negative_context,
+                audio_context,
+                negative_audio_context,
+                transformer,
+                sig,
+                verbose=verbose,
+                cfg_scale=cfg_scale,
+                video_state=dev_state,
+                audio_frozen=audio_frozen,
+                controlnet_image=controlnet_image,
+                inpaint_mask=inpaint_mask,
+                init_latent=init_latent,
+            )
+        else:
+            latents = denoise_distilled_t2v(
+                latents,
+                positions,
+                context,
+                transformer,
+                sig,
+                verbose=verbose,
+                controlnet_image=controlnet_image,
+                inpaint_mask=inpaint_mask,
+                init_latent=init_latent,
+                state=dev_state,
+                negative_context=negative_context,
+                cfg_scale=cfg_scale,
+            )
         mx.eval(latents)
+        if audio_latents is not None:
+            mx.eval(audio_latents)
         mx.clear_cache()
         del transformer
         mx.clear_cache()
@@ -617,7 +655,18 @@ def generate_video(
             video_np.shape[2],
             video_np.shape[1],
         )
-        mp4_bytes = _write_mp4(video_np, fps, output_path)
+        if audio and audio_latents is not None:
+            mp4_bytes = _write_mp4_av(
+                video_np,
+                fps,
+                audio_latents,
+                root,
+                audio_vae_weights,
+                var_str,
+                output_path,
+            )
+        else:
+            mp4_bytes = _write_mp4(video_np, fps, output_path)
         logger.info("ltx2_5 dev generate_video: %.1fs", time.time() - start_time)
         return mp4_bytes
 

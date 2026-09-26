@@ -225,7 +225,7 @@ def denoise_dev(
 
     latents = latents.astype(mx.float32)
 
-    sigmas_list = sigmas.tolist()
+    sigmas_list = sigmas.tolist() if hasattr(sigmas, "tolist") else list(sigmas)
     use_cfg = cfg_scale != 1.0
     use_stg = stg_scale != 0.0 and stg_blocks is not None
     num_steps = len(sigmas_list) - 1
@@ -411,34 +411,42 @@ def denoise_dev_av(
     video_latents = video_latents.astype(mx.float32)
     audio_latents = audio_latents.astype(mx.float32)
 
-    sigmas_list = sigmas.tolist()
+    sigmas_list = sigmas.tolist() if hasattr(sigmas, "tolist") else list(sigmas)
     use_cfg = cfg_scale != 1.0
     use_stg = stg_scale != 0.0 and stg_video_blocks is not None
     use_modality = modality_scale != 1.0
     num_steps = len(sigmas_list) - 1
 
-    precomputed_video_rope = precompute_freqs_cis(
-        video_positions,
-        dim=transformer.inner_dim,
-        theta=transformer.positional_embedding_theta,
-        max_pos=transformer.positional_embedding_max_pos,
-        use_middle_indices_grid=transformer.use_middle_indices_grid,
-        num_attention_heads=transformer.num_attention_heads,
-        rope_type=transformer.rope_type,
-        double_precision=transformer.config.double_precision_rope,
-    )
-
-    precomputed_audio_rope = precompute_freqs_cis(
-        audio_positions,
-        dim=transformer.audio_inner_dim,
-        theta=transformer.positional_embedding_theta,
-        max_pos=transformer.audio_positional_embedding_max_pos,
-        use_middle_indices_grid=transformer.use_middle_indices_grid,
-        num_attention_heads=transformer.audio_num_attention_heads,
-        rope_type=transformer.rope_type,
-        double_precision=transformer.config.double_precision_rope,
-    )
-    mx.eval(precomputed_video_rope, precomputed_audio_rope)
+    precomputed_video_rope = None
+    precomputed_audio_rope = None
+    _is_ltx2_5 = "ltx2_5" in type(transformer).__module__
+    if not _is_ltx2_5:
+        precomputed_video_rope = precompute_freqs_cis(
+            video_positions,
+            dim=transformer.inner_dim,
+            theta=transformer.positional_embedding_theta,
+            max_pos=transformer.positional_embedding_max_pos,
+            use_middle_indices_grid=transformer.use_middle_indices_grid,
+            num_attention_heads=transformer.num_attention_heads,
+            rope_type=transformer.rope_type,
+            double_precision=transformer.config.double_precision_rope,
+        )
+        precomputed_audio_rope = precompute_freqs_cis(
+            audio_positions,
+            dim=transformer.audio_inner_dim,
+            theta=transformer.positional_embedding_theta,
+            max_pos=transformer.audio_positional_embedding_max_pos,
+            use_middle_indices_grid=transformer.use_middle_indices_grid,
+            num_attention_heads=transformer.audio_num_attention_heads,
+            rope_type=transformer.rope_type,
+            double_precision=transformer.config.double_precision_rope,
+        )
+        mx.eval(precomputed_video_rope, precomputed_audio_rope)
+    else:
+        logger.info(
+            "denoise_dev_av: ltx2_5 transformer computes rope internally "
+            "(positional_embeddings=None)"
+        )
 
     passes = ["CFG"] if use_cfg else []
     if use_stg:
@@ -731,7 +739,7 @@ def denoise_res2s_av(
     video_latents = video_latents.astype(mx.float32)
     audio_latents = audio_latents.astype(mx.float32)
 
-    sigmas_list = sigmas.tolist()
+    sigmas_list = sigmas.tolist() if hasattr(sigmas, "tolist") else list(sigmas)
     use_cfg = cfg_scale != 1.0
     use_stg = stg_scale != 0.0 and stg_video_blocks is not None
     use_modality = modality_scale != 1.0
