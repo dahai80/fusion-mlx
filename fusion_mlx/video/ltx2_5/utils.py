@@ -81,6 +81,7 @@ _LTX2_5_FLAT_FILES = {
     "duration_head": "duration_head.safetensors",
     "spatial_upscaler": "spatial_upscaler_x2_v1_0.safetensors",
     "temporal_upscaler": "temporal_upscaler_x2_v1_0.safetensors",
+    "audio_vae": "audio_vae.safetensors",
 }
 
 # mlx-community 布局 (#786, mlx-community/ltx-2.5-mlx-q8 等公开 4/8-bit 仓)：
@@ -96,6 +97,7 @@ _LTX2_5_MLXCOMM_FILES = {
     "duration_head": "duration_head.safetensors",
     "spatial_upscaler": "spatial_upscaler_x2_v1_1.safetensors",
     "temporal_upscaler": "temporal_upscaler_x2_v1_0.safetensors",
+    "audio_vae": "audio_vae.safetensors",
 }
 
 # 三种布局: "comfy" (子目录), "flat" (dgrauet 根级单文件), "mlxcomm" (#786)。

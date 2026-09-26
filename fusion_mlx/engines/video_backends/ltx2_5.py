@@ -127,6 +127,9 @@ class LTX2_5Backend(VideoBackend):
                     inpaint_mask=inpaint_mask,
                     init_latent=init_latent,
                     session_id=params.session_id,
+                    audio=params.audio,
+                    audio_frozen=params.audio_frozen,
+                    audio_vae_weights=params.audio_vae_weights,
                 )
                 results.append(mp4_bytes)
             return results
@@ -238,6 +241,9 @@ def _generate_one(
     inpaint_mask=None,
     init_latent=None,
     session_id: str | None = None,
+    audio: bool = False,
+    audio_frozen: bool = False,
+    audio_vae_weights: str | None = None,
 ) -> bytes:
     from fusion_mlx.video.ltx2_5.config import LTX2_5Variant
     from fusion_mlx.video.ltx2_5.generate import generate_video
@@ -270,6 +276,11 @@ def _generate_one(
         gen_kwargs["image_strength"] = image_strength
     if session_id is not None:
         gen_kwargs["session_id"] = session_id
+    if audio:
+        gen_kwargs["audio"] = True
+        gen_kwargs["audio_frozen"] = audio_frozen
+        if audio_vae_weights is not None:
+            gen_kwargs["audio_vae_weights"] = audio_vae_weights
     with managed_tempfile_path(prefix="fusion_video_", suffix=".mp4") as handle:
         temp_path = handle.path
         gen_kwargs["output_path"] = temp_path

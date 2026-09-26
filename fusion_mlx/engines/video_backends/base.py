@@ -98,7 +98,17 @@ class VideoGenParams:
     # MiniMax-H3 native audio (issue #588): joint audio+video generation.
     # True → DiT audio branch + AudioVAE decode → muxed MP4 (A/V single file).
     # False → video-only (backwards compat). Other backends ignore this field.
+    # LTX-2.5 (#982): True → joint A/V distilled denoise + 48kHz wav muxed in。
     audio: bool = False
+    # audio_frozen=True → A2V (audio-to-video): input audio stays fixed, only
+    # video generated. LTX-2.5 freezes audio latents across denoise steps。
+    audio_frozen: bool = False
+    # LTX-2.5 (#982): path to audio VAE weights (audio_vae.safetensors) for the
+    # A/V decode chain (AudioDecoder + VocoderWithBWE → 48kHz wav). The dgrauet
+    # q8 repo lacks audio_vae; callers pass the Lightricks bf16 repo path. None
+    # → backend resolves via resolve_component (Comfy/mlx-community repos that
+    # ship audio_vae.safetensors). Other backends ignore this field.
+    audio_vae_weights: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
     # Output format: "mp4" (default, returns bytes) or "raw" (returns numpy
     # array of shape [T, H, W, 3] uint8 — skips MP4 encoding entirely).

@@ -119,6 +119,9 @@ class VideoGenEngine(BaseNonStreamingEngine):
             # 但此处未转发到 VideoGenParams → backend 收到默认 False → 永远 video-only，
             # 音频被静默丢弃。补齐转发，False 保持向后兼容。
             audio=kwargs.get("audio", False),
+            audio_frozen=kwargs.get("audio_frozen", False),
+            # LTX-2.5 (#982): audio VAE weights path for A/V decode chain。
+            audio_vae_weights=kwargs.get("audio_vae_weights"),
         )
 
         t0 = time.monotonic()
