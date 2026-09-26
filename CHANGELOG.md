@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added — ACE-Step1.5 text-to-music generation (#988, self-implemented)
+- **`engines/music.py`** + **`audio/acestep/orchestration.py`**: pure-MLX port of
+  ACE-Step1.5 turbo (DiT flow-match + Oobleck VAE + Qwen3-Embedding text encoder).
+  Loads the `ACE-Step/Ace-Step1.5` checkpoint and generates 48kHz stereo WAV from
+  a caption + optional lyrics.
+- **`POST /v1/audio/music`**: OpenAI-style audio route returning WAV (default),
+  flac/ogg/mp3 via soundfile. Request fields: `model`, `caption`, `lyrics`,
+  `duration` (≤300s), `language`, `bpm`, `timesignature`, `keyscale`, `seed`,
+  `shift`, `infer_method` (`ode`/`sde`).
+- Serve via the audio registry alias: `fusion-mlx serve ace-step --port 11434`
+  (or full id `ACE-Step/Ace-Step1.5`). Engines lazy-load on first request.
+- 8-step `ode` flow-match, ~13s gen for a 10s clip on Apple Silicon.
+
 ### Added — Qwen-Image-2.1 transparent RGBA PNG (self-implemented, mlx-serve parity)
 - **`engines/qwen_image_21/`**: vendored mflux 0.20.0 PR#736 qwen21 package
   (7.1B DiT + Qwen3-VL-8B text encoder + 4-channel RGBA VAE, 38 files, MIT).
