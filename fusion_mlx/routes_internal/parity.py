@@ -183,13 +183,3 @@ def _safe_version() -> str:
         return __version__
     except Exception:
         return "unknown"
-
-
-def _kv_dtype(cfg) -> str | None:
-    try:
-        from ..kv_cache_dtype import get_kv_cache_dtype
-
-        d = get_kv_cache_dtype()
-        return str(d) if d is not None else None
-    except Exception:
-        return None
