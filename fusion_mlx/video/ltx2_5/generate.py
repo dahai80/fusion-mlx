@@ -108,6 +108,40 @@ def _build_i2v_conditionings(
     return conditionings
 
 
+def _build_i2v_state(
+    image_latent,
+    latent_shape,
+    noise_scale,
+    image_frame_idx: int,
+    image_strength: float,
+    model_dtype,
+):
+    # #977: shared I2V latent-state constructor (dev single-stage + distilled
+    # stages share this pattern). zeros latent + image clean_latent at
+    # image_frame_idx, denoise_mask=1-strength (condition frame frozen clean).
+    # renoise free frames (mask=1) to noise_scale; condition frames (mask=0)
+    # stay at the (zero) base latent. Returns LatentState ready for
+    # denoise_distilled_t2v(state=).
+    state = LatentState(
+        latent=mx.zeros(latent_shape, dtype=model_dtype),
+        clean_latent=mx.zeros(latent_shape, dtype=model_dtype),
+        denoise_mask=mx.ones((1, 1, latent_shape[2], 1, 1), dtype=model_dtype),
+    )
+    conditionings = _build_i2v_conditionings(
+        image_latent, image_frame_idx, image_strength
+    )
+    state = apply_conditioning(state, conditionings)
+    noise = mx.random.normal(latent_shape, dtype=model_dtype)
+    scaled_mask = state.denoise_mask * mx.array(noise_scale, dtype=model_dtype)
+    state = LatentState(
+        latent=noise * scaled_mask
+        + state.latent * (mx.array(1.0, dtype=model_dtype) - scaled_mask),
+        clean_latent=state.clean_latent,
+        denoise_mask=state.denoise_mask,
+    )
+    return state
+
+
 _LTX2_5_TEMPORAL_TILE_FRAMES = 128
 _LTX2_5_TEMPORAL_OVERLAP_FRAMES = 64
 _LTX2_5_AUTO_TILING_FRAME_THRESHOLD = 65
@@ -417,29 +451,63 @@ def generate_video(
     # 去噪（schedule 由 dev_sigmas() 按 token 数动态 shift，对拍 diffusers
     # max|Δ|<3e-8），CFG 走真实负向分支（guidance_scale>1 有意义）。
     if var_str == "dev":
-        if image is not None:
-            raise NotImplementedError(
-                "ltx2_5 dev: I2V single-stage conditioning not wired yet "
-                "(#968 follow-up) — use pipeline=distilled for I2V."
-            )
         dev_steps = num_inference_steps if num_inference_steps else 20
         dev_h, dev_w = height // 32, width // 32
         dev_tokens = latent_frames * dev_h * dev_w
         sig = dev_sigmas(dev_steps, num_tokens=dev_tokens)
         logger.info(
-            "dev single-stage: %dx%d (%d steps, tokens=%d, cfg=%s)",
+            "dev single-stage: %dx%d (%d steps, tokens=%d, cfg=%s, i2v=%s)",
             dev_w * 32,
             dev_h * 32,
             dev_steps,
             dev_tokens,
             cfg_scale,
+            image is not None,
         )
         mx.random.seed(seed)
         positions = create_position_grid(1, latent_frames, dev_h, dev_w)
         mx.eval(positions)
-        latents = mx.random.normal(
-            (1, 128, latent_frames, dev_h, dev_w), dtype=model_dtype
-        )
+        # #977: dev I2V single-stage conditioning. Same latent-level injection
+        # pattern as distilled stage1 — encode image at dev (full) resolution,
+        # inject as clean_latent at image_frame_idx, freeze via denoise_mask,
+        # renoise free frames to sig[0]. condition frames mask=0 -> timesteps=0
+        # -> transformer treats as clean; apply_denoise_mask clamps each step.
+        dev_state = None
+        if image is not None:
+            latent_cache = get_image_latent_cache(model_repo)
+            dev_image_latent, vae_encoder = _encode_image_latent(
+                image,
+                height,
+                width,
+                model_repo,
+                root,
+                model_dtype,
+                latent_cache,
+                None,
+            )
+            if vae_encoder is not None:
+                del vae_encoder
+                mx.clear_cache()
+            logger.info(
+                "ltx2_5 dev I2V: image latent encoded %s (frame_idx=%d strength=%s)",
+                dev_image_latent.shape,
+                image_frame_idx,
+                image_strength,
+            )
+            latent_shape = (1, 128, latent_frames, dev_h, dev_w)
+            dev_state = _build_i2v_state(
+                dev_image_latent,
+                latent_shape,
+                sig[0],
+                image_frame_idx,
+                image_strength,
+                model_dtype,
+            )
+            latents = dev_state.latent
+        else:
+            latents = mx.random.normal(
+                (1, 128, latent_frames, dev_h, dev_w), dtype=model_dtype
+            )
         mx.eval(latents)
         latents = denoise_distilled_t2v(
             latents,
@@ -451,6 +519,7 @@ def generate_video(
             controlnet_image=controlnet_image,
             inpaint_mask=inpaint_mask,
             init_latent=init_latent,
+            state=dev_state,
             negative_context=negative_context,
             cfg_scale=cfg_scale,
         )
