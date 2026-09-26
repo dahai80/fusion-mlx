@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+# Vendored from mflux 0.20.0 (https://github.com/filipstrand/mflux) PR#736
+# MIT-licensed pure-MLX Qwen-Image-2.1 reference (txt2img + 4-ch RGBA VAE).
+# Pinned to fusion-mlx's mlx stack. Upstream-tracked; do not modify forward
+# numerics without parity-testing against mflux qwen21.
+
+import mlx.core as mx
+from mlx import nn
+
+from .qwen21_attention import Qwen21Attention
+from .qwen21_feed_forward import Qwen21SwiGLUFeedForward
+
+
+class Qwen21TransformerBlock(nn.Module):
+    # Modulation is shared across blocks: the parent passes per-token modulation
+    # chunks already selected for the causal_condition t=0 split.
+
+    def __init__(
+        self,
+        dim: int = 4096,
+        num_attention_heads: int = 32,
+        attention_head_dim: int = 128,
+        mlp_ratio: int = 3,
+        eps: float = 1e-6,
+    ):
+        super().__init__()
+        self.img_norm1 = nn.LayerNorm(dim, eps=eps, affine=False)
+        self.attn = Qwen21Attention(dim=dim, num_heads=num_attention_heads, head_dim=attention_head_dim, eps=eps)
+        self.img_norm2 = nn.LayerNorm(dim, eps=eps, affine=False)
+        self.img_mlp = Qwen21SwiGLUFeedForward(hidden_size=dim, mlp_hidden_size=dim * mlp_ratio)
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        mod1: mx.array,
+        mod2: mx.array,
+        rope_cos: mx.array,
+        rope_sin: mx.array,
+        attn_mask: mx.array | None,
+        text_len: int | None = None,
+    ) -> mx.array:
+        scale1, gate1 = mx.split(mod1, 2, axis=-1)
+        scale2, gate2 = mx.split(mod2, 2, axis=-1)
+
+        attn_input = self.img_norm1(hidden_states) * (1 + scale1)
+        hidden_states = hidden_states + nn.tanh(gate1) * self.attn(attn_input, rope_cos, rope_sin, attn_mask, text_len)
+
+        mlp_input = self.img_norm2(hidden_states) * (1 + scale2)
+        hidden_states = hidden_states + nn.tanh(gate2) * self.img_mlp(mlp_input)
+        return hidden_states

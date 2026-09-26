@@ -581,7 +581,7 @@ The macOS app offers a mode toggle between:
 | OpenAI Responses | `/v1/responses`, `/v1/responses/{id}`, `/v1/responses/compact`, `WS /v1/responses/ws` | ✅ Stateful chains (`previous_response_id`), base64 compaction blobs, WebSocket transport |
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ Fully compatible |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ Supported |
-| Images | `/v1/images/generate`, `/v1/images/generations`, `/v1/images/edits`, `/v1/images/super-resolution` | ✅ Generate (Flux 2, SD3-Medium, SDXL, Stable Cascade); edits (OpenAI SDK multipart, Fill/Kontext); Super-resolution (RealESRGAN x4plus, pure MLX, #752) |
+| Images | `/v1/images/generate`, `/v1/images/generations`, `/v1/images/edits`, `/v1/images/super-resolution` | ✅ Generate (Flux 2, SD3-Medium, SDXL, Stable Cascade, Qwen-Image-2.1 RGBA); edits (OpenAI SDK multipart, Fill/Kontext); Super-resolution (RealESRGAN x4plus, pure MLX, #752) |
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
 | Reasoning | `/v1/reasoning` | ✅ Explicit thinking step API (DeepSeek-R1, QwQ, etc.) |
@@ -2368,6 +2368,66 @@ curl -s http://127.0.0.1:11434/v1/images/generate \
 dev is a base (non-distilled) model: use `steps>=20` and `guidance=3.5`
 (default). Fewer steps underconverge. Model load is heavy (~66 G unified
 memory at 8-bit DiT + bf16 text encoder).
+
+## Qwen-Image-2.1 Transparent RGBA PNG (self-implemented, 2026-09-26)
+
+Upstream `mflux` PR#736 merged base Qwen-Image-2.1 (7.1B DiT + Qwen3-VL-8B
+text encoder + 4-channel VAE) but **drops the alpha channel** in
+`Qwen21VAE.decode` (`decoded[:, :3, :, :]` — the 4th channel carries edit-mask
+signal, not image content). The RGBA transparent-output path (PR#741) is
+**open/unmerged**. Rather than wait on mflux#741, fusion-mlx self-implements
+transparent PNG output with mlx-serve `transparent:true` parity.
+
+**What is new:**
+
+- `fusion_mlx/engines/qwen_image_21/` — vendored mflux 0.20.0 PR#736 qwen21
+  package (38 files, MIT). Self-imports rewritten to relative form; common
+  deps (weight loading, config, tokenizer, qwen3_vl) resolve against the
+  installed mflux-fusion 0.18.0, whose shared modules are byte-identical to
+  0.20.0. Lint-excluded (upstream-derived, merge-churn avoidance, same as
+  `patches/` and `engines/laya/`).
+- `__init__.py` bootstrap patches `ModelConfig.qwen_image_21` +
+  `AVAILABLE_MODELS["qwen-image-2.1"]` (priority 29, supports_guidance=True,
+  requires_sigma_shift=True) at import, then re-exports `QwenImage21`.
+- `Qwen21VAE.transparent_output` flag (default False). When true, `decode`
+  keeps all 4 VAE output channels → `ImageUtil._numpy_to_pil` yields an RGBA
+  PIL image → PNG save preserves alpha. Default false preserves upstream
+  PR#736 behavior (alpha dropped, RGB output).
+- `QwenImage21.generate_image(transparent=False)` sets the flag before
+  `VAEUtil.decode`. `ImageGenEngine.generate` forces `output_format="PNG"`
+  when `transparent=True` (JPEG/WebP have no alpha).
+- `ImageGenerateRequest.transparent: bool` field. `transparent=True` on a
+  non-Qwen-Image-2.1 backend returns HTTP 400 (no alpha channel).
+- `_infer_variant` routes `qwen-image-2.1` / `qwen-2.1` / `qwen-image-21` →
+  `qwen_image_21` BEFORE the generic `qwen-image` match. `QwenImage21Pipeline`
+  added to `DIFFUSERS_PIPELINE_TASKS` so discovery classifies the HF repo as
+  `image_gen` (ships `model_index.json`, no `configuration.json` task manifest).
+
+**RGBA mechanism:** the VAE decoder `conv_out` has `out_channels=4`
+(checkpoint key `decoder.conv_out.weight [4,144,3,3]`). The 4th channel is
+the alpha mask. `Image.fromarray` on a 4-channel uint8 array creates an RGBA
+PIL image; PNG format preserves it. This does NOT remove a background — use
+the Qwen-Image-2.1 RGBA prompt convention (see
+<https://github.com/QwenLM/Qwen-Image-2.1#transparent-image-generation-rgba>).
+
+**Verified end-to-end** (M5 Max 128GB, Qwen/Qwen-Image-2.1 fp16 32GB,
+512×512, 8 steps, subprocess mode): `transparent=True` → PNG color_type=6
+(RGBA), alpha min=0 max=255 mean=153.7, 39.7% transparent pixels;
+`transparent=False` (default) → PNG color_type=2 (RGB), no regression;
+`transparent=True` on a non-qwen21 backend → HTTP 400.
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com hf download Qwen/Qwen-Image-2.1 \
+  --local-dir ~/.fusion-mlx/models/Qwen-Image-2.1
+fusion-mlx serve --model-dir ~/.fusion-mlx/models --port 11434
+curl -s http://127.0.0.1:11434/v1/images/generations \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen-Image-2.1","prompt":"This is an RGBA image with transparency. A red apple. The image has alpha channel and the background is transparent.","width":1024,"height":1024,"steps":20,"guidance":4.0,"transparent":true}'
+```
+
+Qwen-Image-2.1 is a base (non-distilled) DiT: use `steps>=20` and
+`guidance=4.0`. The full fp16 model is ~33 GB; set `FUSION_FLUX_QUANT=4` for
+a 4-bit load (~9 GB) on constrained Macs (memory, not speed).
 
 ## Flux-1.lite-8B-MLX Deep Optimization (2026-07-19)
 

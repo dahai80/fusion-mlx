@@ -183,6 +183,20 @@ VARIANT_MAP: dict[str, tuple[str, str, str, float]] = {
         "qwen_image_edit",
         4.0,
     ),
+    # Qwen-Image-2.1 (Qwen/Qwen-Image-2.1) — vendored mflux 0.20.0 PR#736.
+    # 7.1B DiT (32 blocks) + Qwen3-VL-8B text encoder + 4-channel RGBA VAE.
+    # Native transparent PNG: conv_out out_channels=4 -> ImageUtil._numpy_to_pil
+    # yields RGBA PIL, PNG save preserves alpha. Parity with mlx-serve
+    # `transparent:true`. mflux-fusion 0.18.0 predates PR#736, so the qwen21
+    # package is vendored under fusion_mlx.engines.qwen_image_21 (self-imports
+    # rewritten relative; common deps resolve against installed mflux-fusion,
+    # whose shared modules are byte-identical to 0.20.0). supports_guidance=True.
+    "qwen_image_21": (
+        "fusion_mlx.engines.qwen_image_21",
+        "QwenImage21",
+        "qwen_image_21",
+        4.0,
+    ),
 }
 
 # #823: per-variant default diffusion steps. A single global steps=4
@@ -213,6 +227,7 @@ VARIANT_DEFAULT_STEPS: dict[str, int] = {
     "stable_cascade": 12,  # prior 20 + decoder 12; image gen uses prior
     "qwen_image": 30,  # Qwen-Image-2512 DiT — needs ~30 (the #823 report)
     "qwen_image_edit": 30,
+    "qwen_image_21": 20,  # Qwen-Image-2.1 DiT — 20 steps for sharp RGBA output
 }
 
 # Per-call executor timeout for image generation / model load (#481). The
@@ -418,6 +433,16 @@ def _infer_variant(model_path: str) -> str:
     # qwen-image / qwen-image-2512 / Qwen-Image-2512-4bit -> txt2img.
     if "qwen-image-edit" in name or "qwen_image_edit" in name:
         return "qwen_image_edit"
+    # Qwen-Image-2.1 (RGBA transparent PNG). Check "2.1"/"21" BEFORE the
+    # generic "qwen-image" substring — "qwen-image-2.1" contains both.
+    # Matches: qwen-image-2.1, qwen-2.1, qwen-image-21, Qwen-Image-2.1.
+    if (
+        "qwen-image-2.1" in name
+        or "qwen_image_2.1" in name
+        or "qwen-image-21" in name
+        or "qwen-2.1" in name
+    ):
+        return "qwen_image_21"
     if "qwen-image" in name or "qwen_image" in name:
         return "qwen_image"
     # FLUX.2-dev: upstream mflux has no flux2_dev variant/factory and no
@@ -835,6 +860,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         mask_image: str | None = None,
         depth_image: str | None = None,
         image_strength: float | None = None,
+        transparent: bool = False,
         **kwargs,
     ) -> list[bytes]:
         # Subprocess mode loads weights in the worker — the main process does
@@ -924,7 +950,14 @@ class ImageGenEngine(BaseNonStreamingEngine):
             subprocess_mode=subprocess_mode,
         )
 
+        # Transparent RGBA output requires PNG (JPEG/WebP have no alpha in
+        # the OpenAI-compatible b64 path). Force PNG when transparent=true.
+        if transparent:
+            output_format = "PNG"
+
         if subprocess_mode:
+            if transparent:
+                kwargs["transparent"] = True
             return await self._generate_subprocess(
                 prompt=prompt,
                 width=width,
@@ -1060,6 +1093,17 @@ class ImageGenEngine(BaseNonStreamingEngine):
                         gen_kwargs["image_path"] = _edit_path or _control_path
                         if image_strength is not None:
                             gen_kwargs["image_strength"] = image_strength
+                elif variant == "qwen_image_21":
+                    # Qwen-Image-2.1: true CFG when guidance>1 + negative_prompt;
+                    # optional img2img via image_path/image_strength.
+                    if negative_prompt is not None:
+                        gen_kwargs["negative_prompt"] = negative_prompt
+                    if _edit_path is not None or _control_path is not None:
+                        gen_kwargs["image_path"] = _edit_path or _control_path
+                        if image_strength is not None:
+                            gen_kwargs["image_strength"] = image_strength
+                    if transparent:
+                        gen_kwargs["transparent"] = True
                 elif variant == "sd3":
                     if negative_prompt is not None:
                         gen_kwargs["negative_prompt"] = negative_prompt
@@ -1096,6 +1140,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                     "sd15",
                     "sd2",
                     "stable_cascade",
+                    "qwen_image_21",
                 ):
                     logger.warning(
                         "Flux does not support negative_prompt; "

@@ -192,6 +192,12 @@ DIFFUSERS_PIPELINE_TASKS = {
     # returns False and the FL2VA/Ref2VA partitions are never discovered
     # (#597). Partition (fl2va/ref2va) is resolved by MiniMaxH3Backend.detect.
     "MiniMaxH3Pipeline": "text-to-video",
+    # Qwen-Image-2.1 ships model_index.json with _class_name=
+    # "QwenImage21Pipeline" and a 4-channel RGBA VAE (out_channels=4).
+    # Without this entry _is_image_model returns False (no task manifest,
+    # not the Comfy FLUX.2 single-file layout) and discovery falls through
+    # to "llm" — the model never reaches ImageGenEngine. PR#736 vendor.
+    "QwenImage21Pipeline": "text-to-image",
 }
 
 # Known embedding architectures

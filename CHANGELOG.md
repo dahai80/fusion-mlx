@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added — Qwen-Image-2.1 transparent RGBA PNG (self-implemented, mlx-serve parity)
+- **`engines/qwen_image_21/`**: vendored mflux 0.20.0 PR#736 qwen21 package
+  (7.1B DiT + Qwen3-VL-8B text encoder + 4-channel RGBA VAE, 38 files, MIT).
+  Self-imports rewritten to relative form; common deps resolve against
+  installed mflux-fusion 0.18.0 (shared modules byte-identical to 0.20.0).
+  Lint-excluded (upstream-derived, like `patches/` + `engines/laya/`).
+- **`Qwen21VAE.transparent_output`** flag keeps the 4th VAE output channel
+  (alpha) so `ImageUtil._numpy_to_pil` yields RGBA → PNG preserves alpha.
+  Default false = upstream PR#736 behavior (alpha dropped, RGB output).
+  Upstream PR#741 (RGBA) is open/unmerged; this self-implements it.
+- **`api/images.py`**: `ImageGenerateRequest.transparent: bool` field;
+  `transparent=true` on a non-Qwen-Image-2.1 backend returns HTTP 400.
+- **`engines/image_gen.py`**: `_infer_variant` routes `qwen-image-2.1` →
+  `qwen_image_21` before generic `qwen-image`; `VARIANT_MAP` +
+  `VARIANT_DEFAULT_STEPS` entries; `generate()` forces PNG when transparent.
+- **`pool/model_discovery.py`**: `QwenImage21Pipeline` → `text-to-image`
+  (ships `model_index.json`, no task manifest → otherwise misclassified LLM).
+- Verified end-to-end (real 32GB fp16 model, subprocess mode): RGBA PNG
+  color_type=6, alpha min=0/max=255/mean=153.7, 39.7% transparent pixels;
+  default path RGB color_type=2 (no regression).
+
 ### Added — AWSD Phase A: MTP chain-of-K=2 (--mtp-chain-k 2), +32% over K=1
 - **`patches/mlx_lm_mtp/batch_generator.py`**: new `_run_verify_cycle_chain`
   hot-loop drafting K=2 tokens autoregressively off the head's hidden state

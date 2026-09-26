@@ -77,6 +77,12 @@ class ImageGenerateRequest(BaseModel):
     depth_image: str | None = None
     # Img2img strength (used by depth/kontext/redux/txt2img i2i)
     image_strength: float | None = Field(default=None, ge=0.0, le=1.0)
+    # Transparent RGBA PNG output (mlx-serve parity). Only Qwen-Image-2.1
+    # has a 4-channel VAE; other backends return HTTP 400 when true. The
+    # VAE's native 4th channel is preserved in the returned PNG — this does
+    # NOT remove a background; use the RGBA prompt convention (see
+    # https://github.com/QwenLM/Qwen-Image-2.1#transparent-image-generation-rgba).
+    transparent: bool = Field(default=False)
 
     @model_validator(mode="before")
     @classmethod
@@ -208,6 +214,16 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
             gen_kwargs["depth_image"] = request.depth_image
         if request.image_strength is not None:
             gen_kwargs["image_strength"] = request.image_strength
+        if request.transparent:
+            # mlx-serve parity: transparent RGBA PNG only on Qwen-Image-2.1
+            # (4-channel VAE). Other backends have no alpha channel → 400.
+            if engine.variant != "qwen_image_21":
+                raise HTTPException(
+                    400,
+                    "transparent=true requires Qwen-Image-2.1 (4-channel RGBA "
+                    "VAE); the loaded image backend has no alpha channel",
+                )
+            gen_kwargs["transparent"] = True
 
         image_bytes_list = await engine.generate(**gen_kwargs)
 
