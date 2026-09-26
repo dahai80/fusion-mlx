@@ -578,9 +578,10 @@ The macOS app offers a mode toggle between:
 |-----|-----------|--------|
 | OpenAI Chat | `/v1/chat/completions`, `/v1/models` | ✅ Fully compatible |
 | OpenAI Legacy | `/v1/completions` | ✅ Supported |
+| OpenAI Responses | `/v1/responses`, `/v1/responses/{id}`, `/v1/responses/compact`, `WS /v1/responses/ws` | ✅ Stateful chains (`previous_response_id`), base64 compaction blobs, WebSocket transport |
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ Fully compatible |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ Supported |
-| Images | `/v1/images/generate`, `/v1/images/super-resolution` | ✅ Generate (Flux 2, SD3-Medium, SDXL, Stable Cascade); Super-resolution (RealESRGAN x4plus, pure MLX, #752) |
+| Images | `/v1/images/generate`, `/v1/images/generations`, `/v1/images/edits`, `/v1/images/super-resolution` | ✅ Generate (Flux 2, SD3-Medium, SDXL, Stable Cascade); edits (OpenAI SDK multipart, Fill/Kontext); Super-resolution (RealESRGAN x4plus, pure MLX, #752) |
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
 | Reasoning | `/v1/reasoning` | ✅ Explicit thinking step API (DeepSeek-R1, QwQ, etc.) |
@@ -594,6 +595,7 @@ The macOS app offers a mode toggle between:
 | Base Info | `/v1/base` | ✅ MLX runtime capability detection |
 | Convert / Quantize | `/v1/convert`, `/v1/quantize` (+ `.../jobs/{id}`) | ✅ Async HF->MLX conversion + weight quantization |
 | Watermark | `/v1/watermark/embed`, `/v1/watermark/verify` | ✅ Weight-tensor LSB watermark (#656) |
+| Server Utils | `/props`, `/tokenize`, `/detokenize`, `/v1/models/rescan`, `/metrics`, `/metrics.json`, `/v1/load-model`, `/v1/unload-model` | ✅ mlx-serve parity: server props, tokenizer round-trip, model rescan, Prometheus + JSON metrics, body-shape model load/unload |
 
 ## Weight-Tensor Watermark (#656)
 
