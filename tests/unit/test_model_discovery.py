@@ -97,6 +97,36 @@ class TestEstimateModelSize:
         with pytest.raises(ValueError, match="No model weights"):
             estimate_model_size(model_dir)
 
+    def test_ltx2_5_dedup_keeps_larger_transformer(self, tmp_path):
+        # #979: ltx2_5 ships mutually-exclusive transformer-distilled + dev.
+        # Admission must count only the larger (worst-case), not both.
+        model_dir = tmp_path / "ltx25-flat"
+        model_dir.mkdir()
+        (model_dir / "split_model.json").write_text(json.dumps({"recipe": "ltx-2.5"}))
+        (model_dir / "transformer-distilled.safetensors").write_bytes(
+            b"\x00" * (2 * 1024)
+        )
+        (model_dir / "transformer-dev.safetensors").write_bytes(b"\x00" * (5 * 1024))
+        (model_dir / "text_encoder.safetensors").write_bytes(b"\x00" * (1 * 1024))
+        (model_dir / "vae_encoder_conv.safetensors").write_bytes(b"\x00" * 512)
+        result = estimate_model_size(model_dir)
+        # Expect: dev(5120) + text_encoder(1024) + vae(512) = 6656, +5% = 6988.
+        # distilled(2048) dropped. Without dedup it would be ~9142.
+        assert 6900 <= result <= 7100, f"got {result} (expected ~6988, no double-count)"
+
+    def test_ltx2_5_no_dedup_when_single_transformer(self, tmp_path):
+        # Only distilled present (dev via .ref pointer outside dir) — no dedup.
+        model_dir = tmp_path / "ltx25-single"
+        model_dir.mkdir()
+        (model_dir / "split_model.json").write_text(json.dumps({"recipe": "ltx-2.5"}))
+        (model_dir / "transformer-distilled.safetensors").write_bytes(
+            b"\x00" * (3 * 1024)
+        )
+        (model_dir / "text_encoder.safetensors").write_bytes(b"\x00" * (1 * 1024))
+        result = estimate_model_size(model_dir)
+        # 4K * 1.05 = 4200, nothing dropped.
+        assert 4000 <= result <= 4400
+
 
 class TestFormatSize:
     def test_format_bytes(self):
