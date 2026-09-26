@@ -25,6 +25,19 @@
   quality is view-averaged, not per-view distinct. Full multiview + PBR is
   follow-up work (needs the tencent paint reference).
 
+### Fixed — ltx2_5 dev pipeline joint A/V generation wired (#995)
+- The **dev** variant (22B bf16 single-stage, real CFG) no longer raises
+  `NotImplementedError` for `audio=True`; `denoise_dev_av` is now called on the
+  dev branch and `_write_mp4_av` muxes the aac stream, mirroring the distilled
+  A/V path landed in #987.
+- `denoise_dev_av` (`fusion_mlx/video/ltx2/denoise.py`) now accepts a python
+  `list[float]` sigma grid (ltx2_5 `dev_sigmas` returns a list) and skips the
+  manual RoPE precompute for ltx2_5 transformers (which compute positional
+  embeddings internally from `positions`); the precomputed-rope contract is
+  retained for ltx2 transformers that require it.
+- E2E verified: `variant="dev" + audio=True` → mp4 with an `audio` stream
+  (ffprobe-confirmed) at 256×256 / 9f / 4 steps.
+
 ### Added — ACE-Step1.5 text-to-music generation (#988, self-implemented)
 - **`engines/music.py`** + **`audio/acestep/orchestration.py`**: pure-MLX port of
   ACE-Step1.5 turbo (DiT flow-match + Oobleck VAE + Qwen3-Embedding text encoder).
