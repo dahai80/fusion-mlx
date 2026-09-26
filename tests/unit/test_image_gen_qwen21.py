@@ -77,6 +77,10 @@ class TestTransparentRequest:
 
 class TestQwenImage21Import:
     def test_vendored_qwen21_imports(self):
+        # mflux is an optional [image] extra (vendored wheel). Skip on CI
+        # shards that don't install it instead of ModuleNotFoundError —
+        # matches the guard in test_image_gen_flux2.py.
+        pytest.importorskip("mflux")
         # Bootstrap patches ModelConfig.qwen_image_21 + re-exports QwenImage21.
         import fusion_mlx.engines.qwen_image_21 as pkg
 
