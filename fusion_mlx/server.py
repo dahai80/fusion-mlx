@@ -64,6 +64,7 @@ from .admin.helpers import (
     set_ms_downloader,
     set_oq_manager,
 )
+from .api.decisions_routes import router as decisions_router
 from .api.ollama_routes import router as ollama_router
 from .api.ollama_routes import set_ollama_context
 from .api.openai import router as openai_router
@@ -1362,6 +1363,7 @@ class Server:
             ("runtime_config", runtime_config_router, None),
             ("admin", admin_router, None),
             ("cluster", cluster_router, None),
+            ("decisions", decisions_router, None),
         ]
         _mounted: list[str] = []
         _skipped: list[str] = []

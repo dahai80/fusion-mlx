@@ -221,18 +221,25 @@ line-length = 88
 target-version = ["py311", "py312", "py313"]
 # gui_compat/ is adapted MLX-GUI code moved in from the former top-level
 # fusion_gui/ package (#63); not yet brought to black compliance.
+# engines/laya/ is vendored laya-mlx 0.2.0 (upstream-derived, MIT).
 # tests/e2e/ harness scripts use compact one-liner style (ruff-excluded too).
-extend-exclude = 'tests/e2e/'
+extend-exclude = 'tests/e2e/|fusion_mlx/engines/laya/'
 
 [tool.ruff]
 line-length = 88
 # patches/ holds upstream-derived model/patch code (mlx_vlm vendor, mlx_lm_mtp,
 # deepseek_v4, glm_moe_dsa). Not authored here; linting it creates merge churn.
+# engines/laya/ holds vendored laya-mlx 0.2.0 (mizorewww/laya-mlx, MIT) — pure
+# MLX reference impl, lint-excluded to avoid merge churn on upstream sync.
 # gui_compat/ is adapted MLX-GUI code moved in from the former top-level
 # fusion_gui/ package (#63); not yet brought to ruff compliance.
 # tests/e2e/ holds operator-run sequential e2e harness scripts (compact
 # one-liner style for a long sequential script); not CI-gated unit code.
-extend-exclude = ["fusion_mlx/patches", "tests/e2e"]
+extend-exclude = [
+    "fusion_mlx/patches",
+    "fusion_mlx/engines/laya",
+    "tests/e2e",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
