@@ -161,12 +161,18 @@ embeddings = [
 document = [
     "markitdown[pdf,docx,pptx]>=0.1.0",
 ]
+# Hunyuan3D-2.1 3D generation: mesh UV unwrap (xatlas) + GLB export (trimesh).
+# scipy + Pillow are core deps. Pure-numpy rasterizer needs no extra.
+threed = [
+    "xatlas>=0.0.9",
+    "trimesh>=4.0.0",
+]
 # `[full]` = every modality extra. Mirrors the pre-#805 core dependency set so
 # `pip install "fusion-mlx[full]"` is a drop-in for the old all-deps install.
 # Self-reference (PEP 508 / pip 21+): each entry expands this project's own
 # optional-dependency group.
 full = [
-    "fusion-mlx[vlm,dflash,embeddings,document,audio,image,video,mfa,vision,grammar,llguidance,mcp,modelscope,paroquant,dflash2,chat]",
+    "fusion-mlx[vlm,dflash,embeddings,document,audio,image,video,mfa,vision,grammar,llguidance,mcp,modelscope,paroquant,dflash2,chat,threed]",
 ]
 dev = [
     "pytest>=7.0.0",
