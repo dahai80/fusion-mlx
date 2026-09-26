@@ -74,6 +74,24 @@ class PaintVAEConfig:
 
 
 @dataclass
+class PaintDinoConfig:
+    # DINOv2-Giant ViT backbone for the paint pipeline. Feeds image_proj_model_dino
+    # (1536 -> 4096 reshape 4x1024 + LayerNorm(1024)) in the paint UNet.
+    hidden: int = 1536
+    layers: int = 40
+    heads: int = 24
+    head_dim: int = 64
+    patch: int = 14
+    image_size: int = 518
+    mlp_hidden: int = 8192
+    group_size: int = 64  # 1536/64 = 24 groups (scales shape [out, 24])
+
+    @property
+    def num_tokens(self) -> int:
+        return (self.image_size // self.patch) ** 2 + 1  # 37*37 + 1 = 1370
+
+
+@dataclass
 class PaintConfig:
     model_type: str = "hunyuan3d_2_1_paint"
     quant: str = "8bit"
@@ -84,6 +102,7 @@ class PaintConfig:
     num_inference_steps: int = 30
     unet: PaintUNetConfig = field(default_factory=PaintUNetConfig)
     vae: PaintVAEConfig = field(default_factory=PaintVAEConfig)
+    dino: PaintDinoConfig = field(default_factory=PaintDinoConfig)
 
 
 @dataclass
@@ -119,7 +138,7 @@ def load_paint_config(model_dir: str | Path) -> PaintConfig:
             for k in d
             if k in PaintConfig.__dataclass_fields__ and k not in ("unet", "vae")
         },
-    )
+    )  # dino uses PaintDinoConfig defaults (Giant); not in paint config.json
 
 
 def load_unirig_config(model_dir: str | Path) -> UniRigConfig:
