@@ -863,6 +863,13 @@ def detect_model_type(model_path: Path) -> ModelType:
     if "kokoro" in name_lower or "deepfilternet" in name_lower:
         return "audio_tts" if "kokoro" in name_lower else "audio_sts"
 
+    # ACE-Step1.5 music generation (issue #988): DiT + VAE + external
+    # Qwen3-Embedding text encoder. turbo config.json carries
+    # audio_acoustic_hidden_dim / num_hidden_layers but no model_type —
+    # detect by name so /v1/audio/music routes to MusicGenEngine.
+    if "ace-step" in name_lower or "acestep" in name_lower:
+        return "audio_music"
+
     return "llm"
 
 
@@ -1557,7 +1564,7 @@ def _is_embedding_model_dir(model_dir: Path) -> bool:
         return False
 
 
-_AUDIO_MODEL_TYPES = frozenset({"audio_stt", "audio_tts", "audio_sts"})
+_AUDIO_MODEL_TYPES = frozenset({"audio_stt", "audio_tts", "audio_sts", "audio_music"})
 
 
 def _has_any_weights(model_dir: Path) -> bool:
@@ -1719,6 +1726,8 @@ def _register_model(
             engine_type = "audio_tts"
         elif model_type == "audio_sts":
             engine_type = "audio_sts"
+        elif model_type == "audio_music":
+            engine_type = "audio_music"
         elif model_type == "image":
             engine_type = "image_gen"
         elif model_type == "video":

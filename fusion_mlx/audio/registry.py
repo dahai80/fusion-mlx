@@ -7,7 +7,7 @@ from typing import Literal
 
 logger = logging.getLogger(__name__)
 
-AudioType = Literal["tts", "stt"]
+AudioType = Literal["tts", "stt", "music"]
 
 
 @dataclass(frozen=True)
@@ -62,10 +62,10 @@ def _load_registry() -> dict[str, AudioAliasEntry]:
                 f"audio aliases.json: entry {key!r} missing required "
                 f"field {e.args[0]!r}"
             ) from e
-        if kind not in ("tts", "stt"):
+        if kind not in ("tts", "stt", "music"):
             raise ValueError(
                 f"audio aliases.json: entry {key!r} has invalid type "
-                f"{kind!r}; must be 'tts' or 'stt'"
+                f"{kind!r}; must be 'tts', 'stt', or 'music'"
             )
         if "/" not in hf_id:
             raise ValueError(

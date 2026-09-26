@@ -103,3 +103,44 @@ class AudioConverseResponse(BaseModel):
     transcript: str
     reply: str
     audio: str | None = None
+
+
+class AudioMusicRequest(BaseModel):
+    """Request model for music generation (issue #988, ACE-Step1.5).
+
+    POST /v1/audio/music — text-to-music via DiT flow-match + VAE decode.
+    Returns WAV bytes (audio/wav) at 48kHz stereo.
+    """
+
+    model: str
+    caption: str
+    lyrics: str = ""
+    duration: float = Field(30.0, gt=0.0, le=300.0)
+    language: str = "en"
+    bpm: str = "N/A"
+    timesignature: str = "N/A"
+    keyscale: str = "N/A"
+    seed: int | None = 42
+    shift: float = Field(1.0, gt=0.0, le=4.0)
+    infer_method: str = "ode"
+    response_format: str | None = "wav"
+
+    @field_validator("response_format", mode="before")
+    @classmethod
+    def _validate_music_response_format(cls, v):
+        if v is None:
+            return v
+        if not isinstance(v, str):
+            raise ValueError("response_format must be a string")
+        if v not in ("wav", "flac", "ogg", "mp3"):
+            raise ValueError(
+                f"response_format must be one of wav, flac, ogg, mp3 (got {v!r})"
+            )
+        return v
+
+    @field_validator("infer_method")
+    @classmethod
+    def _validate_infer_method(cls, v):
+        if v not in ("ode", "sde"):
+            raise ValueError("infer_method must be 'ode' or 'sde'")
+        return v

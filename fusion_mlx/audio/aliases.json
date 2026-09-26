@@ -188,5 +188,17 @@
         "family": "parakeet",
         "languages": "en",
         "notes": "Parakeet TDT 0.6B v3."
+    },
+    "ace-step": {
+        "type": "music",
+        "hf_id": "ACE-Step/Ace-Step1.5",
+        "family": "acestep",
+        "notes": "ACE-Step1.5 turbo text-to-music (DiT + VAE + Qwen3-Embedding). POST /v1/audio/music."
+    },
+    "ace-step1.5": {
+        "type": "music",
+        "hf_id": "ACE-Step/Ace-Step1.5",
+        "family": "acestep",
+        "notes": "Long-form alias for ace-step."
     }
 }
