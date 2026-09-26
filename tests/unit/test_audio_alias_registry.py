@@ -223,11 +223,11 @@ class TestAudioAliasRegistry:
         )
 
     def test_registry_separates_tts_and_stt(self):
-        """Every entry has a ``type`` that's either 'tts' or 'stt'."""
+        """Every entry has a ``type`` that's tts/stt/music."""
         from fusion_mlx.audio.registry import list_audio_aliases
 
         kinds = {e.type for e in list_audio_aliases()}
-        assert kinds == {"tts", "stt"}, kinds
+        assert kinds == {"tts", "stt", "music"}, kinds
 
     def test_route_alias_tables_built_from_registry(self):
         """The STT/TTS alias maps in routes.audio mirror the registry

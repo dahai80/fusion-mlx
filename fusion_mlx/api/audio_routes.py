@@ -16,6 +16,7 @@ import re
 import tempfile
 from collections.abc import AsyncIterator
 
+import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 
@@ -25,6 +26,7 @@ from ..pool import EnginePool
 from ..server_metrics import get_server_metrics
 from .audio_models import (
     AudioConverseResponse,
+    AudioMusicRequest,
     AudioSpeechRequest,
     AudioTranscriptionResponse,
 )
@@ -1076,4 +1078,161 @@ async def converse(
             audio=base64.b64encode(wav_bytes).decode("ascii"),
         )
 
+    return Response(content=wav_bytes, media_type="audio/wav")
+
+
+def _stereo_wav_bytes(wav_np: "np.ndarray", sample_rate: int) -> bytes:
+    import io
+    import wave
+
+    pcm = (np.clip(wav_np, -1.0, 1.0) * 32767).astype(np.int16)
+    if pcm.ndim == 1:
+        pcm = np.stack([pcm, pcm], axis=-1)
+    elif pcm.shape[-1] == 1:
+        pcm = np.concatenate([pcm, pcm], axis=-1)
+    interleaved = pcm.reshape(-1)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(interleaved.tobytes())
+    return buf.getvalue()
+
+
+@router.post(
+    "/v1/audio/music",
+    dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
+)
+async def create_music(request: AudioMusicRequest):
+    from fusion_mlx.engines.music import MusicGenEngine
+    from fusion_mlx.exceptions import ModelNotFoundError
+
+    if not request.caption or not request.caption.strip():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "type": "invalid_request_error",
+                    "code": "invalid_request_error",
+                    "param": "caption",
+                    "message": "'caption' field must be non-empty (not blank)",
+                }
+            },
+        )
+
+    resolved_model = _resolve_model(request.model)
+    pool = _get_engine_pool()
+
+    # ACE-Step1.5 ships a non-standard repo layout (turbo config under
+    # acestep-v15-turbo/, not snapshot root) so discovery does not list it.
+    # Ensure a lazy audio_music entry exists so the pool lazy-loads
+    # MusicGenEngine via _load_engine on this first request (issue #988).
+    if not pool.has_entry(resolved_model):
+        pool.register_audio_engine_entry(resolved_model, resolved_model, "audio_music")
+        logger.info(
+            "registered lazy audio_music entry for %s on first request",
+            resolved_model,
+        )
+
+    try:
+        engine = await pool.get_engine(resolved_model)
+    except ModelNotFoundError as exc:
+        avail = ", ".join(exc.available_models) if exc.available_models else "(none)"
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model '{resolved_model}' not found. Available: {avail}",
+        ) from exc
+    except Exception as exc:
+        logger.exception(
+            "music engine load failed for %s: %s(%s)",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+    if not isinstance(engine, MusicGenEngine):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{resolved_model}' is not a music generation model",
+        )
+
+    try:
+        wav_np, sr = await engine.generate_music(
+            caption=request.caption,
+            lyrics=request.lyrics,
+            duration=request.duration,
+            language=request.language,
+            bpm=request.bpm,
+            timesignature=request.timesignature,
+            keyscale=request.keyscale,
+            seed=request.seed,
+            shift=request.shift,
+            infer_method=request.infer_method,
+        )
+    except TimeoutError as exc:
+        logger.warning(
+            "music generation timed out for %s: %s(%s) — GPU busy, retry later",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Music generation timed out (GPU busy), retry later",
+            headers={"Retry-After": "5"},
+        ) from exc
+    except ValueError as exc:
+        logger.warning(
+            "music generation bad request for %s: %s(%s)",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception(
+            "music generation failed for %s: %s(%s)",
+            resolved_model,
+            type(exc).__name__,
+            exc,
+        )
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+    _record_audio_request(resolved_model)
+
+    fmt = request.response_format or "wav"
+    if fmt != "wav":
+        try:
+            import io as _io
+
+            import soundfile as sf
+
+            buf = _io.BytesIO()
+            sf.write(buf, wav_np, sr, format=fmt.upper() if fmt != "ogg" else "OGG")
+            logger.info(
+                "music gen responded %s bytes=%d sr=%d dur=%.1fs",
+                fmt,
+                buf.tell(),
+                sr,
+                request.duration,
+            )
+            media = "audio/flac" if fmt == "flac" else f"audio/{fmt}"
+            return Response(content=buf.getvalue(), media_type=media)
+        except Exception as exc:
+            logger.warning(
+                "music gen format %s encode failed (%s); falling back to wav",
+                fmt,
+                exc,
+            )
+
+    wav_bytes = _stereo_wav_bytes(wav_np, sr)
+    logger.info(
+        "music gen responded wav bytes=%d sr=%d dur=%.1fs caption=%r",
+        len(wav_bytes),
+        sr,
+        request.duration,
+        request.caption[:60],
+    )
     return Response(content=wav_bytes, media_type="audio/wav")

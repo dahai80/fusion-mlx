@@ -73,4 +73,41 @@ def load_acestep_model(
     return model
 
 
-__all__ = ["load_acestep_weights", "load_acestep_model"]
+def load_silence_latent(safetensors_path: str | Path) -> mx.array:
+    # silence_latent.safetensors: {silence_latent: (1, 15000, 64)} float32.
+    # Converted from ACE-Step silence_latent.pt (transposed to T-last).
+    data = mx.load(str(safetensors_path))
+    key = "silence_latent" if "silence_latent" in data else next(iter(data))
+    lat = data[key].astype(mx.float32)
+    logger.info("silence_latent loaded: %s dtype=%s", lat.shape, lat.dtype)
+    return lat
+
+
+def load_acestep_orchestrator(
+    checkpoint_dir: str | Path,
+    text_encoder_repo: str = "Qwen/Qwen3-Embedding-0.6B",
+    load_text_encoder: bool = True,
+):
+    # checkpoint_dir: ACE-Step1.5 snapshot dir containing acestep-v15-turbo/ + vae/.
+    from .orchestration import AceStepOrchestrator
+    from .vae import AutoencoderOobleckMLX
+
+    checkpoint_dir = Path(checkpoint_dir)
+    turbo_dir = checkpoint_dir / "acestep-v15-turbo"
+    vae_dir = checkpoint_dir / "vae"
+    config = AceStepConfig.from_json(turbo_dir / "config.json")
+    model = load_acestep_model(config, turbo_dir / "model.safetensors")
+    vae = AutoencoderOobleckMLX.from_pretrained(vae_dir)
+    silence = load_silence_latent(turbo_dir / "silence_latent.safetensors")
+    orch = AceStepOrchestrator(config, model, vae, silence)
+    if load_text_encoder:
+        orch.load_text_encoder(text_encoder_repo)
+    return orch
+
+
+__all__ = [
+    "load_acestep_weights",
+    "load_acestep_model",
+    "load_silence_latent",
+    "load_acestep_orchestrator",
+]

@@ -151,6 +151,12 @@ def _serve_audio_mode(args, entry) -> None:
     # adds a second call site.
     server.register_audio_routes_if_enabled()
 
+    # ACE-Step1.5 music (issue #988): discovery can't classify it from the
+    # non-standard repo layout (turbo config at acestep-v15-turbo/config.json,
+    # not snapshot root). The /v1/audio/music route registers a lazy
+    # audio_music entry on first request (pool built in get_app, after this
+    # function returns), so no boot-time registration is possible here.
+
     # Print the resolution banner so the operator sees what loaded.
     family_tag = f"[audio:{entry.type}]"
     shown_alias = getattr(args, "_original_alias", args.model)

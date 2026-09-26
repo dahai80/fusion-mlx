@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from ..engines.batched import BatchedEngine  # noqa: F401
     from ..engines.embedding import EmbeddingEngine  # noqa: F401
     from ..engines.image_gen import ImageGenEngine  # noqa: F401
+    from ..engines.music import MusicGenEngine  # noqa: F401
     from ..engines.ner import NEREngine  # noqa: F401
     from ..engines.reranker import RerankerEngine  # noqa: F401
     from ..engines.sts import STSEngine  # noqa: F401
@@ -67,6 +68,7 @@ _LAZY_ENGINE_CLASSES: dict[str, tuple[str, str]] = {
     "STTEngine": ("fusion_mlx.engines.stt", "STTEngine"),
     "TTSEngine": ("fusion_mlx.engines.tts", "TTSEngine"),
     "STSEngine": ("fusion_mlx.engines.sts", "STSEngine"),
+    "MusicGenEngine": ("fusion_mlx.engines.music", "MusicGenEngine"),
     "ImageGenEngine": ("fusion_mlx.engines.image_gen", "ImageGenEngine"),
     "VideoGenEngine": ("fusion_mlx.engines.video", "VideoGenEngine"),
 }
@@ -146,6 +148,7 @@ class EngineEntry:
         | STTEngine
         | STSEngine
         | TTSEngine
+        | MusicGenEngine
         | VideoGenEngine
         | None
     ) = None  # Loaded engine instance
@@ -681,6 +684,7 @@ class EnginePool:
         "audio_stt": "audio_stt",
         "audio_tts": "audio_tts",
         "audio_sts": "audio_sts",
+        "audio_music": "audio_music",
         "image": "image_gen",
         "video": "video_gen",
         "ti2v": "video_gen",
@@ -1307,6 +1311,7 @@ class EnginePool:
         | STTEngine
         | STSEngine
         | TTSEngine
+        | MusicGenEngine
         | DiffusionEngine
     ):
         """
@@ -1726,22 +1731,53 @@ class EnginePool:
         finally:
             await self.release_engine(model_id)
 
+    def has_entry(self, model_id: str) -> bool:
+        """Return True if model_id has a discovered/registered pool entry."""
+        return model_id in self._entries
+
     def register_engine(self, model_id: str, engine) -> None:
         """Register an externally-created engine in the pool."""
+        self._register_entry(model_id, "", "llm", "batched", engine=engine)
+
+    def register_audio_engine_entry(
+        self,
+        model_id: str,
+        model_path: str,
+        engine_type: str,
+        model_type: str = "llm",
+    ) -> None:
+        """Register a lazy (engine=None) discovered entry for an audio model
+        that discovery could not classify from its non-standard config layout
+        (e.g. ACE-Step1.5 ships acestep-v15-turbo/config.json, not a snapshot
+        root config). The pool lazy-loads via _load_engine on first request,
+        dispatching by engine_type (audio_music -> MusicGenEngine)."""
+        self._register_entry(model_id, model_path, model_type, engine_type, engine=None)
+
+    def _register_entry(
+        self,
+        model_id: str,
+        model_path: str,
+        model_type: str,
+        engine_type: str,
+        engine=None,
+    ) -> None:
         entry = self._entries.get(model_id)
         if entry is None:
             entry = EngineEntry(
                 model_id=model_id,
-                model_path="",
-                model_type="llm",
-                engine_type="batched",
+                model_path=model_path,
+                model_type=model_type,
+                engine_type=engine_type,
                 estimated_size=0,
             )
             self._entries[model_id] = entry
-        entry.engine = engine
-        entry.last_access = time.monotonic()
-        self._current_model_memory += entry.estimated_size
-        logger.info(f"Registered engine '{model_id}' in pool")
+        if engine is not None:
+            entry.engine = engine
+            entry.last_access = time.monotonic()
+            self._current_model_memory += entry.estimated_size
+        logger.info(
+            f"Registered entry '{model_id}' in pool (engine_type={engine_type})"
+        )
 
     def unload_engine(self, model_id: str) -> None:
         """Synchronously remove an engine from pool entries (non-blocking)."""
@@ -2632,6 +2668,7 @@ class EnginePool:
             NEREngine = _g.get("NEREngine") or __getattr__("NEREngine")
             STTEngine = _g.get("STTEngine") or __getattr__("STTEngine")
             TTSEngine = _g.get("TTSEngine") or __getattr__("TTSEngine")
+            MusicGenEngine = _g.get("MusicGenEngine") or __getattr__("MusicGenEngine")
             STSEngine = _g.get("STSEngine") or __getattr__("STSEngine")
             ImageGenEngine = _g.get("ImageGenEngine") or __getattr__("ImageGenEngine")
             VideoGenEngine = _g.get("VideoGenEngine") or __getattr__("VideoGenEngine")
@@ -2655,6 +2692,7 @@ class EnginePool:
                     "audio_stt": "audio",
                     "audio_tts": "audio",
                     "audio_sts": "audio",
+                    "audio_music": "audio",
                     "image_gen": "image",
                     "video_gen": "video",
                     "diffusion": "video",
@@ -2798,6 +2836,8 @@ class EnginePool:
                         model_name=entry.model_path,
                         config_model_type=entry.config_model_type,
                     )
+                elif entry.engine_type == "audio_music":
+                    engine = MusicGenEngine(model_name=entry.model_path)
                 elif entry.engine_type == "image_gen":
                     engine = ImageGenEngine(model_name=entry.model_path)
                 elif entry.engine_type == "video_gen":
