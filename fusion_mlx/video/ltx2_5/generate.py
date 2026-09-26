@@ -518,11 +518,6 @@ def generate_video(
     # 去噪（schedule 由 dev_sigmas() 按 token 数动态 shift，对拍 diffusers
     # max|Δ|<3e-8），CFG 走真实负向分支（guidance_scale>1 有意义）。
     if var_str == "dev":
-        if image is not None:
-            raise NotImplementedError(
-                "ltx2_5 dev: I2V single-stage conditioning not wired yet "
-                "(#968 follow-up) — use pipeline=distilled for I2V."
-            )
         if audio:
             # dev AV 需 CFG 联合去噪路径 (denoise_dev_av, 含 audio_cfg_scale +
             # modality_scale), 本轮仅接 distilled A/V。Fail visible (Rule 12)。

@@ -5,6 +5,9 @@
 # frames renoised to sig[0]. No real 22B model load (OOM gate).
 from __future__ import annotations
 
+import ast
+import inspect
+
 import mlx.core as mx
 
 from fusion_mlx.video.ltx2.conditioning import LatentState
@@ -76,3 +79,78 @@ def test_build_i2v_state_partial_strength_keeps_some_noise_on_condition():
     assert mx.allclose(
         state.denoise_mask[:, :, 0:1], mx.array([[[0.5]]]), atol=1e-5
     ).item()
+
+
+def _dev_branch_source() -> str:
+    # Extract the `if var_str == "dev":` branch body source from
+    # generate_video. PR#985 shipped the I2V wiring (_build_i2v_state call)
+    # but left a dead `if image is not None: raise NotImplementedError`
+    # BEFORE it, so the wiring never ran and dev+image returned 500. This
+    # helper lets the regression test inspect the branch structurally
+    # without loading the 22B model (OOM gate).
+    src = inspect.getsource(gen_mod.generate_video)
+    tree = ast.parse(src)
+    dev_body: list[ast.stmt] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == "var_str"
+            and test.ops
+            and isinstance(test.ops[0], ast.Eq)
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value == "dev"
+        ):
+            dev_body = node.body
+            break
+    assert dev_body, "dev branch (`if var_str == 'dev':`) not found"
+    return ast.unparse(ast.Module(body=dev_body, type_ignores=[]))
+
+
+def test_dev_branch_has_no_image_notimplemented_raise():
+    # Regression guard for PR#985/#977: the dev branch must NOT contain a
+    # `raise NotImplementedError` gated on `image is not None` (that was the
+    # dead-code block that shadowed the I2V wiring and caused the 500 the
+    # user hit). Only the audio A/V follow-up raise is allowed.
+    dev_src = _dev_branch_source()
+    tree = ast.parse(dev_src)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
+            continue
+        func = node.exc.func
+        name = func.id if isinstance(func, ast.Name) else ""
+        if name != "NotImplementedError":
+            continue
+        # Find the enclosing `if image is not None:` — walk parents via the
+        # parsed subtree is awkward, so check the raise is not directly inside
+        # an image-guarded block by scanning the unparsed source around it.
+        raise_src = ast.unparse(node)
+        idx = dev_src.find(raise_src)
+        assert idx >= 0
+        # The allowed audio raise is gated on `if audio:`. Confirm no raise
+        # sits under an `if image is not None:` guard.
+        before = dev_src[:idx]
+        last_if = before.rfind("if image is not None")
+        last_audio = before.rfind("if audio")
+        assert last_audio > last_if, (
+            "dev branch has a NotImplementedError raise not guarded by "
+            "`if audio:` — an image-guarded raise would shadow the I2V "
+            "wiring (#977 regression). raise:\n" + raise_src
+        )
+
+
+def test_dev_branch_calls_build_i2v_state_when_image_set():
+    # The I2V wiring (_build_i2v_state) must be present inside the dev
+    # branch and reachable when `image is not None`. PR#985 had the call
+    # but it was dead code under the deleted raise; this asserts the call
+    # exists in the branch so a future refactor can't silently drop it.
+    dev_src = _dev_branch_source()
+    assert (
+        "_build_i2v_state(" in dev_src
+    ), "dev branch must call _build_i2v_state for I2V conditioning (#977)"
+    assert "image is not None" in dev_src or "image is not  None" in dev_src
+    # encode path also required
+    assert "_encode_image_latent(" in dev_src
