@@ -224,6 +224,7 @@ fusion-mlx convert mlx-community/Qwen3.5-9B --quant-bits 8 --upload-repo me/my-r
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech` | ✅ 支持 |
 | Images | `/v1/images/generate` | ✅ 支持 (Flux 2、SD3-Medium、SDXL、Stable Cascade、Qwen-Image-2.1 RGBA 透明 PNG) |
 | Videos | `/v1/videos/generate` | ✅ 支持 (LTX-2、Wan2、SkyReels-V3；纯 MLX 移植) |
+| 3D | `/v1/3d/generate` | ✅ Hunyuan3D-2.1 图像→带纹理 GLB（形状 MoE DiT + ShapeVAE + marching cubes + 多视图纹理扩散 + xatlas UV 烘焙） |
 | Embeddings | `/v1/embeddings` | ✅ 支持 |
 | MCP | `/v1/mcp/tools`, `/v1/mcp/servers`, `/v1/mcp/execute` | ✅ 支持 |
 | OpenClaw Agent | `/v1/openclaw/agent/*` | ✅ 会话、多轮、工具调用、SSE 流式 |
