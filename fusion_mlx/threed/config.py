@@ -61,6 +61,19 @@ class PaintUNetConfig:
 
 
 @dataclass
+class PaintVAEConfig:
+    in_channels: int = 3
+    out_channels: int = 3
+    latent_channels: int = 4
+    block_out_channels: list = field(default_factory=lambda: [128, 256, 512, 512])
+    layers_per_block: int = 2
+    norm_num_groups: int = 32
+    sample_size: int = 768
+    norm_eps: float = 1e-06
+    scaling_factor: float = 0.18215
+
+
+@dataclass
 class PaintConfig:
     model_type: str = "hunyuan3d_2_1_paint"
     quant: str = "8bit"
@@ -70,6 +83,7 @@ class PaintConfig:
     guidance_scale: float = 3.0
     num_inference_steps: int = 30
     unet: PaintUNetConfig = field(default_factory=PaintUNetConfig)
+    vae: PaintVAEConfig = field(default_factory=PaintVAEConfig)
 
 
 @dataclass
@@ -93,9 +107,18 @@ def load_paint_config(model_dir: str | Path) -> PaintConfig:
     unet = PaintUNetConfig(
         **{k: unet_d[k] for k in unet_d if k in PaintUNetConfig.__dataclass_fields__}
     )
+    vae_d = d.get("vae", {})
+    vae = PaintVAEConfig(
+        **{k: vae_d[k] for k in vae_d if k in PaintVAEConfig.__dataclass_fields__}
+    )
     return PaintConfig(
         unet=unet,
-        **{k: d[k] for k in d if k in PaintConfig.__dataclass_fields__ and k != "unet"},
+        vae=vae,
+        **{
+            k: d[k]
+            for k in d
+            if k in PaintConfig.__dataclass_fields__ and k not in ("unet", "vae")
+        },
     )
 
 
