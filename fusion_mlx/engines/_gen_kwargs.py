@@ -111,6 +111,17 @@ def build_gen_kwargs(
             gen_kwargs["image_path"] = edit_image
         if image_strength is not None:
             gen_kwargs["image_strength"] = image_strength
+    elif variant == "qwen_image_21":
+        # Qwen-Image-2.1 generate_image accepts negative_prompt (true CFG when
+        # guidance>1 + negative present) and optional img2img image_path.
+        if negative_prompt is not None:
+            gen_kwargs["negative_prompt"] = negative_prompt
+        if edit_image is not None or control_image is not None:
+            gen_kwargs["image_path"] = edit_image or control_image
+            if image_strength is not None:
+                gen_kwargs["image_strength"] = image_strength
+        if extra.get("transparent"):
+            gen_kwargs["transparent"] = True
     if variant in ("sd3", "sdxl", "cosxl", "sdxs", "sd15", "sd2") and (
         edit_image is not None or control_image is not None
     ):
@@ -136,6 +147,7 @@ def build_gen_kwargs(
         "stable_cascade",
         "qwen_image",
         "qwen_image_edit",
+        "qwen_image_21",
     ):
         logger.warning(
             "Flux does not support negative_prompt; ignoring (got %d chars)",
