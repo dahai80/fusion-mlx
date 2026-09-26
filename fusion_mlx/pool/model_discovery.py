@@ -1033,39 +1033,116 @@ def estimate_model_size(model_path: Path) -> int:
     Returns:
         Estimated memory usage in bytes
     """
-    total_size = 0
-
-    # Primary: safetensors files
-    safetensors_files = list(model_path.glob("*.safetensors"))
-    for f in safetensors_files:
-        total_size += f.stat().st_size
-
-    # Fallback: .bin files (older PyTorch format)
-    if total_size == 0:
+    # Collect candidate weight files (path, size). Prefer root-level
+    # safetensors; fall back to recursive glob for subdir layouts (Comfy,
+    # diffusers); then .bin / .npz.
+    candidates: list[tuple[Path, int]] = []
+    for f in model_path.glob("*.safetensors"):
+        if f.is_file() or f.is_symlink():
+            try:
+                candidates.append((f, f.stat().st_size))
+            except OSError:
+                pass
+    if not candidates:
+        for f in model_path.glob("**/*.safetensors"):
+            if f.is_file() or f.is_symlink():
+                try:
+                    candidates.append((f, f.stat().st_size))
+                except OSError:
+                    pass
+    if not candidates:
         for f in model_path.glob("*.bin"):
-            # Filter out non-weight files
             name_lower = f.name.lower()
             if "optimizer" in name_lower or "training" in name_lower:
                 continue
-            total_size += f.stat().st_size
-
-    # Also check in subdirectories (some models store weights in subfolders)
-    if total_size == 0:
-        for f in model_path.glob("**/*.safetensors"):
-            total_size += f.stat().st_size
-
-    # MLX-native .npz weights (e.g. mlx-community whisper STT checkpoints).
-    if total_size == 0:
+            try:
+                candidates.append((f, f.stat().st_size))
+            except OSError:
+                pass
+    if not candidates:
         for f in model_path.glob("*.npz"):
-            total_size += f.stat().st_size
-
-    if total_size == 0:
+            try:
+                candidates.append((f, f.stat().st_size))
+            except OSError:
+                pass
+    if not candidates:
         raise ValueError(f"No model weights found in {model_path}")
+
+    # #979: LTX-2.5 repos ship two mutually-exclusive transformer variants
+    # (transformer-distilled + transformer-dev). A single generate_video call
+    # loads exactly one, so summing both doubles the footprint and spuriously
+    # trips the memory guard 507. Dedup the pair, keeping the larger for a
+    # worst-case admission (dev bf16 42GB > distilled q8 38GB typically).
+    candidates = _dedup_ltx2_5_alternatives(model_path, candidates)
+
+    total_size = sum(sz for _, sz in candidates)
 
     # Add overhead for runtime buffers (~5%)
     overhead_factor = 1.05
 
     return int(total_size * overhead_factor)
+
+
+def _dedup_ltx2_5_alternatives(
+    model_path: Path, candidates: list[tuple[Path, int]]
+) -> list[tuple[Path, int]]:
+    # #979: LTX-2.5 transformer variants (distilled/dev) are loaded mutually
+    # exclusively — one generate_video call loads exactly one. Without dedup
+    # the admission footprint sums both and spuriously trips 507. Detect an
+    # alternative-transformer pair (flat root-level transformer-*.safetensors,
+    # or Comfy diffusion_models/*distilled* + *dev*) and drop the smaller,
+    # keeping the larger for worst-case admission. No-op for non-ltx2_5 repos.
+    names = {p.name for p, _ in candidates}
+    flat_distilled = any(
+        n.startswith("transformer-distilled") and n.endswith(".safetensors")
+        for n in names
+    )
+    flat_dev = any(
+        n.startswith("transformer-dev") and n.endswith(".safetensors") for n in names
+    )
+    if flat_distilled and flat_dev:
+        return _drop_smaller_alternative(
+            candidates,
+            lambda p: p.name.startswith("transformer-distilled"),
+            lambda p: p.name.startswith("transformer-dev"),
+        )
+    # Comfy layout: diffusion_models/ltx-2.5-22b-{distilled,dev}-transformer-*
+    comfy_distilled = [
+        (p, sz) for p, sz in candidates if "distilled-transformer" in p.name
+    ]
+    comfy_dev = [(p, sz) for p, sz in candidates if "dev-transformer" in p.name]
+    if comfy_distilled and comfy_dev and _is_comfy_ltx2_5_layout(model_path):
+        return _drop_smaller_alternative(
+            candidates,
+            lambda p: "distilled-transformer" in p.name,
+            lambda p: "dev-transformer" in p.name,
+        )
+    return candidates
+
+
+def _drop_smaller_alternative(
+    candidates: list[tuple[Path, int]],
+    is_a,
+    is_b,
+) -> list[tuple[Path, int]]:
+    # Keep the larger of two mutually-exclusive alternative weight groups;
+    # drop the smaller. Worst-case admission = max(alt_a, alt_b).
+    a = [(p, sz) for p, sz in candidates if is_a(p)]
+    b = [(p, sz) for p, sz in candidates if is_b(p)]
+    if not a or not b:
+        return candidates
+    a_size = sum(sz for _, sz in a)
+    b_size = sum(sz for _, sz in b)
+    drop = b if a_size >= b_size else a
+    dropped_names = {p.name for p, _ in drop}
+    logger.info(
+        "estimate_model_size: ltx2_5 alternative transformer dedup — "
+        "dropped smaller variant (%s, %d B) keeping larger (%d B)",
+        ",".join(sorted(dropped_names)),
+        min(a_size, b_size),
+        max(a_size, b_size),
+    )
+    return [(p, sz) for p, sz in candidates if p.name not in dropped_names]
 
 
 def _is_adapter_dir(path: Path) -> bool:
