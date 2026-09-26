@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Added — Hunyuan3D-2.1 image→textured-GLB 3D generation (#989)
+- **`POST /v1/3d/generate`**: reference image (data URL or http(s) URL) → textured
+  GLB (base64) + vertex/face/byte counts. End-to-end on Apple Silicon, ~40s for a
+  13k-vert mesh at grid_res=64.
+- **`fusion_mlx/threed/`** (Sessions 1–5, self-implemented MLX-native port):
+  - `dinov2.py` — DINOv2-Large shape conditioner (24L ViT, 8bit).
+  - `dit.py` — flow-match MoE shape DiT (6 MoE layers × 8 experts top-2 + 14 dense).
+  - `shape_vae.py` — ShapeVAE decoder + geo-decoder cross-attn SDF queries.
+  - `marching_cubes.py` — numpy marching-cubes mesh extraction.
+  - `paint/` — multiview texture pipeline: DINOv2-Giant (40L SwiGLU) conditioner,
+    dual-branch HunyuanPaint UNet (6 attn kinds/block, GEGLU), DDIM v_prediction
+    scheduler, AutoencoderKL decoder, numpy 6-view rasterizer + xatlas UV unwrap
+    + vertex-color bake-back + trimesh GLB export.
+  - `orchestrator.py` — `ThreeDOrchestrator.generate_textured_glb()` chains all
+    stages with lazy per-stage weight loading.
+- New `[threed]` extra (`xatlas`, `trimesh`); `threed` modality registered in
+  `profile.py` (allowed in standard/full, disabled in lite).
+- **Known limitation**: real multiview cross-view attention (ctx_mv/ctx_ref) and
+  the mr (metallic-roughness) PBR branch use zeros fallback; bake-back applies a
+  single paint texture across all 6 views. Structurally complete GLB; texture
+  quality is view-averaged, not per-view distinct. Full multiview + PBR is
+  follow-up work (needs the tencent paint reference).
+
 ### Added — ACE-Step1.5 text-to-music generation (#988, self-implemented)
 - **`engines/music.py`** + **`audio/acestep/orchestration.py`**: pure-MLX port of
   ACE-Step1.5 turbo (DiT flow-match + Oobleck VAE + Qwen3-Embedding text encoder).

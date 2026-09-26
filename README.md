@@ -217,6 +217,7 @@ pip install fusion-mlx
 | `[document]` | PDF/DOCX/PPTX ingestion (markitdown) | `pip install "fusion-mlx[document]"` |
 | `[grammar]` / `[llguidance]` | Grammar-constrained decoding backends | `pip install "fusion-mlx[grammar]"` |
 | `[mcp]` | MCP server routes | `pip install "fusion-mlx[mcp]"` |
+| `[threed]` | Hunyuan3D-2.1 3D generation (xatlas UV unwrap, trimesh GLB) | `pip install "fusion-mlx[threed]"` |
 
 ### First Run
 
@@ -584,6 +585,7 @@ The macOS app offers a mode toggle between:
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech`, `/v1/audio/music` | ✅ Supported |
 | Images | `/v1/images/generate`, `/v1/images/generations`, `/v1/images/edits`, `/v1/images/super-resolution` | ✅ Generate (Flux 2, SD3-Medium, SDXL, Stable Cascade, Qwen-Image-2.1 RGBA); edits (OpenAI SDK multipart, Fill/Kontext); Super-resolution (RealESRGAN x4plus, pure MLX, #752) |
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
+| 3D | `/v1/3d/generate` | ✅ Hunyuan3D-2.1 image→textured GLB (shape MoE DiT + ShapeVAE + marching cubes + paint multiview diffusion + xatlas UV bake) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
 | Reasoning | `/v1/reasoning` | ✅ Explicit thinking step API (DeepSeek-R1, QwQ, etc.) |
 | OCR | `/v1/ocr` | ✅ 4 dedicated OCR engines (DeepSeek-OCR, DOTS-OCR, GLM-OCR) |

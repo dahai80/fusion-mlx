@@ -115,6 +115,7 @@ _LAZY_ROUTES: dict[str, tuple[str, str, str | None]] = {
     "ocr": (".api.ocr_routes", "router", "ocr"),
     "rerank": (".api.rerank_routes", "router", "reranker"),
     "recommend_batch": (".api.recommend_batch_routes", "router", "llm"),
+    "threed": (".api.threed_routes", "router", "threed"),
 }
 
 
@@ -1349,6 +1350,7 @@ class Server:
             ("rerank", None, "reranker"),
             ("ner", None, "ner"),
             ("ocr", None, "ocr"),
+            ("threed", None, "threed"),
             ("reasoning", reasoning_router, "llm"),
             ("sessions", sessions_router, "llm"),
             ("health_probe", health_probe_router, None),
@@ -2143,6 +2145,10 @@ class Server:
             from .api.ocr_routes import set_ocr_context
 
             set_ocr_context(self.pool)
+        if "threed" in _mounted:
+            from .api.threed_routes import set_threed_context
+
+            set_threed_context(self.pool, _server_state)
         set_reasoning_context(self.pool)
         set_sessions_context(self.pool, _server_state)
         set_models_context(self.pool)

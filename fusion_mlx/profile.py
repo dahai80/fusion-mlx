@@ -36,6 +36,7 @@ ALL_MODALITIES = frozenset(
         "bench",
         "tools",
         "ocr",
+        "threed",
     }
 )
 
@@ -54,6 +55,7 @@ _LITE_DISABLED = frozenset(
         "bench",
         "tools",
         "ocr",
+        "threed",
     }
 )
 
