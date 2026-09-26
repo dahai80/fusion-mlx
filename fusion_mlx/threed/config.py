@@ -77,14 +77,20 @@ class PaintVAEConfig:
 class PaintDinoConfig:
     # DINOv2-Giant ViT backbone for the paint pipeline. Feeds image_proj_model_dino
     # (1536 -> 4096 reshape 4x1024 + LayerNorm(1024)) in the paint UNet.
+    # mlp is SwiGLU: w_in dim->mlp_hidden (fused gate+up, 2*intermediate),
+    # gelu(gate)*up -> intermediate, w_out intermediate->dim.
     hidden: int = 1536
     layers: int = 40
     heads: int = 24
     head_dim: int = 64
     patch: int = 14
     image_size: int = 518
-    mlp_hidden: int = 8192
+    mlp_hidden: int = 8192  # w_in out (fused gate+up = 2*intermediate)
     group_size: int = 64  # 1536/64 = 24 groups (scales shape [out, 24])
+
+    @property
+    def intermediate(self) -> int:
+        return self.mlp_hidden // 2  # 4096 (w_out in_dim)
 
     @property
     def num_tokens(self) -> int:
@@ -130,15 +136,37 @@ def load_paint_config(model_dir: str | Path) -> PaintConfig:
     vae = PaintVAEConfig(
         **{k: vae_d[k] for k in vae_d if k in PaintVAEConfig.__dataclass_fields__}
     )
+    dino_d = d.get("dino", {})
+    # map paint config.json dino field names -> PaintDinoConfig fields.
+    dino_map = {
+        "hidden_size": "hidden",
+        "num_layers": "layers",
+        "num_heads": "heads",
+        "head_dim": "head_dim",
+        "patch_size": "patch",
+        "image_size": "image_size",
+        "intermediate_size": "mlp_hidden",  # 4096 -> but mlp_hidden is 8192 (fused)
+    }
+    dino_kwargs: dict = {}
+    for src, dst in dino_map.items():
+        if src in dino_d:
+            if src == "intermediate_size":
+                # SwiGLU: w_in fuses gate+up = 2 * intermediate_size.
+                dino_kwargs[dst] = int(dino_d[src]) * 2
+            else:
+                dino_kwargs[dst] = dino_d[src]
+    dino = PaintDinoConfig(**dino_kwargs)
     return PaintConfig(
         unet=unet,
         vae=vae,
+        dino=dino,
         **{
             k: d[k]
             for k in d
-            if k in PaintConfig.__dataclass_fields__ and k not in ("unet", "vae")
+            if k in PaintConfig.__dataclass_fields__
+            and k not in ("unet", "vae", "dino")
         },
-    )  # dino uses PaintDinoConfig defaults (Giant); not in paint config.json
+    )
 
 
 def load_unirig_config(model_dir: str | Path) -> UniRigConfig:

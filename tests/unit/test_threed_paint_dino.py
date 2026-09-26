@@ -59,9 +59,10 @@ def test_dino_block_structure():
 def test_dino_mlp_hidden_dim():
     cfg = PaintDinoConfig()
     net = PaintDINOv2(cfg)
-    # w_in: 1536 -> 8192, w_out: 8192 -> 1536.
+    # SwiGLU: w_in 1536 -> 8192 (fused gate+up), w_out 4096 -> 1536.
     assert net.blocks[0].mlp.w_in.weight.shape == (8192, 1536)
-    assert net.blocks[0].mlp.w_out.weight.shape == (1536, 8192)
+    assert net.blocks[0].mlp.w_out.weight.shape == (1536, 4096)
+    assert net.blocks[0].mlp.intermediate == 4096
 
 
 @real_model

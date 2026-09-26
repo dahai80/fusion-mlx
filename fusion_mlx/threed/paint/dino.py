@@ -42,13 +42,18 @@ class _Attention(nn.Module):
 
 
 class _MLP(nn.Module):
+    # SwiGLU: w_in dim->mlp_hidden (fused gate+up, 2*intermediate), split,
+    # gelu(gate)*up -> intermediate, w_out intermediate->dim.
     def __init__(self, dim: int, hidden: int):
         super().__init__()
         self.w_in = nn.Linear(dim, hidden, bias=True)
-        self.w_out = nn.Linear(hidden, dim, bias=True)
+        self.w_out = nn.Linear(hidden // 2, dim, bias=True)
+        self.intermediate = hidden // 2
 
     def __call__(self, x: mx.array) -> mx.array:
-        return self.w_out(nn.gelu_approx(self.w_in(x)))
+        h = self.w_in(x)
+        gate, up = h[..., : self.intermediate], h[..., self.intermediate :]
+        return self.w_out(nn.gelu_approx(gate) * up)
 
 
 class _Block(nn.Module):
