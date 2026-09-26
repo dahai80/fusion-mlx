@@ -2071,6 +2071,7 @@ fusion-mlx/
 │    ├── speculative/     # SuffixDecoding, DFlash, DSpark, MTP, VLM MTP
 │    ├── telemetry/       # Opt-in anonymous usage telemetry (consent, emit, queue, redact, transport)
 │    ├── video/           # Pure-MLX video generation ports (LTX-2, Wan2, SkyReels-V3, PuLID, LatentSync, MuseTalk)
+│    ├── threed/          # Hunyuan3D-2.1 MLX-native 3D generation port (in progress, #989)
 │    ├── share/           # SSH tunnel public sharing (fusionmlx.com)
 │    ├── launch/          # One-shot IDE/agent config bootstrapper (15 adapters)
 │    └── admin/           # Web panel routes, benchmarking, downloads, settings
