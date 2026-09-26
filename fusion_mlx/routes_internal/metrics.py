@@ -4,7 +4,7 @@ import threading
 from typing import Any
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .._version import __version__
 from ..api import response_format_metrics
@@ -1381,3 +1381,15 @@ def render_prometheus_metrics() -> str:
 async def prometheus_metrics(_auth: bool = Depends(verify_management_access)):
     body = render_prometheus_metrics()
     return PlainTextResponse(content=body, media_type=_CONTENT_TYPE)
+
+
+@router.get("/metrics.json")
+async def metrics_json(_auth: bool = Depends(verify_management_access)):
+    # mlx-serve parity: JSON sibling of /metrics. Returns the server-metrics
+    # aggregate (alltime dict) so scrapers that prefer JSON over Prometheus
+    # text get the same numbers without parsing label lines.
+    sm = get_server_metrics()
+    payload = sm.to_alltime_dict()
+    payload["version"] = __version__
+    logger.debug("metrics.json served keys=%d", len(payload))
+    return JSONResponse(payload)

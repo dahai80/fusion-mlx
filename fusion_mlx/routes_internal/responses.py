@@ -309,17 +309,71 @@ def _sse(event: str, data: dict) -> str:
 @router.post("/v1/responses", dependencies=[Depends(verify_api_key)])
 async def create_response(request: Request):
     body = await request.json()
+
+    # Merge previous_response_id + expand compaction items on the RAW body
+    # before pydantic parse, so InputItem coercion does not hide the
+    # compaction type. mlx-serve parity: stateful chains + compact blobs.
+    import base64
+    import json as _json
+
+    def _expand_compaction(items: list) -> list:
+        out: list = []
+        for it in items:
+            if isinstance(it, dict) and it.get("type") == "compaction":
+                try:
+                    blob = it.get("data") or it.get("compaction") or ""
+                    out.extend(_json.loads(base64.b64decode(blob).decode("utf-8")))
+                except Exception as e:
+                    logger.warning("responses compaction item decode failed: %s", e)
+                continue
+            out.append(it)
+        return out
+
+    prev_id = body.get("previous_response_id")
+    resolved_input: list = []
+    if prev_id:
+        from .responses_store import load_previous_input
+
+        prev = load_previous_input(prev_id)
+        if prev is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"previous_response_id '{prev_id}' not found or expired "
+                    "(TTL 1h, in-memory store)."
+                ),
+            )
+        resolved_input = list(prev)
+        logger.info(
+            "responses previous_response_id=%s restored %d items", prev_id, len(prev)
+        )
+
+    current_input = body.get("input")
+    if isinstance(current_input, list):
+        resolved_input = resolved_input + list(current_input)
+    elif isinstance(current_input, str):
+        if not current_input.strip() and not prev_id:
+            raise HTTPException(
+                status_code=400,
+                detail="input must not be empty",
+            )
+        resolved_input = resolved_input + [
+            {"type": "message", "role": "user", "content": current_input}
+        ]
+
+    resolved_input = _expand_compaction(resolved_input)
+    if resolved_input:
+        body["input"] = resolved_input
+
     responses_request = ResponsesRequest(**body)
 
-    if responses_request.previous_response_id:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "previous_response_id is not supported by this server — "
-                "fusion-mlx is a stateless Responses API shim. Re-send the "
-                "full conversation history in the `input` field each turn."
-            ),
-        )
+    response_id = f"resp_{uuid.uuid4().hex[:24]}"
+    from .responses_store import store_response_input
+
+    store_input_for_next = list(resolved_input)
+    store_response_input(
+        response_id, responses_request.model or "", store_input_for_next
+    )
 
     normalize_responses_tool_types(responses_request.tools)
     raw_tools = None
@@ -362,12 +416,17 @@ async def create_response(request: Request):
 
     if responses_request.stream:
         return await _stream_responses(
-            engine, openai_request, responses_request, request, _release
+            engine, openai_request, responses_request, request, _release, response_id
         )
     else:
         try:
             return await _non_stream(
-                engine, openai_request, responses_request, request, strict_ctx
+                engine,
+                openai_request,
+                responses_request,
+                request,
+                strict_ctx,
+                response_id,
             )
         finally:
             await _release()
@@ -379,6 +438,7 @@ async def _non_stream(
     responses_request: ResponsesRequest,
     request: Request,
     strict_ctx: dict | None = None,
+    response_id: str | None = None,
 ) -> Response:
     created_at = int(time.time())
 
@@ -530,6 +590,29 @@ async def _non_stream(
         chat_response, openai_request.model, responses_request, created_at
     )
 
+    if response_id is not None:
+        responses_response.id = response_id
+        out_text = ""
+        try:
+            for item in responses_response.output:
+                content = getattr(item, "content", None)
+                if content and isinstance(content, list):
+                    for part in content:
+                        t = (
+                            getattr(part, "text", None)
+                            if hasattr(part, "text")
+                            else None
+                        )
+                        if t:
+                            out_text += t
+                elif isinstance(content, str):
+                    out_text += content
+        except Exception:
+            out_text = ""
+        from .responses_store import complete_response
+
+        complete_response(response_id, out_text)
+
     return Response(
         content=responses_response.model_dump_json(exclude_none=True),
         media_type="application/json",
@@ -542,9 +625,11 @@ async def _stream_responses(
     responses_request: ResponsesRequest,
     request: Request,
     _release=None,
+    response_id: str | None = None,
 ) -> StreamingResponse:
     created_at = int(time.time())
-    response_id = f"resp_{uuid.uuid4().hex[:24]}"
+    if response_id is None:
+        response_id = f"resp_{uuid.uuid4().hex[:24]}"
 
     messages = _prepare_messages(openai_request)
     from ..tool_parsers.ui_tars_tool_parser import inject_ui_tars_sysprompt_for_lane
@@ -1059,6 +1144,28 @@ async def _stream_responses(
                 },
             },
         )
+
+        # capture completed response for previous_response_id chains
+        try:
+            _out_text = ""
+            for _oi in output_items:
+                _c = getattr(_oi, "content", None)
+                if _c and isinstance(_c, list):
+                    for _part in _c:
+                        _t = (
+                            getattr(_part, "text", None)
+                            if hasattr(_part, "text")
+                            else None
+                        )
+                        if _t:
+                            _out_text += _t
+                elif isinstance(_c, str):
+                    _out_text += _c
+            from .responses_store import complete_response
+
+            complete_response(response_id, _out_text)
+        except Exception as e:
+            logger.debug("responses_store stream capture failed: %s", e)
 
     async def _generate_with_release() -> AsyncIterator[str]:
         try:

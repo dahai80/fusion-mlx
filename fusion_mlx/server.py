@@ -86,8 +86,10 @@ from .routes_internal.health import probe_router as health_probe_router
 from .routes_internal.health import router as health_router
 from .routes_internal.metrics import router as metrics_router
 from .routes_internal.models import set_models_context
+from .routes_internal.parity import router as parity_router
 from .routes_internal.responses import router as responses_router
 from .routes_internal.responses import set_responses_context
+from .routes_internal.responses_store import router as responses_store_router
 from .routes_internal.runtime_config import router as runtime_config_router
 from .server_metrics import get_server_metrics
 from .settings import Settings
@@ -1352,6 +1354,8 @@ class Server:
             ("health", health_router, None),
             ("health_admin", health_admin_router, None),
             ("metrics", metrics_router, None),
+            ("parity", parity_router, None),
+            ("responses_store", responses_store_router, "llm"),
             ("cache", cache_router, None),
             ("gc", gc_router, None),
             ("config_reload", config_reload_router, None),
@@ -1610,6 +1614,67 @@ class Server:
             _server_state["default_model"] = resolved
             logger.info("Default model set to: %s (requested: %s)", resolved, model_id)
             return {"status": "ok", "model": resolved}
+
+        @app.post("/v1/load-model")
+        async def load_model_alias(
+            request: dict, is_admin: bool = Depends(require_admin)
+        ):
+            # mlx-serve parity: body-shape load. {"model": "<id>",
+            # "default": true} loads a discovered model and optionally makes
+            # it the serving default without a restart. Delegates to the
+            # path-shape load_model_public logic via the pool directly.
+            if self.pool is None:
+                raise HTTPException(status_code=503, detail="Server not initialized")
+            model_id = request.get("model")
+            if not model_id:
+                raise HTTPException(status_code=400, detail="Missing 'model' field")
+            make_default = bool(request.get("default", False))
+            resolved = resolve_model_id(model_id)
+            entry = self.pool.get_entry(resolved)
+            if entry is None and "/" in resolved:
+                hyphen = resolved.replace("/", "--")
+                hyphen_entry = self.pool.get_entry(hyphen)
+                if hyphen_entry is not None:
+                    logger.debug("load-model: slash->hyphen %s -> %s", resolved, hyphen)
+                    resolved = hyphen
+                    entry = hyphen_entry
+            if entry is None:
+                raise HTTPException(
+                    status_code=404, detail=f"Model not found: {model_id}"
+                )
+            if getattr(entry, "engine", None) is None:
+                try:
+                    await self.pool.get_engine(resolved)
+                except HTTPException:
+                    raise
+                except (ModelLoadingError, ModelBusyError) as e:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=str(e),
+                        headers={"Retry-After": "5"},
+                    ) from e
+                except (InsufficientMemoryError, ModelTooLargeError) as e:
+                    raise HTTPException(status_code=503, detail=str(e)) from e
+                except Exception as e:
+                    logger.exception("load-model failed: %s(%s)", type(e).__name__, e)
+                    raise HTTPException(status_code=500, detail="Internal server error")
+            if make_default:
+                _server_state["default_model"] = resolved
+                logger.info("load-model default set: %s", resolved)
+            return {"status": "ok", "model": resolved, "default": make_default}
+
+        @app.post("/v1/unload-model")
+        async def unload_model_alias(
+            request: dict, is_admin: bool = Depends(require_admin)
+        ):
+            # mlx-serve parity: body-shape unload. {"model": "<id>"} frees
+            # a loaded model now. Delegates to _unload_model_impl.
+            model_id = request.get("model")
+            if not model_id:
+                raise HTTPException(status_code=400, detail="Missing 'model' field")
+            result = await _unload_model_impl(model_id)
+            logger.info("unload-model: %s", model_id)
+            return result
 
         @app.post("/rpc")
         async def json_rpc_dispatch(
