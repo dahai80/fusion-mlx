@@ -54,7 +54,7 @@ from .scheduler import (
     dev_sigmas,
 )
 from .text_encoder import load_text_encoder
-from .upsampler import load_spatial_upsampler_2_5, load_temporal_upsampler
+from .upsampler import load_spatial_upsampler_2_5
 from .utils import get_model_path, is_split_layout, resolve_component
 from .video_vae import load_video_decoder, load_video_encoder
 
@@ -238,7 +238,6 @@ def generate_video(
     video_vae_weights: str | Path | None = None,
     duration_head_weights: str | Path | None = None,
     spatial_upscaler_weights: str | Path | None = None,
-    temporal_upscaler_weights: str | Path | None = None,
     audio_vae_weights: str | Path | None = None,
     variant: LTX2_5Variant | str = LTX2_5Variant.DISTILLED,
     num_frames: int | None = None,
@@ -960,31 +959,13 @@ def generate_video(
     del transformer
     mx.clear_cache()
 
-    # ---- 10. temporal upsampler (frames x2) ----
-    temporal_path = (
-        Path(temporal_upscaler_weights)
-        if temporal_upscaler_weights
-        else resolve_component(root, "temporal_upscaler", variant=var_str)
-    )
-    logger.info("Loading temporal upsampler: %s", temporal_path.name)
-    temporal_up, temporal_scale = load_temporal_upsampler(temporal_path)
-    mx.eval(temporal_up.parameters())
-    logger.info(
-        "Temporal upsampler loaded: scale=%sx latents=%s",
-        temporal_scale,
-        latents.shape,
-    )
-    # Mirror the spatial wrapper in upsample_latents(): the upsampler operates
-    # in raw (denormalized) latent space, so denorm -> upsample -> renorm.
-    # Feeding normalized-space latents bare produces 6-7 sigma outliers that
-    # burn into the VAE decode as grid artifacts + oversaturation.
-    t_mean = latent_mean.reshape(1, -1, 1, 1, 1)
-    t_std = latent_std.reshape(1, -1, 1, 1, 1)
-    latents = (temporal_up(latents * t_std + t_mean) - t_mean) / t_std
-    mx.eval(latents)
-    del temporal_up
-    mx.clear_cache()
-    logger.info("Temporal upsampled -> %s", latents.shape)
+    # NOTE: no standalone temporal upsampler. Reference ltx-2-5 distilled
+    # pipeline runs temporal_upscalings=0 (dfr.py:7); the VAE decoder expands
+    # latent frames -> pixel frames via its internal _TEMPORAL_SCALE=8
+    # compression ratio. Applying temporal_upscaler_x2_v1_0 here doubled the
+    # latent frame count (6->12 -> 89 output for a 41-frame request) AND
+    # introduced a luminance fade across the upsampled frames (#978). Frame
+    # expansion is left to the VAE decode below, matching the reference.
 
     # Session-tail latent cache (multi-shot continuity): store the last
     # temporal frame of the final denoised latent so the next shot in this
