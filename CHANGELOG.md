@@ -38,6 +38,22 @@
 - E2E verified: `variant="dev" + audio=True` → mp4 with an `audio` stream
   (ffprobe-confirmed) at 256×256 / 9f / 4 steps.
 
+### Fixed — ltx2_5 distilled visual artifacts: I2V fade + T2V grid residue (#976)(#978)
+- The standalone `temporal_upscaler_x2_v1_0` step was always-on in the distilled
+  `generate_video` path, but the reference ltx-2-5 distilled pipeline runs
+  `temporal_upscalings=0` (dfr.py:7) — frame expansion is handled by the VAE
+  decoder's internal `_TEMPORAL_SCALE=8` compression ratio, not a latent
+  upsampler.
+- The upsampler doubled the latent frame count (6→12 → 89 output for a
+  41-frame request) and its 6-7 sigma outliers burned into the VAE decode:
+  - **#978** (I2V): a luminance fade-to-white across the upsampled frames.
+  - **#976** (T2V): faint grid residue in the first ~0.2s.
+- Removed the temporal upsampler block + `temporal_upscaler_weights` param; frame
+  expansion is left to the VAE decode, matching the reference. `load_temporal_upsampler`
+  remains available in `upsampler.py` for post-hoc temporal-upsample pipelines.
+- Verified: 41 output frames (was 89), YAVG stable across all frames, full
+  dynamic range (YMIN ~28 / YMAX ~224), no fade, no grid.
+
 ### Added — ACE-Step1.5 text-to-music generation (#988, self-implemented)
 - **`engines/music.py`** + **`audio/acestep/orchestration.py`**: pure-MLX port of
   ACE-Step1.5 turbo (DiT flow-match + Oobleck VAE + Qwen3-Embedding text encoder).
