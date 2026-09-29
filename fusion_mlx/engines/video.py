@@ -24,6 +24,24 @@ from .video_backends import VideoGenParams, resolve_backend
 logger = logging.getLogger(__name__)
 
 
+def _resolve_video_weight_bytes(model_name: str) -> int:
+    """Sum on-disk weight file sizes for the video model repo (mirrors
+    image_gen._resolve_weight_bytes). Returns 0 when unresolvable so the
+    reservation degrades to a no-op instead of blocking."""
+    from pathlib import Path
+
+    try:
+        # ltx2_5.utils.get_model_path resolves HF repo id → local snapshot
+        # (works for any repo cached under ~/.fusion-mlx/models); other
+        # backends that don't use this layout degrade to 0 (no-op).
+        from ..pool.model_discovery import estimate_model_size
+        from ..video.ltx2_5.utils import get_model_path
+
+        return int(estimate_model_size(Path(get_model_path(model_name))))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 class VideoGenEngine(BaseNonStreamingEngine):
     def __init__(self, model_name: str, **kwargs):
         super().__init__()
@@ -141,6 +159,33 @@ class VideoGenEngine(BaseNonStreamingEngine):
         _sched = get_video_scheduler()
         _backend_name = getattr(self._backend, "name", "") or self._model_name
         params = _sched.begin_task(_backend_name, params)
+
+        # OP-901 (defect 1) parity with image_gen: register a media
+        # reservation for the admitted video job so the memory enforcer's
+        # hard watermark is raised to the full ceiling while the job runs.
+        # Video pipelines (LTX-2.5 A/V two-stage @ 1088p+) legitimately push
+        # Metal usage past the 95% hard watermark in late denoise/VAE stages
+        # (#976 follow-up); without the raise the enforcer aborts a healthy
+        # job. Single-slot — video jobs are serialized by the scheduler.
+        _enforcer = None
+        try:
+            from ..server import _server_state
+
+            _enforcer = getattr(
+                _server_state.engine_pool, "process_memory_enforcer", None
+            )
+            if _enforcer is not None:
+                # Estimate = on-disk weight bytes + 40% headroom for
+                # activations/cache (LTX-2.5 A/V late-stage peaks are mostly
+                # Metal cache reuse, bounded by the 64GB metal cache cap).
+                _weights = _resolve_video_weight_bytes(self._model_name)
+                _enforcer.register_media_reservation(
+                    int(_weights * 1.4) if _weights > 0 else 0
+                )
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "video admission: reservation unavailable; skipping", exc_info=True
+            )
         try:
             try:
                 result = await self._backend.generate(params)
@@ -168,6 +213,13 @@ class VideoGenEngine(BaseNonStreamingEngine):
             logger.info("VideoGen generated %d video(s) in %.2fs", len(result), elapsed)
             return result
         finally:
+            if _enforcer is not None:
+                try:
+                    _enforcer.unregister_media_reservation()
+                except Exception:  # noqa: BLE001
+                    logger.debug(
+                        "video admission: reservation release failed", exc_info=True
+                    )
             _sched.end_task(_backend_name)
             await self._finish_activity(activity_id)
 
