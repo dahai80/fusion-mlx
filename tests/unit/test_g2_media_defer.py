@@ -99,7 +99,11 @@ class TestWatchdogMediaDefer:
         assert is_llm_executor_poisoned() is False
         # Media job ends — watchdog resumes normal policing.
         set_media_job_active(False)
-        time.sleep(0.4)
+        # Poll with a deadline: the watchdog daemon thread can be scheduled late
+        # on a contended CI runner, so a fixed sleep races the post-clear tick.
+        _dl = time.monotonic() + 5.0
+        while time.monotonic() < _dl and not is_llm_executor_poisoned():
+            time.sleep(0.05)
         assert is_llm_executor_poisoned() is True
         stop_llm_watchdog()
 
@@ -112,8 +116,13 @@ class TestWatchdogMediaDefer:
         with ec._llm_heartbeat_lock:
             ec._llm_step_deadline = time.monotonic() + 10.0
             ec._llm_heartbeat = time.monotonic() - 5.0
-        # 0.4s > 0.3s defer budget → poison despite media active
-        time.sleep(0.6)
+        # Defer budget 0.3s exceeded → poison despite media active. Poll with a
+        # deadline rather than a fixed sleep: the watchdog is a daemon thread and
+        # its first tick (which arms the defer clock) can be scheduled late on a
+        # contended CI runner, so a fixed 0.6s sleep races the 0.3s budget.
+        _dl = time.monotonic() + 5.0
+        while time.monotonic() < _dl and not is_llm_executor_poisoned():
+            time.sleep(0.05)
         assert is_llm_executor_poisoned() is True
         stop_llm_watchdog()
         ec._LLM_WATCHDOG_MEDIA_DEFER_S = 3600.0
