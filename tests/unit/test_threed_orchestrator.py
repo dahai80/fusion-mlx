@@ -16,6 +16,9 @@ _REAL = (
     and (_HUNYUAN3D_DIR / "dit.safetensors").exists()
     and (_HUNYUAN3D_DIR / "vae.safetensors").exists()
     and (_HUNYUAN3D_DIR / "paint").exists()
+    # __init__ eagerly loads shape_cfg/paint_cfg from config.json, so the
+    # lazy-props test needs it present (CI runners have no model).
+    and (_HUNYUAN3D_DIR / "config.json").exists()
 )
 
 real_model = pytest.mark.skipif(not _REAL, reason="needs Hunyuan3D-2.1 full weights")
@@ -31,6 +34,7 @@ def test_orchestrator_import():
     assert load_threed_orchestrator is not None
 
 
+@real_model
 def test_orchestrator_lazy_props():
     # Construct is cheap — all stages lazily loaded on first access.
     from fusion_mlx.threed.orchestrator import ThreeDOrchestrator
