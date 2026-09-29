@@ -636,21 +636,20 @@ class ProcessMemoryEnforcer:
 
         system_bytes = get_system_memory()
         physical_cap = int(system_bytes * _PHYSICAL_RAM_WIRED_CAP_FRACTION)
-        # OP-901 follow-up: custom tier with an explicit ceiling raises the
-        # wired cap floor — the 0.80 physical cap (102.4GB on 128GB) must not
-        # silently override the operator's setting. Custom keeps max(cap,
-        # ceiling) while still bounded by physical RAM itself.
-        if (
-            self._memory_guard_tier == "custom"
-            and self._memory_guard_custom_ceiling_bytes > 0
-        ):
-            return min(
-                max(
-                    static_ceiling + _WIRED_LIMIT_BUFFER_BYTES,
-                    self._memory_guard_custom_ceiling_bytes,
-                ),
-                system_bytes,
-            )
+        # OP-901 follow-up: for the custom tier the operator's explicit ceiling
+        # drives the wired cap (not the static heuristic), + buffer headroom,
+        # capped at physical RAM. The 0.80 default cap (102.4GB on 128GB) must
+        # not silently override a higher custom setting (a 112GB ceiling was
+        # clamped to 102.4GB). Using ceiling+buffer (rather than
+        # static+buffer) keeps a tight backstop for LOW ceilings too.
+        # _apply_metal_wired_limit further clamps against the kernel
+        # iogpu.wired_limit_mb sysctl cap, which is the real safety backstop.
+        # getattr with safe defaults: this method is also called on __new__-only
+        # instances (unit tests), where __init__ never ran and the attrs unset.
+        _tier = getattr(self, "_memory_guard_tier", None)
+        _ceiling = getattr(self, "_memory_guard_custom_ceiling_bytes", 0)
+        if _tier == "custom" and _ceiling > 0:
+            return min(_ceiling + _WIRED_LIMIT_BUFFER_BYTES, system_bytes)
         return min(static_ceiling + _WIRED_LIMIT_BUFFER_BYTES, physical_cap)
 
     def _apply_mlx_cache_limit(self) -> None:
