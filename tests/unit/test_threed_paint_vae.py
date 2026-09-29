@@ -35,11 +35,15 @@ def test_vae_config_defaults():
 def test_vae_structural_decode_shapes():
     cfg = PaintVAEConfig()
     net = PaintVAEDecoder(cfg)
-    # latent (1,4,64,64) -> RGB (1,3,512,512) (8x upscale, 3 upsamplers).
-    lat = mx.random.normal((1, 4, 64, 64), dtype=mx.float16) * 0.3
+    # latent (1,4,32,32) -> RGB (1,3,256,256) (8x upscale, 3 upsamplers).
+    # 32x32 (not 64x64): the 512x512 decode hit the Metal GPU watchdog timeout
+    # (kIOGPUCommandBufferCallbackErrorTimeout) on contended shared M1 CI
+    # runners. The 8x-upscale + finiteness structure is identical at any
+    # resolution, so the lighter decode validates the same logic.
+    lat = mx.random.normal((1, 4, 32, 32), dtype=mx.float16) * 0.3
     o = net(lat)
     mx.eval(o)
-    assert o.shape == (1, 3, 512, 512)
+    assert o.shape == (1, 3, 256, 256)
     assert bool(mx.all(mx.isfinite(o)).item())
 
 
