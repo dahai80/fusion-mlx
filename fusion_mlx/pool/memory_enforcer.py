@@ -636,6 +636,20 @@ class ProcessMemoryEnforcer:
 
         system_bytes = get_system_memory()
         physical_cap = int(system_bytes * _PHYSICAL_RAM_WIRED_CAP_FRACTION)
+        # OP-901 follow-up: for the custom tier the operator's explicit ceiling
+        # drives the wired cap (not the static heuristic), + buffer headroom,
+        # capped at physical RAM. The 0.80 default cap (102.4GB on 128GB) must
+        # not silently override a higher custom setting (a 112GB ceiling was
+        # clamped to 102.4GB). Using ceiling+buffer (rather than
+        # static+buffer) keeps a tight backstop for LOW ceilings too.
+        # _apply_metal_wired_limit further clamps against the kernel
+        # iogpu.wired_limit_mb sysctl cap, which is the real safety backstop.
+        # getattr with safe defaults: this method is also called on __new__-only
+        # instances (unit tests), where __init__ never ran and the attrs unset.
+        _tier = getattr(self, "_memory_guard_tier", None)
+        _ceiling = getattr(self, "_memory_guard_custom_ceiling_bytes", 0)
+        if _tier == "custom" and _ceiling > 0:
+            return min(_ceiling + _WIRED_LIMIT_BUFFER_BYTES, system_bytes)
         return min(static_ceiling + _WIRED_LIMIT_BUFFER_BYTES, physical_cap)
 
     def _apply_mlx_cache_limit(self) -> None:
@@ -833,6 +847,13 @@ class ProcessMemoryEnforcer:
         if system_bytes >= _LARGE_SYSTEM_THRESHOLD:
             fraction = _LARGE_SYSTEM_CEILING_FRACTION.get(self._memory_guard_tier, 0.60)
             fraction_cap = int(system_bytes * fraction)
+            # OP-901 follow-up: an explicit custom ceiling is the operator's
+            # deliberate choice — do NOT clamp it below the tier fraction cap
+            # (128GB Mac × 0.80 = 102.4GB silently overrode a 112GB setting).
+            # Static is only a heuristic fallback for tiers without an
+            # explicit value; custom tier keeps max(base, fraction_cap).
+            if self._memory_guard_tier == "custom":
+                return max(base, fraction_cap)
             return min(base, fraction_cap)
         return base
 
