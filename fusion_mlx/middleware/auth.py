@@ -92,7 +92,6 @@ class RateLimiter:
         now_mono = time.monotonic()
         if now_mono - self._last_cleanup_mono < self.window_size:
             return
-        self._last_cleanup_mono = now_mono
         for k in list(self._requests.keys()):
             if k == client_id:
                 continue
@@ -100,6 +99,11 @@ class RateLimiter:
             if last is None or last <= window_start:
                 self._requests.pop(k, None)
                 self._last_seen.pop(k, None)
+        # #1072: stamp after the scan completes, not preemptively before it —
+        # the next-sweep interval then measures from a finished cleanup, so a
+        # scan that runs late under sustained traffic cannot defer the next
+        # sweep by an extra full window (worst-case expired-bucket linger ~2w).
+        self._last_cleanup_mono = time.monotonic()
 
     def is_allowed(self, client_id: str) -> tuple[bool, int]:
         if not self.enabled:

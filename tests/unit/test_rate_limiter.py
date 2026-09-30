@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import time
+from collections import deque
 from unittest.mock import MagicMock
 
 from fastapi import Request as FastAPIRequest
@@ -146,6 +147,60 @@ class TestRateLimiterConfig:
         limiter._last_seen.clear()
         allowed, _ = limiter.is_allowed("test")
         assert allowed is True
+
+
+# =========================================================================
+# RateLimiter Cleanup Sweep (#1072)
+# =========================================================================
+
+
+class TestRateLimiterCleanup:
+    """Expired-bucket sweep: reaping, interval gate, and timestamp stamping."""
+
+    def _populate(self, limiter, n_clients, base=1000.0, window=60.0):
+        # Half the clients expired (last_seen well before window_start),
+        # half active (recently seen). Exceeds the 100-bucket sweep threshold.
+        n_expired = n_clients // 2
+        for i in range(n_clients):
+            cid = f"client-{i}"
+            last = base - window - 10.0 if i < n_expired else base - 1.0
+            limiter._requests[cid] = deque([last])
+            limiter._last_seen[cid] = last
+
+    def test_sweep_removes_expired_keeps_active(self, monkeypatch):
+        limiter = RateLimiter(requests_per_minute=60, enabled=True)
+        self._populate(limiter, 120)
+        # window_start = 940; expired last_seen = 930 (<= 940), active = 999.
+        limiter._last_cleanup_mono = float("-inf")
+        monkeypatch.setattr(time, "monotonic", lambda: 5000.0)
+        limiter._maybe_cleanup(940.0, "current-client")
+        assert "client-0" not in limiter._requests
+        assert "client-10" not in limiter._requests
+        assert "client-60" in limiter._requests
+        assert "client-119" in limiter._requests
+        # #1072: sweep timestamp stamped to the (mocked) monotonic clock.
+        assert limiter._last_cleanup_mono == 5000.0
+
+    def test_sweep_skipped_when_interval_not_elapsed(self, monkeypatch):
+        limiter = RateLimiter(requests_per_minute=60, enabled=True)
+        self._populate(limiter, 120)
+        # Last sweep 10s ago (< 60s window) -> sweep gated off, no mutation.
+        monkeypatch.setattr(time, "monotonic", lambda: 5000.0)
+        limiter._last_cleanup_mono = 4990.0
+        before = set(limiter._requests.keys())
+        limiter._maybe_cleanup(940.0, "current-client")
+        assert set(limiter._requests.keys()) == before
+        assert limiter._last_cleanup_mono == 4990.0
+
+    def test_sweep_noop_below_threshold(self, monkeypatch):
+        limiter = RateLimiter(requests_per_minute=60, enabled=True)
+        self._populate(limiter, 50)  # under the 100-bucket threshold
+        limiter._last_cleanup_mono = float("-inf")
+        monkeypatch.setattr(time, "monotonic", lambda: 5000.0)
+        before = set(limiter._requests.keys())
+        limiter._maybe_cleanup(940.0, "current-client")
+        assert set(limiter._requests.keys()) == before
+        assert limiter._last_cleanup_mono == float("-inf")
 
 
 # =========================================================================
