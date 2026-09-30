@@ -875,17 +875,22 @@ class ImageGenEngine(BaseNonStreamingEngine):
             raise RuntimeError("ImageGen engine not started.")
 
         # S5 (audit 0910 §6.3-5): if a prior generation hung and poisoned the
-        # image executor, fast-fail loudly instead of silently queuing behind
-        # the dead worker for 600s. Operator must restart fusion-mlx.
-        from ..engine_core import is_image_executor_poisoned
+        # image executor, swap in a fresh worker and reload the model so this
+        # request can proceed. The stuck thread is abandoned; the replacement
+        # worker reloads model weights on its own thread-local stream (#999).
+        from ..engine_core import (
+            is_image_executor_poisoned,
+            reset_image_executor_poison,
+        )
 
         if is_image_executor_poisoned():
-            raise RuntimeError(
-                "image subsystem unavailable: a prior generation hung and "
-                "poisoned the worker thread (S5). Restart fusion-mlx to "
-                "restore image generation. Set FUSION_IMAGE_TIMEOUT to "
-                "adjust the hang deadline."
+            logger.warning(
+                "Image executor was poisoned by a prior hung generation; "
+                "replacing worker thread and reloading model (S5 recovery)"
             )
+            reset_image_executor_poison()
+            self._flux = None
+            await self.start()
 
         flux = self._flux
         base_seed = seed if seed is not None else 0

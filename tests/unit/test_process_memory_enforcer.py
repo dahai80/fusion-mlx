@@ -556,3 +556,58 @@ class TestGetCeilingBreakdown:
         enforcer = _make_enforcer()
         breakdown = enforcer._get_ceiling_breakdown()
         assert isinstance(breakdown, dict)
+
+
+class TestMaybeEscalateUnrecoverable:
+    def test_no_escalation_below_threshold(self):
+        enforcer = _make_enforcer()
+        with patch("fusion_mlx.pool.memory_enforcer._UNRECOVERABLE_POLL_THRESHOLD", 3):
+            enforcer._maybe_escalate_unrecoverable(100, 50)
+            enforcer._maybe_escalate_unrecoverable(100, 50)
+        assert enforcer._unrecoverable_polls == 2
+        assert enforcer._drain_flipped is False
+
+    def test_drain_flip_at_threshold(self):
+        enforcer = _make_enforcer()
+        mock_cfg = Mock()
+        with (
+            patch("fusion_mlx.pool.memory_enforcer._UNRECOVERABLE_POLL_THRESHOLD", 2),
+            patch("fusion_mlx.pool.memory_enforcer._UNRECOVERABLE_FATAL_THRESHOLD", 0),
+            patch("fusion_mlx.config.get_config", return_value=mock_cfg),
+        ):
+            enforcer._maybe_escalate_unrecoverable(100, 50)
+            assert enforcer._drain_flipped is False
+            enforcer._maybe_escalate_unrecoverable(100, 50)
+            assert enforcer._drain_flipped is True
+            assert mock_cfg.draining is True
+
+    def test_fatal_exit_after_sustained_pressure(self):
+        enforcer = _make_enforcer()
+        mock_cfg = Mock()
+        with (
+            patch("fusion_mlx.pool.memory_enforcer._UNRECOVERABLE_POLL_THRESHOLD", 2),
+            patch("fusion_mlx.pool.memory_enforcer._UNRECOVERABLE_FATAL_THRESHOLD", 1),
+            patch("fusion_mlx.config.get_config", return_value=mock_cfg),
+            patch("fusion_mlx.utils.fatal.fatal_exit") as mock_fatal,
+        ):
+            enforcer._maybe_escalate_unrecoverable(100, 50)
+            assert not mock_fatal.called
+            enforcer._maybe_escalate_unrecoverable(100, 50)
+            assert enforcer._drain_flipped is True
+            assert not mock_fatal.called
+            enforcer._maybe_escalate_unrecoverable(100, 50)
+            assert mock_fatal.called
+
+    def test_no_fatal_when_disabled(self):
+        enforcer = _make_enforcer()
+        mock_cfg = Mock()
+        with (
+            patch("fusion_mlx.pool.memory_enforcer._UNRECOVERABLE_POLL_THRESHOLD", 2),
+            patch("fusion_mlx.pool.memory_enforcer._UNRECOVERABLE_FATAL_THRESHOLD", 0),
+            patch("fusion_mlx.config.get_config", return_value=mock_cfg),
+            patch("fusion_mlx.utils.fatal.fatal_exit") as mock_fatal,
+        ):
+            for _ in range(10):
+                enforcer._maybe_escalate_unrecoverable(100, 50)
+            assert enforcer._drain_flipped is True
+            assert not mock_fatal.called

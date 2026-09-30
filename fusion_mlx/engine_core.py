@@ -1543,12 +1543,16 @@ class EngineCore:
             # stuck in a long MLX op). mx.clear_cache() releases unused
             # buffers immediately, breaking the deadlock where memory stays
             # at 100+ GB after abort and the engine can't process new
-            # requests.
+            # requests. gc.collect() helps release stranded Python refs to
+            # large arrays before the next retry (#1002).
             try:
+                import gc
+
                 import mlx.core as _mx
 
                 _mx.synchronize()
                 _mx.clear_cache()
+                gc.collect()
                 logger.info(
                     "Cleared MLX buffer cache after memory-pressure abort "
                     "(freed unused Metal buffers)"

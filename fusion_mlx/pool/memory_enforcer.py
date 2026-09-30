@@ -28,6 +28,7 @@ limit being below the chosen ceiling.
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
 import logging
 import os
@@ -415,6 +416,10 @@ class ProcessMemoryEnforcer:
         # warning spam and escalate once it is clearly not resolving.
         self._hard_busy_victim: str | None = None
         self._hard_busy_cycles: int = 0
+        # No-models-loaded bookkeeping: hard pressure with nothing evictable.
+        # Throttle warning spam, run periodic self-rescue, escalate to
+        # unrecoverable after sustained pressure (#1084).
+        self._no_models_loaded_cycles: int = 0
         # ANE旁路内存感知 (P0底座): CoreML权重常驻IOSurface池不在
         # phys_footprint内, enforcer原本盲视. 注册/注销由ANE engine
         # load/unload调用, get_ane_resident_bytes纳入_current_usage_bytes.
@@ -1526,6 +1531,59 @@ class ProcessMemoryEnforcer:
             global_idle_timeout_seconds=self.get_global_idle_timeout_seconds(),
         )
 
+    def _maybe_escalate_unrecoverable(self, current: int, ceiling: int) -> None:
+        # R-9 (#811): unrecoverable pressure — over the real ceiling with
+        # nothing to evict/abort. After N consecutive such polls, flip draining
+        # so /health/ready goes 503 and downstream stops sending new traffic,
+        # rather than polling until macOS jetsam kills the process with no
+        # drain.
+        self._unrecoverable_polls += 1
+        if (
+            self._unrecoverable_polls >= _UNRECOVERABLE_POLL_THRESHOLD
+            and not self._drain_flipped
+        ):
+            self._drain_flipped = True
+            try:
+                from ..config import get_config
+
+                get_config().draining = True
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Could not set draining flag during unrecoverable memory "
+                    "pressure: %s",
+                    exc,
+                )
+            logger.critical(
+                "UNRECOVERABLE memory pressure: current=%s over ceiling=%s "
+                "for %d consecutive polls with no evictable/abortable "
+                "models. Marked instance DRAINING so /health/ready returns "
+                "503. Operator must free memory (unpin/kill co-tenants) or "
+                "restart; macOS jetsam will otherwise kill this process.",
+                _format_gb(current),
+                _format_gb(ceiling),
+                self._unrecoverable_polls,
+            )
+        # AS-3 (#0907 audit): draining is a signal, not a recovery mechanism.
+        # If pressure stays unrecoverable well past the drain flip, force a
+        # fatal exit so an external supervisor restarts cleanly — instead of
+        # waiting for macOS jetsam to SIGKILL mid-request with no drain, no
+        # client response, no failover. FUSION_UNRECOVERABLE_FATAL_POLLS=0
+        # disables (single-machine dev).
+        if (
+            self._drain_flipped
+            and _UNRECOVERABLE_FATAL_THRESHOLD > 0
+            and self._unrecoverable_polls
+            >= _UNRECOVERABLE_POLL_THRESHOLD + _UNRECOVERABLE_FATAL_THRESHOLD
+        ):
+            from ..utils.fatal import fatal_exit
+
+            fatal_exit(
+                f"unrecoverable memory pressure: current={_format_gb(current)} "
+                f"over ceiling={_format_gb(ceiling)} for "
+                f"{self._unrecoverable_polls} consecutive polls after drain "
+                f"flip; restarting so the supervisor recovers a clean state"
+            )
+
     async def _check_and_enforce(self) -> None:
         """Check current memory and enforce 2-watermark policy.
 
@@ -1579,6 +1637,7 @@ class ProcessMemoryEnforcer:
             if new_level != "hard":
                 self._hard_busy_victim = None
                 self._hard_busy_cycles = 0
+                self._no_models_loaded_cycles = 0
 
         if new_level == "hard":
             freed_hot = await asyncio.to_thread(
@@ -1610,6 +1669,7 @@ class ProcessMemoryEnforcer:
 
         if new_level == "ok":
             self._unrecoverable_polls = 0
+            self._no_models_loaded_cycles = 0
             self._walk_store_cache_caps()
             return
 
@@ -1894,74 +1954,42 @@ class ProcessMemoryEnforcer:
                                 )
                                 # R-9 (#811): unrecoverable pressure — over the
                                 # real ceiling with nothing to evict/abort.
-                                # After N consecutive such polls, flip draining
-                                # so /health/ready goes 503 and downstream stops
-                                # sending new traffic, rather than polling until
-                                # macOS jetsam kills the process with no drain.
+                                # Escalate to drain/fatal when sustained.
                                 if emergency:
-                                    self._unrecoverable_polls += 1
-                                    if (
-                                        self._unrecoverable_polls
-                                        >= _UNRECOVERABLE_POLL_THRESHOLD
-                                        and not self._drain_flipped
-                                    ):
-                                        self._drain_flipped = True
-                                        try:
-                                            from ..config import get_config
-
-                                            get_config().draining = True
-                                        except Exception as exc:  # noqa: BLE001
-                                            logger.error(
-                                                "Could not set draining flag "
-                                                "during unrecoverable memory "
-                                                "pressure: %s",
-                                                exc,
-                                            )
-                                        logger.critical(
-                                            "UNRECOVERABLE memory pressure: "
-                                            "current=%s over ceiling=%s for %d "
-                                            "consecutive polls with no evictable/"
-                                            "abortable models. Marked instance "
-                                            "DRAINING so /health/ready returns "
-                                            "503. Operator must free memory "
-                                            "(unpin/kill co-tenants) or restart; "
-                                            "macOS jetsam will otherwise kill "
-                                            "this process.",
-                                            _format_gb(emergency_current),
-                                            _format_gb(ceiling),
-                                            self._unrecoverable_polls,
-                                        )
-                                    # AS-3 (#0907 audit): draining is a
-                                    # signal, not a recovery mechanism. If
-                                    # pressure stays unrecoverable well past
-                                    # the drain flip, force a fatal exit so
-                                    # an external supervisor restarts
-                                    # cleanly — instead of waiting for macOS
-                                    # jetsam to SIGKILL mid-request with no
-                                    # drain, no client response, no failover.
-                                    # FUSION_UNRECOVERABLE_FATAL_POLLS=0
-                                    # disables (single-machine dev).
-                                    if (
-                                        self._drain_flipped
-                                        and _UNRECOVERABLE_FATAL_THRESHOLD > 0
-                                        and self._unrecoverable_polls
-                                        >= _UNRECOVERABLE_POLL_THRESHOLD
-                                        + _UNRECOVERABLE_FATAL_THRESHOLD
-                                    ):
-                                        from ..utils.fatal import fatal_exit
-
-                                        fatal_exit(
-                                            f"unrecoverable memory pressure: "
-                                            f"current={_format_gb(emergency_current)} "
-                                            f"over ceiling={_format_gb(ceiling)} for "
-                                            f"{self._unrecoverable_polls} consecutive "
-                                            f"polls after drain flip; restarting so the "
-                                            f"supervisor recovers a clean state"
-                                        )
+                                    self._maybe_escalate_unrecoverable(
+                                        emergency_current, ceiling
+                                    )
                             else:
-                                logger.warning(
-                                    "Hard memory pressure but no models loaded."
-                                )
+                                # No models loaded but still over hard limit.
+                                # Backoff warning spam, run periodic self-rescue,
+                                # and escalate to unrecoverable after sustained
+                                # pressure (#1084).
+                                self._no_models_loaded_cycles += 1
+                                if (
+                                    self._no_models_loaded_cycles == 1
+                                    or self._no_models_loaded_cycles % 10 == 0
+                                ):
+                                    logger.warning(
+                                        "Hard memory pressure but no models loaded "
+                                        "(cycles=%d).",
+                                        self._no_models_loaded_cycles,
+                                    )
+                                # Self-rescue every 5s: gc + clear Metal cache.
+                                if self._no_models_loaded_cycles % 5 == 0:
+                                    gc.collect()
+                                    loop = asyncio.get_running_loop()
+                                    from ..engine_core import get_mlx_executor
+
+                                    await loop.run_in_executor(
+                                        get_mlx_executor(),
+                                        lambda: (mx.synchronize(), mx.clear_cache()),
+                                    )
+                                # Escalate after 5 consecutive polls.
+                                if self._no_models_loaded_cycles >= 5:
+                                    current_now = self._current_usage_bytes()
+                                    self._maybe_escalate_unrecoverable(
+                                        current_now, ceiling
+                                    )
                     break
 
             finally:
@@ -1982,6 +2010,7 @@ class ProcessMemoryEnforcer:
             self._over_ceiling_polls = 0
         if post_level == "ok":
             self._unrecoverable_polls = 0
+            self._no_models_loaded_cycles = 0
         if post_level != self._pressure_level:
             self._pressure_level = post_level
             self._propagate_memory_limit()
