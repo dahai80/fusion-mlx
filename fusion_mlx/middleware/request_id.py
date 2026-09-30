@@ -38,7 +38,14 @@ class RequestIdMiddleware:
         for name, value in headers:
             if name == _REQUEST_ID_HEADER:
                 try:
-                    inbound_id = value.decode("ascii", errors="replace").strip() or None
+                    raw = value.decode("ascii", errors="replace")
+                    # #1068: keep only printable-ASCII so a client-supplied ID
+                    # cannot inject fake log lines (the ID is stamped into the
+                    # logging context) or break the response header encoding.
+                    # Fall back to a generated ID if nothing safe remains.
+                    inbound_id = (
+                        "".join(c for c in raw if 32 <= ord(c) < 127).strip() or None
+                    )
                 except Exception:
                     inbound_id = None
                 break
