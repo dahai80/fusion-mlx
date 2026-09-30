@@ -93,12 +93,22 @@ class TestRouteGuardTenantIsolation:
         )
         assert r.status_code == 200
 
-    def test_token_takes_precedence_over_isolation(self, monkeypatch):
-        # FUSION_ROUTE_TOKEN is stricter; its branch runs first and does not
-        # enforce the gateway-decision value or tenant presence.
+    def test_token_valid_but_no_tenant_rejected_under_isolation(self, monkeypatch):
+        # #1048: a valid shared secret is not a tenant grant. The token branch
+        # skips the gateway-decision route-value check, but under isolation it
+        # still requires X-Fusion-Tenant (no tenant = unscoped state access).
         client = _client(monkeypatch, isolation=True, token="s3cret")
-        # wrong route value but matching token -> 200 (token wins)
         r = client.get("/v1/chat/completions", headers={"X-Fusion-Route": "s3cret"})
+        assert r.status_code == 403
+        assert r.json()["error"]["code"] == "missing_tenant"
+
+    def test_token_valid_with_tenant_passes_under_isolation(self, monkeypatch):
+        # #1048: token + tenant together satisfy the isolation contract.
+        client = _client(monkeypatch, isolation=True, token="s3cret")
+        r = client.get(
+            "/v1/chat/completions",
+            headers={"X-Fusion-Route": "s3cret", "X-Fusion-Tenant": "team-alpha"},
+        )
         assert r.status_code == 200
 
     def test_token_missing_still_rejected_under_isolation(self, monkeypatch):

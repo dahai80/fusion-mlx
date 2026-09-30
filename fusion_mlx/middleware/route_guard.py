@@ -133,6 +133,50 @@ class RouteGuardMiddleware:
     def __init__(self, app: Any) -> None:
         self.app = app
 
+    async def _enforce_tenant(self, scope, send, path) -> bool:
+        # #756/#1048: under tenant isolation, require a non-empty X-Fusion-Tenant.
+        # Returns True if the request was rejected (caller must return), else False.
+        if not _tenant_isolation_enabled():
+            return False
+        tenant = _header_value(scope, "x-fusion-tenant")
+        if tenant and tenant.strip():
+            return False
+        logger.warning(
+            "[route_guard] rejected: missing X-Fusion-Tenant "
+            "under tenant isolation host=%s path=%s",
+            _client_host(scope),
+            path.decode("ascii", "replace"),
+        )
+        _record_reject("missing_tenant")
+        body = json.dumps(
+            {
+                "error": {
+                    "message": "Missing X-Fusion-Tenant header "
+                    "under tenant isolation",
+                    "code": "missing_tenant",
+                }
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 403,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": body,
+                "more_body": False,
+            }
+        )
+        return True
+
     async def __call__(self, scope, receive, send):
         if scope.get("type") != "http":
             return await self.app(scope, receive, send)
@@ -185,6 +229,11 @@ class RouteGuardMiddleware:
                     }
                 )
                 return
+            # #1048: a valid shared secret is not a tenant grant — under
+            # isolation still require X-Fusion-Tenant, else a compromised
+            # gateway token reaches the handler unscoped.
+            if await self._enforce_tenant(scope, send, path):
+                return
             return await self.app(scope, receive, send)
 
         if route:
@@ -235,47 +284,10 @@ class RouteGuardMiddleware:
             # request. Under isolation, a valid route without a tenant is
             # a misconfigured/bypassed gateway and must not reach the
             # handler (no tenant = unscoped state access).
-            if _tenant_isolation_enabled():
-                tenant = _header_value(scope, "x-fusion-tenant")
-                if not tenant or not tenant.strip():
-                    logger.warning(
-                        "[route_guard] rejected: missing X-Fusion-Tenant "
-                        "under tenant isolation host=%s path=%s",
-                        _client_host(scope),
-                        path.decode("ascii", "replace"),
-                    )
-                    _record_reject("missing_tenant")
-                    body = json.dumps(
-                        {
-                            "error": {
-                                "message": "Missing X-Fusion-Tenant header "
-                                "under tenant isolation",
-                                "code": "missing_tenant",
-                            }
-                        },
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                    await send(
-                        {
-                            "type": "http.response.start",
-                            "status": 403,
-                            "headers": [
-                                (b"content-type", b"application/json"),
-                                (
-                                    b"content-length",
-                                    str(len(body)).encode("ascii"),
-                                ),
-                            ],
-                        }
-                    )
-                    await send(
-                        {
-                            "type": "http.response.body",
-                            "body": body,
-                            "more_body": False,
-                        }
-                    )
-                    return
+            # #756/#1048: under isolation, a valid route still needs a tenant
+            # (no tenant = unscoped state access). Shared with the token branch.
+            if await self._enforce_tenant(scope, send, path):
+                return
             return await self.app(scope, receive, send)
 
         if _route_enforce_enabled():
