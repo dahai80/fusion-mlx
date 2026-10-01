@@ -256,14 +256,15 @@ class TestRateLimiterAux:
         result = _extract_bearer_token("bearER my-token")
         assert result == "my-token"
 
-    def test_rate_limit_client_id_by_auth(self):
+    def test_rate_limit_client_id_ignores_auth_header(self):
+        # #1045: the bucket is IP/subnet-based, NOT the self-reported
+        # Authorization header (rotating Bearer values would bypass the limiter).
         request = MagicMock(spec=FastAPIRequest)
         request.headers = {"Authorization": "Bearer test-key"}
         request.client = MagicMock()
         request.client.host = "10.0.0.1"
         cid = _rate_limit_client_id(request)
-        # With auth header, returns HMAC bucket (16 hex chars)
-        assert len(cid) == 16
+        assert cid == "10.0.0.0"  # /24 subnet, auth header ignored
 
     def test_rate_limit_client_id_by_ip(self):
         request = MagicMock(spec=FastAPIRequest)
@@ -280,13 +281,47 @@ class TestRateLimiterAux:
         cid = _rate_limit_client_id(request)
         assert cid == "unknown"
 
-    def test_rate_limit_client_id_with_auth_and_no_client(self):
-        """When auth header is present, client host is not needed."""
+    def test_rate_limit_client_id_no_client_ignores_auth(self):
+        # #1045: no client IP -> "unknown" (the bearer token is ignored).
         request = MagicMock(spec=FastAPIRequest)
         request.headers = {"Authorization": "Bearer test-key"}
         request.client = None
         cid = _rate_limit_client_id(request)
-        assert len(cid) == 16
+        assert cid == "unknown"
+
+    def test_rate_limit_rotated_bearer_same_bucket(self):
+        # #1045: an attacker rotating random Bearer values must land in the
+        # same (IP-based) bucket, not a fresh one per value (E-32 brute-force
+        # guard). Supersedes the per-token bucketing from #192.
+        def _req(bearer: str):
+            request = MagicMock(spec=FastAPIRequest)
+            request.headers = {"Authorization": f"Bearer {bearer}"}
+            request.client = MagicMock()
+            request.client.host = "10.0.0.5"
+            return request
+
+        ids = {_rate_limit_client_id(_req(f"key-{i}")) for i in range(5)}
+        assert ids == {"10.0.0.0"}
+
+    def test_rotated_bearer_hits_rate_limit(self):
+        # #1045: rotating random Bearer values from one IP must be rate-limited
+        # (all values map to the same IP-based bucket), not get a fresh bucket
+        # per value — the E-32 brute-force guard on /admin/api/login.
+        limiter = RateLimiter(requests_per_minute=3, enabled=True)
+
+        def _req(bearer: str):
+            request = MagicMock(spec=FastAPIRequest)
+            request.headers = {"Authorization": f"Bearer {bearer}"}
+            request.client = MagicMock()
+            request.client.host = "10.0.0.5"
+            return request
+
+        for i in range(3):
+            allowed, _ = limiter.is_allowed(_rate_limit_client_id(_req(f"key-{i}")))
+            assert allowed is True
+        allowed, retry_after = limiter.is_allowed(_rate_limit_client_id(_req("key-3")))
+        assert allowed is False
+        assert retry_after >= 1
 
 
 # =========================================================================

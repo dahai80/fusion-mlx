@@ -173,16 +173,21 @@ def _subnet_bucket(host: str) -> str:
         return host
 
 
-def _rate_limit_client_id(request: Request) -> str:
-    authorization = request.headers.get("Authorization")
-    if authorization:
-        bearer_key = _extract_bearer_token(authorization)
-        raw = bearer_key or authorization
-        return _bucket_id(raw)
+def _client_subnet_id(request: Request) -> str:
+    # Server-observed client identity (XFF-aware) collapsed to a /24 or /64
+    # subnet. Cannot be controlled by the caller, unlike the Authorization header.
     if request.client and request.client.host:
         client_ip = _xff_client_ip(request) or request.client.host
         return _subnet_bucket(client_ip)
     return "unknown"
+
+
+def _rate_limit_client_id(request: Request) -> str:
+    # #1045: bucket by IP/subnet, NOT the self-reported Authorization header —
+    # rotating random Bearer values would otherwise yield a fresh bucket per
+    # request and bypass the limiter (defeats the /admin/api/login brute-force
+    # guard, E-32). The client IP is server-observed and cannot be spoofed.
+    return _client_subnet_id(request)
 
 
 def _anthropic_rate_limit_client_id(request: Request) -> str:
@@ -200,11 +205,16 @@ def _anthropic_rate_limit_client_id(request: Request) -> str:
 
 def request_principal(request: Request) -> str:
     # #226 IDOR scope: stable per-caller principal id for session tracking.
-    # Reuses the rate-limit bucket (HMAC of bearer token, else client subnet)
-    # so sessions are isolated per caller even in no-key dev mode. Single-key
-    # production deployments collapse to one principal; multi-key deployments
-    # (if ever extended to /v1) get isolation for free.
-    return _rate_limit_client_id(request)
+    # Uses the Authorization header (HMAC of bearer token, else the raw header)
+    # so sessions stay isolated per key even in no-key dev mode (subnet
+    # fallback). Decoupled from _rate_limit_client_id (#1045) so the rate
+    # limiter can bucket by IP without collapsing per-key session isolation.
+    authorization = request.headers.get("Authorization")
+    if authorization:
+        bearer_key = _extract_bearer_token(authorization)
+        raw = bearer_key or authorization
+        return _bucket_id(raw)
+    return _client_subnet_id(request)
 
 
 async def check_rate_limit(request: Request):

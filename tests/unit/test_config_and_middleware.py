@@ -239,10 +239,12 @@ class TestCheckRateLimit:
 
 
 class TestRateLimitClientId:
-    def test_rate_limit_distinguishes_clients_by_hashed_bearer(self):
-        """Two distinct bearer tokens get separate buckets.
+    def test_rate_limit_same_ip_different_tokens_share_bucket(self):
+        """#1045: same /24 shares a bucket regardless of the Bearer token.
 
-        Pins #192: raw header values used to conflate everyone into one bucket.
+        Supersedes #192 (per-token bucketing): rotating random Bearer values
+        would otherwise yield a fresh bucket per request and bypass the limiter
+        (defeats the /admin/api/login brute-force guard, E-32).
         """
         from starlette.requests import Request
 
@@ -262,9 +264,9 @@ class TestRateLimitClientId:
         client_id_1 = _rate_limit_client_id(Request(scope_1))
         client_id_2 = _rate_limit_client_id(Request(scope_2))
 
-        assert client_id_1 != client_id_2, (
-            f"Different tokens must produce different client IDs, "
-            f"got {client_id_1!r} == {client_id_2!r}"
+        assert client_id_1 == client_id_2, (
+            f"Same /24 must share a bucket (token ignored), "
+            f"got {client_id_1!r} != {client_id_2!r}"
         )
         assert (
             "sk-token-alpha" not in client_id_1
@@ -298,13 +300,15 @@ class TestRateLimitClientId:
         ), f"Same /24 must share a bucket, got {client_id_a!r} != {client_id_b!r}"
 
     def test_rate_limit_same_token_via_bearer_and_x_api_key_share_bucket(self):
-        """Same key value via Bearer and x-api-key maps to same bucket."""
+        """Same key value via Bearer and x-api-key maps to same bucket.
+
+        Exercises _anthropic_rate_limit_client_id (still key-based); the
+        generic _rate_limit_client_id is now IP/subnet-based (#1045) and is
+        covered by test_rate_limit_same_ip_different_tokens_share_bucket.
+        """
         from starlette.requests import Request
 
-        from fusion_mlx.middleware.auth import (
-            _anthropic_rate_limit_client_id,
-            _rate_limit_client_id,
-        )
+        from fusion_mlx.middleware.auth import _anthropic_rate_limit_client_id
 
         bearer_scope = {
             "type": "http",
@@ -317,7 +321,7 @@ class TestRateLimitClientId:
             "client": ("192.0.2.1", 12345),
         }
 
-        bearer_id = _rate_limit_client_id(Request(bearer_scope))
+        bearer_id = _anthropic_rate_limit_client_id(Request(bearer_scope))
         x_api_id = _anthropic_rate_limit_client_id(Request(x_api_key_scope))
 
         assert bearer_id == x_api_id, (
