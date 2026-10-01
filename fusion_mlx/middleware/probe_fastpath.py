@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any
 
 from ..config import get_config
+from ..logging_config import _request_id
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,22 @@ def _has_origin(scope: dict[str, Any]) -> bool:
     return False
 
 
+def _resolve_request_id(scope: dict[str, Any]) -> str:
+    # #1073: mirror RequestIdMiddleware — honor an inbound X-Request-Id
+    # (sanitized to printable ASCII) else generate a short uuid4 prefix.
+    for name, value in scope.get("headers", ()):
+        if name.lower() == b"x-request-id":
+            try:
+                raw = value.decode("ascii", errors="replace")
+                return (
+                    "".join(c for c in raw if 32 <= ord(c) < 127).strip()
+                    or uuid.uuid4().hex[:12]
+                )
+            except Exception:
+                return uuid.uuid4().hex[:12]
+    return uuid.uuid4().hex[:12]
+
+
 class ProbeFastPathMiddleware:
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -97,34 +115,45 @@ class ProbeFastPathMiddleware:
         if _has_origin(scope):
             return await self.app(scope, receive, send)
 
-        if raw_path == b"/livez":
-            status_code = 200
-            body = _LIVEZ_BODY
-        else:
-            try:
-                status_code, body = _build_healthz_payload()
-            except Exception:
-                logger.debug("[probe_fastpath] payload build raised; falling through")
-                return await self.app(scope, receive, send)
+        # #1073: this fast path bypasses RequestIdMiddleware, so stamp a
+        # request_id into the logging context (and echo it) to give probe
+        # traffic a correlation ID in logs.
+        request_id = _resolve_request_id(scope)
+        token = _request_id.set(request_id)
+        try:
+            if raw_path == b"/livez":
+                status_code = 200
+                body = _LIVEZ_BODY
+            else:
+                try:
+                    status_code, body = _build_healthz_payload()
+                except Exception:
+                    logger.debug(
+                        "[probe_fastpath] payload build raised; falling through"
+                    )
+                    return await self.app(scope, receive, send)
 
-        headers = _BASE_HEADERS + [
-            (b"content-length", str(len(body)).encode("ascii")),
-        ]
+            headers = _BASE_HEADERS + [
+                (b"content-length", str(len(body)).encode("ascii")),
+                (b"x-request-id", request_id.encode("ascii")),
+            ]
 
-        await send(
-            {
-                "type": "http.response.start",
-                "status": status_code,
-                "headers": headers,
-            }
-        )
-        await send(
-            {
-                "type": "http.response.body",
-                "body": body,
-                "more_body": False,
-            }
-        )
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": status_code,
+                    "headers": headers,
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": body,
+                    "more_body": False,
+                }
+            )
+        finally:
+            _request_id.reset(token)
 
 
 def install_probe_fastpath_middleware(app: Any) -> None:
