@@ -34,6 +34,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from fusion_mlx.config import get_config
+from fusion_mlx.logging_config import _request_id
 from fusion_mlx.middleware.probe_fastpath import (
     ProbeFastPathMiddleware,
     install_probe_fastpath_middleware,
@@ -722,3 +723,102 @@ class TestFastPathASGIShape:
 
         asyncio.run(_drive())
         assert seen_scopes == ["lifespan", "websocket"]
+
+
+class TestFastPathRequestId:
+    """#1073: the fast-path is installed outermost and bypasses
+    RequestIdMiddleware, so it stamps a request_id into the logging
+    ContextVar (and echoes it in the response) to give probe traffic a
+    correlation ID in logs."""
+
+    def _drive(self, headers: list[tuple[bytes, bytes]]):
+        inner_calls: list[dict] = []
+        contextvar_seen: list[str | None] = []
+
+        async def _inner(scope, receive, send):
+            inner_calls.append(scope)
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 500,
+                    "headers": [(b"content-type", b"text/plain")],
+                }
+            )
+            await send({"type": "http.response.body", "body": b"inner-app"})
+
+        mw = ProbeFastPathMiddleware(_inner)
+        captured: list[dict] = []
+
+        async def _send(msg):
+            captured.append(msg)
+            contextvar_seen.append(_request_id.get())
+
+        async def _receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/healthz",
+            "raw_path": b"/healthz",
+            "headers": headers,
+            "query_string": b"",
+        }
+        asyncio.run(mw(scope, _receive, _send))
+        return inner_calls, captured, contextvar_seen
+
+    def _response_header(self, captured: list[dict], name: bytes) -> bytes | None:
+        for msg in captured:
+            if msg["type"] != "http.response.start":
+                continue
+            for k, v in msg.get("headers", ()):
+                if k.lower() == name:
+                    return v
+        return None
+
+    def test_generated_request_id_echoed_and_stamped(self):
+        """No inbound X-Request-Id -> a short id is generated, echoed, and
+        stamped into the ContextVar for the duration of the request."""
+        inner_calls, captured, seen = self._drive([])
+        assert inner_calls == []  # fast-path served, inner app untouched
+        echoed = self._response_header(captured, b"x-request-id")
+        assert echoed is not None
+        # uuid4().hex[:12] is 12 lowercase hex chars.
+        assert len(echoed) == 12
+        assert all(c in b"0123456789abcdef" for c in echoed)
+        # The ContextVar carried the same id while the response was sent.
+        assert seen and all(v == echoed.decode("ascii") for v in seen)
+
+    def test_inbound_request_id_honored(self):
+        """An inbound X-Request-Id is honored (not replaced) so a gateway's
+        correlation id survives the fast-path."""
+        inner_calls, captured, seen = self._drive([(b"x-request-id", b"abc-123")])
+        assert inner_calls == []
+        echoed = self._response_header(captured, b"x-request-id")
+        assert echoed == b"abc-123"
+        assert seen and all(v == "abc-123" for v in seen)
+
+    def test_inbound_request_id_sanitized(self):
+        """#1073 mirrors the #1068 log-injection guard: non-printable bytes
+        are stripped before the id is used."""
+        inner_calls, captured, seen = self._drive([(b"x-request-id", b"ab\tc\n")])
+        assert inner_calls == []
+        echoed = self._response_header(captured, b"x-request-id")
+        assert echoed == b"abc"
+        assert seen and all(v == "abc" for v in seen)
+
+    def test_blank_inbound_request_id_falls_back_to_generated(self):
+        """A header that sanitizes to nothing must not produce an empty
+        id — fall back to a generated one."""
+        inner_calls, captured, seen = self._drive([(b"x-request-id", b"   ")])
+        assert inner_calls == []
+        echoed = self._response_header(captured, b"x-request-id")
+        assert echoed is not None
+        assert len(echoed) == 12
+        assert seen and all(v == echoed.decode("ascii") and v for v in seen)
+
+    def test_request_id_reset_after_request(self):
+        """The ContextVar is reset in a finally so the id does not leak
+        into the next request served on the same task/context."""
+        self._drive([(b"x-request-id", b"leak-check")])
+        assert _request_id.get() is None

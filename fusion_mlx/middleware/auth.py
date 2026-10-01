@@ -92,7 +92,6 @@ class RateLimiter:
         now_mono = time.monotonic()
         if now_mono - self._last_cleanup_mono < self.window_size:
             return
-        self._last_cleanup_mono = now_mono
         for k in list(self._requests.keys()):
             if k == client_id:
                 continue
@@ -100,6 +99,11 @@ class RateLimiter:
             if last is None or last <= window_start:
                 self._requests.pop(k, None)
                 self._last_seen.pop(k, None)
+        # #1072: stamp after the scan completes, not preemptively before it —
+        # the next-sweep interval then measures from a finished cleanup, so a
+        # scan that runs late under sustained traffic cannot defer the next
+        # sweep by an extra full window (worst-case expired-bucket linger ~2w).
+        self._last_cleanup_mono = time.monotonic()
 
     def is_allowed(self, client_id: str) -> tuple[bool, int]:
         if not self.enabled:
@@ -169,38 +173,35 @@ def _subnet_bucket(host: str) -> str:
         return host
 
 
+def _client_subnet_id(request: Request) -> str:
+    # Server-observed client identity (XFF-aware) collapsed to a /24 or /64
+    # subnet. Cannot be controlled by the caller, unlike the Authorization header.
+    if request.client and request.client.host:
+        client_ip = _xff_client_ip(request) or request.client.host
+        return _subnet_bucket(client_ip)
+    return "unknown"
+
+
 def _rate_limit_client_id(request: Request) -> str:
+    # #1045: bucket by IP/subnet, NOT the self-reported Authorization header —
+    # rotating random Bearer values would otherwise yield a fresh bucket per
+    # request and bypass the limiter (defeats the /admin/api/login brute-force
+    # guard, E-32). The client IP is server-observed and cannot be spoofed.
+    return _client_subnet_id(request)
+
+
+def request_principal(request: Request) -> str:
+    # #226 IDOR scope: stable per-caller principal id for session tracking.
+    # Uses the Authorization header (HMAC of bearer token, else the raw header)
+    # so sessions stay isolated per key even in no-key dev mode (subnet
+    # fallback). Decoupled from _rate_limit_client_id (#1045) so the rate
+    # limiter can bucket by IP without collapsing per-key session isolation.
     authorization = request.headers.get("Authorization")
     if authorization:
         bearer_key = _extract_bearer_token(authorization)
         raw = bearer_key or authorization
         return _bucket_id(raw)
-    if request.client and request.client.host:
-        client_ip = _xff_client_ip(request) or request.client.host
-        return _subnet_bucket(client_ip)
-    return "unknown"
-
-
-def _anthropic_rate_limit_client_id(request: Request) -> str:
-    bearer_key = _extract_bearer_token(request.headers.get("Authorization"))
-    if bearer_key:
-        return _bucket_id(bearer_key)
-    x_api_key = request.headers.get("x-api-key")
-    if x_api_key:
-        return _bucket_id(x_api_key)
-    if request.client and request.client.host:
-        client_ip = _xff_client_ip(request) or request.client.host
-        return _subnet_bucket(client_ip)
-    return "unknown"
-
-
-def request_principal(request: Request) -> str:
-    # #226 IDOR scope: stable per-caller principal id for session tracking.
-    # Reuses the rate-limit bucket (HMAC of bearer token, else client subnet)
-    # so sessions are isolated per caller even in no-key dev mode. Single-key
-    # production deployments collapse to one principal; multi-key deployments
-    # (if ever extended to /v1) get isolation for free.
-    return _rate_limit_client_id(request)
+    return _client_subnet_id(request)
 
 
 async def check_rate_limit(request: Request):
@@ -221,20 +222,10 @@ async def check_rate_limit(request: Request):
 
 
 async def check_rate_limit_or_x_api_key(request: Request):
-    client_id = _anthropic_rate_limit_client_id(request)
-    allowed, retry_after = rate_limiter.is_allowed(client_id)
-    if not allowed:
-        logger.warning(
-            "Rate limit exceeded for client=%s retry_after=%d",
-            client_id[:8],
-            retry_after,
-        )
-        _tick_rate_limit_reject()
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded. Retry after {retry_after} seconds.",
-            headers={"Retry-After": str(retry_after)},
-        )
+    # #1045: identical IP/subnet bucketing to check_rate_limit so the anthropic
+    # and standard routes share one budget per client. Kept as a distinct name
+    # for the anthropic route wiring and any external callers.
+    await check_rate_limit(request)
 
 
 def _resolve_api_key_from_config() -> str | None:

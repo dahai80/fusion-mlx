@@ -11,6 +11,7 @@ Covers:
 from __future__ import annotations
 
 import time
+from collections import deque
 from unittest.mock import MagicMock
 
 from fastapi import Request as FastAPIRequest
@@ -149,6 +150,60 @@ class TestRateLimiterConfig:
 
 
 # =========================================================================
+# RateLimiter Cleanup Sweep (#1072)
+# =========================================================================
+
+
+class TestRateLimiterCleanup:
+    """Expired-bucket sweep: reaping, interval gate, and timestamp stamping."""
+
+    def _populate(self, limiter, n_clients, base=1000.0, window=60.0):
+        # Half the clients expired (last_seen well before window_start),
+        # half active (recently seen). Exceeds the 100-bucket sweep threshold.
+        n_expired = n_clients // 2
+        for i in range(n_clients):
+            cid = f"client-{i}"
+            last = base - window - 10.0 if i < n_expired else base - 1.0
+            limiter._requests[cid] = deque([last])
+            limiter._last_seen[cid] = last
+
+    def test_sweep_removes_expired_keeps_active(self, monkeypatch):
+        limiter = RateLimiter(requests_per_minute=60, enabled=True)
+        self._populate(limiter, 120)
+        # window_start = 940; expired last_seen = 930 (<= 940), active = 999.
+        limiter._last_cleanup_mono = float("-inf")
+        monkeypatch.setattr(time, "monotonic", lambda: 5000.0)
+        limiter._maybe_cleanup(940.0, "current-client")
+        assert "client-0" not in limiter._requests
+        assert "client-10" not in limiter._requests
+        assert "client-60" in limiter._requests
+        assert "client-119" in limiter._requests
+        # #1072: sweep timestamp stamped to the (mocked) monotonic clock.
+        assert limiter._last_cleanup_mono == 5000.0
+
+    def test_sweep_skipped_when_interval_not_elapsed(self, monkeypatch):
+        limiter = RateLimiter(requests_per_minute=60, enabled=True)
+        self._populate(limiter, 120)
+        # Last sweep 10s ago (< 60s window) -> sweep gated off, no mutation.
+        monkeypatch.setattr(time, "monotonic", lambda: 5000.0)
+        limiter._last_cleanup_mono = 4990.0
+        before = set(limiter._requests.keys())
+        limiter._maybe_cleanup(940.0, "current-client")
+        assert set(limiter._requests.keys()) == before
+        assert limiter._last_cleanup_mono == 4990.0
+
+    def test_sweep_noop_below_threshold(self, monkeypatch):
+        limiter = RateLimiter(requests_per_minute=60, enabled=True)
+        self._populate(limiter, 50)  # under the 100-bucket threshold
+        limiter._last_cleanup_mono = float("-inf")
+        monkeypatch.setattr(time, "monotonic", lambda: 5000.0)
+        before = set(limiter._requests.keys())
+        limiter._maybe_cleanup(940.0, "current-client")
+        assert set(limiter._requests.keys()) == before
+        assert limiter._last_cleanup_mono == float("-inf")
+
+
+# =========================================================================
 # Auxiliary Functions
 # =========================================================================
 
@@ -201,14 +256,15 @@ class TestRateLimiterAux:
         result = _extract_bearer_token("bearER my-token")
         assert result == "my-token"
 
-    def test_rate_limit_client_id_by_auth(self):
+    def test_rate_limit_client_id_ignores_auth_header(self):
+        # #1045: the bucket is IP/subnet-based, NOT the self-reported
+        # Authorization header (rotating Bearer values would bypass the limiter).
         request = MagicMock(spec=FastAPIRequest)
         request.headers = {"Authorization": "Bearer test-key"}
         request.client = MagicMock()
         request.client.host = "10.0.0.1"
         cid = _rate_limit_client_id(request)
-        # With auth header, returns HMAC bucket (16 hex chars)
-        assert len(cid) == 16
+        assert cid == "10.0.0.0"  # /24 subnet, auth header ignored
 
     def test_rate_limit_client_id_by_ip(self):
         request = MagicMock(spec=FastAPIRequest)
@@ -225,13 +281,47 @@ class TestRateLimiterAux:
         cid = _rate_limit_client_id(request)
         assert cid == "unknown"
 
-    def test_rate_limit_client_id_with_auth_and_no_client(self):
-        """When auth header is present, client host is not needed."""
+    def test_rate_limit_client_id_no_client_ignores_auth(self):
+        # #1045: no client IP -> "unknown" (the bearer token is ignored).
         request = MagicMock(spec=FastAPIRequest)
         request.headers = {"Authorization": "Bearer test-key"}
         request.client = None
         cid = _rate_limit_client_id(request)
-        assert len(cid) == 16
+        assert cid == "unknown"
+
+    def test_rate_limit_rotated_bearer_same_bucket(self):
+        # #1045: an attacker rotating random Bearer values must land in the
+        # same (IP-based) bucket, not a fresh one per value (E-32 brute-force
+        # guard). Supersedes the per-token bucketing from #192.
+        def _req(bearer: str):
+            request = MagicMock(spec=FastAPIRequest)
+            request.headers = {"Authorization": f"Bearer {bearer}"}
+            request.client = MagicMock()
+            request.client.host = "10.0.0.5"
+            return request
+
+        ids = {_rate_limit_client_id(_req(f"key-{i}")) for i in range(5)}
+        assert ids == {"10.0.0.0"}
+
+    def test_rotated_bearer_hits_rate_limit(self):
+        # #1045: rotating random Bearer values from one IP must be rate-limited
+        # (all values map to the same IP-based bucket), not get a fresh bucket
+        # per value — the E-32 brute-force guard on /admin/api/login.
+        limiter = RateLimiter(requests_per_minute=3, enabled=True)
+
+        def _req(bearer: str):
+            request = MagicMock(spec=FastAPIRequest)
+            request.headers = {"Authorization": f"Bearer {bearer}"}
+            request.client = MagicMock()
+            request.client.host = "10.0.0.5"
+            return request
+
+        for i in range(3):
+            allowed, _ = limiter.is_allowed(_rate_limit_client_id(_req(f"key-{i}")))
+            assert allowed is True
+        allowed, retry_after = limiter.is_allowed(_rate_limit_client_id(_req("key-3")))
+        assert allowed is False
+        assert retry_after >= 1
 
 
 # =========================================================================

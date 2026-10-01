@@ -148,6 +148,50 @@ class TestMiddlewareExports:
         assert callable(install_request_body_depth_middleware)
         assert callable(install_request_body_limit_middleware)
 
+
+class TestRequestIdMiddleware:
+    async def _run(self, header_value: bytes) -> str:
+        from fusion_mlx.logging_config import _request_id
+        from fusion_mlx.middleware.request_id import RequestIdMiddleware
+
+        seen: dict = {}
+
+        async def inner(scope, receive, send):
+            seen["id"] = _request_id.get()
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        app = RequestIdMiddleware(inner)
+        scope = {"type": "http", "headers": [(b"x-request-id", header_value)]}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            pass
+
+        await app(scope, receive, send)
+        return seen["id"]
+
+    async def test_embedded_newline_is_stripped(self):
+        # #1068: a client-supplied ID with an embedded newline must not reach
+        # the logging context (it would inject a fake log line).
+        rid = await self._run(b"evil\n2026-01-01 FAKE LOG LINE")
+        assert rid
+        assert "\n" not in rid
+        assert "\r" not in rid
+
+    async def test_all_control_id_falls_back_to_generated(self):
+        # An ID made only of control chars sanitizes to empty -> generated uuid.
+        rid = await self._run(b"\n\r\t")
+        assert rid
+        assert len(rid) == 12
+        assert all(c.isalnum() for c in rid)
+
+    async def test_safe_id_is_honored(self):
+        rid = await self._run(b"abc-123_def")
+        assert rid == "abc-123_def"
+
     def test_auth_exports_available(self):
         from fusion_mlx.middleware import (
             RateLimiter,

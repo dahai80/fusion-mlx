@@ -90,3 +90,64 @@ async def test_valid_key_passes_through(monkeypatch):
     scope["headers"] = [(b"authorization", b"Bearer sk-test")]
     await mw(scope, receive, None)
     assert called
+
+
+@pytest.mark.asyncio
+async def test_setup_api_key_excluded_from_precheck(monkeypatch):
+    # #1046: fresh install (no key, no anonymous) — the bootstrap setup
+    # endpoint must not be pre-checked, else it 401s the very endpoint that
+    # sets the initial key (request=None defeats the loopback exemption).
+    monkeypatch.setattr(
+        "fusion_mlx.middleware.auth_precheck._get_configured_api_key",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "fusion_mlx.middleware.auth_precheck._anonymous_access_allowed",
+        lambda request: False,
+    )
+    called = False
+
+    async def app(scope, receive, send):
+        nonlocal called
+        called = True
+
+    async def receive():
+        raise AssertionError("body must not be read on pass-through")
+
+    mw = AuthPrecheckMiddleware(app)
+    scope = _scope(path="/admin/api/setup-api-key", method="POST")
+    await mw(scope, receive, None)
+    assert called
+
+
+@pytest.mark.asyncio
+async def test_other_admin_path_still_prechecked_when_no_key(monkeypatch):
+    # #1046: only the setup endpoint is excluded — other /admin/ body-bearing
+    # paths are still pre-checked (no key + no anonymous -> 401, no buffer).
+    monkeypatch.setattr(
+        "fusion_mlx.middleware.auth_precheck._get_configured_api_key",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "fusion_mlx.middleware.auth_precheck._anonymous_access_allowed",
+        lambda request: False,
+    )
+    called = False
+
+    async def app(scope, receive, send):
+        nonlocal called
+        called = True
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    mw = AuthPrecheckMiddleware(app)
+    scope = _scope(path="/admin/api/login", method="POST")
+    await mw(scope, receive, send)
+    assert not called
+    assert sent and sent[0]["status"] == 401

@@ -212,6 +212,13 @@ class TestCheckRateLimit:
         """Rate limit returns 429 when exceeded."""
         from fusion_mlx.middleware.auth import check_rate_limit, rate_limiter
 
+        # rate_limiter is a module-level singleton; other tests (e.g. the
+        # session-router tests that run check_rate_limit) can leave the
+        # "testclient" bucket populated, which would make the first request
+        # here 429 instead of 200. Reset the shared state for hermeticity.
+        rate_limiter._requests.clear()
+        rate_limiter._last_seen.clear()
+
         rate_limiter.enabled = True
         rate_limiter.requests_per_minute = 1
 
@@ -228,21 +235,25 @@ class TestCheckRateLimit:
         r2 = client.get("/test")
         assert r2.status_code == 429
 
-        # cleanup
+        # cleanup — also clear so this test does not pollute later tests
         rate_limiter.enabled = False
         rate_limiter.requests_per_minute = 60
+        rate_limiter._requests.clear()
+        rate_limiter._last_seen.clear()
 
 
 # ======================================================================
-# _rate_limit_client_id / _anthropic_rate_limit_client_id
+# _rate_limit_client_id
 # ======================================================================
 
 
 class TestRateLimitClientId:
-    def test_rate_limit_distinguishes_clients_by_hashed_bearer(self):
-        """Two distinct bearer tokens get separate buckets.
+    def test_rate_limit_same_ip_different_tokens_share_bucket(self):
+        """#1045: same /24 shares a bucket regardless of the Bearer token.
 
-        Pins #192: raw header values used to conflate everyone into one bucket.
+        Supersedes #192 (per-token bucketing): rotating random Bearer values
+        would otherwise yield a fresh bucket per request and bypass the limiter
+        (defeats the /admin/api/login brute-force guard, E-32).
         """
         from starlette.requests import Request
 
@@ -262,9 +273,9 @@ class TestRateLimitClientId:
         client_id_1 = _rate_limit_client_id(Request(scope_1))
         client_id_2 = _rate_limit_client_id(Request(scope_2))
 
-        assert client_id_1 != client_id_2, (
-            f"Different tokens must produce different client IDs, "
-            f"got {client_id_1!r} == {client_id_2!r}"
+        assert client_id_1 == client_id_2, (
+            f"Same /24 must share a bucket (token ignored), "
+            f"got {client_id_1!r} != {client_id_2!r}"
         )
         assert (
             "sk-token-alpha" not in client_id_1
@@ -298,13 +309,15 @@ class TestRateLimitClientId:
         ), f"Same /24 must share a bucket, got {client_id_a!r} != {client_id_b!r}"
 
     def test_rate_limit_same_token_via_bearer_and_x_api_key_share_bucket(self):
-        """Same key value via Bearer and x-api-key maps to same bucket."""
+        """Same key value via Bearer and x-api-key maps to the same bucket.
+
+        Exercises _rate_limit_client_id (#1045: IP/subnet-based, the
+        self-reported key is ignored for bucketing) so the anthropic and
+        standard routes share one budget per client.
+        """
         from starlette.requests import Request
 
-        from fusion_mlx.middleware.auth import (
-            _anthropic_rate_limit_client_id,
-            _rate_limit_client_id,
-        )
+        from fusion_mlx.middleware.auth import _rate_limit_client_id
 
         bearer_scope = {
             "type": "http",
@@ -318,12 +331,13 @@ class TestRateLimitClientId:
         }
 
         bearer_id = _rate_limit_client_id(Request(bearer_scope))
-        x_api_id = _anthropic_rate_limit_client_id(Request(x_api_key_scope))
+        x_api_id = _rate_limit_client_id(Request(x_api_key_scope))
 
         assert bearer_id == x_api_id, (
             f"Same key via Bearer and x-api-key must produce same bucket, "
             f"got {bearer_id!r} != {x_api_id!r}"
         )
+        assert "sk-abc" not in bearer_id, "Raw key must not appear in client_id"
 
 
 # ======================================================================

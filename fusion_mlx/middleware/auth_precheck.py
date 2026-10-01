@@ -52,7 +52,13 @@ _GUARDED_PREFIXES = (
 
 # Exclude paths that have their own auth (e.g. admin login) or are
 # intentionally public.
-_EXCLUDED_PATHS = frozenset({"/v1/audio/transcriptions"})
+#
+# #1046: /admin/api/setup-api-key is the bootstrap entry point on a fresh
+# install (no key configured). It enforces its own loopback-only auth, so it
+# must not be pre-checked — otherwise the pre-check 401s the very endpoint
+# that sets the initial key (request=None means the loopback exemption in
+# _anonymous_access_allowed cannot fire), leaving CLI as the only path.
+_EXCLUDED_PATHS = frozenset({"/v1/audio/transcriptions", "/admin/api/setup-api-key"})
 
 
 def _path_is_guarded(path: str | None) -> bool:
