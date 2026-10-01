@@ -1009,10 +1009,23 @@ def deep_reset(self) -> None:
     self.memory_monitor = None
     self._boundary_snapshot_store = None
 
-    # Force garbage collection of any lingering cache objects
+    # Release speculative-decode drafter state so drafter weights are not
+    # retained across engine switches (#1052).
+    for attr in (
+        "_spec_decode_state",
+        "_specprefill_draft_model",
+        "_vlm_mtp_drafter",
+        "_dflash_runtime",
+        "_draft_prefix_cache",
+    ):
+        if hasattr(self, attr):
+            setattr(self, attr, None)
+
+    # Force garbage collection + Metal cache clear of any lingering weights.
     import gc
 
     gc.collect()
+    mx.clear_cache()
 
     logger.info("Deep reset completed - all caches cleared")
 

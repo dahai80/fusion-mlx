@@ -1502,18 +1502,29 @@ class EnginePool:
 
         # Phase 2: Slow operations OUTSIDE the lock
         # so concurrent requests are not blocked for 5-20 seconds.
-        if entry.engine is not None:
-            logger.info(
-                "Unloading %s before reload (outside lock)",
-                entry_key,
-            )
-            await self.unload_engine_async(entry_key)
+        try:
+            if entry.engine is not None:
+                logger.info(
+                    "Unloading %s before reload (outside lock)",
+                    entry_key,
+                )
+                await self.unload_engine_async(entry_key)
 
-        # Evict derived adapter engines over the soft cap (victims selected
-        # under the lock in Phase 1). unload_engine_async is slow, so do it here.
-        for vk in adapter_victims:
-            self._record_eviction("adapter_cap")
-            await self.unload_engine_async(vk)
+            # Evict derived adapter engines over the soft cap (victims selected
+            # under the lock in Phase 1). unload_engine_async is slow, so do it here.
+            for vk in adapter_victims:
+                self._record_eviction("adapter_cap")
+                await self.unload_engine_async(vk)
+        except Exception:
+            logger.exception("Reload unload failed for %s", entry_key)
+            async with self._lock:
+                entry.is_loading = False
+                entry.last_load_failed = True
+                loading_event = entry.loading_event
+                entry.loading_event = None
+            if loading_event is not None:
+                loading_event.set()
+            raise
 
         # Pre-load admission check (outside lock — memory state is approximate)
         ceiling = self._current_ceiling()
@@ -2800,67 +2811,86 @@ class EnginePool:
                 )
 
             # Create engine based on engine type (if DFlash not active)
-            if engine is None:
-                if effective_type == "embedding":
-                    engine = EmbeddingEngine(
-                        model_name=entry.model_path,
-                        trust_remote_code=trc,
-                        scheduler_config=self._scheduler_config,
-                    )
-                elif effective_type == "reranker":
-                    engine = RerankerEngine(
-                        model_name=entry.model_path,
-                        trust_remote_code=trc,
-                    )
-                elif effective_type == "ner":
-                    engine = NEREngine(
-                        model_name=entry.model_path,
-                        trust_remote_code=trc,
-                    )
-                elif effective_type == "vlm":
-                    engine = VLMBatchedEngine(
-                        model_name=entry.model_path,
-                        trust_remote_code=trc,
-                        scheduler_config=self._scheduler_config,
-                        model_settings=model_settings,
-                        enable_thinking=entry.thinking_default,
-                        preserve_thinking=entry.preserve_thinking_default,
-                        prefill_eviction_callback=prefill_eviction_callback,
-                    )
-                elif entry.engine_type == "audio_stt":
-                    engine = STTEngine(model_name=entry.model_path)
-                elif entry.engine_type == "audio_tts":
-                    engine = TTSEngine(model_name=entry.model_path)
-                elif entry.engine_type == "audio_sts":
-                    engine = STSEngine(
-                        model_name=entry.model_path,
-                        config_model_type=entry.config_model_type,
-                    )
-                elif entry.engine_type == "audio_music":
-                    engine = MusicGenEngine(model_name=entry.model_path)
-                elif entry.engine_type == "image_gen":
-                    engine = ImageGenEngine(model_name=entry.model_path)
-                elif entry.engine_type == "video_gen":
-                    engine = VideoGenEngine(model_name=entry.model_path)
-                elif entry.engine_type == "diffusion":
-                    from ..runtime.diffusion_lane import DiffusionEngine
+            try:
+                if engine is None:
+                    if effective_type == "embedding":
+                        engine = EmbeddingEngine(
+                            model_name=entry.model_path,
+                            trust_remote_code=trc,
+                            scheduler_config=self._scheduler_config,
+                        )
+                    elif effective_type == "reranker":
+                        engine = RerankerEngine(
+                            model_name=entry.model_path,
+                            trust_remote_code=trc,
+                        )
+                    elif effective_type == "ner":
+                        engine = NEREngine(
+                            model_name=entry.model_path,
+                            trust_remote_code=trc,
+                        )
+                    elif effective_type == "vlm":
+                        engine = VLMBatchedEngine(
+                            model_name=entry.model_path,
+                            trust_remote_code=trc,
+                            scheduler_config=self._scheduler_config,
+                            model_settings=model_settings,
+                            enable_thinking=entry.thinking_default,
+                            preserve_thinking=entry.preserve_thinking_default,
+                            prefill_eviction_callback=prefill_eviction_callback,
+                        )
+                    elif entry.engine_type == "audio_stt":
+                        engine = STTEngine(model_name=entry.model_path)
+                    elif entry.engine_type == "audio_tts":
+                        engine = TTSEngine(model_name=entry.model_path)
+                    elif entry.engine_type == "audio_sts":
+                        engine = STSEngine(
+                            model_name=entry.model_path,
+                            config_model_type=entry.config_model_type,
+                        )
+                    elif entry.engine_type == "audio_music":
+                        engine = MusicGenEngine(model_name=entry.model_path)
+                    elif entry.engine_type == "image_gen":
+                        engine = ImageGenEngine(model_name=entry.model_path)
+                    elif entry.engine_type == "video_gen":
+                        engine = VideoGenEngine(model_name=entry.model_path)
+                    elif entry.engine_type == "diffusion":
+                        from ..runtime.diffusion_lane import DiffusionEngine
 
-                    engine = DiffusionEngine(
-                        model_name=entry.model_path,
-                        scheduler_config=self._scheduler_config,
-                    )
-                else:
-                    engine = BatchedEngine(
-                        model_name=entry.model_path,
-                        trust_remote_code=trc,
-                        scheduler_config=self._scheduler_config,
-                        model_settings=model_settings,
-                        enable_thinking=entry.thinking_default,
-                        preserve_thinking=entry.preserve_thinking_default,
-                        prefill_eviction_callback=prefill_eviction_callback,
-                        lora_path=entry.adapter_path
-                        or getattr(model_settings, "lora_path", None),
-                    )
+                        engine = DiffusionEngine(
+                            model_name=entry.model_path,
+                            scheduler_config=self._scheduler_config,
+                        )
+                    else:
+                        engine = BatchedEngine(
+                            model_name=entry.model_path,
+                            trust_remote_code=trc,
+                            scheduler_config=self._scheduler_config,
+                            model_settings=model_settings,
+                            enable_thinking=entry.thinking_default,
+                            preserve_thinking=entry.preserve_thinking_default,
+                            prefill_eviction_callback=prefill_eviction_callback,
+                            lora_path=entry.adapter_path
+                            or getattr(model_settings, "lora_path", None),
+                        )
+            except Exception:
+                logger.exception("Engine constructor failed for %s", model_id)
+                if engine is not None:
+                    try:
+                        await engine.stop()
+                    except Exception:
+                        logger.warning(
+                            "engine.stop() failed after constructor failure for %s",
+                            model_id,
+                            exc_info=True,
+                        )
+                gc.collect()
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    get_mlx_executor(),
+                    lambda: (mx.synchronize(), mx.clear_cache()),
+                )
+                raise
 
             _is_dflash_engine = (
                 engine is not None and type(engine).__name__ == "DFlashEngine"
