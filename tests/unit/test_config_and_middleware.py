@@ -212,6 +212,13 @@ class TestCheckRateLimit:
         """Rate limit returns 429 when exceeded."""
         from fusion_mlx.middleware.auth import check_rate_limit, rate_limiter
 
+        # rate_limiter is a module-level singleton; other tests (e.g. the
+        # session-router tests that run check_rate_limit) can leave the
+        # "testclient" bucket populated, which would make the first request
+        # here 429 instead of 200. Reset the shared state for hermeticity.
+        rate_limiter._requests.clear()
+        rate_limiter._last_seen.clear()
+
         rate_limiter.enabled = True
         rate_limiter.requests_per_minute = 1
 
@@ -228,9 +235,11 @@ class TestCheckRateLimit:
         r2 = client.get("/test")
         assert r2.status_code == 429
 
-        # cleanup
+        # cleanup — also clear so this test does not pollute later tests
         rate_limiter.enabled = False
         rate_limiter.requests_per_minute = 60
+        rate_limiter._requests.clear()
+        rate_limiter._last_seen.clear()
 
 
 # ======================================================================
