@@ -190,19 +190,6 @@ def _rate_limit_client_id(request: Request) -> str:
     return _client_subnet_id(request)
 
 
-def _anthropic_rate_limit_client_id(request: Request) -> str:
-    bearer_key = _extract_bearer_token(request.headers.get("Authorization"))
-    if bearer_key:
-        return _bucket_id(bearer_key)
-    x_api_key = request.headers.get("x-api-key")
-    if x_api_key:
-        return _bucket_id(x_api_key)
-    if request.client and request.client.host:
-        client_ip = _xff_client_ip(request) or request.client.host
-        return _subnet_bucket(client_ip)
-    return "unknown"
-
-
 def request_principal(request: Request) -> str:
     # #226 IDOR scope: stable per-caller principal id for session tracking.
     # Uses the Authorization header (HMAC of bearer token, else the raw header)
@@ -235,20 +222,10 @@ async def check_rate_limit(request: Request):
 
 
 async def check_rate_limit_or_x_api_key(request: Request):
-    client_id = _anthropic_rate_limit_client_id(request)
-    allowed, retry_after = rate_limiter.is_allowed(client_id)
-    if not allowed:
-        logger.warning(
-            "Rate limit exceeded for client=%s retry_after=%d",
-            client_id[:8],
-            retry_after,
-        )
-        _tick_rate_limit_reject()
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded. Retry after {retry_after} seconds.",
-            headers={"Retry-After": str(retry_after)},
-        )
+    # #1045: identical IP/subnet bucketing to check_rate_limit so the anthropic
+    # and standard routes share one budget per client. Kept as a distinct name
+    # for the anthropic route wiring and any external callers.
+    await check_rate_limit(request)
 
 
 def _resolve_api_key_from_config() -> str | None:

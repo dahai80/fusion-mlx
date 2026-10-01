@@ -243,7 +243,7 @@ class TestCheckRateLimit:
 
 
 # ======================================================================
-# _rate_limit_client_id / _anthropic_rate_limit_client_id
+# _rate_limit_client_id
 # ======================================================================
 
 
@@ -309,15 +309,15 @@ class TestRateLimitClientId:
         ), f"Same /24 must share a bucket, got {client_id_a!r} != {client_id_b!r}"
 
     def test_rate_limit_same_token_via_bearer_and_x_api_key_share_bucket(self):
-        """Same key value via Bearer and x-api-key maps to same bucket.
+        """Same key value via Bearer and x-api-key maps to the same bucket.
 
-        Exercises _anthropic_rate_limit_client_id (still key-based); the
-        generic _rate_limit_client_id is now IP/subnet-based (#1045) and is
-        covered by test_rate_limit_same_ip_different_tokens_share_bucket.
+        Exercises _rate_limit_client_id (#1045: IP/subnet-based, the
+        self-reported key is ignored for bucketing) so the anthropic and
+        standard routes share one budget per client.
         """
         from starlette.requests import Request
 
-        from fusion_mlx.middleware.auth import _anthropic_rate_limit_client_id
+        from fusion_mlx.middleware.auth import _rate_limit_client_id
 
         bearer_scope = {
             "type": "http",
@@ -330,13 +330,14 @@ class TestRateLimitClientId:
             "client": ("192.0.2.1", 12345),
         }
 
-        bearer_id = _anthropic_rate_limit_client_id(Request(bearer_scope))
-        x_api_id = _anthropic_rate_limit_client_id(Request(x_api_key_scope))
+        bearer_id = _rate_limit_client_id(Request(bearer_scope))
+        x_api_id = _rate_limit_client_id(Request(x_api_key_scope))
 
         assert bearer_id == x_api_id, (
             f"Same key via Bearer and x-api-key must produce same bucket, "
             f"got {bearer_id!r} != {x_api_id!r}"
         )
+        assert "sk-abc" not in bearer_id, "Raw key must not appear in client_id"
 
 
 # ======================================================================
