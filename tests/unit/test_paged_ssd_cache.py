@@ -765,9 +765,11 @@ class TestPagedSSDCacheManagerWithMLX:
         # Second save (should just touch)
         manager.save_block(block_hash, cache_data, 32)
 
-        # saves count should not increase (just hit)
+        # saves count should not increase; the dedup is tracked separately and
+        # must not inflate the read-hit counter (#1040).
         assert manager._stats["saves"] == initial_saves
-        assert manager._stats["hits"] >= 1
+        assert manager._stats["saves_deduped"] >= 1
+        assert manager._stats["hits"] == 0
 
     def test_save_writes_format_version(self, tmp_path: Path, mock_mlx):
         """Saved blocks tag the file with the current format version."""
@@ -1691,10 +1693,56 @@ class TestAsyncWriteAndTimeoutLoad:
         ssd_cache.save_block(block_hash, cache_data, 32)
         initial_saves = ssd_cache._stats["saves"]
 
-        # Second save should just touch, not re-enqueue
+        # Second save should just touch, not re-enqueue; the dedup is tracked
+        # separately and must not inflate the read-hit counter (#1040).
         ssd_cache.save_block(block_hash, cache_data, 32)
         assert ssd_cache._stats["saves"] == initial_saves
-        assert ssd_cache._stats["hits"] >= 1
+        assert ssd_cache._stats["saves_deduped"] >= 1
+        assert ssd_cache._stats["hits"] == 0
+
+    def test_store_block_reused_id_persists_new_content(self, ssd_cache, mx):
+        """#1040: a reused block_id with different data must overwrite, not dedup."""
+        block_id = 7
+        block_hash = str(block_id).encode().ljust(20, b"_")[:20]
+
+        content_a = [(mx.zeros((2, 4)), mx.zeros((2, 4)))]
+        content_b = [(mx.ones((2, 4)), mx.ones((2, 4)))]
+
+        saves0 = ssd_cache._stats["saves"]
+        dedup0 = ssd_cache._stats["saves_deduped"]
+
+        assert ssd_cache.store_block(block_id, content_a) is True
+        assert ssd_cache._stats["saves"] == saves0 + 1
+        assert ssd_cache._stats["saves_deduped"] == dedup0
+        hash_a = ssd_cache.get_block_metadata(block_hash).content_hash
+        assert hash_a
+
+        # Reuse the same block_id with different content: must overwrite.
+        assert ssd_cache.store_block(block_id, content_b) is True
+        assert ssd_cache._stats["saves"] == saves0 + 2
+        assert ssd_cache._stats["saves_deduped"] == dedup0
+        hash_b = ssd_cache.get_block_metadata(block_hash).content_hash
+        assert hash_b != hash_a
+
+    def test_store_block_reused_id_same_content_dedups(self, ssd_cache, mx):
+        """#1040: a reused block_id with identical data dedups (no re-write)."""
+        block_id = 9
+        block_hash = str(block_id).encode().ljust(20, b"_")[:20]
+        content = [(mx.zeros((2, 4)), mx.zeros((2, 4)))]
+
+        saves0 = ssd_cache._stats["saves"]
+        dedup0 = ssd_cache._stats["saves_deduped"]
+
+        assert ssd_cache.store_block(block_id, content) is True
+        assert ssd_cache._stats["saves"] == saves0 + 1
+        assert ssd_cache._stats["saves_deduped"] == dedup0
+        hash0 = ssd_cache.get_block_metadata(block_hash).content_hash
+
+        # Reuse the same block_id with identical content: dedup, no re-write.
+        assert ssd_cache.store_block(block_id, content) is True
+        assert ssd_cache._stats["saves"] == saves0 + 1
+        assert ssd_cache._stats["saves_deduped"] == dedup0 + 1
+        assert ssd_cache.get_block_metadata(block_hash).content_hash == hash0
 
     def test_save_and_load_round_trip_after_flush(self, ssd_cache, mx):
         """Verify full round-trip: save -> flush -> load from disk."""

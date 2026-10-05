@@ -2,6 +2,7 @@
 """Paged SSD cache -- cold layer for KV cache blocks."""
 
 import errno
+import hashlib
 import json
 import logging
 import os
@@ -149,6 +150,7 @@ class PagedSSDBlockMetadata:
     model_name: str = ""
     block_size: int = 0
     cache_signature: str = ""
+    content_hash: str = ""
     layer_cache_types: list[str] | None = None
     layer_meta_states: list[tuple[int, ...]] | None = None
 
@@ -167,6 +169,7 @@ class PagedSSDBlockMetadata:
             "model_name": self.model_name,
             "block_size": self.block_size,
             "cache_signature": self.cache_signature,
+            "content_hash": self.content_hash,
         }
         if self.layer_cache_types is not None:
             d["layer_cache_types"] = list(self.layer_cache_types)
@@ -191,6 +194,7 @@ class PagedSSDBlockMetadata:
             model_name=d.get("model_name", ""),
             block_size=d.get("block_size", 0),
             cache_signature=d.get("cache_signature", ""),
+            content_hash=d.get("content_hash", ""),
             layer_cache_types=d.get("layer_cache_types"),
             layer_meta_states=(
                 [tuple(s) for s in d["layer_meta_states"]]
@@ -330,6 +334,24 @@ def _extract_tensor_bytes(arr) -> tuple[bytes, str, list[int]]:
     except TypeError:
         raw = bytes(arr) if hasattr(arr, "__bytes__") else b""
     return raw, dtype_str, shape
+
+
+def _content_signature(tensors_raw: dict[str, tuple[bytes, str, list[int]]]) -> str:
+    # #1040: cheap content discriminator for id-derived (block_id) block hashes.
+    # Samples the leading bytes of each tensor plus dtype/shape/size so a reused
+    # block_id holding different data yields a different signature and is not
+    # wrongly deduped. Sample-based to stay cheap on large KV blocks.
+    h = hashlib.sha256()
+    total = 0
+    for key in sorted(tensors_raw):
+        raw, dtype, shape = tensors_raw[key]
+        total += len(raw)
+        h.update(raw[:4096])
+        h.update(dtype.encode("ascii"))
+        h.update(repr(shape).encode("ascii"))
+    h.update(str(total).encode("ascii"))
+    h.update(str(len(tensors_raw)).encode("ascii"))
+    return h.hexdigest()[:32]
 
 
 # Composite nstate element support (DeepSeek-V4-Flash CacheList layers).
@@ -641,6 +663,7 @@ class _SSDCacheStats:
     hits: int = 0
     misses: int = 0
     saves: int = 0
+    saves_deduped: int = 0
     saves_persisted: int = 0
     loads: int = 0
     errors: int = 0
@@ -733,6 +756,7 @@ class PagedSSDCacheManager:
             "hits": 0,
             "misses": 0,
             "saves": 0,
+            "saves_deduped": 0,
             "saves_persisted": 0,
             "loads": 0,
             "errors": 0,
@@ -830,14 +854,19 @@ class PagedSSDCacheManager:
         model_name: str = "",
         layer_cache_types: list[str] | None = None,
         layer_meta_states: list[tuple[int, ...]] | None = None,
+        verify_content: bool = False,
         **kwargs,
     ) -> bool:
         if block_hash is None:
             return False
         with self._state_lock:
-            if self._index.contains(block_hash):
+            already = self._index.contains(block_hash)
+            if already and not verify_content:
+                # Content-derived hash: same hash == same content, so dedup
+                # cheaply without re-reading the block. A dedup save is a
+                # save that no-ops, not a read hit (#1040).
                 self._index.touch(block_hash)
-                self._stats["hits"] += 1
+                self._stats["saves_deduped"] += 1
                 return True
 
         if cache_data is None:
@@ -933,6 +962,21 @@ class PagedSSDCacheManager:
                 file_metadata[f"layer_{i}_state_count"] = str(len(state_items))
 
         estimated_file_size = sum(len(r) for r, _, _ in tensors_raw.values())
+        content_sig = _content_signature(tensors_raw)
+        if already and verify_content:
+            # Id-derived hash (store_block): a reused block_id can collide, so
+            # verify the stored content actually matches before deduping; a
+            # mismatch means new content and must overwrite (#1040).
+            with self._state_lock:
+                cur = self._index.get(block_hash)
+                if cur is not None and cur.content_hash == content_sig:
+                    self._index.touch(block_hash)
+                    self._stats["saves_deduped"] += 1
+                    return True
+            logger.debug(
+                "SSD save content mismatch, overwriting: block %s",
+                block_hash.hex()[:16],
+            )
         file_path = self._get_file_path(block_hash)
         block_metadata = PagedSSDBlockMetadata(
             block_hash=block_hash,
@@ -947,6 +991,7 @@ class PagedSSDCacheManager:
             or self._expected_block_size_tokens
             or token_count,
             cache_signature=sig,
+            content_hash=content_sig,
             layer_cache_types=layer_cache_types,
             layer_meta_states=layer_meta_states,
         )
@@ -1588,6 +1633,7 @@ class PagedSSDCacheManager:
             hits=self._stats["hits"],
             misses=self._stats["misses"],
             saves=self._stats["saves"],
+            saves_deduped=self._stats["saves_deduped"],
             saves_persisted=self._stats["saves_persisted"],
             loads=self._stats["loads"],
             errors=self._stats["errors"],
@@ -1662,6 +1708,7 @@ class PagedSSDCacheManager:
                 hits=self._stats["hits"],
                 misses=self._stats["misses"],
                 saves=self._stats["saves"],
+                saves_deduped=self._stats["saves_deduped"],
                 saves_persisted=self._stats["saves_persisted"],
                 loads=self._stats["loads"],
                 errors=self._stats["errors"],
@@ -2301,7 +2348,12 @@ class PagedSSDCacheManager:
         if not layers:
             return False
         block_hash = str(block_id).encode().ljust(20, b"_")[:20]
-        return self.save_block(block_hash=block_hash, cache_data=layers, token_count=0)
+        # #1040: block_id-derived hash is not content-derived, so a reused
+        # block_id holding different data would be wrongly deduped. Verify the
+        # content before trusting an existing entry.
+        return self.save_block(
+            block_hash=block_hash, cache_data=layers, token_count=0, verify_content=True
+        )
 
     def verify_and_repair_index(self) -> dict[str, int]:
         report = {"orphaned_files_removed": 0, "stale_entries_evicted": 0}
