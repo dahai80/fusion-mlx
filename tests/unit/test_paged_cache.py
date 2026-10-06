@@ -893,3 +893,26 @@ class TestPagedCacheManager:
 
         assert num_tokens == 0
         assert len(cached_blocks) == 0
+
+    def test_touch_free_block_reallocates(self):
+        """Normal path: a free block is removed from the queue and re-allocated."""
+        manager = PagedCacheManager(block_size=4, max_blocks=8, initial_blocks=8)
+        free = manager.free_block_queue.get_all_free_blocks()
+        assert free
+        block = free[0]
+        assert block.ref_count == 0
+        manager.touch([block])
+        assert block.ref_count == 1
+        assert block.block_id in manager.allocated_blocks
+
+    def test_touch_ghost_block_skipped(self):
+        # #1035: a block with ref_count==0 that is NOT linked into the free
+        # queue must not get its ref_count incremented. The old `except
+        # RuntimeError: pass` fell through to `ref_count += 1`, creating a
+        # ghost block (ref>0 but in no container, never freed).
+        manager = PagedCacheManager(block_size=4, max_blocks=8, initial_blocks=8)
+        orphan = CacheBlock(block_id=999)  # ref_count==0, not in any queue
+        assert orphan.ref_count == 0
+        manager.touch([orphan])
+        assert orphan.ref_count == 0  # not incremented -> no ghost
+        assert manager.stats.touch_ghost_skips == 1

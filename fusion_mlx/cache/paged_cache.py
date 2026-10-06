@@ -879,11 +879,21 @@ class PagedCacheManager(CacheManager):
                     # Block is in free queue, remove it
                     try:
                         self.free_block_queue.remove(block)
-                        self.stats.free_blocks -= 1
-                        self.stats.allocated_blocks += 1
-                        self.allocated_blocks[block.block_id] = block
                     except RuntimeError:
-                        pass  # Block not in queue
+                        # #1035: ref_count==0 but not actually linked into the
+                        # free queue. The old `pass` fell through to
+                        # `ref_count += 1` below, creating a ghost block
+                        # (ref>0 but in no container, never freed). Skip it and
+                        # count.
+                        self.stats.touch_ghost_skips += 1
+                        logger.debug(
+                            "paged touch: block %d not in free queue, skipping",
+                            block.block_id,
+                        )
+                        continue
+                    self.stats.free_blocks -= 1
+                    self.stats.allocated_blocks += 1
+                    self.allocated_blocks[block.block_id] = block
 
                 block.ref_count += 1
                 block.touch()
