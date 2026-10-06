@@ -1666,16 +1666,26 @@ class PagedCacheManager(CacheManager):
 
             # Also check allocated blocks with ref_count == 0 (not in free queue yet)
             if len(candidates) < count:
-                # Sort by last_access (LRU)
-                remaining = []
-                for block in self.allocated_blocks.values():
+                # #1039: O(1) dedup via block_id set. The old
+                # `block not in candidates` was an O(len(candidates)) field-wise
+                # `__eq__` scan per block, making this pass O(N*F) under the lock
+                # (F = free-queue length). The set keeps it O(N).
+                seen_ids = {b.block_id for b in candidates}
+                remaining = [
+                    block
+                    for block in self.allocated_blocks.values()
                     if (
                         not block.is_null
                         and block.ref_count == 0
-                        and block not in candidates
-                    ):
-                        remaining.append(block)
+                        and block.block_id not in seen_ids
+                    )
+                ]
 
+                # #1039 note: kept the C-Timsort `sort` rather than
+                # `heapq.nsmallest` top-K — benchmarked at N=100k, nsmallest is
+                # a pure-Python heap loop and 1.7-3.5x SLOWER than the C sort
+                # for K>=2% of N, so the sort is not the spike; the O(N*F)
+                # dedup above is.
                 remaining.sort(key=lambda b: b.last_access)
                 candidates.extend(remaining[: count - len(candidates)])
 

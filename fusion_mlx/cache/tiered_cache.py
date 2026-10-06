@@ -201,8 +201,14 @@ class TieredCacheManager(CacheManager):
             self._demotion_in_progress = False
 
     def _do_demotion(self) -> int:
+        # #1039: bound the demotion batch (top-K) instead of materializing
+        # every evictable block. With max_blocks=100k the old count=999999
+        # made each 2s-cooldown trigger scan+demote the whole table; a bounded
+        # batch keeps per-trigger work small and catches up over triggers.
+        max_blocks = getattr(self._hot, "max_blocks", 0)
+        count = min(999999, max(1024, max_blocks // 8)) if max_blocks else 999999
         evictable = (
-            self._hot.get_evictable_blocks(count=999999)
+            self._hot.get_evictable_blocks(count=count)
             if hasattr(self._hot, "get_evictable_blocks")
             else []
         )
