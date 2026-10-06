@@ -22,6 +22,24 @@ logger = logging.getLogger(__name__)
 _CACHE_FORMAT_VERSION = "3"
 _READABLE_CACHE_FORMAT_VERSIONS = frozenset({"2", "3"})
 _MAX_INLINE_UNLINKS_PER_SAVE = 32
+# #1037: single-hex-char shard subdirs created under the cache dir (see
+# __init__). The default cache dir is a shared global path, so the startup
+# repair must only touch .tmp files inside our own shard layout.
+_HEX_SHARD_DIRS = frozenset("0123456789abcdef")
+
+
+def _is_hex_blob_name(name: str) -> bool:
+    # #1037: our block files/tmp are named {block_hash.hex()} (even-length
+    # hex). Foreign files another process drops in the shared cache dir are
+    # not, so this distinguishes ours for the orphan-tmp cleanup.
+    if len(name) % 2 != 0:
+        return False
+    try:
+        bytes.fromhex(name)
+    except ValueError:
+        return False
+    return True
+
 
 try:
     import mlx.core as mx
@@ -2360,12 +2378,20 @@ class PagedSSDCacheManager:
         if self._cache_dir is None:
             return report
         for f in self._cache_dir.rglob("*.tmp"):
-            if f.is_file():
-                try:
-                    f.unlink()
-                    report["orphaned_files_removed"] += 1
-                except OSError:
-                    pass
+            if not f.is_file():
+                continue
+            # #1037: the default cache dir is a shared global path; only
+            # remove our own tmp files (in a 0-f shard dir with a hex stem),
+            # never foreign files another process left there.
+            if f.parent.name not in _HEX_SHARD_DIRS:
+                continue
+            if not _is_hex_blob_name(f.stem):
+                continue
+            try:
+                f.unlink()
+                report["orphaned_files_removed"] += 1
+            except OSError:
+                pass
         with self._state_lock:
             for block_hash in list(self._index.blocks.keys()):
                 meta = self._index.get(block_hash)

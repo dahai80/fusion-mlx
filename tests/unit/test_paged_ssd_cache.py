@@ -19,12 +19,14 @@ from unittest.mock import patch
 import pytest
 
 from fusion_mlx.cache.paged_ssd_cache import (
+    _HEX_SHARD_DIRS,
     PagedSSDBlockMetadata,
     PagedSSDCacheIndex,
     PagedSSDCacheManager,
     SharedHotCacheBudget,
     _cache_compat_signature,
     _extract_tensor_bytes,
+    _is_hex_blob_name,
     _restore_tensor_from_bytes,
     _write_safetensors_no_mx,
     parse_size,
@@ -629,6 +631,48 @@ class TestPagedSSDCacheManager:
         # Should return 0 when under limit
         freed = manager.enforce_size_limit()
         assert freed == 0
+
+
+class TestVerifyAndRepairIndex:
+    """#1037: startup repair must only remove our own .tmp files."""
+
+    @pytest.fixture
+    def ssd_cache(self, tmp_path):
+        return PagedSSDCacheManager(
+            cache_dir=tmp_path / "ssd_cache",
+            max_size_bytes=100 * 1024**2,
+        )
+
+    def test_is_hex_blob_name(self):
+        assert _is_hex_blob_name("deadbeef") is True
+        assert _is_hex_blob_name("ab") is True
+        assert _is_hex_blob_name("0123456789abcdef") is True
+        assert _is_hex_blob_name("abc") is False
+        assert _is_hex_blob_name("foreign") is False
+
+    def test_hex_shard_dirs(self):
+        assert "0" in _HEX_SHARD_DIRS
+        assert "f" in _HEX_SHARD_DIRS
+        assert "g" not in _HEX_SHARD_DIRS
+        assert "01" not in _HEX_SHARD_DIRS
+
+    def test_removes_own_tmp_keeps_foreign(self, ssd_cache):
+        cache_dir = ssd_cache._cache_dir
+        own = cache_dir / "a" / "deadbeef.tmp"
+        own.write_bytes(b"orphan")
+        foreign1 = cache_dir / "a" / "foreign.tmp"
+        foreign1.write_bytes(b"not ours")
+        foreign_dir = cache_dir / "notashard"
+        foreign_dir.mkdir()
+        foreign2 = foreign_dir / "deadbeef.tmp"
+        foreign2.write_bytes(b"not ours")
+
+        report = ssd_cache.verify_and_repair_index()
+
+        assert not own.exists()
+        assert foreign1.exists()
+        assert foreign2.exists()
+        assert report["orphaned_files_removed"] == 1
 
 
 class TestPagedSSDCacheManagerWithMLX:
