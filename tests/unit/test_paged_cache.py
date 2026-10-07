@@ -505,6 +505,24 @@ class TestPagedCacheManager:
         assert block.block_id in manager.allocated_blocks
         assert manager.free_blocks == initial_free - 1
 
+    def test_usage_uses_real_pool_size(self):
+        # #1033: usage denominator must be the real (lazily-grown) pool size,
+        # not max_blocks. With initial_blocks=256, max_blocks=1000 the pool
+        # starts at 256, so usage must reflect that — the old max_blocks
+        # denominator overstated it ~4x until the pool fully grew.
+        manager = PagedCacheManager(
+            block_size=4, max_blocks=1000, model_name="t", initial_blocks=256
+        )
+        # Pool is 256 blocks, 1 null, 255 usable, all free -> usage 0.0.
+        # (Before the fix this was 1 - 255/999 = 0.745.)
+        assert manager.usage == pytest.approx(0.0)
+        # Allocate one block -> 1 of 255 usable in use.
+        b = manager.allocate_block()
+        assert b is not None
+        assert manager.usage == pytest.approx(1 / 255)
+        manager.free_block(b.block_id)
+        assert manager.usage == pytest.approx(0.0)
+
     def test_get_new_blocks(self):
         """Test allocating multiple blocks."""
         manager = PagedCacheManager(block_size=64, max_blocks=100, initial_blocks=100)

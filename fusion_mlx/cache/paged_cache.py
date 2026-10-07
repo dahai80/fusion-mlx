@@ -1538,7 +1538,12 @@ class PagedCacheManager(CacheManager):
     @property
     def usage(self) -> float:
         """Cache usage ratio (0.0 to 1.0)."""
-        total = self.max_blocks - 1  # Exclude null block
+        # #1033: denominator is the real (lazily-grown) pool size, not
+        # max_blocks. The pool starts at initial_blocks and grows on demand,
+        # so max_blocks overstates the denominator until fully grown, skewing
+        # the ratio. _current_allocated_count tracks the blocks actually
+        # created (see _grow_blocks).
+        total = self._current_allocated_count - 1  # Exclude null block
         if total == 0:
             return 0.0
         return 1.0 - (self.free_blocks / total)
