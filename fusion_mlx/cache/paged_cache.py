@@ -828,9 +828,13 @@ class PagedCacheManager(CacheManager):
 
             return False
 
-    def free_blocks(self, blocks: Iterable[CacheBlock]) -> None:
+    def free_blocks_batch(self, blocks: Iterable[CacheBlock]) -> None:
         """
         Free multiple blocks (vLLM style).
+
+        Named `free_blocks_batch` (not `free_blocks`) to avoid colliding with
+        the `free_blocks` count property below, which would shadow this method
+        and make it dead code.
 
         Blocks with ref_count=0 are added to the free queue.
 
@@ -849,11 +853,20 @@ class PagedCacheManager(CacheManager):
 
                 if block.ref_count <= 0:
                     # Remove from hash cache
+                    freed_parent_hash = None
                     if block.block_hash is not None:
+                        freed_parent_hash = block.block_hash
                         self.cached_block_hash_to_block.pop(
                             block.block_hash, block.block_id
                         )
                         self._notify_block_content_invalidated(block.block_id)
+
+                    # P3-1 (#1034): cascade-clear orphaned descendant hash
+                    # entries, matching the single free_block(). Without this
+                    # the batch path left orphans in the hash index until LRU
+                    # / memory pressure reclaimed them.
+                    if freed_parent_hash is not None:
+                        self._cascade_evict_orphans_locked(freed_parent_hash)
 
                     del self.allocated_blocks[block.block_id]
                     to_free.append(block)

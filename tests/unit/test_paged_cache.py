@@ -916,3 +916,34 @@ class TestPagedCacheManager:
         manager.touch([orphan])
         assert orphan.ref_count == 0  # not incremented -> no ghost
         assert manager.stats.touch_ghost_skips == 1
+
+    def test_free_blocks_cascades_orphans(self):
+        # #1034: batch free_blocks_batch() must cascade-clear orphaned
+        # descendant hash entries, matching the single free_block(). Without
+        # the cascade the stale child entry lingered in the hash index until
+        # LRU / memory pressure reclaimed it. (The method was renamed from
+        # free_blocks to free_blocks_batch to avoid shadowing by the
+        # free_blocks count property, which had made it dead code.)
+        manager = PagedCacheManager(
+            block_size=4, max_blocks=16, model_name="test-model", initial_blocks=16
+        )
+
+        parent = manager.allocate_block()
+        parent_hash = compute_block_hash(None, [1, 2, 3, 4], model_name="test-model")
+        parent.block_hash = parent_hash
+        manager.cached_block_hash_to_block.insert(parent_hash, parent)
+
+        child = CacheBlock(block_id=999)  # orphan: ref-0, stale hash entry
+        child_hash = compute_block_hash(
+            parent_hash, [5, 6, 7, 8], model_name="test-model"
+        )
+        child.block_hash = child_hash
+        child.parent_hash = parent_hash
+        child.ref_count = 0
+        manager.cached_block_hash_to_block.insert(child_hash, child)
+
+        manager.free_blocks_batch([parent])
+
+        # The orphan child's stale hash entry is cascade-cleared.
+        assert manager.cached_block_hash_to_block.get_block(child_hash) is None
+        assert child.block_hash is None
