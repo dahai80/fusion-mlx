@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 _CACHE_FORMAT_VERSION = "3"
 _READABLE_CACHE_FORMAT_VERSIONS = frozenset({"2", "3"})
 _MAX_INLINE_UNLINKS_PER_SAVE = 32
+# #1030: max batches (lock-hold / unlink cycles) per enforce_size_limit call.
+# Batching releases _state_lock between batches, so a flood of concurrent
+# saves could keep the cache over limit and the loop spinning; this caps the
+# total work so the call always returns (the next call resumes enforcement).
+_MAX_ENFORCE_SIZE_LIMIT_ITERATIONS = 1000
 # #1037: single-hex-char shard subdirs created under the cache dir (see
 # __init__). The default cache dir is a shared global path, so the startup
 # repair must only touch .tmp files inside our own shard layout.
@@ -2204,36 +2209,78 @@ class PagedSSDCacheManager:
     def enforce_size_limit(self) -> int:
         effective = self._get_effective_max_size()
         freed = 0
-        # E-37 (#811): collect victim file paths under the lock, unlink
-        # AFTER release — matching _enforce_size_limit_for_new_block. The
-        # index entries are removed under the lock; unlink is best-effort.
-        victims: list[Path] = []
-        with self._state_lock:
-            while self._tracked_ssd_size() > effective:
-                if self._incompatible_index.count > 0:
-                    lru = self._incompatible_index.get_lru_entries(1)
-                    if lru:
-                        victim = lru[0]
-                        freed += victim.file_size
+        # E-37 (#811) + #1030: batch the victim collection and release
+        # _state_lock between batches. The old single with-block held the lock
+        # across the whole eviction loop — one O(n log n) get_lru_entries(1)
+        # sort per victim, uncapped — so a large over-limit cache stalled every
+        # SSD op. Now each batch evicts at most _MAX_INLINE_UNLINKS_PER_SAVE
+        # victims (incompatible first, then compatible — aligning with the
+        # per-save cap in _enforce_size_limit_for_new_block), releases the
+        # lock, unlinks the batch, and re-checks the limit. Full enforcement
+        # is preserved; only the lock hold time is bounded. The iteration cap
+        # guards against a livelock if concurrent saves keep the cache over
+        # the limit between batches.
+        iterations = 0
+        while True:
+            if iterations >= _MAX_ENFORCE_SIZE_LIMIT_ITERATIONS:
+                logger.warning(
+                    "SSD enforce_size_limit hit iteration cap %d; cache may "
+                    "still be over limit under sustained pressure",
+                    _MAX_ENFORCE_SIZE_LIMIT_ITERATIONS,
+                )
+                break
+            iterations += 1
+            victims: list[Path] = []
+            batch_freed = 0
+            unlinks_done = 0
+            with self._state_lock:
+                # Prefer incompatible (other-model) blocks — safe to drop
+                # before the current model's blocks.
+                if (
+                    self._tracked_ssd_size() > effective
+                    and self._incompatible_index.count > 0
+                ):
+                    for victim in self._incompatible_index.get_lru_entries(
+                        _MAX_INLINE_UNLINKS_PER_SAVE
+                    ):
+                        if (
+                            self._tracked_ssd_size() <= effective
+                            or unlinks_done >= _MAX_INLINE_UNLINKS_PER_SAVE
+                        ):
+                            break
+                        batch_freed += victim.file_size
                         victims.append(self._get_file_path(victim.block_hash))
                         self._incompatible_index.remove(victim.block_hash)
-                        continue
-                if self._index.count == 0:
-                    break
-                lru = self._index.get_lru_entries(1)
-                if not lru:
-                    break
-                victim = lru[0]
-                freed += victim.file_size
-                victims.append(self._get_file_path(victim.block_hash))
-                self._index.remove(victim.block_hash)
-
-        for file_path in victims:
-            try:
-                if file_path.exists():
-                    file_path.unlink()
-            except OSError as e:
-                logger.debug("Enforce unlink failed: %s", e)
+                        unlinks_done += 1
+                # Then compatible (current-model) blocks if still over.
+                if (
+                    self._tracked_ssd_size() > effective
+                    and unlinks_done < _MAX_INLINE_UNLINKS_PER_SAVE
+                    and self._index.count > 0
+                ):
+                    remaining = _MAX_INLINE_UNLINKS_PER_SAVE - unlinks_done
+                    for victim in self._index.get_lru_entries(remaining):
+                        if (
+                            self._tracked_ssd_size() <= effective
+                            or unlinks_done >= _MAX_INLINE_UNLINKS_PER_SAVE
+                        ):
+                            break
+                        batch_freed += victim.file_size
+                        victims.append(self._get_file_path(victim.block_hash))
+                        self._index.remove(victim.block_hash)
+                        unlinks_done += 1
+            if not victims:
+                break
+            for file_path in victims:
+                try:
+                    # #681: _get_file_path returns None in pure-memory mode.
+                    if file_path is not None and file_path.exists():
+                        file_path.unlink()
+                except OSError as e:
+                    logger.debug("Enforce unlink failed: %s", e)
+            freed += batch_freed
+            if self._tracked_ssd_size() <= effective:
+                break
         return freed
 
     def preload_matched_blocks(self, block_hashes: list[bytes]) -> int:

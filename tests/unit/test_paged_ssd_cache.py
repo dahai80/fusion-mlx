@@ -632,6 +632,62 @@ class TestPagedSSDCacheManager:
         freed = manager.enforce_size_limit()
         assert freed == 0
 
+    def test_enforce_size_limit_batches_until_under_limit(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """#1030: enforce_size_limit evicts in batches (bounded lock holds)
+        but still fully enforces the limit — it must drain the index across
+        multiple batches until the tracked size is under the effective max,
+        even when more than _MAX_INLINE_UNLINKS_PER_SAVE entries need
+        eviction. The old uncapped single-lock loop held _state_lock for the
+        whole eviction, stalling every SSD op."""
+        from fusion_mlx.cache import paged_ssd_cache as ssd_cache_module
+
+        # Small batch size to force multiple batches.
+        monkeypatch.setattr(ssd_cache_module, "_MAX_INLINE_UNLINKS_PER_SAVE", 2)
+
+        mgr = PagedSSDCacheManager(
+            cache_dir=tmp_path / "enforce_batches",
+            max_size_bytes=1024**2,
+            hot_cache_only=True,
+        )
+        try:
+            # 6 entries x 10 bytes = 60 bytes total.
+            for i in range(6):
+                block_hash = f"enf_{i}".encode()
+                mgr._index.add(
+                    PagedSSDBlockMetadata(
+                        block_hash=block_hash,
+                        file_size=10,
+                        token_count=1,
+                        created_at=float(i),
+                        last_access=float(i),
+                        num_layers=1,
+                    )
+                )
+
+            # Effective max 20 bytes → must evict down to 2 entries (20
+            # bytes). 4 evictions with a batch cap of 2 = 2 batches, proving
+            # the multi-batch path runs and fully enforces the limit.
+            mgr._get_effective_max_size = lambda: 20  # type: ignore[method-assign]
+            freed = mgr.enforce_size_limit()
+
+            assert mgr._tracked_ssd_size() <= 20, (
+                f"enforce_size_limit did not fully enforce the limit: "
+                f"{mgr._tracked_ssd_size()} > 20"
+            )
+            # The 4 LRU entries (enf_0..enf_3) evicted; the 2 most recent
+            # (enf_4, enf_5) remain.
+            remaining = {
+                m.block_hash for m in mgr._index.get_lru_entries(mgr._index.count)
+            }
+            assert remaining == {b"enf_4", b"enf_5"}
+            # 4 entries x 10 bytes freed (> the batch cap of 2, so multiple
+            # batches ran).
+            assert freed == 40
+        finally:
+            mgr.close()
+
 
 class TestVerifyAndRepairIndex:
     """#1037: startup repair must only remove our own .tmp files."""
