@@ -565,7 +565,9 @@ class TestBoundarySnapshotSSDStore:
             # counter=2, then times out (writer still pinned on A).
             self.store.cleanup_request("req-drain")
             with self.store._cancelled_lock:
-                assert self.store._cancelled_requests.get("req-drain") == 2, (
+                entry = self.store._cancelled_requests.get("req-drain")
+                # #1032: value is now (remaining_count, created_monotonic).
+                assert entry is not None and entry[0] == 2, (
                     "cleanup_request did not record both pending items "
                     "before timing out"
                 )
@@ -741,6 +743,39 @@ class TestBoundarySnapshotSSDStore:
         # both succeed.
         with self.store._cancelled_lock:
             assert len(self.store._cancelled_requests) >= 0
+
+    def test_cancelled_entry_ttl_expiry(self):
+        """#1032: a cancelled-request entry whose writer died/stuck must
+        auto-expire after _CANCELLED_TTL_S instead of lingering for the
+        process lifetime and discarding every later save for the rid.
+
+        A fresh entry (just created) is still cancelled; a stale entry
+        (older than the TTL) expires on read and returns False.
+        """
+        import time
+        from unittest.mock import patch
+
+        with patch.object(type(self.store), "_CANCELLED_TTL_S", 0.1):
+            # Fresh entry — within TTL — still cancelled.
+            with self.store._cancelled_lock:
+                self.store._cancelled_requests["req-fresh"] = (
+                    1,
+                    time.monotonic(),
+                )
+            assert self.store._is_cancelled("req-fresh") is True
+            assert "req-fresh" in self.store._cancelled_requests
+
+            # Stale entry — older than TTL — expires on read.
+            with self.store._cancelled_lock:
+                self.store._cancelled_requests["req-stale"] = (
+                    1,
+                    time.monotonic() - 10.0,
+                )
+            assert self.store._is_cancelled("req-stale") is False
+            assert "req-stale" not in self.store._cancelled_requests
+
+            # Unknown rid is never cancelled.
+            assert self.store._is_cancelled("req-unknown") is False
 
     def test_concurrent_save_cleanup_request_cleanup_all_no_orphans(self):
         """Stress: concurrent save() + cleanup_request() + cleanup_all().
