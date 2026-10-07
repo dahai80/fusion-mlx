@@ -1565,20 +1565,23 @@ class TestAsyncWriteAndTimeoutLoad:
         # Remove from hot cache buffer so load goes to disk
         ssd_cache._hot_cache_remove(block_hash)
 
-        # Mock both load paths to simulate a corrupted file.
-        # load_block tries _load_safetensors_raw first, then
-        # _load_safetensors_file; both must fail so the outer
-        # except triggers _recover_from_block_error.
+        # Simulate a corrupted file: the raw reader returns None.
+        # #1031: load_block must NOT fall back to _load_safetensors_file
+        # (mx.load) on the raw-None path — that is a second full read of the
+        # same bad file, the IO storm P2-24 set out to avoid. Spy on it to
+        # assert the fallback no longer runs; the raw-None branch recovers
+        # the block and returns None directly.
+        from unittest.mock import MagicMock
+
+        file_spy = MagicMock()
         with (
             patch.object(ssd_cache, "_load_safetensors_raw", return_value=None),
-            patch.object(
-                ssd_cache,
-                "_load_safetensors_file",
-                side_effect=OSError("corrupted file"),
-            ),
+            patch.object(ssd_cache, "_load_safetensors_file", file_spy),
         ):
             loaded = ssd_cache.load_block(block_hash)
             assert loaded is None  # Should return None, not raise
+        # #1031: the mx.load fallback must not run on the raw-None path.
+        file_spy.assert_not_called()
 
         # Block should be removed from index (corrupted entry cleanup)
         assert not ssd_cache.has_block(block_hash)

@@ -1169,14 +1169,21 @@ class PagedSSDCacheManager:
                 self._stats["errors"] += 1
                 self._stats["misses"] += 1
                 return None
-            # raw_result is None: file missing or header unreadable.
-            # Fall through to _load_safetensors_file as last resort.
-            loaded = self._load_safetensors_file(str(file_path))
-            if loaded is not None:
-                self._stats["loads"] += 1
-                self._stats["hits"] += 1
-                self._index.touch(block_hash)
-                return loaded
+            # raw_result is None: file missing, header unreadable, or
+            # truncated (EF-3). #1031: do NOT fall back to
+            # _load_safetensors_file (mx.load) — that is a second full read
+            # of the same bad file, the IO storm P2-24 set out to avoid, and
+            # on a truncated file mx.load can zero-pad the missing bytes and
+            # return a corrupt block that defeats the EF-3 reject. Fail
+            # visibly and drop the block (matches the reconstruct-failed and
+            # exception branches above); removing the index entry also stops
+            # future loads from re-reading the corrupt file.
+            logger.warning(
+                "SSD block %s raw read failed (missing/corrupt), dropping",
+                block_hash.hex()[:16],
+            )
+            self._recover_from_block_error(block_hash)
+            self._stats["errors"] += 1
             self._stats["misses"] += 1
             return None
         except Exception as e:
