@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed — video routes surface unsupported-param warnings (#1023)
+- **#1023**: Wan2 silently ignored request `fps` (controls container fps
+  internally) and skyreels silently ignored `control_type` (control conditioning
+  is Wan2-only) — no 422, no warning, violating fail-visible. Fix:
+  `VideoGenerateResponse` gained a `warnings` field; when the backend ignores a
+  requested param, a WARNING is logged and the warning is surfaced in the
+  response (empty list = all params honored).
+
 ### Fixed — openclaw SSE disconnect logs + re-raises; active flag reset (#1022)
 - **#1022**: `api/openclaw_routes.py` SSE heartbeat generator had
   `except asyncio.CancelledError: pass` — swallowed client disconnects silently
