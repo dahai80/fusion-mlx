@@ -685,7 +685,9 @@ async def generate_video(
             if request.audio_vae_weights is not None:
                 gen_kwargs["audio_vae_weights"] = request.audio_vae_weights
 
+            _gen_start = time.perf_counter()
             video_bytes_list = await engine.generate(**gen_kwargs)
+            _gen_elapsed = time.perf_counter() - _gen_start
             outputs = []
             for vb in video_bytes_list:
                 actual_dur = None
@@ -729,15 +731,23 @@ async def generate_video(
                     SURFACE_API,
                 )
 
+                # #1042: fill real telemetry values instead of hardcoded zeros.
+                # prompt_tokens: rough estimate (4 chars ≈ 1 token) — video models
+                # use text encoders (T5/CLIP) whose tokenizer isn't accessible here.
+                # ttft_ms: total generation time (non-streaming, one-shot).
+                # tps: videos per second (completion_tokens / elapsed_seconds).
+                _est_prompt_tokens = max(1, len(request.prompt) // 4)
+                _ttft_ms = _gen_elapsed * 1000.0
+                _tps = len(video_bytes_list) / _gen_elapsed if _gen_elapsed > 0 else 0.0
                 emit.request(
                     endpoint="/v1/videos/generate",
                     model_alias=request.model,
                     stream=False,
                     tool_call_used=False,
-                    prompt_tokens=0,
+                    prompt_tokens=_est_prompt_tokens,
                     completion_tokens=len(video_bytes_list),
-                    ttft_ms=0.0,
-                    tps=0.0,
+                    ttft_ms=_ttft_ms,
+                    tps=_tps,
                     status=200,
                 )
                 emit.activation(
