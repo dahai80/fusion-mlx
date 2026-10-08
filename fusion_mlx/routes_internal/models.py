@@ -147,6 +147,7 @@ def _entry_payload(
     capabilities=None,
     loaded=True,
     state="loaded",
+    default_for_chat=None,
 ):
     # #577: every entry carries a ``loaded`` bool + ``state`` ("loaded" |
     # "registered") so consumers can distinguish resident-in-memory models
@@ -164,12 +165,26 @@ def _entry_payload(
     }
     if capabilities is not None:
         payload["capabilities"] = capabilities
+    # #1087: mark the resolved default chat model on the entry so clients
+    # can see which model auto-selection will pick. None (field omitted)
+    # when no default is decidable or this entry is not the default.
+    if default_for_chat:
+        payload["default_for_chat"] = True
     return payload
 
 
 @router.get("/v1/models")
 async def list_models(_auth: bool = Depends(verify_api_key)):
     cfg = get_config()
+    # #1087: resolved default chat model — mark the matching entry so
+    # clients can see which model auto-selection will pick.
+    default_model: str | None = None
+    try:
+        from .._cli_base import resolve_default_chat_model
+
+        default_model = resolve_default_chat_model()
+    except Exception:
+        default_model = None
     data = []
     if cfg.model_registry is not None:
         for entry in cfg.model_registry:
@@ -178,7 +193,14 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
             profile = resolve_profile(entry.model_name)
             caps = _capabilities_for(entry.model_name, profile)
             data.append(
-                _entry_payload(entry.model_name, tool, reasoning, modality, caps)
+                _entry_payload(
+                    entry.model_name,
+                    tool,
+                    reasoning,
+                    modality,
+                    caps,
+                    default_for_chat=(entry.model_name == default_model),
+                )
             )
     elif cfg.model_name:
         profile = resolve_profile(cfg.model_alias) if cfg.model_alias else None
@@ -189,14 +211,30 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
         )
         modality = _resolve_modality(cfg.model_name)
         caps = _capabilities_for(cfg.model_name, profile)
-        data.append(_entry_payload(cfg.model_name, tool, reasoning, modality, caps))
+        data.append(
+            _entry_payload(
+                cfg.model_name,
+                tool,
+                reasoning,
+                modality,
+                caps,
+                default_for_chat=(cfg.model_name == default_model),
+            )
+        )
         if cfg.model_alias:
             tool, reasoning = effective_parsers_for(
                 cfg.model_alias, profile_tool, profile_reasoning
             )
             alias_modality = _resolve_modality(cfg.model_alias)
             data.append(
-                _entry_payload(cfg.model_alias, tool, reasoning, alias_modality, caps)
+                _entry_payload(
+                    cfg.model_alias,
+                    tool,
+                    reasoning,
+                    alias_modality,
+                    caps,
+                    default_for_chat=(cfg.model_alias == default_model),
+                )
             )
     # H-13: surface the boot-locked embedding model so discovery clients
     # (langchain / llamaindex / openai-python) find an
@@ -248,6 +286,7 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
                         caps,
                         loaded=is_loaded,
                         state="loaded" if is_loaded else "registered",
+                        default_for_chat=(model_id == default_model),
                     )
                 )
                 listed_ids.add(model_id)

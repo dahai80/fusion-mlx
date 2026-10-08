@@ -751,6 +751,7 @@ class ModelInfo(BaseModel):
     owned_by: str = "fusion-mlx"
     modality: str = "text"
     capabilities: dict | None = None
+    default_for_chat: bool | None = None
 
 
 class ModelsResponse(BaseModel):

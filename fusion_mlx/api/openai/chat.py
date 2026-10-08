@@ -79,14 +79,43 @@ async def _run_chat(
     engine = await _resolve_engine(model_name, adapter_path=adapter_path)
     if engine is None:
         await _release()
-        raise HTTPException(404, f"Model {model_name} not available")
+        # #1087: echo the resolved model id in the error so clients can tell
+        # "my request was fine but the resolved default model is wrong" from
+        # "my request was malformed". request.model is what the client sent;
+        # model_name is what it resolved to (may differ for "default"/alias).
+        raise HTTPException(
+            404,
+            detail={
+                "error": {
+                    "message": f"Model {model_name} not available",
+                    "type": "model_not_found",
+                    "param": "model",
+                    "code": "model_not_available",
+                    "requested_model": request.model,
+                    "resolved_model": model_name,
+                }
+            },
+        )
 
     # #205 Guard: reject engines without chat capability (e.g. ImageGenEngine)
     if not _skip_cap_check:
         try:
             check_chat_capability(engine, "chat", model_name)
-        except HTTPException:
+        except HTTPException as exc:
             await _release()
+            # #1087: enrich the 400 with resolved_model so a client whose
+            # "auto" traffic landed on a non-chat model (e.g. a 3D generator
+            # post-#1086) sees exactly which model was chosen.
+            if isinstance(exc.detail, str):
+                exc.detail = {
+                    "error": {
+                        "message": exc.detail,
+                        "type": "model_capability_mismatch",
+                        "param": "model",
+                        "requested_model": request.model,
+                        "resolved_model": model_name,
+                    }
+                }
             raise
 
     # Reject multimodal content on text-only models

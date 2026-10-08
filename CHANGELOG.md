@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added — expose default chat model + resolved_model in errors (#1087)
+- **#1087**: `/v1/models` now marks the resolved default chat model with
+  `"default_for_chat": true` (omitted on non-default entries), so a client
+  can see which model `model="default"` (or no explicit model) will resolve
+  to BEFORE sending a chat request. The default is resolved via the same
+  `resolve_model("default")` chain (settings.json `default_model` →
+  single-cached-text-model auto-detect). `/v1/chat/completions` 404
+  (model not available) and 400 (capability mismatch, e.g. a 3D model
+  post-#1086) error bodies now include `resolved_model` +
+  `requested_model` so a client can distinguish "my request was fine but
+  the resolved default is wrong" from "my request was malformed". A new
+  `resolve_default_chat_model()` helper returns the resolved id or None
+  (never raises) so the listing stays 200 even when no default is set.
+  Streaming path (`/v1/chat/completions` stream=true) enriched identically.
+
 ## [0.10.7] — 2026-10-09
 
 Patch release collecting 9 concurrency / error-handling / capability-metadata
