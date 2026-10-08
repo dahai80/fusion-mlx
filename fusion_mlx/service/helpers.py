@@ -1598,6 +1598,11 @@ def enforce_context_length(
     max_tokens: int | None = None,
 ) -> None:
     max_context = get_model_max_context(engine)
+    if max_context <= 0:
+        # Cannot determine the model's real context limit (config not yet
+        # loaded / unavailable) — skip rather than reject every request.
+        # The prefill memory guard + mid-prefill chunk guard still backstop.
+        return
     completion = int(max_tokens) if max_tokens else 0
     requested_total = int(prompt_tokens) + max(0, completion)
     if requested_total <= max_context:

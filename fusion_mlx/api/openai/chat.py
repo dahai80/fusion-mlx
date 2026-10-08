@@ -141,6 +141,27 @@ async def _run_chat(
                 f"Reduce conversation length or use /compact."
             )
 
+    # #998: hard context-length preflight against the model's REAL
+    # max_position_embeddings. The 85% heuristic above only fires when
+    # the server config sets max_context_window — unset in standalone
+    # deploys, so over-context prompts reached prefill, hung (~168s on a
+    # 27B model), then 500'd with an empty body. enforce_context_length
+    # uses get_model_max_context (model.args.max_position_embeddings),
+    # not server config, and was dead code (defined, never wired). It
+    # raises a clean 400 context_length_exceeded BEFORE the engine call.
+    # Lease released on reject (the 85% ModelTooLargeError above does
+    # not release — #1005).
+    if prompt_token_estimate > 0:
+        try:
+            from ...service.helpers import enforce_context_length
+
+            enforce_context_length(
+                engine, prompt_token_estimate, max_tokens=sampling.max_tokens
+            )
+        except HTTPException:
+            await _release()
+            raise
+
     sampling.max_tokens = cap_max_tokens_to_context(
         sampling.max_tokens, model_name, prompt_token_estimate=prompt_token_estimate
     )
