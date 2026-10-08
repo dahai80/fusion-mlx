@@ -5,20 +5,24 @@ from __future__ import annotations
 
 import pytest
 
-from fusion_mlx.bench import run_benchmark, tier_runner
+from fusion_mlx.bench import BenchmarkRunnerUnavailable, run_benchmark, tier_runner
 
 
 class TestRunBenchmark:
-    def test_returns_tokens_per_second_zero(self):
-        result = run_benchmark("test-model")
-        assert result == {"tokens_per_second": 0}
+    # #1012: run_benchmark was returning {"tokens_per_second": 0} fake data.
+    # Now raises BenchmarkRunnerUnavailable (fail-visible, matches tier_runner).
 
-    def test_ignores_kwargs(self):
-        result = run_benchmark("x", batch=4, warmup=2)
-        assert result == {"tokens_per_second": 0}
+    def test_raises_unavailable(self):
+        with pytest.raises(BenchmarkRunnerUnavailable, match="no runner"):
+            run_benchmark("test-model")
 
-    def test_empty_model_name(self):
-        assert run_benchmark("") == {"tokens_per_second": 0}
+    def test_raises_with_kwargs(self):
+        with pytest.raises(BenchmarkRunnerUnavailable):
+            run_benchmark("x", batch=4, warmup=2)
+
+    def test_raises_empty_model_name(self):
+        with pytest.raises(BenchmarkRunnerUnavailable):
+            run_benchmark("")
 
 
 class TestRunTier:
