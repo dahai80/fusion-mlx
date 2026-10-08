@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed — telemetry flush failure permanently drops batch (#1069)
+- **#1069**: `_drain_once` cleared the queue before the POST
+  (`batch = list(self._events); self._events.clear()`), so a flush failure
+  permanently lost the whole batch — no re-enqueue, no retry. An offline
+  user's session data was silently lost, and `events_dropped` only counted
+  maxlen overflow, not flush losses. Fix: on flush failure the batch is
+  re-enqueued for the next flush, capped to never evict newer events
+  (enqueued during the POST) to make room for old retry events — the
+  surplus is dropped and counted in a new `flush_dropped` counter (exposed
+  in `snapshot()`). A flusher exception is likewise treated as a failure +
+  re-enqueued.
+
 ### Fixed — ClusterHealthMonitor.stop swallowed all exceptions (#1067)
 - **#1067**: `ClusterHealthMonitor.stop` used
   `except (asyncio.CancelledError, Exception): pass` — swallowed every

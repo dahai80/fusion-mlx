@@ -30,11 +30,14 @@ event loop. A plain daemon thread is the lowest common denominator.
 from __future__ import annotations
 
 import atexit
+import logging
 import threading
 from collections import deque
 from typing import Any
 
 from fusion_mlx.telemetry.transport import post_batch
+
+logger = logging.getLogger(__name__)
 
 MAX_QUEUE_LEN = 100
 FLUSH_INTERVAL_S = 60.0
@@ -91,6 +94,11 @@ class TelemetryQueue:
         self.events_dropped = 0
         self.flushes_ok = 0
         self.flushes_failed = 0
+        # #1069: events permanently lost when a failed flush's batch could
+        # not be fully re-enqueued (queue full of newer events). Distinct
+        # from events_dropped (maxlen overflow on enqueue) so an offline
+        # session's data loss is observable, not silent.
+        self.flush_dropped = 0
 
     # ----------------------------------------------------------------- API
 
@@ -199,6 +207,7 @@ class TelemetryQueue:
                 "dropped_total": self.events_dropped,
                 "flushes_ok": self.flushes_ok,
                 "flushes_failed": self.flushes_failed,
+                "flush_dropped": self.flush_dropped,
             }
 
     # --------------------------------------------------------------- internals
@@ -242,3 +251,31 @@ class TelemetryQueue:
                 self.flushes_ok += 1
             else:
                 self.flushes_failed += 1
+                # #1069: re-enqueue the failed batch so the next flush retries
+                # it instead of permanently losing an offline session's data.
+                # Capped: never evict newer events (enqueued during the POST)
+                # to make room for old retry events — drop the surplus from
+                # the batch's tail and count it as flush_dropped. Without this
+                # a stuck collector would avalanche: every 60 s the same
+                # growing batch re-failed, starving fresh events.
+                capacity = self._events.maxlen - len(self._events)
+                requeue = batch[:capacity] if capacity > 0 else []
+                dropped = len(batch) - len(requeue)
+                if requeue:
+                    # extendleft(reversed(...)) preserves order: batch[0]
+                    # ends up at the far left (oldest), ahead of newer events.
+                    self._events.extendleft(reversed(requeue))
+                if dropped > 0:
+                    self.flush_dropped += dropped
+                    logger.warning(
+                        "telemetry: flush failed — re-enqueued %d/%d events, "
+                        "dropped %d (queue full of newer events)",
+                        len(requeue),
+                        len(batch),
+                        dropped,
+                    )
+                else:
+                    logger.info(
+                        "telemetry: flush failed — re-enqueued %d event(s) for retry",
+                        len(requeue),
+                    )

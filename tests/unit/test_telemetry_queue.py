@@ -166,10 +166,16 @@ def test_flusher_exception_increments_failed_not_crash():
         f"(flushes_failed={snap_after['flushes_failed']}); "
         "either the daemon never restarted or the second batch was dropped"
     )
-    assert snap_after["pending"] == 0, (
-        f"second lifecycle left {snap_after['pending']} event(s) stuck "
-        "in the queue -- the drain on shutdown is broken"
+    # #1069: a failed flush now re-enqueues the batch (previously it was
+    # silently dropped). With a flusher that always raises, the events stay
+    # re-enqueued — pending > 0 is the expected behavior, not a broken drain.
+    assert snap_after["pending"] >= 1, (
+        f"second lifecycle left {snap_after['pending']} pending — a failed "
+        "flush should have re-enqueued the batch for retry"
     )
+    assert (
+        snap_after["flush_dropped"] == 0
+    ), "queue had capacity — no events should have been dropped on re-enqueue"
 
 
 def test_shutdown_called_twice_does_not_double_budget():
@@ -282,6 +288,7 @@ def test_snapshot_shape():
         "dropped_total",
         "flushes_ok",
         "flushes_failed",
+        "flush_dropped",
     }
 
 
