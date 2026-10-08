@@ -214,6 +214,54 @@ class TestBlockAwarePrefixCache:
         # P1-3: the paged block table is dropped so its refcounts are released.
         assert "req-001" not in paged_cache.request_tables
 
+    def test_no_free_variant_does_not_double_decrement(self, prefix_cache, paged_cache):
+        """#1007: release_for_eviction already decrements block refs. The
+        abort/finish/fail_all paths must use clear_request_entry_no_free
+        (detach only); clear_request_entry would call delete_block_table
+        -> free_block and decrement again (double-free). Exclusive blocks
+        go to ref -1; shared blocks hit 0 early and get recycled under a
+        live reader."""
+        table = paged_cache.create_block_table("req-df")
+        block = paged_cache.allocate_block()
+        table.block_ids.append(block.block_id)
+        paged_cache.increment_ref(block.block_id)  # fetch-style ref
+        prefix_cache._request_tables["req-df"] = BlockCacheEntry(
+            block_table=table,
+            last_access=time.time(),
+        )
+        ref_before = block.ref_count
+
+        paged_cache.release_for_eviction(table.block_ids)
+        prefix_cache.clear_request_entry_no_free("req-df")
+
+        assert "req-df" not in prefix_cache._request_tables
+        # Exactly one decrement (release_for_eviction); no_free did not
+        # touch the block table's per-block refs again.
+        assert block.ref_count == ref_before - 1
+        assert block.ref_count >= 0, "double-free drove ref below zero"
+
+    def test_clear_request_entry_would_double_free(self, prefix_cache, paged_cache):
+        """#1007 (negative evidence): the OLD clear_request_entry, when used
+        after release_for_eviction, drives the exclusive block ref to -1.
+        This is the bug the abort/finish/fail_all fixes avoid."""
+        table = paged_cache.create_block_table("req-old")
+        block = paged_cache.allocate_block()
+        table.block_ids.append(block.block_id)
+        paged_cache.increment_ref(block.block_id)
+        prefix_cache._request_tables["req-old"] = BlockCacheEntry(
+            block_table=table,
+            last_access=time.time(),
+        )
+        ref_before = block.ref_count
+
+        paged_cache.release_for_eviction(table.block_ids)
+        # clear_request_entry calls delete_block_table -> free_block again.
+        prefix_cache.clear_request_entry("req-old")
+
+        # Double decrement — the bug. Demonstrates why the no-free variant
+        # is required after release_for_eviction.
+        assert block.ref_count == ref_before - 2
+
     def test_fork_cache(self, prefix_cache, paged_cache):
         """Test forking cache from one request to another."""
         # Create source with blocks

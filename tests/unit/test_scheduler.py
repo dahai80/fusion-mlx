@@ -1187,6 +1187,65 @@ class TestSchedulerAbortRequest:
         assert "req-ghost" not in scheduler.request_id_to_uid
         assert uid not in scheduler.uid_to_request_id
 
+    def test_abort_resets_spec_decode_state_for_active_spec_request(
+        self, mock_model, mock_tokenizer
+    ):
+        """#1054: abort must reset eagle3 _spec_decode_state (draft cache +
+        prefill_hidden) when the aborted request was the active spec
+        request. The reset previously only ran on the normal-finish path
+        and only when _last_request_id == request_id — an aborted spec
+        request left K stale draft KV tokens in prompt_cache."""
+        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
+
+        request = Request(
+            request_id="req-spec",
+            prompt="Hello",
+            sampling_params=SamplingParams(),
+        )
+        request.prompt_token_ids = [1]
+        request.num_prompt_tokens = 1
+        request.status = RequestStatus.RUNNING
+        scheduler.requests["req-spec"] = request
+        scheduler.running["req-spec"] = request
+
+        spec_state = MagicMock()
+        spec_state._last_request_id = "req-spec"
+        scheduler._spec_decode_state = spec_state
+        scheduler.batch_generator = MagicMock()
+
+        scheduler.abort_request("req-spec")
+        scheduler._process_pending_aborts()
+
+        spec_state.reset.assert_called_once()
+
+    def test_abort_does_not_reset_spec_state_for_other_request(
+        self, mock_model, mock_tokenizer
+    ):
+        """#1054: a non-spec abort must not reset spec state belonging to a
+        different still-running request."""
+        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
+
+        request = Request(
+            request_id="req-other",
+            prompt="Hello",
+            sampling_params=SamplingParams(),
+        )
+        request.prompt_token_ids = [1]
+        request.num_prompt_tokens = 1
+        request.status = RequestStatus.RUNNING
+        scheduler.requests["req-other"] = request
+        scheduler.running["req-other"] = request
+
+        spec_state = MagicMock()
+        spec_state._last_request_id = "req-different-still-running"
+        scheduler._spec_decode_state = spec_state
+        scheduler.batch_generator = MagicMock()
+
+        scheduler.abort_request("req-other")
+        scheduler._process_pending_aborts()
+
+        spec_state.reset.assert_not_called()
+
 
 class TestPrefillAbortInterrupt:
     """Tests for prefill abort interrupt via _check_pending_aborts_for_uids."""
