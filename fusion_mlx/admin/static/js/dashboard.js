@@ -63,7 +63,7 @@
     ]);
     const DASHBOARD_MAIN_TABS = new Set(['status', 'settings', 'models', 'logs', 'bench', 'fineTune']);
     const DASHBOARD_SETTINGS_TABS = new Set(['global', 'integrations', 'models']);
-    const DASHBOARD_MODELS_TABS = new Set(['manager', 'downloader', 'quantizer', 'uploader']);
+    const DASHBOARD_MODELS_TABS = new Set(['manager', 'downloader', 'quantizer', 'uploader', 'migrate']);
     const DASHBOARD_BENCH_TABS = new Set(['throughput', 'accuracy']);
     const DASHBOARD_FINETUNE_TABS = new Set(['jobs', 'adapters', 'new']);
 
@@ -447,6 +447,11 @@
             uploadError: '',
             uploadSuccess: '',
             _uploadRefreshTimer: null,
+            // #1078: migrate/convert task panel state
+            convertJobs: [],
+            quantizeJobs: [],
+            migrations: [],
+            _migrateRefreshTimer: null,
             // Upload modal
             uploadModalOpen: false,
             uploadModalModelPath: '',
@@ -765,6 +770,12 @@
                 if (tab === 'uploader') {
                     if (!this.uploadOqModelsLoaded) this.loadUploadOqModels();
                     this.loadUploadTasks();
+                }
+                if (tab === 'migrate') {
+                    this.loadMigrateTasks();
+                    this.startMigrateRefresh();
+                } else {
+                    this.stopMigrateRefresh();
                 }
             },
 
@@ -4664,6 +4675,90 @@
                     clearInterval(this._uploadRefreshTimer);
                     this._uploadRefreshTimer = null;
                 }
+            },
+
+            // #1078: migrate/convert task panel — polls convert + quantize
+            // jobs + migrate pipeline state so the operator can see progress
+            // and results without curling GET endpoints or tailing logs.
+            async loadMigrateTasks() {
+                const tasks = [];
+                try {
+                    const [convResp, quantResp, migResp] = await Promise.all([
+                        fetch('/v1/convert/jobs'),
+                        fetch('/v1/quantize/jobs'),
+                        fetch('/admin/api/migrate/list'),
+                    ]);
+                    if (convResp.ok) this.convertJobs = await convResp.json();
+                    if (quantResp.ok) this.quantizeJobs = await quantResp.json();
+                    if (migResp.ok) {
+                        const data = await migResp.json();
+                        this.migrations = data.migrations || [];
+                    }
+                } catch (err) {
+                    console.error('Failed to load migrate tasks:', err);
+                }
+                const hasActive = [...this.convertJobs, ...this.quantizeJobs].some(
+                    j => ['queued', 'running'].includes(j.status)
+                );
+                if (!hasActive) {
+                    this.stopMigrateRefresh();
+                }
+            },
+
+            async cancelConvertJob(jobId, kind) {
+                try {
+                    const resp = await fetch(
+                        `/v1/${kind}/jobs/${jobId}/cancel`,
+                        { method: 'POST' }
+                    );
+                    if (!resp.ok) {
+                        const data = await resp.json();
+                        alert(data.detail || 'Cancel failed');
+                    }
+                    await this.loadMigrateTasks();
+                } catch (err) {
+                    console.error('Failed to cancel job:', err);
+                }
+            },
+
+            async deleteConvertJob(jobId, kind) {
+                try {
+                    await fetch(`/v1/${kind}/jobs/${jobId}`, { method: 'DELETE' });
+                    await this.loadMigrateTasks();
+                } catch (err) {
+                    console.error('Failed to delete job:', err);
+                }
+            },
+
+            startMigrateRefresh() {
+                this.stopMigrateRefresh();
+                this._migrateRefreshTimer = setInterval(() => {
+                    this.loadMigrateTasks();
+                }, 3000);
+            },
+
+            stopMigrateRefresh() {
+                if (this._migrateRefreshTimer) {
+                    clearInterval(this._migrateRefreshTimer);
+                    this._migrateRefreshTimer = null;
+                }
+            },
+
+            formatJobStatus(status) {
+                if (!status) return '-';
+                return status.charAt(0).toUpperCase() + status.slice(1);
+            },
+
+            jobStatusColor(status) {
+                const map = {
+                    queued: 'bg-neutral-100 text-neutral-600',
+                    running: 'bg-blue-50 text-blue-600',
+                    completed: 'bg-green-50 text-green-600',
+                    failed: 'bg-red-50 text-red-600',
+                    cancelled: 'bg-amber-50 text-amber-600',
+                    interrupted: 'bg-amber-50 text-amber-600',
+                };
+                return map[status] || 'bg-neutral-100 text-neutral-600';
             },
 
             formatUploadElapsed(task) {
