@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added — restart-required metadata + per-control badges in admin settings (#1077)
+- **#1077**: Settings that are persisted to `settings.json` but NOT
+  hot-applied at runtime (host, port, max_concurrent_requests, mcp_config,
+  ssd_cache_dir, initial_cache_blocks, hot_cache_only) now carry a unified
+  `REQUIRES_RESTART_FIELDS` metadata set in `config_reload.py`.
+  `GET /admin/api/global-settings` returns `requires_restart_fields` (flat
+  list) so the dashboard can badge the matching controls; `POST
+  /admin/api/global-settings` returns `requires_restart: bool` +
+  `restart_fields: list[str]` so the save toast tells the operator which
+  changed fields need a restart. The dashboard renders an amber "restart"
+  badge next to each control via a metadata-driven `needsRestart(field)`
+  helper (replacing the prior scattered hardcoded badges), and appends
+  "restart needed for: …" to the save confirmation when a restart-required
+  field was touched.
+
 ### Added — prefix cache latency + MoE shared cache in admin stats (#1080)
 - **#1080**: `/admin/api/stats` now carries a `prefix_cache` section
   (aggregate + per-model: hit_rate, hits, misses, tokens_saved, block_sizes,

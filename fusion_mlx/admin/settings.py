@@ -455,10 +455,20 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
         raise HTTPException(status_code=500, detail="Failed to save settings")
 
     logger.info(f"Global settings saved (fallback mode): {runtime_applied}")
+    # #1077: report restart-required fields present in the request.
+    restart_fields: list[str] = []
+    try:
+        from ..routes_internal.config_reload import restart_fields_in_request
+
+        restart_fields = restart_fields_in_request(set(request.model_fields_set))
+    except Exception:
+        logger.debug("restart_fields check unavailable (fallback)", exc_info=True)
     return {
         "success": True,
         "message": "Settings saved.",
         "runtime_applied": runtime_applied,
+        "requires_restart": len(restart_fields) > 0,
+        "restart_fields": restart_fields,
     }
 
 
@@ -596,6 +606,7 @@ def _build_fallback_global_settings() -> dict:
         },
         "ui": {"language": ""},
         "idle_timeout": {"idle_timeout_seconds": None},
+        "requires_restart_fields": _get_requires_restart_fields(),
     }
 
 
@@ -833,7 +844,24 @@ async def get_global_settings(is_admin: bool = Depends(require_admin)):
         "idle_timeout": {
             "idle_timeout_seconds": global_settings.idle_timeout.idle_timeout_seconds,
         },
+        # #1077: flat list of field names that require a server restart to
+        # take effect. The dashboard badges the matching controls so the
+        # operator knows a change won't apply until restart.
+        "requires_restart_fields": _get_requires_restart_fields(),
     }
+
+
+def _get_requires_restart_fields() -> list[str]:
+    # #1077: delegate to the canonical metadata in config_reload so the
+    # restart set stays single-source. Lazy import avoids a circular ref at
+    # module load (config_reload imports admin.helpers at runtime only).
+    try:
+        from ..routes_internal.config_reload import get_requires_restart_metadata
+
+        return get_requires_restart_metadata()
+    except Exception:
+        logger.debug("requires_restart metadata unavailable", exc_info=True)
+        return []
 
 
 @_router.post("/api/global-settings")
@@ -1323,10 +1351,24 @@ async def update_global_settings(
     # Build response message
     message = "Settings saved successfully."
 
+    # #1077: report which changed fields require a restart to take effect.
+    # Checks request.model_fields_set (the fields actually present in the
+    # POST body) against the canonical restart set so the frontend can show
+    # "restart needed" only when the operator actually touched one.
+    restart_fields: list[str] = []
+    try:
+        from ..routes_internal.config_reload import restart_fields_in_request
+
+        restart_fields = restart_fields_in_request(set(request.model_fields_set))
+    except Exception:
+        logger.debug("restart_fields check unavailable", exc_info=True)
+
     return {
         "success": True,
         "message": message,
         "runtime_applied": runtime_applied,
+        "requires_restart": len(restart_fields) > 0,
+        "restart_fields": restart_fields,
     }
 
 

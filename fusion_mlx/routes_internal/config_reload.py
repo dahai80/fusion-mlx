@@ -31,6 +31,40 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(dependencies=[Depends(verify_api_key_or_x_api_key)])
 
+# #1077: canonical "requires server restart" metadata. These fields are
+# persisted to settings.json but NOT hot-applied at runtime — the operator
+# must restart for them to take effect. Surfaced via get_global_settings so
+# the admin dashboard can badge the matching controls, and checked in
+# update_global_settings so the save response tells the frontend which
+# changed fields need a restart.
+#
+# Field names match the flat GlobalSettingsRequest field names (not the
+# nested settings.json path) so the frontend can check membership directly
+# against request field names.
+REQUIRES_RESTART_FIELDS: frozenset[str] = frozenset(
+    {
+        "host",
+        "port",
+        "max_concurrent_requests",
+        "mcp_config",
+        "ssd_cache_dir",
+        "initial_cache_blocks",
+        "hot_cache_only",
+    }
+)
+
+
+def get_requires_restart_metadata() -> list[str]:
+    """Return the sorted list of flat field names that require a restart."""
+    return sorted(REQUIRES_RESTART_FIELDS)
+
+
+def restart_fields_in_request(changed: set[str]) -> list[str]:
+    """Given the set of field names present in a save request, return the
+    subset that require a server restart (sorted)."""
+    return sorted(changed & REQUIRES_RESTART_FIELDS)
+
+
 # A-P0-1 (#0908 audit): serialize concurrent reloads. A rapid double-SIGHUP
 # (or SIGHUP during POST /v1/config/reload) ran two reload_config() bodies
 # concurrently — both mutating enforcer.prefill_memory_guard,
