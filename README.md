@@ -1745,6 +1745,41 @@ curl -X POST /v1/videos/generate \
 All media params accept **local paths**, **http(s) URLs**, and **data: URIs**.
 URLs and data-URIs are downloaded/decoded to temp files automatically.
 
+#### Duration & resolution params (#1003)
+
+`POST /v1/videos/generate` accepts two high-level sizing params in addition to
+the raw `num_frames`/`width`/`height`/`fps`:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `duration` | float (s) | Requested video duration in seconds. When set, `num_frames` is derived as `round(duration*fps/8)*8+1` (honoring the LTX `1+8k` constraint). Overrides the default `num_frames=97`. |
+| `resolution` | string | Preset: `480p`/`540p`/`720p`/`1080p`/`1440p`. When set, `width`/`height` are derived and rounded to the backend's `dim_divisibility` (e.g. `1080p` → `1920×1088` on LTX-2.5). Unknown values return `422`. |
+
+The **actual** output duration is probed from the generated mp4 container
+(`moov`/`mvhd` box, no ffmpeg) and echoed in the response so callers can detect
+silent truncation — a backend may clamp frames via memory/tiling below the
+requested duration:
+
+```json
+{
+  "data": [{
+    "url": "data:video/mp4;base64,...",
+    "num_frames": 121,
+    "fps": 24,
+    "width": 1920,
+    "height": 1088,
+    "duration_seconds": 5.04
+  }],
+  "created": 1717500000
+}
+```
+
+If the actual duration differs from the requested `duration` by more than 15%,
+a `WARNING` is logged (`output was truncated`). Previously `duration` and
+`resolution` were silently dropped (undeclared fields) and the response carried
+no output metadata, so a 15 s storyboard could return a 2.33 s clip with no
+signal (#1003).
+
 
 ### Radix Text-Encoding Cache (#178)
 

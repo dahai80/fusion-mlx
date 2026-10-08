@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed — video duration/resolution no longer silently ignored (#1003)
+- **#1003**: `POST /v1/videos/generate` silently truncated requested duration
+  (15 s request → 2.33 s output, 2 s → 0.69 s) with no warning or 422. Root
+  cause: `duration` and `resolution` were not declared fields on
+  `VideoGenerateRequest`, so pydantic dropped them and the model fell back to
+  native dims + default `num_frames`; the response carried no output metadata,
+  so callers could not detect the mismatch. Fix: `duration` and `resolution`
+  are now first-class params — `duration` derives `num_frames`
+  (`round(duration*fps/8)*8+1`, LTX `1+8k` constraint), `resolution` derives
+  width/height (rounded to the backend's `dim_divisibility`, e.g. `1080p` →
+  `1920×1088`). The ACTUAL output duration is probed from the generated mp4
+  `moov`/`mvhd` box (no ffmpeg) and echoed as `VideoOutput.duration_seconds`
+  (+ `num_frames`/`fps`/`width`/`height`); a >15 % mismatch is logged loudly.
+
 ### Fixed — over-context prompts now return 400 instead of hang+500 (#998)
 - **#998**: `POST /v1/chat/completions` (and `/v1/messages`) hung ~168s then
   returned an empty `500 Internal Server Error` for prompts exceeding the

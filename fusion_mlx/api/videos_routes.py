@@ -70,6 +70,101 @@ def _resolve_video_model(prompt: str, audio: bool, requested: str | None) -> str
     return "ltx-2" if routed != "minimax_h3" else "minimax-h3"
 
 
+_RESOLUTION_PRESETS = {
+    "480p": (854, 480),
+    "540p": (960, 540),
+    "720p": (1280, 720),
+    "1080p": (1920, 1080),
+    "1440p": (2560, 1440),
+}
+
+
+def _resolution_to_dims(resolution: str, dim_div: int) -> tuple[int, int]:
+    key = resolution.strip().lower()
+    if key not in _RESOLUTION_PRESETS:
+        raise ValueError(
+            f"unknown resolution '{resolution}'; supported: "
+            f"{', '.join(sorted(_RESOLUTION_PRESETS))}"
+        )
+    w, h = _RESOLUTION_PRESETS[key]
+    if dim_div > 1:
+        w = round(w / dim_div) * dim_div
+        h = round(h / dim_div) * dim_div
+    return w, h
+
+
+def _duration_to_num_frames(duration_s: float, fps: int, block: int = 8) -> int:
+    # LTX frame constraint: num_frames % 8 == 1 (1 + 8*k).
+    raw = round(duration_s * fps / block) * block
+    return max(1, int(raw) + 1)
+
+
+def _probe_mp4_duration_seconds(mp4_bytes: bytes) -> float | None:
+    # Parse ISOBMFF moov/mvhd to read the ACTUAL container duration without
+    # ffmpeg. Returns seconds or None if the box structure is unparseable.
+    # Used to echo real output duration so callers can detect silent
+    # truncation (#1003) — the requested duration/num_frames may be clamped
+    # by memory/tiling inside the backend, and the only ground truth is the
+    # generated mp4 itself.
+    data = mp4_bytes
+    n = len(data)
+    pos = 0
+    while pos + 8 <= n:
+        size = int.from_bytes(data[pos : pos + 4], "big")
+        btype = data[pos + 4 : pos + 8]
+        header = 8
+        if size == 1:
+            if pos + 16 > n:
+                return None
+            size = int.from_bytes(data[pos + 8 : pos + 16], "big")
+            header = 16
+        elif size == 0:
+            size = n - pos
+        if size < header or pos + size > n:
+            return None
+        if btype == b"moov":
+            return _probe_mvhd_duration(data, pos + header, pos + size)
+        pos += size
+    return None
+
+
+def _probe_mvhd_duration(data: bytes, start: int, end: int) -> float | None:
+    pos = start
+    while pos + 8 <= end:
+        size = int.from_bytes(data[pos : pos + 4], "big")
+        btype = data[pos + 4 : pos + 8]
+        header = 8
+        if size == 1:
+            if pos + 16 > end:
+                return None
+            size = int.from_bytes(data[pos + 8 : pos + 16], "big")
+            header = 16
+        elif size == 0:
+            size = end - pos
+        if size < header or pos + size > end:
+            return None
+        if btype == b"mvhd":
+            version = data[pos + header]
+            off = pos + header + 4
+            if version == 1:
+                off += 16
+                if off + 12 > pos + size:
+                    return None
+                timescale = int.from_bytes(data[off : off + 4], "big")
+                duration = int.from_bytes(data[off + 4 : off + 12], "big")
+            else:
+                off += 8
+                if off + 8 > pos + size:
+                    return None
+                timescale = int.from_bytes(data[off : off + 4], "big")
+                duration = int.from_bytes(data[off + 4 : off + 8], "big")
+            if timescale <= 0:
+                return None
+            return duration / timescale
+        pos += size
+    return None
+
+
 class VideoRouteRequest(BaseModel):
     prompt: str
     scene: str | None = None
@@ -213,11 +308,29 @@ class VideoGenerateRequest(BaseModel):
     # local file path. None → backend resolves via resolve_component (Comfy/
     # mlx-community repos that ship audio_vae.safetensors).
     audio_vae_weights: str | None = None
+    # Requested video duration in seconds (#1003). When set, num_frames is
+    # derived as round(duration*fps/8)*8+1 (honoring the LTX 1+8k constraint)
+    # unless num_frames is also explicitly set. The ACTUAL output duration is
+    # probed from the generated mp4 and echoed in VideoOutput.duration_seconds
+    # so callers can detect any mismatch (backends may clamp via memory/tiling).
+    duration: float | None = Field(default=None, ge=0.1, le=300)
+    # Resolution preset ("480p"/"540p"/"720p"/"1080p"/"1440p"). When set,
+    # width/height are derived (rounded to the backend's dim_divisibility)
+    # instead of using the defaults. Previously this field was silently
+    # ignored (pydantic dropped unknown keys) — now a first-class param (#1003).
+    resolution: str | None = None
 
 
 class VideoOutput(BaseModel):
     url: str | None = None
     b64_json: str | None = None
+    # Echoed output metadata (#1003): lets callers detect silent duration
+    # truncation. duration_seconds is probed from the actual generated mp4.
+    num_frames: int | None = None
+    fps: int | None = None
+    width: int | None = None
+    height: int | None = None
+    duration_seconds: float | None = None
 
 
 class VideoGenerateResponse(BaseModel):
@@ -225,11 +338,27 @@ class VideoGenerateResponse(BaseModel):
     created: int = Field(default_factory=lambda: int(time.time()))
 
 
-def _encode_video_output(vid_bytes: bytes, response_format: str) -> VideoOutput:
+def _encode_video_output(
+    vid_bytes: bytes,
+    response_format: str,
+    *,
+    num_frames: int | None = None,
+    fps: int | None = None,
+    width: int | None = None,
+    height: int | None = None,
+    duration_seconds: float | None = None,
+) -> VideoOutput:
     b64 = base64.b64encode(vid_bytes).decode()
+    meta = dict(
+        num_frames=num_frames,
+        fps=fps,
+        width=width,
+        height=height,
+        duration_seconds=duration_seconds,
+    )
     if response_format == "b64_json":
-        return VideoOutput(b64_json=b64)
-    return VideoOutput(url=f"data:video/mp4;base64,{b64}")
+        return VideoOutput(b64_json=b64, **meta)
+    return VideoOutput(url=f"data:video/mp4;base64,{b64}", **meta)
 
 
 async def _safe_fetch_to_file(url: str, prefix: str, ext: str) -> tuple[str, bool]:
@@ -343,13 +472,58 @@ async def generate_video(
             request.model,
         )
 
+        # Resolve constraints early — dim_divisibility drives resolution-preset
+        # rounding, and a clear 422 beats a deep OOM/500 on out-of-range
+        # duration/resolution (#1003).
+        constraints = constraints_for(model_name)
+
+        effective_fps = request.fps
+        effective_width = request.width
+        effective_height = request.height
+        effective_num_frames = request.num_frames
+
+        if request.resolution is not None:
+            try:
+                rw, rh = _resolution_to_dims(
+                    request.resolution, constraints.dim_divisibility
+                )
+            except ValueError as exc:
+                raise HTTPException(422, str(exc))
+            effective_width = rw
+            effective_height = rh
+            logger.info(
+                "video: resolution=%s -> %dx%d (dim_div=%d)",
+                request.resolution,
+                rw,
+                rh,
+                constraints.dim_divisibility,
+            )
+
+        if request.duration is not None:
+            derived = _duration_to_num_frames(request.duration, effective_fps)
+            if request.num_frames != 97:
+                logger.warning(
+                    "video: both duration=%.2fs and num_frames=%d set; using "
+                    "duration-derived num_frames=%d (explicit num_frames ignored)",
+                    request.duration,
+                    request.num_frames,
+                    derived,
+                )
+            effective_num_frames = derived
+            logger.info(
+                "video: duration=%.2fs fps=%d -> num_frames=%d",
+                request.duration,
+                effective_fps,
+                derived,
+            )
+
         # Backend-aware constraint validation (422 on violation).
         try:
             validate_params(
-                constraints_for(model_name),
-                num_frames=request.num_frames,
-                width=request.width,
-                height=request.height,
+                constraints,
+                num_frames=effective_num_frames,
+                width=effective_width,
+                height=effective_height,
                 n=request.n,
                 image=request.image,
             )
@@ -404,10 +578,10 @@ async def generate_video(
 
             gen_kwargs: dict = {
                 "prompt": request.prompt,
-                "num_frames": request.num_frames,
-                "width": request.width,
-                "height": request.height,
-                "fps": request.fps,
+                "num_frames": effective_num_frames,
+                "width": effective_width,
+                "height": effective_height,
+                "fps": effective_fps,
                 "seed": request.seed,
                 "n": request.n,
             }
@@ -488,10 +662,42 @@ async def generate_video(
                 gen_kwargs["audio_vae_weights"] = request.audio_vae_weights
 
             video_bytes_list = await engine.generate(**gen_kwargs)
-            outputs = [
-                _encode_video_output(vb, request.response_format)
-                for vb in video_bytes_list
-            ]
+            outputs = []
+            for vb in video_bytes_list:
+                actual_dur = None
+                if isinstance(vb, (bytes, bytearray)):
+                    actual_dur = _probe_mp4_duration_seconds(vb)
+                if (
+                    request.duration is not None
+                    and actual_dur is not None
+                    and request.duration > 0
+                    and abs(actual_dur - request.duration) / request.duration > 0.15
+                ):
+                    # Surface silent truncation (#1003): the backend clamped
+                    # the output (memory/tiling/VAE) below the requested
+                    # duration. Log loudly so operators see it; the actual
+                    # duration is also echoed in the response body.
+                    logger.warning(
+                        "video: requested duration=%.2fs but actual=%.2fs "
+                        "(num_frames=%d fps=%d model=%s) — output was truncated "
+                        "(#1003)",
+                        request.duration,
+                        actual_dur,
+                        effective_num_frames,
+                        effective_fps,
+                        model_name,
+                    )
+                outputs.append(
+                    _encode_video_output(
+                        vb,
+                        request.response_format,
+                        num_frames=effective_num_frames,
+                        fps=effective_fps,
+                        width=effective_width,
+                        height=effective_height,
+                        duration_seconds=actual_dur,
+                    )
+                )
             try:
                 from ..telemetry import emit
                 from ..telemetry.activation_spec import (
