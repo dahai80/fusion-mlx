@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed — streaming paths接入 circuit breaker stats (#1049)
+- **#1049**: streaming failures were invisible to the circuit breakers.
+  `CloudRouter.stream_completion` yielded an SSE error frame on mid-stream
+  failure but called no `report_cloud_failure()` and emitted no trailing
+  `[DONE]` → persistent mid-stream断流 never tripped the EF-4 cloud breaker
+  and clients hung waiting for stream termination. `RequestRouter.
+  route_stream_chat` returned the raw `engine.stream_chat` iterator → local
+  mid-stream failures never called `report_local_failure()` (only non-stream
+  `route_chat` was covered). Fix: cloud stream error path now ticks
+  `report_cloud_failure()` + emits `[DONE]`; local stream is wrapped in a
+  failure-tracking generator that calls `report_local_success()` /
+  `report_local_failure()` mirroring `route_chat`.
+
 ### Fixed — setup-api-key half-failure state drift (#1047)
 - **#1047**: `/api/setup-api-key` wrote runtime memory (settings,
   `_server_state`, `set_api_key`, `get_config`) before persisting to disk.
