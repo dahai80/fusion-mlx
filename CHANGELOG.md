@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed — /v1/count_tokens no longer leaks engine lease on errors (#1005)
+- **#1005**: `/v1/count_tokens` acquired an engine lease (`_lease=True` via
+  `_resolve_engine`) but the body after it — `convert_anthropic_to_internal`,
+  `build_prompt`, `_encode_token_count` — was not in a try/finally. Only the
+  happy path and two specific branches manually released. A malformed request
+  (e.g. multimodal convert failure) raised mid-body, leaving `entry.in_use`
+  permanently +1 so the model could never be evicted (LRU + TTL skip
+  `in_use>0`). Fix: wrapped the entire post-resolve body in try/finally that
+  calls `_release_engine` on EVERY path (return + exception), matching the
+  `_release` closure pattern in the messages/stream paths.
+
 ### Fixed — video duration/resolution no longer silently ignored (#1003)
 - **#1003**: `POST /v1/videos/generate` silently truncated requested duration
   (15 s request → 2.33 s output, 2 s → 0.69 s) with no warning or 422. Root
