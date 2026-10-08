@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Fixed — audio eviction hang, int16 clip, unload cache reclaim (#1001 #1060 #1061)
+- **#1001**: `POST /v1/audio/speech` hung indefinitely after `memory_enforcer`
+  evicted the TTS model. Root cause: `_settle_unloaded_engine` ran
+  `mx.synchronize()` + `mx.clear_cache()` via the shared single-thread mlx
+  executor with no timeout; under GPU contention (concurrent LLM prefill) the
+  blocked synchronize stranded `entry.is_unloading=True` forever, so every
+  subsequent `get_engine` waited on `loading_event` with no engine log. Fix:
+  new `EnginePool._bounded_mlx_sync_clear` wraps the settle sync calls in
+  `asyncio.wait_for` (`FUSION_MLX_SYNC_TIMEOUT`, default 30s); on timeout it
+  logs and proceeds (memory accounting self-corrects via the live gauge).
+  Plus `create_speech` now logs entry/exit and bounds `pool.get_engine`
+  (`FUSION_AUDIO_LOAD_TIMEOUT`, default 120s) — a stuck reload surfaces as a
+  retryable 503 (`engine_load_timeout`) instead of a silent client hang.
+- **#1060**: scipy wav fallback in `audio/tts.py` `save()` and
+  `audio/processor.py` `save()` converted to int16 **without** clipping, so
+  `|sample|>1` wrapped (2.0 → -2, severe clipping artifacts). Added
+  `np.clip(audio, -1.0, 1.0)` before `* 32767` (the `to_bytes` path already
+  had it).
+- **#1061**: audio-layer `unload()` (tts/stt/processor) missed
+  `gc.collect()` + `mx.clear_cache()`, leaving the Metal cache pinned after
+  unload (engines-layer `stop()` already did this). Added the reclaim.
+  Also `engines/stt.py` `transcribe` and `engines/sts.py` `process` hardcoded
+  a 60s timeout; now env-configurable via `FUSION_STT_TIMEOUT` /
+  `FUSION_STS_TIMEOUT` (default 60s; invalid value falls back with warning).
+
 ### Added — Hunyuan3D-2.1 image→textured-GLB 3D generation (#989)
 - **`POST /v1/3d/generate`**: reference image (data URL or http(s) URL) → textured
   GLB (base64) + vertex/face/byte counts. End-to-end on Apple Silicon, ~40s for a

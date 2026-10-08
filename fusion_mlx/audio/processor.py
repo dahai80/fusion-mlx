@@ -117,7 +117,9 @@ class AudioProcessor:
         except ImportError:
             import scipy.io.wavfile as wav
 
-            audio_int16 = (audio * 32767).astype(np.int16)
+            # #1060: clip before int16 conversion — |sample|>1 causes
+            # int16 wraparound (severe clipping artifacts).
+            audio_int16 = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
             wav.write(str(path), sr, audio_int16)
 
         logger.info("Audio saved to %s", path)
@@ -126,6 +128,16 @@ class AudioProcessor:
         self.model = None
         self.processor = None
         self._loaded = False
+        # #1061: release Metal cache + force GC.
+        import gc
+
+        gc.collect()
+        try:
+            import mlx.core as mx
+
+            mx.clear_cache()
+        except Exception:
+            pass
         logger.info("Audio processor unloaded")
 
 

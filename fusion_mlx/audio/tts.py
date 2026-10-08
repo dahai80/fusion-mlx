@@ -276,7 +276,10 @@ class TTSEngine:
         except ImportError:
             import scipy.io.wavfile as wav
 
-            audio_int16 = (audio.audio * 32767).astype(np.int16)
+            # #1060: clip before int16 conversion — |sample|>1 causes
+            # int16 wraparound (severe clipping artifacts). to_bytes()
+            # already clips; this path was missing it.
+            audio_int16 = (np.clip(audio.audio, -1.0, 1.0) * 32767).astype(np.int16)
             wav.write(str(path), audio.sample_rate, audio_int16)
             logger.info("Audio saved to %s (scipy fallback)", path)
 
@@ -356,6 +359,19 @@ class TTSEngine:
     def unload(self) -> None:
         self.model = None
         self._loaded = False
+        # #1061: release Metal cache + force GC so the model's MLX
+        # tensors are actually reclaimed. The engines-layer stop() does
+        # this; the audio-layer unload was missing it, leaving Metal
+        # cache pinned until the next unrelated mx.clear_cache().
+        import gc
+
+        gc.collect()
+        try:
+            import mlx.core as mx
+
+            mx.clear_cache()
+        except Exception:
+            pass
         logger.info("TTS model unloaded")
 
 

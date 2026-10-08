@@ -363,6 +363,17 @@ class STTEngine:
     def unload(self) -> None:
         self.model = None
         self._loaded = False
+        # #1061: release Metal cache + force GC (aligns with engines-layer
+        # stop() which does this; audio-layer unload was missing it).
+        import gc
+
+        gc.collect()
+        try:
+            import mlx.core as mx
+
+            mx.clear_cache()
+        except Exception:
+            pass
         logger.info("STT model unloaded")
 
 
