@@ -10,6 +10,7 @@ prefill bottleneck on Apple Silicon for cold, large-context prompts.
 import asyncio
 import json
 import logging
+import threading
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -66,6 +67,13 @@ class CloudRouter:
         self._cloud_failure_threshold = 5
         self._cloud_open_at: float | None = None
         self._cloud_cooldown: float = 60.0
+        # #1071: breaker state check-then-act was lockless — is_cloud_circuit_open
+        # even flipped _cloud_circuit_open on the READ path. report_local_* can be
+        # called from sync context (RequestRouter failure tracking wraps the local
+        # stream), so asyncio.Lock would deadlock. threading.RLock guards all
+        # breaker reads/writes; reentrant so should_route_to_cloud can call
+        # is_cloud_circuit_open (which also locks) without self-deadlock.
+        self._breaker_lock = threading.RLock()
 
     def _get_litellm(self):
         """Lazy import of litellm."""
@@ -76,60 +84,73 @@ class CloudRouter:
         return self._litellm
 
     def report_local_failure(self) -> None:
-        self._circuit_failure_count += 1
-        if self._circuit_failure_count >= self._circuit_failure_threshold:
-            self._circuit_open = True
-            self._circuit_open_at = time.time()
-            logger.warning(
-                "[CLOUD] Circuit breaker OPENED after %d consecutive local failures",
-                self._circuit_failure_count,
-            )
+        with self._breaker_lock:
+            self._circuit_failure_count += 1
+            if self._circuit_failure_count >= self._circuit_failure_threshold:
+                self._circuit_open = True
+                self._circuit_open_at = time.time()
+                logger.warning(
+                    "[CLOUD] Circuit breaker OPENED after %d consecutive local failures",
+                    self._circuit_failure_count,
+                )
 
     def report_local_success(self) -> None:
-        if self._circuit_open and self._circuit_reset_on_success:
-            self._circuit_open = False
-            self._circuit_failure_count = 0
-            logger.info("[CLOUD] Circuit breaker CLOSED - local inference recovered")
+        with self._breaker_lock:
+            if self._circuit_open and self._circuit_reset_on_success:
+                self._circuit_open = False
+                self._circuit_failure_count = 0
+                logger.info(
+                    "[CLOUD] Circuit breaker CLOSED - local inference recovered"
+                )
 
     def is_circuit_open(self) -> bool:
-        return self._circuit_open
+        with self._breaker_lock:
+            return self._circuit_open
 
     # EF-4 (#0907 audit): cloud-side breaker reporting.
     def report_cloud_failure(self) -> None:
-        self._cloud_failure_count += 1
-        if (
-            not self._cloud_circuit_open
-            and self._cloud_failure_count >= self._cloud_failure_threshold
-        ):
-            self._cloud_circuit_open = True
-            self._cloud_open_at = time.time()
-            logger.warning(
-                "[CLOUD] CLOUD-side circuit breaker OPENED after %d "
-                "consecutive cloud failures — cloud routing disabled "
-                "for %.0fs (EF-4)",
-                self._cloud_failure_count,
-                self._cloud_cooldown,
-            )
+        with self._breaker_lock:
+            self._cloud_failure_count += 1
+            if (
+                not self._cloud_circuit_open
+                and self._cloud_failure_count >= self._cloud_failure_threshold
+            ):
+                self._cloud_circuit_open = True
+                self._cloud_open_at = time.time()
+                logger.warning(
+                    "[CLOUD] CLOUD-side circuit breaker OPENED after %d "
+                    "consecutive cloud failures — cloud routing disabled "
+                    "for %.0fs (EF-4)",
+                    self._cloud_failure_count,
+                    self._cloud_cooldown,
+                )
 
     def report_cloud_success(self) -> None:
-        if self._cloud_circuit_open:
-            logger.info("[CLOUD] CLOUD-side circuit breaker CLOSED — cloud recovered")
-        self._cloud_circuit_open = False
-        self._cloud_failure_count = 0
-        self._cloud_open_at = None
+        with self._breaker_lock:
+            if self._cloud_circuit_open:
+                logger.info(
+                    "[CLOUD] CLOUD-side circuit breaker CLOSED — cloud recovered"
+                )
+            self._cloud_circuit_open = False
+            self._cloud_failure_count = 0
+            self._cloud_open_at = None
 
     def is_cloud_circuit_open(self) -> bool:
-        # Half-open: after cooldown elapses, allow one probe through.
-        if self._cloud_circuit_open and self._cloud_open_at is not None:
-            elapsed = time.time() - self._cloud_open_at
-            if elapsed > self._cloud_cooldown:
-                self._cloud_circuit_open = False
-                logger.info(
-                    "[CLOUD] CLOUD-side breaker HALF-OPEN after %.0fs — "
-                    "allowing one probe",
-                    elapsed,
-                )
-        return self._cloud_circuit_open
+        # #1071: half-open transition is a state mutation — guard it so the
+        # check-then-act (read _cloud_open_at, flip _cloud_circuit_open) is
+        # atomic against concurrent report_cloud_failure/report_cloud_success.
+        # Pre-fix this flipped state on the read path with no lock.
+        with self._breaker_lock:
+            if self._cloud_circuit_open and self._cloud_open_at is not None:
+                elapsed = time.time() - self._cloud_open_at
+                if elapsed > self._cloud_cooldown:
+                    self._cloud_circuit_open = False
+                    logger.info(
+                        "[CLOUD] CLOUD-side breaker HALF-OPEN after %.0fs — "
+                        "allowing one probe",
+                        elapsed,
+                    )
+            return self._cloud_circuit_open
 
     def should_route_to_cloud(self, new_tokens: int) -> bool:
         """Return True if new_tokens exceeds threshold OR circuit breaker is open.
@@ -149,15 +170,17 @@ class CloudRouter:
                 "(EF-4); falling back to local"
             )
             return False
-        if self._circuit_open and self._circuit_open_at is not None:
-            elapsed = time.time() - self._circuit_open_at
-            if elapsed > self._half_open_timeout:
-                self._circuit_open = False  # half-open: allow one probe
-                logger.info(
-                    "[CLOUD] Circuit breaker HALF-OPEN after %.0fs — allowing probe",
-                    elapsed,
-                )
-        return self._circuit_open or new_tokens > self.threshold
+        with self._breaker_lock:
+            if self._circuit_open and self._circuit_open_at is not None:
+                elapsed = time.time() - self._circuit_open_at
+                if elapsed > self._half_open_timeout:
+                    self._circuit_open = False  # half-open: allow one probe
+                    logger.info(
+                        "[CLOUD] Circuit breaker HALF-OPEN after %.0fs — allowing probe",
+                        elapsed,
+                    )
+            circuit_open = self._circuit_open
+        return circuit_open or new_tokens > self.threshold
 
     async def completion(
         self,
