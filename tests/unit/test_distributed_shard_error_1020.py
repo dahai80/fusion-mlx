@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import pytest
 from fastapi import HTTPException
-from fusion_mlx.distributed.shard import ShardError
 
 from fusion_mlx.api.distributed_routes import _shard_error_response
+from fusion_mlx.distributed.shard import ShardError
 
 
 class TestShardErrorResponse:
