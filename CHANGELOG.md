@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed — Anthropic thinking signature is now HMAC, PDF docs raise 400 (#1011)
+- **#1011**: (1) thinking blocks returned a fixed placeholder signature
+  `"fusion-mlx-reasoning"` (identical for every response) — strict clients
+  that verify signatures rejected it. Fix: signature is now an HMAC-SHA256
+  of the thinking content keyed by a per-server-startup secret (self-signed,
+  self-verifiable within a session; different content → different signature).
+  (2) PDF/non-text document blocks returned a fixed placeholder text
+  (`[Document: ... — FusionMLX does not provide PDF parsing...]`) injected
+  into model context — the model answered the placeholder as if it were
+  document content. Fix: non-text document blocks now raise 400 with a clear
+  "unsupported media_type, only text/plain supported" message.
+
 ### Fixed — convert/layered-quantize job dict no longer accumulates forever (#1010)
 - **#1010**: `_jobs` (convert/quantize) and `_layered_jobs` (layered-quantize)
   had only POST + GET endpoints — no DELETE, no TTL, no cap. Terminal jobs
