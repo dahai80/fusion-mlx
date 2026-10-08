@@ -371,6 +371,18 @@ class FreeKVCacheBlockQueue:
 
         self.num_free_blocks += len(blocks)
 
+    def is_in_queue(self, block: CacheBlock) -> bool:
+        """O(1) membership check via the linked-list pointers.
+
+        A block in the free queue has both prev_free_block and
+        next_free_block set (linked to sentinels or siblings); popleft /
+        popleft_n / remove clear both to None. #1016: evict_block_permanently
+        uses this to avoid double-appending a block that free_block already
+        returned to the queue — a double-append links the same node twice,
+        corrupting the list and inflating free_blocks.
+        """
+        return block.prev_free_block is not None and block.next_free_block is not None
+
     def get_all_free_blocks(self) -> list[CacheBlock]:
         """Get all free blocks (for testing)."""
         result = []
@@ -1805,8 +1817,13 @@ class PagedCacheManager(CacheManager):
                 del self.allocated_blocks[block_id]
                 self.stats.allocated_blocks -= 1
 
-            self.free_block_queue.append(block)
-            self.stats.free_blocks += 1
+            # #1016: if the block is already in the free queue (freed by
+            # free_block / free_blocks_batch before this call), do NOT
+            # append again — a double-append links the same node twice,
+            # corrupting the list and inflating free_blocks.
+            if not self.free_block_queue.is_in_queue(block):
+                self.free_block_queue.append(block)
+                self.stats.free_blocks += 1
             self.stats.evictions += 1
 
             logger.debug(f"Permanently evicted block {block_id}")
@@ -1833,8 +1850,10 @@ class PagedCacheManager(CacheManager):
         if block_id in self.allocated_blocks:
             del self.allocated_blocks[block_id]
             self.stats.allocated_blocks -= 1
-        self.free_block_queue.append(block)
-        self.stats.free_blocks += 1
+        # #1016: guard against double-append (see evict_block_permanently).
+        if not self.free_block_queue.is_in_queue(block):
+            self.free_block_queue.append(block)
+            self.stats.free_blocks += 1
         self.stats.evictions += 1
         return True
 

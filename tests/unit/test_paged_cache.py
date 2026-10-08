@@ -680,6 +680,61 @@ class TestPagedCacheManager:
         assert result is False
         assert block_id in manager.allocated_blocks
 
+    def test_evict_block_already_freed_no_double_append(self):
+        """#1016: evict_block_permanently on a block already freed (ref_count=0,
+        in the free queue) must not append it again — a double-append links the
+        same node twice, corrupting the list and inflating free_blocks."""
+        manager = PagedCacheManager(block_size=64, max_blocks=100, initial_blocks=100)
+
+        block = manager.allocate_block()
+        block_id = block.block_id
+        block.block_hash = BlockHash(b"hash_double_append")
+        manager.cached_block_hash_to_block.insert(block.block_hash, block)
+
+        # Free it the normal way — block enters the free queue, ref_count=0.
+        manager.free_block(block_id)
+        assert block_id not in manager.allocated_blocks
+        free_after_free = manager.free_blocks
+        assert manager.free_block_queue.is_in_queue(block)
+
+        # Now evict_block_permanently on the same block. Before #1016 this
+        # appended it a second time, corrupting the list and bumping
+        # free_blocks by 1.
+        result = manager.evict_block_permanently(block_id)
+        assert result is True
+        assert manager.free_blocks == free_after_free, (
+            "evict_block_permanently double-appended a freed block, "
+            "inflating free_blocks"
+        )
+        # Walk the free queue — the block must appear exactly once.
+        free_list = manager.free_block_queue.get_all_free_blocks()
+        assert (
+            free_list.count(block) == 1
+        ), "block appears multiple times in the free queue — list corrupted"
+
+    def test_evict_block_permanently_inline_already_freed(self):
+        """#1016: the lock-free inline variant has the same guard."""
+        manager = PagedCacheManager(block_size=64, max_blocks=100, initial_blocks=100)
+
+        block = manager.allocate_block()
+        block_id = block.block_id
+        block.block_hash = BlockHash(b"hash_inline_double")
+        manager.cached_block_hash_to_block.insert(block.block_hash, block)
+
+        manager.free_block(block_id)
+        free_after_free = manager.free_blocks
+
+        with (
+            manager._block_table_lock,
+            manager._hash_map_lock,
+            manager._free_queue_lock,
+        ):
+            result = manager._evict_block_permanently_inline(block_id)
+        assert result is True
+        assert manager.free_blocks == free_after_free
+        free_list = manager.free_block_queue.get_all_free_blocks()
+        assert free_list.count(block) == 1
+
     def test_dynamic_block_growth(self):
         """Test dynamic block pool growth."""
         manager = PagedCacheManager(
