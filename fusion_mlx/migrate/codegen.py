@@ -205,8 +205,20 @@ def generate_model_code(
 ) -> CodegenResult:
     result = CodegenResult(output_path=output_dir)
 
+    tmp_dir: str | None = None
     try:
-        os.makedirs(output_dir, exist_ok=True)
+        # #1057: build in a sibling temp dir then rename-to-swap, matching
+        # converter.py's #811 P0 pattern. The old code wrote .py + config.json
+        # directly to output_dir — a crash between the two writes left a
+        # half-written model dir that mlx_lm.load could silently load as a
+        # valid but broken model.
+        import shutil
+
+        os.makedirs(os.path.dirname(os.path.abspath(output_dir)) or ".", exist_ok=True)
+        tmp_dir = f"{output_dir}.codegen_tmp.{os.getpid()}"
+        if os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        os.makedirs(tmp_dir, exist_ok=True)
 
         model_args = _build_model_args(template, config)
         attention = _build_attention_class(template)
@@ -215,10 +227,9 @@ def generate_model_code(
         model = _build_model_class(template, config)
 
         model_py = model_args + attention + mlp + block + model + "\n"
-        model_path = os.path.join(output_dir, f"{template.name}.py")
+        model_path = os.path.join(tmp_dir, f"{template.name}.py")
         with open(model_path, "w") as f:
             f.write(model_py)
-        result.files_generated.append(model_path)
         logger.info("Generated model code: %s", model_path)
 
         mlx_config = {
@@ -244,15 +255,46 @@ def generate_model_code(
         if template.has_mlp_bias:
             mlx_config["mlp_bias"] = True
 
-        config_path = os.path.join(output_dir, "config.json")
+        config_path = os.path.join(tmp_dir, "config.json")
         with open(config_path, "w") as f:
             json.dump(mlx_config, f, indent=2)
-        result.files_generated.append(config_path)
         logger.info("Generated config: %s", config_path)
+
+        # #1058: swap via rename-to-backup so a failed rename does NOT
+        # destroy the previously-available output_dir.
+        backup_dir = f"{output_dir}.old.{os.getpid()}"
+        if os.path.exists(output_dir):
+            os.rename(output_dir, backup_dir)
+        try:
+            os.rename(tmp_dir, output_dir)
+            tmp_dir = None  # consumed
+        except OSError:
+            if os.path.exists(backup_dir) and not os.path.exists(output_dir):
+                try:
+                    os.rename(backup_dir, output_dir)
+                except OSError:
+                    logger.error(
+                        "Failed to restore backup %s after rename failure",
+                        backup_dir,
+                        exc_info=True,
+                    )
+            raise
+        if os.path.exists(backup_dir):
+            shutil.rmtree(backup_dir, ignore_errors=True)
+
+        result.files_generated.append(os.path.join(output_dir, f"{template.name}.py"))
+        result.files_generated.append(os.path.join(output_dir, "config.json"))
+        logger.info("Atomically installed codegen output to %s", output_dir)
 
     except Exception as e:
         logger.exception("Codegen failed: %s", e)
         result.error = str(e)
+    finally:
+        # Clean up a half-written temp dir from a failed codegen.
+        if tmp_dir is not None and os.path.exists(tmp_dir):
+            import shutil
+
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return result
 

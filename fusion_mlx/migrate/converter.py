@@ -97,12 +97,22 @@ def _quantize_weights(
     weights: dict[str, mx.array],
     quant_bits: int = 4,
     quant_group_size: int = 64,
-) -> dict[str, mx.array]:
+) -> tuple[dict[str, mx.array], bool]:
+    """Quantize weights. Returns (quantized_weights, all_ok).
+
+    #1059: if ANY weight fails to quantize, we do NOT partially quantize
+    — a half-quantized model has some weights with .scales/.biases and
+    others as plain .weight, which mlx_lm.load mis-handles (shape/quant
+    mismatch). all_ok=False signals the caller to drop quantization
+    entirely and keep all weights fp16, so config + weights stay
+    consistent.
+    """
     if quant_bits <= 0:
-        return weights
+        return weights, True
 
     quantized = {}
     skip_patterns = ("norm.weight", "embed_tokens.weight", "lm_head.weight")
+    failed: list[str] = []
 
     for name, tensor in weights.items():
         if any(name.endswith(p) for p in skip_patterns) or len(tensor.shape) < 2:
@@ -123,10 +133,23 @@ def _quantize_weights(
             quantized[base_name + ".scales"] = q_scale
             quantized[base_name + ".biases"] = q_bias
         except Exception:
-            logger.warning("Quantize failed for %s, keeping fp16", name)
-            quantized[name] = tensor
+            logger.warning("Quantize failed for %s", name, exc_info=True)
+            failed.append(name)
 
-    return quantized
+    if failed:
+        logger.warning(
+            "Quantize failed for %d/%d weights — dropping quantization "
+            "entirely to avoid a half-quantized model (config/weight "
+            "mismatch on load). Affected: %s",
+            len(failed),
+            len(weights),
+            failed[:10],
+        )
+        # Return original weights un-quantized so config + weights stay
+        # consistent (no .scales/.biases keys → mlx_lm loads as fp16).
+        return dict(weights), False
+
+    return quantized, True
 
 
 def _build_mlx_config(
@@ -193,6 +216,21 @@ def convert_model(
         result.orphans = find_orphan_keys(hf_keys, weight_map)
         result.missing = find_missing_keys(weight_map, hf_keys)
 
+        # #1059: if num_hidden_layers resolved to 0, the weight map only
+        # contains embed/norm/lm_head — ALL per-layer weights become
+        # orphans. Writing this to disk produces a 0-layer "model" that
+        # mlx_lm.load accepts as valid but generates garbage. Hard-fail
+        # instead of warning + returning success.
+        num_layers = config.get("num_hidden_layers", config.get("n_layer", 0))
+        if num_layers == 0:
+            result.error = (
+                "num_hidden_layers resolved to 0 — cannot build a valid "
+                "weight map (no per-layer entries). Check the HF config "
+                "for 'num_hidden_layers' or 'n_layer'."
+            )
+            logger.error("Conversion aborted: %s", result.error)
+            return result
+
         if result.missing:
             logger.warning(
                 "Missing %d expected keys — conversion may be incomplete",
@@ -203,10 +241,13 @@ def convert_model(
             progress_cb(0.4, "Remapping weights")
         mlx_weights = _remap_weights(hf_weights, weight_map)
 
+        quant_ok = True
         if quant_bits > 0:
             if progress_cb:
                 progress_cb(0.6, "Quantizing weights")
-            mlx_weights = _quantize_weights(mlx_weights, quant_bits, quant_group_size)
+            mlx_weights, quant_ok = _quantize_weights(
+                mlx_weights, quant_bits, quant_group_size
+            )
 
         if progress_cb:
             progress_cb(0.8, "Saving MLX model")
@@ -222,6 +263,19 @@ def convert_model(
         os.makedirs(tmp_dir, exist_ok=True)
 
         mlx_config = _build_mlx_config(config, template)
+        # #1059: if quantization was requested but partially failed
+        # (_quantize_weights returned all_ok=False), the weights are
+        # un-quantized fp16. Strip any quantization-related fields from
+        # config so mlx_lm.load doesn't expect .scales/.biases keys.
+        if quant_bits > 0 and not quant_ok:
+            mlx_config.pop("quantization", None)
+            mlx_config.pop("quant_bits", None)
+            mlx_config.pop("quant_group_size", None)
+            logger.warning(
+                "Quantization requested (bits=%d) but failed — writing "
+                "fp16 model with no quantization config",
+                quant_bits,
+            )
         config_path = os.path.join(tmp_dir, "config.json")
         with open(config_path, "w") as f:
             json.dump(mlx_config, f, indent=2)
@@ -246,11 +300,34 @@ def convert_model(
             shutil.copy2(str(custom_tok), os.path.join(tmp_dir, custom_tok.name))
             logger.info("Copied custom tokenizer %s", custom_tok.name)
 
-        # Swap the completed temp tree into the final path.
+        # #1058: swap via rename-to-backup so a failed rename does NOT
+        # destroy the previously-available output_dir. The old code did
+        # rmtree(output_dir) then rename(tmp_dir, output_dir) — if rmtree
+        # succeeded but rename failed (cross-device / permission), the
+        # old model was already gone and tmp_dir was cleaned by the outer
+        # finally, losing everything. Now: rename old → backup, rename
+        # tmp → final, rmtree backup only after the swap succeeds.
+        backup_dir = f"{output_dir}.old.{os.getpid()}"
         if os.path.exists(output_dir):
-            shutil.rmtree(output_dir, ignore_errors=True)
-        os.rename(tmp_dir, output_dir)
-        tmp_dir = None  # consumed
+            os.rename(output_dir, backup_dir)
+        try:
+            os.rename(tmp_dir, output_dir)
+            tmp_dir = None  # consumed
+        except OSError:
+            # rename failed — restore old output if we moved it.
+            if os.path.exists(backup_dir) and not os.path.exists(output_dir):
+                try:
+                    os.rename(backup_dir, output_dir)
+                except OSError:
+                    logger.error(
+                        "Failed to restore backup %s after rename failure",
+                        backup_dir,
+                        exc_info=True,
+                    )
+            raise
+        # Swap succeeded — safe to remove the old output.
+        if os.path.exists(backup_dir):
+            shutil.rmtree(backup_dir, ignore_errors=True)
         logger.info("Atomically installed converted model to %s", output_dir)
 
         result.num_weights = len(mlx_weights)
