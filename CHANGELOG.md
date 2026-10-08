@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed — flywheel dead code removed from server route mounting (#1024)
+- **#1024**: flywheel was hard-banned via `_FORBIDDEN_UNTIL_FIXED` in
+  `server.py` — an incomplete feature leaving a dead code chain (forbidden
+  gate + route registry entry + lazy route module mapping). Removed the
+  mounting: deleted flywheel from `_LAZY_ROUTES`, `_ROUTE_REGISTRY`, and the
+  entire `_FORBIDDEN_UNTIL_FIXED` mechanism (only entry was flywheel).
+  Library code retained (`bench/flywheel.py` + `api/flywheel_routes.py`) for
+  programmatic use with an explicit runner.
+
 ### Fixed — video routes surface unsupported-param warnings (#1023)
 - **#1023**: Wan2 silently ignored request `fps` (controls container fps
   internally) and skyreels silently ignored `control_type` (control conditioning

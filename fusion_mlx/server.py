@@ -108,7 +108,6 @@ _LAZY_ROUTES: dict[str, tuple[str, str, str | None]] = {
     "layered_quantize": (".api.layered_quantize_routes", "router", "llm"),
     "distributed": (".api.distributed_routes", "router", "multitenant"),
     "bench": (".api.bench_routes", "router", "bench"),
-    "flywheel": (".api.flywheel_routes", "router", "bench"),
     "spec": (".api.spec_routes", "router", "llm"),
     "embeddings": (".api.embeddings_routes", "router", "embedding"),
     "ner": (".api.ner_routes", "router", "ner"),
@@ -1322,10 +1321,6 @@ class Server:
         # (unreachable = no attack surface). Routes with modality=None always
         # mount (health, metrics, admin infra).
         _profile = self._profile
-        _FORBIDDEN_UNTIL_FIXED: set[str] = set()
-        # H2 stub: flywheel routes a fake runner. Until fixed, hard-ban even
-        # in full profile — code-level prohibition, stronger than profile gate.
-        _FORBIDDEN_UNTIL_FIXED.add("flywheel")
 
         _ROUTE_REGISTRY: list[tuple[str, str | None, str | None]] = [
             ("ollama", ollama_router, "llm"),
@@ -1346,7 +1341,6 @@ class Server:
             ("recommend", recommend_router, "llm"),
             ("bench", None, "bench"),
             ("recommend_batch", None, "llm"),
-            ("flywheel", None, "bench"),
             ("spec", None, "llm"),
             ("embeddings", None, "embedding"),
             ("rerank", None, "reranker"),
@@ -1372,9 +1366,6 @@ class Server:
         _mounted: list[str] = []
         _skipped: list[str] = []
         for _name, _router, _mod in _ROUTE_REGISTRY:
-            if _name in _FORBIDDEN_UNTIL_FIXED:
-                _skipped.append(f"{_name}(forbidden-stub)")
-                continue
             if _mod is not None and not _profile.engine_allowed(_mod):
                 _skipped.append(f"{_name}(modality={_mod})")
                 continue
