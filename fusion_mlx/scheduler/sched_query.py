@@ -147,17 +147,15 @@ def fail_all_requests(self) -> list[str]:
                         rid,
                         exc_info=True,
                     )
-            try:
-                self.paged_cache_manager.delete_block_table(rid)
-            except Exception:
-                logger.debug(
-                    "fail_all_requests: delete_block_table failed for %s",
-                    rid,
-                    exc_info=True,
-                )
+        # #1007: release_for_eviction already decremented block refs; the
+        # explicit delete_block_table here plus clear_request_entry below
+        # double/triple-freed (delete_block_table -> free_block runs twice,
+        # once explicit, once via clear_request_entry). Shared blocks could
+        # be recycled under a live request. Drop the explicit delete and
+        # use the no-free detach, matching _do_abort_request / store_cache.
         if self.block_aware_cache is not None:
             try:
-                self.block_aware_cache.clear_request_entry(rid)
+                self.block_aware_cache.clear_request_entry_no_free(rid)
             except Exception:
                 logger.debug(
                     "fail_all_requests: block_aware clear failed for %s",

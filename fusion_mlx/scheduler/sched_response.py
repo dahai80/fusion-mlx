@@ -610,7 +610,11 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                         self.paged_cache_manager.release_for_eviction(
                             block_table.block_ids
                         )
-                    self.block_aware_cache.clear_request_entry(request_id)
+                    # #1007: release_for_eviction already decremented refs;
+                    # clear_request_entry would double-free (delete_block_table
+                    # -> free_block). Shared blocks could be recycled while a
+                    # live request still reads them. Use the no-free detach.
+                    self.block_aware_cache.clear_request_entry_no_free(request_id)
 
         # Remove from running
         if request_id in self.running:

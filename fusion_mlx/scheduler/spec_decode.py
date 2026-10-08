@@ -353,48 +353,71 @@ def spec_decode_step(
 
     non_trimmable_snapshots = _snapshot_non_trimmable_caches(prompt_cache)
 
-    with mx.stream(scheduler._stream):
-        t0 = time.perf_counter()
-        verified, n_accepted, cache_tokens_processed = _run_spec_verify(
-            model,
-            current_token,
-            draft_tokens,
-            prompt_cache,
-            sampled_from_regular=sampled_from_regular,
-        )
-    dt = time.perf_counter() - t0
+    # #1055: verify forward writes up to K draft KV tokens to prompt_cache.
+    # If _run_spec_verify or the replay below raises, that draft KV was
+    # never trimmed/restored, permanently polluting the request's
+    # prompt_cache (repeated/garbled output downstream). Wrap verify +
+    # rollback so the exception path restores non-trimmable snapshots and
+    # trims the K draft tokens from trimmable layers before re-raising.
+    try:
+        with mx.stream(scheduler._stream):
+            t0 = time.perf_counter()
+            verified, n_accepted, cache_tokens_processed = _run_spec_verify(
+                model,
+                current_token,
+                draft_tokens,
+                prompt_cache,
+                sampled_from_regular=sampled_from_regular,
+            )
+        dt = time.perf_counter() - t0
 
-    # Cache rollback for rejected tokens
-    if cache_tokens_processed > 0 and n_accepted < K:
-        n_rejected = cache_tokens_processed - n_accepted
+        # Cache rollback for rejected tokens
+        if cache_tokens_processed > 0 and n_accepted < K:
+            n_rejected = cache_tokens_processed - n_accepted
+            if non_trimmable_snapshots is not None:
+                _restore_non_trimmable_caches(prompt_cache, non_trimmable_snapshots)
+                if n_accepted > 0:
+                    accepted_prefix = draft_tokens[:n_accepted]
+                    replay_input = mx.array(accepted_prefix, mx.uint32)
+                    with mx.stream(scheduler._stream):
+                        replay_logits = model(replay_input[None], cache=prompt_cache)
+                        mx.eval(replay_logits)
+                logger.debug(
+                    "spec_decode: restored %d non-trimmable caches, %d/%d rejected",
+                    len(non_trimmable_snapshots),
+                    n_rejected,
+                    K,
+                )
+            # Trim trimmable KVCache layers. trim_prompt_cache is a no-op on
+            # hybrid caches (ArraysCache is non-trimmable); _trim_trimmable
+            # skips non-trimmable layers instead. The replay above appended
+            # n_accepted duplicates to KVCache, so a hybrid cache holds
+            # K+n_accepted -> trim K (==cache_tokens_processed) to leave
+            # n_accepted. A pure KVCache (no snapshot/replay) still holds K
+            # -> trim only the n_rejected rejected drafts.
+            trim_count = (
+                cache_tokens_processed
+                if non_trimmable_snapshots is not None
+                else n_rejected
+            )
+            if trim_count > 0:
+                _trim_trimmable(prompt_cache, trim_count)
+    except Exception:
+        # Verify/replay raised after writing draft KV. Restore to the
+        # pre-verify snapshot point: non-trimmable layers via the deepcopy,
+        # trimmable KVCache layers by trimming the K draft tokens verify
+        # would have appended.
         if non_trimmable_snapshots is not None:
             _restore_non_trimmable_caches(prompt_cache, non_trimmable_snapshots)
-            if n_accepted > 0:
-                accepted_prefix = draft_tokens[:n_accepted]
-                replay_input = mx.array(accepted_prefix, mx.uint32)
-                with mx.stream(scheduler._stream):
-                    replay_logits = model(replay_input[None], cache=prompt_cache)
-                    mx.eval(replay_logits)
-            logger.debug(
-                "spec_decode: restored %d non-trimmable caches, %d/%d rejected",
-                len(non_trimmable_snapshots),
-                n_rejected,
-                K,
-            )
-        # Trim trimmable KVCache layers. trim_prompt_cache is a no-op on
-        # hybrid caches (ArraysCache is non-trimmable); _trim_trimmable
-        # skips non-trimmable layers instead. The replay above appended
-        # n_accepted duplicates to KVCache, so a hybrid cache holds
-        # K+n_accepted -> trim K (==cache_tokens_processed) to leave
-        # n_accepted. A pure KVCache (no snapshot/replay) still holds K
-        # -> trim only the n_rejected rejected drafts.
-        trim_count = (
-            cache_tokens_processed
-            if non_trimmable_snapshots is not None
-            else n_rejected
+        _trim_trimmable(prompt_cache, K)
+        logger.warning(
+            "spec_decode: verify/replay raised for %s; restored prompt_cache "
+            "to pre-verify state (trimmed %d draft tokens)",
+            request_id,
+            K,
+            exc_info=True,
         )
-        if trim_count > 0:
-            _trim_trimmable(prompt_cache, trim_count)
+        raise
 
     spec_state.record_accepted(n_accepted, K)
 

@@ -206,9 +206,16 @@ def _do_abort_request(self, request_id: str) -> bool:
                     f"(request {request_id})"
                 )
 
-    # Clear request entry from block_aware_cache
+    # Clear request entry from block_aware_cache.
+    # #1007: release_for_eviction above already decremented block refs to
+    # 0; clear_request_entry would call delete_block_table -> free_block
+    # and decrement again (double-free). Exclusive blocks go to ref -1;
+    # shared blocks (ref=2) hit 0 and get recycled while another live
+    # request still reads them -> corrupt KV. Use the no-free variant
+    # (detach request table only, blocks stay in the hash index for
+    # prefix reuse), matching the store_cache worker idiom.
     if self.block_aware_cache is not None:
-        self.block_aware_cache.clear_request_entry(request_id)
+        self.block_aware_cache.clear_request_entry_no_free(request_id)
 
     # Clean up streaming detokenizer to prevent state contamination
     self._cleanup_detokenizer(request_id)
@@ -230,18 +237,59 @@ def _do_abort_request(self, request_id: str) -> bool:
     # F3 (#0910 audit): close DSpark spec-decode session to prevent
     # generator leak. The session holds a DSpark generator iterator with
     # target+draft model state; without cleanup it leaks on abort.
+    # #1038: warn (not silently skip) when a present state object lacks
+    # cleanup_request — that indicates a drifted state class and a likely
+    # generator/draft-KV leak.
     dspark_state = getattr(self, "_dspark_spec_state", None)
     if dspark_state is not None:
-        dspark_state.cleanup_request(request_id)
+        if hasattr(dspark_state, "cleanup_request"):
+            dspark_state.cleanup_request(request_id)
+        else:
+            logger.warning(
+                "dspark spec state present but lacks cleanup_request for "
+                "aborted %s — draft state may leak",
+                request_id,
+            )
     dflash_state = getattr(self, "_dflash_spec_state", None)
     if dflash_state is not None and hasattr(dflash_state, "cleanup_request"):
         dflash_state.cleanup_request(request_id)
+    elif dflash_state is not None:
+        logger.warning(
+            "dflash spec state present but lacks cleanup_request for "
+            "aborted %s — draft state may leak",
+            request_id,
+        )
     dflash2_state = getattr(self, "_dflash2_spec_state", None)
     if dflash2_state is not None and hasattr(dflash2_state, "cleanup_request"):
         dflash2_state.cleanup_request(request_id)
+    elif dflash2_state is not None:
+        logger.warning(
+            "dflash2 spec state present but lacks cleanup_request for "
+            "aborted %s — draft state may leak",
+            request_id,
+        )
     ngram_state = getattr(self, "_ngram_spec_state", None)
     if ngram_state is not None and hasattr(ngram_state, "cleanup_request"):
         ngram_state.cleanup_request(request_id)
+    elif ngram_state is not None:
+        logger.warning(
+            "ngram spec state present but lacks cleanup_request for "
+            "aborted %s — draft state may leak",
+            request_id,
+        )
+
+    # #1054: reset eagle3 spec decode state (draft_model._draft_cache +
+    # _prefill_hidden) when the aborted request was the active spec
+    # request. The normal finish path resets in _cleanup_finished, but
+    # only when _last_request_id == request_id — an aborted request that
+    # WAS the spec request, or one aborted mid spec_verify (verify
+    # forward already wrote K draft KV tokens that trim never ran on),
+    # would leave K stale draft KV tokens in the prompt_cache until the
+    # next request overwrote them. Mirror the finish-path condition.
+    spec_state = getattr(self, "_spec_decode_state", None)
+    if spec_state is not None:
+        if getattr(spec_state, "_last_request_id", None) == request_id:
+            spec_state.reset()
 
     # Remove from prefill progress tracker.
     get_prefill_tracker().remove(request_id)
