@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed — analyze/migration routes surface partial failures instead of silent pass (#1021)
+- **#1021**: `api/analyze_routes.py` had two `except Exception: pass` blocks
+  (safetensors shape parsing + special-ops detection) that swallowed failures
+  and returned an `AnalyzeResponse` that looked successful but was missing
+  shapes/ops. `api/migration_routes.py` had `except Exception: pass` after
+  `resolve_model` that silently fell through to a default migration level,
+  potentially faking a real assessment. Fix: all three failure points now log
+  WARNING and collect warnings; `AnalyzeResponse` gained a `warnings` field
+  (empty = fully successful); `MigrationLevelResponse.warnings` now carries
+  probe-failure markers instead of silent pass.
+
 ### Fixed — distributed_routes shard error call sites now explicitly raise (#1020)
 - **#1020**: `_shard_error_response(exc)` was called without `raise` at 8 route
   handler sites — the function internally raised `HTTPException`, so it worked,

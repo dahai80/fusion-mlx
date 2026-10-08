@@ -106,6 +106,7 @@ def _assess_level(
     if model_id in aliases:
         return MigrationLevel.L0, list(_STANDARD_COMPONENTS.keys()), [], []
 
+    probe_warnings: list[str] = []
     try:
         resolved = resolve_model(model_id)
         if resolved and resolved != model_id:
@@ -114,8 +115,11 @@ def _assess_level(
             )
             if resolved in aliases:
                 return MigrationLevel.L0, list(_STANDARD_COMPONENTS.keys()), [], []
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(
+            "migration: model probe (resolve_model) failed for %s: %s", model_id, e
+        )
+        probe_warnings.append(f"model probe failed: {e}")
 
     try:
         cfg = detect_model_config(model_id)
@@ -128,7 +132,7 @@ def _assess_level(
             name for name, pat in _STANDARD_COMPONENTS.items() if pat.search(model_str)
         ]
         missing = []
-        warnings = []
+        warnings = list(probe_warnings)
 
         if _HYBRID_OPS.search(model_str):
             missing.append("hybrid-attention ops (Mamba/SSM)")
@@ -157,7 +161,7 @@ def _assess_level(
         MigrationLevel.L4,
         [],
         ["unrecognized architecture"],
-        ["Cannot analyze model structure; manual assessment required"],
+        probe_warnings + ["Cannot analyze model structure; manual assessment required"],
     )
 
 
