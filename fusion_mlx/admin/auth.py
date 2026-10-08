@@ -77,22 +77,31 @@ def verify_session_from_request(request: Request) -> bool:
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if not token:
         return False
-    if token not in _active_sessions:
-        return False
-    if time.time() > _active_sessions[token]["expires"]:
-        del _active_sessions[token]
-        return False
-    return True
+    # #1050: check-then-act under the lock so concurrent logout/reaper
+    # cannot delete the token between the `in` check and the `["expires"]`
+    # access (KeyError → 500). Pre-fix the delete used `del` outside the
+    # lock — a race with logout (which holds the lock) could double-delete.
+    with _sessions_lock:
+        session = _active_sessions.get(token)
+        if session is None:
+            return False
+        if time.time() > session["expires"]:
+            _active_sessions.pop(token, None)
+            return False
+        return True
 
 
 def verify_session(token: str) -> bool:
     """Check if a session token is valid."""
-    if token not in _active_sessions:
-        return False
-    if time.time() > _active_sessions[token]["expires"]:
-        del _active_sessions[token]
-        return False
-    return True
+    # #1050: same race fix as verify_session_from_request.
+    with _sessions_lock:
+        session = _active_sessions.get(token)
+        if session is None:
+            return False
+        if time.time() > session["expires"]:
+            _active_sessions.pop(token, None)
+            return False
+        return True
 
 
 def validate_api_key(key: str) -> tuple[bool, str]:
