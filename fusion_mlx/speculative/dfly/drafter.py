@@ -27,6 +27,8 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
+from .accept_counter import DFlyAcceptCounter
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TARGET_LAYER_IDS = [1, 20, 39, 58, 77]
@@ -191,6 +193,10 @@ class DFlyDrafter:
         self._draft_model: DFlyDraftModel | None = None
         self._cache: list[Any] | None = None
         self._loaded = False
+        # #1075: per-drafter accept counter so multi-model EnginePool stats
+        # don't mix. The module-level global aggregated across engines; an
+        # instance-owned counter isolates per engine.
+        self.accept_counter = DFlyAcceptCounter()
         logger.info(
             "DFlyDrafter: path=%s block_size=%d target_layers=%s",
             model_path,

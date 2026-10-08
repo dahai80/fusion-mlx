@@ -1011,6 +1011,25 @@ def deep_reset(self) -> None:
 
     # Release speculative-decode drafter state so drafter weights are not
     # retained across engine switches (#1052).
+    # #1051: uninstall HiddenStateCapture BEFORE dropping _spec_decode_state.
+    # The capture middleware replaces target-model layers with wrappers that
+    # hold back-references to the original layers + captured mx.array tensors.
+    # Without uninstall(), setting _spec_decode_state=None orphaned the
+    # HiddenStateCapture (still holding _original_layers + _captured +
+    # _prefill_captured Metal tensors) with no reachable uninstall path —
+    # the wrappers stayed in model.model.layers until the model was GC'd,
+    # and captured hidden tensors (hidden_size x seq_len) leaked on Metal.
+    spec_state = getattr(self, "_spec_decode_state", None)
+    if spec_state is not None:
+        hc = getattr(spec_state, "hidden_capture", None)
+        if hc is not None and getattr(hc, "installed", False):
+            try:
+                hc.uninstall()
+            except Exception:
+                logger.debug(
+                    "deep_reset: hidden_capture uninstall failed",
+                    exc_info=True,
+                )
     for attr in (
         "_spec_decode_state",
         "_specprefill_draft_model",

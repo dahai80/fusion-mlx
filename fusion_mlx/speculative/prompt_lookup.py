@@ -54,7 +54,13 @@ class PromptLookupDecoder:
 
         # Statistics
         self.total_drafts = 0
+        # #1074: successful_drafts counts FULL acceptances only (all K draft
+        # tokens accepted). Previously any num_accepted > 0 counted, making
+        # successful_drafts/total_drafts a biased "any-hit" rate that
+        # overstated spec effectiveness. partial_accept_drafts tracks the
+        # 0 < accepted < drafted case separately.
         self.successful_drafts = 0
+        self.partial_accept_drafts = 0
         self.total_draft_tokens = 0
         self.accepted_tokens = 0
 
@@ -154,11 +160,21 @@ class PromptLookupDecoder:
 
         return []
 
-    def record_accepted(self, num_accepted: int):
-        """Record statistics about accepted draft tokens."""
+    def record_accepted(self, num_accepted: int, num_drafted: int = 0):
+        """Record statistics about accepted draft tokens.
+
+        #1074: successful_drafts counts FULL acceptances (num_accepted ==
+        num_drafted) so successful_drafts/total_drafts is the full-accept
+        rate, not a biased any-hit rate. partial_accept_drafts tracks
+        drafts with 0 < accepted < drafted. num_drafted defaults to 0 for
+        back-compat (treated as partial when num_accepted > 0).
+        """
         if num_accepted > 0:
-            self.successful_drafts += 1
             self.accepted_tokens += num_accepted
+            if num_drafted > 0 and num_accepted >= num_drafted:
+                self.successful_drafts += 1
+            else:
+                self.partial_accept_drafts += 1
 
     def get_stats(self) -> dict:
         """Get decoder statistics."""
@@ -169,6 +185,7 @@ class PromptLookupDecoder:
         return {
             "total_drafts": self.total_drafts,
             "successful_drafts": self.successful_drafts,
+            "partial_accept_drafts": self.partial_accept_drafts,
             "total_draft_tokens": self.total_draft_tokens,
             "accepted_tokens": self.accepted_tokens,
             "acceptance_rate": acceptance_rate,
@@ -296,7 +313,7 @@ def prompt_lookup_generate_step(
                 else:
                     break
 
-            decoder.record_accepted(n_accepted)
+            decoder.record_accepted(n_accepted, num_drafted=len(draft_tokens))
 
             if ntoks >= max_tokens:
                 break

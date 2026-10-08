@@ -793,9 +793,12 @@ class DSparkSpecState:
         self._session_order: list[str] = []
 
     def on_new_request(self, request_id: str):
+        # #1074: total_spec_steps / total_draft_proposed / total_draft_accepted
+        # are lifecycle (cumulative) counters — they feed Prometheus _total
+        # gauges and must accumulate across requests, not reset per request.
+        # Only the per-request session state resets here.
         if self._last_request_id != request_id:
             self._last_request_id = request_id
-            self.total_spec_steps = 0
 
     def get_session(self, request_id: str):
         return self._sessions.get(request_id)
@@ -1125,10 +1128,12 @@ class DFlash2SpecState:
         self._probe_rates: list[float] = []
 
     def on_new_request(self, request_id: str):
+        # #1074: total_spec_steps is a lifecycle (cumulative) counter matching
+        # eagle3/DSpark/dflash — accumulates across requests for Prometheus
+        # _total gauges. Only per-request adaptive state resets here.
         if self._last_request_id != request_id:
             self._last_request_id = request_id
             self.steps_since_start = 0
-            self.total_spec_steps = 0
             self._recent_rates = []
             self._circuit_tripped = False
             self._paused_steps = 0

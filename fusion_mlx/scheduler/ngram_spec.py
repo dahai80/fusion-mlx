@@ -208,13 +208,14 @@ class NGramSpecState:
         self._last_request_id = None
 
     def on_new_request(self, request_id: str):
+        # #1074: total_spec_steps / total_draft_proposed / total_draft_accepted
+        # are lifecycle (cumulative) counters matching eagle3/DSpark/dflash —
+        # they feed Prometheus _total gauges and accumulate across requests.
+        # Only per-request adaptive state resets here.
         if self._last_request_id != request_id:
             self.predictor.reset()
             self._last_request_id = request_id
             self.steps = 0
-            self.total_spec_steps = 0
-            self.total_draft_proposed = 0
-            self.total_draft_accepted = 0
             self._paused = False
             self._recent_rates.clear()
             self._d1_rates.clear()
