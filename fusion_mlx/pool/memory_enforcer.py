@@ -454,6 +454,13 @@ class ProcessMemoryEnforcer:
         with self._state_lock:
             self._loaded_model_bytes = max(0, self._loaded_model_bytes + delta)
 
+    def prune_model_state(self, model_id: str) -> None:
+        # #1027: drop eviction cooldown metadata for a fully-removed model so
+        # _last_evicted_at doesn't grow one entry per ever-loaded model.
+        with self._state_lock:
+            self._last_evicted_at.pop(model_id, None)
+        self._eviction_marked.discard(model_id)
+
     def get_loaded_model_bytes(self) -> int:
         """Return current loaded model byte count (thread-safe)."""
         with self._state_lock:

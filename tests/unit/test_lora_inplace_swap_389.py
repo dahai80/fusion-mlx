@@ -254,3 +254,98 @@ class TestConcurrency:
         r_idx = order.index("restore-A")
         b_idx = order.index("apply-B")
         assert a_idx < r_idx < b_idx
+
+
+class TestAdapterSwapStateCleanup:
+    """#1027: per-base swap-lock + enforcer eviction metadata must be dropped
+    when a base model is fully removed from _entries (unregister / stale
+    discover sweep), not retained indefinitely."""
+
+    def test_cleanup_removes_idle_swap_lock(self):
+        pool = _pool()
+        entry = _base_entry()
+        pool._entries["qwen-base"] = entry
+        # Touch the lock so it exists.
+        pool._swap_lock("qwen-base")
+        assert "qwen-base" in pool._adapter_swap_locks
+
+        pool._cleanup_adapter_swap_state("qwen-base")
+
+        assert "qwen-base" not in pool._adapter_swap_locks
+
+    def test_cleanup_drops_stale_active_swap(self):
+        pool = _pool()
+        entry = _base_entry()
+        pool._entries["qwen-base"] = entry
+        swap = MagicMock()
+        swap.restore = MagicMock()
+        pool._active_swap["qwen-base"] = swap
+        pool._swap_lock("qwen-base")
+
+        pool._cleanup_adapter_swap_state("qwen-base")
+
+        assert "qwen-base" not in pool._active_swap
+        swap.restore.assert_called_once()
+        assert "qwen-base" not in pool._adapter_swap_locks
+
+    def test_cleanup_retains_held_lock(self):
+        pool = _pool()
+        entry = _base_entry()
+        pool._entries["qwen-base"] = entry
+        lock = pool._swap_lock("qwen-base")
+        await_lock = asyncio.Event()
+
+        async def hold():
+            async with lock:
+                await_lock.set()
+                await asyncio.sleep(0.05)
+
+        async def run():
+            await asyncio.gather(hold(), _hold_cleanup(pool))
+
+        async def _hold_cleanup(p):
+            await await_lock.wait()
+            p._cleanup_adapter_swap_state("qwen-base")
+
+        asyncio.run(run())
+        # Lock was held during cleanup → retained, not dropped.
+        assert "qwen-base" in pool._adapter_swap_locks
+
+    def test_unregister_engine_cleans_swap_state(self):
+        pool = _pool()
+        entry = _base_entry()
+        pool._entries["qwen-base"] = entry
+        pool._swap_lock("qwen-base")
+        assert "qwen-base" in pool._adapter_swap_locks
+
+        removed = pool.unregister_engine("qwen-base")
+
+        assert removed is True
+        assert "qwen-base" not in pool._entries
+        assert "qwen-base" not in pool._adapter_swap_locks
+
+    def test_merge_discovered_cleans_stale_swap_state(self):
+        pool = _pool()
+        entry = _base_entry()
+        entry.engine = None  # stale-removable
+        pool._entries["gone-base"] = entry
+        pool._swap_lock("gone-base")
+        assert "gone-base" in pool._adapter_swap_locks
+
+        # Empty discovered dict → every engine-less entry is stale.
+        pool._merge_discovered({})
+
+        assert "gone-base" not in pool._entries
+        assert "gone-base" not in pool._adapter_swap_locks
+
+    def test_enforcer_prune_model_state_drops_eviction_cooldown(self):
+        from fusion_mlx.pool.memory_enforcer import ProcessMemoryEnforcer
+
+        enf = ProcessMemoryEnforcer(engine_pool=MagicMock())
+        enf._last_evicted_at["stale-model"] = 1234.0
+        enf._eviction_marked.add("stale-model")
+
+        enf.prune_model_state("stale-model")
+
+        assert "stale-model" not in enf._last_evicted_at
+        assert "stale-model" not in enf._eviction_marked

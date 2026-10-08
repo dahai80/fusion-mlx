@@ -642,6 +642,8 @@ class EnginePool:
             ]
             for mid in stale:
                 del self._entries[mid]
+                # #1027: clean per-base swap-lock + enforcer eviction state.
+                self._cleanup_adapter_swap_state(mid)
 
             # Warn about pinned models not found
             found_models = set(self._entries.keys())
@@ -1087,6 +1089,43 @@ class EnginePool:
             lock = asyncio.Lock()
             self._adapter_swap_locks[base_model_id] = lock
         return lock
+
+    def _cleanup_adapter_swap_state(self, base_model_id: str) -> None:
+        # #1027: drop the per-base swap lock + any stale active-swap entry
+        # when the base model is fully removed from _entries. Without this
+        # the dicts grew one entry per model and never shrank (low-risk
+        # metadata leak). Only drop the lock if it isn't currently held —
+        # an in-flight adapter request on a concurrently-removed base is
+        # pathological, but releasing a held lock from underneath it would
+        # corrupt the swap serialization contract.
+        swap = self._active_swap.pop(base_model_id, None)
+        if swap is not None:
+            logger.warning(
+                "Discarding stale active LoRA swap for removed base '%s'",
+                base_model_id,
+            )
+            try:
+                swap.restore()
+            except Exception:
+                logger.debug(
+                    "stale swap restore failed for %s", base_model_id, exc_info=True
+                )
+        lock = self._adapter_swap_locks.pop(base_model_id, None)
+        if lock is not None and lock.locked():
+            # Re-add — an in-flight request still holds it; it will be
+            # released by _release_inplace_adapter and orphaned (harmless:
+            # the base is gone, no future acquire can look it up).
+            self._adapter_swap_locks[base_model_id] = lock
+            logger.debug("Retained held swap lock for removed base '%s'", base_model_id)
+        if self._process_memory_enforcer is not None:
+            try:
+                self._process_memory_enforcer.prune_model_state(base_model_id)
+            except Exception:
+                logger.debug(
+                    "enforcer prune_model_state failed for %s",
+                    base_model_id,
+                    exc_info=True,
+                )
 
     async def _acquire_inplace_adapter(
         self, base_model_id: str, adapter_path: str
@@ -1891,6 +1930,9 @@ class EnginePool:
                     -int(entry.estimated_size)
                 )
         del self._entries[model_id]
+        # #1027: drop per-base swap-lock + enforcer eviction state so the
+        # metadata dicts don't grow unbounded across model churn.
+        self._cleanup_adapter_swap_state(model_id)
         logger.info(f"Unregistered entry '{model_id}' from pool (full removal)")
         return True
 
