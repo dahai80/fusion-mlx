@@ -213,20 +213,17 @@ class KVCacheImportResponse(BaseModel):
 
 
 def _shard_error_response(exc: ShardError):
+    # #1020: return (not raise) so call sites are explicit: raise _shard_error_response(exc).
     # 400 for caller errors (bad range / payload), 404 for unknown shard,
-    # 502 for model-load failure. Kept here so the route handlers stay flat.
-    msg = str(exc)
-    if msg.startswith("unknown shard_id"):
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=404, detail=msg)
-    if msg.startswith("failed to load model"):
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=502, detail=msg)
+    # 502 for model-load failure.
     from fastapi import HTTPException
 
-    raise HTTPException(status_code=400, detail=msg)
+    msg = str(exc)
+    if msg.startswith("unknown shard_id"):
+        return HTTPException(status_code=404, detail=msg)
+    if msg.startswith("failed to load model"):
+        return HTTPException(status_code=502, detail=msg)
+    return HTTPException(status_code=400, detail=msg)
 
 
 @router.post("/load_shard", response_model=LoadShardResponse)
@@ -239,7 +236,7 @@ async def load_shard(
             req.model_id, req.shard_index, req.layer_range, req.dtype
         )
     except ShardError as exc:
-        _shard_error_response(exc)
+        raise _shard_error_response(exc)
     return LoadShardResponse(**info)
 
 
@@ -253,7 +250,7 @@ async def pipeline_step(
             req.shard_id, req.hidden_states, req.input_ids, req.position_ids
         )
     except ShardError as exc:
-        _shard_error_response(exc)
+        raise _shard_error_response(exc)
     return PipelineStepResponse(**out)
 
 
@@ -271,7 +268,7 @@ async def decode(
             req.return_logits,
         )
     except ShardError as exc:
-        _shard_error_response(exc)
+        raise _shard_error_response(exc)
     return DecodeResponse(**out)
 
 
@@ -291,7 +288,7 @@ async def decode_step(
             req.return_logits,
         )
     except ShardError as exc:
-        _shard_error_response(exc)
+        raise _shard_error_response(exc)
     return DecodeStepResponse(**out)
 
 
@@ -303,7 +300,7 @@ async def reset_cache(
     try:
         out = get_manager().reset_cache(req.shard_id)
     except ShardError as exc:
-        _shard_error_response(exc)
+        raise _shard_error_response(exc)
     return ResetCacheResponse(**out)
 
 
@@ -315,7 +312,7 @@ async def export_kv_cache(
     try:
         out = get_manager().export_kv_cache(req.shard_id, req.layer_range)
     except ShardError as exc:
-        _shard_error_response(exc)
+        raise _shard_error_response(exc)
     return KVCacheExportResponse(**out)
 
 
@@ -329,7 +326,7 @@ async def import_kv_cache(
             req.shard_id, [l.model_dump() for l in req.layers], req.seq_len
         )
     except ShardError as exc:
-        _shard_error_response(exc)
+        raise _shard_error_response(exc)
     return KVCacheImportResponse(**out)
 
 
@@ -341,7 +338,7 @@ async def sync_weights(
     try:
         out = get_manager().sync_weights(req.shard_id, req.weights, req.manifest)
     except ShardError as exc:
-        _shard_error_response(exc)
+        raise _shard_error_response(exc)
     return SyncWeightsResponse(**out)
 
 
@@ -361,5 +358,5 @@ async def drop_shard(
     try:
         out = get_manager().drop_shard(shard_id)
     except ShardError as exc:
-        _shard_error_response(exc)
+        raise _shard_error_response(exc)
     return DropShardResponse(**out)

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed — distributed_routes shard error call sites now explicitly raise (#1020)
+- **#1020**: `_shard_error_response(exc)` was called without `raise` at 8 route
+  handler sites — the function internally raised `HTTPException`, so it worked,
+  but the call-site pattern looked like exception swallowing. If someone
+  refactored the function to return instead of raise, all 8 sites would silently
+  return fake success responses. Fix: `_shard_error_response` now RETURNS
+  `HTTPException`; all 8 call sites explicitly `raise _shard_error_response(exc)`.
+
 ### Fixed — video/common + cache abstract base methods raise NotImplementedError (#1019)
 - **#1019**: abstract base class methods in `video/common/video_vae_base.py`,
   `video/common/scheduler_base.py`, `video/common/upsample_base.py`,
