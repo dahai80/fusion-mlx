@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed — in-place LoRA swap no longer leaks lock/in_use/swap on base unload (#1009)
+- **#1009**: with `FUSION_LORA_INPLACE_SWAP=1` (default off), if the base
+  engine was concurrently unloaded during the swap window, `release_engine`
+  skipped `_release_inplace_adapter` (the `engine is not None` guard) and
+  fell through to the adapter-key path — never decrementing the base's
+  `in_use`, never releasing `_adapter_swap_locks[base]`, never popping
+  `_active_swap[base]`. Result: `in_use` permanently +1 (LRU/TTL skip) +
+  swap lock held forever (every subsequent adapter request hung on
+  `lock.acquire()`) + swap object pinning weights past gc/clear_cache. Fix:
+  `release_engine` always calls `_release_inplace_adapter` for inplace
+  adapter releases (the helper handles None engine/entry gracefully);
+  `_detach_engine` pops `_active_swap` + releases a held swap lock on unload.
+
 ### Fixed — /v1/count_tokens no longer leaks engine lease on errors (#1005)
 - **#1005**: `/v1/count_tokens` acquired an engine lease (`_lease=True` via
   `_resolve_engine`) but the body after it — `convert_anthropic_to_internal`,

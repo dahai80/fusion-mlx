@@ -1664,10 +1664,17 @@ class EnginePool:
         # was an adapter request served from the resident base engine, restore
         # the base weights and release the per-base swap lock.
         if self._inplace_swap and adapter_path:
-            base_entry = self._entries.get(model_id)
-            if base_entry is not None and base_entry.engine is not None:
-                await self._release_inplace_adapter(model_id, adapter_path)
-                return
+            # #1009: always release the inplace adapter lease — even if the
+            # base engine was concurrently unloaded (engine is None) during
+            # the swap window. _release_inplace_adapter pops _active_swap,
+            # decrements base in_use, and releases the swap lock regardless
+            # of engine state. The old `engine is not None` guard skipped
+            # all three when the base was torn down mid-lease, leaving
+            # in_use permanently +1 (LRU/TTL skip) and the swap lock held
+            # forever — every subsequent adapter request hung on
+            # lock.acquire().
+            await self._release_inplace_adapter(model_id, adapter_path)
+            return
         entry_key = self._adapter_key(model_id, adapter_path)
         # Detach + settle both OUTSIDE the lock. _detach_engine awaits
         # entry.engine.safe_evict() (30s timeout) / stop() — a slow op that
@@ -2076,6 +2083,20 @@ class EnginePool:
                 logger.debug("model_registry cleanup: %d stale entries", cleaned)
         except Exception:
             logger.debug("model_registry cleanup failed", exc_info=True)
+        # #1009: drop any lingering in-place LoRA swap for this base. The
+        # swap object holds a reference to the (now-stopping) model; without
+        # popping it, the weights stay pinned and gc/clear_cache in the
+        # settle barrier cannot reclaim them. Also release the per-base swap
+        # lock if it is still held (a mid-swap unload can leave it locked).
+        stale_swap = self._active_swap.pop(model_id, None)
+        if stale_swap is not None:
+            logger.info("inplace_swap: dropping stale swap for %s on unload", model_id)
+        stale_lock = self._adapter_swap_locks.pop(model_id, None)
+        if stale_lock is not None and stale_lock.locked():
+            stale_lock.release()
+            logger.warning(
+                "inplace_swap: released held swap lock for %s on unload", model_id
+            )
         entry.engine = None
         # RC-3 (#811 audit 0906): notify the Server so it drops its
         # engine_cores reference for this model. Without this, an unload
