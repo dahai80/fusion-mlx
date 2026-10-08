@@ -18,33 +18,33 @@ class CacheManager(ABC):
 
     @abstractmethod
     def fetch(self, key: Any) -> tuple[Any | None, bool]:
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def store(self, key: Any, value: Any) -> bool:
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def evict(self, key: Any) -> bool:
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def clear(self) -> int:
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def get_stats(self) -> BaseCacheStats:
-        pass
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def size(self) -> int:
-        pass
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def max_size(self) -> int:
-        pass
+        raise NotImplementedError
 
     @property
     def utilization(self) -> float:

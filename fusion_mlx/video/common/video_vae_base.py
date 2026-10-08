@@ -22,15 +22,15 @@ class VideoVAEBase(ABC):
 
     @abstractmethod
     def encode(self, pixels: mx.array) -> mx.array:
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def decode(self, latent: mx.array) -> mx.array:
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def decode_tiled(self, latent: mx.array, tile_size: int = 256) -> mx.array:
-        pass
+        raise NotImplementedError
 
     def release(self) -> None:
         logger.debug("VAE %s release (no-op base)", self.name)

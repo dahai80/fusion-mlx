@@ -22,7 +22,7 @@ class UpsampleBase(ABC):
 
     @abstractmethod
     def upsample(self, latent: mx.array) -> mx.array:
-        pass
+        raise NotImplementedError
 
     def release(self) -> None:
         logger.debug("upsampler %s release (no-op base)", self.name)

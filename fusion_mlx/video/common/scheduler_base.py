@@ -21,12 +21,12 @@ class NoiseSchedulerBase(ABC):
 
     @abstractmethod
     def sigmas(self, num_steps: int) -> mx.array:
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def add_noise(self, latent: mx.array, sigma: mx.array, seed: int) -> mx.array:
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def step(self, latent: mx.array, model_out: mx.array, sigma: mx.array) -> mx.array:
-        pass
+        raise NotImplementedError
