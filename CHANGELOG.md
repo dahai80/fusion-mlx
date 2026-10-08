@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed — video/common + cache abstract base methods raise NotImplementedError (#1019)
+- **#1019**: abstract base class methods in `video/common/video_vae_base.py`,
+  `video/common/scheduler_base.py`, `video/common/upsample_base.py`,
+  `cache/interface.py`, and `cache/type_handlers.py` used `pass` as the body.
+  A subclass that forgot to override would silently return `None` instead of
+  failing. Fix: all abstract method bodies now `raise NotImplementedError`
+  (defense-in-depth: `@abstractmethod` prevents direct instantiation, but
+  `super()` calls or incomplete overrides now fail visibly).
+
 ### Fixed — skyreels_v3 stub outputs now log warnings + is_stub() probes (#1018)
 - **#1018**: skyreels_v3 had multiple zero-tensor stub outputs (UMT5 text
   encoder, VAE decode, A2V audio/text embeds) that silently produced

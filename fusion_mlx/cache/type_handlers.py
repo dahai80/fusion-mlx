@@ -84,13 +84,13 @@ class CacheTypeHandler(ABC):
     @abstractmethod
     def cache_type(self) -> CacheType:
         """Return the cache type this handler manages."""
-        pass
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def supports_block_slicing(self) -> bool:
         """Whether this cache type supports sequence-level block slicing."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def extract_state(self, cache_obj: Any) -> dict[str, Any]:
@@ -102,7 +102,7 @@ class CacheTypeHandler(ABC):
         Returns:
             Dictionary containing state tensors and metadata
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def get_seq_len(self, state: dict[str, Any]) -> int:
@@ -114,7 +114,7 @@ class CacheTypeHandler(ABC):
         Returns:
             Sequence length (number of tokens)
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def slice_state(
@@ -133,7 +133,7 @@ class CacheTypeHandler(ABC):
         Returns:
             Sliced state dictionary, or None if slicing not supported
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def concatenate_states(
@@ -148,7 +148,7 @@ class CacheTypeHandler(ABC):
         Returns:
             Combined state dictionary
         """
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def reconstruct_cache(
@@ -165,7 +165,7 @@ class CacheTypeHandler(ABC):
         Returns:
             Reconstructed mlx-lm cache object
         """
-        pass
+        raise NotImplementedError
 
     def get_state_info(self) -> CacheStateInfo:
         """Get information about this cache type's state structure."""
