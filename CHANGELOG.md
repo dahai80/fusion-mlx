@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed — setup-api-key half-failure state drift (#1047)
+- **#1047**: `/api/setup-api-key` wrote runtime memory (settings,
+  `_server_state`, `set_api_key`, `get_config`) before persisting to disk.
+  A `save()` failure left the in-memory key active while disk had none →
+  `require_admin` accepted the new key but the "already configured" branch
+  blocked re-setup, and a restart lost the key (memory/disk drift). Sync
+  failures were debug-logged and the route returned `{"success": True}`
+  → "set success but login 401". Fix: persist first; on save failure
+  rollback the in-memory settings and return 500 (no changes applied);
+  on post-save sync failure return 500 with the specific failed layer and
+  a "restart to reload" hint instead of fake success.
+
 ### Changed — skyreels_v3 speculative_denoise removed (#1044)
 - **#1044**: `video/skyreels_v3/speculative_denoise.py` was a falsified
   experiment (0% acceptance, 0.2-0.4x slower than baseline, env-gated OFF).

@@ -187,3 +187,115 @@ class TestSetupApiKeyViaTestClient:
     def test_missing_fields_return_422(self, client):
         resp = client.post("/api/setup-api-key", json={})
         assert resp.status_code == 422
+
+
+class TestSetupApiKeyHalfFailure1047:
+    """#1047: persist-first ordering + no fake success on sync failure."""
+
+    @staticmethod
+    def _local_request():
+        fastapi_request = AsyncMock(spec=Request)
+        fastapi_request.client.host = "127.0.0.1"
+        fastapi_request.headers = {}
+        return fastapi_request
+
+    @pytest.mark.asyncio
+    async def test_save_failure_rolls_back_memory(self):
+        from fusion_mlx.admin.auth_routes import setup_api_key
+        from fusion_mlx.admin.models import SetupApiKeyRequest
+
+        request_data = SetupApiKeyRequest(
+            api_key="valid-key-1234", api_key_confirm="valid-key-1234"
+        )
+        response = MagicMock()
+        fastapi_request = self._local_request()
+
+        with (
+            patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs,
+            patch("fusion_mlx.server._server_state", {}) as state,
+            patch("fusion_mlx.admin.auth.set_api_key") as mock_set,
+            patch("fusion_mlx.config.get_config") as mock_cfg,
+        ):
+            settings = MagicMock()
+            settings.auth.api_key = None
+            settings.save.side_effect = RuntimeError("disk full")
+            mock_gs.return_value = settings
+
+            from fastapi import HTTPException
+
+            with pytest.raises(HTTPException) as exc:
+                await setup_api_key(request_data, response, fastapi_request)
+            assert exc.value.status_code == 500
+            assert "persist" in exc.value.detail.lower()
+            # rollback: in-memory key restored to prior (None)
+            assert settings.auth.api_key is None
+            # memory layers NOT touched on save failure
+            assert "api_key" not in state
+            mock_set.assert_not_called()
+            mock_cfg.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sync_failure_returns_500_not_success(self):
+        from fusion_mlx.admin.auth_routes import setup_api_key
+        from fusion_mlx.admin.models import SetupApiKeyRequest
+
+        request_data = SetupApiKeyRequest(
+            api_key="valid-key-1234", api_key_confirm="valid-key-1234"
+        )
+        response = MagicMock()
+        fastapi_request = self._local_request()
+
+        with (
+            patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs,
+            patch("fusion_mlx.server._server_state", {}) as state,
+            patch(
+                "fusion_mlx.admin.auth.set_api_key",
+                side_effect=RuntimeError("module lock poisoned"),
+            ),
+            patch("fusion_mlx.config.get_config"),
+        ):
+            settings = MagicMock()
+            settings.auth.api_key = None
+            settings.save.return_value = None
+            mock_gs.return_value = settings
+
+            from fastapi import HTTPException
+
+            with pytest.raises(HTTPException) as exc:
+                await setup_api_key(request_data, response, fastapi_request)
+            assert exc.value.status_code == 500
+            assert "sync failed" in exc.value.detail.lower()
+            # persisted + _server_state synced before the failing layer
+            settings.save.assert_called_once()
+            assert state.get("api_key") == "valid-key-1234"
+
+    @pytest.mark.asyncio
+    async def test_success_syncs_all_layers(self):
+        from fusion_mlx.admin.auth_routes import setup_api_key
+        from fusion_mlx.admin.models import SetupApiKeyRequest
+
+        request_data = SetupApiKeyRequest(
+            api_key="valid-key-1234", api_key_confirm="valid-key-1234"
+        )
+        response = MagicMock()
+        fastapi_request = self._local_request()
+
+        with (
+            patch("fusion_mlx.admin.auth_routes._get_global_settings") as mock_gs,
+            patch("fusion_mlx.server._server_state", {}) as state,
+            patch("fusion_mlx.admin.auth.set_api_key") as mock_set,
+            patch("fusion_mlx.config.get_config") as mock_cfg,
+        ):
+            settings = MagicMock()
+            settings.auth.api_key = None
+            settings.save.return_value = None
+            mock_gs.return_value = settings
+            cfg = MagicMock()
+            mock_cfg.return_value = cfg
+
+            result = await setup_api_key(request_data, response, fastapi_request)
+            assert result["success"] is True
+            assert settings.auth.api_key == "valid-key-1234"
+            assert state["api_key"] == "valid-key-1234"
+            mock_set.assert_called_once_with("valid-key-1234")
+            assert cfg.api_key == "valid-key-1234"
