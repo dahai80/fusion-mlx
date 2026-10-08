@@ -18,8 +18,8 @@ import numpy as np
 from fusion_mlx.video.skyreels_v3.pipelines import (
     SkyReelsBasePipeline,
     SkyReelsPipelineConfig,
+    async_denoise_enabled,
 )
-from fusion_mlx.video.skyreels_v3.speculative_denoise import async_denoise_enabled
 
 logger = logging.getLogger(__name__)
 

@@ -128,24 +128,12 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             # hard-imports mlx + triggers nvfp4.py top-level mx.array (#179);
             # skip on Linux CI (mlx absent/mocked), run on macOS.
             "test_nvfp4_reader.py",
-            # hard-imports mlx + mlx.nn (#177 speculative denoise);
-            # skip on Linux CI (mlx absent/mocked), run on macOS.
-            "test_speculative_denoise.py",
-            # hard-imports mlx + mlx.nn + SkyReelsR2VDiT (#177 Phase-2 wiring);
-            # skip on Linux CI (mlx absent/mocked), run on macOS.
-            "test_speculative_denoise_phase2.py",
             # hard-imports mlx + mlx.nn + SkyReelsBaseDiT (#186 Tier-2 DiT unify);
             # skip on Linux CI (mlx absent/mocked), run on macOS.
             "test_skyreels_dit_unify.py",
-            # hard-imports mlx + mlx.nn + V2V/A2V DiT (#186 item 3 spec wiring);
-            # skip on Linux CI (mlx absent/mocked), run on macOS.
-            "test_speculative_denoise_v2v_a2v.py",
             # hard-imports mlx + SkyReelsBasePipeline stub (#180 Metal async dispatch);
             # skip on Linux CI (mlx absent/mocked), run on macOS.
             "test_async_denoise_180.py",
-            # hard-imports mlx + speculative_denoise + videos_routes (#177 Phase-3
-            # spec-denoise stats stage API); skip on Linux CI (mlx absent/mocked).
-            "test_spec_denoise_stats.py",
             # hard-imports mlx.core (#2 UMA Radix Latent cache session tail);
             # skip on Linux CI (mlx absent/mocked), run on macOS.
             "test_latent_cache_session.py",
@@ -263,7 +251,6 @@ _OPT_DEP_SUITES: list[tuple[str, list[str]]] = [
             "test_scheduler_logits_processors.py",
             "test_scheduler_prefill_memory_guard.py",
             "test_scheduler_stop_decoder_surface.py",
-            "test_speculative_acceptance.py",
             "test_speculative_config.py",
         ],
     ),
