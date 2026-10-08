@@ -742,6 +742,33 @@ def _auto_detect_single_cached_model() -> str | None:
     return None
 
 
+def resolve_default_chat_model() -> str | None:
+    """#1087: return the model id that ``resolve_model_id("default")`` would
+    resolve to, or None when no default is decidable (no settings.json
+    default_model and auto-detection is ambiguous).
+
+    This is the *resolved* default — the model an API request with
+    model="default" (or no explicit model, when the client uses the
+    "default" sentinel) lands on. Used to mark ``default_for_chat: true``
+    on the matching /v1/models entry so downstream clients can see which
+    model auto-selection will pick BEFORE sending a chat request (the
+    #1086 debugging cycle: a client couldn't tell its "auto" traffic was
+    landing on a 3D model until it 400'd).
+
+    Returns None (not raise) so /v1/models listing stays 200 even when no
+    default is set — the field is simply absent on every entry.
+    """
+    try:
+        from .model_aliases import resolve_model
+
+        return resolve_model("default")
+    except ValueError:
+        return None
+    except Exception as exc:
+        logger.debug("resolve_default_chat_model: %s", exc)
+        return None
+
+
 def _print_unknown_model_help(name: str, *, full_path_example: str) -> None:
     """Print fuzzy suggestions + a curated popular-models hint.
 

@@ -711,14 +711,38 @@ async def _stream_chat(
     engine = await _resolve_engine(model_name, adapter_path=adapter_path)
     if engine is None:
         await _release_engine(model_name, adapter_path=adapter_path)
-        raise HTTPException(404, f"Model {model_name} not available")
+        # #1087: echo resolved model id (see _run_chat for rationale).
+        raise HTTPException(
+            404,
+            detail={
+                "error": {
+                    "message": f"Model {model_name} not available",
+                    "type": "model_not_found",
+                    "param": "model",
+                    "code": "model_not_available",
+                    "requested_model": request.model,
+                    "resolved_model": model_name,
+                }
+            },
+        )
 
     # #205 Guard: reject engines without stream_chat capability
     if not _skip_cap_check:
         try:
             check_chat_capability(engine, "stream_chat", model_name)
-        except HTTPException:
+        except HTTPException as exc:
             await _release_engine(model_name, adapter_path=adapter_path)
+            # #1087: enrich with resolved_model (see _run_chat).
+            if isinstance(exc.detail, str):
+                exc.detail = {
+                    "error": {
+                        "message": exc.detail,
+                        "type": "model_capability_mismatch",
+                        "param": "model",
+                        "requested_model": request.model,
+                        "resolved_model": model_name,
+                    }
+                }
             raise
 
     # Reject multimodal content on text-only models

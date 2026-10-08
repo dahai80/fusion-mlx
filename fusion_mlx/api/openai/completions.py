@@ -270,6 +270,17 @@ async def list_models(
     except Exception:
         model_ids = []
 
+    # #1087: mark the resolved default chat model so clients can see which
+    # model auto-selection (model="default"/no-model) will land on BEFORE
+    # sending a chat request. None when no default is decidable.
+    default_model: str | None = None
+    try:
+        from ..._cli_base import resolve_default_chat_model
+
+        default_model = resolve_default_chat_model()
+    except Exception:
+        default_model = None
+
     models = [
         ModelInfo(
             id=mid,
@@ -278,6 +289,7 @@ async def list_models(
             owned_by="local",
             modality=_resolve_modality(mid),
             capabilities=_resolve_capabilities(mid),
+            default_for_chat=True if (default_model and mid == default_model) else None,
         )
         for mid in model_ids
     ]
