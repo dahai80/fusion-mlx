@@ -932,3 +932,105 @@ class TestBoundarySnapshotProvider:
 
         assert not bool(provider)
         assert 1024 not in provider
+
+
+class TestPrefixSnapshotOverwrite:
+    """#1017: overwriting a prefix_hash with a different token_count must
+    unlink the old file and keep _prefix_total_bytes honest, so the orphaned
+    file does not leak forever and escape _enforce_prefix_cap."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, tmp_path):
+        self.base_dir = tmp_path / "prefix_cache"
+        self.base_dir.mkdir()
+        self.store = BoundarySnapshotSSDStore(
+            base_dir=self.base_dir,
+            prefix_persist=True,
+        )
+        yield
+        self.store.shutdown()
+
+    @staticmethod
+    def _make_item(store, prefix_hash: bytes, token_count: int):
+        file_path = store._prefix_file_path(prefix_hash, token_count)
+        tensors_raw = {
+            "layer_0": (b"\x00" * 16, "F16", [8]),
+        }
+        metadata = {
+            "prefix_model_name": "test-model",
+            "request_id": f"prefix:{prefix_hash.hex()[:8]}",
+            "token_count": str(token_count),
+        }
+        return (prefix_hash, token_count, tensors_raw, metadata, file_path)
+
+    def test_overwrite_different_token_count_unlinks_old_file(self):
+        """Same prefix_hash, different token_count: the old file (different
+        path on disk) must be unlinked and its bytes subtracted."""
+        prefix_hash = bytes.fromhex("aabbccdd" * 8)
+
+        item1 = self._make_item(self.store, prefix_hash, 100)
+        self.store._process_prefix_write_item(item1)
+        old_path = item1[4]
+        assert old_path.exists()
+        old_size = self.store._prefix_total_bytes
+
+        item2 = self._make_item(self.store, prefix_hash, 200)
+        self.store._process_prefix_write_item(item2)
+        new_path = item2[4]
+
+        # Old file gone, new file present.
+        assert not old_path.exists()
+        assert new_path.exists()
+        # _prefix_total_bytes reflects only the new file.
+        new_size = new_path.stat().st_size
+        assert self.store._prefix_total_bytes == new_size
+        assert self.store._prefix_total_bytes < old_size + new_size
+
+    def test_overwrite_same_token_count_replaces_file(self):
+        """Same prefix_hash, same token_count: os.rename already replaced
+        the file atomically, so no separate unlink; bytes are subtracted
+        then re-added (net = new file size)."""
+        prefix_hash = bytes.fromhex("11223344" * 8)
+
+        item1 = self._make_item(self.store, prefix_hash, 100)
+        self.store._process_prefix_write_item(item1)
+        path = item1[4]
+        assert path.exists()
+
+        item2 = self._make_item(self.store, prefix_hash, 100)
+        # Make the second write larger so the byte total changes.
+        item2 = (
+            item2[0],
+            item2[1],
+            {"layer_0": (b"\x00" * 64, "F16", [32])},
+            item2[3],
+            item2[4],
+        )
+        self.store._process_prefix_write_item(item2)
+
+        assert path.exists()
+        new_size = path.stat().st_size
+        assert self.store._prefix_total_bytes == new_size
+
+    def test_overwrite_then_enforce_cap_uses_honest_bytes(self):
+        """After an overwrite the orphaned old file is gone, so
+        _enforce_prefix_cap does not over-evict based on inflated bytes."""
+        prefix_hash = bytes.fromhex("55667788" * 8)
+
+        # Write a 16-byte file at token_count=100.
+        item1 = self._make_item(self.store, prefix_hash, 100)
+        self.store._process_prefix_write_item(item1)
+
+        # Overwrite with token_count=200 — old file unlinked, bytes honest.
+        item2 = self._make_item(self.store, prefix_hash, 200)
+        self.store._process_prefix_write_item(item2)
+
+        # Only one file on disk under this prefix_hash.
+        import os
+
+        on_disk = []
+        for root, _dirs, files in os.walk(self.store._prefix_dir):
+            for f in files:
+                if f.endswith(".safetensors"):
+                    on_disk.append(f)
+        assert len(on_disk) == 1

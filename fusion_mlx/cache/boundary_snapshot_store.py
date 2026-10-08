@@ -879,6 +879,7 @@ class BoundarySnapshotSSDStore:
     def _process_prefix_write_item(self, item) -> None:
         prefix_hash, token_count, tensors_raw, metadata, file_path = item
         temp_path = None
+        stale_file_to_unlink = None
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             temp_path = file_path.with_name(file_path.stem + "_tmp.safetensors")
@@ -891,8 +892,21 @@ class BoundarySnapshotSSDStore:
             now = time.time()
             with self._prefix_lock:
                 existing = self._prefix_index.get(prefix_hash)
-                if existing is not None and existing.token_count == token_count:
+                if existing is not None:
+                    # #1017: unconditionally subtract the old entry's bytes
+                    # so _prefix_total_bytes stays honest. When token_count
+                    # differs the old file is a separate path on disk
+                    # (filename embeds token_count) — collect it for unlink
+                    # outside the lock so it does not leak forever and
+                    # escape _enforce_prefix_cap. On a same-token_count
+                    # overwrite the rename already atomically replaced the
+                    # file, so no separate unlink is needed.
                     self._prefix_total_bytes -= existing.size_bytes
+                    if (
+                        existing.token_count != token_count
+                        and existing.file_path != file_path
+                    ):
+                        stale_file_to_unlink = existing.file_path
                 entry = _PrefixEntry(
                     prefix_hash=prefix_hash,
                     token_count=token_count,
@@ -903,6 +917,16 @@ class BoundarySnapshotSSDStore:
                 self._prefix_index[prefix_hash] = entry
                 self._prefix_total_bytes += size_bytes
                 self._prefix_stats["writes"] += 1
+            if stale_file_to_unlink is not None:
+                try:
+                    if stale_file_to_unlink.exists():
+                        stale_file_to_unlink.unlink()
+                except OSError as e:
+                    logger.debug(
+                        "Prefix snapshot overwrite unlink failed: %s: %s",
+                        stale_file_to_unlink,
+                        e,
+                    )
             self._enforce_prefix_cap()
         except Exception as e:
             logger.debug("Prefix snapshot background write failed: %s", e)
