@@ -3216,6 +3216,27 @@ class EnginePool:
                         exc_info=True,
                     )
 
+            # #1028: if an adapter entry's load failed and it was never
+            # successfully loaded (engine is None, last_observed_size is
+            # None), remove the empty shell from _entries so it doesn't
+            # linger until the next discover / base-unload sweep. Only
+            # adapter entries — base model entries stay for retry.
+            if (
+                not load_completed
+                and entry.adapter_path is not None
+                and entry.engine is None
+                and entry.last_observed_size is None
+            ):
+                async with self._lock:
+                    cur = self._entries.get(model_id)
+                    if cur is entry and not cur.is_loading and cur.engine is None:
+                        del self._entries[model_id]
+                        logger.info(
+                            "Removed failed adapter entry '%s' "
+                            "(load failed, never loaded)",
+                            model_id,
+                        )
+
     async def preload_pinned_models(self) -> None:
         """
         Preload all pinned models at startup.
