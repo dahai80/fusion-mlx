@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed — skyreels_v3 speculative_denoise removed (#1044)
+- **#1044**: `video/skyreels_v3/speculative_denoise.py` was a falsified
+  experiment (0% acceptance, 0.2-0.4x slower than baseline, env-gated OFF).
+  Removed the module, all call sites (T2V + A2V `_denoise_sample_speculative`
+  methods + guards + imports), the `GET /v1/videos/denoise-stats` route, and
+  the `last_denoise_stats` accessor chain (VideoGenEngine +
+  SkyReelsBackend + VideoBackend base). The `SPECULATIVE_DENOISE.md`
+  conclusion doc is kept. The separate async double-buffer feature (#180,
+  `FUSION_ASYNC_DENOISE`) is preserved — its `async_denoise_enabled` helper
+  moved into `pipelines/__init__.py`. The DiT `forward_partial` method and
+  its parity tests are retained (generic DiT capability, independently
+  tested).
+
 ### Fixed — video generation telemetry fills real values (#1042)
 - **#1042**: `/v1/videos/generate` telemetry hardcoded `prompt_tokens=0`,
   `ttft_ms=0.0`, `tps=0.0`, distorting metrics. Fix: `prompt_tokens` now
