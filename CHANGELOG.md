@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed — /audio/transcriptions temperature returns 422 instead of silent ignore (#1041)
+- **#1041**: `/audio/transcriptions` accepted a `temperature` parameter for
+  OpenAI API compatibility but silently ignored it (comment self-admitted "not
+  yet implemented — silently ignored"). Fix: non-default `temperature` values
+  now return 422 with a clear message ("only greedy decoding (temperature=0.0)
+  is implemented") instead of silently swallowing.
+
 ### Changed — stale think_detector TODO updated (#1025)
 - **#1025**: `model_auto_config/core.py` had a stale TODO claiming
   `fusion_mlx/reasoning/think_detector.py` "does not exist yet" — but the

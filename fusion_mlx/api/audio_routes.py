@@ -473,8 +473,9 @@ async def create_transcription(
 ):
     """OpenAI-compatible audio transcription endpoint (Speech-to-Text).
 
-    Note: ``response_format`` and ``temperature`` are accepted for OpenAI API
-    compatibility but are not yet implemented — they are silently ignored.
+    Note: ``response_format`` only ``json`` is implemented (srt/vtt/verbose_json
+    return 400). ``temperature`` is accepted for OpenAI API compatibility but
+    not yet implemented — non-default values return 422 (#1041).
 
     ``max_tokens`` is an FusionMLX extension that raises the underlying model's
     output cap. Useful for long audio with models like VibeVoice-ASR whose
@@ -501,6 +502,17 @@ async def create_transcription(
             detail=f"response_format='{response_format}' is not supported: "
             "only 'json' is implemented. Convert to srt/vtt client-side from "
             "the returned segments.",
+        )
+
+    # #1041: temperature is accepted for OpenAI API compatibility but not yet
+    # implemented in the STT engine. Non-default values fail visibly (422)
+    # instead of silently swallowing — the client needs to know their sampling
+    # preference was ignored.
+    if temperature != 0.0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"temperature={temperature} is not supported for transcription: "
+            "only greedy decoding (temperature=0.0) is implemented.",
         )
 
     # #508: validate/resolve the model BEFORE touching the engine pool so
