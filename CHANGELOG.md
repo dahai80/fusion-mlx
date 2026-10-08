@@ -27,6 +27,21 @@
   a 60s timeout; now env-configurable via `FUSION_STT_TIMEOUT` /
   `FUSION_STS_TIMEOUT` (default 60s; invalid value falls back with warning).
 
+### Fixed — route guard no longer breaks standalone clients (#1000)
+- **#1000**: since v0.7.0 (#349 Phase 2) route-guard enforced
+  `X-Fusion-Route` by default, so a standalone `fusion-mlx serve` (direct
+  OpenAI-client connection, no gateway) rejected every `/v1/*` request with
+  `403 missing_route`. The #398 fix only set `FUSION_ROUTE_WARN_ONLY=true`
+  in `start.sh` preflight — the CLI `serve` path and direct `create_app`
+  callers bypassed it. Fix: enforce is now meaningful ONLY when a
+  gateway/tenant contract exists (`FUSION_ROUTE_TOKEN` /
+  `FUSION_TENANT_ISOLATION` / explicit `FUSION_ROUTE_ENFORCE=true`); with
+  none set the server is standalone and defaults to warn-only — direct
+  clients pass out of the box. Gateway/multi-tenant deployments keep
+  enforce as the safe default. The `missing_route` 403 body now carries a
+  `FUSION_ROUTE_WARN_ONLY=true` hint, and the active mode is logged at
+  startup.
+
 ### Added — Hunyuan3D-2.1 image→textured-GLB 3D generation (#989)
 - **`POST /v1/3d/generate`**: reference image (data URL or http(s) URL) → textured
   GLB (base64) + vertex/face/byte counts. End-to-end on Apple Silicon, ~40s for a

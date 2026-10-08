@@ -61,14 +61,19 @@ def _guard_app() -> FastAPI:
     return app
 
 
-def test_route_guard_enforces_by_default(monkeypatch):
-    # #349: enforce is the default since v0.7.0. No X-Fusion-Route -> 403.
+def test_route_guard_standalone_defaults_to_warn_only(monkeypatch):
+    # #1000: with no gateway contract configured (no token, no tenant
+    # isolation, no explicit enforce), a standalone `fusion-mlx serve`
+    # defaults to warn-only so direct OpenAI clients work. No env set ->
+    # request passes (200), NOT 403. (Prior #349 default of enforce-by-
+    # default broke standalone deployments — reverted.)
     monkeypatch.delenv("FUSION_ROUTE_WARN_ONLY", raising=False)
     monkeypatch.delenv("FUSION_ROUTE_ENFORCE", raising=False)
+    monkeypatch.delenv("FUSION_ROUTE_TOKEN", raising=False)
+    monkeypatch.delenv("FUSION_TENANT_ISOLATION", raising=False)
     client = TestClient(_guard_app())
     r = client.get("/v1/chat/completions")
-    assert r.status_code == 403
-    assert r.json()["error"]["code"] == "missing_route"
+    assert r.status_code == 200
 
 
 def test_route_guard_warn_only_via_env(monkeypatch):

@@ -1304,9 +1304,11 @@ class Server:
         # propagates into the handler's task.
         install_request_id_middleware(app)
 
-        # #343: X-Fusion-Route source validation. Warn-only by default;
-        # rejects 403 when FUSION_ROUTE_ENFORCE=true. Health probes and
-        # CORS preflight stay exempt (handled inside the middleware).
+        # #343/#1000: X-Fusion-Route source validation. Standalone (no
+        # gateway contract) defaults to warn-only so direct OpenAI clients
+        # work; gateway deployments (FUSION_ROUTE_TOKEN/FUSION_TENANT_
+        # ISOLATION) or explicit FUSION_ROUTE_ENFORCE enforce -> 403 on
+        # missing header. Health probes + CORS preflight stay exempt.
         install_route_guard_middleware(app)
 
         # Probe fast-path (OUTERMOST — installed last so it runs first)

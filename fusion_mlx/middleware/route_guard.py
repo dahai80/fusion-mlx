@@ -71,14 +71,36 @@ def _warn_only_enabled() -> bool:
     return os.environ.get("FUSION_ROUTE_WARN_ONLY", "").strip().lower() in _TRUTHY
 
 
+def _gateway_signals_configured() -> bool:
+    # #1000: enforce is meaningful only when a gateway/tenant contract
+    # exists to validate request provenance against. A standalone
+    # ``fusion-mlx serve`` (direct OpenAI-client connection, no gateway)
+    # has no such contract — enforcing X-Fusion-Route there rejects every
+    # legitimate direct client with 403 (the #1000 regression). Gateway
+    # deployments signal the contract via FUSION_ROUTE_TOKEN (#352 shared
+    # secret), FUSION_TENANT_ISOLATION (#756), or an explicit
+    # FUSION_ROUTE_ENFORCE=true opt-in. Without any of these the server
+    # is treated as standalone and defaults to warn-only.
+    if _configured_route_token():
+        return True
+    if _tenant_isolation_enabled():
+        return True
+    if os.environ.get("FUSION_ROUTE_ENFORCE", "").strip().lower() in _TRUTHY:
+        return True
+    return False
+
+
 def _route_enforce_enabled() -> bool:
-    # #349: Phase 2 enforce is now the DEFAULT. Standalone/dev deployments
-    # without a gateway set FUSION_ROUTE_WARN_ONLY=true to restore the prior
-    # warn-only (Phase 1) behavior. FUSION_ROUTE_ENFORCE=true remains accepted
-    # as an explicit opt-in (redundant with the new default).
+    # #1000: standalone (no gateway contract) defaults to warn-only so
+    # direct OpenAI-compatible clients work out of the box — the server's
+    # primary "drop-in Ollama replacement" use case. Gateway/multi-tenant
+    # deployments (token/isolation set) keep enforce as the safe default.
+    # FUSION_ROUTE_WARN_ONLY=true always wins (explicit opt-out);
+    # FUSION_ROUTE_ENFORCE=true forces enforce even standalone (opt-in,
+    # e.g. for testing the reject path on a direct deploy).
     if _warn_only_enabled():
         return False
-    return True
+    return _gateway_signals_configured()
 
 
 def _configured_route_token() -> str | None:
@@ -300,8 +322,12 @@ class RouteGuardMiddleware:
             body = json.dumps(
                 {
                     "error": {
-                        "message": "Missing X-Fusion-Route header",
+                        "message": "Missing X-Fusion-Route header "
+                        "(route-guard enforce is active). Route requests "
+                        "through the gateway, or disable enforce by setting "
+                        "FUSION_ROUTE_WARN_ONLY=true.",
                         "code": "missing_route",
+                        "hint": "FUSION_ROUTE_WARN_ONLY=true",
                     }
                 },
                 separators=(",", ":"),
@@ -334,4 +360,32 @@ class RouteGuardMiddleware:
 
 
 def install_route_guard_middleware(app: Any) -> None:
+    # #1000: log the active mode at install so operators can see whether
+    # direct clients will be rejected. Standalone (no gateway contract)
+    # defaults to warn-only; gateway deployments enforce.
+    if _warn_only_enabled():
+        logger.info(
+            "[route_guard] warn-only mode (FUSION_ROUTE_WARN_ONLY=true) — "
+            "missing X-Fusion-Route is logged, not rejected"
+        )
+    elif _gateway_signals_configured():
+        signals = []
+        if _configured_route_token():
+            signals.append("FUSION_ROUTE_TOKEN")
+        if _tenant_isolation_enabled():
+            signals.append("FUSION_TENANT_ISOLATION")
+        if os.environ.get("FUSION_ROUTE_ENFORCE", "").strip().lower() in _TRUTHY:
+            signals.append("FUSION_ROUTE_ENFORCE")
+        logger.info(
+            "[route_guard] enforce mode active (gateway signals: %s) — "
+            "direct clients without X-Fusion-Route are rejected 403",
+            ", ".join(signals) or "none",
+        )
+    else:
+        logger.info(
+            "[route_guard] standalone mode — warn-only (no gateway contract "
+            "configured; direct OpenAI-compatible clients pass). Set "
+            "FUSION_ROUTE_TOKEN / FUSION_TENANT_ISOLATION for gateway "
+            "enforce, or FUSION_ROUTE_ENFORCE=true to force enforce."
+        )
     app.add_middleware(RouteGuardMiddleware)
