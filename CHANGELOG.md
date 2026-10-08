@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.10.7] — 2026-10-09
+
+Patch release collecting 9 concurrency / error-handling / capability-metadata
+fixes (#1063–#1083). No API surface changes; all fixes are drop-in.
+
 ### Fixed — 3D/MuseTalk models advertised text_generation (#1086)
 - **#1086**: `Hunyuan3D-2.1-MLX-Serve-8bit` (a 3D shape generator served by
   `POST /v1/3d/generate`) and `musetalk-mlx-native` (a lip-sync model) ship a
