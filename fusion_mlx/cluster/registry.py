@@ -400,8 +400,20 @@ class ClusterHealthMonitor:
             self._task.cancel()
             try:
                 await self._task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
+                # expected — the cancel() above propagates as CancelledError
                 pass
+            except Exception as exc:
+                # #1067: pre-fix swallowed every exception silently (the bare
+                # `except (CancelledError, Exception): pass` was a fake-success
+                # on the shutdown path). A non-cancellation failure here means
+                # the heartbeat loop died unexpectedly — log it so shutdown
+                # diagnostics don't point at a void.
+                logger.warning(
+                    "cluster health monitor task ended with error on stop: %s",
+                    exc,
+                    exc_info=True,
+                )
             self._task = None
             logger.info("cluster health monitor stopped")
         self.registry._set_health_monitor_active(False)

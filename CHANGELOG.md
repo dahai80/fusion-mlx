@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed — ClusterHealthMonitor.stop swallowed all exceptions (#1067)
+- **#1067**: `ClusterHealthMonitor.stop` used
+  `except (asyncio.CancelledError, Exception): pass` — swallowed every
+  exception silently (fake-success on the shutdown path). Fix:
+  `CancelledError` is still swallowed (expected from `cancel()`); any other
+  exception is now logged at `WARNING` with `exc_info` so a heartbeat loop
+  that died unexpectedly surfaces in shutdown diagnostics instead of a void.
+
 ### Fixed — peer stream relay leak + router single-probe mode (#1066)
 - **#1066**: two cluster bugs.
   - `peer_lb.forward_to_peer` (stream path) returned a bare async
