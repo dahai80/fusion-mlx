@@ -269,6 +269,12 @@ class CloudRouter:
                 exc,
                 exc_info=True,
             )
+            # #1049: a mid-stream break is a cloud-outage signal — tick the
+            # EF-4 cloud-side breaker so subsequent requests skip cloud for
+            # the cooldown window instead of hammering a dead upstream.
+            # Pre-fix this path only yielded the error frame, so persistent
+            # mid-stream断流 never tripped the breaker.
+            self.report_cloud_failure()
             err_payload = json.dumps(
                 {
                     "error": {
@@ -279,6 +285,9 @@ class CloudRouter:
                 }
             )
             yield f"data: {err_payload}\n\n"
+            # #1049: terminate the SSE stream properly — pre-fix the error
+            # frame had no trailing [DONE], leaving clients waiting.
+            yield "data: [DONE]\n\n"
 
     @staticmethod
     def _is_retryable_cloud_error(exc: BaseException) -> bool:

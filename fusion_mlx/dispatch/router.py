@@ -207,7 +207,23 @@ class RequestRouter:
                     )
                     return self.cloud_router.stream_completion(messages, **kwargs)
 
-        return engine.stream_chat(messages, **kwargs)
+        # #1049: wrap the local stream so mid-stream failures tick the
+        # local-side circuit breaker (report_local_failure), mirroring
+        # route_chat's try/except (:174-182). Pre-fix returned the raw
+        # iterator, so local streaming failures were invisible to the
+        # breaker and the cloud-switch decision (only non-stream covered).
+        async def _stream_with_failure_tracking():
+            try:
+                async for chunk in engine.stream_chat(messages, **kwargs):
+                    yield chunk
+                if self.cloud_router:
+                    self.cloud_router.report_local_success()
+            except Exception:
+                if self.cloud_router:
+                    self.cloud_router.report_local_failure()
+                raise
+
+        return _stream_with_failure_tracking()
 
     def get_stats(self) -> dict[str, Any]:
         """Return router status."""
