@@ -673,6 +673,11 @@ def detect_model_type(model_path: Path) -> ModelType:
         return "image"
     if _is_video_model(model_path):
         return "video"
+    # #1086: 3D shape generators (Hunyuan3D-2.1) and MuseTalk lip-sync models
+    # are non-text specialty models served by dedicated routes. Without this
+    # they fell through to the "llm" default and advertised text_generation.
+    if _is_specialty_generative_model(model_path):
+        return "image"
     # GLiNER NER models ship gliner_config.json (no config.json); the gliner
     # package reads it directly. Without this, ModelDiscovery skips the dir
     # entirely (_is_model_dir) and the NER route 404s on every gliner model.
@@ -1294,6 +1299,35 @@ def _iter_safetensors_entries(dir_path: Path):
                 yield p
     except OSError:
         return
+
+
+def _is_specialty_generative_model(path: Path) -> bool:
+    # #1086: Hunyuan3D-2.1 (3D shape generation) and MuseTalk (lip-sync)
+    # ship a config.json with no LLM architecture/model_type, so
+    # detect_model_type defaulted them to "llm" → /v1/models advertised
+    # text_generation:true → downstream auto-selection routed
+    # /v1/chat/completions traffic to them (400 on every call). They are
+    # served by dedicated routes (/v1/3d/generate, /v1/videos/generate
+    # musetalk backend), NOT the LLM engine. Treat them as non-text
+    # generative models (modality "image", text_generation false) so
+    # capability-based client filtering excludes them from chat traffic —
+    # mirroring FLUX.1-dev.
+    config_path = path / "config.json"
+    if not config_path.exists():
+        return False
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    mt = (config.get("model_type") or "").lower()
+    if mt.startswith("hunyuan3d"):
+        return True
+    source = (config.get("source") or "").lower()
+    converted_by = (config.get("converted_by") or "").lower()
+    if "musetalk" in source or "musetalk" in converted_by:
+        return True
+    return False
 
 
 def _is_image_model(path: Path) -> bool:
