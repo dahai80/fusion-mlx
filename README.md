@@ -1341,8 +1341,8 @@ fusion-mlx is the link endpoint in a 3-tier chain: App -> Gateway -> MLX. By def
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `server.host` (config) / `--host` | `127.0.0.1` | Bind address. `0.0.0.0` exposes the server on all interfaces - only do this behind a gateway. |
-| `FUSION_ROUTE_ENFORCE` | `true` | When `true` (default since v0.7.0, #349), requests missing the `X-Fusion-Route` header are rejected with `403`. Accepted as an explicit opt-in (redundant with the default, kept for backward compatibility). |
-| `FUSION_ROUTE_WARN_ONLY` | `false` | Dev/standalone override (#349). When `true`, restores phase-1 warn-only behavior: a missing `X-Fusion-Route` is logged at WARN and allowed. Set this for standalone local-server use without a gateway. |
+| `FUSION_ROUTE_ENFORCE` | `false` (standalone) | When `true`, requests missing the `X-Fusion-Route` header are rejected with `403`. Explicit opt-in to force enforce on a standalone deploy (e.g. testing the reject path). Gateway deployments (where `FUSION_ROUTE_TOKEN` or `FUSION_TENANT_ISOLATION` is set) enforce automatically — this flag is redundant there. |
+| `FUSION_ROUTE_WARN_ONLY` | `true` (standalone) | #1000. When `true`, a missing `X-Fusion-Route` is logged at WARN and allowed (warn-only). Standalone deployments (no gateway contract configured) default to warn-only so direct OpenAI-compatible clients work out of the box; set `false` only behind a gateway that injects the header. Explicit `true` always wins (opt-out) even when gateway signals are configured. |
 | `FUSION_ALLOW_ANONYMOUS` | `false` | Dev override. When `true`, requests without an API key are allowed. Does **not** bypass a configured `api_key` - a matching key is still required when one is set. |
 | `FUSION_TRUSTED_PROXIES` | _(unset)_ | #801. Comma-separated CIDR list (e.g. `10.0.0.0/8,172.16.0.0/12`) identifying trusted reverse-proxy hops. When set, the rate limiter walks `X-Forwarded-For` right-to-left and takes the first hop **not** in a trusted CIDR as the real client IP for its bucket, so co-located clients behind a proxy are not collapsed into one `/24` bucket (one abuser no longer starves them all). When unset, `X-Forwarded-For` is ignored — do not trust client-supplied headers by default. |
 | `FUSION_REVEAL_MODEL_LIST` | `false` | #801. When `true`, `ModelNotFoundError` responses echo the full exception (which may list available models) to the caller. Default `false` returns a generic `Model '<id>' not found` to unauthenticated callers so the model inventory is not leaked; the full exception is always logged server-side. Set `true` for local dev/debug only. |
@@ -1479,7 +1479,7 @@ The `/metrics` endpoint exposes Prometheus-format series (requires `verify_manag
 
 ### Access policy
 
-- **Route guard (#343):** routed requests should carry `X-Fusion-Route: gateway` so the server knows they came through the gateway. Exempt paths: `/`, `/health`, `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`, `/favicon.ico`, and `OPTIONS` preflight. Enforce is the default since v0.7.0 (#349): un-routed traffic is rejected with `403`. Set `FUSION_ROUTE_WARN_ONLY=true` to restore warn-only behavior for standalone use. The header is routing provenance only - it does **not** authenticate a caller (any client can set it). For cross-host deployments where the gateway is on a different machine, set `FUSION_ROUTE_TOKEN` (#352) to upgrade `X-Fusion-Route` from spoofable provenance to a shared-secret credential: its value must equal the token, else `403 invalid_route_token`.
+- **Route guard (#343/#1000):** routed requests should carry `X-Fusion-Route: gateway` so the server knows they came through the gateway. Exempt paths: `/`, `/health`, `/healthz`, `/readyz`, `/livez`, `/openapi.json`, `/docs`, `/redoc`, `/favicon.ico`, and `OPTIONS` preflight. **Standalone deployments (no gateway contract) default to warn-only** (#1000): a missing `X-Fusion-Route` is logged at WARN and allowed, so direct OpenAI-compatible clients work out of the box. Enforce (403 on missing header) activates automatically when a gateway contract is configured (`FUSION_ROUTE_TOKEN` / `FUSION_TENANT_ISOLATION`), or via explicit `FUSION_ROUTE_ENFORCE=true`. The header is routing provenance only - it does **not** authenticate a caller (any client can set it). For cross-host deployments where the gateway is on a different machine, set `FUSION_ROUTE_TOKEN` (#352) to upgrade `X-Fusion-Route` from spoofable provenance to a shared-secret credential: its value must equal the token, else `403 invalid_route_token`.
 - **Management endpoints (#344):** `/metrics` and `/v1/status` require `verify_management_access` - a valid API key or `FUSION_ALLOW_ANONYMOUS=true`. Since v0.7.0 (#350) loopback no longer exempts management endpoints: a same-host client (including a co-located gateway) must forward a valid API key, or set the dev override. `X-Fusion-Route` is not accepted as authentication.
 - **Model lifecycle (#345):** `/v1/models/load` and `/v1/models/unload` require `X-Fusion-Source: model-hub` (or a loopback client); otherwise `403`. **#631:** the gui_compat router registers these paths first and shadows the engine-pool handler; its `unload` falls back to the engine pool (`_unload_pool_model`) when the model is loaded in the pool but not tracked in the gui database, so a loaded model is actually unloaded (no memory leak).
 - **Anonymous access (#346):** rejected by default. Allow only for local dev via `FUSION_ALLOW_ANONYMOUS=true`. Since v0.7.0 (#350) loopback clients are no longer exempt - a same-host client (including a co-located gateway) must present a valid API key. A gateway must forward a valid API key; `X-Fusion-Route` alone does not authenticate.
@@ -1502,15 +1502,14 @@ FUSION_TENANT_ISOLATION=true fusion-mlx serve --model-dir ~/.fusion-mlx/models
 # Bind loopback only (default)
 fusion-mlx serve --model qwen3.5-4b-4bit --host 127.0.0.1 --port 11434
 
-# Standalone local server (no gateway): opt into warn-only route guard
-FUSION_ROUTE_WARN_ONLY=true fusion-mlx serve --model qwen3.5-4b-4bit
-
-# Behind a gateway (default since v0.7.0: enforce X-Fusion-Route)
+# Standalone local server (no gateway): warn-only is the default (#1000)
+# — direct OpenAI clients work without any extra config.
 fusion-mlx serve --model qwen3.5-4b-4bit
 
-# Cross-host gateway (#352): shared-secret on X-Fusion-Route value
+# Behind a gateway (#352): set a shared-secret token (or FUSION_TENANT_
+# #ISOLATION=true) to activate enforce — the gateway must then send
+# X-Fusion-Route: <same-token> on every upstream request.
 FUSION_ROUTE_TOKEN=$(cat /etc/fusion/gateway.token) fusion-mlx serve --model qwen3.5-4b-4bit
-# Gateway then sends: X-Fusion-Route: <same-token>
 ```
 
 ### Unix Domain Socket (UDS) listen mode (#351)
