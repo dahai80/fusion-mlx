@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed — skyreels_v3 stub outputs now log warnings + is_stub() probes (#1018)
+- **#1018**: skyreels_v3 had multiple zero-tensor stub outputs (UMT5 text
+  encoder, VAE decode, A2V audio/text embeds) that silently produced
+  distorted/all-black video with no request-level warning. Fix: added
+  `is_stub()` methods to `UMT5Encoder` and `SkyReelsVAE` (CLIPTextEncoder
+  already had one); every stub return path now logs a prominent WARNING so
+  output degradation is visible. Long-term: real wav2vec2/xlm_roberta
+  encoders for A2V remain TODO.
+
 ### Fixed — bench run_benchmark stub raises instead of returning fake 0 t/s (#1012)
 - **#1012**: `fusion_mlx.bench.run_benchmark()` always returned
   `{"tokens_per_second": 0}` — fake data that callers silently consumed
