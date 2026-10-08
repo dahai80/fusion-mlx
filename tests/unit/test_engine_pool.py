@@ -471,6 +471,26 @@ class TestEngineEntry:
         assert entry.is_pinned is True
 
 
+class TestRegisterEngineWallClock:
+    """#1006: register_engine must stamp last_access with wall-clock
+    time.time(), not time.monotonic(). monotonic (~1e5) << time.time()
+    (~1.7e9) made registered models perpetually oldest in LRU and gave
+    them absurd (~56000-year) idle_time under TTL."""
+
+    def test_registered_last_access_is_wall_clock(self):
+        import time as _time
+
+        pool = _make_pool(ceiling=10 * 1024**3)
+        before = _time.time()
+        pool.register_engine("ext-model", MagicMock())
+        after = _time.time()
+
+        entry = pool._entries["ext-model"]
+        # Wall-clock magnitude — monotonic would be ~1e5, far below before.
+        assert before <= entry.last_access <= after + 1.0
+        assert entry.last_access > 1_000_000_000  # epoch seconds, not monotonic
+
+
 class TestApplySettingsOverrides:
     """Tests for apply_settings_overrides method."""
 
@@ -738,6 +758,68 @@ class TestVLMFallback:
         assert "VLM fallback also failed" in msg
         assert "vision encoder weights missing" in msg
         assert isinstance(excinfo.value.__cause__, TypeError)
+
+
+class TestAdapterEntryLoadFailureCleanup:
+    """#1028: a failed adapter entry load must remove the empty shell from
+    _entries so it doesn't linger until the next discover / base-unload
+    sweep. Base model entries stay for retry."""
+
+    @pytest.mark.asyncio
+    async def test_failed_adapter_entry_removed(self, small_mock_model_dir):
+        pool = _make_pool(ceiling=10 * 1024**3)
+        pool.discover_models(str(small_mock_model_dir))
+
+        base = pool.get_entry("model-a")
+        adapter_key = pool._adapter_key("model-a", "/fake/adapter")
+        entry = pool._make_adapter_entry(base, "/fake/adapter", adapter_key)
+        pool._entries[adapter_key] = entry
+
+        assert entry.adapter_path is not None
+        assert entry.engine is None
+        assert entry.last_observed_size is None
+
+        mock_engine = MagicMock()
+        mock_engine.start = AsyncMock(side_effect=Exception("adapter load failed"))
+
+        with (
+            patch(
+                "fusion_mlx.pool.engine_pool.BatchedEngine",
+                return_value=mock_engine,
+            ),
+            pytest.raises(Exception, match="adapter load failed"),
+        ):
+            await pool._load_engine(adapter_key)
+
+        assert (
+            adapter_key not in pool._entries
+        ), "failed adapter entry shell must be removed from _entries"
+        assert entry.last_load_failed is True
+
+    @pytest.mark.asyncio
+    async def test_failed_base_entry_kept_for_retry(self, small_mock_model_dir):
+        pool = _make_pool(ceiling=10 * 1024**3)
+        pool.discover_models(str(small_mock_model_dir))
+
+        base = pool.get_entry("model-a")
+        assert base.adapter_path is None
+
+        mock_engine = MagicMock()
+        mock_engine.start = AsyncMock(side_effect=Exception("base load failed"))
+
+        with (
+            patch(
+                "fusion_mlx.pool.engine_pool.BatchedEngine",
+                return_value=mock_engine,
+            ),
+            pytest.raises(Exception, match="base load failed"),
+        ):
+            await pool._load_engine("model-a")
+
+        assert (
+            "model-a" in pool._entries
+        ), "base model entry must stay for retry (not an adapter shell)"
+        assert pool._entries["model-a"].last_load_failed is True
 
 
 class TestEnginePoolLRU:

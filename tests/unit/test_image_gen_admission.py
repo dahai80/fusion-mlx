@@ -151,3 +151,114 @@ class TestAdmitGeneration:
                     subprocess_mode=True,
                 )
         pool.admit_media_job.assert_awaited_once()
+
+
+class TestSubprocessMediaReservationRelease:
+    """#1004: _generate_subprocess must release the media reservation in its
+    finally. The subprocess branch returned early from generate() and
+    bypassed the inproc finally that did this, leaving
+    _media_reservation_bytes >0 forever (hard watermark stuck high)."""
+
+    def _make_engine(self):
+        return ImageGenEngine(model_name="flux-schnell", variant="flux1_schnell")
+
+    @pytest.mark.asyncio
+    async def test_subprocess_releases_reservation_on_success(self):
+        engine = self._make_engine()
+        engine._finish_activity = AsyncMock()
+
+        enf = MagicMock()
+        pool = MagicMock()
+        pool.process_memory_enforcer = enf
+        state = MagicMock()
+        state.engine_pool = pool
+
+        fake_result = MagicMock()
+        fake_result.outputs = []
+        with (
+            patch("fusion_mlx.server._server_state", state),
+            patch(
+                "fusion_mlx.media.job_manager.MediaJobManager.run_image_job",
+                AsyncMock(return_value=fake_result),
+            ),
+            patch("fusion_mlx.engine_core.set_media_job_active") as sma,
+        ):
+            images = await engine._generate_subprocess(
+                prompt="test",
+                width=512,
+                height=512,
+                steps=2,
+                seed=0,
+                guidance=1.0,
+                n_images=1,
+                output_format="png",
+                scheduler=None,
+                negative_prompt=None,
+                denoising_end=None,
+                on_step=None,
+                control_image=None,
+                controlnet_strength=None,
+                reference_images=None,
+                reference_strengths=None,
+                edit_image=None,
+                mask_image=None,
+                depth_image=None,
+                image_strength=None,
+                kwargs={},
+                t0=0.0,
+                activity_id="act-1",
+            )
+
+        enf.unregister_media_reservation.assert_called_once()
+        sma.assert_called_with(False)
+        engine._finish_activity.assert_awaited_once_with("act-1")
+
+    @pytest.mark.asyncio
+    async def test_subprocess_releases_reservation_on_failure(self):
+        engine = self._make_engine()
+        engine._finish_activity = AsyncMock()
+
+        enf = MagicMock()
+        pool = MagicMock()
+        pool.process_memory_enforcer = enf
+        state = MagicMock()
+        state.engine_pool = pool
+
+        with (
+            patch("fusion_mlx.server._server_state", state),
+            patch(
+                "fusion_mlx.media.job_manager.MediaJobManager.run_image_job",
+                AsyncMock(side_effect=RuntimeError("worker blew up")),
+            ),
+            patch("fusion_mlx.engine_core.set_media_job_active") as sma,
+            pytest.raises(RuntimeError, match="worker blew up"),
+        ):
+            await engine._generate_subprocess(
+                prompt="test",
+                width=512,
+                height=512,
+                steps=2,
+                seed=0,
+                guidance=1.0,
+                n_images=1,
+                output_format="png",
+                scheduler=None,
+                negative_prompt=None,
+                denoising_end=None,
+                on_step=None,
+                control_image=None,
+                controlnet_strength=None,
+                reference_images=None,
+                reference_strengths=None,
+                edit_image=None,
+                mask_image=None,
+                depth_image=None,
+                image_strength=None,
+                kwargs={},
+                t0=0.0,
+                activity_id="act-2",
+            )
+
+        enf.unregister_media_reservation.assert_called_once()
+        sma.assert_called_with(False)
+        engine._finish_activity.assert_awaited_once_with("act-2")

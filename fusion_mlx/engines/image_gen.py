@@ -1450,6 +1450,28 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 "restart fusion-mlx to recover."
             )
         finally:
+            # #1004: release the media reservation registered in
+            # _admit_generation. The subprocess branch returned early from
+            # generate() and bypassed the inproc finally that does this;
+            # without it _media_reservation_bytes stayed >0 forever, keeping
+            # the hard watermark raised and suppressing LLM pressure eviction.
+            try:
+                from ..server import _server_state
+
+                _pool = _server_state.engine_pool
+                _enf = getattr(_pool, "process_memory_enforcer", None)
+                if _enf is not None:
+                    _enf.unregister_media_reservation()
+            except Exception:  # noqa: BLE001
+                logger.debug(
+                    "media reservation release: pool unavailable", exc_info=True
+                )
+            try:
+                from ..engine_core import set_media_job_active
+
+                set_media_job_active(False)
+            except Exception:  # noqa: BLE001
+                pass
             await self._finish_activity(activity_id)
 
         # Read output files into bytes, then clean up temp dir
