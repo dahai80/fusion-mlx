@@ -1359,7 +1359,13 @@ class SkyReelsA2VPipeline(SkyReelsBasePipeline):
         cfg.animatediff_scale = animatediff_scale
 
         # 1. 编码音频 (wav2vec2) + 文本 (xlm_roberta)
-        # 简化: 用零张量作为 stub
+        # #1018: A2V audio/text embeds are stubbed (hardcoded zeros) — real
+        # wav2vec2/xlm_roberta encoders not yet implemented. Output will be
+        # distorted; log prominently so degradation is visible.
+        logger.warning(
+            "A2V stub: audio_embeds + text_embeds are zero tensors "
+            "(wav2vec2/xlm_roberta encoders not implemented) — output will be distorted"
+        )
         audio_embeds = mx.zeros((1, cfg.num_frames, cfg.audio_dim))
         text_embeds = mx.zeros((1, 512, 4096))
 

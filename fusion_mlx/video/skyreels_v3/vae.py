@@ -129,6 +129,10 @@ class SkyReelsVAE(nn.Module):
             ]
         ).reshape(1, self.config.z_dim, 1, 1, 1)
 
+    def is_stub(self) -> bool:
+        # #1018: whether VAE is in stub mode (no WanVAE base loaded)
+        return self.vae is None
+
     def decode(
         self,
         latent: mx.array,
@@ -147,8 +151,12 @@ class SkyReelsVAE(nn.Module):
             [B, 3, T, H*8, W*8] 解码视频 (像素 [-1, 1])
         """
         if self.vae is None:
-            # Stub: 返回零张量 (假设 8x 上采样)
+            # #1018: stub returns zero tensor — log so output degradation is visible
             b, c, t, h, w = latent.shape
+            logger.warning(
+                "SkyReelsVAE decode stub: returning zero tensor (WanVAE base unavailable) "
+                "— output will be all-black"
+            )
             return mx.zeros((b, self.config.out_dim, t, h * 8, w * 8))
 
         # per-channel 反归一化: latent = latent * STD + MEAN

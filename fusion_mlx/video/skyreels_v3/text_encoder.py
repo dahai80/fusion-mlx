@@ -171,7 +171,10 @@ class UMT5Encoder(nn.Module):
         self._ensure_tokenizer()
 
         if self._tokenizer == "stub":
-            # stub: 返回零张量
+            # #1018: stub returns zero tensors — log so output degradation is visible
+            logger.warning(
+                "UMT5 tokenize stub: returning zero tensors (tokenizer unavailable)"
+            )
             return mx.zeros((1, max_length), dtype=mx.int32), mx.zeros((1, max_length))
 
         tokens = self._tokenizer(
@@ -215,7 +218,10 @@ class UMT5Encoder(nn.Module):
         ids, mask = self.tokenize(prompt, max_length=max_length)
 
         if self._tokenizer == "stub" or self.encoder is None:
-            # stub: 返回零张量
+            # #1018: stub returns zero tensors — log so output degradation is visible
+            logger.warning(
+                "UMT5 encode_text stub: returning zero embeddings (encoder/tokenizer unavailable)"
+            )
             return mx.zeros((1, max_length, self.config.d_model))
 
         embeddings = self.encoder(ids, attention_mask=mask)
@@ -245,8 +251,11 @@ class UMT5Encoder(nn.Module):
             [B, L, d_model] 文本 embedding
         """
         if self.encoder is None:
-            # Stub: 返回零张量
+            # #1018: stub returns zero tensors — log so output degradation is visible
             b, l = input_ids.shape
+            logger.warning(
+                "UMT5 __call__ stub: returning zero embeddings (encoder unavailable)"
+            )
             return mx.zeros((b, l, self.config.d_model))
 
         return self.encoder(input_ids, attention_mask)
@@ -285,6 +294,10 @@ class UMT5Encoder(nn.Module):
                 logger.warning("Failed to load UMT5 weights: %s", exc)
 
         return instance
+
+    def is_stub(self) -> bool:
+        # #1018: whether this encoder is in stub mode (no real weights/tokenizer)
+        return self.encoder is None or self._tokenizer == "stub"
 
 
 # ---------------------------------------------------------------------------
