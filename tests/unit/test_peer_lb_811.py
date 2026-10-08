@@ -273,10 +273,13 @@ async def test_forward_to_peer_stream_relays_bytes(monkeypatch):
     import httpx as _real_httpx
 
     monkeypatch.setattr(_real_httpx, "AsyncClient", FakeClient)
-    it = await peer_lb.forward_to_peer(node, "POST", "/v1/chat", stream=True)
+    relay = await peer_lb.forward_to_peer(node, "POST", "/v1/chat", stream=True)
     out = []
-    async for chunk in it:
-        out.append(chunk)
+    # #1066: stream relay is an aclosing async context manager — consume via
+    # async with so an early break drives gen.aclose() -> resp/client release.
+    async with relay as it:
+        async for chunk in it:
+            out.append(chunk)
     assert out == [b"chunk1", b"chunk2"]
 
 

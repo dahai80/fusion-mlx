@@ -61,6 +61,11 @@ class Backend:
     last_failure_ts: float = 0.0
     # SWRR mutable state — NOT part of equality/hashing.
     current_weight: int = 0
+    # #1066: single-probe flag. A dead backend past its cooldown is eligible
+    # for exactly ONE probe request (not continuous 1/N traffic). select()
+    # sets this when it returns the backend; record_success clears it
+    # (revived) and mark_dead clears it (cooldown restarts).
+    probing: bool = False
 
     def __post_init__(self) -> None:
         if self.weight <= 0:
@@ -76,28 +81,40 @@ class Backend:
                 self.failures,
             )
         self.alive = False
+        self.probing = False
         self.last_failure_ts = time.monotonic()
 
     def record_success(self) -> None:
         self.failures = 0
         self.alive = True
+        self.probing = False
         self.last_success_ts = time.monotonic()
 
     def record_failure(self) -> None:
         self.failures += 1
         self.last_failure_ts = time.monotonic()
+        # #1066: a failed probe clears the one-shot flag so the backend can be
+        # re-probed after the next cooldown (last_failure_ts just restarted it).
+        self.probing = False
         if self.failures >= _MAX_FAILURES:
             self.mark_dead()
 
     def maybe_revive(self) -> bool:
-        # A dead backend past its cooldown is eligible for one probe
-        # request. ``select`` returns it; if the probe succeeds it
-        # revives, if it fails the cooldown restarts.
+        # #1066: a dead backend past its cooldown is eligible for exactly ONE
+        # probe request — not continuous participation in SWRR. select() sets
+        # ``probing`` when it returns this backend so subsequent select() calls
+        # skip it until the probe resolves (record_success revives it fully;
+        # mark_dead restarts the cooldown). Pre-fix, the comment claimed "one
+        # probe" but the code returned True on every select() past cooldown, so
+        # a recovering bad node took 1/N of real traffic continuously.
         if self.alive:
             return True
+        if self.probing:
+            return False
         if time.monotonic() - self.last_failure_ts >= _DEAD_COOLDOWN:
+            self.probing = True
             logger.info(
-                "cluster_router: backend %s cooldown expired — probing",
+                "cluster_router: backend %s cooldown expired — probing (one shot)",
                 self.name,
             )
             return True

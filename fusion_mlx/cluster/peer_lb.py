@@ -29,6 +29,7 @@ multi-instance case the gateway is not needed for.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import typing
 from typing import Any
@@ -219,7 +220,14 @@ async def forward_to_peer(
                     await resp.aclose()
                     await client.aclose()
 
-            return _relay()
+            # #1066: wrap in aclosing so the consumer's early break (or an
+            # exception) drives __aexit__ -> gen.aclose() -> the finally above
+            # that releases the httpx response + client. A bare async
+            # generator only runs its finally on exhaustion/raise/GC, so a
+            # caller that breaks out of the stream left the connection +
+            # response hanging until GC (or never). Callers MUST consume via
+            # ``async with relay: async for chunk in relay:``.
+            return contextlib.aclosing(_relay())
         resp = await client.request(method, url, headers=fwd_headers, content=body)
         await client.aclose()
         if resp.status_code >= 500:
