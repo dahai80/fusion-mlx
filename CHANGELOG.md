@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed — agents _atomic_write not atomic for new files (#1063)
+- **#1063**: `_atomic_write` took an early-return `write_text` path for
+  non-existent targets. A crash mid-write (SIGKILL, disk full, power loss)
+  left a corrupted half-written agent config on disk with no rollback.
+  Fix: removed the early-return branch — ALL writes now go through
+  `tempfile.mkstemp` + `fsync` + `os.replace()`, so a new file either has
+  the full new content or nothing (never a partial write). New files get
+  mode 0o644; existing files keep their prior mode bits.
+
 ### Fixed — reranker/embedding/NER token-count hardening (#1062)
 - **#1062**: three engine bugs.
   - `reranker.py`: `max_content_tokens = max_length - prefix - suffix` had

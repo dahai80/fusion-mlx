@@ -74,9 +74,11 @@ def _resolve_config_path(cfg) -> Path:
 def _atomic_write(target: Path, content: str) -> None:
     """Write *content* to *target* atomically, preserving symlinks and mode.
 
+    All writes go through a temp file + ``os.replace()`` so the target
+    either has the full new content or its prior state (or nothing, for
+    a brand-new file that never completed) — never a half-written file.
     When *target* already exists, its mode bits are copied to the
-    replacement file.  When it does not exist, a simple ``write_text``
-    is used so no metadata is lost (there's nothing to preserve).
+    replacement file; new files default to 0o644.
     Symlinks are resolved before writing so dotfile-managed configs
     stay connected to their real target.
     """
@@ -84,15 +86,15 @@ def _atomic_write(target: Path, content: str) -> None:
     import tempfile
 
     resolved = target.resolve()
+    resolved.parent.mkdir(parents=True, exist_ok=True)
 
-    # If the file doesn't exist yet, a plain write is safe and
-    # avoids the metadata-preservation question entirely.
-    if not resolved.exists():
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_text(content, encoding="utf-8")
-        return
-
-    mode = stat.S_IMODE(resolved.stat().st_mode)
+    # #1063: previously non-existent targets used an early write_text
+    # return, but a crash mid-write left a corrupted half-written agent
+    # config. Now ALL writes go through tmp + os.replace().
+    if resolved.exists():
+        mode = stat.S_IMODE(resolved.stat().st_mode)
+    else:
+        mode = 0o644
 
     fd, tmp_path = tempfile.mkstemp(
         dir=str(resolved.parent), prefix=".fusion-mlx-", suffix=".tmp"
