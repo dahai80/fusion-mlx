@@ -102,9 +102,9 @@ class TestMLLMCacheConcurrency:
         _store_entry(mgr, "dup", token_count=4)
         mem_after_first = mgr._current_memory
         _store_entry(mgr, "dup", token_count=4)
-        assert mgr._current_memory == mem_after_first, (
-            "overwrite double-counted _current_memory"
-        )
+        assert (
+            mgr._current_memory == mem_after_first
+        ), "overwrite double-counted _current_memory"
 
     def test_clear_resets_memory(self, mgr):
         _store_entry(mgr, "a", token_count=4)
