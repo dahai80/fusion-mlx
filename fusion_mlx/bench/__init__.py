@@ -14,4 +14,10 @@ class BenchmarkRunnerUnavailable(RuntimeError):
 
 
 def run_benchmark(model: str, **kwargs) -> dict:
-    return {"tokens_per_second": 0}
+    # #1012: was returning {"tokens_per_second": 0} — fake data that callers
+    # silently consumed instead of failing. Raise so callers know no runner
+    # is wired (use the CLI or pass an explicit runner to flywheel).
+    raise BenchmarkRunnerUnavailable(
+        f"run_benchmark('{model}') has no runner wired — "
+        "use 'fusion-mlx bench' CLI or pass an explicit runner to flywheel()"
+    )

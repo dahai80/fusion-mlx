@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed — bench run_benchmark stub raises instead of returning fake 0 t/s (#1012)
+- **#1012**: `fusion_mlx.bench.run_benchmark()` always returned
+  `{"tokens_per_second": 0}` — fake data that callers silently consumed
+  instead of failing. The `BenchmarkRunnerUnavailable` exception class was
+  defined in the same file but never used. Fix: `run_benchmark` now raises
+  `BenchmarkRunnerUnavailable` with a clear message directing users to the
+  CLI (`fusion-mlx bench`) or to pass an explicit runner to `flywheel()`.
+  Matches the existing `tier_runner.run_tier()` pattern.
+
 ### Fixed — Anthropic thinking signature is now HMAC, PDF docs raise 400 (#1011)
 - **#1011**: (1) thinking blocks returned a fixed placeholder signature
   `"fusion-mlx-reasoning"` (identical for every response) — strict clients
