@@ -223,13 +223,19 @@ def _install_mtp_vendored(
         # ``_mtp_step`` call has already proven the path is broken —
         # a slow-loss loop that codex round-G rightly called out.
         #
-        # _disabled_uids has exactly TWO valid clear paths:
+        # _disabled_uids has exactly THREE valid clear paths:
         #   1. Reuse detection in the ``uid in _disabled_uids`` gate
         #      inside _mtp_step (the round-E fix): a NEW request_id for
         #      the same uid means mlx-lm reused the uid; clear and let
-        #      MTP re-arm for the new request.
+        #      MTP re-arm for the new request. (#1053: this now calls
+        #      _final_cleanup_uid which also drops _handoff_logged keys.)
         #   2. Never for the current request. The disable is a permanent
         #      marker for the request's lifetime.
+        #   3. _final_cleanup_uid on the request finish/retire path
+        #      (#1053): exposed as batch_gen._mtp_vendored_final_cleanup_uid
+        #      so a finish/abort callback can drop the uid's entries from
+        #      _disabled_uids, _state, and _handoff_logged once the uid is
+        #      retired for good.
         #
         # State (the per-uid MTP generator + queue) is cleaned here as
         # usual — that's per-generator lifecycle, not per-request.
@@ -242,6 +248,28 @@ def _install_mtp_vendored(
                 gen.close()
             except Exception:  # noqa: BLE001
                 pass
+
+    def _final_cleanup_uid(uid: int) -> None:
+        # #1053: _disabled_uids + _handoff_logged grew one entry per uid
+        # and were only cleared on uid-reuse detection (path 1 in the
+        # _cleanup_uid comment). Under non-reusing uid allocation (bench
+        # harness uid_to_request_id=None, or long-run services where the
+        # uid space keeps expanding) both maps accumulated indefinitely.
+        # This runs on the request finish/abort path — after the uid is
+        # retired for good — so the disable marker + handoff log keys for
+        # that uid can be dropped. A reused uid arrives clean.
+        _disabled_uids.pop(uid, None)
+        state = _state.pop(uid, None)
+        if state is not None:
+            gen = state.get("gen")
+            if gen is not None:
+                try:
+                    gen.close()
+                except Exception:  # noqa: BLE001
+                    pass
+        stale_keys = [k for k in _handoff_logged if k[0] == uid]
+        for k in stale_keys:
+            _handoff_logged.discard(k)
 
     def _is_greedy_for_uid(uid: int) -> bool:
         """Return True when the request behind ``uid`` sampled at temp=0.
@@ -476,7 +504,10 @@ def _install_mtp_vendored(
             ):
                 # uid was reused for a new request — forget the stale
                 # disable and fall through to normal MTP path.
-                del _disabled_uids[uid]
+                # #1053: also drop _handoff_logged keys for the retired
+                # uid (they were never cleared before, growing the set
+                # one entry per disabled uid across the process lifetime).
+                _final_cleanup_uid(uid)
             else:
                 _stats["fallthrough_steps"] += 1
                 _stats["ft_disabled"] += 1
@@ -564,7 +595,10 @@ def _install_mtp_vendored(
                 # generator + drop the queue, then fall through to
                 # FIRST-call construction so the new request gets a
                 # fresh MTP path.
-                _cleanup_uid(uid)
+                # #1053: use _final_cleanup_uid (not _cleanup_uid) so
+                # _handoff_logged keys for the retired uid are also
+                # dropped — they grew one entry per uid otherwise.
+                _final_cleanup_uid(uid)
                 state = None
 
         if state is None:
@@ -822,6 +856,12 @@ def _install_mtp_vendored(
     # _step takes over.
     gb._step = _mtp_step
     batch_gen._mtp_vendored_stats = _stats
+    # #1053: expose the finish-path cleanup so a request retire/abort
+    # callback with access to batch_gen can drop the uid's entries from
+    # _disabled_uids + _state + _handoff_logged. Without this the maps
+    # grew one entry per uid for the process lifetime under non-reusing
+    # uid allocation.
+    batch_gen._mtp_vendored_final_cleanup_uid = _final_cleanup_uid
 
     logger.info(
         "[MTP-vendored] installed on GenerationBatch._step "

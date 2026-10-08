@@ -49,6 +49,11 @@ _global_lock = threading.Lock()
 
 
 def get_global_counter() -> DFlyAcceptCounter:
+    # #1075: the module-level singleton mixes draft counts across all
+    # engines in a multi-model EnginePool. Per-engine isolation is via
+    # DFlyDrafter.accept_counter (each drafter instance owns its own).
+    # This global remains for back-compat with metrics.py aggregation and
+    # tests; new code should use the per-drafter instance.
     global _global_counter
     with _global_lock:
         if _global_counter is None:

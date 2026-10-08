@@ -353,6 +353,19 @@ class Eagle3Speculator:
         self._draft_cache = None
         self._prev_token = None
         self._prefill_hidden = None
+        # #1051: clear captured hidden tensors from the HiddenStateCapture
+        # middleware. Before this fix, _prefill_captured was only cleared
+        # inside _build_hidden_from_capture after a SUCCESSFUL projection
+        # (line 253). An abort/timeout before that left hidden_size x
+        # seq_len Metal tensors stranded in _prefill_captured +
+        # _captured, retained by the SpecDecodeState until the next
+        # request's successful prefill overwrote them. reset() runs on
+        # abort (#1054) and on_new_request, so clearing here covers
+        # both paths.
+        hc = getattr(self, "_hidden_capture", None)
+        if hc is not None:
+            hc.clear_captured()
+            hc.clear_prefill_captured()
         # Reset adaptive state so a new request starts fresh (acceptance
         # distribution differs per prompt — don't carry over pause state).
         self._recent_accept.clear()

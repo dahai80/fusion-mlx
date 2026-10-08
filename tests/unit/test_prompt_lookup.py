@@ -195,16 +195,39 @@ class TestPromptLookupDecoderRecordAccepted:
 
     def test_record_accepted_positive(self):
         decoder = PromptLookupDecoder()
-        decoder.record_accepted(3)
+        # #1074: successful_drafts counts FULL acceptances only
+        # (num_accepted >= num_drafted). Pass num_drafted so this is a
+        # full accept.
+        decoder.record_accepted(3, num_drafted=3)
         assert decoder.successful_drafts == 1
+        assert decoder.partial_accept_drafts == 0
+        assert decoder.accepted_tokens == 3
+
+    def test_record_accepted_partial(self):
+        decoder = PromptLookupDecoder()
+        # #1074: partial acceptance (num_accepted < num_drafted) goes
+        # to partial_accept_drafts, not successful_drafts.
+        decoder.record_accepted(2, num_drafted=4)
+        assert decoder.successful_drafts == 0
+        assert decoder.partial_accept_drafts == 1
+        assert decoder.accepted_tokens == 2
+
+    def test_record_accepted_no_num_drafted_is_partial(self):
+        decoder = PromptLookupDecoder()
+        # #1074: back-compat — num_drafted defaults to 0, treated as
+        # partial when num_accepted > 0 (can't prove full acceptance).
+        decoder.record_accepted(3)
+        assert decoder.successful_drafts == 0
+        assert decoder.partial_accept_drafts == 1
         assert decoder.accepted_tokens == 3
 
     def test_record_accepted_multiple_calls(self):
         decoder = PromptLookupDecoder()
-        decoder.record_accepted(2)
-        decoder.record_accepted(3)
-        decoder.record_accepted(1)
+        decoder.record_accepted(2, num_drafted=2)
+        decoder.record_accepted(3, num_drafted=3)
+        decoder.record_accepted(1, num_drafted=1)
         assert decoder.successful_drafts == 3
+        assert decoder.partial_accept_drafts == 0
         assert decoder.accepted_tokens == 6
 
 
@@ -240,7 +263,7 @@ class TestPromptLookupDecoderGetStats:
         drafts = decoder.get_draft_tokens()
 
         num_drafts = len(drafts)
-        decoder.record_accepted(num_drafts)
+        decoder.record_accepted(num_drafts, num_drafted=num_drafts)
 
         stats = decoder.get_stats()
         assert stats["acceptance_rate"] == 1.0
@@ -254,7 +277,7 @@ class TestPromptLookupDecoderGetStats:
         accepted = len(drafts) // 2
         if accepted == 0:
             accepted = 1
-        decoder.record_accepted(accepted)
+        decoder.record_accepted(accepted, num_drafted=len(drafts))
 
         stats = decoder.get_stats()
         expected_rate = accepted / len(drafts)

@@ -2044,3 +2044,241 @@ def test_install_mtp_vendored_uid_reuse_clears_stale_state(monkeypatch):
         f"(got {tokens!r}, expected [2000]). This suggests the "
         "wrapper resumed the OLD generator's queue / iteration state."
     )
+
+
+# ---------------------------------------------------------------------------
+# 6. #1053: _disabled_uids / _handoff_logged finish-path cleanup
+# ---------------------------------------------------------------------------
+
+
+def test_final_cleanup_uid_exposed_on_batch_gen(monkeypatch):
+    """#1053: _final_cleanup_uid must be exposed on batch_gen so a
+    request finish/abort callback can retire a uid's entries from
+    _disabled_uids + _state + _handoff_logged."""
+    from types import SimpleNamespace
+
+    import mlx.core as mx
+
+    from fusion_mlx.scheduler import _install_mtp_vendored
+    from fusion_mlx.speculative.mtp import generator as _gen_mod
+
+    class _FakeGen:
+        def __init__(self):
+            self._n = 0
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            self._n += 1
+            return (self._n + 100, mx.array([0.0]), False)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(_gen_mod, "mtp_generate_step", lambda *a, **kw: _FakeGen())
+
+    batch_gen, gb = _make_batch_gen_with_gb()
+    gb.uids = [55]
+    ok = _install_mtp_vendored(
+        batch_gen,
+        model=_StubModel(),
+        requests={
+            "req-55": SimpleNamespace(sampling_params=SimpleNamespace(temperature=0.0))
+        },
+        uid_to_request_id={55: "req-55"},
+    )
+    assert ok is True
+    assert hasattr(batch_gen, "_mtp_vendored_final_cleanup_uid")
+    assert callable(batch_gen._mtp_vendored_final_cleanup_uid)
+
+
+def test_final_cleanup_uid_clears_disabled_marker(monkeypatch):
+    """#1053: calling _final_cleanup_uid must clear the _disabled_uids
+    marker so a subsequent step for the SAME uid + SAME request_id
+    re-enters MTP construction instead of short-circuiting.
+
+    Before #1053, _disabled_uids entries were only cleared on uid
+    reuse (different request_id). A finish-path cleanup that retired
+    the uid without reusing it left the marker forever, so the next
+    request on that uid (if the harness didn't rotate request IDs)
+    stayed disabled."""
+    from types import SimpleNamespace
+
+    import mlx.core as mx
+
+    from fusion_mlx.scheduler import _install_mtp_vendored
+    from fusion_mlx.speculative.mtp import generator as _gen_mod
+
+    class _RecoveringCtor:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("simulated construction failure")
+            return _FakeGen()
+
+    class _FakeGen:
+        def __init__(self):
+            self._n = 0
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            self._n += 1
+            return (self._n + 100, mx.array([0.0]), False)
+
+        def close(self):
+            pass
+
+    ctor = _RecoveringCtor()
+    monkeypatch.setattr(_gen_mod, "mtp_generate_step", ctor)
+
+    batch_gen, gb = _make_batch_gen_with_gb()
+    gb.uids = [77]
+    uid_map: dict[int, str] = {77: "req-77"}
+    ok = _install_mtp_vendored(
+        batch_gen,
+        model=_StubModel(),
+        requests={
+            "req-77": SimpleNamespace(sampling_params=SimpleNamespace(temperature=0.0))
+        },
+        uid_to_request_id=uid_map,
+    )
+    assert ok is True
+
+    gb._next_tokens = mx.array([10], dtype=mx.uint32)
+    gb._next_logprobs = [mx.array([0.0])]
+
+    # Step 1 — construction fails, uid=77 disabled.
+    gb._step()
+    assert ctor.calls == 1
+
+    # Step 2 — same uid + same request: disabled short-circuit fires.
+    gb._next_tokens = mx.array([20], dtype=mx.uint32)
+    gb._step()
+    assert ctor.calls == 1
+
+    # Retire the uid via the finish-path cleanup hook.
+    batch_gen._mtp_vendored_final_cleanup_uid(77)
+
+    # Step 3 — same uid + same request: marker was cleared, so
+    # construction MUST be retried. Before #1053 this stayed disabled.
+    gb._next_tokens = mx.array([30], dtype=mx.uint32)
+    gb._step()
+    assert ctor.calls == 2, (
+        "#1053 regression: _final_cleanup_uid did not clear "
+        "_disabled_uids. The uid stayed disabled after the finish-"
+        f"path cleanup (ctor.calls={ctor.calls!r})."
+    )
+
+
+def test_uid_reuse_cleans_handoff_logged(monkeypatch, caplog):
+    """#1053: uid-reuse detection must also clear _handoff_logged keys
+    for the retired uid (via _final_cleanup_uid). Before #1053 the
+    uid-reuse gate only did ``del _disabled_uids[uid]`` — _handoff_logged
+    grew one entry per (uid, reason) for the process lifetime.
+
+    Observable contract: _log_mtp_mid_stream_handoff_once logs at most
+    once per (uid, reason). After uid reuse cleans the set, a SECOND
+    handoff for the same uid + same reason MUST log again."""
+    from types import SimpleNamespace
+
+    import mlx.core as mx
+
+    from fusion_mlx.scheduler import _install_mtp_vendored
+    from fusion_mlx.speculative.mtp import generator as _gen_mod
+
+    class _FakeGen:
+        def __init__(self):
+            self._n = 0
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            self._n += 1
+            return (self._n + 100, mx.array([0.0]), False)
+
+        def close(self):
+            pass
+
+    ctor_calls = {"n": 0}
+
+    def _ctor(*a, **kw):
+        ctor_calls["n"] += 1
+        return _FakeGen()
+
+    monkeypatch.setattr(_gen_mod, "mtp_generate_step", _ctor)
+
+    batch_gen, gb = _make_batch_gen_with_gb()
+    gb.uids = [88]
+    uid_map: dict[int, str] = {88: "req-88"}
+    requests: dict = {
+        "req-88": SimpleNamespace(sampling_params=SimpleNamespace(temperature=0.0))
+    }
+    ok = _install_mtp_vendored(
+        batch_gen,
+        model=_StubModel(),
+        requests=requests,
+        uid_to_request_id=uid_map,
+    )
+    assert ok is True
+
+    gb._next_tokens = mx.array([500], dtype=mx.uint32)
+    gb._next_logprobs = [mx.array([0.0])]
+
+    # Prime MTP (FIRST-call succeeds, _state[88] set).
+    with caplog.at_level("WARNING"):
+        gb._step()
+    first_handoff_count = batch_gen._mtp_vendored_stats["ft_mid_stream_handoff"]
+
+    # Trigger B>1 handoff — logs once for (88, "b_gt_1").
+    with caplog.at_level("WARNING"):
+        gb.uids = [88, 89]
+        gb._step()
+    after_first_handoff = batch_gen._mtp_vendored_stats["ft_mid_stream_handoff"]
+    assert after_first_handoff >= first_handoff_count + 1
+
+    # Trigger B>1 again — _handoff_logged already has (88, "b_gt_1"),
+    # so NO new handoff is counted.
+    with caplog.at_level("WARNING"):
+        gb._step()
+    assert (
+        batch_gen._mtp_vendored_stats["ft_mid_stream_handoff"] == after_first_handoff
+    ), "second B>1 for same uid should not re-log handoff"
+
+    # Simulate uid reuse for a new request — _final_cleanup_uid fires
+    # in the reuse gate, cleaning _disabled_uids + _state + _handoff_logged.
+    uid_map[88] = "req-88B"
+    requests["req-88B"] = SimpleNamespace(
+        sampling_params=SimpleNamespace(temperature=0.0)
+    )
+    gb.uids = [88]
+    gb._next_tokens = mx.array([600], dtype=mx.uint32)
+    gb._next_logprobs = [mx.array([0.0])]
+    with caplog.at_level("WARNING"):
+        gb._step()  # FIRST-call for req-88B
+    assert ctor_calls["n"] == 2
+
+    # Prime + trigger B>1 again for the reused uid. Because
+    # _handoff_logged was cleaned by _final_cleanup_uid, this MUST
+    # log a NEW handoff for (88, "b_gt_1").
+    gb._next_tokens = mx.array([700], dtype=mx.uint32)
+    gb._next_logprobs = [mx.array([0.0])]
+    with caplog.at_level("WARNING"):
+        gb._step()  # SUBSEQUENT call, drains queue
+    with caplog.at_level("WARNING"):
+        gb.uids = [88, 89]
+        gb._step()  # B>1 handoff
+    after_reuse_handoff = batch_gen._mtp_vendored_stats["ft_mid_stream_handoff"]
+    assert after_reuse_handoff > after_first_handoff, (
+        "#1053 regression: uid reuse did not clean _handoff_logged. "
+        "The second B>1 handoff for the reused uid was NOT logged "
+        f"(ft_mid_stream_handoff stayed at {after_first_handoff}). "
+        "_handoff_logged grew one entry per uid instead of being "
+        "cleaned on the finish/reuse path."
+    )
