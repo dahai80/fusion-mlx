@@ -596,7 +596,7 @@ The macOS app offers a mode toggle between:
 | OpenClaw Agent | `/v1/openclaw/agent/*` | ✅ Sessions, turns, tool calling, SSE streaming |
 | Agent Graph | `/v1/agents/graphs`, `/v1/agents/run` | ✅ CRUD + export + run (in-memory) |
 | Base Info | `/v1/base` | ✅ MLX runtime capability detection |
-| Convert / Quantize | `/v1/convert`, `/v1/quantize` (+ `.../jobs/{id}`) | ✅ Async HF->MLX conversion + weight quantization |
+| Convert / Quantize | `/v1/convert`, `/v1/quantize`, `/v1/quantize/layered` (+ `.../jobs/{id}` GET/DELETE) | ✅ Async HF→MLX conversion + weight quantization, TTL+cap job cleanup (#1010) |
 | Watermark | `/v1/watermark/embed`, `/v1/watermark/verify` | ✅ Weight-tensor LSB watermark (#656) |
 | Server Utils | `/props`, `/tokenize`, `/detokenize`, `/v1/models/rescan`, `/metrics`, `/metrics.json`, `/v1/load-model`, `/v1/unload-model` | ✅ mlx-serve parity: server props, tokenizer round-trip, model rescan, Prometheus + JSON metrics, body-shape model load/unload |
 

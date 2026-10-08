@@ -34,6 +34,50 @@ _layered_executor = ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="layered-quant-job"
 )
 
+# #1010: terminal jobs accumulate forever without a DELETE endpoint or TTL.
+# Cap retained jobs + sweep terminal ones older than TTL on every submit.
+_MAX_LAYERED_JOBS = 200
+_LAYERED_JOB_TTL_SECONDS = 3600
+_LAYERED_TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted"})
+
+
+def _prune_layered_jobs() -> None:
+    # #1010: called under _layered_jobs_lock on submit. Evict terminal jobs
+    # older than TTL first; if still over cap, drop oldest terminal jobs.
+    now = _now()
+    stale = [
+        jid
+        for jid, j in _layered_jobs.items()
+        if j["status"] in _LAYERED_TERMINAL_STATUSES
+        and (now - j.get("updated_at", j.get("created_at", now)))
+        > _LAYERED_JOB_TTL_SECONDS
+    ]
+    for jid in stale:
+        _layered_jobs.pop(jid, None)
+    if stale:
+        logger.info(
+            "layered-quantize: pruned %d stale terminal job(s) (TTL=%ds)",
+            len(stale),
+            _LAYERED_JOB_TTL_SECONDS,
+        )
+    if len(_layered_jobs) > _MAX_LAYERED_JOBS:
+        terminal = sorted(
+            (
+                (j.get("updated_at", 0.0), jid)
+                for jid, j in _layered_jobs.items()
+                if j["status"] in _LAYERED_TERMINAL_STATUSES
+            ),
+            key=lambda x: x[0],
+        )
+        excess = len(_layered_jobs) - _MAX_LAYERED_JOBS
+        for _, jid in terminal[:excess]:
+            _layered_jobs.pop(jid, None)
+        logger.info(
+            "layered-quantize: pruned %d oldest terminal job(s) (cap=%d)",
+            min(excess, len(terminal)),
+            _MAX_LAYERED_JOBS,
+        )
+
 
 def shutdown_layered_quantize_executor(wait: bool = False) -> None:
     # E-11 (#811): match convert_routes — the layered-quantize executor
@@ -211,6 +255,7 @@ async def start_layered_quantize(
 ) -> Any:
     job = _new_layered_job(request.model)
     with _layered_jobs_lock:
+        _prune_layered_jobs()
         _layered_jobs[job["job_id"]] = job
     logger.info(
         "layered-quantize job %s queued: model=%s, default_bits=%d, rules=%d",
@@ -233,6 +278,28 @@ async def get_layered_quantize_job(
         if job is None:
             raise HTTPException(404, detail=f"Job '{job_id}' not found")
         return dict(job)
+
+
+@router.delete("/quantize/layered/jobs/{job_id}")
+async def delete_layered_quantize_job(
+    job_id: str,
+    _is_admin: bool = Depends(require_admin),
+) -> Any:
+    # #1010: DELETE endpoint for terminal layered-quantize jobs. Running/queued
+    # jobs cannot be deleted (safety — half-deleted running job confuses pollers).
+    with _layered_jobs_lock:
+        job = _layered_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, detail=f"Job '{job_id}' not found")
+        if job["status"] not in _LAYERED_TERMINAL_STATUSES:
+            raise HTTPException(
+                409,
+                detail=f"Job '{job_id}' is still {job['status']} — "
+                "wait for completion or interrupt via server shutdown",
+            )
+        _layered_jobs.pop(job_id, None)
+    logger.info("layered-quantize job %s deleted", job_id)
+    return {"job_id": job_id, "status": "deleted"}
 
 
 @router.get("/quantize/layered/jobs")

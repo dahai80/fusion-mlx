@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed — convert/layered-quantize job dict no longer accumulates forever (#1010)
+- **#1010**: `_jobs` (convert/quantize) and `_layered_jobs` (layered-quantize)
+  had only POST + GET endpoints — no DELETE, no TTL, no cap. Terminal jobs
+  (completed/failed/interrupted, with output_path + metadata) accumulated
+  forever in memory across the server lifetime. Fix: added TTL sweep
+  (terminal jobs > 1h evicted on every submit) + cap (max 200 retained,
+  oldest terminal dropped first) + `DELETE /v1/convert/jobs/{job_id}`,
+  `DELETE /v1/quantize/jobs/{job_id}`, `DELETE /v1/quantize/layered/jobs/{job_id}`
+  (terminal only; 409 for running/queued).
+
 ### Fixed — in-place LoRA swap no longer leaks lock/in_use/swap on base unload (#1009)
 - **#1009**: with `FUSION_LORA_INPLACE_SWAP=1` (default off), if the base
   engine was concurrently unloaded during the swap window, `release_engine`

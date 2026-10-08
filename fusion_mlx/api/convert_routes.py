@@ -35,6 +35,49 @@ _jobs_lock = threading.Lock()
 # jobs to avoid OOM. A queued job waits for the prior one to finish.
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="convert-job")
 
+# #1010: terminal jobs accumulate forever without a DELETE endpoint or TTL.
+# Cap retained jobs + sweep terminal ones older than TTL on every submit.
+_MAX_JOBS = 200
+_JOB_TTL_SECONDS = 3600
+_TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted"})
+
+
+def _prune_jobs() -> None:
+    # #1010: called under _jobs_lock on submit. Evict terminal jobs older than
+    # TTL first; if still over cap, drop oldest terminal jobs until under cap.
+    now = _now()
+    stale = [
+        jid
+        for jid, j in _jobs.items()
+        if j["status"] in _TERMINAL_STATUSES
+        and (now - j.get("updated_at", j.get("created_at", now))) > _JOB_TTL_SECONDS
+    ]
+    for jid in stale:
+        _jobs.pop(jid, None)
+    if stale:
+        logger.info(
+            "convert: pruned %d stale terminal job(s) (TTL=%ds)",
+            len(stale),
+            _JOB_TTL_SECONDS,
+        )
+    if len(_jobs) > _MAX_JOBS:
+        terminal = sorted(
+            (
+                (j.get("updated_at", 0.0), jid)
+                for jid, j in _jobs.items()
+                if j["status"] in _TERMINAL_STATUSES
+            ),
+            key=lambda x: x[0],
+        )
+        excess = len(_jobs) - _MAX_JOBS
+        for _, jid in terminal[:excess]:
+            _jobs.pop(jid, None)
+        logger.info(
+            "convert: pruned %d oldest terminal job(s) (cap=%d)",
+            min(excess, len(terminal)),
+            _MAX_JOBS,
+        )
+
 
 def shutdown_convert_executor(wait: bool = False) -> None:
     # E-11 (#811): the convert/quantize executor was never closed. On
@@ -131,6 +174,7 @@ def _run_job(job: dict[str, Any], req: ConvertRequest | QuantizeRequest) -> None
 def _submit(kind: str, req: ConvertRequest | QuantizeRequest) -> dict[str, Any]:
     job = _new_job(kind, req.model)
     with _jobs_lock:
+        _prune_jobs()
         _jobs[job["job_id"]] = job
     logger.info("%s job %s queued: model=%s", kind, job["job_id"], req.model)
     _executor.submit(_run_job, job, req)
@@ -150,6 +194,24 @@ def _get_job(job_id: str, kind: str) -> dict[str, Any]:
         if job is None or job["kind"] != kind:
             raise HTTPException(404, detail=f"Job '{job_id}' not found")
         return dict(job)
+
+
+def _delete_job(job_id: str, kind: str) -> dict[str, Any]:
+    # #1010: DELETE endpoint for terminal jobs. Running/queued jobs cannot be
+    # deleted (safety — a half-deleted running job would confuse pollers).
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None or job["kind"] != kind:
+            raise HTTPException(404, detail=f"Job '{job_id}' not found")
+        if job["status"] not in _TERMINAL_STATUSES:
+            raise HTTPException(
+                409,
+                detail=f"Job '{job_id}' is still {job['status']} — "
+                "wait for completion or interrupt via server shutdown",
+            )
+        _jobs.pop(job_id, None)
+    logger.info("%s job %s deleted", kind, job_id)
+    return {"job_id": job_id, "status": "deleted"}
 
 
 @router.post("/convert")
@@ -189,6 +251,14 @@ async def get_convert_job(
     return _get_job(job_id, "convert")
 
 
+@router.delete("/convert/jobs/{job_id}")
+async def delete_convert_job(
+    job_id: str,
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
+    return _delete_job(job_id, "convert")
+
+
 @router.get("/quantize/jobs")
 async def list_quantize_jobs(
     _is_admin: bool = Depends(require_admin),
@@ -202,6 +272,14 @@ async def get_quantize_job(
     _is_admin: bool = Depends(require_admin),
 ) -> dict[str, Any]:
     return _get_job(job_id, "quantize")
+
+
+@router.delete("/quantize/jobs/{job_id}")
+async def delete_quantize_job(
+    job_id: str,
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
+    return _delete_job(job_id, "quantize")
 
 
 # --- LoRA/DoRA adapter merge (#584) -------------------------------------
