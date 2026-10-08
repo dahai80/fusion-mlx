@@ -336,6 +336,10 @@ class VideoOutput(BaseModel):
 class VideoGenerateResponse(BaseModel):
     data: list[VideoOutput]
     created: int = Field(default_factory=lambda: int(time.time()))
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="unsupported-param notices (empty = all params honored)",
+    )
 
 
 def _encode_video_output(
@@ -576,6 +580,26 @@ async def generate_video(
                     "Load a video model first.",
                 )
 
+            # #1023: surface unsupported params instead of silent ignore.
+            # wan2 controls container fps internally → request fps is ignored.
+            # skyreels has no control conditioning → control_type is ignored.
+            backend_name = getattr(getattr(engine, "_backend", None), "name", "")
+            param_warnings: list[str] = []
+            if backend_name == "wan2" and request.fps != 24:
+                msg = (
+                    f"fps={request.fps} ignored by wan2 backend "
+                    "(controls container fps internally)"
+                )
+                logger.warning("video: %s", msg)
+                param_warnings.append(msg)
+            if backend_name == "skyreels" and request.control_type != "canny":
+                msg = (
+                    f"control_type={request.control_type} ignored by skyreels "
+                    "backend (control conditioning is Wan2-only)"
+                )
+                logger.warning("video: %s", msg)
+                param_warnings.append(msg)
+
             gen_kwargs: dict = {
                 "prompt": request.prompt,
                 "num_frames": effective_num_frames,
@@ -726,7 +750,7 @@ async def generate_video(
                     exc_info=True,
                 )
 
-            return VideoGenerateResponse(data=outputs)
+            return VideoGenerateResponse(data=outputs, warnings=param_warnings)
         finally:
             if image_is_temp and image_path:
                 try:
