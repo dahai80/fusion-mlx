@@ -450,6 +450,7 @@
             // #1078: migrate/convert task panel state
             convertJobs: [],
             quantizeJobs: [],
+            layeredJobs: [],
             migrations: [],
             _migrateRefreshTimer: null,
             // Upload modal
@@ -4683,13 +4684,15 @@
             async loadMigrateTasks() {
                 const tasks = [];
                 try {
-                    const [convResp, quantResp, migResp] = await Promise.all([
+                    const [convResp, quantResp, layeredResp, migResp] = await Promise.all([
                         fetch('/v1/convert/jobs'),
                         fetch('/v1/quantize/jobs'),
+                        fetch('/v1/quantize/layered/jobs'),
                         fetch('/admin/api/migrate/list'),
                     ]);
                     if (convResp.ok) this.convertJobs = await convResp.json();
                     if (quantResp.ok) this.quantizeJobs = await quantResp.json();
+                    if (layeredResp.ok) this.layeredJobs = await layeredResp.json();
                     if (migResp.ok) {
                         const data = await migResp.json();
                         this.migrations = data.migrations || [];
@@ -4697,7 +4700,7 @@
                 } catch (err) {
                     console.error('Failed to load migrate tasks:', err);
                 }
-                const hasActive = [...this.convertJobs, ...this.quantizeJobs].some(
+                const hasActive = [...this.convertJobs, ...this.quantizeJobs, ...this.layeredJobs].some(
                     j => ['queued', 'running'].includes(j.status)
                 );
                 if (!hasActive) {
@@ -4721,12 +4724,37 @@
                 }
             },
 
+            async cancelLayeredJob(jobId) {
+                try {
+                    const resp = await fetch(
+                        `/v1/quantize/layered/jobs/${jobId}/cancel`,
+                        { method: 'POST' }
+                    );
+                    if (!resp.ok) {
+                        const data = await resp.json();
+                        alert(data.detail || 'Cancel failed');
+                    }
+                    await this.loadMigrateTasks();
+                } catch (err) {
+                    console.error('Failed to cancel layered job:', err);
+                }
+            },
+
             async deleteConvertJob(jobId, kind) {
                 try {
                     await fetch(`/v1/${kind}/jobs/${jobId}`, { method: 'DELETE' });
                     await this.loadMigrateTasks();
                 } catch (err) {
                     console.error('Failed to delete job:', err);
+                }
+            },
+
+            async deleteLayeredJob(jobId) {
+                try {
+                    await fetch(`/v1/quantize/layered/jobs/${jobId}`, { method: 'DELETE' });
+                    await this.loadMigrateTasks();
+                } catch (err) {
+                    console.error('Failed to delete layered job:', err);
                 }
             },
 
