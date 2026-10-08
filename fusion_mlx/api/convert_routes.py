@@ -31,6 +31,12 @@ router = APIRouter(prefix="/v1", tags=["convert"])
 _jobs: dict[str, dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
 
+# #1078: track submitted futures so queued jobs can be cancelled before the
+# single-worker executor picks them up. Running jobs cannot be cancelled
+# (mlx-lm convert() has no cancel hook) — the cancel endpoint returns 409
+# for those so the GUI can show an honest "cannot cancel" state.
+_futures: dict[str, Future] = {}
+
 # Single-worker pool: a conversion loads a full model into memory, so serialize
 # jobs to avoid OOM. A queued job waits for the prior one to finish.
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="convert-job")
@@ -39,7 +45,7 @@ _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="convert-job")
 # Cap retained jobs + sweep terminal ones older than TTL on every submit.
 _MAX_JOBS = 200
 _JOB_TTL_SECONDS = 3600
-_TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted"})
+_TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted", "cancelled"})
 
 
 def _prune_jobs() -> None:
@@ -54,6 +60,7 @@ def _prune_jobs() -> None:
     ]
     for jid in stale:
         _jobs.pop(jid, None)
+        _futures.pop(jid, None)
     if stale:
         logger.info(
             "convert: pruned %d stale terminal job(s) (TTL=%ds)",
@@ -72,6 +79,7 @@ def _prune_jobs() -> None:
         excess = len(_jobs) - _MAX_JOBS
         for _, jid in terminal[:excess]:
             _jobs.pop(jid, None)
+            _futures.pop(jid, None)
         logger.info(
             "convert: pruned %d oldest terminal job(s) (cap=%d)",
             min(excess, len(terminal)),
@@ -138,6 +146,15 @@ def _run_job(job: dict[str, Any], req: ConvertRequest | QuantizeRequest) -> None
     from fusion_mlx.cli_convert import _build_convert_kwargs, _run_convert
     from fusion_mlx.model_aliases import resolve_model
 
+    # #1078: a queued job may have been cancelled before the executor picked
+    # it up. Skip the work and leave the cancelled status in place.
+    with _jobs_lock:
+        if job["status"] == "cancelled":
+            logger.info(
+                "convert job %s skipped (cancelled while queued)", job["job_id"]
+            )
+            return
+
     try:
         model = resolve_model(req.model)
         args_ns = SimpleNamespace(
@@ -177,8 +194,39 @@ def _submit(kind: str, req: ConvertRequest | QuantizeRequest) -> dict[str, Any]:
         _prune_jobs()
         _jobs[job["job_id"]] = job
     logger.info("%s job %s queued: model=%s", kind, job["job_id"], req.model)
-    _executor.submit(_run_job, job, req)
+    fut = _executor.submit(_run_job, job, req)
+    with _jobs_lock:
+        _futures[job["job_id"]] = fut
     return {"job_id": job["job_id"], "status": "queued"}
+
+
+def _cancel_job(job_id: str, kind: str) -> dict[str, Any]:
+    # #1078: cancel a queued job. Running jobs cannot be cancelled (mlx-lm
+    # convert() has no cancel hook) — return 409 so the GUI shows an honest
+    # "cannot cancel" state. Terminal jobs are idempotent no-ops.
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+        if job is None or job["kind"] != kind:
+            raise HTTPException(404, detail=f"Job '{job_id}' not found")
+        status = job["status"]
+        if status in _TERMINAL_STATUSES:
+            return {"job_id": job_id, "status": status}
+        if status == "running":
+            raise HTTPException(
+                409,
+                detail=f"Job '{job_id}' is running — mlx-lm convert() has no "
+                "cancel hook; wait for completion or restart the server",
+            )
+        # queued — cancel the future + mark cancelled. _run_job checks the
+        # status at entry and skips if already cancelled (race: the executor
+        # may have just picked it up).
+        fut = _futures.pop(job_id, None)
+        job["status"] = "cancelled"
+        job["updated_at"] = _now()
+    if fut is not None:
+        fut.cancel()
+    logger.info("%s job %s cancelled (was queued)", kind, job_id)
+    return {"job_id": job_id, "status": "cancelled"}
 
 
 def _list_jobs(kind: str) -> list[dict[str, Any]]:
@@ -210,6 +258,7 @@ def _delete_job(job_id: str, kind: str) -> dict[str, Any]:
                 "wait for completion or interrupt via server shutdown",
             )
         _jobs.pop(job_id, None)
+        _futures.pop(job_id, None)
     logger.info("%s job %s deleted", kind, job_id)
     return {"job_id": job_id, "status": "deleted"}
 
@@ -259,6 +308,15 @@ async def delete_convert_job(
     return _delete_job(job_id, "convert")
 
 
+@router.post("/convert/jobs/{job_id}/cancel")
+async def cancel_convert_job(
+    job_id: str,
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
+    # #1078: cancel a queued convert job. Running jobs return 409.
+    return _cancel_job(job_id, "convert")
+
+
 @router.get("/quantize/jobs")
 async def list_quantize_jobs(
     _is_admin: bool = Depends(require_admin),
@@ -280,6 +338,15 @@ async def delete_quantize_job(
     _is_admin: bool = Depends(require_admin),
 ) -> dict[str, Any]:
     return _delete_job(job_id, "quantize")
+
+
+@router.post("/quantize/jobs/{job_id}/cancel")
+async def cancel_quantize_job(
+    job_id: str,
+    _is_admin: bool = Depends(require_admin),
+) -> dict[str, Any]:
+    # #1078: cancel a queued quantize job. Running jobs return 409.
+    return _cancel_job(job_id, "quantize")
 
 
 # --- LoRA/DoRA adapter merge (#584) -------------------------------------

@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added — admin migrate/convert task panel + cancel endpoints (#1078)
+- **#1078**: The admin dashboard Models page now has a "Migrate / Convert"
+  tab that polls `GET /v1/convert/jobs`, `GET /v1/quantize/jobs`, and
+  `GET /admin/api/migrate/list` every 3s while jobs are active, rendering
+  per-job state (job_id, model, status badge, progress bar, output_path or
+  error), plus the 6-step migration pipeline (analyze/download/convert/
+  codegen/validate/register) with per-step status pills. New `POST
+  /v1/convert/jobs/{id}/cancel` and `POST /v1/quantize/jobs/{id}/cancel`
+  endpoints let queued jobs be aborted from the GUI (future.cancel() +
+  status flip; the queued-entry check in `_run_job` skips work if the job
+  was cancelled before the single-worker executor picked it up). Running
+  jobs return 409 (mlx-lm `convert()` has no cancel hook); terminal jobs
+  are idempotent no-ops. The cancel/delete buttons + progress bars close
+  the loop with the #1010 TTL/cap/DELETE work.
+
 ### Added — restart-required metadata + per-control badges in admin settings (#1077)
 - **#1077**: Settings that are persisted to `settings.json` but NOT
   hot-applied at runtime (host, port, max_concurrent_requests, mcp_config,

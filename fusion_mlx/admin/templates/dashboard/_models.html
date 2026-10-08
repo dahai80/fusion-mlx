@@ -34,6 +34,14 @@
                             class="px-5 py-2.5 rounded-full text-sm font-medium transition-all duration-200">
                             {{ t('models.tab.uploader') }}
                         </button>
+                        <button
+                            @click="setModelsTab('migrate')"
+                            :class="modelsTab === 'migrate'
+                                ? 'bg-neutral-900 text-white'
+                                : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'"
+                            class="px-5 py-2.5 rounded-full text-sm font-medium transition-all duration-200">
+                            Migrate / Convert
+                        </button>
                     </div>
 
                     <!-- ==================== MANAGER TAB ==================== -->
@@ -2062,6 +2070,131 @@
                                 </div>
                             </div>
                         </template>
+                    </div>
+
+                    <!-- ==================== MIGRATE / CONVERT TAB (#1078) ==================== -->
+                    <div x-show="modelsTab === 'migrate'" x-cloak>
+                        <div class="mb-8">
+                            <h2 class="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-2">Pipeline</h2>
+                            <h3 class="text-2xl font-bold tracking-tight text-neutral-900">Migrate / Convert Tasks</h3>
+                            <p class="text-sm text-neutral-500 mt-2">
+                                Convert + quantize jobs and migration pipeline state. Polls every 3s while jobs are active.
+                            </p>
+                        </div>
+
+                        <!-- Convert Jobs -->
+                        <div class="bg-white rounded-2xl border border-neutral-200 overflow-hidden mb-6">
+                            <div class="flex items-center justify-between px-6 py-4 bg-neutral-100 border-b border-neutral-200">
+                                <div class="flex items-center gap-3">
+                                    <i data-lucide="repeat" class="w-4 h-4 text-neutral-500"></i>
+                                    <span class="text-xs font-bold uppercase tracking-wider text-neutral-600">Convert Jobs</span>
+                                </div>
+                                <button @click="loadMigrateTasks()" class="text-xs text-neutral-500 hover:text-neutral-900">Refresh</button>
+                            </div>
+                            <div class="p-4">
+                                <template x-if="convertJobs.length === 0">
+                                    <p class="text-sm text-neutral-400 py-4 text-center">No convert jobs. Start one via POST /v1/convert.</p>
+                                </template>
+                                <template x-for="job in convertJobs" :key="job.job_id">
+                                    <div class="flex items-center gap-3 py-2 border-b border-neutral-50 last:border-0">
+                                        <div class="flex-1 min-w-0">
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-xs font-mono text-neutral-500" x-text="job.job_id"></span>
+                                                <span class="text-sm font-medium text-neutral-900 truncate" x-text="job.model"></span>
+                                                <span :class="jobStatusColor(job.status)" class="px-1.5 py-0.5 text-[10px] font-medium rounded-full" x-text="formatJobStatus(job.status)"></span>
+                                            </div>
+                                            <div class="mt-1 flex items-center gap-2">
+                                                <div class="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+                                                    <div class="h-full bg-neutral-900 rounded-full transition-all" :style="'width: ' + ((job.progress || 0) * 100) + '%'"></div>
+                                                </div>
+                                                <span class="text-[11px] text-neutral-400" x-text="((job.progress || 0) * 100).toFixed(0) + '%'"></span>
+                                            </div>
+                                            <p x-show="job.error" class="text-xs text-red-500 mt-1" x-text="job.error"></p>
+                                            <p x-show="job.output_path" class="text-xs text-neutral-400 mt-1 font-mono truncate" x-text="job.output_path"></p>
+                                        </div>
+                                        <div class="flex items-center gap-1">
+                                            <button x-show="job.status === 'queued'" @click="cancelConvertJob(job.job_id, 'convert')"
+                                                    class="px-2 py-1 text-[11px] text-amber-600 hover:bg-amber-50 rounded">Cancel</button>
+                                            <button x-show="['completed','failed','cancelled','interrupted'].includes(job.status)" @click="deleteConvertJob(job.job_id, 'convert')"
+                                                    class="px-2 py-1 text-[11px] text-neutral-400 hover:bg-neutral-100 rounded">Delete</button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Quantize Jobs -->
+                        <div class="bg-white rounded-2xl border border-neutral-200 overflow-hidden mb-6">
+                            <div class="flex items-center justify-between px-6 py-4 bg-neutral-100 border-b border-neutral-200">
+                                <div class="flex items-center gap-3">
+                                    <i data-lucide="layers" class="w-4 h-4 text-neutral-500"></i>
+                                    <span class="text-xs font-bold uppercase tracking-wider text-neutral-600">Quantize Jobs</span>
+                                </div>
+                                <button @click="loadMigrateTasks()" class="text-xs text-neutral-500 hover:text-neutral-900">Refresh</button>
+                            </div>
+                            <div class="p-4">
+                                <template x-if="quantizeJobs.length === 0">
+                                    <p class="text-sm text-neutral-400 py-4 text-center">No quantize jobs. Start one via POST /v1/quantize.</p>
+                                </template>
+                                <template x-for="job in quantizeJobs" :key="job.job_id">
+                                    <div class="flex items-center gap-3 py-2 border-b border-neutral-50 last:border-0">
+                                        <div class="flex-1 min-w-0">
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-xs font-mono text-neutral-500" x-text="job.job_id"></span>
+                                                <span class="text-sm font-medium text-neutral-900 truncate" x-text="job.model"></span>
+                                                <span :class="jobStatusColor(job.status)" class="px-1.5 py-0.5 text-[10px] font-medium rounded-full" x-text="formatJobStatus(job.status)"></span>
+                                            </div>
+                                            <div class="mt-1 flex items-center gap-2">
+                                                <div class="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+                                                    <div class="h-full bg-neutral-900 rounded-full transition-all" :style="'width: ' + ((job.progress || 0) * 100) + '%'"></div>
+                                                </div>
+                                                <span class="text-[11px] text-neutral-400" x-text="((job.progress || 0) * 100).toFixed(0) + '%'"></span>
+                                            </div>
+                                            <p x-show="job.error" class="text-xs text-red-500 mt-1" x-text="job.error"></p>
+                                            <p x-show="job.output_path" class="text-xs text-neutral-400 mt-1 font-mono truncate" x-text="job.output_path"></p>
+                                        </div>
+                                        <div class="flex items-center gap-1">
+                                            <button x-show="job.status === 'queued'" @click="cancelConvertJob(job.job_id, 'quantize')"
+                                                    class="px-2 py-1 text-[11px] text-amber-600 hover:bg-amber-50 rounded">Cancel</button>
+                                            <button x-show="['completed','failed','cancelled','interrupted'].includes(job.status)" @click="deleteConvertJob(job.job_id, 'quantize')"
+                                                    class="px-2 py-1 text-[11px] text-neutral-400 hover:bg-neutral-100 rounded">Delete</button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Migration Pipeline -->
+                        <div class="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
+                            <div class="flex items-center justify-between px-6 py-4 bg-neutral-100 border-b border-neutral-200">
+                                <div class="flex items-center gap-3">
+                                    <i data-lucide="git-branch" class="w-4 h-4 text-neutral-500"></i>
+                                    <span class="text-xs font-bold uppercase tracking-wider text-neutral-600">Migration Pipeline</span>
+                                </div>
+                                <button @click="loadMigrateTasks()" class="text-xs text-neutral-500 hover:text-neutral-900">Refresh</button>
+                            </div>
+                            <div class="p-4">
+                                <template x-if="migrations.length === 0">
+                                    <p class="text-sm text-neutral-400 py-4 text-center">No migrations. Start one via POST /admin/api/migrate/analyze.</p>
+                                </template>
+                                <template x-for="mig in migrations" :key="mig.migration_id">
+                                    <div class="py-3 border-b border-neutral-50 last:border-0">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-xs font-mono text-neutral-500" x-text="mig.migration_id"></span>
+                                            <span class="text-sm font-medium text-neutral-900" x-text="mig.hf_id || '?'"></span>
+                                        </div>
+                                        <div class="mt-1 flex flex-wrap items-center gap-1">
+                                            <template x-for="step in ['analyze','download','convert','codegen','validate','register']" :key="step">
+                                                <span class="px-1.5 py-0.5 text-[10px] font-medium rounded-full"
+                                                      :class="mig[step + '_status'] === 'completed' ? 'bg-green-50 text-green-600' : (mig[step + '_status'] ? 'bg-blue-50 text-blue-600' : 'bg-neutral-100 text-neutral-400')"
+                                                      x-text="step"></span>
+                                            </template>
+                                        </div>
+                                        <p x-show="mig.hf_dir" class="text-xs text-neutral-400 mt-1 font-mono truncate" x-text="mig.hf_dir"></p>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
