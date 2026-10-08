@@ -6,6 +6,7 @@ Provides prefix caching using PagedCacheManager for block-based storage
 with SSD persistence. FusionMLX only supports paged SSD-based caching.
 """
 
+import collections
 import logging
 import math
 import threading
@@ -42,6 +43,18 @@ class BlockCacheEntry:
 
     block_table: BlockTable
     last_access: float
+
+
+def _percentile(values: collections.deque, pct: float) -> float:
+    # #1080: nearest-rank percentile over the latency ring buffer. Copies
+    # to a sorted list — the deque is capped (<=512) so this is cheap and
+    # runs only when /admin/api/stats is polled, never on the hot path.
+    n = len(values)
+    if n == 0:
+        return 0.0
+    s = sorted(values)
+    idx = max(0, min(n - 1, int(math.ceil((pct / 100.0) * n)) - 1))
+    return round(s[idx], 4)
 
 
 class BlockAwarePrefixCache(CacheManager):
@@ -130,6 +143,10 @@ class BlockAwarePrefixCache(CacheManager):
             "8k-32k": (0, 0),
             "32k+": (0, 0),
         }
+        # #1080: rolling window of per-lookup latency (ms) for p50/p99
+        # observability in /admin/api/stats. Bounded deque — oldest samples
+        # drop automatically so memory stays flat under sustained load.
+        self._lookup_latencies_ms: collections.deque = collections.deque(maxlen=512)
         # O2.1 (optimization-0914 item 3): pinned block set.
         # block_id -> expiry epoch (0.0 = permanent). Pin increments
         # PagedCacheManager ref_count so LRU eviction skips the block.
@@ -362,6 +379,31 @@ class BlockAwarePrefixCache(CacheManager):
         if not tokens:
             return None, tokens
 
+        # #1080: record total lookup latency for p50/p99 percentile stats.
+        _t0 = time.perf_counter()
+        try:
+            return self._fetch_cache_impl(
+                request_id,
+                tokens,
+                extra_keys,
+                extra_key_token_start,
+                extra_key_ranges,
+            )
+        finally:
+            _elapsed_ms = (time.perf_counter() - _t0) * 1000.0
+            self._lookup_latencies_ms.append(_elapsed_ms)
+
+    def _fetch_cache_impl(
+        self,
+        request_id: str,
+        tokens: list[int],
+        extra_keys: tuple[Any, ...] | None = None,
+        extra_key_token_start: int | None = None,
+        extra_key_ranges: list[tuple[int, tuple[Any, ...]]] | None = None,
+    ) -> tuple[BlockTable | None, list[int]]:
+        # #1080: split from fetch_cache so the try/finally latency wrapper
+        # in fetch_cache captures every return path without duplicating the
+        # timing instrumentation at each exit point.
         # Try to find shared prefix blocks
         shared_block_ids, remaining = self.paged_cache.find_shared_prefix(
             tokens,
@@ -2900,6 +2942,17 @@ class BlockAwarePrefixCache(CacheManager):
             "active_requests": len(self._request_tables),
             "pinned_blocks": len(self._pinned_blocks),
             "hit_buckets": bucket_stats,
+            "latency_p50_ms": _percentile(self._lookup_latencies_ms, 50),
+            "latency_p99_ms": _percentile(self._lookup_latencies_ms, 99),
+            "latency_avg_ms": (
+                round(
+                    sum(self._lookup_latencies_ms) / len(self._lookup_latencies_ms),
+                    4,
+                )
+                if self._lookup_latencies_ms
+                else 0.0
+            ),
+            "latency_samples": len(self._lookup_latencies_ms),
             **paged_stats,
         }
 
@@ -2998,6 +3051,7 @@ class BlockAwarePrefixCache(CacheManager):
         self._last_tokens_to_next_block = 0
         for k in self._hit_buckets:
             self._hit_buckets[k] = (0, 0)
+        self._lookup_latencies_ms.clear()
         self.paged_cache.reset_stats()
 
     def clear(self) -> int:

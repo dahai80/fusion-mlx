@@ -575,6 +575,119 @@
                             <div class="text-[11px] text-neutral-500">
                                 Note: <span class="font-medium text-amber-600">Sub-block Cache</span> means requests below one full block (for example &lt;1024 tokens on some models) are cached in memory/paged cache but are not counted as indexed SSD blocks.
                             </div>
+
+                            <!-- #1080: Prefix cache latency + MoE shared cache observability -->
+                            <div x-show="statsScope !== 'alltime' && ((stats.prefix_cache?.models && stats.prefix_cache.models.length > 0) || stats.moe_shared_cache?.enabled)" x-cloak
+                                 class="border border-neutral-100 rounded-lg p-3 space-y-3">
+                                <div class="flex items-center gap-2">
+                                    <i data-lucide="gauge" class="w-3.5 h-3.5 text-neutral-400"></i>
+                                    <span class="text-[11px] font-bold uppercase tracking-wider text-neutral-500">Prefix Latency &amp; MoE Shared Cache</span>
+                                </div>
+                                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3"
+                                     x-data="{ get pc() { return stats.prefix_cache || {} } }">
+                                    <div>
+                                        <p class="text-[11px] text-neutral-400 mb-0.5">Prefix Hit Rate</p>
+                                        <p class="text-lg font-bold text-neutral-900"
+                                           x-text="((pc.hit_rate || 0) * 100).toFixed(1) + '%'"></p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[11px] text-neutral-400 mb-0.5">Lookup p50</p>
+                                        <p class="text-lg font-bold text-neutral-900"
+                                           x-text="(pc.latency_p50_ms || 0).toFixed(2) + ' ms'"></p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[11px] text-neutral-400 mb-0.5">Lookup p99</p>
+                                        <p class="text-lg font-bold text-neutral-900"
+                                           x-text="(pc.latency_p99_ms || 0).toFixed(2) + ' ms'"></p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[11px] text-neutral-400 mb-0.5">Tokens Saved</p>
+                                        <p class="text-lg font-bold text-neutral-900"
+                                           x-text="formatNumber(pc.tokens_saved || 0)"></p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[11px] text-neutral-400 mb-0.5">Active Requests</p>
+                                        <p class="text-lg font-bold text-neutral-900"
+                                           x-text="(pc.active_requests || 0).toLocaleString()"></p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[11px] text-neutral-400 mb-0.5">Pinned Blocks</p>
+                                        <p class="text-lg font-bold text-neutral-900"
+                                           x-text="(pc.pinned_blocks || 0).toLocaleString()"></p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[11px] text-neutral-400 mb-0.5">Block Size</p>
+                                        <p class="text-lg font-bold text-neutral-900"
+                                           x-text="(pc.block_sizes || []).join(', ') || '-'"></p>
+                                    </div>
+                                    <div>
+                                        <p class="text-[11px] text-neutral-400 mb-0.5">Latency Samples</p>
+                                        <p class="text-lg font-bold text-neutral-900"
+                                           x-text="(pc.latency_samples || 0).toLocaleString()"></p>
+                                    </div>
+                                </div>
+
+                                <!-- Prefix per-model breakdown -->
+                                <div x-show="stats.prefix_cache?.models && stats.prefix_cache.models.length > 0"
+                                     class="overflow-x-auto border border-neutral-100 rounded-lg">
+                                    <table class="min-w-full text-xs">
+                                        <thead class="bg-neutral-50 text-neutral-500 uppercase tracking-wider">
+                                            <tr>
+                                                <th class="px-3 py-2 text-left">Model</th>
+                                                <th class="px-3 py-2 text-right">Hit Rate</th>
+                                                <th class="px-3 py-2 text-right">Hits</th>
+                                                <th class="px-3 py-2 text-right">Misses</th>
+                                                <th class="px-3 py-2 text-right">p50</th>
+                                                <th class="px-3 py-2 text-right">p99</th>
+                                                <th class="px-3 py-2 text-right">Tokens Saved</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-neutral-100 text-neutral-700">
+                                            <template x-for="m in (stats.prefix_cache?.models || [])" :key="m.id">
+                                                <tr>
+                                                    <td class="px-3 py-2 font-medium" x-text="m.id"></td>
+                                                    <td class="px-3 py-2 text-right" x-text="((m.hit_rate || 0) * 100).toFixed(1) + '%'"></td>
+                                                    <td class="px-3 py-2 text-right" x-text="formatNumber(m.hits || 0)"></td>
+                                                    <td class="px-3 py-2 text-right" x-text="formatNumber(m.misses || 0)"></td>
+                                                    <td class="px-3 py-2 text-right" x-text="(m.latency_p50_ms || 0).toFixed(2) + ' ms'"></td>
+                                                    <td class="px-3 py-2 text-right" x-text="(m.latency_p99_ms || 0).toFixed(2) + ' ms'"></td>
+                                                    <td class="px-3 py-2 text-right" x-text="formatNumber(m.tokens_saved || 0)"></td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                <!-- MoE shared cache -->
+                                <div x-show="stats.moe_shared_cache?.enabled" class="space-y-2"
+                                     x-data="{ get mc() { return stats.moe_shared_cache || {} } }">
+                                    <div class="flex items-center gap-2">
+                                        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-green-100 text-green-700">MoE Shared</span>
+                                        <span class="text-[11px] text-neutral-500" x-text="mc.layers_tracked + ' layers tracked'"></span>
+                                    </div>
+                                    <div class="grid grid-cols-3 gap-3">
+                                        <div>
+                                            <p class="text-[11px] text-neutral-400 mb-0.5">Hit Rate</p>
+                                            <p class="text-lg font-bold text-neutral-900"
+                                               x-text="((mc.hit_rate || 0) * 100).toFixed(1) + '%'"></p>
+                                        </div>
+                                        <div>
+                                            <p class="text-[11px] text-neutral-400 mb-0.5">Hits</p>
+                                            <p class="text-lg font-bold text-neutral-900"
+                                               x-text="formatNumber(mc.hits || 0)"></p>
+                                        </div>
+                                        <div>
+                                            <p class="text-[11px] text-neutral-400 mb-0.5">Misses</p>
+                                            <p class="text-lg font-bold text-neutral-900"
+                                               x-text="formatNumber(mc.misses || 0)"></p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div x-show="!stats.moe_shared_cache?.enabled && (stats.prefix_cache?.models || []).length === 0"
+                                     class="text-[11px] text-neutral-400">
+                                    MoE shared cache is OFF (set FUSION_MOE_SHARED_CACHE=1 to enable). No loaded models reporting prefix stats.
+                                </div>
+                            </div>
                         </div>
                     </div>
 
