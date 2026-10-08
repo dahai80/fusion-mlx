@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added — prefix cache latency + MoE shared cache in admin stats (#1080)
+- **#1080**: `/admin/api/stats` now carries a `prefix_cache` section
+  (aggregate + per-model: hit_rate, hits, misses, tokens_saved, block_sizes,
+  active_requests, pinned_blocks, `latency_p50_ms`, `latency_p99_ms`,
+  `latency_avg_ms`, `latency_samples`, hit_buckets) and a `moe_shared_cache`
+  section (enabled, requests, hits, misses, hit_rate, layers_tracked,
+  per_layer). `BlockAwarePrefixCache` records a rolling 512-sample window of
+  per-lookup latency in `fetch_cache` (try/finally wrapper, every return
+  path) and exposes p50/p99 via nearest-rank percentile in `get_stats_dict`.
+  The admin dashboard Status page renders a "Prefix Latency & MoE Shared
+  Cache" card with per-model hit-rate/p50/p99/tokens-saved table and the
+  MoE shared-cache hit rate (shown only when `FUSION_MOE_SHARED_CACHE=1`).
+  Prefix latency was not previously tracked — only hit counts existed.
+
 ### Added — expose default chat model + resolved_model in errors (#1087)
 - **#1087**: `/v1/models` now marks the resolved default chat model with
   `"default_for_chat": true` (omitted on non-default entries), so a client

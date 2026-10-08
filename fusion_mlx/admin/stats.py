@@ -383,6 +383,169 @@ def _build_runtime_cache_observability(
     return payload
 
 
+def _build_cache_observability(model_filter: str = "") -> dict:
+    # #1080: surface radix prefix-cache hit rate / latency percentiles and
+    # MoE shared-expert cache hit rate in /admin/api/stats so the dashboard
+    # cache panel can show them. Reaches scheduler.block_aware_cache on each
+    # loaded model (the live instance, not the stale dataclass snapshot in
+    # runtime_stats) and calls get_stats_dict() — which now carries p50/p99
+    # lookup latency. MoE shared cache is process-global (one _stats dict),
+    # so it is reported once, not per-model.
+    engine_pool = _get_engine_pool()
+    prefix_agg = {
+        "hits": 0,
+        "misses": 0,
+        "hit_rate": 0.0,
+        "tokens_saved": 0,
+        "block_sizes": [],
+        "active_requests": 0,
+        "pinned_blocks": 0,
+        "latency_p50_ms": 0.0,
+        "latency_p99_ms": 0.0,
+        "latency_avg_ms": 0.0,
+        "latency_samples": 0,
+        "hit_buckets": {},
+        "models": [],
+    }
+    moe_payload = {
+        "enabled": False,
+        "requests": 0,
+        "hits": 0,
+        "misses": 0,
+        "hit_rate": 0.0,
+        "layers_tracked": 0,
+        "per_layer": {},
+    }
+
+    # MoE shared cache — process-global, env-gated (default OFF).
+    try:
+        from ..patches._moe_shared_cache import (
+            get_stats,
+            get_stats_flat,
+            shared_cache_enabled,
+        )
+
+        moe_payload["enabled"] = bool(shared_cache_enabled())
+        flat = get_stats_flat()
+        moe_payload["requests"] = int(flat.get("moe_shared_cache_requests", 0) or 0)
+        moe_payload["hits"] = int(flat.get("moe_shared_cache_hits", 0) or 0)
+        moe_payload["misses"] = int(flat.get("moe_shared_cache_misses", 0) or 0)
+        moe_payload["hit_rate"] = float(
+            flat.get("moe_shared_cache_hit_rate", 0.0) or 0.0
+        )
+        moe_payload["layers_tracked"] = int(
+            flat.get("moe_shared_cache_layers_tracked", 0) or 0
+        )
+        per_layer = get_stats()
+        moe_payload["per_layer"] = {str(k): dict(v) for k, v in per_layer.items()}
+    except Exception as exc:
+        logger.warning("_build_cache_observability: MoE stats failed: %s", exc)
+
+    if engine_pool is None:
+        return {"prefix_cache": prefix_agg, "moe_shared_cache": moe_payload}
+
+    block_sizes_seen: set[int] = set()
+    merged_buckets: dict[str, dict[str, int]] = {}
+    p99_values: list[float] = []
+    p50_values: list[float] = []
+    avg_sum = 0.0
+    avg_count = 0
+
+    for model_info in engine_pool.get_status().get("models", []):
+        model_id = model_info.get("id")
+        if not model_id:
+            continue
+        if model_filter and model_id != model_filter:
+            continue
+        if not model_info.get("loaded"):
+            continue
+        entry = engine_pool._entries.get(model_id)
+        if entry is None or entry.engine is None:
+            continue
+        async_core = getattr(entry.engine, "_engine", None)
+        core = getattr(async_core, "engine", None) if async_core is not None else None
+        scheduler = getattr(core, "scheduler", None) if core is not None else None
+        if scheduler is None:
+            continue
+        prefix_cache = getattr(scheduler, "block_aware_cache", None)
+        if prefix_cache is None or not hasattr(prefix_cache, "get_stats_dict"):
+            continue
+        try:
+            stats = prefix_cache.get_stats_dict()
+        except Exception as exc:
+            logger.warning(
+                "_build_cache_observability: prefix stats for '%s': %s",
+                model_id,
+                exc,
+            )
+            continue
+
+        hits = int(stats.get("hits", 0) or 0)
+        misses = int(stats.get("misses", 0) or 0)
+        prefix_agg["hits"] += hits
+        prefix_agg["misses"] += misses
+        prefix_agg["tokens_saved"] += int(stats.get("tokens_saved", 0) or 0)
+        prefix_agg["active_requests"] += int(stats.get("active_requests", 0) or 0)
+        prefix_agg["pinned_blocks"] += int(stats.get("pinned_blocks", 0) or 0)
+        bs = int(stats.get("block_size", 0) or 0)
+        if bs > 0:
+            block_sizes_seen.add(bs)
+
+        p50 = float(stats.get("latency_p50_ms", 0.0) or 0.0)
+        p99 = float(stats.get("latency_p99_ms", 0.0) or 0.0)
+        avg = float(stats.get("latency_avg_ms", 0.0) or 0.0)
+        samples = int(stats.get("latency_samples", 0) or 0)
+        if samples > 0:
+            p50_values.append(p50)
+            p99_values.append(p99)
+            avg_sum += avg * samples
+            avg_count += samples
+
+        buckets = stats.get("hit_buckets", {})
+        if isinstance(buckets, dict):
+            for bname, bval in buckets.items():
+                if not isinstance(bval, dict):
+                    continue
+                tgt = merged_buckets.setdefault(
+                    bname, {"hits": 0, "misses": 0, "hit_rate": 0.0}
+                )
+                tgt["hits"] += int(bval.get("hits", 0) or 0)
+                tgt["misses"] += int(bval.get("misses", 0) or 0)
+
+        prefix_agg["models"].append(
+            {
+                "id": model_id,
+                "hits": hits,
+                "misses": misses,
+                "hit_rate": (hits / (hits + misses) if (hits + misses) > 0 else 0.0),
+                "tokens_saved": int(stats.get("tokens_saved", 0) or 0),
+                "block_size": bs,
+                "latency_p50_ms": p50,
+                "latency_p99_ms": p99,
+                "latency_avg_ms": avg,
+                "latency_samples": samples,
+                "active_requests": int(stats.get("active_requests", 0) or 0),
+                "pinned_blocks": int(stats.get("pinned_blocks", 0) or 0),
+            }
+        )
+
+    total = prefix_agg["hits"] + prefix_agg["misses"]
+    prefix_agg["hit_rate"] = prefix_agg["hits"] / total if total > 0 else 0.0
+    prefix_agg["block_sizes"] = sorted(block_sizes_seen)
+    prefix_agg["latency_p50_ms"] = round(max(p50_values), 4) if p50_values else 0.0
+    prefix_agg["latency_p99_ms"] = round(max(p99_values), 4) if p99_values else 0.0
+    prefix_agg["latency_avg_ms"] = (
+        round(avg_sum / avg_count, 4) if avg_count > 0 else 0.0
+    )
+    prefix_agg["latency_samples"] = avg_count
+    for bname, bval in merged_buckets.items():
+        btot = bval["hits"] + bval["misses"]
+        bval["hit_rate"] = round(bval["hits"] / btot, 4) if btot > 0 else 0.0
+    prefix_agg["hit_buckets"] = merged_buckets
+
+    return {"prefix_cache": prefix_agg, "moe_shared_cache": moe_payload}
+
+
 @_router.get("/api/stats")
 async def get_server_stats(
     model: str = "",
@@ -419,6 +582,8 @@ async def get_server_stats(
         rich,
         model_filter=model,
     )
+    # #1080: prefix cache hit rate / latency percentiles + MoE shared cache.
+    cache_obs_data = _build_cache_observability(model_filter=model)
 
     return {
         **snapshot,
@@ -435,6 +600,8 @@ async def get_server_stats(
         "engines": _get_engine_info(),
         "active_models": active_models_data,
         "runtime_cache": runtime_cache_data,
+        "prefix_cache": cache_obs_data["prefix_cache"],
+        "moe_shared_cache": cache_obs_data["moe_shared_cache"],
     }
 
 
