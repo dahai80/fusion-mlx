@@ -1929,32 +1929,6 @@ class EnginePool:
         candidates.sort()  # Sort by last_access (oldest first)
         return candidates[0][1]
 
-    async def _evict_kv_cache(self, model_id: str) -> bool:
-        """Phase 1 eviction — free KV cache only, keep weights in memory.
-
-        Much faster than full unload (~100ms vs ~20s for a 7B model).
-        Use this as the first eviction step before unloading weights.
-
-        Returns:
-            True if KV cache was freed, False if nothing to free.
-        """
-        entry = self._entries.get(model_id)
-        if not entry or entry.engine is None:
-            return False
-        if hasattr(entry.engine, "clear_kv_cache"):
-            try:
-                entry.engine.clear_kv_cache()
-
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(
-                    get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache())
-                )
-                logger.info(f"Phase 1 eviction for {model_id}: KV cache freed")
-                return True
-            except Exception as e:
-                logger.warning(f"Phase 1 eviction failed for {model_id}: {e}")
-        return False
-
     async def _detach_engine(self, model_id: str) -> int | None:
         # Stop and detach an engine (set entry.engine = None). Fast teardown:
         # stop + reset activity + drain ready queue + clear entry fields.
