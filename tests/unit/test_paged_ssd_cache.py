@@ -19,12 +19,14 @@ from unittest.mock import patch
 import pytest
 
 from fusion_mlx.cache.paged_ssd_cache import (
+    _HEX_SHARD_DIRS,
     PagedSSDBlockMetadata,
     PagedSSDCacheIndex,
     PagedSSDCacheManager,
     SharedHotCacheBudget,
     _cache_compat_signature,
     _extract_tensor_bytes,
+    _is_hex_blob_name,
     _restore_tensor_from_bytes,
     _write_safetensors_no_mx,
     parse_size,
@@ -630,6 +632,218 @@ class TestPagedSSDCacheManager:
         freed = manager.enforce_size_limit()
         assert freed == 0
 
+    def test_enforce_size_limit_batches_until_under_limit(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """#1030: enforce_size_limit evicts in batches (bounded lock holds)
+        but still fully enforces the limit — it must drain the index across
+        multiple batches until the tracked size is under the effective max,
+        even when more than _MAX_INLINE_UNLINKS_PER_SAVE entries need
+        eviction. The old uncapped single-lock loop held _state_lock for the
+        whole eviction, stalling every SSD op."""
+        from fusion_mlx.cache import paged_ssd_cache as ssd_cache_module
+
+        # Small batch size to force multiple batches.
+        monkeypatch.setattr(ssd_cache_module, "_MAX_INLINE_UNLINKS_PER_SAVE", 2)
+
+        mgr = PagedSSDCacheManager(
+            cache_dir=tmp_path / "enforce_batches",
+            max_size_bytes=1024**2,
+            hot_cache_only=True,
+        )
+        try:
+            # 6 entries x 10 bytes = 60 bytes total.
+            for i in range(6):
+                block_hash = f"enf_{i}".encode()
+                mgr._index.add(
+                    PagedSSDBlockMetadata(
+                        block_hash=block_hash,
+                        file_size=10,
+                        token_count=1,
+                        created_at=float(i),
+                        last_access=float(i),
+                        num_layers=1,
+                    )
+                )
+
+            # Effective max 20 bytes → must evict down to 2 entries (20
+            # bytes). 4 evictions with a batch cap of 2 = 2 batches, proving
+            # the multi-batch path runs and fully enforces the limit.
+            mgr._get_effective_max_size = lambda: 20  # type: ignore[method-assign]
+            freed = mgr.enforce_size_limit()
+
+            assert mgr._tracked_ssd_size() <= 20, (
+                f"enforce_size_limit did not fully enforce the limit: "
+                f"{mgr._tracked_ssd_size()} > 20"
+            )
+            # The 4 LRU entries (enf_0..enf_3) evicted; the 2 most recent
+            # (enf_4, enf_5) remain.
+            remaining = {
+                m.block_hash for m in mgr._index.get_lru_entries(mgr._index.count)
+            }
+            assert remaining == {b"enf_4", b"enf_5"}
+            # 4 entries x 10 bytes freed (> the batch cap of 2, so multiple
+            # batches ran).
+            assert freed == 40
+        finally:
+            mgr.close()
+
+    def test_enforce_size_limit_unlink_failure_counts(self, tmp_path: Path):
+        """#1029: a failed unlink in enforce_size_limit increments
+        evict_unlink_failures — the index entry is already removed, so the
+        failed file becomes an orphan that the sweep reclaims."""
+        cache_dir = tmp_path / "ssd_unlink"
+        mgr = PagedSSDCacheManager(
+            cache_dir=cache_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=True,
+        )
+        try:
+            for i in range(3):
+                block_hash = f"orf_{i}".encode()
+                file_path = mgr._get_file_path(block_hash)
+                assert file_path is not None
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_bytes(b"x" * 10)
+                mgr._index.add(
+                    PagedSSDBlockMetadata(
+                        block_hash=block_hash,
+                        file_path=file_path,
+                        file_size=10,
+                        token_count=1,
+                        created_at=float(i),
+                        last_access=float(i),
+                        num_layers=1,
+                    )
+                )
+
+            mgr._get_effective_max_size = lambda: 20  # type: ignore[method-assign]
+
+            def boom(self, *args, **kwargs):
+                raise OSError("simulated unlink failure")
+
+            with patch.object(Path, "unlink", boom):
+                freed = mgr.enforce_size_limit()
+
+            # 3 x 10 = 30 > 20 → one victim evicted to reach 20.
+            assert freed == 10
+            assert mgr._stats["evict_unlink_failures"] == 1
+            assert mgr._tracked_ssd_size() == 20
+        finally:
+            mgr.close()
+
+    def test_orphan_sweep_removes_unindexed_old_file(self, tmp_path: Path, monkeypatch):
+        """#1029: _sweep_orphaned_files removes a .safetensors whose hash is
+        not in the index (failed eviction unlink), but keeps one the index
+        still tracks."""
+        from fusion_mlx.cache import paged_ssd_cache as ssd_cache_module
+
+        monkeypatch.setattr(ssd_cache_module, "_ORPHAN_SWEEP_MIN_AGE_S", 0.0)
+        cache_dir = tmp_path / "orphan_sweep"
+        mgr = PagedSSDCacheManager(
+            cache_dir=cache_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=True,
+        )
+        try:
+            orphan_hash = bytes.fromhex("0a0b0c0d0e0f1011")
+            indexed_hash = bytes.fromhex("1a1b1c1d1e1f2021")
+            orphan = cache_dir / "0" / f"{orphan_hash.hex()}.safetensors"
+            indexed = cache_dir / "1" / f"{indexed_hash.hex()}.safetensors"
+            for path, hash_ in ((orphan, orphan_hash), (indexed, indexed_hash)):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"stub")
+                # Age the file 100s into the past so it clears the min-age.
+                os.utime(path, (time.time() - 100.0, time.time() - 100.0))
+
+            mgr._index.add(
+                PagedSSDBlockMetadata(
+                    block_hash=indexed_hash,
+                    file_path=indexed,
+                    file_size=4,
+                    token_count=1,
+                    created_at=1.0,
+                    last_access=1.0,
+                    num_layers=1,
+                )
+            )
+
+            removed = mgr._sweep_orphaned_files()
+
+            assert removed == 1
+            assert not orphan.exists()
+            assert indexed.exists()
+        finally:
+            mgr.close()
+
+    def test_orphan_sweep_skips_fresh_file(self, tmp_path: Path, monkeypatch):
+        """#1029: a file whose mtime is younger than
+        _ORPHAN_SWEEP_MIN_AGE_S (mid-write or just re-saved) is never
+        mistaken for an orphan."""
+        from fusion_mlx.cache import paged_ssd_cache as ssd_cache_module
+
+        monkeypatch.setattr(ssd_cache_module, "_ORPHAN_SWEEP_MIN_AGE_S", 10**6)
+        cache_dir = tmp_path / "orphan_sweep_fresh"
+        mgr = PagedSSDCacheManager(
+            cache_dir=cache_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=True,
+        )
+        try:
+            orphan_hash = bytes.fromhex("0a0b0c0d0e0f1011")
+            orphan = cache_dir / "0" / f"{orphan_hash.hex()}.safetensors"
+            orphan.parent.mkdir(parents=True, exist_ok=True)
+            orphan.write_bytes(b"stub")  # fresh mtime, no utime backdate
+
+            removed = mgr._sweep_orphaned_files()
+
+            assert removed == 0
+            assert orphan.exists()
+        finally:
+            mgr.close()
+
+
+class TestVerifyAndRepairIndex:
+    """#1037: startup repair must only remove our own .tmp files."""
+
+    @pytest.fixture
+    def ssd_cache(self, tmp_path):
+        return PagedSSDCacheManager(
+            cache_dir=tmp_path / "ssd_cache",
+            max_size_bytes=100 * 1024**2,
+        )
+
+    def test_is_hex_blob_name(self):
+        assert _is_hex_blob_name("deadbeef") is True
+        assert _is_hex_blob_name("ab") is True
+        assert _is_hex_blob_name("0123456789abcdef") is True
+        assert _is_hex_blob_name("abc") is False
+        assert _is_hex_blob_name("foreign") is False
+
+    def test_hex_shard_dirs(self):
+        assert "0" in _HEX_SHARD_DIRS
+        assert "f" in _HEX_SHARD_DIRS
+        assert "g" not in _HEX_SHARD_DIRS
+        assert "01" not in _HEX_SHARD_DIRS
+
+    def test_removes_own_tmp_keeps_foreign(self, ssd_cache):
+        cache_dir = ssd_cache._cache_dir
+        own = cache_dir / "a" / "deadbeef.tmp"
+        own.write_bytes(b"orphan")
+        foreign1 = cache_dir / "a" / "foreign.tmp"
+        foreign1.write_bytes(b"not ours")
+        foreign_dir = cache_dir / "notashard"
+        foreign_dir.mkdir()
+        foreign2 = foreign_dir / "deadbeef.tmp"
+        foreign2.write_bytes(b"not ours")
+
+        report = ssd_cache.verify_and_repair_index()
+
+        assert not own.exists()
+        assert foreign1.exists()
+        assert foreign2.exists()
+        assert report["orphaned_files_removed"] == 1
+
 
 class TestPagedSSDCacheManagerWithMLX:
     """Tests for PagedSSDCacheManager that require MLX.
@@ -765,9 +979,11 @@ class TestPagedSSDCacheManagerWithMLX:
         # Second save (should just touch)
         manager.save_block(block_hash, cache_data, 32)
 
-        # saves count should not increase (just hit)
+        # saves count should not increase; the dedup is tracked separately and
+        # must not inflate the read-hit counter (#1040).
         assert manager._stats["saves"] == initial_saves
-        assert manager._stats["hits"] >= 1
+        assert manager._stats["saves_deduped"] >= 1
+        assert manager._stats["hits"] == 0
 
     def test_save_writes_format_version(self, tmp_path: Path, mock_mlx):
         """Saved blocks tag the file with the current format version."""
@@ -1519,20 +1735,23 @@ class TestAsyncWriteAndTimeoutLoad:
         # Remove from hot cache buffer so load goes to disk
         ssd_cache._hot_cache_remove(block_hash)
 
-        # Mock both load paths to simulate a corrupted file.
-        # load_block tries _load_safetensors_raw first, then
-        # _load_safetensors_file; both must fail so the outer
-        # except triggers _recover_from_block_error.
+        # Simulate a corrupted file: the raw reader returns None.
+        # #1031: load_block must NOT fall back to _load_safetensors_file
+        # (mx.load) on the raw-None path — that is a second full read of the
+        # same bad file, the IO storm P2-24 set out to avoid. Spy on it to
+        # assert the fallback no longer runs; the raw-None branch recovers
+        # the block and returns None directly.
+        from unittest.mock import MagicMock
+
+        file_spy = MagicMock()
         with (
             patch.object(ssd_cache, "_load_safetensors_raw", return_value=None),
-            patch.object(
-                ssd_cache,
-                "_load_safetensors_file",
-                side_effect=OSError("corrupted file"),
-            ),
+            patch.object(ssd_cache, "_load_safetensors_file", file_spy),
         ):
             loaded = ssd_cache.load_block(block_hash)
             assert loaded is None  # Should return None, not raise
+        # #1031: the mx.load fallback must not run on the raw-None path.
+        file_spy.assert_not_called()
 
         # Block should be removed from index (corrupted entry cleanup)
         assert not ssd_cache.has_block(block_hash)
@@ -1691,10 +1910,56 @@ class TestAsyncWriteAndTimeoutLoad:
         ssd_cache.save_block(block_hash, cache_data, 32)
         initial_saves = ssd_cache._stats["saves"]
 
-        # Second save should just touch, not re-enqueue
+        # Second save should just touch, not re-enqueue; the dedup is tracked
+        # separately and must not inflate the read-hit counter (#1040).
         ssd_cache.save_block(block_hash, cache_data, 32)
         assert ssd_cache._stats["saves"] == initial_saves
-        assert ssd_cache._stats["hits"] >= 1
+        assert ssd_cache._stats["saves_deduped"] >= 1
+        assert ssd_cache._stats["hits"] == 0
+
+    def test_store_block_reused_id_persists_new_content(self, ssd_cache, mx):
+        """#1040: a reused block_id with different data must overwrite, not dedup."""
+        block_id = 7
+        block_hash = str(block_id).encode().ljust(20, b"_")[:20]
+
+        content_a = [(mx.zeros((2, 4)), mx.zeros((2, 4)))]
+        content_b = [(mx.ones((2, 4)), mx.ones((2, 4)))]
+
+        saves0 = ssd_cache._stats["saves"]
+        dedup0 = ssd_cache._stats["saves_deduped"]
+
+        assert ssd_cache.store_block(block_id, content_a) is True
+        assert ssd_cache._stats["saves"] == saves0 + 1
+        assert ssd_cache._stats["saves_deduped"] == dedup0
+        hash_a = ssd_cache.get_block_metadata(block_hash).content_hash
+        assert hash_a
+
+        # Reuse the same block_id with different content: must overwrite.
+        assert ssd_cache.store_block(block_id, content_b) is True
+        assert ssd_cache._stats["saves"] == saves0 + 2
+        assert ssd_cache._stats["saves_deduped"] == dedup0
+        hash_b = ssd_cache.get_block_metadata(block_hash).content_hash
+        assert hash_b != hash_a
+
+    def test_store_block_reused_id_same_content_dedups(self, ssd_cache, mx):
+        """#1040: a reused block_id with identical data dedups (no re-write)."""
+        block_id = 9
+        block_hash = str(block_id).encode().ljust(20, b"_")[:20]
+        content = [(mx.zeros((2, 4)), mx.zeros((2, 4)))]
+
+        saves0 = ssd_cache._stats["saves"]
+        dedup0 = ssd_cache._stats["saves_deduped"]
+
+        assert ssd_cache.store_block(block_id, content) is True
+        assert ssd_cache._stats["saves"] == saves0 + 1
+        assert ssd_cache._stats["saves_deduped"] == dedup0
+        hash0 = ssd_cache.get_block_metadata(block_hash).content_hash
+
+        # Reuse the same block_id with identical content: dedup, no re-write.
+        assert ssd_cache.store_block(block_id, content) is True
+        assert ssd_cache._stats["saves"] == saves0 + 1
+        assert ssd_cache._stats["saves_deduped"] == dedup0 + 1
+        assert ssd_cache.get_block_metadata(block_hash).content_hash == hash0
 
     def test_save_and_load_round_trip_after_flush(self, ssd_cache, mx):
         """Verify full round-trip: save -> flush -> load from disk."""

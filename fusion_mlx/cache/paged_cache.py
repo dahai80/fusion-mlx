@@ -371,6 +371,18 @@ class FreeKVCacheBlockQueue:
 
         self.num_free_blocks += len(blocks)
 
+    def is_in_queue(self, block: CacheBlock) -> bool:
+        """O(1) membership check via the linked-list pointers.
+
+        A block in the free queue has both prev_free_block and
+        next_free_block set (linked to sentinels or siblings); popleft /
+        popleft_n / remove clear both to None. #1016: evict_block_permanently
+        uses this to avoid double-appending a block that free_block already
+        returned to the queue — a double-append links the same node twice,
+        corrupting the list and inflating free_blocks.
+        """
+        return block.prev_free_block is not None and block.next_free_block is not None
+
     def get_all_free_blocks(self) -> list[CacheBlock]:
         """Get all free blocks (for testing)."""
         result = []
@@ -828,9 +840,13 @@ class PagedCacheManager(CacheManager):
 
             return False
 
-    def free_blocks(self, blocks: Iterable[CacheBlock]) -> None:
+    def free_blocks_batch(self, blocks: Iterable[CacheBlock]) -> None:
         """
         Free multiple blocks (vLLM style).
+
+        Named `free_blocks_batch` (not `free_blocks`) to avoid colliding with
+        the `free_blocks` count property below, which would shadow this method
+        and make it dead code.
 
         Blocks with ref_count=0 are added to the free queue.
 
@@ -849,11 +865,20 @@ class PagedCacheManager(CacheManager):
 
                 if block.ref_count <= 0:
                     # Remove from hash cache
+                    freed_parent_hash = None
                     if block.block_hash is not None:
+                        freed_parent_hash = block.block_hash
                         self.cached_block_hash_to_block.pop(
                             block.block_hash, block.block_id
                         )
                         self._notify_block_content_invalidated(block.block_id)
+
+                    # P3-1 (#1034): cascade-clear orphaned descendant hash
+                    # entries, matching the single free_block(). Without this
+                    # the batch path left orphans in the hash index until LRU
+                    # / memory pressure reclaimed them.
+                    if freed_parent_hash is not None:
+                        self._cascade_evict_orphans_locked(freed_parent_hash)
 
                     del self.allocated_blocks[block.block_id]
                     to_free.append(block)
@@ -879,11 +904,21 @@ class PagedCacheManager(CacheManager):
                     # Block is in free queue, remove it
                     try:
                         self.free_block_queue.remove(block)
-                        self.stats.free_blocks -= 1
-                        self.stats.allocated_blocks += 1
-                        self.allocated_blocks[block.block_id] = block
                     except RuntimeError:
-                        pass  # Block not in queue
+                        # #1035: ref_count==0 but not actually linked into the
+                        # free queue. The old `pass` fell through to
+                        # `ref_count += 1` below, creating a ghost block
+                        # (ref>0 but in no container, never freed). Skip it and
+                        # count.
+                        self.stats.touch_ghost_skips += 1
+                        logger.debug(
+                            "paged touch: block %d not in free queue, skipping",
+                            block.block_id,
+                        )
+                        continue
+                    self.stats.free_blocks -= 1
+                    self.stats.allocated_blocks += 1
+                    self.allocated_blocks[block.block_id] = block
 
                 block.ref_count += 1
                 block.touch()
@@ -1515,7 +1550,12 @@ class PagedCacheManager(CacheManager):
     @property
     def usage(self) -> float:
         """Cache usage ratio (0.0 to 1.0)."""
-        total = self.max_blocks - 1  # Exclude null block
+        # #1033: denominator is the real (lazily-grown) pool size, not
+        # max_blocks. The pool starts at initial_blocks and grows on demand,
+        # so max_blocks overstates the denominator until fully grown, skewing
+        # the ratio. _current_allocated_count tracks the blocks actually
+        # created (see _grow_blocks).
+        total = self._current_allocated_count - 1  # Exclude null block
         if total == 0:
             return 0.0
         return 1.0 - (self.free_blocks / total)
@@ -1666,16 +1706,26 @@ class PagedCacheManager(CacheManager):
 
             # Also check allocated blocks with ref_count == 0 (not in free queue yet)
             if len(candidates) < count:
-                # Sort by last_access (LRU)
-                remaining = []
-                for block in self.allocated_blocks.values():
+                # #1039: O(1) dedup via block_id set. The old
+                # `block not in candidates` was an O(len(candidates)) field-wise
+                # `__eq__` scan per block, making this pass O(N*F) under the lock
+                # (F = free-queue length). The set keeps it O(N).
+                seen_ids = {b.block_id for b in candidates}
+                remaining = [
+                    block
+                    for block in self.allocated_blocks.values()
                     if (
                         not block.is_null
                         and block.ref_count == 0
-                        and block not in candidates
-                    ):
-                        remaining.append(block)
+                        and block.block_id not in seen_ids
+                    )
+                ]
 
+                # #1039 note: kept the C-Timsort `sort` rather than
+                # `heapq.nsmallest` top-K — benchmarked at N=100k, nsmallest is
+                # a pure-Python heap loop and 1.7-3.5x SLOWER than the C sort
+                # for K>=2% of N, so the sort is not the spike; the O(N*F)
+                # dedup above is.
                 remaining.sort(key=lambda b: b.last_access)
                 candidates.extend(remaining[: count - len(candidates)])
 
@@ -1767,8 +1817,13 @@ class PagedCacheManager(CacheManager):
                 del self.allocated_blocks[block_id]
                 self.stats.allocated_blocks -= 1
 
-            self.free_block_queue.append(block)
-            self.stats.free_blocks += 1
+            # #1016: if the block is already in the free queue (freed by
+            # free_block / free_blocks_batch before this call), do NOT
+            # append again — a double-append links the same node twice,
+            # corrupting the list and inflating free_blocks.
+            if not self.free_block_queue.is_in_queue(block):
+                self.free_block_queue.append(block)
+                self.stats.free_blocks += 1
             self.stats.evictions += 1
 
             logger.debug(f"Permanently evicted block {block_id}")
@@ -1795,8 +1850,10 @@ class PagedCacheManager(CacheManager):
         if block_id in self.allocated_blocks:
             del self.allocated_blocks[block_id]
             self.stats.allocated_blocks -= 1
-        self.free_block_queue.append(block)
-        self.stats.free_blocks += 1
+        # #1016: guard against double-append (see evict_block_permanently).
+        if not self.free_block_queue.is_in_queue(block):
+            self.free_block_queue.append(block)
+            self.stats.free_blocks += 1
         self.stats.evictions += 1
         return True
 

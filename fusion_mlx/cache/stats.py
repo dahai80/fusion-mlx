@@ -83,6 +83,9 @@ class PagedCacheStats(BaseCacheStats):
     shared_blocks: int = 0
     total_tokens_cached: int = 0
     cow_copies: int = 0
+    # #1035: touch() calls where the block was not in the free queue and the
+    # ref increment was skipped to avoid creating a ghost block.
+    touch_ghost_skips: int = 0
 
     @property
     def utilization(self) -> float:
@@ -93,6 +96,7 @@ class PagedCacheStats(BaseCacheStats):
     def reset(self) -> None:
         super().reset()
         self.cow_copies = 0
+        self.touch_ghost_skips = 0
 
     def to_dict(self) -> dict[str, Any]:
         d = super().to_dict()

@@ -54,6 +54,35 @@ class TestFingerprint:
         k2 = c.fingerprint("m1", [{"role": "user", "content": "hi"}], tools=tools)
         assert k1 != k2
 
+    def test_max_tokens_zero_vs_none(self):
+        # #1036: explicit 0 and None are distinct params, distinct keys.
+        c = ResponseCache()
+        k0 = c.fingerprint("m1", [{"role": "user", "content": "hi"}], max_tokens=0)
+        knone = c.fingerprint(
+            "m1", [{"role": "user", "content": "hi"}], max_tokens=None
+        )
+        assert k0 != knone
+
+    def test_seed_zero_vs_none(self):
+        c = ResponseCache()
+        k0 = c.fingerprint("m1", [{"role": "user", "content": "hi"}], seed=0)
+        knone = c.fingerprint("m1", [{"role": "user", "content": "hi"}], seed=None)
+        assert k0 != knone
+
+    def test_top_p_zero_vs_none(self):
+        c = ResponseCache()
+        k0 = c.fingerprint("m1", [{"role": "user", "content": "hi"}], top_p=0.0)
+        knone = c.fingerprint("m1", [{"role": "user", "content": "hi"}], top_p=None)
+        assert k0 != knone
+
+    def test_temperature_zero_vs_none(self):
+        c = ResponseCache()
+        k0 = c.fingerprint("m1", [{"role": "user", "content": "hi"}], temperature=0.0)
+        knone = c.fingerprint(
+            "m1", [{"role": "user", "content": "hi"}], temperature=None
+        )
+        assert k0 != knone
+
 
 class TestResolvePolicy:
     def test_response_format_dict_included(self):
@@ -157,6 +186,20 @@ class TestGetPut:
             c.put(f"key-{i}", {"i": i})
         assert c.stats.entry_count <= 3
         assert c.stats.evictions >= 2
+
+    def test_put_sweeps_expired_not_lru_head(self):
+        # #1036: on put, TTL-expired entries are evicted before the LRU head,
+        # so a stale entry doesn't push out a fresh one.
+        c = ResponseCache(max_entries=3, max_total_bytes=1024 * 1024)
+        c.put("a", {"v": 1}, ttl=0.05)
+        c.put("b", {"v": 2}, ttl=3600.0)
+        c.put("c", {"v": 3}, ttl=3600.0)
+        c.get("a")  # "a" becomes most-recently-used; "b" is the LRU head
+        time.sleep(0.1)  # "a" is now TTL-expired
+        c.put("d", {"v": 4}, ttl=3600.0)
+        assert c.get("b") == {"v": 2}  # fresh "b" preserved
+        assert c.get("a") is None  # expired "a" swept
+        assert c.get("d") == {"v": 4}
 
 
 class TestInvalidate:

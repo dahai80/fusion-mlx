@@ -201,8 +201,14 @@ class TieredCacheManager(CacheManager):
             self._demotion_in_progress = False
 
     def _do_demotion(self) -> int:
+        # #1039: bound the demotion batch (top-K) instead of materializing
+        # every evictable block. With max_blocks=100k the old count=999999
+        # made each 2s-cooldown trigger scan+demote the whole table; a bounded
+        # batch keeps per-trigger work small and catches up over triggers.
+        max_blocks = getattr(self._hot, "max_blocks", 0)
+        count = min(999999, max(1024, max_blocks // 8)) if max_blocks else 999999
         evictable = (
-            self._hot.get_evictable_blocks(count=999999)
+            self._hot.get_evictable_blocks(count=count)
             if hasattr(self._hot, "get_evictable_blocks")
             else []
         )
@@ -216,28 +222,38 @@ class TieredCacheManager(CacheManager):
             if block.ref_count > 0:
                 continue
 
-            self._demote_block(block)
-            demoted += 1
-            self._stats.demotions += 1
+            if self._demote_block(block):
+                demoted += 1
+                self._stats.demotions += 1
 
         if demoted > 0:
             self._hot.evict_lru_blocks(demoted)
 
         return demoted
 
-    def _demote_block(self, block: Any) -> None:
+    def _demote_block(self, block: Any) -> bool:
+        """Verify the block's data is safe on the cold layer before hot
+        eviction.
+
+        #1008: the old code passed the CacheBlock dataclass directly as
+        cache_data to cold.save_block — PagedSSDCacheManager iterates it as a
+        layer list (``for i, layer_data in enumerate(cache_data)``), producing
+        garbage. In paged SSD-only mode the CacheBlock holds metadata only;
+        the actual KV data is saved to SSD during prefill (prefix_cache.py
+        _save_blocks_to_ssd). So demotion just needs to confirm the cold
+        layer already has the block — if it does, hot metadata eviction is
+        safe; if not, the data was never persisted and must NOT be evicted.
+        """
         if self._cold is None or block.block_hash is None:
-            return
-        saved = self._cold.save_block(
-            block_hash=block.block_hash,
-            cache_data=block,
+            return False
+        if self._cold.has_block(block.block_hash):
+            return True
+        logger.warning(
+            "tiered demote: block %d not on cold layer — skipping "
+            "demotion (data would be lost on hot eviction)",
+            block.block_id,
         )
-        if not saved:
-            logger.warning(
-                "tiered demote: cold layer save failed for block %d, "
-                "data will be lost on hot eviction",
-                block.block_id,
-            )
+        return False
 
     def _promote(self, block_hash: Any, cache_data: Any) -> None:
         if self._cold is None:

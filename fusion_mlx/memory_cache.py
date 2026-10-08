@@ -722,8 +722,11 @@ class MemoryAwarePrefixCache:
         matches, and longest-common-prefix (LCP) matches.  Uses a sorted key
         index for O(log N) lookup instead of scanning all entries.
 
-        Returns the cached KV state directly (no copy) since MLX arrays
-        are immutable and safe to share.
+        The matched entry is materialized (deep-copied or trimmed, then
+        decompressed) outside the lock so a large KV copy doesn't block
+        concurrent store/evict on the mlx-step thread. The caller gets an
+        independent copy it may mutate in-place during generation without
+        corrupting the stored entry.
 
         Args:
             tokens: Input token sequence.
@@ -741,11 +744,28 @@ class MemoryAwarePrefixCache:
         tokens_key = tuple(tokens)
 
         with self._lock:
-            return self._fetch_locked(tokens, tokens_key)
+            spec = self._match_locked(tokens, tokens_key)
 
-    def _fetch_locked(
+        if spec is None:
+            return None, tokens
+
+        entry, kind, excess, remaining = spec
+        if kind == "trim":
+            cache_out = _trim_cache_offset(entry.cache, excess)
+        else:
+            cache_out = copy.deepcopy(entry.cache)
+        cache_out = self._decompress_cache(cache_out)
+        return cache_out, remaining
+
+    def _match_locked(
         self, tokens: list[int], tokens_key: tuple[int, ...]
-    ) -> tuple[list[Any] | None, list[int]]:
+    ) -> tuple[_CacheEntry, str, int, list[int]] | None:
+        # Caller must hold self._lock. Finds the best-matching entry and
+        # records LRU/stats, but does NOT materialize the cache — the
+        # expensive deepcopy/trim + decompress happens in fetch() outside the
+        # lock so a large KV copy doesn't block concurrent store/evict.
+        # Returns (entry, kind, excess, remaining) or None on miss.
+
         # --- O(1) exact match ---
         if tokens_key in self._entries:
             entry = self._entries[tokens_key]
@@ -753,11 +773,7 @@ class MemoryAwarePrefixCache:
             self._stats.hits += 1
             self._stats.tokens_saved += len(tokens)
             self._last_match_type = "exact"
-            # Deep copy: cache objects have mutable offset/state that
-            # generation modifies in-place, corrupting the stored entry.
-            cache_out = copy.deepcopy(entry.cache)
-            cache_out = self._decompress_cache(cache_out)
-            return cache_out, []
+            return entry, "copy", 0, []
 
         # --- O(log N) prefix & supersequence match via sorted index ---
         best_match: _CacheEntry | None = None
@@ -826,21 +842,17 @@ class MemoryAwarePrefixCache:
                     "non-trimmable cache layers (hybrid model)"
                 )
             elif excess > 0:
-                trimmed_cache = _trim_cache_offset(best_super.cache, excess)
                 self._entries.move_to_end(best_super.tokens)
                 self._stats.hits += 1
                 self._stats.tokens_saved += n_requested
                 self._last_match_type = "supersequence"
-                trimmed_cache = self._decompress_cache(trimmed_cache)
-                return trimmed_cache, []
+                return best_super, "trim", excess, []
             else:
                 self._entries.move_to_end(best_super.tokens)
                 self._stats.hits += 1
                 self._stats.tokens_saved += n_requested
                 self._last_match_type = "supersequence"
-                cache_out = copy.deepcopy(best_super.cache)
-                cache_out = self._decompress_cache(cache_out)
-                return cache_out, []
+                return best_super, "copy", 0, []
 
         # --- Prefix match ---
         if best_match is not None:
@@ -849,9 +861,7 @@ class MemoryAwarePrefixCache:
             self._stats.tokens_saved += best_length
             remaining = tokens[best_length:]
             self._last_match_type = "prefix"
-            cache_out = copy.deepcopy(best_match.cache)
-            cache_out = self._decompress_cache(cache_out)
-            return cache_out, remaining
+            return best_match, "copy", 0, remaining
 
         # --- LCP (Longest Common Prefix) for divergent sequences ---
         # This handles the agentic pattern: same system+context prefix
@@ -907,7 +917,6 @@ class MemoryAwarePrefixCache:
             )
 
             if not has_non_trimmable:
-                trimmed_cache = _trim_cache_offset(best_lcp_entry.cache, excess)
                 self._entries.move_to_end(best_lcp_entry.tokens)
                 self._stats.hits += 1
                 self._stats.tokens_saved += best_lcp_length
@@ -917,13 +926,12 @@ class MemoryAwarePrefixCache:
                     f"trimmed={excess} remaining={len(remaining)}"
                 )
                 self._last_match_type = "lcp"
-                trimmed_cache = self._decompress_cache(trimmed_cache)
-                return trimmed_cache, remaining
+                return best_lcp_entry, "trim", excess, remaining
 
         self._stats.misses += 1
         self._last_match_type = "miss"
 
-        return None, tokens
+        return None
 
     def store(
         self, tokens: list[int], cache: list[Any], evict_prefixes: bool = True

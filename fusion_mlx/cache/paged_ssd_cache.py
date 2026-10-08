@@ -2,6 +2,7 @@
 """Paged SSD cache -- cold layer for KV cache blocks."""
 
 import errno
+import hashlib
 import json
 import logging
 import os
@@ -21,6 +22,37 @@ logger = logging.getLogger(__name__)
 _CACHE_FORMAT_VERSION = "3"
 _READABLE_CACHE_FORMAT_VERSIONS = frozenset({"2", "3"})
 _MAX_INLINE_UNLINKS_PER_SAVE = 32
+# #1030: max batches (lock-hold / unlink cycles) per enforce_size_limit call.
+# Batching releases _state_lock between batches, so a flood of concurrent
+# saves could keep the cache over limit and the loop spinning; this caps the
+# total work so the call always returns (the next call resumes enforcement).
+_MAX_ENFORCE_SIZE_LIMIT_ITERATIONS = 1000
+# #1029: a failed eviction unlink (index entry removed, file unlink raised)
+# orphans the .safetensors file, which _tracked_ssd_size() no longer counts —
+# so real disk usage silently exceeds the tracked size. The background writer
+# sweeps such orphans every _ORPHAN_SWEEP_INTERVAL_S while running. Only files
+# older than _ORPHAN_SWEEP_MIN_AGE_S are swept, so a file mid-write or just
+# re-saved (fresh mtime from the rename) is never mistaken for an orphan.
+_ORPHAN_SWEEP_INTERVAL_S = 60.0
+_ORPHAN_SWEEP_MIN_AGE_S = 30.0
+# #1037: single-hex-char shard subdirs created under the cache dir (see
+# __init__). The default cache dir is a shared global path, so the startup
+# repair must only touch .tmp files inside our own shard layout.
+_HEX_SHARD_DIRS = frozenset("0123456789abcdef")
+
+
+def _is_hex_blob_name(name: str) -> bool:
+    # #1037: our block files/tmp are named {block_hash.hex()} (even-length
+    # hex). Foreign files another process drops in the shared cache dir are
+    # not, so this distinguishes ours for the orphan-tmp cleanup.
+    if len(name) % 2 != 0:
+        return False
+    try:
+        bytes.fromhex(name)
+    except ValueError:
+        return False
+    return True
+
 
 try:
     import mlx.core as mx
@@ -149,6 +181,7 @@ class PagedSSDBlockMetadata:
     model_name: str = ""
     block_size: int = 0
     cache_signature: str = ""
+    content_hash: str = ""
     layer_cache_types: list[str] | None = None
     layer_meta_states: list[tuple[int, ...]] | None = None
 
@@ -167,6 +200,7 @@ class PagedSSDBlockMetadata:
             "model_name": self.model_name,
             "block_size": self.block_size,
             "cache_signature": self.cache_signature,
+            "content_hash": self.content_hash,
         }
         if self.layer_cache_types is not None:
             d["layer_cache_types"] = list(self.layer_cache_types)
@@ -191,6 +225,7 @@ class PagedSSDBlockMetadata:
             model_name=d.get("model_name", ""),
             block_size=d.get("block_size", 0),
             cache_signature=d.get("cache_signature", ""),
+            content_hash=d.get("content_hash", ""),
             layer_cache_types=d.get("layer_cache_types"),
             layer_meta_states=(
                 [tuple(s) for s in d["layer_meta_states"]]
@@ -330,6 +365,24 @@ def _extract_tensor_bytes(arr) -> tuple[bytes, str, list[int]]:
     except TypeError:
         raw = bytes(arr) if hasattr(arr, "__bytes__") else b""
     return raw, dtype_str, shape
+
+
+def _content_signature(tensors_raw: dict[str, tuple[bytes, str, list[int]]]) -> str:
+    # #1040: cheap content discriminator for id-derived (block_id) block hashes.
+    # Samples the leading bytes of each tensor plus dtype/shape/size so a reused
+    # block_id holding different data yields a different signature and is not
+    # wrongly deduped. Sample-based to stay cheap on large KV blocks.
+    h = hashlib.sha256()
+    total = 0
+    for key in sorted(tensors_raw):
+        raw, dtype, shape = tensors_raw[key]
+        total += len(raw)
+        h.update(raw[:4096])
+        h.update(dtype.encode("ascii"))
+        h.update(repr(shape).encode("ascii"))
+    h.update(str(total).encode("ascii"))
+    h.update(str(len(tensors_raw)).encode("ascii"))
+    return h.hexdigest()[:32]
 
 
 # Composite nstate element support (DeepSeek-V4-Flash CacheList layers).
@@ -641,6 +694,7 @@ class _SSDCacheStats:
     hits: int = 0
     misses: int = 0
     saves: int = 0
+    saves_deduped: int = 0
     saves_persisted: int = 0
     loads: int = 0
     errors: int = 0
@@ -733,6 +787,7 @@ class PagedSSDCacheManager:
             "hits": 0,
             "misses": 0,
             "saves": 0,
+            "saves_deduped": 0,
             "saves_persisted": 0,
             "loads": 0,
             "errors": 0,
@@ -830,14 +885,19 @@ class PagedSSDCacheManager:
         model_name: str = "",
         layer_cache_types: list[str] | None = None,
         layer_meta_states: list[tuple[int, ...]] | None = None,
+        verify_content: bool = False,
         **kwargs,
     ) -> bool:
         if block_hash is None:
             return False
         with self._state_lock:
-            if self._index.contains(block_hash):
+            already = self._index.contains(block_hash)
+            if already and not verify_content:
+                # Content-derived hash: same hash == same content, so dedup
+                # cheaply without re-reading the block. A dedup save is a
+                # save that no-ops, not a read hit (#1040).
                 self._index.touch(block_hash)
-                self._stats["hits"] += 1
+                self._stats["saves_deduped"] += 1
                 return True
 
         if cache_data is None:
@@ -933,6 +993,21 @@ class PagedSSDCacheManager:
                 file_metadata[f"layer_{i}_state_count"] = str(len(state_items))
 
         estimated_file_size = sum(len(r) for r, _, _ in tensors_raw.values())
+        content_sig = _content_signature(tensors_raw)
+        if already and verify_content:
+            # Id-derived hash (store_block): a reused block_id can collide, so
+            # verify the stored content actually matches before deduping; a
+            # mismatch means new content and must overwrite (#1040).
+            with self._state_lock:
+                cur = self._index.get(block_hash)
+                if cur is not None and cur.content_hash == content_sig:
+                    self._index.touch(block_hash)
+                    self._stats["saves_deduped"] += 1
+                    return True
+            logger.debug(
+                "SSD save content mismatch, overwriting: block %s",
+                block_hash.hex()[:16],
+            )
         file_path = self._get_file_path(block_hash)
         block_metadata = PagedSSDBlockMetadata(
             block_hash=block_hash,
@@ -947,6 +1022,7 @@ class PagedSSDCacheManager:
             or self._expected_block_size_tokens
             or token_count,
             cache_signature=sig,
+            content_hash=content_sig,
             layer_cache_types=layer_cache_types,
             layer_meta_states=layer_meta_states,
         )
@@ -1106,14 +1182,21 @@ class PagedSSDCacheManager:
                 self._stats["errors"] += 1
                 self._stats["misses"] += 1
                 return None
-            # raw_result is None: file missing or header unreadable.
-            # Fall through to _load_safetensors_file as last resort.
-            loaded = self._load_safetensors_file(str(file_path))
-            if loaded is not None:
-                self._stats["loads"] += 1
-                self._stats["hits"] += 1
-                self._index.touch(block_hash)
-                return loaded
+            # raw_result is None: file missing, header unreadable, or
+            # truncated (EF-3). #1031: do NOT fall back to
+            # _load_safetensors_file (mx.load) — that is a second full read
+            # of the same bad file, the IO storm P2-24 set out to avoid, and
+            # on a truncated file mx.load can zero-pad the missing bytes and
+            # return a corrupt block that defeats the EF-3 reject. Fail
+            # visibly and drop the block (matches the reconstruct-failed and
+            # exception branches above); removing the index entry also stops
+            # future loads from re-reading the corrupt file.
+            logger.warning(
+                "SSD block %s raw read failed (missing/corrupt), dropping",
+                block_hash.hex()[:16],
+            )
+            self._recover_from_block_error(block_hash)
+            self._stats["errors"] += 1
             self._stats["misses"] += 1
             return None
         except Exception as e:
@@ -1588,6 +1671,7 @@ class PagedSSDCacheManager:
             hits=self._stats["hits"],
             misses=self._stats["misses"],
             saves=self._stats["saves"],
+            saves_deduped=self._stats["saves_deduped"],
             saves_persisted=self._stats["saves_persisted"],
             loads=self._stats["loads"],
             errors=self._stats["errors"],
@@ -1662,6 +1746,7 @@ class PagedSSDCacheManager:
                 hits=self._stats["hits"],
                 misses=self._stats["misses"],
                 saves=self._stats["saves"],
+                saves_deduped=self._stats["saves_deduped"],
                 saves_persisted=self._stats["saves_persisted"],
                 loads=self._stats["loads"],
                 errors=self._stats["errors"],
@@ -1825,10 +1910,21 @@ class PagedSSDCacheManager:
             self._stats["ssd_write_drops"] += 1
 
     def _background_writer(self):
+        last_orphan_sweep = 0.0
         while True:
             try:
                 item = self._write_queue.get(timeout=1.0)
             except queue.Empty:
+                # #1029: opportunistically sweep orphaned .safetensors files
+                # (from failed eviction unlinks) while the queue is idle, so
+                # _tracked_ssd_size() stays honest and the orphaned space is
+                # reclaimed. Only runs when there is no pending write, so it
+                # never delays a save; the interval bounds how often the (slow)
+                # disk scan happens.
+                now = time.time()
+                if now - last_orphan_sweep >= _ORPHAN_SWEEP_INTERVAL_S:
+                    last_orphan_sweep = now
+                    self._sweep_orphaned_files()
                 if self._shutting_down:
                     break
                 continue
@@ -2023,10 +2119,14 @@ class PagedSSDCacheManager:
             victim = lru[0]
             file_path = self._get_file_path(victim.block_hash)
             try:
-                if file_path.exists():
+                # #681: _get_file_path returns None in pure-memory mode.
+                if file_path is not None and file_path.exists():
                     file_path.unlink()
             except OSError as e:
-                logger.debug("Startup incompatible unlink failed: %s", e)
+                # #1029: index entry removed below, so a failed unlink orphans
+                # the file; the orphan sweep reclaims it. Warn + count.
+                logger.warning("SSD startup unlink failed: %s: %s", file_path, e)
+                self._stats["evict_unlink_failures"] += 1
             self._incompatible_index.remove(victim.block_hash)
 
     def _is_compatible_block(self, meta: PagedSSDBlockMetadata) -> bool:
@@ -2123,45 +2223,96 @@ class PagedSSDCacheManager:
 
         for file_path in victims:
             try:
-                if file_path.exists():
+                # #681: _get_file_path returns None in pure-memory mode.
+                if file_path is not None and file_path.exists():
                     file_path.unlink()
             except OSError as e:
-                logger.debug("Inline unlink failed: %s", e)
+                # #1029: index entry already removed above — failed unlink
+                # orphans the file. Warn (not debug) + count; the orphan
+                # sweep reclaims it.
+                logger.warning("SSD inline unlink failed: %s: %s", file_path, e)
                 self._stats["evict_unlink_failures"] += 1
 
     def enforce_size_limit(self) -> int:
         effective = self._get_effective_max_size()
         freed = 0
-        # E-37 (#811): collect victim file paths under the lock, unlink
-        # AFTER release — matching _enforce_size_limit_for_new_block. The
-        # index entries are removed under the lock; unlink is best-effort.
-        victims: list[Path] = []
-        with self._state_lock:
-            while self._tracked_ssd_size() > effective:
-                if self._incompatible_index.count > 0:
-                    lru = self._incompatible_index.get_lru_entries(1)
-                    if lru:
-                        victim = lru[0]
-                        freed += victim.file_size
+        # E-37 (#811) + #1030: batch the victim collection and release
+        # _state_lock between batches. The old single with-block held the lock
+        # across the whole eviction loop — one O(n log n) get_lru_entries(1)
+        # sort per victim, uncapped — so a large over-limit cache stalled every
+        # SSD op. Now each batch evicts at most _MAX_INLINE_UNLINKS_PER_SAVE
+        # victims (incompatible first, then compatible — aligning with the
+        # per-save cap in _enforce_size_limit_for_new_block), releases the
+        # lock, unlinks the batch, and re-checks the limit. Full enforcement
+        # is preserved; only the lock hold time is bounded. The iteration cap
+        # guards against a livelock if concurrent saves keep the cache over
+        # the limit between batches.
+        iterations = 0
+        while True:
+            if iterations >= _MAX_ENFORCE_SIZE_LIMIT_ITERATIONS:
+                logger.warning(
+                    "SSD enforce_size_limit hit iteration cap %d; cache may "
+                    "still be over limit under sustained pressure",
+                    _MAX_ENFORCE_SIZE_LIMIT_ITERATIONS,
+                )
+                break
+            iterations += 1
+            victims: list[Path] = []
+            batch_freed = 0
+            unlinks_done = 0
+            with self._state_lock:
+                # Prefer incompatible (other-model) blocks — safe to drop
+                # before the current model's blocks.
+                if (
+                    self._tracked_ssd_size() > effective
+                    and self._incompatible_index.count > 0
+                ):
+                    for victim in self._incompatible_index.get_lru_entries(
+                        _MAX_INLINE_UNLINKS_PER_SAVE
+                    ):
+                        if (
+                            self._tracked_ssd_size() <= effective
+                            or unlinks_done >= _MAX_INLINE_UNLINKS_PER_SAVE
+                        ):
+                            break
+                        batch_freed += victim.file_size
                         victims.append(self._get_file_path(victim.block_hash))
                         self._incompatible_index.remove(victim.block_hash)
-                        continue
-                if self._index.count == 0:
-                    break
-                lru = self._index.get_lru_entries(1)
-                if not lru:
-                    break
-                victim = lru[0]
-                freed += victim.file_size
-                victims.append(self._get_file_path(victim.block_hash))
-                self._index.remove(victim.block_hash)
-
-        for file_path in victims:
-            try:
-                if file_path.exists():
-                    file_path.unlink()
-            except OSError as e:
-                logger.debug("Enforce unlink failed: %s", e)
+                        unlinks_done += 1
+                # Then compatible (current-model) blocks if still over.
+                if (
+                    self._tracked_ssd_size() > effective
+                    and unlinks_done < _MAX_INLINE_UNLINKS_PER_SAVE
+                    and self._index.count > 0
+                ):
+                    remaining = _MAX_INLINE_UNLINKS_PER_SAVE - unlinks_done
+                    for victim in self._index.get_lru_entries(remaining):
+                        if (
+                            self._tracked_ssd_size() <= effective
+                            or unlinks_done >= _MAX_INLINE_UNLINKS_PER_SAVE
+                        ):
+                            break
+                        batch_freed += victim.file_size
+                        victims.append(self._get_file_path(victim.block_hash))
+                        self._index.remove(victim.block_hash)
+                        unlinks_done += 1
+            if not victims:
+                break
+            for file_path in victims:
+                try:
+                    # #681: _get_file_path returns None in pure-memory mode.
+                    if file_path is not None and file_path.exists():
+                        file_path.unlink()
+                except OSError as e:
+                    # #1029: the index entry was already removed, so a failed
+                    # unlink orphans the file — _tracked_ssd_size() no longer
+                    # counts it. Warn + count; the background writer's periodic
+                    # orphan sweep reclaims it.
+                    logger.warning("SSD enforce unlink failed: %s: %s", file_path, e)
+                    self._stats["evict_unlink_failures"] += 1
+            freed += batch_freed
+            if self._tracked_ssd_size() <= effective:
+                break
         return freed
 
     def preload_matched_blocks(self, block_hashes: list[bytes]) -> int:
@@ -2301,19 +2452,95 @@ class PagedSSDCacheManager:
         if not layers:
             return False
         block_hash = str(block_id).encode().ljust(20, b"_")[:20]
-        return self.save_block(block_hash=block_hash, cache_data=layers, token_count=0)
+        # #1040: block_id-derived hash is not content-derived, so a reused
+        # block_id holding different data would be wrongly deduped. Verify the
+        # content before trusting an existing entry.
+        return self.save_block(
+            block_hash=block_hash, cache_data=layers, token_count=0, verify_content=True
+        )
+
+    def _sweep_orphaned_files(self) -> int:
+        """#1029: remove .safetensors files that have no index entry.
+
+        A failed eviction unlink (index entry removed, file unlink raised
+        OSError) orphans the file, which _tracked_ssd_size() no longer counts
+        — so real disk usage silently exceeds the tracked size and the cache
+        stops evicting, letting the disk fill up. This sweep reclaims those
+        orphans. It runs periodically from the background writer (off the hot
+        path), not just at startup.
+
+        Safety: only touches our own shard layout (0-f dirs, hex blob names —
+        #1037); only files older than _ORPHAN_SWEEP_MIN_AGE_S (a file
+        mid-write or just re-saved has a fresh mtime from the rename, so it is
+        never mistaken for an orphan); and only files with no index entry in
+        either _index or _incompatible_index.
+        """
+        if self._cache_dir is None:
+            return 0
+        # Snapshot the indexed hashes once (single lock hold) so the per-file
+        # orphan check below does not churn _state_lock for every file.
+        with self._state_lock:
+            indexed = set(self._index.get_all_hashes()) | set(
+                self._incompatible_index.get_all_hashes()
+            )
+        removed = 0
+        for shard in _HEX_SHARD_DIRS:
+            shard_dir = self._cache_dir / shard
+            if not shard_dir.is_dir():
+                continue
+            for f in shard_dir.glob("*.safetensors"):
+                if not f.is_file() or not _is_hex_blob_name(f.stem):
+                    continue
+                try:
+                    block_hash = bytes.fromhex(f.stem)
+                except ValueError:
+                    continue
+                if block_hash in indexed:
+                    continue
+                # Orphan candidate (no index entry in the snapshot). Only sweep
+                # files that have been on disk a while, so a file mid-write or
+                # just re-saved (fresh mtime) is never deleted.
+                try:
+                    if time.time() - f.stat().st_mtime < _ORPHAN_SWEEP_MIN_AGE_S:
+                        continue
+                except OSError:
+                    continue
+                # Re-check the index right before unlink to close the race with
+                # a concurrent re-save (which would have added an index entry
+                # after the snapshot above).
+                with self._state_lock:
+                    if self._index.contains(
+                        block_hash
+                    ) or self._incompatible_index.contains(block_hash):
+                        continue
+                try:
+                    f.unlink()
+                    removed += 1
+                except OSError as e:
+                    logger.debug("SSD orphan sweep unlink failed: %s: %s", f, e)
+        if removed:
+            logger.warning("SSD orphan sweep removed %d orphaned file(s)", removed)
+        return removed
 
     def verify_and_repair_index(self) -> dict[str, int]:
         report = {"orphaned_files_removed": 0, "stale_entries_evicted": 0}
         if self._cache_dir is None:
             return report
         for f in self._cache_dir.rglob("*.tmp"):
-            if f.is_file():
-                try:
-                    f.unlink()
-                    report["orphaned_files_removed"] += 1
-                except OSError:
-                    pass
+            if not f.is_file():
+                continue
+            # #1037: the default cache dir is a shared global path; only
+            # remove our own tmp files (in a 0-f shard dir with a hex stem),
+            # never foreign files another process left there.
+            if f.parent.name not in _HEX_SHARD_DIRS:
+                continue
+            if not _is_hex_blob_name(f.stem):
+                continue
+            try:
+                f.unlink()
+                report["orphaned_files_removed"] += 1
+            except OSError:
+                pass
         with self._state_lock:
             for block_hash in list(self._index.blocks.keys()):
                 meta = self._index.get(block_hash)

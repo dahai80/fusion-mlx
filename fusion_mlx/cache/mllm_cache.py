@@ -22,6 +22,7 @@ Based on research from:
 import copy
 import hashlib
 import logging
+import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -275,6 +276,13 @@ class MLLMPrefixCacheManager:
         self.max_memory = max_memory_mb * 1024 * 1024
         self._cache: OrderedDict[str, MLLMPrefixCacheEntry] = OrderedDict()
         self._current_memory = 0
+        # #1015: _cache and _current_memory are read/written from both the
+        # request and scheduler threads (fetch / store / eviction / clear).
+        # Without a lock the OrderedDict can be mutated mid-iteration in
+        # _evict_by_memory / the image-only scan in fetch, raising
+        # "OrderedDict mutated during iteration" RuntimeError. Aligns with
+        # response_cache.py / vision_feature_cache.py.
+        self._lock = threading.Lock()
         self.stats = MLLMCacheStats()
 
     def _make_cache_key(self, images: list[str], prompt: str) -> str:
@@ -295,6 +303,8 @@ class MLLMPrefixCacheManager:
         2. Physical MLX allocator pressure (mx.get_cache_memory) to catch
            the gap between freed Python objects and MLX's internal free-list
            that hasn't returned pages to the OS.
+
+        Caller must hold self._lock.
         """
         while self._current_memory + required_size > self.max_memory and self._cache:
             oldest_key = next(iter(self._cache))
@@ -341,7 +351,10 @@ class MLLMPrefixCacheManager:
                 logger.debug("MLX allocator pressure check skipped (mlx absent)")
 
     def _evict_by_count(self) -> None:
-        """Evict entries until we're under max_size."""
+        """Evict entries until we're under max_size.
+
+        Caller must hold self._lock.
+        """
         while len(self._cache) >= self.max_size and self._cache:
             oldest_key = next(iter(self._cache))
             oldest_entry = self._cache.pop(oldest_key)
@@ -371,61 +384,63 @@ class MLLMPrefixCacheManager:
             - entry: The cache entry if found, None otherwise
             - prefix_match_length: Number of tokens that match (0 if miss)
         """
-        self.stats.total_queries += 1
-        cache_key = self._make_cache_key(images, prompt)
+        with self._lock:
+            self.stats.total_queries += 1
+            cache_key = self._make_cache_key(images, prompt)
 
-        if cache_key in self._cache:
-            # Full cache hit - exact image+prompt match
-            entry = self._cache.pop(cache_key)
-            self._cache[cache_key] = entry  # Move to end (LRU)
-            entry.hit_count += 1
+            if cache_key in self._cache:
+                # Full cache hit - exact image+prompt match
+                entry = self._cache.pop(cache_key)
+                self._cache[cache_key] = entry  # Move to end (LRU)
+                entry.hit_count += 1
 
-            self.stats.hits += 1
-            if images:
-                self.stats.image_cache_hits += 1
-            if entry.vision_embeddings is not None:
-                self.stats.vision_encoder_skips += 1
-
-            # Calculate prefix match length
-            match_length = entry.total_tokens
-            if token_ids:
-                match_length = entry.get_prefix_match_length(token_ids)
-                if match_length < entry.total_tokens:
-                    self.stats.partial_hits += 1
-
-            self.stats.tokens_saved += match_length
-            logger.debug(
-                f"MLLM cache HIT: {cache_key[:32]}..., prefix_match={match_length}"
-            )
-
-            # E-42 (#811): clone only the mutable kv_cache, share the
-            # large read-only vision embeddings — see clone_for_use.
-            return entry.clone_for_use(), match_length
-
-        # Check for image-only match (can reuse vision embeddings)
-        if images:
-            image_key = self._make_image_only_key(images)
-            for key, entry in self._cache.items():
-                if (
-                    entry.image_hash == image_key
-                    and entry.vision_embeddings is not None
-                ):
-                    # Image match - can reuse vision embeddings!
-                    self.stats.partial_hits += 1
+                self.stats.hits += 1
+                if images:
+                    self.stats.image_cache_hits += 1
+                if entry.vision_embeddings is not None:
                     self.stats.vision_encoder_skips += 1
-                    logger.debug(
-                        f"MLLM cache PARTIAL HIT (vision only): image={image_key[:16]}"
-                    )
 
-                    # Return entry for vision embeddings, but 0 prefix match
-                    # (prompt is different, so KV cache can't be reused)
-                    # E-42 (#811): partial vision-only hit still needs a
-                    # mutable kv_cache copy — use clone_for_use.
-                    return entry.clone_for_use(), 0
+                # Calculate prefix match length
+                match_length = entry.total_tokens
+                if token_ids:
+                    match_length = entry.get_prefix_match_length(token_ids)
+                    if match_length < entry.total_tokens:
+                        self.stats.partial_hits += 1
 
-        self.stats.misses += 1
-        logger.debug(f"MLLM cache MISS: {cache_key[:32]}...")
-        return None, 0
+                self.stats.tokens_saved += match_length
+                logger.debug(
+                    f"MLLM cache HIT: {cache_key[:32]}..., prefix_match={match_length}"
+                )
+
+                # E-42 (#811): clone only the mutable kv_cache, share the
+                # large read-only vision embeddings — see clone_for_use.
+                return entry.clone_for_use(), match_length
+
+            # Check for image-only match (can reuse vision embeddings)
+            if images:
+                image_key = self._make_image_only_key(images)
+                for key, entry in self._cache.items():
+                    if (
+                        entry.image_hash == image_key
+                        and entry.vision_embeddings is not None
+                    ):
+                        # Image match - can reuse vision embeddings!
+                        self.stats.partial_hits += 1
+                        self.stats.vision_encoder_skips += 1
+                        logger.debug(
+                            f"MLLM cache PARTIAL HIT (vision only): "
+                            f"image={image_key[:16]}"
+                        )
+
+                        # Return entry for vision embeddings, but 0 prefix
+                        # match (prompt is different, so KV cache can't be
+                        # reused). E-42 (#811): partial vision-only hit still
+                        # needs a mutable kv_cache copy — use clone_for_use.
+                        return entry.clone_for_use(), 0
+
+            self.stats.misses += 1
+            logger.debug(f"MLLM cache MISS: {cache_key[:32]}...")
+            return None, 0
 
     def fetch_cache(
         self,
@@ -482,21 +497,23 @@ class MLLMPrefixCacheManager:
             is_vision_placeholder=is_vision_placeholder,
         )
 
-        # Evict by memory first
-        self._evict_by_memory(entry.memory_size)
+        with self._lock:
+            # Evict by memory first
+            self._evict_by_memory(entry.memory_size)
 
-        # Then evict by count
-        self._evict_by_count()
+            # Then evict by count
+            self._evict_by_count()
 
-        # E-35: if cache_key already held an entry, its memory_size was never
-        # subtracted before adding the new one -> _current_memory double-counted
-        # the slot on every overwrite -> premature eviction. Drop the old
-        # entry's bytes first (the dict overwrite below replaces the reference).
-        old = self._cache.get(cache_key)
-        if old is not None:
-            self._current_memory = max(0, self._current_memory - old.memory_size)
-        self._cache[cache_key] = entry
-        self._current_memory += entry.memory_size
+            # E-35: if cache_key already held an entry, its memory_size was
+            # never subtracted before adding the new one -> _current_memory
+            # double-counted the slot on every overwrite -> premature
+            # eviction. Drop the old entry's bytes first (the dict overwrite
+            # below replaces the reference).
+            old = self._cache.get(cache_key)
+            if old is not None:
+                self._current_memory = max(0, self._current_memory - old.memory_size)
+            self._cache[cache_key] = entry
+            self._current_memory += entry.memory_size
 
         logger.debug(
             f"MLLM cache STORED: key={cache_key[:32]}..., "
@@ -532,30 +549,35 @@ class MLLMPrefixCacheManager:
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
-        stats = self.stats.to_dict()
-        stats["entries"] = len(self._cache)
-        stats["max_entries"] = self.max_size
-        stats["memory_used_mb"] = self._current_memory / 1024 / 1024
-        stats["max_memory_mb"] = self.max_memory / 1024 / 1024
+        with self._lock:
+            stats = self.stats.to_dict()
+            stats["entries"] = len(self._cache)
+            stats["max_entries"] = self.max_size
+            stats["memory_used_mb"] = self._current_memory / 1024 / 1024
+            stats["max_memory_mb"] = self.max_memory / 1024 / 1024
         return stats
 
     def reset_stats(self) -> None:
         """Reset statistics counters."""
-        self.stats = MLLMCacheStats()
+        with self._lock:
+            self.stats = MLLMCacheStats()
 
     def clear(self) -> None:
         """Clear all cached entries and reset stats."""
-        self._cache.clear()
-        self._current_memory = 0
-        self.reset_stats()
+        with self._lock:
+            self._cache.clear()
+            self._current_memory = 0
+            self.stats = MLLMCacheStats()
 
     def __len__(self) -> int:
         """Return number of cached entries."""
-        return len(self._cache)
+        with self._lock:
+            return len(self._cache)
 
     def __repr__(self) -> str:
-        mem_mb = self._current_memory / 1024 / 1024
-        return f"<MLLMPrefixCacheManager entries={len(self)} memory={mem_mb:.1f}MB>"
+        with self._lock:
+            mem_mb = self._current_memory / 1024 / 1024
+            return f"<MLLMPrefixCacheManager entries={len(self)} memory={mem_mb:.1f}MB>"
 
 
 # Short alias for convenience

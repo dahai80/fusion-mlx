@@ -127,13 +127,18 @@ class ResponseCache:
             # path (no regression vs. the pre-fix path-only key).
             adapter_path_signature(adapters) if adapters else "",
             json.dumps(messages, sort_keys=True, separators=(",", ":")),
-            str(temperature or 0.0),
-            str(top_p or 1.0),
-            str(max_tokens or -1),
+            # #1036: use `is not None` (not `or`) so an explicit 0 is not
+            # collapsed into the None sentinel; 0 and None are distinct
+            # request params and must map to distinct cache keys. -1 is
+            # outside every param's valid range, so it never collides with a
+            # real value (and keeps max_tokens=None keyed as before).
+            str(temperature) if temperature is not None else "-1",
+            str(top_p) if top_p is not None else "-1",
+            str(max_tokens) if max_tokens is not None else "-1",
             json.dumps(stop or [], sort_keys=True, separators=(",", ":")),
             json.dumps(tools or [], sort_keys=True, separators=(",", ":")),
             json.dumps(response_format or {}, sort_keys=True, separators=(",", ":")),
-            str(seed or 0),
+            str(seed) if seed is not None else "-1",
             str(grammar or ""),
         ]
         blob = "|".join(parts)
@@ -211,6 +216,9 @@ class ResponseCache:
                 old = self._store[key]
                 self._stats.size_bytes -= old.size_bytes
                 del self._store[key]
+            # #1036: sweep TTL-expired entries before LRU eviction so stale
+            # entries don't push out fresh ones.
+            self._sweep_expired(now)
             while (
                 len(self._store) >= self._max_entries
                 or (self._stats.size_bytes + size) > self._max_total_bytes
@@ -242,6 +250,26 @@ class ResponseCache:
             self._stats.evictions += 1
             # P2-23 (#0910 audit): update entry_count on eviction
             self._stats.entry_count = len(self._store)
+
+    def _sweep_expired(self, now: float) -> int:
+        # #1036: TTL was previously enforced only lazily on get(), so
+        # long-unread expired entries lingered and occupied size_bytes /
+        # max_entries until LRU pressure. Drop them on put() so stale entries
+        # don't push out fresh ones. Caller must hold self._lock.
+        expired = [
+            key
+            for key, entry in self._store.items()
+            if now - entry.created_at > entry.ttl
+        ]
+        for key in expired:
+            self._evict(key)
+        if expired:
+            logger.debug(
+                "Response cache swept %d expired entr%s",
+                len(expired),
+                "y" if len(expired) == 1 else "ies",
+            )
+        return len(expired)
 
     def invalidate(self, key: str) -> bool:
         with self._lock:

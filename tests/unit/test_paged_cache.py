@@ -505,6 +505,24 @@ class TestPagedCacheManager:
         assert block.block_id in manager.allocated_blocks
         assert manager.free_blocks == initial_free - 1
 
+    def test_usage_uses_real_pool_size(self):
+        # #1033: usage denominator must be the real (lazily-grown) pool size,
+        # not max_blocks. With initial_blocks=256, max_blocks=1000 the pool
+        # starts at 256, so usage must reflect that — the old max_blocks
+        # denominator overstated it ~4x until the pool fully grew.
+        manager = PagedCacheManager(
+            block_size=4, max_blocks=1000, model_name="t", initial_blocks=256
+        )
+        # Pool is 256 blocks, 1 null, 255 usable, all free -> usage 0.0.
+        # (Before the fix this was 1 - 255/999 = 0.745.)
+        assert manager.usage == pytest.approx(0.0)
+        # Allocate one block -> 1 of 255 usable in use.
+        b = manager.allocate_block()
+        assert b is not None
+        assert manager.usage == pytest.approx(1 / 255)
+        manager.free_block(b.block_id)
+        assert manager.usage == pytest.approx(0.0)
+
     def test_get_new_blocks(self):
         """Test allocating multiple blocks."""
         manager = PagedCacheManager(block_size=64, max_blocks=100, initial_blocks=100)
@@ -661,6 +679,61 @@ class TestPagedCacheManager:
         result = manager.evict_block_permanently(block_id)
         assert result is False
         assert block_id in manager.allocated_blocks
+
+    def test_evict_block_already_freed_no_double_append(self):
+        """#1016: evict_block_permanently on a block already freed (ref_count=0,
+        in the free queue) must not append it again — a double-append links the
+        same node twice, corrupting the list and inflating free_blocks."""
+        manager = PagedCacheManager(block_size=64, max_blocks=100, initial_blocks=100)
+
+        block = manager.allocate_block()
+        block_id = block.block_id
+        block.block_hash = BlockHash(b"hash_double_append")
+        manager.cached_block_hash_to_block.insert(block.block_hash, block)
+
+        # Free it the normal way — block enters the free queue, ref_count=0.
+        manager.free_block(block_id)
+        assert block_id not in manager.allocated_blocks
+        free_after_free = manager.free_blocks
+        assert manager.free_block_queue.is_in_queue(block)
+
+        # Now evict_block_permanently on the same block. Before #1016 this
+        # appended it a second time, corrupting the list and bumping
+        # free_blocks by 1.
+        result = manager.evict_block_permanently(block_id)
+        assert result is True
+        assert manager.free_blocks == free_after_free, (
+            "evict_block_permanently double-appended a freed block, "
+            "inflating free_blocks"
+        )
+        # Walk the free queue — the block must appear exactly once.
+        free_list = manager.free_block_queue.get_all_free_blocks()
+        assert (
+            free_list.count(block) == 1
+        ), "block appears multiple times in the free queue — list corrupted"
+
+    def test_evict_block_permanently_inline_already_freed(self):
+        """#1016: the lock-free inline variant has the same guard."""
+        manager = PagedCacheManager(block_size=64, max_blocks=100, initial_blocks=100)
+
+        block = manager.allocate_block()
+        block_id = block.block_id
+        block.block_hash = BlockHash(b"hash_inline_double")
+        manager.cached_block_hash_to_block.insert(block.block_hash, block)
+
+        manager.free_block(block_id)
+        free_after_free = manager.free_blocks
+
+        with (
+            manager._block_table_lock,
+            manager._hash_map_lock,
+            manager._free_queue_lock,
+        ):
+            result = manager._evict_block_permanently_inline(block_id)
+        assert result is True
+        assert manager.free_blocks == free_after_free
+        free_list = manager.free_block_queue.get_all_free_blocks()
+        assert free_list.count(block) == 1
 
     def test_dynamic_block_growth(self):
         """Test dynamic block pool growth."""
@@ -893,3 +966,57 @@ class TestPagedCacheManager:
 
         assert num_tokens == 0
         assert len(cached_blocks) == 0
+
+    def test_touch_free_block_reallocates(self):
+        """Normal path: a free block is removed from the queue and re-allocated."""
+        manager = PagedCacheManager(block_size=4, max_blocks=8, initial_blocks=8)
+        free = manager.free_block_queue.get_all_free_blocks()
+        assert free
+        block = free[0]
+        assert block.ref_count == 0
+        manager.touch([block])
+        assert block.ref_count == 1
+        assert block.block_id in manager.allocated_blocks
+
+    def test_touch_ghost_block_skipped(self):
+        # #1035: a block with ref_count==0 that is NOT linked into the free
+        # queue must not get its ref_count incremented. The old `except
+        # RuntimeError: pass` fell through to `ref_count += 1`, creating a
+        # ghost block (ref>0 but in no container, never freed).
+        manager = PagedCacheManager(block_size=4, max_blocks=8, initial_blocks=8)
+        orphan = CacheBlock(block_id=999)  # ref_count==0, not in any queue
+        assert orphan.ref_count == 0
+        manager.touch([orphan])
+        assert orphan.ref_count == 0  # not incremented -> no ghost
+        assert manager.stats.touch_ghost_skips == 1
+
+    def test_free_blocks_cascades_orphans(self):
+        # #1034: batch free_blocks_batch() must cascade-clear orphaned
+        # descendant hash entries, matching the single free_block(). Without
+        # the cascade the stale child entry lingered in the hash index until
+        # LRU / memory pressure reclaimed it. (The method was renamed from
+        # free_blocks to free_blocks_batch to avoid shadowing by the
+        # free_blocks count property, which had made it dead code.)
+        manager = PagedCacheManager(
+            block_size=4, max_blocks=16, model_name="test-model", initial_blocks=16
+        )
+
+        parent = manager.allocate_block()
+        parent_hash = compute_block_hash(None, [1, 2, 3, 4], model_name="test-model")
+        parent.block_hash = parent_hash
+        manager.cached_block_hash_to_block.insert(parent_hash, parent)
+
+        child = CacheBlock(block_id=999)  # orphan: ref-0, stale hash entry
+        child_hash = compute_block_hash(
+            parent_hash, [5, 6, 7, 8], model_name="test-model"
+        )
+        child.block_hash = child_hash
+        child.parent_hash = parent_hash
+        child.ref_count = 0
+        manager.cached_block_hash_to_block.insert(child_hash, child)
+
+        manager.free_blocks_batch([parent])
+
+        # The orphan child's stale hash entry is cascade-cleared.
+        assert manager.cached_block_hash_to_block.get_block(child_hash) is None
+        assert child.block_hash is None

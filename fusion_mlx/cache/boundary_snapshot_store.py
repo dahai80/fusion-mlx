@@ -92,6 +92,12 @@ class BoundarySnapshotSSDStore:
     # constructor cleanup — so the only knob is per-call latency.
     _CLEANUP_ALL_TIMEOUT_S = 5.0
     _CLEANUP_REQUEST_TIMEOUT_S = 2.0
+    # #1032: max lifetime of a cancelled-request counter entry. A live writer
+    # drains the counter (and removes the entry) well within this window; a
+    # dead/stuck writer never does, so the entry auto-expires in
+    # _is_cancelled instead of lingering for the process lifetime and
+    # discarding every later save for the rid.
+    _CANCELLED_TTL_S = 60.0
 
     def __init__(
         self,
@@ -124,7 +130,12 @@ class BoundarySnapshotSSDStore:
         # mutated unlocked from cleanup_request, cleanup_all, and the
         # writer thread, creating lost-cancellation and counter-
         # underflow races.
-        self._cancelled_requests: dict[str, int] = {}
+        #
+        # Value is (remaining_count, created_monotonic). #1032: the
+        # timestamp lets _is_cancelled expire entries whose writer never
+        # drained the counter (dead/stuck thread) after _CANCELLED_TTL_S,
+        # instead of the key lingering for the process lifetime.
+        self._cancelled_requests: dict[str, tuple[int, float]] = {}
         self._cancelled_lock = threading.Lock()
 
         # Background writer thread.
@@ -448,9 +459,21 @@ class BoundarySnapshotSSDStore:
                 del self._pending_writes[key]
             if count > 0:
                 with self._cancelled_lock:
-                    self._cancelled_requests[request_id] = (
-                        self._cancelled_requests.get(request_id, 0) + count
-                    )
+                    existing = self._cancelled_requests.get(request_id)
+                    if existing is None:
+                        self._cancelled_requests[request_id] = (
+                            count,
+                            time.monotonic(),
+                        )
+                    else:
+                        # #1032: bump the count but keep the original
+                        # timestamp so a burst of re-cancels cannot refresh
+                        # the TTL forever — a dead writer's entry must still
+                        # expire.
+                        self._cancelled_requests[request_id] = (
+                            existing[0] + count,
+                            existing[1],
+                        )
 
         # Remove from registry.
         with self._registry_lock:
@@ -856,6 +879,7 @@ class BoundarySnapshotSSDStore:
     def _process_prefix_write_item(self, item) -> None:
         prefix_hash, token_count, tensors_raw, metadata, file_path = item
         temp_path = None
+        stale_file_to_unlink = None
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             temp_path = file_path.with_name(file_path.stem + "_tmp.safetensors")
@@ -868,8 +892,21 @@ class BoundarySnapshotSSDStore:
             now = time.time()
             with self._prefix_lock:
                 existing = self._prefix_index.get(prefix_hash)
-                if existing is not None and existing.token_count == token_count:
+                if existing is not None:
+                    # #1017: unconditionally subtract the old entry's bytes
+                    # so _prefix_total_bytes stays honest. When token_count
+                    # differs the old file is a separate path on disk
+                    # (filename embeds token_count) — collect it for unlink
+                    # outside the lock so it does not leak forever and
+                    # escape _enforce_prefix_cap. On a same-token_count
+                    # overwrite the rename already atomically replaced the
+                    # file, so no separate unlink is needed.
                     self._prefix_total_bytes -= existing.size_bytes
+                    if (
+                        existing.token_count != token_count
+                        and existing.file_path != file_path
+                    ):
+                        stale_file_to_unlink = existing.file_path
                 entry = _PrefixEntry(
                     prefix_hash=prefix_hash,
                     token_count=token_count,
@@ -880,6 +917,16 @@ class BoundarySnapshotSSDStore:
                 self._prefix_index[prefix_hash] = entry
                 self._prefix_total_bytes += size_bytes
                 self._prefix_stats["writes"] += 1
+            if stale_file_to_unlink is not None:
+                try:
+                    if stale_file_to_unlink.exists():
+                        stale_file_to_unlink.unlink()
+                except OSError as e:
+                    logger.debug(
+                        "Prefix snapshot overwrite unlink failed: %s: %s",
+                        stale_file_to_unlink,
+                        e,
+                    )
             self._enforce_prefix_cap()
         except Exception as e:
             logger.debug("Prefix snapshot background write failed: %s", e)
@@ -930,20 +977,38 @@ class BoundarySnapshotSSDStore:
     # ------------------------------------------------------------------
 
     def _is_cancelled(self, request_id: str) -> bool:
-        """Thread-safe check for cancellation."""
+        """Thread-safe check for cancellation.
+
+        #1032: entries carry a creation timestamp and auto-expire after
+        _CANCELLED_TTL_S. A live writer drains the counter (removing the
+        entry) well within that window; a dead/stuck writer never does, so
+        without the TTL the key would linger for the process lifetime and
+        discard every subsequent save for the rid.
+        """
         with self._cancelled_lock:
-            return request_id in self._cancelled_requests
+            entry = self._cancelled_requests.get(request_id)
+            if entry is None:
+                return False
+            _count, created = entry
+            if time.monotonic() - created > self._CANCELLED_TTL_S:
+                self._cancelled_requests.pop(request_id, None)
+                return False
+            return True
 
     def _dec_cancelled(self, request_id: str) -> None:
         """Decrement cancelled counter under lock; remove entry when
         exhausted. Atomic read-modify-write closes the underflow race
         between two writer-thread iterations / cleanup_all clears."""
         with self._cancelled_lock:
-            remaining = self._cancelled_requests.get(request_id, 0) - 1
+            entry = self._cancelled_requests.get(request_id)
+            if entry is None:
+                return
+            count, created = entry
+            remaining = count - 1
             if remaining <= 0:
                 self._cancelled_requests.pop(request_id, None)
             else:
-                self._cancelled_requests[request_id] = remaining
+                self._cancelled_requests[request_id] = (remaining, created)
 
     def _file_path(self, request_id: str, token_count: int) -> Path:
         return self._snapshot_dir / request_id / f"{token_count}.safetensors"
