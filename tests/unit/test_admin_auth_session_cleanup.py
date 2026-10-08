@@ -73,6 +73,67 @@ class TestSessionCleanup:
         mock_req.cookies.get.return_value = None
         assert verify_session_from_request(mock_req) is False
 
+
+class TestSessionRaceFix1050:
+    """#1050: verify_session check-then-act is lock-protected + pop-based."""
+
+    def setup_method(self):
+        _clear_sessions()
+
+    def test_no_bare_del_outside_lock(self):
+        import inspect
+
+        from fusion_mlx.admin import auth
+
+        source = inspect.getsource(auth)
+        # pre-fix used `del _active_sessions[token]` (KeyError-prone) in both
+        # verify functions; post-fix uses pop(token, None) under the lock.
+        assert "del _active_sessions[token]" not in source
+
+    def test_concurrent_verify_and_delete_no_keyerror(self):
+        import threading
+
+        errors: list[Exception] = []
+
+        def worker():
+            try:
+                for _ in range(200):
+                    token = create_session_token()
+                    verify_session(token)
+                    _orig_active_sessions.pop(token, None)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert not errors, f"concurrent verify/delete raised: {errors}"
+
+    def test_concurrent_verify_from_request_and_delete_no_keyerror(self):
+        import threading
+
+        errors: list[Exception] = []
+
+        def worker():
+            try:
+                for _ in range(200):
+                    token = create_session_token()
+                    mock_req = MagicMock()
+                    mock_req.cookies.get.return_value = token
+                    verify_session_from_request(mock_req)
+                    _orig_active_sessions.pop(token, None)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert not errors, f"concurrent verify_request/delete raised: {errors}"
+
     def test_remember_me_uses_longer_ttl(self, monkeypatch):
         fake_now = 1000000.0
         monkeypatch.setattr(time, "time", lambda: fake_now)

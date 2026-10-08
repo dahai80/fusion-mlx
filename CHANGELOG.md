@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed — admin session race KeyError → 500 (#1050)
+- **#1050**: `verify_session_from_request` and `verify_session` did their
+  check-then-act (token-in-dict + expiry read + `del`) outside
+  `_sessions_lock`. Concurrent logout/reaper could delete the token between
+  the `in` check and the `["expires"]` access → `KeyError` → 500, and the
+  `del` could double-delete. Fix: both functions now hold `_sessions_lock`
+  for the whole check-then-act and use `.get()` + `pop(token, None)` (no
+  KeyError path).
+
 ### Fixed — streaming paths接入 circuit breaker stats (#1049)
 - **#1049**: streaming failures were invisible to the circuit breakers.
   `CloudRouter.stream_completion` yielded an SSE error frame on mid-stream
