@@ -52,8 +52,9 @@ class ModelConfig:
     model_family: str | None = None
 
 
-# TODO: fusion_mlx/reasoning/think_detector.py does not exist yet in fusion_mlx
-# DEPRECATED dispatch surface — see ``fusion_mlx/reasoning/think_detector.py``.
+# DEPRECATED dispatch surface — ``fusion_mlx/reasoning/think_detector.py``
+# now EXISTS (ThinkDetector class + looks_like_autonomous_think helper) but
+# is UNWIRED: the legacy name-regex map below still owns parser selection.
 #
 # The name-regex map below is the ONLY fall-back when a serve target lacks
 # an explicit alias entry in ``aliases.json``. Every entry in this map is

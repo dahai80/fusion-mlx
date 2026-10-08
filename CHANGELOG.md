@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed — stale think_detector TODO updated (#1025)
+- **#1025**: `model_auto_config/core.py` had a stale TODO claiming
+  `fusion_mlx/reasoning/think_detector.py` "does not exist yet" — but the
+  module DOES exist (`ThinkDetector` class + `looks_like_autonomous_think`
+  helper). Updated the comment to reflect that the module exists but is
+  UNWIRED (legacy name-regex dispatch in `_MODEL_PATTERNS` still owns parser
+  selection; `ThinkDetector` is the migration target once aliases gain
+  `can_emit_think` booleans).
+
 ### Changed — flywheel dead code removed from server route mounting (#1024)
 - **#1024**: flywheel was hard-banned via `_FORBIDDEN_UNTIL_FIXED` in
   `server.py` — an incomplete feature leaving a dead code chain (forbidden
