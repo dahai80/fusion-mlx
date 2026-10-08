@@ -1472,15 +1472,13 @@ class EngineCore:
 
     async def abort_request(self, request_id: str) -> bool:
         scheduler = getattr(self, "scheduler", None)
-        if getattr(self, "_closed", False) or scheduler is None:
-            logger.debug(
-                "Skipping abort for request %s because engine is already closed",
-                request_id,
-            )
-            return False
-        result = scheduler.abort_request(request_id)
         ctx = self._active_contexts.get(request_id)
-        if ctx is not None:
+        # #1056: idempotency — if already finished (normal completion or a
+        # prior abort), skip the terminal put to avoid the P2-02
+        # double-terminal window (re-abort of a finished request pushed a
+        # duplicate "abort" terminal).
+        already_finished = ctx is not None and ctx.finished_event.is_set()
+        if ctx is not None and not already_finished:
             ctx.collector.put(
                 RequestOutput(
                     request_id=request_id,
@@ -1489,8 +1487,21 @@ class EngineCore:
                     error="Request aborted",
                 )
             )
-        self._mark_request_finished(request_id)
-        self._wake_engine_loop()
+            self._mark_request_finished(request_id)
+            self._wake_engine_loop()
+        # #1056: _closed path previously returned False without putting a
+        # terminal or marking finished -> a disconnect guard hitting abort
+        # during the close race window left the ctx lingering in
+        # _active_contexts until close(). Now the terminal is pushed above
+        # regardless of _closed state.
+        if getattr(self, "_closed", False) or scheduler is None:
+            logger.debug(
+                "abort for %s: engine closed/scheduler gone — terminal %s",
+                request_id,
+                "skipped (already finished)" if already_finished else "pushed",
+            )
+            return False
+        result = scheduler.abort_request(request_id)
         return result
 
     async def abort_all_requests(self) -> int:

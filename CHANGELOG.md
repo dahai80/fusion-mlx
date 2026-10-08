@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed — engine_core abort/close race leaves ctx lingering (#1056)
+- **#1056**: `EngineCore.abort_request` returned `False` on `_closed=True`
+  without putting a terminal output or marking the request finished → a
+  disconnect guard hitting abort during the close race window left the ctx
+  in `_active_contexts` until `close()`. Also, re-aborting an already-
+  finished request pushed a duplicate "abort" terminal (P2-02 double-
+  terminal window). Fix: the terminal put + `_mark_request_finished` now
+  run before the `_closed` check (so the closed path still terminals), and
+  an idempotency guard (`ctx.finished_event.is_set()`) skips the duplicate
+  terminal for already-finished requests.
+
 ### Fixed — admin session race KeyError → 500 (#1050)
 - **#1050**: `verify_session_from_request` and `verify_session` did their
   check-then-act (token-in-dict + expiry read + `del`) outside
