@@ -54,6 +54,7 @@ class TestTieredCacheManager:
         cold = MagicMock()
         cold.fetch = MagicMock(return_value=(None, False))
         cold.save_block = MagicMock(return_value=True)
+        cold.has_block = MagicMock(return_value=True)
         cold.evict = MagicMock(return_value=False)
         cold.clear = MagicMock(return_value=0)
         cold.get_stats = MagicMock(
@@ -182,6 +183,75 @@ class TestTieredCacheManager:
         cold = self._make_cold()
         tm = TieredCacheManager(hot=hot, cold=cold, demotion_threshold=0.99)
         assert tm.maybe_demote() == 0
+
+    def test_demote_only_evicts_blocks_on_cold(self):
+        """#1008: _do_demotion must only evict hot metadata for blocks whose
+        data is confirmed on the cold layer. Blocks not on cold are skipped
+        (data would be lost)."""
+        hot = self._make_hot()
+        cold = self._make_cold()
+        tm = TieredCacheManager(hot=hot, cold=cold, demotion_threshold=0.0)
+
+        from fusion_mlx.cache.paged_cache import CacheBlock
+
+        # Two evictable blocks: block A on cold (has_block=True),
+        # block B not on cold (has_block=False).
+        block_a = CacheBlock(block_id=10)
+        block_a.block_hash = b"\x0a" * 32
+        block_a.ref_count = 0
+        block_b = CacheBlock(block_id=11)
+        block_b.block_hash = b"\x0b" * 32
+        block_b.ref_count = 0
+
+        # Mock get_evictable_blocks to return exactly these two blocks,
+        # avoiding block_id collisions with the real free queue.
+        hot.get_evictable_blocks = MagicMock(return_value=[block_a, block_b])
+        hot.evict_lru_blocks = MagicMock(return_value=1)
+
+        cold.has_block = MagicMock(side_effect=lambda h: h == block_a.block_hash)
+
+        demoted = tm._do_demotion()
+        assert demoted == 1, "only the block on cold should be demoted"
+        cold.has_block.assert_any_call(block_a.block_hash)
+        cold.has_block.assert_any_call(block_b.block_hash)
+        # Only 1 block evicted from hot (the successful demotion).
+        hot.evict_lru_blocks.assert_called_once_with(1)
+
+    def test_demote_block_returns_false_when_not_on_cold(self):
+        """#1008: _demote_block returns False (no save_block with bad
+        cache_data) when the cold layer doesn't have the block."""
+        hot = self._make_hot()
+        cold = self._make_cold()
+        cold.has_block = MagicMock(return_value=False)
+        tm = TieredCacheManager(hot=hot, cold=cold)
+
+        from fusion_mlx.cache.paged_cache import CacheBlock
+
+        block = CacheBlock(block_id=5)
+        block.block_hash = b"\xcc" * 32
+
+        result = tm._demote_block(block)
+        assert result is False
+        # Must NOT call save_block with the CacheBlock as cache_data — that
+        # was the #1008 data-corruption bug.
+        cold.save_block.assert_not_called()
+
+    def test_demote_block_returns_true_when_on_cold(self):
+        """#1008: when the cold layer already has the block (data saved
+        during prefill), demotion is safe — return True without re-saving."""
+        hot = self._make_hot()
+        cold = self._make_cold()
+        cold.has_block = MagicMock(return_value=True)
+        tm = TieredCacheManager(hot=hot, cold=cold)
+
+        from fusion_mlx.cache.paged_cache import CacheBlock
+
+        block = CacheBlock(block_id=6)
+        block.block_hash = b"\xdd" * 32
+
+        result = tm._demote_block(block)
+        assert result is True
+        cold.save_block.assert_not_called()
 
     def test_get_tier_stats(self):
         hot = self._make_hot()
