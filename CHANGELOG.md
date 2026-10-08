@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed — /v1/videos/generate CancelledError → ASGI 500 (#1083)
+- **#1083**: `generate_video` had no `except asyncio.CancelledError` handler.
+  `CancelledError` is `BaseException` (3.8+), not `Exception`, so when the
+  `ProcessMemoryEnforcer` aborted a video job under hard memory pressure
+  (`VideoGenEngine: aborted N active media job(s)`), the cancel bypassed
+  every `except Exception` and propagated to ASGI → 500 with no detail and an
+  ASGI stack trace. Fix: an `except asyncio.CancelledError` handler now
+  returns a structured 503 (`"Video generation cancelled by memory guard —
+  retry later"`, `Retry-After: 10`) so the client knows it was a memory-guard
+  cancellation (retryable), not a permanent server fault. The route-level
+  fix covers all video backends uniformly (ltx2_5, wan2, skyreels, …).
+
 ### Fixed — CloudRouter breaker state lockless check-then-act (#1071)
 - **#1071**: `CloudRouter` circuit-breaker state
   (`_circuit_open`/`_circuit_failure_count`/`_circuit_open_at` and the

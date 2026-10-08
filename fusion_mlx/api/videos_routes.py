@@ -4,6 +4,7 @@
 # Backend-aware: constraint validation is delegated to the resolved video
 # backend (LTX-2, Wan2, ...), so each backend enforces its own frame/dim/I2V
 # rules instead of a hardcoded LTX-2 validator.
+import asyncio
 import base64
 import logging
 import mimetypes
@@ -814,6 +815,23 @@ async def generate_video(
 
     except HTTPException:
         raise
+    except asyncio.CancelledError:
+        # #1083: the ProcessMemoryEnforcer aborts active video jobs under hard
+        # memory pressure by cancelling the task (VideoGenEngine: aborted N
+        # active media job(s)). CancelledError is BaseException in 3.8+, not
+        # Exception, so it bypassed every except-Exception handler here and
+        # propagated to ASGI → 500 with no detail and an ASGI stack trace.
+        # Translate to a structured 503 so the client knows it was a memory-
+        # guard cancellation (retryable), not a permanent server fault.
+        logger.warning(
+            "Video generation cancelled (memory guard / task abort) — "
+            "returning 503 Retry-After"
+        )
+        raise HTTPException(
+            503,
+            "Video generation cancelled by memory guard — retry later",
+            headers={"Retry-After": "10"},
+        ) from None
     except ValueError as exc:
         # User-actionable config/input error from the engine (e.g. issue #761:
         # an i2v checkpoint run without conditioning). Surface the message as
