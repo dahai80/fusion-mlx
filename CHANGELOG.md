@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed — CloudRouter breaker state lockless check-then-act (#1071)
+- **#1071**: `CloudRouter` circuit-breaker state
+  (`_circuit_open`/`_circuit_failure_count`/`_circuit_open_at` and the
+  cloud-side `_cloud_circuit_open`/`_cloud_failure_count`/`_cloud_open_at`)
+  was mutated check-then-act with no lock. `is_cloud_circuit_open` even
+  flipped `_cloud_circuit_open` on the READ path (half-open transition).
+  `report_local_*` can be called from sync context (RequestRouter failure
+  tracking wraps the local stream), so concurrent calls could lose counts
+  or trigger half-open probe storms. Fix: a `threading.RLock`
+  (`_breaker_lock`) now guards every breaker read/write (reentrant so
+  `should_route_to_cloud` can call `is_cloud_circuit_open` without
+  self-deadlock).
+
 ### Fixed — telemetry flush failure permanently drops batch (#1069)
 - **#1069**: `_drain_once` cleared the queue before the POST
   (`batch = list(self._events); self._events.clear()`), so a flush failure
