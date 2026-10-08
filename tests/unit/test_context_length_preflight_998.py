@@ -22,7 +22,7 @@ model config was unavailable).
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
@@ -93,9 +93,7 @@ class TestEnforceContextLength:
     def test_over_context_raises_400(self):
         engine = _StubEngine(max_position_embeddings=32768)
         with pytest.raises(HTTPException) as exc_info:
-            enforce_context_length(
-                engine, prompt_tokens=32000, max_tokens=1000
-            )
+            enforce_context_length(engine, prompt_tokens=32000, max_tokens=1000)
         assert exc_info.value.status_code == 400
         detail = exc_info.value.detail
         err = detail.get("error", detail) if isinstance(detail, dict) else {}
@@ -107,17 +105,13 @@ class TestEnforceContextLength:
         # though prompt alone fits.
         engine = _StubEngine(max_position_embeddings=32768)
         with pytest.raises(HTTPException) as exc_info:
-            enforce_context_length(
-                engine, prompt_tokens=32000, max_tokens=1000
-            )
+            enforce_context_length(engine, prompt_tokens=32000, max_tokens=1000)
         assert exc_info.value.status_code == 400
 
     def test_exact_fit_passes(self):
         # prompt + max_tokens == max_context exactly -> passes (<=).
         engine = _StubEngine(max_position_embeddings=32768)
-        enforce_context_length(
-            engine, prompt_tokens=32768, max_tokens=0
-        )
+        enforce_context_length(engine, prompt_tokens=32768, max_tokens=0)
 
     def test_max_context_zero_skips(self):
         # #998 latent bug: max_context<=0 must skip, not reject all.
@@ -140,17 +134,13 @@ class TestEnforceContextLengthForMessages:
         # build_prompt concatenates content; 200 chars = 200 tokens > 100.
         messages = [{"role": "user", "content": "x" * 200}]
         with pytest.raises(HTTPException) as exc_info:
-            enforce_context_length_for_messages(
-                engine, messages, max_tokens=10
-            )
+            enforce_context_length_for_messages(engine, messages, max_tokens=10)
         assert exc_info.value.status_code == 400
 
     def test_under_context_messages_pass(self):
         engine = _StubEngine(max_position_embeddings=10000)
         messages = [{"role": "user", "content": "short prompt"}]
-        result = enforce_context_length_for_messages(
-            engine, messages, max_tokens=50
-        )
+        result = enforce_context_length_for_messages(engine, messages, max_tokens=50)
         # Returns the prompt token count on success.
         assert result is not None and result > 0
 
