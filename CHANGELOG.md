@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed — cluster registry never prunes dead/evicted nodes (#1064)
+- **#1064**: `NodeRegistry.evict()` only flipped `state=EVICTED`; the entry
+  stayed in `_nodes` forever (no TTL/expiry). A long-running gateway's
+  registry — and `/v1/cluster/health` listing — grew monotonically with
+  dead/evicted nodes. Fix: DEAD/EVICTED nodes now carry a
+  `state_changed_at` timestamp and are pruned from `_nodes` after
+  `FUSION_CLUSTER_NODE_TTL` seconds (default 300) on the list read paths
+  (`all_nodes`/`alive_nodes`). TTL=0 disables pruning (back-compat). A
+  later re-register re-adds a pruned node fresh. `snapshot()` exposes
+  `state_changed_at` for observability.
+
 ### Fixed — agents _atomic_write not atomic for new files (#1063)
 - **#1063**: `_atomic_write` took an early-return `write_text` path for
   non-existent targets. A crash mid-write (SIGKILL, disk full, power loss)

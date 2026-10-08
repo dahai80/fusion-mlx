@@ -95,6 +95,9 @@ class ClusterNode:
     available_percent: float = 100.0
     models_loaded: list[str] = field(default_factory=list)
     last_error: str = ""
+    # #1064: when state last transitioned to DEAD/EVICTED. Drives TTL prune
+    # so long-running gateways don't accumulate dead/evicted nodes forever.
+    state_changed_at: float = 0.0
 
     def is_alive(self) -> bool:
         return self.state == NodeState.ALIVE
@@ -116,6 +119,7 @@ class ClusterNode:
             "available_percent": round(self.available_percent, 1),
             "models_loaded": list(self.models_loaded),
             "last_error": self.last_error,
+            "state_changed_at": round(self.state_changed_at, 3),
         }
 
 
@@ -149,6 +153,22 @@ class NodeRegistry:
         # flag is flipped on by ClusterHealthMonitor.start() so the health
         # route can fail visibly (warn, not lie) when the monitor is absent.
         self._health_monitor_active = False
+        # #1064: TTL (seconds) after which a DEAD/EVICTED node is dropped from
+        # _nodes entirely. Without this, evict() only flips state=EVICTED and
+        # the entry lingers forever — a long-running gateway's registry (and
+        # /health listing) grows monotonically with dead nodes. A later
+        # re-register re-adds a pruned node fresh. 0 = never prune (back-compat).
+        import os
+
+        _ttl_raw = os.environ.get("FUSION_CLUSTER_NODE_TTL", "").strip()
+        try:
+            self._dead_node_ttl = float(_ttl_raw) if _ttl_raw else 300.0
+        except ValueError:
+            logger.warning(
+                "cluster: invalid FUSION_CLUSTER_NODE_TTL='%s', using 300s",
+                _ttl_raw,
+            )
+            self._dead_node_ttl = 300.0
 
     @property
     def health_monitor_active(self) -> bool:
@@ -198,6 +218,7 @@ class NodeRegistry:
             if node is None:
                 return False
             node.state = NodeState.EVICTED
+            node.state_changed_at = time.time()
             node.last_error = reason or "manual eviction"
             logger.warning("cluster: evicted node %s (%s)", node_id, node.last_error)
             return True
@@ -206,12 +227,43 @@ class NodeRegistry:
         async with self._lock:
             return self._nodes.get(node_id)
 
+    def _prune_expired(self) -> None:
+        """Drop DEAD/EVICTED nodes older than the TTL (caller holds _lock).
+
+        #1064: evict()/mark_dead() only flip state — the entry stays in
+        _nodes forever. This sweeps stale dead/evicted nodes so a long-running
+        gateway doesn't accumulate them. Re-register re-adds a pruned node.
+        Called from the list read paths (all_nodes/alive_nodes), which the
+        health monitor sweep and /v1/cluster/health both drive.
+        """
+        if self._dead_node_ttl <= 0:
+            return
+        now = time.time()
+        stale = [
+            nid
+            for nid, n in self._nodes.items()
+            if n.state in (NodeState.DEAD, NodeState.EVICTED)
+            and n.state_changed_at > 0
+            and (now - n.state_changed_at) > self._dead_node_ttl
+        ]
+        for nid in stale:
+            removed = self._nodes.pop(nid, None)
+            if removed is not None:
+                logger.info(
+                    "cluster: pruned %s node %s after %.0fs TTL",
+                    removed.state,
+                    nid,
+                    self._dead_node_ttl,
+                )
+
     async def alive_nodes(self) -> list[ClusterNode]:
         async with self._lock:
+            self._prune_expired()
             return [n for n in self._nodes.values() if n.is_alive()]
 
     async def all_nodes(self) -> list[ClusterNode]:
         async with self._lock:
+            self._prune_expired()
             return list(self._nodes.values())
 
     async def mark_dead(self, node_id: str, reason: str = "") -> bool:
@@ -221,6 +273,11 @@ class NodeRegistry:
                 return False
             if node.state == NodeState.EVICTED:
                 return False
+            # Only stamp the TTL clock on the alive→dead transition; later
+            # missed-beat increments shouldn't reset it (a node stuck DEAD
+            # for TTL seconds should still prune).
+            if node.state != NodeState.DEAD:
+                node.state_changed_at = time.time()
             node.state = NodeState.DEAD
             node.missed_beats += 1
             node.last_error = reason or f"missed {node.missed_beats} heartbeats"
@@ -243,6 +300,7 @@ class NodeRegistry:
                 return False
             was_dead = not node.is_alive()
             node.state = NodeState.ALIVE
+            node.state_changed_at = 0.0
             node.missed_beats = 0
             node.last_heartbeat = time.time()
             node.active_requests = active_requests
