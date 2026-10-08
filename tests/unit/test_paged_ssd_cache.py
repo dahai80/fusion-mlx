@@ -688,6 +688,120 @@ class TestPagedSSDCacheManager:
         finally:
             mgr.close()
 
+    def test_enforce_size_limit_unlink_failure_counts(self, tmp_path: Path):
+        """#1029: a failed unlink in enforce_size_limit increments
+        evict_unlink_failures — the index entry is already removed, so the
+        failed file becomes an orphan that the sweep reclaims."""
+        cache_dir = tmp_path / "ssd_unlink"
+        mgr = PagedSSDCacheManager(
+            cache_dir=cache_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=True,
+        )
+        try:
+            for i in range(3):
+                block_hash = f"orf_{i}".encode()
+                file_path = mgr._get_file_path(block_hash)
+                assert file_path is not None
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_bytes(b"x" * 10)
+                mgr._index.add(
+                    PagedSSDBlockMetadata(
+                        block_hash=block_hash,
+                        file_path=file_path,
+                        file_size=10,
+                        token_count=1,
+                        created_at=float(i),
+                        last_access=float(i),
+                        num_layers=1,
+                    )
+                )
+
+            mgr._get_effective_max_size = lambda: 20  # type: ignore[method-assign]
+
+            def boom(self, *args, **kwargs):
+                raise OSError("simulated unlink failure")
+
+            with patch.object(Path, "unlink", boom):
+                freed = mgr.enforce_size_limit()
+
+            # 3 x 10 = 30 > 20 → one victim evicted to reach 20.
+            assert freed == 10
+            assert mgr._stats["evict_unlink_failures"] == 1
+            assert mgr._tracked_ssd_size() == 20
+        finally:
+            mgr.close()
+
+    def test_orphan_sweep_removes_unindexed_old_file(self, tmp_path: Path, monkeypatch):
+        """#1029: _sweep_orphaned_files removes a .safetensors whose hash is
+        not in the index (failed eviction unlink), but keeps one the index
+        still tracks."""
+        from fusion_mlx.cache import paged_ssd_cache as ssd_cache_module
+
+        monkeypatch.setattr(ssd_cache_module, "_ORPHAN_SWEEP_MIN_AGE_S", 0.0)
+        cache_dir = tmp_path / "orphan_sweep"
+        mgr = PagedSSDCacheManager(
+            cache_dir=cache_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=True,
+        )
+        try:
+            orphan_hash = bytes.fromhex("0a0b0c0d0e0f1011")
+            indexed_hash = bytes.fromhex("1a1b1c1d1e1f2021")
+            orphan = cache_dir / "0" / f"{orphan_hash.hex()}.safetensors"
+            indexed = cache_dir / "1" / f"{indexed_hash.hex()}.safetensors"
+            for path, hash_ in ((orphan, orphan_hash), (indexed, indexed_hash)):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"stub")
+                # Age the file 100s into the past so it clears the min-age.
+                os.utime(path, (time.time() - 100.0, time.time() - 100.0))
+
+            mgr._index.add(
+                PagedSSDBlockMetadata(
+                    block_hash=indexed_hash,
+                    file_path=indexed,
+                    file_size=4,
+                    token_count=1,
+                    created_at=1.0,
+                    last_access=1.0,
+                    num_layers=1,
+                )
+            )
+
+            removed = mgr._sweep_orphaned_files()
+
+            assert removed == 1
+            assert not orphan.exists()
+            assert indexed.exists()
+        finally:
+            mgr.close()
+
+    def test_orphan_sweep_skips_fresh_file(self, tmp_path: Path, monkeypatch):
+        """#1029: a file whose mtime is younger than
+        _ORPHAN_SWEEP_MIN_AGE_S (mid-write or just re-saved) is never
+        mistaken for an orphan."""
+        from fusion_mlx.cache import paged_ssd_cache as ssd_cache_module
+
+        monkeypatch.setattr(ssd_cache_module, "_ORPHAN_SWEEP_MIN_AGE_S", 10**6)
+        cache_dir = tmp_path / "orphan_sweep_fresh"
+        mgr = PagedSSDCacheManager(
+            cache_dir=cache_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=True,
+        )
+        try:
+            orphan_hash = bytes.fromhex("0a0b0c0d0e0f1011")
+            orphan = cache_dir / "0" / f"{orphan_hash.hex()}.safetensors"
+            orphan.parent.mkdir(parents=True, exist_ok=True)
+            orphan.write_bytes(b"stub")  # fresh mtime, no utime backdate
+
+            removed = mgr._sweep_orphaned_files()
+
+            assert removed == 0
+            assert orphan.exists()
+        finally:
+            mgr.close()
+
 
 class TestVerifyAndRepairIndex:
     """#1037: startup repair must only remove our own .tmp files."""

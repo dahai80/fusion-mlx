@@ -27,6 +27,14 @@ _MAX_INLINE_UNLINKS_PER_SAVE = 32
 # saves could keep the cache over limit and the loop spinning; this caps the
 # total work so the call always returns (the next call resumes enforcement).
 _MAX_ENFORCE_SIZE_LIMIT_ITERATIONS = 1000
+# #1029: a failed eviction unlink (index entry removed, file unlink raised)
+# orphans the .safetensors file, which _tracked_ssd_size() no longer counts —
+# so real disk usage silently exceeds the tracked size. The background writer
+# sweeps such orphans every _ORPHAN_SWEEP_INTERVAL_S while running. Only files
+# older than _ORPHAN_SWEEP_MIN_AGE_S are swept, so a file mid-write or just
+# re-saved (fresh mtime from the rename) is never mistaken for an orphan.
+_ORPHAN_SWEEP_INTERVAL_S = 60.0
+_ORPHAN_SWEEP_MIN_AGE_S = 30.0
 # #1037: single-hex-char shard subdirs created under the cache dir (see
 # __init__). The default cache dir is a shared global path, so the startup
 # repair must only touch .tmp files inside our own shard layout.
@@ -1902,10 +1910,21 @@ class PagedSSDCacheManager:
             self._stats["ssd_write_drops"] += 1
 
     def _background_writer(self):
+        last_orphan_sweep = 0.0
         while True:
             try:
                 item = self._write_queue.get(timeout=1.0)
             except queue.Empty:
+                # #1029: opportunistically sweep orphaned .safetensors files
+                # (from failed eviction unlinks) while the queue is idle, so
+                # _tracked_ssd_size() stays honest and the orphaned space is
+                # reclaimed. Only runs when there is no pending write, so it
+                # never delays a save; the interval bounds how often the (slow)
+                # disk scan happens.
+                now = time.time()
+                if now - last_orphan_sweep >= _ORPHAN_SWEEP_INTERVAL_S:
+                    last_orphan_sweep = now
+                    self._sweep_orphaned_files()
                 if self._shutting_down:
                     break
                 continue
@@ -2100,10 +2119,14 @@ class PagedSSDCacheManager:
             victim = lru[0]
             file_path = self._get_file_path(victim.block_hash)
             try:
-                if file_path.exists():
+                # #681: _get_file_path returns None in pure-memory mode.
+                if file_path is not None and file_path.exists():
                     file_path.unlink()
             except OSError as e:
-                logger.debug("Startup incompatible unlink failed: %s", e)
+                # #1029: index entry removed below, so a failed unlink orphans
+                # the file; the orphan sweep reclaims it. Warn + count.
+                logger.warning("SSD startup unlink failed: %s: %s", file_path, e)
+                self._stats["evict_unlink_failures"] += 1
             self._incompatible_index.remove(victim.block_hash)
 
     def _is_compatible_block(self, meta: PagedSSDBlockMetadata) -> bool:
@@ -2200,10 +2223,14 @@ class PagedSSDCacheManager:
 
         for file_path in victims:
             try:
-                if file_path.exists():
+                # #681: _get_file_path returns None in pure-memory mode.
+                if file_path is not None and file_path.exists():
                     file_path.unlink()
             except OSError as e:
-                logger.debug("Inline unlink failed: %s", e)
+                # #1029: index entry already removed above — failed unlink
+                # orphans the file. Warn (not debug) + count; the orphan
+                # sweep reclaims it.
+                logger.warning("SSD inline unlink failed: %s: %s", file_path, e)
                 self._stats["evict_unlink_failures"] += 1
 
     def enforce_size_limit(self) -> int:
@@ -2277,7 +2304,12 @@ class PagedSSDCacheManager:
                     if file_path is not None and file_path.exists():
                         file_path.unlink()
                 except OSError as e:
-                    logger.debug("Enforce unlink failed: %s", e)
+                    # #1029: the index entry was already removed, so a failed
+                    # unlink orphans the file — _tracked_ssd_size() no longer
+                    # counts it. Warn + count; the background writer's periodic
+                    # orphan sweep reclaims it.
+                    logger.warning("SSD enforce unlink failed: %s: %s", file_path, e)
+                    self._stats["evict_unlink_failures"] += 1
             freed += batch_freed
             if self._tracked_ssd_size() <= effective:
                 break
@@ -2426,6 +2458,69 @@ class PagedSSDCacheManager:
         return self.save_block(
             block_hash=block_hash, cache_data=layers, token_count=0, verify_content=True
         )
+
+    def _sweep_orphaned_files(self) -> int:
+        """#1029: remove .safetensors files that have no index entry.
+
+        A failed eviction unlink (index entry removed, file unlink raised
+        OSError) orphans the file, which _tracked_ssd_size() no longer counts
+        — so real disk usage silently exceeds the tracked size and the cache
+        stops evicting, letting the disk fill up. This sweep reclaims those
+        orphans. It runs periodically from the background writer (off the hot
+        path), not just at startup.
+
+        Safety: only touches our own shard layout (0-f dirs, hex blob names —
+        #1037); only files older than _ORPHAN_SWEEP_MIN_AGE_S (a file
+        mid-write or just re-saved has a fresh mtime from the rename, so it is
+        never mistaken for an orphan); and only files with no index entry in
+        either _index or _incompatible_index.
+        """
+        if self._cache_dir is None:
+            return 0
+        # Snapshot the indexed hashes once (single lock hold) so the per-file
+        # orphan check below does not churn _state_lock for every file.
+        with self._state_lock:
+            indexed = set(self._index.get_all_hashes()) | set(
+                self._incompatible_index.get_all_hashes()
+            )
+        removed = 0
+        for shard in _HEX_SHARD_DIRS:
+            shard_dir = self._cache_dir / shard
+            if not shard_dir.is_dir():
+                continue
+            for f in shard_dir.glob("*.safetensors"):
+                if not f.is_file() or not _is_hex_blob_name(f.stem):
+                    continue
+                try:
+                    block_hash = bytes.fromhex(f.stem)
+                except ValueError:
+                    continue
+                if block_hash in indexed:
+                    continue
+                # Orphan candidate (no index entry in the snapshot). Only sweep
+                # files that have been on disk a while, so a file mid-write or
+                # just re-saved (fresh mtime) is never deleted.
+                try:
+                    if time.time() - f.stat().st_mtime < _ORPHAN_SWEEP_MIN_AGE_S:
+                        continue
+                except OSError:
+                    continue
+                # Re-check the index right before unlink to close the race with
+                # a concurrent re-save (which would have added an index entry
+                # after the snapshot above).
+                with self._state_lock:
+                    if self._index.contains(
+                        block_hash
+                    ) or self._incompatible_index.contains(block_hash):
+                        continue
+                try:
+                    f.unlink()
+                    removed += 1
+                except OSError as e:
+                    logger.debug("SSD orphan sweep unlink failed: %s: %s", f, e)
+        if removed:
+            logger.warning("SSD orphan sweep removed %d orphaned file(s)", removed)
+        return removed
 
     def verify_and_repair_index(self) -> dict[str, int]:
         report = {"orphaned_files_removed": 0, "stale_entries_evicted": 0}
