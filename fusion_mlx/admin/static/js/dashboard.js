@@ -115,6 +115,8 @@
                 ui: { language: 'en' },
                 idle_timeout: { idle_timeout_seconds: null },
                 system: { total_memory_bytes: 0, total_memory: '', auto_model_memory: '', ssd_total_bytes: 0, ssd_total: '' },
+                // #1077: flat list of field names requiring a restart.
+                requires_restart_fields: [],
             },
 
             // Cache slider (0-100%)
@@ -942,6 +944,14 @@
                         const data = await response.json();
                         this.saveSuccess = true;
                         this.saveMessage = data.message || 'Settings saved successfully';
+                        // #1077: if any changed field requires a restart,
+                        // surface it to the operator so they know the change
+                        // is persisted but not yet live.
+                        if (data.requires_restart) {
+                            const fields = (data.restart_fields || []).join(', ');
+                            this.saveMessage +=
+                                ' — restart needed for: ' + (fields || 'some settings');
+                        }
                         // Refresh stats and model list (cache changes unload models)
                         await this.loadStats();
                         await this.loadModels();
@@ -2639,6 +2649,13 @@
                 if (num >= 1000000000) return (num / 1000000000).toFixed(1) + 'B';
                 if (num >= 10000000) return (num / 1000000).toFixed(1) + 'M';
                 return num.toLocaleString();
+            },
+
+            needsRestart(fieldName) {
+                // #1077: metadata-driven restart badge. Checks the flat
+                // requires_restart_fields list from /api/global-settings.
+                const fields = this.globalSettings.requires_restart_fields || [];
+                return fields.includes(fieldName);
             },
 
             cacheObsCumulative(stats, selectedModel) {
