@@ -697,22 +697,48 @@ def apply_settings_memory_tier(config, *, cli_tier: str = "auto") -> None:
 
 def _auto_detect_single_cached_model() -> str | None:
     """§6.1: when no default_model and no explicit model arg, check if
-    ~/.fusion-mlx/models contains exactly one model directory. If so,
+    ~/.fusion-mlx/models contains exactly one text-generation model. If so,
     return its name so ``serve``/``chat`` can use it as the default.
 
-    Returns None when the dir is missing, empty, or has multiple entries
-    (ambiguous — don't guess).
+    Returns None when the dir is missing, empty, or has multiple
+    text-generation entries (ambiguous — don't guess).
+
+    #1086: only ``llm``/``vlm`` models count. Pre-fix the sole dir on disk
+    was returned verbatim — if it was a 3D/image/video/audio specialty
+    model (Hunyuan3D, MuseTalk, FLUX), every /v1/chat/completions
+    auto-resolved to it and 400'd. Non-model dirs (no config.json /
+    gliner_config / image-video manifest) and non-text generative models
+    are now skipped, so a single text model alongside several specialty
+    models still auto-resolves correctly.
     """
     from pathlib import Path
 
     model_dir = Path.home() / ".fusion-mlx" / "models"
     if not model_dir.is_dir():
         return None
-    candidates = [
-        p.name for p in model_dir.iterdir() if p.is_dir() and not p.name.startswith(".")
-    ]
-    if len(candidates) == 1:
-        return candidates[0]
+    try:
+        from .pool.model_discovery import _is_model_dir, detect_model_type
+    except Exception as exc:
+        logger.warning(
+            "_auto_detect_single_cached_model: discovery import failed: %s", exc
+        )
+        return None
+    text_candidates: list[str] = []
+    for p in model_dir.iterdir():
+        if not p.is_dir() or p.name.startswith("."):
+            continue
+        try:
+            if not _is_model_dir(p):
+                continue
+            if detect_model_type(p) in ("llm", "vlm"):
+                text_candidates.append(p.name)
+        except Exception:
+            logger.debug(
+                "_auto_detect_single_cached_model: skip %s", p.name, exc_info=True
+            )
+            continue
+    if len(text_candidates) == 1:
+        return text_candidates[0]
     return None
 
 

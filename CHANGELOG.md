@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed — 3D/MuseTalk models advertised text_generation (#1086)
+- **#1086**: `Hunyuan3D-2.1-MLX-Serve-8bit` (a 3D shape generator served by
+  `POST /v1/3d/generate`) and `musetalk-mlx-native` (a lip-sync model) ship a
+  `config.json` with no LLM architecture/`model_type`, so `detect_model_type`
+  defaulted them to `"llm"`. `/v1/models` then advertised `modality: "text"` +
+  `text_generation: true`, so downstream clients doing capability-based
+  auto-selection (fusion-k12-teacher) routed `/v1/chat/completions` traffic to
+  them — 400 on every call. Fix: `detect_model_type` classifies these
+  specialty generative models as `"image"` (non-text, mirroring `FLUX.1-dev`)
+  so modality is non-text and `text_generation` stays false. They remain
+  listed in `/v1/models` (visible to discovery clients) but are correctly
+  excluded from chat traffic. `_auto_detect_single_cached_model` now only
+  considers `llm`/`vlm` dirs, so a lone 3D/image/video/audio model on disk
+  is never auto-picked as the default chat model. Audited `EAGLE3` draft
+  models — they are real LLaMA3.1 causal LMs and correctly stay `llm`.
+
 ### Fixed — /v1/videos/generate CancelledError → ASGI 500 (#1083)
 - **#1083**: `generate_video` had no `except asyncio.CancelledError` handler.
   `CancelledError` is `BaseException` (3.8+), not `Exception`, so when the
