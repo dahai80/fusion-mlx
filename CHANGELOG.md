@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Fixed — peer stream relay leak + router single-probe mode (#1066)
+- **#1066**: two cluster bugs.
+  - `peer_lb.forward_to_peer` (stream path) returned a bare async
+    generator whose `finally` (resp/client release) only ran on
+    exhaustion/raise/GC — a consumer that broke out of the stream early
+    left the httpx response + client hanging. Fix: the relay is now
+    wrapped in `contextlib.aclosing`, so `__aexit__` drives
+    `gen.aclose()` → the finally. **Stream callers must consume via
+    `async with relay as it: async for chunk in it:`.**
+  - `router.Backend.maybe_revive` claimed a dead backend past cooldown
+    was "eligible for one probe request", but returned `True` on every
+    `select()` past cooldown — a recovering bad node took 1/N of real
+    traffic continuously instead of a single probe. Fix: single-probe
+    mode via a `probing` flag — `select()` returns the backend once, then
+    skips it until the probe resolves (`record_success` revives it fully;
+    `record_failure`/`mark_dead` clear the flag and restart the cooldown).
+
 ### Fixed — FailoverRouter dead-code branch + no-monitor dead-node revival (#1065)
 - **#1065**: two bugs in `FailoverRouter.route()`:
   - The `except NodeUnavailableError` handler had an `if self.monitor is not
