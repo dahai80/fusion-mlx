@@ -87,6 +87,10 @@ class AnalyzeResponse(BaseModel):
     special_ops: list[str]
     safetensors_files: list[str]
     config_json: dict[str, Any]
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="partial-failure markers (empty = fully successful analysis)",
+    )
 
 
 def _detect_architecture(model_str: str, config: dict) -> str:
@@ -181,6 +185,7 @@ async def analyze_model(
     tensor_keys: list[str] = []
     shapes: dict[str, list[int]] = {}
     safetensors_files: list[str] = []
+    warnings: list[str] = []
 
     model_dir = None
     if req.model_path:
@@ -214,16 +219,20 @@ async def analyze_model(
                     tensor_keys.append(key)
                     if isinstance(val, dict) and "shape" in val:
                         shapes[key] = val["shape"]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "analyze: failed to parse shapes from %s: %s", sf.name, e
+                )
+                warnings.append(f"safetensors shape parse failed for {sf.name}: {e}")
 
     try:
         model_cfg = detect_model_config(model_id)
         if model_cfg and model_cfg.is_hybrid:
             if "hybrid-attention" not in _detect_special_ops(tensor_keys, config):
                 pass
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("analyze: special-ops detection failed for %s: %s", model_id, e)
+        warnings.append(f"special-ops detection failed: {e}")
 
     architecture = _detect_architecture(model_id, config)
     layer_types = _detect_layer_types(tensor_keys) if tensor_keys else []
@@ -258,4 +267,5 @@ async def analyze_model(
         special_ops=special_ops,
         safetensors_files=safetensors_files,
         config_json=config,
+        warnings=warnings,
     )
