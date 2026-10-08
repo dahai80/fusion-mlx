@@ -249,10 +249,16 @@ async def execute_turn(
     if pool is None:
         raise HTTPException(450, "Engine pool not initialized")
 
-    if req.auto_execute:
-        return await _execute_turn_auto(pool, session, req, session_id)
+    try:
+        if req.auto_execute:
+            return await _execute_turn_auto(pool, session, req, session_id)
 
-    return await _execute_single_turn(pool, session, req, session_id)
+        return await _execute_single_turn(pool, session, req, session_id)
+    finally:
+        # #1022: reset active flag on turn completion (success or failure) —
+        # previously set True and never reset, leaving session permanently
+        # "active" after the first turn.
+        session["active"] = False
 
 
 async def _execute_single_turn(
@@ -569,7 +575,13 @@ async def stream_events(
                     yield f"data: {json.dumps({'type': 'session_closed'})}\n\n"
                     break
         except asyncio.CancelledError:
-            pass
+            # #1022: client disconnected from SSE. Log + re-raise (align with
+            # anthropic_routes pattern). No handle_disconnect call here — this
+            # SSE is a heartbeat listener, not a generation stream; turns run
+            # on separate POST requests and hold no engine resources in this
+            # generator. Swallowing CancelledError breaks cancellation chains.
+            logger.info("OpenClaw SSE client disconnected: session=%s", session_id)
+            raise
 
     return StreamingResponse(
         event_generator(),
