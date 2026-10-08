@@ -2311,6 +2311,47 @@ class EnginePool:
                 if event is not None:
                     event.set()
 
+    async def _bounded_mlx_sync_clear(
+        self, loop, label: str = "settle", timeout: float | None = None
+    ) -> None:
+        # #1001: mx.synchronize() drains all in-flight Metal command buffers
+        # on the shared single-thread mlx executor. Under GPU contention
+        # (concurrent 27B LLM prefill on the same Metal device) or a stuck
+        # command buffer, synchronize() blocks that executor thread
+        # indefinitely. _settle_unloaded_engine ran these calls unbounded,
+        # so a blocked synchronize stranded entry.is_unloading=True forever
+        # — every subsequent get_engine for the evicted model waited on
+        # loading_event indefinitely (silent client hang after eviction,
+        # only a "already loading — waiting" pool log). Bound it: on
+        # timeout, log loudly and proceed. The orphaned executor thread
+        # keeps running to completion; the memory accounting self-corrects
+        # via the live-gauge re-read in admission (the #1623 max() in
+        # get_engine), so proceeding without a settled baseline is safe.
+        if timeout is None:
+            try:
+                timeout = float(os.environ.get("FUSION_MLX_SYNC_TIMEOUT", "30"))
+            except ValueError:
+                logger.warning(
+                    "Invalid FUSION_MLX_SYNC_TIMEOUT=%r, falling back to 30s",
+                    os.environ.get("FUSION_MLX_SYNC_TIMEOUT"),
+                )
+                timeout = 30.0
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(
+                    get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache())
+                ),
+                timeout=timeout,
+            )
+        except TimeoutError:
+            logger.warning(
+                "mx.synchronize()+clear_cache timed out after %.1fs (%s) — "
+                "Metal device likely stuck/contended; proceeding without a "
+                "settled memory baseline (admission re-reads the live gauge).",
+                timeout,
+                label,
+            )
+
     async def _settle_unloaded_engine(
         self, model_id: str, pre_unload_active: int
     ) -> None:
@@ -2331,9 +2372,9 @@ class EnginePool:
         # still referenced by in-flight command buffers. See issue #300.
         gc.collect()
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache())
-        )
+        # #1001: bounded — a blocked mx.synchronize() must not strand
+        # is_unloading forever (silent post-eviction TTS hang).
+        await self._bounded_mlx_sync_clear(loop, label=f"settle-init:{model_id}")
         gc.collect()
         # clear_cache releases C++ Metal buffer wrappers — second GC pass
         # collects the Python-side objects freed by the C++ destructors
@@ -2382,9 +2423,8 @@ class EnginePool:
             )
             await asyncio.sleep(0.5)
             gc.collect()
-            await loop.run_in_executor(
-                get_mlx_executor(), lambda: (mx.synchronize(), mx.clear_cache())
-            )
+            # #1001: bounded sync+clear per settle retry round.
+            await self._bounded_mlx_sync_clear(loop, label=f"settle-retry:{model_id}")
 
         # Release memory tracking AFTER barrier
         # E-21 (#811): the unload decrement races the load increment at the
@@ -2424,9 +2464,9 @@ class EnginePool:
             )
             for _ in range(3):
                 gc.collect()
-                await loop.run_in_executor(
-                    get_mlx_executor(),
-                    lambda: (mx.synchronize(), mx.clear_cache()),
+                # #1001: bounded sync+clear per emergency reclaim round.
+                await self._bounded_mlx_sync_clear(
+                    loop, label=f"settle-emergency:{model_id}"
                 )
                 await asyncio.sleep(1.0)
             active_after = mx.get_active_memory()

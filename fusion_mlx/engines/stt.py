@@ -4,6 +4,7 @@
 import asyncio
 import gc
 import logging
+import os
 import time
 from typing import Any
 
@@ -172,9 +173,22 @@ class STTEngine(BaseNonStreamingEngine):
         activity_id = self._begin_activity("transcribing", detail="Transcribing")
         try:
             loop = asyncio.get_running_loop()
+            # #1061: configurable via FUSION_STT_TIMEOUT (seconds). Default
+            # 60s. Under GPU contention (concurrent LLM prefill) the STT
+            # executor blocks on the shared Metal device and can exceed the
+            # old hardcoded 60s ceiling. The route layer maps TimeoutError
+            # to 503 (retryable).
+            try:
+                timeout = float(os.environ.get("FUSION_STT_TIMEOUT", "60"))
+            except ValueError:
+                logger.warning(
+                    "Invalid FUSION_STT_TIMEOUT=%r, falling back to 60s",
+                    os.environ.get("FUSION_STT_TIMEOUT"),
+                )
+                timeout = 60.0
             result = await asyncio.wait_for(
                 loop.run_in_executor(get_executor("audio"), _transcribe_sync),
-                timeout=60.0,
+                timeout=timeout,
             )
             return result
         finally:

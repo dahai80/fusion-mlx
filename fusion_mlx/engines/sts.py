@@ -291,8 +291,20 @@ class STSEngine(BaseNonStreamingEngine):
         )
         try:
             loop = asyncio.get_running_loop()
+            # #1061: configurable via FUSION_STS_TIMEOUT (seconds). Default
+            # 60s. Under GPU contention the STS executor blocks on the
+            # shared Metal device and can exceed the old hardcoded 60s.
+            try:
+                timeout = float(os.environ.get("FUSION_STS_TIMEOUT", "60"))
+            except ValueError:
+                logger.warning(
+                    "Invalid FUSION_STS_TIMEOUT=%r, falling back to 60s",
+                    os.environ.get("FUSION_STS_TIMEOUT"),
+                )
+                timeout = 60.0
             return await asyncio.wait_for(
-                loop.run_in_executor(get_executor("audio"), _process_sync), timeout=60.0
+                loop.run_in_executor(get_executor("audio"), _process_sync),
+                timeout=timeout,
             )
         finally:
             await self._finish_activity(activity_id)

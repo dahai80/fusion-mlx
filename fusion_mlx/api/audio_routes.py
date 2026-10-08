@@ -8,6 +8,7 @@ This module provides OpenAI-compatible audio endpoints:
 - POST /v1/audio/process         - Speech-to-Speech / audio processing
 """
 
+import asyncio
 import base64
 import logging
 import math
@@ -231,6 +232,33 @@ def _resolve_tts_streaming_interval(request: AudioSpeechRequest) -> float:
             ),
         )
     return interval
+
+
+# #1001: bound pool.get_engine in the audio routes so a reload stuck on the
+# settle barrier (blocked mx.synchronize under GPU contention after eviction)
+# fails fast with a retryable 503 instead of hanging the client indefinitely.
+# Generous default: a cold Kokoro load + clear_cache is ~2-5s; under heavy
+# Metal contention (27B LLM prefill) it can stretch, so 120s leaves headroom
+# while still being bounded.
+_AUDIO_LOAD_TIMEOUT_DEFAULT_S = 120.0
+
+
+def _audio_load_timeout() -> float:
+    raw = os.environ.get("FUSION_AUDIO_LOAD_TIMEOUT")
+    if not raw:
+        return _AUDIO_LOAD_TIMEOUT_DEFAULT_S
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid FUSION_AUDIO_LOAD_TIMEOUT=%r, falling back to %.0fs",
+            raw,
+            _AUDIO_LOAD_TIMEOUT_DEFAULT_S,
+        )
+        return _AUDIO_LOAD_TIMEOUT_DEFAULT_S
+    if val <= 0:
+        return _AUDIO_LOAD_TIMEOUT_DEFAULT_S
+    return val
 
 
 def _split_tts_text(text: str, max_chars: int = 300) -> list[str]:
@@ -637,14 +665,49 @@ async def create_speech(request: AudioSpeechRequest):
     resolved_model = _resolve_model(request.model)
     pool = _get_engine_pool()
 
+    # #1001: after memory_enforcer evicts the TTS model, a reload's settle
+    # barrier (mx.synchronize) could block on the contended Metal device and
+    # hang the client silently with no engine log. Log entry/exit + bound the
+    # get_engine call so a stuck reload fails fast with a retryable 503
+    # (route layer maps TimeoutError to 503) instead of hanging forever.
+    logger.info(
+        "audio/speech: acquiring engine for %r (stream=%s)",
+        resolved_model,
+        bool(request.stream),
+    )
     try:
-        engine = await pool.get_engine(resolved_model)
+        load_timeout = _audio_load_timeout()
+        engine = await asyncio.wait_for(
+            pool.get_engine(resolved_model), timeout=load_timeout
+        )
     except ModelNotFoundError as exc:
         avail = ", ".join(exc.available_models) if exc.available_models else "(none)"
         raise HTTPException(
             status_code=404,
             detail=f"Model '{resolved_model}' not found. Available: {avail}",
         ) from exc
+    except TimeoutError:
+        logger.error(
+            "audio/speech: engine load timed out after %.1fs for %r — "
+            "reload path stuck (likely Metal device contention after "
+            "eviction); returning 503 retryable",
+            load_timeout,
+            resolved_model,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": {
+                    "type": "server_error",
+                    "code": "engine_load_timeout",
+                    "message": (
+                        "TTS engine reload timed out — the model was likely "
+                        "evicted under memory pressure and the reload is "
+                        "blocked on GPU contention. Retry the request."
+                    ),
+                }
+            },
+        )
     except Exception as exc:
         logger.exception(
             "audio speech engine load failed for %s: %s(%s)",
@@ -653,6 +716,7 @@ async def create_speech(request: AudioSpeechRequest):
             exc,
         )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
+    logger.info("audio/speech: engine acquired for %r", resolved_model)
 
     if not isinstance(engine, TTSEngine):
         raise HTTPException(
