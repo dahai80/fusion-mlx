@@ -184,7 +184,21 @@ class NEREngine(BaseNonStreamingEngine):
             entities = await self._run_via_executor(
                 _ner_sync, executor_name="llm", timeout=60.0
             )
-            total_tokens = sum(len(text.split()) + len(labels) for text in texts)
+            # #1062: use the real tokenizer if available instead of
+            # space-split (space-split is "假准确" for CJK: 一段中文.split()
+            # = 1 word but ~N tokens). Fall back to a char-based estimate
+            # when no tokenizer is exposed.
+            ner_tok = getattr(self._model, "tokenizer", None)
+            if ner_tok is not None and hasattr(ner_tok, "encode"):
+                total_tokens = sum(
+                    len(ner_tok.encode(text)) + len(labels) for text in texts
+                )
+            else:
+                total_tokens = sum(max(1, len(text)) + len(labels) for text in texts)
+                logger.debug(
+                    "NER total_tokens: GLiNER tokenizer unavailable, "
+                    "char-based estimate used"
+                )
             return NEROutput(entities=entities, total_tokens=total_tokens)
         finally:
             self._end_activity(activity_id)

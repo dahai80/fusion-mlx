@@ -651,6 +651,20 @@ class MLXRerankerModel:
         if not callable(self._model):
             raise ValueError("CausalLM reranker model is not initialized.")
         max_content_tokens = max_length - len(prefix_tokens) - len(suffix_tokens)
+        # #1062: clamp to a non-negative floor so a small max_length (where
+        # prefix+suffix already exceed it) does not feed a negative value
+        # to tokenizer(max_length=...) → crash/undefined behavior.
+        if max_content_tokens <= 0:
+            logger.warning(
+                "reranker: max_length=%d too small (prefix=%d + suffix=%d = %d "
+                "overhead); clamping content budget to 0 — documents will be "
+                "truncated to empty",
+                max_length,
+                len(prefix_tokens),
+                len(suffix_tokens),
+                len(prefix_tokens) + len(suffix_tokens),
+            )
+            max_content_tokens = 0
         pairs_text = []
         for doc in documents:
             content = f"<Instruct>: {self._CAUSAL_LM_DEFAULT_INSTRUCTION}\n<Query>: {query}\n<Document>: {doc}"

@@ -501,7 +501,11 @@ class MLXEmbeddingModel:
                     if truncation:
                         ids = ids[:max_length]
                     encoded_ids.append(ids)
-                max_len = max(len(ids) for ids in encoded_ids)
+                # #1062: default=0 guard — embed([]) with a non-callable
+                # processor leaves encoded_ids empty; max() on an empty
+                # sequence raises ValueError (compare the dimensions guard
+                # at :573 `if embeddings else 0`).
+                max_len = max((len(ids) for ids in encoded_ids), default=0)
                 padded = []
                 for ids in encoded_ids:
                     pad_len = max_len - len(ids)
