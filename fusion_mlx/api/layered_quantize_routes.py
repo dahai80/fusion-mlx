@@ -14,7 +14,7 @@ import re
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
 
@@ -34,11 +34,19 @@ _layered_executor = ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="layered-quant-job"
 )
 
+# #1081: track submitted futures so queued layered-quantize jobs can be
+# cancelled before the single-worker executor picks them up. Running jobs
+# cannot be cancelled (no cancel hook in the quant pipeline) — the cancel
+# endpoint returns 409 for those so the GUI shows an honest state.
+_layered_futures: dict[str, Future] = {}
+
 # #1010: terminal jobs accumulate forever without a DELETE endpoint or TTL.
 # Cap retained jobs + sweep terminal ones older than TTL on every submit.
 _MAX_LAYERED_JOBS = 200
 _LAYERED_JOB_TTL_SECONDS = 3600
-_LAYERED_TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted"})
+_LAYERED_TERMINAL_STATUSES = frozenset(
+    {"completed", "failed", "interrupted", "cancelled"}
+)
 
 
 def _prune_layered_jobs() -> None:
@@ -54,6 +62,7 @@ def _prune_layered_jobs() -> None:
     ]
     for jid in stale:
         _layered_jobs.pop(jid, None)
+        _layered_futures.pop(jid, None)
     if stale:
         logger.info(
             "layered-quantize: pruned %d stale terminal job(s) (TTL=%ds)",
@@ -72,6 +81,7 @@ def _prune_layered_jobs() -> None:
         excess = len(_layered_jobs) - _MAX_LAYERED_JOBS
         for _, jid in terminal[:excess]:
             _layered_jobs.pop(jid, None)
+            _layered_futures.pop(jid, None)
         logger.info(
             "layered-quantize: pruned %d oldest terminal job(s) (cap=%d)",
             min(excess, len(terminal)),
@@ -174,6 +184,15 @@ def _set_layered(job: dict[str, Any], **fields: Any) -> None:
 
 
 def _run_layered_quantize(job: dict[str, Any], req: LayeredQuantizeRequest) -> None:
+    # #1081: a queued job may have been cancelled before the executor picked
+    # it up. Skip the work and leave the cancelled status in place.
+    with _layered_jobs_lock:
+        if job["status"] == "cancelled":
+            logger.info(
+                "layered-quantize job %s skipped (cancelled while queued)",
+                job["job_id"],
+            )
+            return
     try:
         from fusion_mlx.cli_convert import _build_convert_kwargs, _run_convert
         from fusion_mlx.model_aliases import resolve_model
@@ -264,7 +283,9 @@ async def start_layered_quantize(
         request.default_bits,
         len(request.layer_rules),
     )
-    _layered_executor.submit(_run_layered_quantize, job, request)
+    fut = _layered_executor.submit(_run_layered_quantize, job, request)
+    with _layered_jobs_lock:
+        _layered_futures[job["job_id"]] = fut
     return LayeredQuantizeResponse(job_id=job["job_id"], status="queued")
 
 
@@ -298,8 +319,44 @@ async def delete_layered_quantize_job(
                 "wait for completion or interrupt via server shutdown",
             )
         _layered_jobs.pop(job_id, None)
+        _layered_futures.pop(job_id, None)
     logger.info("layered-quantize job %s deleted", job_id)
     return {"job_id": job_id, "status": "deleted"}
+
+
+def _cancel_layered_job(job_id: str) -> dict[str, Any]:
+    # #1081: cancel a queued layered-quantize job. Running jobs cannot be
+    # cancelled (no cancel hook in the quant pipeline) — return 409. Terminal
+    # jobs are idempotent no-ops.
+    with _layered_jobs_lock:
+        job = _layered_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, detail=f"Job '{job_id}' not found")
+        status = job["status"]
+        if status in _LAYERED_TERMINAL_STATUSES:
+            return {"job_id": job_id, "status": status}
+        if status == "running":
+            raise HTTPException(
+                409,
+                detail=f"Job '{job_id}' is running — no cancel hook; "
+                "wait for completion or restart the server",
+            )
+        fut = _layered_futures.pop(job_id, None)
+        job["status"] = "cancelled"
+        job["updated_at"] = _now()
+    if fut is not None:
+        fut.cancel()
+    logger.info("layered-quantize job %s cancelled (was queued)", job_id)
+    return {"job_id": job_id, "status": "cancelled"}
+
+
+@router.post("/quantize/layered/jobs/{job_id}/cancel")
+async def cancel_layered_quantize_job(
+    job_id: str,
+    _is_admin: bool = Depends(require_admin),
+) -> Any:
+    # #1081: cancel a queued layered-quantize job. Running jobs return 409.
+    return _cancel_layered_job(job_id)
 
 
 @router.get("/quantize/layered/jobs")

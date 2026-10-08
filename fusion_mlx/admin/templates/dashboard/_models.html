@@ -2164,6 +2164,47 @@
                             </div>
                         </div>
 
+                        <!-- Layered Quantize Jobs (#1081) -->
+                        <div class="bg-white rounded-2xl border border-neutral-200 overflow-hidden mb-6">
+                            <div class="flex items-center justify-between px-6 py-4 bg-neutral-100 border-b border-neutral-200">
+                                <div class="flex items-center gap-3">
+                                    <i data-lucide="layers-3" class="w-4 h-4 text-neutral-500"></i>
+                                    <span class="text-xs font-bold uppercase tracking-wider text-neutral-600">Layered Quantize Jobs</span>
+                                </div>
+                                <button @click="loadMigrateTasks()" class="text-xs text-neutral-500 hover:text-neutral-900">Refresh</button>
+                            </div>
+                            <div class="p-4">
+                                <template x-if="layeredJobs.length === 0">
+                                    <p class="text-sm text-neutral-400 py-4 text-center">No layered-quantize jobs. Start one via POST /v1/quantize/layered.</p>
+                                </template>
+                                <template x-for="job in layeredJobs" :key="job.job_id">
+                                    <div class="flex items-center gap-3 py-2 border-b border-neutral-50 last:border-0">
+                                        <div class="flex-1 min-w-0">
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-xs font-mono text-neutral-500" x-text="job.job_id"></span>
+                                                <span class="text-sm font-medium text-neutral-900 truncate" x-text="job.model"></span>
+                                                <span :class="jobStatusColor(job.status)" class="px-1.5 py-0.5 text-[10px] font-medium rounded-full" x-text="formatJobStatus(job.status)"></span>
+                                            </div>
+                                            <div class="mt-1 flex items-center gap-2">
+                                                <div class="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+                                                    <div class="h-full bg-neutral-900 rounded-full transition-all" :style="'width: ' + ((job.progress || 0) * 100) + '%'"></div>
+                                                </div>
+                                                <span class="text-[11px] text-neutral-400" x-text="((job.progress || 0) * 100).toFixed(0) + '%'"></span>
+                                            </div>
+                                            <p x-show="job.error" class="text-xs text-red-500 mt-1" x-text="job.error"></p>
+                                            <p x-show="job.output_path" class="text-xs text-neutral-400 mt-1 font-mono truncate" x-text="job.output_path"></p>
+                                        </div>
+                                        <div class="flex items-center gap-1">
+                                            <button x-show="job.status === 'queued'" @click="cancelLayeredJob(job.job_id)"
+                                                    class="px-2 py-1 text-[11px] text-amber-600 hover:bg-amber-50 rounded">Cancel</button>
+                                            <button x-show="['completed','failed','cancelled','interrupted'].includes(job.status)" @click="deleteLayeredJob(job.job_id)"
+                                                    class="px-2 py-1 text-[11px] text-neutral-400 hover:bg-neutral-100 rounded">Delete</button>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
                         <!-- Migration Pipeline -->
                         <div class="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
                             <div class="flex items-center justify-between px-6 py-4 bg-neutral-100 border-b border-neutral-200">

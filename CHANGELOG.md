@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added — layered_quantize GUI panel + cancel endpoint (#1081)
+- **#1081**: The admin dashboard Migrate/Convert tab now also renders
+  layered-quantize jobs (polled from `GET /v1/quantize/layered/jobs`),
+  with per-job state, progress bar, cancel (queued only), and delete
+  (terminal only) buttons — same shape as the convert/quantize job lists.
+  New `POST /v1/quantize/layered/jobs/{id}/cancel` endpoint cancels queued
+  jobs (`future.cancel()` + status flip; `_run_layered_quantize` skips work
+  if cancelled before the executor picks it up). Running jobs return 409
+  (no cancel hook in the quant pipeline); terminal jobs idempotent. The
+  `_layered_futures` dict + `cancelled` terminal status mirror the
+  convert_routes #1078 pattern.
+
 ### Added — admin migrate/convert task panel + cancel endpoints (#1078)
 - **#1078**: The admin dashboard Models page now has a "Migrate / Convert"
   tab that polls `GET /v1/convert/jobs`, `GET /v1/quantize/jobs`, and
