@@ -6,8 +6,11 @@ Handles conversion between Anthropic API format and internal FusionMLX format.
 """
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
+import os
 import uuid
 from typing import Any
 
@@ -27,14 +30,29 @@ from .openai_models import ToolCall
 _PRESERVE_ROLE_BOUNDARY = "_preserve_role_boundary"
 logger = logging.getLogger(__name__)
 
+# #1011: thinking block signature. Anthropic requires a non-empty cryptographic
+# signature; a fixed placeholder string is obviously fake and fails strict
+# clients that verify. Use an HMAC of the thinking content keyed by a
+# per-server-startup secret — self-signed, self-verifiable within a session.
+_THINKING_SIGN_KEY = os.urandom(32)
+
+
+def _sign_thinking(thinking: str) -> str:
+    return hmac.new(
+        _THINKING_SIGN_KEY, thinking.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+
 
 def _decode_document_block(block_dict: dict[str, Any]) -> str:
     """Decode an Anthropic document content block to text.
 
     For text/plain documents, decodes base64 data and returns the text.
-    For other media types (e.g. PDF), returns a placeholder message since
-    FusionMLX does not provide document parsing.
+    For other media types (e.g. PDF), raises 400 — #1011: returning a
+    placeholder string injected it into model context, making the model
+    answer the placeholder as if it were document content.
     """
+    from fastapi import HTTPException
+
     source = block_dict.get("source", {})
     media_type = source.get("media_type", "")
     data = source.get("data", "")
@@ -48,10 +66,16 @@ def _decode_document_block(block_dict: dict[str, Any]) -> str:
         except Exception:
             return f"[Document: {title or 'untitled'} — failed to decode]"
 
+    # #1011: non-text document (PDF etc.) — reject with 400 instead of
+    # injecting placeholder text into the model context.
     label = title or "untitled"
-    return (
-        f"[Document: {label} ({media_type}) — "
-        f"FusionMLX does not provide PDF parsing. Send as text instead.]"
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Document block '{label}' has unsupported media_type "
+            f"'{media_type}'. Only text/plain documents are supported — "
+            "extract the text and send it as a text block instead."
+        ),
     )
 
 
@@ -884,19 +908,15 @@ def convert_internal_to_anthropic_response(
     content: list[ContentBlockText | ContentBlockToolUse | ContentBlockThinking] = []
 
     # Add thinking content block before text if present.
-    # Anthropic's spec requires a non-empty cryptographic signature on
-    # thinking blocks; an empty string makes some SDK versions fall
-    # back to a text-block parser path and emit "Content block is not
-    # a text block". fusion-mlx cannot mint a real Anthropic signature, so
-    # we use a stable placeholder string. Clients that strictly verify
-    # the signature will still reject, but the common Claude Code SDK
-    # only checks that the field is present and non-empty.
+    # #1011: Anthropic's spec requires a non-empty cryptographic signature on
+    # thinking blocks. A fixed placeholder string fails strict clients. Use an
+    # HMAC of the content (self-signed, self-verifiable within a session).
     if thinking and thinking.strip():
         content.append(
             ContentBlockThinking(
                 type="thinking",
                 thinking=thinking,
-                signature="fusion-mlx-reasoning",
+                signature=_sign_thinking(thinking),
             )
         )
 
@@ -1062,13 +1082,11 @@ def create_content_block_start_event(index: int, block_type: str, **kwargs) -> s
             "input": {},
         }
     elif block_type == "thinking":
-        # Anthropic spec requires a signature field on thinking blocks
-        # (see convert_internal_to_anthropic_response for the rationale
-        # behind the placeholder string).
+        # #1011: HMAC signature of the thinking content (self-signed).
         content_block = {
             "type": "thinking",
             "thinking": "",
-            "signature": "fusion-mlx-reasoning",
+            "signature": _sign_thinking(kwargs.get("thinking", "")),
         }
     else:
         content_block = {"type": block_type}

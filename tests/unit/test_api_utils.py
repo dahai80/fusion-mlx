@@ -841,6 +841,8 @@ class TestConvertAnthropicToInternal:
         assert "[Document: notes.txt]" in result[0]["content"]
 
     def test_document_block_pdf_placeholder(self):
+        # #1011: PDF/non-text documents now raise 400 instead of injecting
+        # placeholder text into the model context.
         request = MessagesRequest(
             model="claude-3",
             max_tokens=1024,
@@ -860,11 +862,13 @@ class TestConvertAnthropicToInternal:
                 ),
             ],
         )
-        result = convert_anthropic_to_internal(request)
-        assert len(result) == 1
-        content = result[0]["content"]
-        assert "manual.pdf" in content
-        assert "FusionMLX does not provide PDF parsing" in content
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc:
+            convert_anthropic_to_internal(request)
+        assert exc.value.status_code == 400
+        assert "application/pdf" in exc.value.detail
+        assert "text/plain" in exc.value.detail
 
     def test_thinking_block_reconstructed_as_think_tag(self):
         request = MessagesRequest(
