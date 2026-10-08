@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed — openclaw SSE disconnect logs + re-raises; active flag reset (#1022)
+- **#1022**: `api/openclaw_routes.py` SSE heartbeat generator had
+  `except asyncio.CancelledError: pass` — swallowed client disconnects silently
+  with no logging and no re-raise (breaks asyncio cancellation chains). Also
+  `session["active"]` was set to `True` on turn start but never reset, leaving
+  sessions permanently "active" after the first turn. Fix: CancelledError now
+  logs an info message and re-raises (aligns with `anthropic_routes` pattern);
+  `execute_turn` wraps the turn in a `finally` that resets `active = False`
+  on both success and failure paths.
+
 ### Fixed — analyze/migration routes surface partial failures instead of silent pass (#1021)
 - **#1021**: `api/analyze_routes.py` had two `except Exception: pass` blocks
   (safetensors shape parsing + special-ops detection) that swallowed failures
