@@ -189,6 +189,22 @@ async def _stream_chat_generator(
                 f"Reduce conversation length or use /compact."
             )
 
+    # #998: hard context-length preflight against the model's real
+    # max_position_embeddings (the 85% heuristic above only fires when
+    # the server config sets max_context_window — unset in standalone).
+    # Raises 400 context_length_exceeded BEFORE prefill, instead of the
+    # ~168s hang + empty 500 that over-context prompts produced.
+    if prompt_token_estimate > 0:
+        try:
+            from ...service.helpers import enforce_context_length
+
+            enforce_context_length(
+                engine, prompt_token_estimate, max_tokens=sampling.max_tokens
+            )
+        except HTTPException:
+            await _release()
+            raise
+
     sampling.max_tokens = cap_max_tokens_to_context(
         sampling.max_tokens, model_name, prompt_token_estimate=prompt_token_estimate
     )

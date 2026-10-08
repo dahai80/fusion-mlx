@@ -319,6 +319,25 @@ async def _run_anthropic_messages(
     from .utils import cap_max_tokens_to_context
 
     sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
+    # #998: hard context-length preflight against the model's real
+    # max_position_embeddings — same gap as /v1/chat/completions. Over-
+    # context prompts hung then 500'd instead of a clean 400.
+    from ..service.helpers import (
+        compute_prompt_tokens_for_messages,
+        enforce_context_length,
+    )
+
+    _anthropic_prompt_est = compute_prompt_tokens_for_messages(
+        engine, messages, tools=effective_tools
+    )
+    if _anthropic_prompt_est > 0:
+        try:
+            enforce_context_length(
+                engine, _anthropic_prompt_est, max_tokens=sampling.max_tokens
+            )
+        except HTTPException:
+            await _release()
+            raise
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
     await acquire_request_slot()
@@ -502,6 +521,25 @@ async def _stream_anthropic_generator(
     from .utils import cap_max_tokens_to_context
 
     sampling.max_tokens = cap_max_tokens_to_context(sampling.max_tokens, model_name)
+    # #998: hard context-length preflight against the model's real
+    # max_position_embeddings — same gap as /v1/chat/completions. Over-
+    # context prompts hung then 500'd instead of a clean 400.
+    from ..service.helpers import (
+        compute_prompt_tokens_for_messages,
+        enforce_context_length,
+    )
+
+    _anthropic_prompt_est = compute_prompt_tokens_for_messages(
+        engine, messages, tools=effective_tools
+    )
+    if _anthropic_prompt_est > 0:
+        try:
+            enforce_context_length(
+                engine, _anthropic_prompt_est, max_tokens=sampling.max_tokens
+            )
+        except HTTPException:
+            await _release()
+            raise
     request_id = f"msg-{uuid.uuid4().hex[:12]}"
 
     # SSE keepalive: prevent client/proxy timeout during long inference

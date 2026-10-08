@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Fixed — over-context prompts now return 400 instead of hang+500 (#998)
+- **#998**: `POST /v1/chat/completions` (and `/v1/messages`) hung ~168s then
+  returned an empty `500 Internal Server Error` for prompts exceeding the
+  model's context window. Root cause: the route-layer preflight used
+  `get_max_context_window` (server config `max_context_window`), which is
+  unset in standalone deploys → the 85% heuristic was skipped entirely.
+  The `enforce_context_length` helper — which uses the model's REAL
+  `max_position_embeddings` via `get_model_max_context` — was dead code
+  (defined, never wired). Over-context prompts reached prefill and either
+  OOM'd or hit a position-out-of-bounds → uncaught `RuntimeError` → bare
+  500. Fix: wired `enforce_context_length` into the OpenAI chat (non-stream
+  + stream) and Anthropic (non-stream + stream) paths, raising a clean 400
+  `context_length_exceeded` BEFORE the engine call. Also guarded
+  `enforce_context_length` against `max_context <= 0` (the latent bug that
+  made it unsafe to wire — it would have rejected every request when model
+  config was unavailable). Lease released on reject.
+
 ### Fixed — audio eviction hang, int16 clip, unload cache reclaim (#1001 #1060 #1061)
 - **#1001**: `POST /v1/audio/speech` hung indefinitely after `memory_enforcer`
   evicted the TTS model. Root cause: `_settle_unloaded_engine` ran
