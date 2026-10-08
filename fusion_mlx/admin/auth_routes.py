@@ -164,34 +164,54 @@ async def setup_api_key(
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_msg)
 
-        # Apply to settings and runtime
+        # #1047: persist FIRST, then sync runtime memory. Pre-fix wrote
+        # memory (_server_state / set_api_key / get_config) then saved; a
+        # save failure left the in-memory key active while disk had none →
+        # require_admin accepted the new key but the "already configured"
+        # branch blocked re-setup, and a restart lost the key
+        # (memory/disk drift). Sync failures were debug-logged and the
+        # route returned {"success": True} → "set success but login 401".
+        _prev_key = global_settings.auth.api_key
         global_settings.auth.api_key = request.api_key
+        try:
+            global_settings.save()
+        except Exception as e:
+            global_settings.auth.api_key = _prev_key
+            logger.error("setup-api-key: persist failed, rolled back: %s", e)
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to persist API key settings; no changes applied.",
+            ) from e
+
+        # Persist succeeded — sync the runtime memory layers so the admin
+        # module global (set_api_key) and config layer agree with disk. A
+        # failure here means disk has the key but a runtime layer is stale;
+        # surface it explicitly (restart reloads from disk) instead of
+        # returning fake success.
+        _sync_errors: list[str] = []
         _server_state["api_key"] = request.api_key
-        # G-8/T-2 (#0912 audit): sync ALL three key sources so the admin
-        # layer (global_settings.auth.api_key), the module global
-        # (admin/auth._api_key via set_api_key), and the config layer
-        # (get_config().api_key) agree. Pre-fix this route only mutated
-        # the admin layer → middleware's _get_configured_api_key read a
-        # different key than admin auth → same-machine multi-instance
-        # 401 divergence.
         try:
             from .auth import set_api_key
 
             set_api_key(request.api_key)
-        except Exception:
-            logger.debug("set_api_key sync failed on initial setup", exc_info=True)
+        except Exception as e:
+            _sync_errors.append(f"admin auth module global: {e}")
+            logger.error("setup-api-key: set_api_key sync failed: %s", e)
         try:
             from ..config import get_config
 
             get_config().api_key = request.api_key
-        except Exception:
-            logger.debug("config api_key sync failed on initial setup", exc_info=True)
-
-        # Persist to file
-        try:
-            global_settings.save()
         except Exception as e:
-            raise HTTPException(status_code=500, detail="Failed to save settings")
+            _sync_errors.append(f"config layer: {e}")
+            logger.error("setup-api-key: config api_key sync failed: %s", e)
+
+        if _sync_errors:
+            raise HTTPException(
+                status_code=500,
+                detail="API key persisted to disk but runtime sync failed ("
+                + "; ".join(_sync_errors)
+                + "). Restart the server to reload the key from disk.",
+            )
 
         logger.info("API key configured via initial setup")
         # OP-9 (#0907 audit): record the admin write to the audit log.
