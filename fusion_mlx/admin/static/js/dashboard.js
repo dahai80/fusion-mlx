@@ -61,7 +61,7 @@
         'gemma4_unified_assistant',
         'qwen3_5_mtp',
     ]);
-    const DASHBOARD_MAIN_TABS = new Set(['status', 'settings', 'models', 'logs', 'bench', 'fineTune']);
+    const DASHBOARD_MAIN_TABS = new Set(['status', 'settings', 'models', 'logs', 'bench', 'fineTune', 'video']);
     const DASHBOARD_SETTINGS_TABS = new Set(['global', 'integrations', 'models']);
     const DASHBOARD_MODELS_TABS = new Set(['manager', 'downloader', 'quantizer', 'uploader', 'migrate']);
     const DASHBOARD_BENCH_TABS = new Set(['throughput', 'accuracy']);
@@ -453,6 +453,9 @@
             layeredJobs: [],
             migrations: [],
             _migrateRefreshTimer: null,
+            // Video jobs (#1079)
+            videoJobs: [],
+            _videoRefreshTimer: null,
             // Upload modal
             uploadModalOpen: false,
             uploadModalModelPath: '',
@@ -697,6 +700,14 @@
                     await Promise.all([this.loadFineTuneJobs(), this.loadFineTuneAdapters(), this.loadFineTuneModels()]);
                 } else {
                     this.stopFineTuneRefresh();
+                }
+                if (value === 'video') {
+                    await this.loadVideoJobs();
+                    const hasActive = this.videoJobs.some(
+                        j => ['queued', 'running'].includes(j.status));
+                    if (hasActive) this.startVideoRefresh();
+                } else {
+                    this.stopVideoRefresh();
                 }
             },
 
@@ -4787,6 +4798,59 @@
                     interrupted: 'bg-amber-50 text-amber-600',
                 };
                 return map[status] || 'bg-neutral-100 text-neutral-600';
+            },
+
+            // --- Video jobs (#1079) ---
+            async loadVideoJobs() {
+                try {
+                    const resp = await fetch('/v1/videos/jobs');
+                    if (resp.ok) this.videoJobs = await resp.json();
+                } catch (err) {
+                    console.error('Failed to load video jobs:', err);
+                }
+                const hasActive = this.videoJobs.some(
+                    j => ['queued', 'running'].includes(j.status));
+                if (!hasActive) this.stopVideoRefresh();
+            },
+
+            async cancelVideoJob(jobId) {
+                try {
+                    const resp = await fetch(`/v1/videos/jobs/${jobId}`, { method: 'DELETE' });
+                    if (!resp.ok) {
+                        const data = await resp.json();
+                        alert(data.detail || 'Cancel failed');
+                    }
+                    await this.loadVideoJobs();
+                } catch (err) {
+                    console.error('Failed to cancel video job:', err);
+                }
+            },
+
+            async deleteVideoJob(jobId) {
+                try {
+                    await fetch(`/v1/videos/jobs/${jobId}`, { method: 'DELETE' });
+                    await this.loadVideoJobs();
+                } catch (err) {
+                    console.error('Failed to delete video job:', err);
+                }
+            },
+
+            videoOutputUrl(jobId, index) {
+                return `/v1/videos/jobs/${jobId}/output/${index}`;
+            },
+
+            startVideoRefresh() {
+                this.stopVideoRefresh();
+                this._videoRefreshTimer = setInterval(() => {
+                    this.loadVideoJobs();
+                }, 3000);
+            },
+
+            stopVideoRefresh() {
+                if (this._videoRefreshTimer) {
+                    clearInterval(this._videoRefreshTimer);
+                    this._videoRefreshTimer = null;
+                }
             },
 
             formatUploadElapsed(task) {
