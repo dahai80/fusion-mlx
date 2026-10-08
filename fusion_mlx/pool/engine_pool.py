@@ -1823,7 +1823,7 @@ class EnginePool:
             self._entries[model_id] = entry
         if engine is not None:
             entry.engine = engine
-            entry.last_access = time.monotonic()
+            entry.last_access = time.time()
             self._current_model_memory += entry.estimated_size
         logger.info(
             f"Registered entry '{model_id}' in pool (engine_type={engine_type})"

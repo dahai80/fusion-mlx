@@ -471,6 +471,26 @@ class TestEngineEntry:
         assert entry.is_pinned is True
 
 
+class TestRegisterEngineWallClock:
+    """#1006: register_engine must stamp last_access with wall-clock
+    time.time(), not time.monotonic(). monotonic (~1e5) << time.time()
+    (~1.7e9) made registered models perpetually oldest in LRU and gave
+    them absurd (~56000-year) idle_time under TTL."""
+
+    def test_registered_last_access_is_wall_clock(self):
+        import time as _time
+
+        pool = _make_pool(ceiling=10 * 1024**3)
+        before = _time.time()
+        pool.register_engine("ext-model", MagicMock())
+        after = _time.time()
+
+        entry = pool._entries["ext-model"]
+        # Wall-clock magnitude — monotonic would be ~1e5, far below before.
+        assert before <= entry.last_access <= after + 1.0
+        assert entry.last_access > 1_000_000_000  # epoch seconds, not monotonic
+
+
 class TestApplySettingsOverrides:
     """Tests for apply_settings_overrides method."""
 
