@@ -902,62 +902,67 @@ async def count_tokens(
             },
         )
 
-    tokenizer = getattr(engine, "tokenizer", None)
-    if tokenizer is None:
-        logger.warning(
-            "count_tokens: no tokenizer on engine for '%s', falling back to estimate",
-            request.model,
-        )
-        text = _extract_request_text(request)
-        await _release_engine(request.model)
-        return TokenCountResponse(input_tokens=max(1, len(text) // 4))
-
-    from .anthropic_utils import convert_anthropic_to_internal
-
-    enable_thinking = (
-        request.thinking is not None
-        and getattr(request.thinking, "type", "disabled") != "disabled"
-    )
-    tools_dicts = None
-    if request.tools:
-        tools_dicts = [
-            t.model_dump() if hasattr(t, "model_dump") else t for t in request.tools
-        ]
-
-    messages = convert_anthropic_to_internal(
-        request,
-        tokenizer=tokenizer,
-        preserve_images=False,
-        native_reasoning_content=True,
-    )
-
+    # #1005: the leased engine must be released on EVERY path — including
+    # exceptions from convert_anthropic_to_internal / build_prompt / encode
+    # (malformed multimodal, tokenizer errors). Without this, in_use stays
+    # +1 forever and the model can never be evicted (LRU + TTL skip
+    # in_use>0). Mirrors the _release closure pattern in messages/count paths.
     try:
-        prompt = engine.build_prompt(
-            messages,
-            tools=tools_dicts,
-            enable_thinking=enable_thinking,
+        tokenizer = getattr(engine, "tokenizer", None)
+        if tokenizer is None:
+            logger.warning(
+                "count_tokens: no tokenizer on engine for '%s', falling back to estimate",
+                request.model,
+            )
+            text = _extract_request_text(request)
+            return TokenCountResponse(input_tokens=max(1, len(text) // 4))
+
+        from .anthropic_utils import convert_anthropic_to_internal
+
+        enable_thinking = (
+            request.thinking is not None
+            and getattr(request.thinking, "type", "disabled") != "disabled"
         )
-    except Exception:
-        logger.debug(
-            "count_tokens: build_prompt failed for '%s', encoding message text directly",
-            request.model,
-            exc_info=True,
-        )
-        text = _extract_request_text(request)
-        await _release_engine(request.model)
-        return TokenCountResponse(
-            input_tokens=max(1, _encode_token_count(tokenizer, text))
+        tools_dicts = None
+        if request.tools:
+            tools_dicts = [
+                t.model_dump() if hasattr(t, "model_dump") else t for t in request.tools
+            ]
+
+        messages = convert_anthropic_to_internal(
+            request,
+            tokenizer=tokenizer,
+            preserve_images=False,
+            native_reasoning_content=True,
         )
 
-    token_count = max(1, _encode_token_count(tokenizer, prompt))
-    logger.debug(
-        "count_tokens: model=%s prompt_len=%d token_count=%d",
-        request.model,
-        len(prompt),
-        token_count,
-    )
-    await _release_engine(request.model)
-    return TokenCountResponse(input_tokens=token_count)
+        try:
+            prompt = engine.build_prompt(
+                messages,
+                tools=tools_dicts,
+                enable_thinking=enable_thinking,
+            )
+        except Exception:
+            logger.debug(
+                "count_tokens: build_prompt failed for '%s', encoding message text directly",
+                request.model,
+                exc_info=True,
+            )
+            text = _extract_request_text(request)
+            return TokenCountResponse(
+                input_tokens=max(1, _encode_token_count(tokenizer, text))
+            )
+
+        token_count = max(1, _encode_token_count(tokenizer, prompt))
+        logger.debug(
+            "count_tokens: model=%s prompt_len=%d token_count=%d",
+            request.model,
+            len(prompt),
+            token_count,
+        )
+        return TokenCountResponse(input_tokens=token_count)
+    finally:
+        await _release_engine(request.model)
 
 
 def _extract_request_text(request: TokenCountRequest) -> str:
