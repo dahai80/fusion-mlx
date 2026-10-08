@@ -1,0 +1,90 @@
+<!-- Video Jobs Tab (#1079) -->
+<div x-show="mainTab === 'video'" x-cloak class="space-y-6">
+    <div class="mb-4">
+        <h2 class="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-2">Generation</h2>
+        <h3 class="text-2xl font-bold tracking-tight text-neutral-900">Video Jobs</h3>
+        <p class="text-sm text-neutral-500 mt-2">
+            Async video generation jobs. Submit via POST /v1/videos/jobs, then poll for status + download results.
+            Auto-refreshes every 3s while jobs are active.
+        </p>
+    </div>
+
+    <!-- Job List -->
+    <div class="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
+        <div class="flex items-center justify-between px-6 py-4 bg-neutral-100 border-b border-neutral-200">
+            <div class="flex items-center gap-3">
+                <i data-lucide="video" class="w-4 h-4 text-neutral-500"></i>
+                <span class="text-xs font-bold uppercase tracking-wider text-neutral-600">Active Jobs</span>
+            </div>
+            <button @click="loadVideoJobs()" class="text-xs text-neutral-500 hover:text-neutral-900">Refresh</button>
+        </div>
+        <div class="p-4">
+            <template x-if="videoJobs.length === 0">
+                <p class="text-sm text-neutral-400 py-8 text-center">
+                    No video jobs. Submit one via POST /v1/videos/jobs with a VideoGenerateRequest body.
+                </p>
+            </template>
+            <template x-for="job in videoJobs" :key="job.job_id">
+                <div class="py-3 border-b border-neutral-50 last:border-0">
+                    <div class="flex items-center gap-3">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-mono text-neutral-500" x-text="job.job_id"></span>
+                                <span class="text-sm font-medium text-neutral-900 truncate" x-text="job.model || '(auto)'"></span>
+                                <span :class="jobStatusColor(job.status)"
+                                      class="px-1.5 py-0.5 text-[10px] font-medium rounded-full"
+                                      x-text="formatJobStatus(job.status)"></span>
+                            </div>
+                            <p class="text-xs text-neutral-400 mt-1 truncate" x-text="job.prompt"></p>
+                            <div class="mt-1 flex items-center gap-2">
+                                <div class="flex-1 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+                                    <div class="h-full bg-neutral-900 rounded-full transition-all"
+                                         :style="'width: ' + ((job.progress || 0) * 100) + '%'"></div>
+                                </div>
+                                <span class="text-[11px] text-neutral-400"
+                                      x-text="((job.progress || 0) * 100).toFixed(0) + '%'"></span>
+                            </div>
+                            <p x-show="job.error" class="text-xs text-red-500 mt-1" x-text="job.error"></p>
+                            <template x-if="job.warnings && job.warnings.length > 0">
+                                <div class="mt-1">
+                                    <template x-for="w in job.warnings" :key="w">
+                                        <p class="text-xs text-amber-500" x-text="w"></p>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <template x-if="job.status === 'completed'">
+                                <div class="flex items-center gap-1">
+                                    <template x-for="(meta, idx) in job.output_meta" :key="idx">
+                                        <a :href="videoOutputUrl(job.job_id, idx)" target="_blank"
+                                           class="px-2 py-1 text-[11px] text-blue-600 hover:bg-blue-50 rounded">
+                                            Download #<span x-text="idx"></span>
+                                        </a>
+                                    </template>
+                                </div>
+                            </template>
+                            <button x-show="job.status === 'queued'" @click="cancelVideoJob(job.job_id)"
+                                    class="px-2 py-1 text-[11px] text-amber-600 hover:bg-amber-50 rounded">Cancel</button>
+                            <button x-show="['completed','failed','cancelled','interrupted'].includes(job.status)"
+                                    @click="deleteVideoJob(job.job_id)"
+                                    class="px-2 py-1 text-[11px] text-neutral-400 hover:bg-neutral-100 rounded">Delete</button>
+                        </div>
+                    </div>
+                    <template x-if="job.status === 'completed' && job.output_meta && job.output_meta.length > 0">
+                        <div class="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px] text-neutral-400">
+                            <template x-for="(meta, idx) in job.output_meta" :key="'meta-' + idx">
+                                <div class="flex items-center gap-1">
+                                    <span class="font-mono" x-text="'#' + idx"></span>
+                                    <span x-text="(meta.width || '?') + 'x' + (meta.height || '?')"></span>
+                                    <span x-show="meta.duration_seconds" x-text="meta.duration_seconds.toFixed(1) + 's'"></span>
+                                    <span x-show="meta.fps" x-text="meta.fps + 'fps'"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>

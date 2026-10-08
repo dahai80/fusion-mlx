@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added — video generation job-ification + GUI panel (#1079)
+- **#1079**: Video generation is now job-capable. New endpoints:
+  `POST /v1/videos/jobs` (submit a VideoGenerateRequest, returns job_id
+  immediately — generation runs in a background asyncio task), `GET
+  /v1/videos/jobs` (list), `GET /v1/videos/jobs/{id}` (status + metadata),
+  `GET /v1/videos/jobs/{id}/output/{index}` (stream completed video file
+  via FileResponse), `DELETE /v1/videos/jobs/{id}` (cancel queued / delete
+  terminal + unlink temp output files). The existing sync `POST
+  /v1/videos/generate` endpoint is unchanged (back-compat). Video output is
+  written to temp .mp4 files (paths stored in the job dict, not held in
+  memory). TTL (30min) + cap (20 jobs) prune terminal jobs + unlink output
+  files. Running jobs return 409 on DELETE (no cancel hook in
+  engine.generate). The core generation logic was extracted into
+  `_execute_video_generation()` for reuse by both the sync and job paths.
+  The admin dashboard gains a "Video" main tab with a job list (status
+  badge, progress bar, prompt preview, warnings, download links, cancel/
+  delete buttons), auto-refreshing every 3s while jobs are active.
+
 ### Added — layered_quantize GUI panel + cancel endpoint (#1081)
 - **#1081**: The admin dashboard Migrate/Convert tab now also renders
   layered-quantize jobs (polled from `GET /v1/quantize/layered/jobs`),

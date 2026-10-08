@@ -5,12 +5,16 @@
 # backend (LTX-2, Wan2, ...), so each backend enforces its own frame/dim/I2V
 # rules instead of a hardcoded LTX-2 validator.
 import asyncio
+import atexit
 import base64
 import logging
 import mimetypes
 import os
 import tempfile
+import threading
 import time
+import uuid
+from typing import Any
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -460,369 +464,542 @@ async def _resolve_media_to_path(value: str, label: str) -> tuple[str, bool]:
     return value, False
 
 
+async def _execute_video_generation(
+    request: VideoGenerateRequest,
+) -> VideoGenerateResponse:
+    # #1079: core generation logic extracted from generate_video for reuse by
+    # the async job runner. Raises exceptions for the caller to map to HTTP.
+    if _pool is None:
+        raise HTTPException(503, "Engine pool not initialized")
+
+    model_name = _resolve_video_model(
+        request.prompt,
+        bool(request.audio) if request.audio is not None else False,
+        request.model,
+    )
+
+    # Resolve constraints early — dim_divisibility drives resolution-preset
+    # rounding, and a clear 422 beats a deep OOM/500 on out-of-range
+    # duration/resolution (#1003).
+    constraints = constraints_for(model_name)
+
+    effective_fps = request.fps
+    effective_width = request.width
+    effective_height = request.height
+    effective_num_frames = request.num_frames
+
+    if request.resolution is not None:
+        try:
+            rw, rh = _resolution_to_dims(
+                request.resolution, constraints.dim_divisibility
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc))
+        effective_width = rw
+        effective_height = rh
+        logger.info(
+            "video: resolution=%s -> %dx%d (dim_div=%d)",
+            request.resolution,
+            rw,
+            rh,
+            constraints.dim_divisibility,
+        )
+
+    if request.duration is not None:
+        derived = _duration_to_num_frames(request.duration, effective_fps)
+        if request.num_frames != 97:
+            logger.warning(
+                "video: both duration=%.2fs and num_frames=%d set; using "
+                "duration-derived num_frames=%d (explicit num_frames ignored)",
+                request.duration,
+                request.num_frames,
+                derived,
+            )
+        effective_num_frames = derived
+        logger.info(
+            "video: duration=%.2fs fps=%d -> num_frames=%d",
+            request.duration,
+            effective_fps,
+            derived,
+        )
+
+    # Backend-aware constraint validation (422 on violation).
+    try:
+        validate_params(
+            constraints,
+            num_frames=effective_num_frames,
+            width=effective_width,
+            height=effective_height,
+            n=request.n,
+            image=request.image,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+    # Resolve I2V image to a local path (400 on resolve failure).
+    image_path: str | None = None
+    image_is_temp = False
+    last_frame_path: str | None = None
+    last_frame_is_temp = False
+    ip_path: str | None = None
+    ip_is_temp = False
+    cn_path: str | None = None
+    cn_is_temp = False
+    cv_path: str | None = None
+    cv_is_temp = False
+    cm_path: str | None = None
+    cm_is_temp = False
+    ri_paths: list[str] = []
+    ri_is_temps: list[bool] = []
+    cam_path: str | None = None
+    cam_is_temp = False
+    if request.image:
+        try:
+            image_path, image_is_temp = await _resolve_image_to_path(request.image)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(400, "failed to resolve image input")
+    if request.last_frame_image:
+        try:
+            last_frame_path, last_frame_is_temp = await _resolve_image_to_path(
+                request.last_frame_image
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(400, "failed to resolve last_frame_image input")
+
+    try:
+        try:
+            engine = await _pool.get_engine(model_name)
+        except ModelNotFoundError:
+            engine = None
+        if engine is None or not isinstance(engine, VideoGenEngine):
+            raise HTTPException(
+                404,
+                f"Video generation model '{model_name}' not loaded. "
+                "Load a video model first.",
+            )
+
+        # #1023: surface unsupported params instead of silent ignore.
+        # wan2 controls container fps internally → request fps is ignored.
+        # skyreels has no control conditioning → control_type is ignored.
+        backend_name = getattr(getattr(engine, "_backend", None), "name", "")
+        param_warnings: list[str] = []
+        if backend_name == "wan2" and request.fps != 24:
+            msg = (
+                f"fps={request.fps} ignored by wan2 backend "
+                "(controls container fps internally)"
+            )
+            logger.warning("video: %s", msg)
+            param_warnings.append(msg)
+        if backend_name == "skyreels" and request.control_type != "canny":
+            msg = (
+                f"control_type={request.control_type} ignored by skyreels "
+                "backend (control conditioning is Wan2-only)"
+            )
+            logger.warning("video: %s", msg)
+            param_warnings.append(msg)
+
+        gen_kwargs: dict = {
+            "prompt": request.prompt,
+            "num_frames": effective_num_frames,
+            "width": effective_width,
+            "height": effective_height,
+            "fps": effective_fps,
+            "seed": request.seed,
+            "n": request.n,
+        }
+        if image_path is not None:
+            gen_kwargs["image"] = image_path
+        if last_frame_path is not None:
+            gen_kwargs["last_frame_image"] = last_frame_path
+        if request.negative_prompt is not None:
+            gen_kwargs["negative_prompt"] = request.negative_prompt
+        if request.num_inference_steps is not None:
+            gen_kwargs["num_inference_steps"] = request.num_inference_steps
+        if request.scheduler is not None:
+            gen_kwargs["scheduler"] = request.scheduler
+        if request.cfg_scale is not None:
+            gen_kwargs["cfg_scale"] = request.cfg_scale
+        if request.guide_scale is not None:
+            gen_kwargs["guide_scale"] = request.guide_scale
+        if request.shift is not None:
+            gen_kwargs["shift"] = request.shift
+        if request.tiling is not None:
+            gen_kwargs["tiling"] = request.tiling
+        if request.no_compile is not None:
+            gen_kwargs["no_compile"] = request.no_compile
+        if request.enhance_prompt is not None:
+            gen_kwargs["enhance_prompt"] = request.enhance_prompt
+        if request.session_id is not None:
+            gen_kwargs["session_id"] = request.session_id
+        if request.ip_adapter_image is not None:
+            ip_path, ip_is_temp = await _resolve_image_to_path(request.ip_adapter_image)
+            gen_kwargs["ip_adapter_image"] = ip_path
+        if request.ip_adapter_scale != 1.0:
+            gen_kwargs["ip_adapter_scale"] = request.ip_adapter_scale
+        if request.controlnet_image is not None:
+            cn_path, cn_is_temp = await _resolve_image_to_path(request.controlnet_image)
+            gen_kwargs["controlnet_image"] = cn_path
+        if request.controlnet_strength != 1.0:
+            gen_kwargs["controlnet_strength"] = request.controlnet_strength
+        if request.control_type != "canny":
+            gen_kwargs["control_type"] = request.control_type
+        if request.animatediff_scale > 0:
+            gen_kwargs["animatediff_scale"] = request.animatediff_scale
+        if request.control_video is not None:
+            cv_path, cv_is_temp = await _resolve_media_to_path(
+                request.control_video, "ctrl_vid"
+            )
+            gen_kwargs["control_video"] = cv_path
+        if request.control_mask is not None:
+            cm_path, cm_is_temp = await _resolve_media_to_path(
+                request.control_mask, "ctrl_mask"
+            )
+            gen_kwargs["control_mask"] = cm_path
+        if request.reference_images is not None:
+            ri_resolved = [
+                await _resolve_media_to_path(p, "ref_img")
+                for p in request.reference_images
+            ]
+            ri_paths = [r[0] for r in ri_resolved]
+            ri_is_temps = [r[1] for r in ri_resolved]
+            gen_kwargs["reference_images"] = ri_paths
+        if request.camera_conditions is not None:
+            cam_path, cam_is_temp = await _resolve_media_to_path(
+                request.camera_conditions, "camera"
+            )
+            gen_kwargs["camera_conditions"] = cam_path
+        if request.quantize is not None:
+            gen_kwargs["quantize"] = request.quantize
+        if request.pipeline is not None:
+            gen_kwargs["pipeline"] = request.pipeline
+        if request.audio is not None:
+            gen_kwargs["audio"] = request.audio
+        if request.audio_frozen is not None:
+            gen_kwargs["audio_frozen"] = request.audio_frozen
+        if request.audio_vae_weights is not None:
+            gen_kwargs["audio_vae_weights"] = request.audio_vae_weights
+
+        _gen_start = time.perf_counter()
+        video_bytes_list = await engine.generate(**gen_kwargs)
+        _gen_elapsed = time.perf_counter() - _gen_start
+        outputs = []
+        for vb in video_bytes_list:
+            actual_dur = None
+            if isinstance(vb, (bytes, bytearray)):
+                actual_dur = _probe_mp4_duration_seconds(vb)
+            if (
+                request.duration is not None
+                and actual_dur is not None
+                and request.duration > 0
+                and abs(actual_dur - request.duration) / request.duration > 0.15
+            ):
+                # Surface silent truncation (#1003): the backend clamped
+                # the output (memory/tiling/VAE) below the requested
+                # duration. Log loudly so operators see it; the actual
+                # duration is also echoed in the response body.
+                logger.warning(
+                    "video: requested duration=%.2fs but actual=%.2fs "
+                    "(num_frames=%d fps=%d model=%s) — output was truncated "
+                    "(#1003)",
+                    request.duration,
+                    actual_dur,
+                    effective_num_frames,
+                    effective_fps,
+                    model_name,
+                )
+            outputs.append(
+                _encode_video_output(
+                    vb,
+                    request.response_format,
+                    num_frames=effective_num_frames,
+                    fps=effective_fps,
+                    width=effective_width,
+                    height=effective_height,
+                    duration_seconds=actual_dur,
+                )
+            )
+        try:
+            from ..telemetry import emit
+            from ..telemetry.activation_spec import (
+                ACTIVATION_FIRST_VIDEO_GENERATION,
+                SURFACE_API,
+            )
+
+            # #1042: fill real telemetry values instead of hardcoded zeros.
+            # prompt_tokens: rough estimate (4 chars ≈ 1 token) — video models
+            # use text encoders (T5/CLIP) whose tokenizer isn't accessible here.
+            # ttft_ms: total generation time (non-streaming, one-shot).
+            # tps: videos per second (completion_tokens / elapsed_seconds).
+            _est_prompt_tokens = max(1, len(request.prompt) // 4)
+            _ttft_ms = _gen_elapsed * 1000.0
+            _tps = len(video_bytes_list) / _gen_elapsed if _gen_elapsed > 0 else 0.0
+            emit.request(
+                endpoint="/v1/videos/generate",
+                model_alias=request.model,
+                stream=False,
+                tool_call_used=False,
+                prompt_tokens=_est_prompt_tokens,
+                completion_tokens=len(video_bytes_list),
+                ttft_ms=_ttft_ms,
+                tps=_tps,
+                status=200,
+            )
+            emit.activation(
+                activation_kind=ACTIVATION_FIRST_VIDEO_GENERATION,
+                surface=SURFACE_API,
+            )
+        except Exception:
+            logger.debug(
+                "telemetry video-generation activation emit failed",
+                exc_info=True,
+            )
+
+        return VideoGenerateResponse(data=outputs, warnings=param_warnings)
+    finally:
+        if image_is_temp and image_path:
+            try:
+                os.unlink(image_path)
+            except OSError:
+                logger.warning("failed to unlink temp image: %s", image_path)
+        if last_frame_is_temp and last_frame_path:
+            try:
+                os.unlink(last_frame_path)
+            except OSError:
+                logger.warning(
+                    "failed to unlink temp last_frame image: %s", last_frame_path
+                )
+        if ip_is_temp and ip_path:
+            try:
+                os.unlink(ip_path)
+            except OSError:
+                logger.warning("failed to unlink temp ip_adapter image: %s", ip_path)
+        if cn_is_temp and cn_path:
+            try:
+                os.unlink(cn_path)
+            except OSError:
+                logger.warning("failed to unlink temp controlnet image: %s", cn_path)
+        if cv_is_temp and cv_path:
+            try:
+                os.unlink(cv_path)
+            except OSError:
+                logger.warning("failed to unlink temp control_video: %s", cv_path)
+        if cm_is_temp and cm_path:
+            try:
+                os.unlink(cm_path)
+            except OSError:
+                logger.warning("failed to unlink temp control_mask: %s", cm_path)
+        for rp, rt in zip(ri_paths, ri_is_temps):
+            if rt and rp:
+                try:
+                    os.unlink(rp)
+                except OSError:
+                    logger.warning("failed to unlink temp ref image: %s", rp)
+        if cam_is_temp and cam_path:
+            try:
+                os.unlink(cam_path)
+            except OSError:
+                logger.warning("failed to unlink temp camera_conditions: %s", cam_path)
+
+
+# --- #1079: video job-ification ------------------------------------------
+# Video generation is minute-scale + memory-heavy. The sync /generate endpoint
+# holds a long connection and loses the result if the client disconnects. Job
+# mode: POST /v1/videos/jobs returns a job_id immediately; the generation runs
+# in a background asyncio task; GET /v1/videos/jobs/{id} polls status + result;
+# GET /v1/videos/jobs/{id}/output/{index} streams the video file; DELETE
+# cancels (queued) or removes (terminal) the job + unlinks temp output files.
+#
+# Unlike convert (ThreadPoolExecutor), video generation is already async
+# (engine.generate is a coroutine), so we use asyncio task scheduling, not a
+# thread pool. The single-video-model mutex in VideoGenEngine serializes
+# concurrent video jobs naturally.
+
+_video_jobs: dict[str, dict[str, Any]] = {}
+_video_jobs_lock = threading.Lock()
+_VIDEO_TERMINAL_STATUSES = frozenset(
+    {"completed", "failed", "interrupted", "cancelled"}
+)
+_MAX_VIDEO_JOBS = 20
+_VIDEO_JOB_TTL_SECONDS = 1800
+
+
+def _video_job_now() -> float:
+    return time.time()
+
+
+def _new_video_job(request: VideoGenerateRequest) -> dict[str, Any]:
+    job_id = uuid.uuid4().hex[:16]
+    now = _video_job_now()
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "progress": 0.0,
+        "model": request.model,
+        "prompt": request.prompt[:200],
+        "n": request.n,
+        "output_files": [],
+        "output_meta": [],
+        "warnings": [],
+        "error": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def _set_video_job(job: dict[str, Any], **fields: Any) -> None:
+    with _video_jobs_lock:
+        job.update(fields)
+        job["updated_at"] = _video_job_now()
+
+
+def _unlink_video_outputs(job: dict[str, Any] | None) -> None:
+    if job is None:
+        return
+    for path in job.get("output_files", []):
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _video_jobs_prune_locked() -> None:
+    # #1079: prune is called under _video_jobs_lock on submit + list. Evict
+    # stale terminal jobs + cap overflow, unlinking temp output files.
+    now = _video_job_now()
+    stale = [
+        jid
+        for jid, j in _video_jobs.items()
+        if j["status"] in _VIDEO_TERMINAL_STATUSES
+        and (now - j.get("updated_at", j.get("created_at", now)))
+        > _VIDEO_JOB_TTL_SECONDS
+    ]
+    for jid in stale:
+        _unlink_video_outputs(_video_jobs.pop(jid, None))
+    if stale:
+        logger.info(
+            "video-jobs: pruned %d stale terminal job(s) (TTL=%ds)",
+            len(stale),
+            _VIDEO_JOB_TTL_SECONDS,
+        )
+    if len(_video_jobs) > _MAX_VIDEO_JOBS:
+        terminal = sorted(
+            (
+                (j.get("updated_at", 0.0), jid)
+                for jid, j in _video_jobs.items()
+                if j["status"] in _VIDEO_TERMINAL_STATUSES
+            ),
+            key=lambda x: x[0],
+        )
+        excess = len(_video_jobs) - _MAX_VIDEO_JOBS
+        for _, jid in terminal[:excess]:
+            _unlink_video_outputs(_video_jobs.pop(jid, None))
+        logger.info(
+            "video-jobs: pruned %d oldest terminal job(s) (cap=%d)",
+            min(excess, len(terminal)),
+            _MAX_VIDEO_JOBS,
+        )
+
+
+def shutdown_video_jobs() -> None:
+    with _video_jobs_lock:
+        for job in _video_jobs.values():
+            if job["status"] in ("queued", "running"):
+                job["status"] = "interrupted"
+                job["error"] = "server shutdown"
+                job["updated_at"] = _video_job_now()
+
+
+atexit.register(shutdown_video_jobs)
+
+
+async def _run_video_job(job: dict[str, Any], request: VideoGenerateRequest) -> None:
+    # #1079: run video generation in the background. The result videos are
+    # written to temp files (paths stored in the job dict) so the GET /output
+    # endpoint can stream them without holding bytes in memory.
+    with _video_jobs_lock:
+        if job["status"] == "cancelled":
+            logger.info("video job %s skipped (cancelled while queued)", job["job_id"])
+            return
+    _set_video_job(job, status="running", progress=0.1)
+    logger.info(
+        "video job %s running: model=%s prompt_len=%d",
+        job["job_id"],
+        request.model,
+        len(request.prompt),
+    )
+    try:
+        request.response_format = "b64_json"
+        response = await _execute_video_generation(request)
+        output_files: list[str] = []
+        output_meta: list[dict] = []
+        for i, vid in enumerate(response.data):
+            vid_bytes = base64.b64decode(vid.b64_json) if vid.b64_json else b""
+            fd, path = tempfile.mkstemp(
+                prefix=f"video_job_{job['job_id']}_{i}_", suffix=".mp4"
+            )
+            with os.fdopen(fd, "wb") as f:
+                f.write(vid_bytes)
+            output_files.append(path)
+            output_meta.append(
+                {
+                    "num_frames": vid.num_frames,
+                    "fps": vid.fps,
+                    "width": vid.width,
+                    "height": vid.height,
+                    "duration_seconds": vid.duration_seconds,
+                    "size_bytes": len(vid_bytes),
+                }
+            )
+        _set_video_job(
+            job,
+            status="completed",
+            progress=1.0,
+            output_files=output_files,
+            output_meta=output_meta,
+            warnings=response.warnings,
+        )
+        logger.info("video job %s done: %d output(s)", job["job_id"], len(output_files))
+    except asyncio.CancelledError:
+        _set_video_job(
+            job,
+            status="failed",
+            progress=1.0,
+            error="cancelled by memory guard or client disconnect",
+        )
+        logger.warning("video job %s cancelled", job["job_id"])
+    except HTTPException as exc:
+        _set_video_job(
+            job,
+            status="failed",
+            progress=1.0,
+            error=exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+        )
+        logger.warning(
+            "video job %s failed (HTTP %d): %s",
+            job["job_id"],
+            exc.status_code,
+            exc.detail,
+        )
+    except Exception as exc:
+        _set_video_job(job, status="failed", progress=1.0, error=str(exc))
+        logger.exception("video job %s failed", job["job_id"])
+
+
 @router.post("/generate")
 async def generate_video(
     request: VideoGenerateRequest,
     _auth: bool = Depends(verify_api_key),
     _rate: bool = Depends(check_rate_limit),
 ) -> VideoGenerateResponse:
-    # Generate videos from a text prompt (and optional image for I2V).
     try:
-        if _pool is None:
-            raise HTTPException(503, "Engine pool not initialized")
-
-        model_name = _resolve_video_model(
-            request.prompt,
-            bool(request.audio) if request.audio is not None else False,
-            request.model,
-        )
-
-        # Resolve constraints early — dim_divisibility drives resolution-preset
-        # rounding, and a clear 422 beats a deep OOM/500 on out-of-range
-        # duration/resolution (#1003).
-        constraints = constraints_for(model_name)
-
-        effective_fps = request.fps
-        effective_width = request.width
-        effective_height = request.height
-        effective_num_frames = request.num_frames
-
-        if request.resolution is not None:
-            try:
-                rw, rh = _resolution_to_dims(
-                    request.resolution, constraints.dim_divisibility
-                )
-            except ValueError as exc:
-                raise HTTPException(422, str(exc))
-            effective_width = rw
-            effective_height = rh
-            logger.info(
-                "video: resolution=%s -> %dx%d (dim_div=%d)",
-                request.resolution,
-                rw,
-                rh,
-                constraints.dim_divisibility,
-            )
-
-        if request.duration is not None:
-            derived = _duration_to_num_frames(request.duration, effective_fps)
-            if request.num_frames != 97:
-                logger.warning(
-                    "video: both duration=%.2fs and num_frames=%d set; using "
-                    "duration-derived num_frames=%d (explicit num_frames ignored)",
-                    request.duration,
-                    request.num_frames,
-                    derived,
-                )
-            effective_num_frames = derived
-            logger.info(
-                "video: duration=%.2fs fps=%d -> num_frames=%d",
-                request.duration,
-                effective_fps,
-                derived,
-            )
-
-        # Backend-aware constraint validation (422 on violation).
-        try:
-            validate_params(
-                constraints,
-                num_frames=effective_num_frames,
-                width=effective_width,
-                height=effective_height,
-                n=request.n,
-                image=request.image,
-            )
-        except ValueError as exc:
-            raise HTTPException(422, str(exc))
-
-        # Resolve I2V image to a local path (400 on resolve failure).
-        image_path: str | None = None
-        image_is_temp = False
-        last_frame_path: str | None = None
-        last_frame_is_temp = False
-        ip_path: str | None = None
-        ip_is_temp = False
-        cn_path: str | None = None
-        cn_is_temp = False
-        cv_path: str | None = None
-        cv_is_temp = False
-        cm_path: str | None = None
-        cm_is_temp = False
-        ri_paths: list[str] = []
-        ri_is_temps: list[bool] = []
-        cam_path: str | None = None
-        cam_is_temp = False
-        if request.image:
-            try:
-                image_path, image_is_temp = await _resolve_image_to_path(request.image)
-            except HTTPException:
-                raise
-            except Exception as exc:
-                raise HTTPException(400, "failed to resolve image input")
-        if request.last_frame_image:
-            try:
-                last_frame_path, last_frame_is_temp = await _resolve_image_to_path(
-                    request.last_frame_image
-                )
-            except HTTPException:
-                raise
-            except Exception as exc:
-                raise HTTPException(400, "failed to resolve last_frame_image input")
-
-        try:
-            try:
-                engine = await _pool.get_engine(model_name)
-            except ModelNotFoundError:
-                engine = None
-            if engine is None or not isinstance(engine, VideoGenEngine):
-                raise HTTPException(
-                    404,
-                    f"Video generation model '{model_name}' not loaded. "
-                    "Load a video model first.",
-                )
-
-            # #1023: surface unsupported params instead of silent ignore.
-            # wan2 controls container fps internally → request fps is ignored.
-            # skyreels has no control conditioning → control_type is ignored.
-            backend_name = getattr(getattr(engine, "_backend", None), "name", "")
-            param_warnings: list[str] = []
-            if backend_name == "wan2" and request.fps != 24:
-                msg = (
-                    f"fps={request.fps} ignored by wan2 backend "
-                    "(controls container fps internally)"
-                )
-                logger.warning("video: %s", msg)
-                param_warnings.append(msg)
-            if backend_name == "skyreels" and request.control_type != "canny":
-                msg = (
-                    f"control_type={request.control_type} ignored by skyreels "
-                    "backend (control conditioning is Wan2-only)"
-                )
-                logger.warning("video: %s", msg)
-                param_warnings.append(msg)
-
-            gen_kwargs: dict = {
-                "prompt": request.prompt,
-                "num_frames": effective_num_frames,
-                "width": effective_width,
-                "height": effective_height,
-                "fps": effective_fps,
-                "seed": request.seed,
-                "n": request.n,
-            }
-            if image_path is not None:
-                gen_kwargs["image"] = image_path
-            if last_frame_path is not None:
-                gen_kwargs["last_frame_image"] = last_frame_path
-            if request.negative_prompt is not None:
-                gen_kwargs["negative_prompt"] = request.negative_prompt
-            if request.num_inference_steps is not None:
-                gen_kwargs["num_inference_steps"] = request.num_inference_steps
-            if request.scheduler is not None:
-                gen_kwargs["scheduler"] = request.scheduler
-            if request.cfg_scale is not None:
-                gen_kwargs["cfg_scale"] = request.cfg_scale
-            if request.guide_scale is not None:
-                gen_kwargs["guide_scale"] = request.guide_scale
-            if request.shift is not None:
-                gen_kwargs["shift"] = request.shift
-            if request.tiling is not None:
-                gen_kwargs["tiling"] = request.tiling
-            if request.no_compile is not None:
-                gen_kwargs["no_compile"] = request.no_compile
-            if request.enhance_prompt is not None:
-                gen_kwargs["enhance_prompt"] = request.enhance_prompt
-            if request.session_id is not None:
-                gen_kwargs["session_id"] = request.session_id
-            if request.ip_adapter_image is not None:
-                ip_path, ip_is_temp = await _resolve_image_to_path(
-                    request.ip_adapter_image
-                )
-                gen_kwargs["ip_adapter_image"] = ip_path
-            if request.ip_adapter_scale != 1.0:
-                gen_kwargs["ip_adapter_scale"] = request.ip_adapter_scale
-            if request.controlnet_image is not None:
-                cn_path, cn_is_temp = await _resolve_image_to_path(
-                    request.controlnet_image
-                )
-                gen_kwargs["controlnet_image"] = cn_path
-            if request.controlnet_strength != 1.0:
-                gen_kwargs["controlnet_strength"] = request.controlnet_strength
-            if request.control_type != "canny":
-                gen_kwargs["control_type"] = request.control_type
-            if request.animatediff_scale > 0:
-                gen_kwargs["animatediff_scale"] = request.animatediff_scale
-            if request.control_video is not None:
-                cv_path, cv_is_temp = await _resolve_media_to_path(
-                    request.control_video, "ctrl_vid"
-                )
-                gen_kwargs["control_video"] = cv_path
-            if request.control_mask is not None:
-                cm_path, cm_is_temp = await _resolve_media_to_path(
-                    request.control_mask, "ctrl_mask"
-                )
-                gen_kwargs["control_mask"] = cm_path
-            if request.reference_images is not None:
-                ri_resolved = [
-                    await _resolve_media_to_path(p, "ref_img")
-                    for p in request.reference_images
-                ]
-                ri_paths = [r[0] for r in ri_resolved]
-                ri_is_temps = [r[1] for r in ri_resolved]
-                gen_kwargs["reference_images"] = ri_paths
-            if request.camera_conditions is not None:
-                cam_path, cam_is_temp = await _resolve_media_to_path(
-                    request.camera_conditions, "camera"
-                )
-                gen_kwargs["camera_conditions"] = cam_path
-            if request.quantize is not None:
-                gen_kwargs["quantize"] = request.quantize
-            if request.pipeline is not None:
-                gen_kwargs["pipeline"] = request.pipeline
-            if request.audio is not None:
-                gen_kwargs["audio"] = request.audio
-            if request.audio_frozen is not None:
-                gen_kwargs["audio_frozen"] = request.audio_frozen
-            if request.audio_vae_weights is not None:
-                gen_kwargs["audio_vae_weights"] = request.audio_vae_weights
-
-            _gen_start = time.perf_counter()
-            video_bytes_list = await engine.generate(**gen_kwargs)
-            _gen_elapsed = time.perf_counter() - _gen_start
-            outputs = []
-            for vb in video_bytes_list:
-                actual_dur = None
-                if isinstance(vb, (bytes, bytearray)):
-                    actual_dur = _probe_mp4_duration_seconds(vb)
-                if (
-                    request.duration is not None
-                    and actual_dur is not None
-                    and request.duration > 0
-                    and abs(actual_dur - request.duration) / request.duration > 0.15
-                ):
-                    # Surface silent truncation (#1003): the backend clamped
-                    # the output (memory/tiling/VAE) below the requested
-                    # duration. Log loudly so operators see it; the actual
-                    # duration is also echoed in the response body.
-                    logger.warning(
-                        "video: requested duration=%.2fs but actual=%.2fs "
-                        "(num_frames=%d fps=%d model=%s) — output was truncated "
-                        "(#1003)",
-                        request.duration,
-                        actual_dur,
-                        effective_num_frames,
-                        effective_fps,
-                        model_name,
-                    )
-                outputs.append(
-                    _encode_video_output(
-                        vb,
-                        request.response_format,
-                        num_frames=effective_num_frames,
-                        fps=effective_fps,
-                        width=effective_width,
-                        height=effective_height,
-                        duration_seconds=actual_dur,
-                    )
-                )
-            try:
-                from ..telemetry import emit
-                from ..telemetry.activation_spec import (
-                    ACTIVATION_FIRST_VIDEO_GENERATION,
-                    SURFACE_API,
-                )
-
-                # #1042: fill real telemetry values instead of hardcoded zeros.
-                # prompt_tokens: rough estimate (4 chars ≈ 1 token) — video models
-                # use text encoders (T5/CLIP) whose tokenizer isn't accessible here.
-                # ttft_ms: total generation time (non-streaming, one-shot).
-                # tps: videos per second (completion_tokens / elapsed_seconds).
-                _est_prompt_tokens = max(1, len(request.prompt) // 4)
-                _ttft_ms = _gen_elapsed * 1000.0
-                _tps = len(video_bytes_list) / _gen_elapsed if _gen_elapsed > 0 else 0.0
-                emit.request(
-                    endpoint="/v1/videos/generate",
-                    model_alias=request.model,
-                    stream=False,
-                    tool_call_used=False,
-                    prompt_tokens=_est_prompt_tokens,
-                    completion_tokens=len(video_bytes_list),
-                    ttft_ms=_ttft_ms,
-                    tps=_tps,
-                    status=200,
-                )
-                emit.activation(
-                    activation_kind=ACTIVATION_FIRST_VIDEO_GENERATION,
-                    surface=SURFACE_API,
-                )
-            except Exception:
-                logger.debug(
-                    "telemetry video-generation activation emit failed",
-                    exc_info=True,
-                )
-
-            return VideoGenerateResponse(data=outputs, warnings=param_warnings)
-        finally:
-            if image_is_temp and image_path:
-                try:
-                    os.unlink(image_path)
-                except OSError:
-                    logger.warning("failed to unlink temp image: %s", image_path)
-            if last_frame_is_temp and last_frame_path:
-                try:
-                    os.unlink(last_frame_path)
-                except OSError:
-                    logger.warning(
-                        "failed to unlink temp last_frame image: %s", last_frame_path
-                    )
-            if ip_is_temp and ip_path:
-                try:
-                    os.unlink(ip_path)
-                except OSError:
-                    logger.warning(
-                        "failed to unlink temp ip_adapter image: %s", ip_path
-                    )
-            if cn_is_temp and cn_path:
-                try:
-                    os.unlink(cn_path)
-                except OSError:
-                    logger.warning(
-                        "failed to unlink temp controlnet image: %s", cn_path
-                    )
-            if cv_is_temp and cv_path:
-                try:
-                    os.unlink(cv_path)
-                except OSError:
-                    logger.warning("failed to unlink temp control_video: %s", cv_path)
-            if cm_is_temp and cm_path:
-                try:
-                    os.unlink(cm_path)
-                except OSError:
-                    logger.warning("failed to unlink temp control_mask: %s", cm_path)
-            for rp, rt in zip(ri_paths, ri_is_temps):
-                if rt and rp:
-                    try:
-                        os.unlink(rp)
-                    except OSError:
-                        logger.warning("failed to unlink temp ref image: %s", rp)
-            if cam_is_temp and cam_path:
-                try:
-                    os.unlink(cam_path)
-                except OSError:
-                    logger.warning(
-                        "failed to unlink temp camera_conditions: %s", cam_path
-                    )
-
+        return await _execute_video_generation(request)
     except HTTPException:
         raise
     except asyncio.CancelledError:
-        # #1083: the ProcessMemoryEnforcer aborts active video jobs under hard
-        # memory pressure by cancelling the task (VideoGenEngine: aborted N
-        # active media job(s)). CancelledError is BaseException in 3.8+, not
-        # Exception, so it bypassed every except-Exception handler here and
-        # propagated to ASGI → 500 with no detail and an ASGI stack trace.
-        # Translate to a structured 503 so the client knows it was a memory-
-        # guard cancellation (retryable), not a permanent server fault.
         logger.warning(
             "Video generation cancelled (memory guard / task abort) — "
             "returning 503 Retry-After"
@@ -833,21 +1010,12 @@ async def generate_video(
             headers={"Retry-After": "10"},
         ) from None
     except ValueError as exc:
-        # User-actionable config/input error from the engine (e.g. issue #761:
-        # an i2v checkpoint run without conditioning). Surface the message as
-        # 400 instead of the generic 500 so the client sees the remediation.
         logger.warning("Video generation rejected: %s", exc)
         raise HTTPException(400, str(exc))
     except (InsufficientMemoryError, ModelTooLargeError) as exc:
-        # #0916: admission rejection is retryable (free memory / retry), not a
-        # generic 500. Map to 507 so clients can back off instead of treating
-        # it as a permanent server fault.
         logger.warning("Video generation memory admission failed: %s", exc)
         raise HTTPException(507, str(exc), headers={"Retry-After": "5"}) from exc
     except Exception as exc:
-        # #950: dual-model mutex contention — another video model is resident
-        # and generating. Return 503 Retry-After (NOT 500) so the client
-        # retries and the in-flight generation is NOT killed.
         from fusion_mlx.scheduler.video_unified_scheduler import (
             VideoMemoryPressureError,
             VideoMutexBusyError,
@@ -856,11 +1024,138 @@ async def generate_video(
         if isinstance(exc, VideoMutexBusyError):
             logger.warning("Video generation mutex busy: %s", exc)
             raise HTTPException(503, str(exc), headers={"Retry-After": "10"}) from exc
-        # #951: sustained memory pressure mid-denoise after emergency_reclaim
-        # could not bring it below the L3 red line. Aborted to keep the server
-        # alive (instead of ProcessMemoryEnforcer fatal_exit). 507 Retry-After.
         if isinstance(exc, VideoMemoryPressureError):
             logger.warning("Video generation aborted (memory pressure): %s", exc)
             raise HTTPException(507, str(exc), headers={"Retry-After": "5"}) from exc
         logger.exception("Video generation failed")
         raise HTTPException(500, "Internal server error")
+
+
+# --- #1079: video job endpoints ------------------------------------------
+
+
+class VideoJobSubmitResponse(BaseModel):
+    job_id: str
+    status: str
+
+
+@router.post("/jobs")
+async def submit_video_job(
+    request: VideoGenerateRequest,
+    _auth: bool = Depends(verify_api_key),
+    _rate: bool = Depends(check_rate_limit),
+) -> VideoJobSubmitResponse:
+    # #1079: submit a video generation job. Returns job_id immediately; the
+    # generation runs in a background asyncio task. Poll via GET /jobs/{id}.
+    job = _new_video_job(request)
+    with _video_jobs_lock:
+        _video_jobs_prune_locked()
+        _video_jobs[job["job_id"]] = job
+    logger.info(
+        "video job %s queued: model=%s prompt_len=%d",
+        job["job_id"],
+        request.model,
+        len(request.prompt),
+    )
+    asyncio.create_task(_run_video_job(job, request))
+    return VideoJobSubmitResponse(job_id=job["job_id"], status="queued")
+
+
+@router.get("/jobs")
+async def list_video_jobs(
+    _auth: bool = Depends(verify_api_key),
+) -> list[dict[str, Any]]:
+    with _video_jobs_lock:
+        _video_jobs_prune_locked()
+        items = [dict(j) for j in _video_jobs.values()]
+    items.sort(key=lambda x: x["updated_at"], reverse=True)
+    return items
+
+
+@router.get("/jobs/{job_id}")
+async def get_video_job(
+    job_id: str,
+    _auth: bool = Depends(verify_api_key),
+) -> dict[str, Any]:
+    with _video_jobs_lock:
+        job = _video_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, detail=f"Video job '{job_id}' not found")
+        return dict(job)
+
+
+@router.get("/jobs/{job_id}/output/{index}")
+async def get_video_job_output(
+    job_id: str,
+    index: int,
+    _auth: bool = Depends(verify_api_key),
+):
+    # #1079: stream a completed video job's output file. The file is a temp
+    # .mp4 written by _run_video_job; it lives until the job is pruned/deleted.
+    from fastapi.responses import FileResponse
+
+    with _video_jobs_lock:
+        job = _video_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, detail=f"Video job '{job_id}' not found")
+        if job["status"] != "completed":
+            raise HTTPException(
+                409,
+                detail=f"Video job '{job_id}' is {job['status']} — "
+                "output is only available for completed jobs",
+            )
+        output_files = list(job.get("output_files", []))
+        output_meta = list(job.get("output_meta", []))
+    if index < 0 or index >= len(output_files):
+        raise HTTPException(
+            404,
+            detail=f"Output index {index} out of range "
+            f"(job has {len(output_files)} output(s))",
+        )
+    path = output_files[index]
+    if not os.path.exists(path):
+        raise HTTPException(410, detail="Output file was pruned or deleted")
+    meta = output_meta[index] if index < len(output_meta) else {}
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=f"video_{job_id}_{index}.mp4",
+        headers={
+            "X-Video-Frames": str(meta.get("num_frames") or ""),
+            "X-Video-FPS": str(meta.get("fps") or ""),
+            "X-Video-Width": str(meta.get("width") or ""),
+            "X-Video-Height": str(meta.get("height") or ""),
+            "X-Video-Duration": str(meta.get("duration_seconds") or ""),
+        },
+    )
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_video_job(
+    job_id: str,
+    _auth: bool = Depends(verify_api_key),
+) -> dict[str, Any]:
+    # #1079: cancel (queued) or delete (terminal) a video job. Running jobs
+    # cannot be cancelled (engine.generate has no cancel hook) — return 409.
+    # Terminal jobs are deleted + output files unlinked.
+    with _video_jobs_lock:
+        job = _video_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, detail=f"Video job '{job_id}' not found")
+        status = job["status"]
+        if status == "running":
+            raise HTTPException(
+                409,
+                detail=f"Video job '{job_id}' is running — no cancel hook; "
+                "wait for completion or restart the server",
+            )
+        if status == "queued":
+            job["status"] = "cancelled"
+            job["updated_at"] = _video_job_now()
+            logger.info("video job %s cancelled (was queued)", job_id)
+            return {"job_id": job_id, "status": "cancelled"}
+        # terminal — delete + unlink outputs
+        _unlink_video_outputs(job)
+        _video_jobs.pop(job_id, None)
+    logger.info("video job %s deleted", job_id)
+    return {"job_id": job_id, "status": "deleted"}
