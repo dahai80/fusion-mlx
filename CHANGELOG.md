@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed — FailoverRouter dead-code branch + no-monitor dead-node revival (#1065)
+- **#1065**: two bugs in `FailoverRouter.route()`:
+  - The `except NodeUnavailableError` handler had an `if self.monitor is not
+    None: mark_dead(...) else: mark_dead(...)` — both branches identical
+    (dead code). Removed the branch; a single unconditional `mark_dead` now
+    excludes the failed node from the next selection.
+  - Without a running `ClusterHealthMonitor`, a DEAD node was never
+    `mark_alive`'d — one transient network blip permanently kicked a peer
+    out of routing. Added `NodeRegistry.revive_cooled_nodes(cooldown)`,
+    called at the top of `route()` when no monitor is present: a DEAD node
+    older than `FUSION_CLUSTER_DEAD_COOLDOWN` (default 30s) is revived back
+    to ALIVE so the next selection can retry it. If it fails again it is
+    re-marked DEAD with a fresh clock. EVICTED nodes are NOT passively
+    revived (manual eviction stays sticky until re-register).
+
 ### Fixed — cluster registry never prunes dead/evicted nodes (#1064)
 - **#1064**: `NodeRegistry.evict()` only flipped `state=EVICTED`; the entry
   stayed in `_nodes` forever (no TTL/expiry). A long-running gateway's

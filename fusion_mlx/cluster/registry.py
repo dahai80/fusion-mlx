@@ -309,6 +309,40 @@ class NodeRegistry:
                 logger.info("cluster: node %s revived — rejoining active set", node_id)
             return True
 
+    async def revive_cooled_nodes(self, cooldown: float) -> int:
+        """Passively revive DEAD nodes older than *cooldown* (no-monitor path).
+
+        #1065: without a running ClusterHealthMonitor, a DEAD node stays dead
+        forever — one transient network blip permanently kicks a peer out of
+        routing. This gives a cooled-down DEAD node another chance: the next
+        ``FailoverRouter.route()`` selection may pick it; if it fails again it
+        is re-marked DEAD with a fresh ``state_changed_at``. EVICTED nodes are
+        NOT revived (manual eviction is sticky until explicit re-register).
+        Returns the count revived.
+        """
+        if cooldown <= 0:
+            return 0
+        now = time.time()
+        revived = 0
+        async with self._lock:
+            for node in self._nodes.values():
+                if (
+                    node.state == NodeState.DEAD
+                    and node.state_changed_at > 0
+                    and (now - node.state_changed_at) > cooldown
+                ):
+                    node.state = NodeState.ALIVE
+                    node.state_changed_at = 0.0
+                    node.missed_beats = 0
+                    node.last_error = ""
+                    revived += 1
+                    logger.info(
+                        "cluster: passively revived cooled node %s " "(cooldown %.0fs)",
+                        node.node_id,
+                        cooldown,
+                    )
+        return revived
+
     async def update_load(
         self, node_id: str, active_requests: int, available_percent: float
     ) -> bool:
@@ -470,6 +504,12 @@ class FailoverRouter:
         # existing callers/tests; a production wire-up MUST pass a positive
         # cap or set FUSION_CLUSTER_MAX_INFLIGHT.
         max_inflight: int = 0,
+        # #1065: passive revival cooldown. Without a running monitor, a DEAD
+        # node stays dead forever — one transient blip permanently kicks a
+        # peer out of routing. After this many seconds a DEAD node is given
+        # another chance at selection (EVICTED nodes are sticky — manual
+        # eviction only clears on re-register). 0 = never passively revive.
+        dead_cooldown: float = -1.0,
     ) -> None:
         self.registry = registry
         self.lb = lb
@@ -490,12 +530,35 @@ class FailoverRouter:
         self._inflight: asyncio.Semaphore | None = (
             asyncio.Semaphore(max_inflight) if max_inflight > 0 else None
         )
+        if dead_cooldown < 0:
+            _cd_raw = os.environ.get("FUSION_CLUSTER_DEAD_COOLDOWN", "").strip()
+            if _cd_raw:
+                try:
+                    dead_cooldown = float(_cd_raw)
+                except ValueError:
+                    logger.warning(
+                        "cluster: invalid FUSION_CLUSTER_DEAD_COOLDOWN='%s', "
+                        "using 30s",
+                        _cd_raw,
+                    )
+                    dead_cooldown = 30.0
+            else:
+                dead_cooldown = 30.0
+        self.dead_cooldown = dead_cooldown
 
     async def route(
         self,
         call_fn: Callable[[ClusterNode], Coroutine[Any, Any, Any]],
         stream: bool = False,
     ) -> Any:
+        # #1065: passive revival for no-monitor deployments. Without a running
+        # ClusterHealthMonitor a DEAD node is never mark_alive'd by heartbeats,
+        # so one transient network blip permanently excludes a peer. Give
+        # cooled-down DEAD nodes another chance at selection before the retry
+        # loop. If the peer is still down it fails again and is re-marked DEAD
+        # with a fresh clock (exponential backoff is a future enhancement).
+        if self.monitor is None and self.dead_cooldown > 0:
+            await self.registry.revive_cooled_nodes(self.dead_cooldown)
         # CL-3 (#811 audit 0906): backpressure. Reject overflow fast instead
         # of piling unbounded inflight onto a slow peer. A request that
         # cannot acquire the cap returns a NodeUnavailableError so the caller
@@ -531,12 +594,11 @@ class FailoverRouter:
                     self.max_retries + 1,
                     exc.reason,
                 )
-                if self.monitor is not None:
-                    await self.registry.mark_dead(exc.node_id, exc.reason)
-                else:
-                    # Without a monitor the router still excludes the failed
-                    # node from the next selection by marking it dead locally.
-                    await self.registry.mark_dead(exc.node_id, exc.reason)
+                # #1065: the prior code had an if/else here that both branches
+                # called mark_dead — dead code. The node is excluded from the
+                # next selection either way (monitor or not). Passive revival
+                # for the no-monitor case happens at the top of route().
+                await self.registry.mark_dead(exc.node_id, exc.reason)
                 if stream:
                     # E-47 (#811): distinguish a mid-stream failure (some
                     # output already delivered to the client) from a
