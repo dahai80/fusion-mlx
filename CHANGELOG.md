@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed — reranker/embedding/NER token-count hardening (#1062)
+- **#1062**: three engine bugs.
+  - `reranker.py`: `max_content_tokens = max_length - prefix - suffix` had
+    no lower bound → a small `max_length` fed a negative value to
+    `tokenizer(max_length=...)` → crash. Fix: clamp to 0 + warn.
+  - `embedding.py`: `max(len(ids) for ids in encoded_ids)` raised
+    `ValueError` on empty input (`embed([])` with non-callable processor).
+    Fix: `max(..., default=0)`.
+  - `ner.py`: `total_tokens` used `len(text.split())` — space-split is
+    wrong for CJK (一段中文 = 1 word but ~N tokens). Fix: use the GLiNER
+    tokenizer's `encode()` when available, fall back to a char-based
+    estimate (more honest for CJK than space-split).
+
 ### Fixed — engine_core abort/close race leaves ctx lingering (#1056)
 - **#1056**: `EngineCore.abort_request` returned `False` on `_closed=True`
   without putting a terminal output or marking the request finished → a
