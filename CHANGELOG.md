@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed — video generation telemetry fills real values (#1042)
+- **#1042**: `/v1/videos/generate` telemetry hardcoded `prompt_tokens=0`,
+  `ttft_ms=0.0`, `tps=0.0`, distorting metrics. Fix: `prompt_tokens` now
+  estimated from prompt length (4 chars ≈ 1 token, min 1); `ttft_ms` is the
+  actual generation duration measured via `perf_counter`; `tps` is videos
+  per second (completion_tokens / elapsed_seconds).
+
 ### Fixed — /audio/transcriptions temperature returns 422 instead of silent ignore (#1041)
 - **#1041**: `/audio/transcriptions` accepted a `temperature` parameter for
   OpenAI API compatibility but silently ignored it (comment self-admitted "not
