@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.10.8] — 2026-10-09
+
+Patch release collecting 11 fixes/features (#1026–#1143): spec-decode
+default-on efficiency fix, Mandarin TTS, MiniMax-H3 detection, 3D multiview
+warning, admin advanced-config + job panels, prefix-cache latency metrics.
+All changes are drop-in; no breaking API surface changes.
+
 ### Fixed — spec decode silently off on default-profile serves (efficiency)
 - The profile presets advertise spec decode as default-on for
   standard/full/turbo (`_PRESET_SPEC_DEFAULT`), and the startup banner even
