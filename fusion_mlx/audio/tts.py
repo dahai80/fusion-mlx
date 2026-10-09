@@ -190,6 +190,27 @@ class TTSEngine:
         try:
             import mlx.core as mx
 
+            # #1085: Kokoro is language-blind at the model level — the G2P
+            # frontend is chosen by lang_code. The default English pipeline
+            # ("a") phonemizes CJK text through espeak and produces gibberish
+            # (whisper transcribes it back as "Chinese letter"). Route CJK
+            # text to the Chinese pipeline ("z" → misaki ZHG2P,
+            # pypinyin+jieba), normalize K-12 math notation, and override
+            # the default English voice to a Mandarin voice.
+            if self._model_family == "kokoro":
+                from ..audio.cjk import (
+                    is_cjk_text,
+                    is_mandarin_voice,
+                    normalize_cjk_text,
+                )
+
+                if is_cjk_text(text):
+                    lang_code = "z"
+                    text = normalize_cjk_text(text)
+                    if not is_mandarin_voice(voice):
+                        voice = "zf_xiaoxiao"
+                        logger.info("CJK text: overriding voice to zf_xiaoxiao")
+
             audio_chunks = []
             sample_rate = 24000
 

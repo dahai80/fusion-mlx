@@ -183,6 +183,29 @@ class TTSEngine(BaseNonStreamingEngine):
                     gk["voice"] = _resolved_voice
                 elif "instruct" in gp:
                     gk["instruct"] = _resolved_voice
+            # #1085: Kokoro CJK routing — route CJK text to the Chinese G2P
+            # pipeline ("z" → misaki ZHG2P, pypinyin+jieba), normalize K-12
+            # math notation, and override the default English voice to a
+            # Mandarin voice (zf_xiaoxiao) so Mandarin lines synthesize
+            # correctly instead of producing gibberish phonemes.
+            if self._model_family == "kokoro":
+                from ..audio.cjk import (
+                    is_cjk_text,
+                    is_mandarin_voice,
+                    normalize_cjk_text,
+                )
+
+                if is_cjk_text(text):
+                    gk["lang_code"] = "z"
+                    gk["text"] = normalize_cjk_text(text)
+                    if not is_mandarin_voice(voice):
+                        _zh_voice = TTSEngine._resolve_model_voice(model, "zf_xiaoxiao")
+                        if _zh_voice is not None:
+                            if "voice" in gp:
+                                gk["voice"] = _zh_voice
+                            elif "instruct" in gp:
+                                gk["instruct"] = _zh_voice
+                        logger.info("CJK text: overriding voice to zf_xiaoxiao")
             if instructions is not None and "instruct" in gp:
                 gk["instruct"] = instructions
             if speed != 1.0:
