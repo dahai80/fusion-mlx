@@ -782,4 +782,18 @@ def resolve_vocab_size(model) -> int | None:
         vs = getattr(args, "vocab_size", None)
         if isinstance(vs, int):
             return vs
+        # 多模态模型 (qwen3_5 等) 顶层 args.vocab_size 为 None，
+        # 真实词表大小嵌在 args.text_config 里 (dict 或对象)。
+        # 不查此路径 → resolve_vocab_size 返回 None → scheduler 跳过
+        # grammar 约束 → 模型自由输出非结构化文本 (#1153)。
+        text_cfg = getattr(args, "text_config", None)
+        if text_cfg is not None:
+            if isinstance(text_cfg, dict):
+                vs2 = text_cfg.get("vocab_size")
+                if isinstance(vs2, int):
+                    return vs2
+            else:
+                vs2 = getattr(text_cfg, "vocab_size", None)
+                if isinstance(vs2, int):
+                    return vs2
     return None
