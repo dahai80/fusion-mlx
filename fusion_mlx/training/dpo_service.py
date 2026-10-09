@@ -267,8 +267,16 @@ class DPOService:
         logger.info(
             "%s execute: model=%s job=%s", cfg.method.upper(), model_path, job.job_id
         )
+        if cfg.init_adapter_path:
+            logger.info(
+                "%s: chaining on SFT adapter %s (#1149)",
+                cfg.method.upper(),
+                cfg.init_adapter_path,
+            )
 
-        model, tokenizer = mlx_utils.load(model_path)
+        model, tokenizer = mlx_utils.load(
+            model_path, adapter_path=cfg.init_adapter_path or None
+        )
 
         mx.random.seed(cfg.seed)
         model.freeze()

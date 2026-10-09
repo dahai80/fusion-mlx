@@ -42,6 +42,7 @@ class DPOConfig:
     lambda_odds: float = 1.0  # ORPO odds-ratio penalty weight
     max_seq_length: int = 1024
     seed: int = 0
+    init_adapter_path: str = ""  # SFT adapter to chain DPO on (#1149)
 
     def to_dict(self):
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
