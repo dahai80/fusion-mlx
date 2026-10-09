@@ -47,6 +47,25 @@ def set_ollama_context(pool: Any) -> None:
     _pool = pool
 
 
+def _entry_context_length(entry) -> int | None:
+    if entry is None:
+        return None
+    ctx = getattr(entry, "model_context_length", None)
+    if ctx and ctx > 0:
+        return ctx
+    engine = getattr(entry, "engine", None)
+    if engine is not None:
+        try:
+            from ..service.helpers import get_model_max_context
+
+            ctx = get_model_max_context(engine)
+            if ctx and ctx > 0:
+                return ctx
+        except Exception:
+            logger.debug("context_length: engine lookup failed")
+    return None
+
+
 # =============================================================================
 # Ollama request / response models
 # =============================================================================
@@ -507,6 +526,17 @@ async def api_tags(
                 or getattr(entry, "actual_size", 0)
                 or 0
             )
+        details = {
+            "parent_model": "",
+            "format": "gguf",
+            "family": mid.split("-")[0] if "-" in mid else mid,
+            "families": [mid.split("-")[0] if "-" in mid else mid],
+            "parameter_size": "",
+            "quantization_level": "",
+        }
+        ctx_len = _entry_context_length(entry)
+        if ctx_len is not None and ctx_len > 0:
+            details["context_length"] = ctx_len
         models.append(
             {
                 "name": mid,
@@ -516,14 +546,7 @@ async def api_tags(
                 ),
                 "size": size,
                 "digest": "sha256:" + uuid.uuid4().hex[:64],
-                "details": {
-                    "parent_model": "",
-                    "format": "gguf",
-                    "family": mid.split("-")[0] if "-" in mid else mid,
-                    "families": [mid.split("-")[0] if "-" in mid else mid],
-                    "parameter_size": "",
-                    "quantization_level": "",
-                },
+                "details": details,
             }
         )
 
@@ -578,24 +601,30 @@ async def api_show(
         or "llm"
     )
     size = entry.last_observed_size or entry.actual_size or entry.estimated_size or 0
+    details = {
+        "parent_model": "",
+        "format": "mlx",
+        "family": family,
+        "families": [family],
+        "parameter_size": "",
+        "quantization_level": "",
+    }
+    model_info = {
+        "general.architecture": family,
+        "general.file_type": "mlx",
+    }
+    ctx_len = _entry_context_length(entry)
+    if ctx_len is not None and ctx_len > 0:
+        details["context_length"] = ctx_len
+        model_info["llm.context_length"] = ctx_len
     return JSONResponse(
         {
             "name": resolved,
             "modified_at": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
             "size": size,
             "digest": "sha256:" + uuid.uuid4().hex[:64],
-            "details": {
-                "parent_model": "",
-                "format": "mlx",
-                "family": family,
-                "families": [family],
-                "parameter_size": "",
-                "quantization_level": "",
-            },
-            "model_info": {
-                "general.architecture": family,
-                "general.file_type": "mlx",
-            },
+            "details": details,
+            "model_info": model_info,
             "modelfile": f"# Modelfile for {resolved}\nFROM {resolved}\n",
             "parameters": "",
         }

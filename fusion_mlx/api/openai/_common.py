@@ -94,6 +94,28 @@ def _resolve_capabilities(model_id: str) -> dict:
     return caps
 
 
+def _resolve_context_length(model_id: str) -> int | None:
+    if _pool is None:
+        return None
+    entry = _pool.get_entry(model_id)
+    if entry is None:
+        return None
+    ctx = getattr(entry, "model_context_length", None)
+    if ctx and ctx > 0:
+        return ctx
+    engine = getattr(entry, "engine", None)
+    if engine is not None:
+        try:
+            from ...service.helpers import get_model_max_context
+
+            ctx = get_model_max_context(engine)
+            if ctx and ctx > 0:
+                return ctx
+        except Exception:
+            logger.debug("context_length: engine lookup failed for %s", model_id)
+    return None
+
+
 def set_openai_context(pool: EnginePool, req_router: RequestRouter) -> None:
     """Inject engine pool and request router into this module."""
     global _pool, _request_router
