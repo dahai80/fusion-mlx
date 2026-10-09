@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed — grammar constraint silently skipped for multimodal models (#1153)
+- `resolve_vocab_size` (`utils/tokenizer.py`) only checked `args.vocab_size`
+  for multimodal models — never descended into `args.text_config`. When
+  `args.vocab_size` was `None` (common for qwen3_5 and other multimodal
+  architectures), all paths returned `None`, the scheduler logged
+  "Cannot determine vocab_size; skipping grammar constraint", and the
+  logits processor was never attached. The model produced unconstrained
+  free text with `200 OK`.
+- Fix: `args` branch now descends into `args.text_config` (both dict and
+  object forms), mirroring the existing `config.text_config` logic.
+- Tests: 3 new tests in `test_resolve_vocab_size_g5.py` — dict text_config,
+  object text_config, missing vocab_size returns None.
+
 ### Added — DPO init_adapter_path for two-stage SFT→DPO chaining (#1149)
 - `DPOConfig` gained `init_adapter_path: str = ""` field. When set, the
   DPO/ORPO policy model loads with the specified SFT adapter chained on
