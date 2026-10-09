@@ -102,4 +102,12 @@ async def list_grammar_parsers(is_admin: bool = Depends(require_admin)):
         return []
 
 
+@_router.get("/api/grammar/aliases")
+async def list_grammar_aliases_route(is_admin: bool = Depends(require_admin)):
+    """Return registered grammar aliases (e.g. bnup-socratic) for API use."""
+    from fusion_mlx.api.grammar_aliases import list_grammar_aliases
+
+    return list_grammar_aliases()
+
+
 router = _router

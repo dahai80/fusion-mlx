@@ -91,6 +91,14 @@ def _compile_grammar_for_request(engine, req: ChatCompletionRequest):
     if grammar_spec is None:
         return None
 
+    if "grammar" in grammar_spec and isinstance(grammar_spec["grammar"], str):
+        from ..grammar_aliases import resolve_grammar_alias
+
+        resolved = resolve_grammar_alias(grammar_spec["grammar"])
+        if resolved is not None:
+            grammar_spec["grammar"] = resolved["grammar"]
+            grammar_spec["format"] = resolved["format"]
+
     if backend == GrammarBackend.LLGUIDANCE:
         from ..grammar import create_llguidance_matcher
 
