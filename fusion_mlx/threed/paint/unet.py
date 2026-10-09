@@ -205,8 +205,10 @@ class TransformerBlock(nn.Module):
         h = h + self.attn2(n2, ctx_text) + self.attn_dino(n2, ctx_dino)
         # ctx_mv / ctx_ref: per-block dim matching `dim`. When None (structural
         # scaffold / single-view), zeros -> cross-attn no-op.
-        # TODO(reference): real multiview forward runs 6 views jointly with
-        # cross-view attention; ctx_mv = the 6 views' tokens at this block dim.
+        # #1026: real multiview forward runs 6 views jointly with cross-view
+        # attention; ctx_mv = the 6 views' tokens at this block dim. Until
+        # implemented, the orchestrator broadcasts a single texture to all 6
+        # views and surfaces a warning in the API response.
         B, N, D = n2.shape
         if ctx_mv is None:
             ctx_mv = mx.zeros((B, N, D), dtype=n2.dtype)
