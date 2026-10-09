@@ -192,6 +192,9 @@ DIFFUSERS_PIPELINE_TASKS = {
     # returns False and the FL2VA/Ref2VA partitions are never discovered
     # (#597). Partition (fl2va/ref2va) is resolved by MiniMaxH3Backend.detect.
     "MiniMaxH3Pipeline": "text-to-video",
+    # Official MiniMaxAI/MiniMax-H3 ships MiniMaxH3ModularPipeline (modular
+    # diffusers layout with FL2VA/ subdirs); same video backend as above.
+    "MiniMaxH3ModularPipeline": "text-to-video",
     # Qwen-Image-2.1 ships model_index.json with _class_name=
     # "QwenImage21Pipeline" and a 4-channel RGBA VAE (out_channels=4).
     # Without this entry _is_image_model returns False (no task manifest,
@@ -1353,8 +1356,11 @@ def _is_video_model(path: Path) -> bool:
         return p.is_dir() or p.is_symlink()
 
     has_diffusers_subdirs = any(
-        _has_diffusers_subdir(sub) for sub in ("vae", "transformer", "audio_vae", "dit")
-    )
+        _has_diffusers_subdir(sub)
+        for sub in ("vae", "transformer", "audio_vae", "dit")
+        # Official MiniMaxAI/MiniMax-H3 nests its diffusers layout one level
+        # deeper under FL2VA/ (vae/transformer/audio_vae live in that subfolder).
+    ) or _has_diffusers_subdir("FL2VA")
     if _is_task_model(path, "text-to-video"):
         # #947: model_index.json-declared diffusers pipeline (e.g. LTX-Video
         # legacy single-file layout, one ltxv-*.safetensors with transformer
@@ -1392,6 +1398,19 @@ def _is_video_model(path: Path) -> bool:
     # subdirs. Discovered as video; load tracked in #762.
     if _is_flat_ltx2_5_layout(path):
         return True
+    # MiniMax-H3 DiT-only layout (pipenetwork quantized forks): config.json has
+    # _class_name="MiniMaxH3DiTModel" but no model_type field, no
+    # model_index.json and no diffusers subdirs — without this branch the repo
+    # is misdetected as an LLM and mlx_lm raises KeyError('model_type') on load.
+    try:
+        with open(path / "config.json") as f:
+            cfg = json.load(f)
+        if cfg.get("_class_name", "").startswith("MiniMaxH3") and any(
+            p.suffix == ".safetensors" for p in path.iterdir() if p.is_file()
+        ):
+            return True
+    except (OSError, json.JSONDecodeError):
+        pass
     # Wan2.2 models ship config.json with model_type in {t2v, i2v, ti2v} but
     # may omit the configuration.json task manifest. These sub-types are
     # unambiguous video types (no LLM uses them), so accept them when the
