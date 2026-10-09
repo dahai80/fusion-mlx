@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed — 3D multiview texture approximation now surfaced as warning (#1026)
+- **#1026**: The 3D generation paint diffusion pipeline currently generates a
+  single texture and broadcasts it to all 6 rasterized views — true multiview
+  texture generation (6 distinct view textures with cross-view attention) is
+  not yet implemented. This approximation is now explicitly surfaced as a
+  `warnings` field in the `ThreeDGenerateResponse` so clients know the texture
+  quality is approximate. The orchestrator logs a warning and exposes
+  `last_warnings`; the route handler wires them into the response.
+
 ### Added — Mandarin (zh-CN) TTS support (#1085)
 - **#1085**: Kokoro TTS now produces correct Mandarin output automatically:
   1. **Language-aware routing**: CJK text detected via Unicode range check →

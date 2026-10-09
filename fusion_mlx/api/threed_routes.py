@@ -52,6 +52,9 @@ class ThreeDGenerateResponse(BaseModel):
     vertices: int
     faces: int
     bytes: int
+    # #1026: surface non-fatal warnings (e.g. single-texture multiview
+    # approximation) so clients know the output is not production-grade.
+    warnings: list[str] = Field(default_factory=list)
 
 
 def set_threed_context(pool: Any, server_state: Any) -> None:
@@ -204,6 +207,21 @@ async def generate_3d(
         n_faces,
         len(glb_bytes),
     )
+    # #1026: the paint diffusion pipeline currently generates a single texture
+    # and broadcasts it to all 6 rasterized views — real multiview texture
+    # generation (6 distinct view textures with cross-view attention) is not
+    # yet implemented. Surface this as a warning so clients know the texture
+    # quality is approximate.
+    warnings: list[str] = []
+    single_texture_warning = getattr(orch, "last_warnings", None)
+    if single_texture_warning:
+        warnings.extend(single_texture_warning)
+    else:
+        warnings.append(
+            "single_texture_multiview_approximation: a single diffusion "
+            "texture is broadcast to all 6 views; multiview texture "
+            "generation is not yet implemented (#1026)"
+        )
     return ThreeDGenerateResponse(
         created=int(time.time()),
         model=_HUNYUAN3D_SUBDIR,
@@ -212,4 +230,5 @@ async def generate_3d(
         vertices=n_verts,
         faces=n_faces,
         bytes=len(glb_bytes),
+        warnings=warnings,
     )

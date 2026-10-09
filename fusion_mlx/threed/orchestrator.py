@@ -61,6 +61,8 @@ class ThreeDOrchestrator:
         self._dit = None
         self._shape_vae = None
         self._paint = None
+        # #1026: surface non-fatal warnings from the last generation run.
+        self.last_warnings: list[str] = []
 
     # --- shape stages ---
 
@@ -142,8 +144,16 @@ class ThreeDOrchestrator:
         # rasterize 6 views for bake-back.
         azims, elevs = _DEFAULT_VIEWS
         raster = rasterize_views(verts, faces, normals, azims, elevs, res=raster_res)
-        # paint diffusion -> single texture (applied across all 6 views;
-        # real multiview generates 6 distinct view textures — TODO reference).
+        # #1026: paint diffusion -> single texture (applied across all 6 views;
+        # real multiview generates 6 distinct view textures with cross-view
+        # attention — not yet implemented). Surface a warning so clients know
+        # the texture quality is approximate.
+        self.last_warnings = [
+            "single_texture_multiview_approximation: a single diffusion "
+            "texture is broadcast to all 6 views; multiview texture "
+            "generation is not yet implemented (#1026)"
+        ]
+        logger.warning(self.last_warnings[0])
         texture = self.paint.denoise(
             ref_image, steps=paint_steps, guidance_scale=paint_guidance, seed=seed
         )
