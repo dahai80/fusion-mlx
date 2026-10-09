@@ -193,3 +193,28 @@ def profile_from_config(config) -> ServerProfile:
     explicit = getattr(config, "profile", None)
     disabled_modules = getattr(config, "disabled_modules", None)
     return resolve_profile(explicit=explicit, disabled_modules=disabled_modules)
+
+
+def resolve_spec_decode_from_profile(
+    current_spec_decode: str | None,
+    profile_name: str | None,
+) -> str | None:
+    """Bridge profile preset spec-decode default to the CLI spec_decode arg.
+
+    Profiles advertise spec decode as default-on (standard/full/turbo via
+    _PRESET_SPEC_DEFAULT) and the startup banner prints "spec_decode=ON
+    (default)", but the argparse default is "none" — so without this bridge
+    every default-profile serve ran stock decode with the MTP/suffix
+    speedups silently off. When the operator hasn't selected a method
+    ("none") and the active profile is default-on, return "auto" so the
+    SpecAutoRouter picks MTP for eligible checkpoints and n-gram suffix
+    otherwise. Returns None when no change is needed (operator chose a
+    method, or profile is default-off like "lite").
+    """
+    if current_spec_decode and current_spec_decode != "none":
+        return None
+    if not profile_name:
+        return None
+    if _PRESET_SPEC_DEFAULT.get(profile_name, True):
+        return "auto"
+    return None

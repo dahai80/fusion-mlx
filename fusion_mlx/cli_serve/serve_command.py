@@ -686,6 +686,42 @@ def serve_command(args):
         print(f"Chunked prefill: {args.chunked_prefill_tokens} tokens per step")
     if args.enable_mtp:
         print(f"MTP: enabled, draft_tokens={args.mtp_num_draft_tokens}")
+    # Profile-driven spec-decode default (#efficiency). The profile
+    # presets advertise spec decode as default-on for standard/full/turbo
+    # (_PRESET_SPEC_DEFAULT) and the startup banner even prints
+    # "spec_decode=ON(default)" — but the argparse default is "none" and
+    # nothing bridged the preset to args.spec_decode, so every standard
+    # profile serve ran stock decode with the +52% MTP speedup silently
+    # left on the table. When the operator hasn't selected a method and
+    # the active profile is default-on, resolve to "auto" so the
+    # auto-router below picks MTP for eligible checkpoints and n-gram
+    # suffix (zero GPU cost) for the rest. "lite" stays OFF. An explicit
+    # --spec-decode none (operator opt-out) must still win, so we detect
+    # whether the flag appeared in argv — argparse can't distinguish the
+    # default "none" from an explicit "none" on its own.
+    if getattr(args, "spec_decode", "none") == "none":
+        _spec_explicit = any(
+            a == "--spec-decode" or a.startswith("--spec-decode=") for a in sys.argv
+        )
+        if not _spec_explicit:
+            _prof = getattr(args, "profile", None)
+            if not _prof:
+                from fusion_mlx._cli_base import _settings_profile as _sp
+
+                _prof = _sp() or "standard"
+            from fusion_mlx.profile import resolve_spec_decode_from_profile
+
+            _resolved = resolve_spec_decode_from_profile(
+                getattr(args, "spec_decode", "none"), _prof
+            )
+            if _resolved is not None:
+                args.spec_decode = _resolved
+                logger.info(
+                    "spec-decode: profile %s default-on -> auto "
+                    "(MTP for eligible checkpoints, n-gram suffix "
+                    "otherwise; pass --spec-decode none to opt out)",
+                    _prof,
+                )
     # --spec-decode auto: ask SpecAutoRouter to pick a zero-config
     # method (mtp for MTP-eligible checkpoints, n-gram suffix otherwise)
     # from the model's shape. Drafter-backed methods stay operator-
@@ -731,6 +767,26 @@ def serve_command(args):
         args.enable_dspark = False
         apply_resolution(args, _resolution)
         print(f"Spec-decode: auto → {_resolution.cli_target} ({_resolution.reason})")
+        # Back-fill scheduler_config: it was built above (before auto-resolve
+        # mutated args), so a resolved n-gram suffix never reached
+        # enable_suffix_decoding. MTP-eligible models are handled by the
+        # reconciliation below (sets scheduler_config.mtp_model_type, which
+        # the BatchedEngine dispatch gate keys on); suffix needs this explicit
+        # propagation or the engine sees enable_suffix_decoding=False and
+        # runs stock decode despite auto resolving to suffix.
+        if getattr(args, "suffix_decoding", False):
+            scheduler_config.enable_suffix_decoding = True
+            scheduler_config.suffix_max_draft = getattr(args, "suffix_max_draft", 8)
+            scheduler_config.suffix_max_suffix_len = getattr(
+                args, "suffix_max_suffix_len", 4
+            )
+            scheduler_config.suffix_min_confidence = getattr(
+                args, "suffix_min_confidence", 0.3
+            )
+            scheduler_config.suffix_min_draft_len = getattr(
+                args, "suffix_min_draft_len", 2
+            )
+            logger.info("spec-decode: n-gram suffix back-filled to scheduler_config")
     # R15-P1 #302: native Qwen3.5/3.6 MTP via vendored mlx-lm PR #990.
     # Banner line + boot-time eligibility check fires here so misuse
     # (--spec-decode mtp on a non-Qwen3.5/3.6 model) bounces with a
