@@ -127,6 +127,47 @@ class TestEstimateModelSize:
         # 4K * 1.05 = 4200, nothing dropped.
         assert 4000 <= result <= 4400
 
+    def test_h3_multicomponent_lora_not_counted(self, tmp_path):
+        # H3 ddalcu 4bit: root has turbo_lora.safetensors (0.78GB) + subdir
+        # weights (transformer/ + text_encoder/ + video_vae/ + audio_vae/).
+        # Before fix: only LoRA counted -> 0.76GB (wrong). After: LoRA excluded,
+        # subdir weights summed.
+        model_dir = tmp_path / "h3-4bit"
+        model_dir.mkdir()
+        (model_dir / "turbo_lora.safetensors").write_bytes(b"\x00" * 780)
+        (model_dir / "transformer").mkdir()
+        (model_dir / "transformer" / "model.safetensors").write_bytes(
+            b"\x00" * (18 * 1024)
+        )
+        (model_dir / "text_encoder").mkdir()
+        (model_dir / "text_encoder" / "model.safetensors").write_bytes(
+            b"\x00" * (15 * 1024)
+        )
+        (model_dir / "video_vae").mkdir()
+        (model_dir / "video_vae" / "model.safetensors").write_bytes(
+            b"\x00" * (5 * 1024)
+        )
+        result = estimate_model_size(model_dir)
+        # 38KB * 1.05 = 39936, LoRA 780B excluded. Without fix: 780 * 1.05 = 819.
+        assert (
+            result >= 38000
+        ), f"got {result} (expected >=38000, LoRA must be excluded)"
+
+    def test_h3_multicomponent_no_root_safetensors(self, tmp_path):
+        # H3 full model: no root safetensors, all in subdirs.
+        model_dir = tmp_path / "h3-full"
+        model_dir.mkdir()
+        (model_dir / "FL2VA").mkdir()
+        (model_dir / "FL2VA" / "transformer.safetensors").write_bytes(
+            b"\x00" * (60 * 1024)
+        )
+        (model_dir / "FL2VA" / "text_encoder.safetensors").write_bytes(
+            b"\x00" * (10 * 1024)
+        )
+        result = estimate_model_size(model_dir)
+        # 70KB * 1.05 = 73728
+        assert result >= 70000, f"got {result} (expected >=70000)"
+
 
 class TestFormatSize:
     def test_format_bytes(self):
