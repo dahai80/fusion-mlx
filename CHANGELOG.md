@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Fixed — MiniMax-H3 quantized fork repos misdetected as LLM (#1137)
+- **#1137**: Three discovery + weight-loading fixes for MiniMax-H3 repos
+  that ship non-standard layouts:
+  1. DiT-only forks (`pipenetwork--MiniMax-H3-MLX-4bit`): `config.json` with
+     `_class_name="MiniMaxH3DiTModel"` but no `model_type` field, no
+     `model_index.json`, no diffusers subdirs — previously fell through to LLM
+     and raised `KeyError('model_type')` on load. Now `_is_video_model` accepts
+     a repo whose `config.json` has `_class_name` starting with `MiniMaxH3`
+     plus at least one root `.safetensors`.
+  2. Official `MiniMaxAI/MiniMax-H3`: `MiniMaxH3ModularPipeline` added to
+     `DIFFUSERS_PIPELINE_TASKS`, and `FL2VA/` subdir treated as satisfying the
+     diffusers-subdir gate (official repo nests subdirs one level deeper).
+  3. ddalcu fork: `MiniMaxH3AudioVAE.from_pretrained` now globs for any
+     `*.safetensors` when `model.safetensors` is absent (handles
+     `audio_vae.safetensors`), and `_apply_decode_weights` supports fused
+     `weight_norm` tensors (flat `weight` without `weight_g`/`weight_v` pair)
+     for `decoder.conv_pre`.
+
 ### Added — admin Scheduler/Memory/Cloud advanced config tab (#1076)
 - **#1076**: The admin Settings page now exposes the low-level
   SchedulerConfig, MemoryConfig (advanced), and cloud-routing fields that

@@ -65,11 +65,28 @@ class MiniMaxH3AudioVAE(nn.Module):
 
     @classmethod
     def from_pretrained(cls, path):
-        # path: audio_vae 目录或 model.safetensors 路径。
+        # path: audio_vae 目录或 .safetensors 路径。
         # 加载 914 decode 权重，weight_norm 重建 + 布局转置。
+        # #1137: fork repos (ddalcu) ship audio_vae.safetensors instead of
+        # model.safetensors — glob for any .safetensors like the transformer/
+        # vae loaders do, preferring model.safetensors when present.
+        import glob
+
         model_file = path
         if os.path.isdir(path):
-            model_file = os.path.join(path, "model.safetensors")
+            canonical = os.path.join(path, "model.safetensors")
+            if os.path.isfile(canonical):
+                model_file = canonical
+            else:
+                candidates = sorted(glob.glob(os.path.join(path, "*.safetensors")))
+                if candidates:
+                    model_file = candidates[0]
+                    logger.info(
+                        "AudioVAE: model.safetensors absent, using %s",
+                        os.path.basename(model_file),
+                    )
+                else:
+                    model_file = canonical
         if not os.path.isfile(model_file):
             raise FileNotFoundError(
                 f"AudioVAE weights not found: {model_file}. "
@@ -119,11 +136,19 @@ def _apply_decode_weights(model, tensors):
     out["dec_in_proj.bias"] = mx.array(tensors["dec_in_proj.bias"], dtype=mx.float32)
 
     # decoder.conv_pre（weight_norm Conv1d）。
-    out["decoder.conv_pre.weight"] = _conv1d_to_mlx(
-        reconstruct_weight_norm(
-            tensors["decoder.conv_pre.weight_g"], tensors["decoder.conv_pre.weight_v"]
+    # ddalcu 4bit 仓库已把 weight_norm 融合成扁平 weight（无 weight_g/weight_v），
+    # 直接使用；官方 weight_norm 拆分格式才走重建。
+    if "decoder.conv_pre.weight_g" in tensors:
+        out["decoder.conv_pre.weight"] = _conv1d_to_mlx(
+            reconstruct_weight_norm(
+                tensors["decoder.conv_pre.weight_g"],
+                tensors["decoder.conv_pre.weight_v"],
+            )
         )
-    )
+    else:
+        out["decoder.conv_pre.weight"] = _conv1d_to_mlx(
+            tensors["decoder.conv_pre.weight"]
+        )
     out["decoder.conv_pre.bias"] = mx.array(
         tensors["decoder.conv_pre.bias"], dtype=mx.float32
     )
