@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added — BNUP Socratic DSL v3.0 GBNF grammar (#1142)
+- New `fusion_mlx/grammars/socratic_dsl_v3.gbnf` — GBNF grammar constraining
+  model output to `<thinking>` + `<dsl>` structure with the 8-value
+  `visual_type` enum (array_grid/tape_diagram/geometry_2d/isometric_3d/
+  track_timeline/bucket_divider/data_chart/flow_card) and pipeline step
+  schema (step/title/formula/eval/result_unit/visual_state).
+- Grammar alias `"bnup-socratic"` — pass via API `structured_outputs.grammar`
+  or admin panel; resolved by `fusion_mlx/api/grammar_aliases.py`.
+- New `/api/grammar/aliases` admin route lists registered grammar aliases.
+- Tests: `tests/unit/test_bnup_gbnf_grammar.py` — 12 tests covering
+  compilation, alias resolution, valid/invalid visual_type, CJK thinking,
+  tag structure enforcement.
+
 ## [0.10.8] — 2026-10-09
 
 Patch release collecting 11 fixes/features (#1026–#1143): spec-decode

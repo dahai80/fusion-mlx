@@ -1,0 +1,56 @@
+# BNUP Socratic DSL v3.0 — GBNF grammar for constrained generation.
+#
+# Constrains model output to:
+#   <thinking>free-text CoT</thinking><dsl>{meta/parameters/entities/pipeline}</dsl>
+#
+# The thinking block allows any free text (including CJK) except the literal
+# sequence "</" which would start the closing tag.  The DSL block enforces a
+# fixed JSON structure with the visual_type 8-value enum and the pipeline
+# step schema (step/title/formula/eval/result_unit/visual_state).
+#
+# Alias: "bnup-socratic"  (see fusion_mlx/api/grammar_aliases.py)
+# Spec:  architecture/k12-train-model-autumation-1009.md GBNF语法强约束配置
+
+root ::= thinking-block dsl-block
+
+# thinking block — free text (incl CJK) between tags; "</" triggers close
+thinking-block ::= "<thinking>" thinking-text "</thinking>"
+thinking-text ::= thinking-char*
+thinking-char ::= [^<] | "<" [^/]
+
+# dsl block
+dsl-block ::= "<dsl>" ws dsl-json ws "</dsl>"
+
+# Top-level DSL: required keys in fixed order
+dsl-json ::= "{" ws "\"meta\"" ws ":" ws meta-obj ws "," ws "\"parameters\"" ws ":" ws parameters-obj ws "," ws "\"entities\"" ws ":" ws entities-arr ws "," ws "\"pipeline\"" ws ":" ws pipeline-arr ws "}"
+
+# meta: id/grade/topic/visual_type/fallback_type
+meta-obj ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"grade\"" ws ":" ws integer ws "," ws "\"topic\"" ws ":" ws string ws "," ws "\"visual_type\"" ws ":" ws visual-type-enum ws "," ws "\"fallback_type\"" ws ":" ws visual-type-enum ws "}"
+
+# 8 visual primitives (Socratic DSL v3.0)
+visual-type-enum ::= "\"array_grid\"" | "\"tape_diagram\"" | "\"geometry_2d\"" | "\"isometric_3d\"" | "\"track_timeline\"" | "\"bucket_divider\"" | "\"data_chart\"" | "\"flow_card\""
+
+# parameters: flexible key-value object
+parameters-obj ::= "{" ws (string ws ":" ws value (ws "," ws string ws ":" ws value)*)? ws "}"
+
+# entities: array of flexible objects
+entities-arr ::= "[" ws (entity-obj (ws "," ws entity-obj)*)? ws "]"
+entity-obj ::= "{" ws (string ws ":" ws value (ws "," ws string ws ":" ws value)*)? ws "}"
+
+# pipeline: each step has step/title/formula/eval/result_unit/visual_state
+pipeline-arr ::= "[" ws pipeline-step (ws "," ws pipeline-step)* ws "]"
+pipeline-step ::= "{" ws "\"step\"" ws ":" ws integer ws "," ws "\"title\"" ws ":" ws string ws "," ws "\"formula\"" ws ":" ws string ws "," ws "\"eval\"" ws ":" ws string ws "," ws "\"result_unit\"" ws ":" ws string ws "," ws "\"visual_state\"" ws ":" ws visual-state-obj ws "}"
+
+visual-state-obj ::= "{" ws (string ws ":" ws value (ws "," ws string ws ":" ws value)*)? ws "}"
+
+# JSON primitives
+value ::= object | array | string | number | "true" | "false" | "null"
+object ::= "{" ws (string ws ":" ws value (ws "," ws string ws ":" ws value)*)? ws "}"
+array ::= "[" ws (value (ws "," ws value)*)? ws "]"
+string ::= "\"" string-char* "\""
+string-char ::= [^"\\] | "\\" escape-char
+escape-char ::= ["\\/bfnrt] | "u" hex-digit hex-digit hex-digit hex-digit
+hex-digit ::= [0-9a-fA-F]
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
+integer ::= "-"? ([0-9] | [1-9] [0-9]*)
+ws ::= [ \t\n]*
