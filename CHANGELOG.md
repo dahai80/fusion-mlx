@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Added — DPO init_adapter_path for two-stage SFT→DPO chaining (#1149)
+- `DPOConfig` gained `init_adapter_path: str = ""` field. When set, the
+  DPO/ORPO policy model loads with the specified SFT adapter chained on
+  (`mlx_utils.load(model_path, adapter_path=cfg.init_adapter_path)`),
+  enabling the BNUP two-stage pipeline (SFT domain injection → DPO
+  preference alignment). The reference model stays base-only
+  (`adapter_path=None`) as required by DPO theory.
+- Backward compatible: empty `init_adapter_path` (default) yields
+  `adapter_path=None`, identical to pre-fix behavior.
+- Tests: 5 new tests in `test_issue_399_dpo_orpo.py` — config default,
+  roundtrip, job dict, policy load passes adapter, backward compat.
+
 ## [v0.10.9] — 2026-10-10
 
 ### Fixed — context_length missing from /v1/models + Ollama API (#1147)
