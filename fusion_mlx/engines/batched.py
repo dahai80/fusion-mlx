@@ -429,6 +429,20 @@ class BatchedEngine(BaseEngine):
                         self._model_name,
                     )
 
+        # CLI master switch: --spec-decode none disables n-gram spec
+        # regardless of env default (NGRAM_SPEC_ENABLED=1) or model_settings
+        # absence.  Without this, the env var keeps n-gram spec on even when
+        # the operator explicitly opted out via --spec-decode none.
+        if (
+            not getattr(scheduler_config, "enable_suffix_decoding", False)
+            and getattr(scheduler_config, "spec_decode", "none") == "none"
+        ):
+            self._engine.engine.scheduler._ngram_spec_state = None
+            logger.info(
+                "N-gram spec disabled for %s (spec-decode=none, CLI master switch)",
+                self._model_name,
+            )
+
         # TurboQuant KV cache — auto-enable when model is eligible and no
         # explicit override was provided.  TurboQuant quantises the KV cache
         # from float16 to 4-bit, cutting memory traffic per decode step by

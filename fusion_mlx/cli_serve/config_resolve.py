@@ -312,6 +312,53 @@ def _serve_from_model_dir(args):
     _get_config().memory.tier = config.memory.tier
     _get_config().memory.custom_limit_mb = config.memory.custom_limit_mb
 
+    # Profile-driven spec-decode default (#efficiency, PR#1143 follow-up).
+    # The single-model serve_command path resolves profile default-on ->
+    # auto at line ~702. But start.sh runs in --model-dir discovery mode
+    # (it reads settings.json model.default, which is often unset, falling
+    # to discovery), so _serve_from_model_dir is the path that actually
+    # runs in production. Without this bridge, every discovery-mode serve
+    # ran stock decode with spec decode silently off despite the banner
+    # printing "Spec decode: ON(default)". Same argv-explicit detection as
+    # serve_command: an explicit --spec-decode none must still win.
+    if getattr(args, "spec_decode", "none") == "none":
+        import sys as _sys
+
+        _spec_explicit = any(
+            a == "--spec-decode" or a.startswith("--spec-decode=") for a in _sys.argv
+        )
+        if not _spec_explicit:
+            _prof_for_spec = config.profile or "standard"
+            from ..profile import resolve_spec_decode_from_profile
+
+            _resolved_spec = resolve_spec_decode_from_profile(
+                getattr(args, "spec_decode", "none"), _prof_for_spec
+            )
+            if _resolved_spec is not None:
+                args.spec_decode = _resolved_spec
+                logger.info(
+                    "spec-decode: profile %s default-on -> auto "
+                    "(discovery mode; pass --spec-decode none to opt out)",
+                    _prof_for_spec,
+                )
+    # --spec-decode auto: resolve to a concrete method via SpecAutoRouter.
+    # Discovery mode serves multiple models, so we can't probe a single
+    # model's config.json at boot. Instead, enable n-gram suffix (zero GPU
+    # cost, safe for all models) as the default auto resolution. MTP is
+    # handled per-model at load time via the BatchedEngine dispatch gate
+    # (mtp_model_type reconciliation in serve_command single-model path).
+    if getattr(args, "spec_decode", "none") == "auto":
+        args.spec_decode = "none"
+        args.suffix_decoding = True
+        if not getattr(args, "suffix_max_draft", 0):
+            args.suffix_max_draft = 8
+            args.suffix_max_suffix_len = 4
+            args.suffix_min_confidence = 0.3
+            args.suffix_min_draft_len = 2
+        logger.info(
+            "spec-decode: auto -> n-gram suffix (discovery mode, "
+            "per-model MTP handled at load time)"
+        )
     # Pass spec-decode / dflash2 / dspark CLI flags through to the engine
     # pool's scheduler_config. Without this, --enable-dflash2 +
     # --dflash2-drafter-path are silently dropped in --model-dir mode:

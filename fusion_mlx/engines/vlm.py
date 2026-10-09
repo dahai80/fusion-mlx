@@ -575,6 +575,25 @@ class VLMBatchedEngine(BaseEngine):
         # the per-request router (per_request_route.select_active_method,
         # engine-type-agnostic) assigns METHOD_NGRAM to VLM requests and
         # _try_spec_decode runs ngram_spec_step on them - same path as text.
+
+        # CLI master switch: --spec-decode none disables n-gram spec
+        # regardless of env default or model_settings absence.
+        if (
+            not getattr(self._scheduler_config, "enable_suffix_decoding", False)
+            and getattr(self._scheduler_config, "spec_decode", "none") == "none"
+        ):
+            try:
+                self._engine.engine.scheduler._ngram_spec_state = None
+                logger.info(
+                    "N-gram spec disabled for VLM %s (spec-decode=none, CLI master switch)",
+                    self._model_name,
+                )
+            except Exception as e:
+                logger.warning(
+                    "N-gram spec disable failed for VLM %s: %s", self._model_name, e
+                )
+            return
+
         if self._model_settings is None:
             return
         ns_enabled = getattr(self._model_settings, "ngram_spec_enabled", None)

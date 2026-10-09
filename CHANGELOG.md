@@ -15,6 +15,29 @@
   compilation, alias resolution, valid/invalid visual_type, CJK thinking,
   tag structure enforcement.
 
+### Fixed — spec decode off on discovery-mode serves + model_settings default (#1143 follow-up)
+- PR#1143 fixed spec-decode default-on for `serve_command.py` (single-model
+  path), but `start.sh` runs discovery mode (`--model-dir`) via
+  `_serve_from_model_dir` in `config_resolve.py` — a separate code path that
+  bypassed the fix. Added profile→auto spec-decode resolution to
+  `_serve_from_model_dir` before `SchedulerConfig` construction.
+- `start.sh` read `settings.json` `model.default` (legacy, often empty)
+  instead of top-level `default_model` (canonical). Fixed to read
+  `default_model` first with `model.default` fallback.
+- `ModelSettings.ngram_spec_enabled` dataclass default was `False` (not
+  `None`), which caused `batched.py`/`vlm.py` per-model override logic to
+  disable n-gram spec for every model without an explicit model_settings
+  entry — silently overriding the env default (`NGRAM_SPEC_ENABLED=1`).
+  Changed default to `None` so absent model_settings respects the env/CLI
+  setting.
+- `--spec-decode none` now disables n-gram spec regardless of env default
+  or model_settings absence (CLI master switch in `batched.py`/`vlm.py`).
+  Without this, the env var kept n-gram spec on even when the operator
+  explicitly opted out.
+- Memory enforcer tier override: boot paths where `ServerConfig` default
+  tier ("balanced") doesn't match `settings.json` declared tier ("custom")
+  now read settings.json directly at enforcer construction.
+
 ## [0.10.8] — 2026-10-09
 
 Patch release collecting 11 fixes/features (#1026–#1143): spec-decode

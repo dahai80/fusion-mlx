@@ -345,12 +345,15 @@ do_start() {
         model_dir="${md}"
     fi
 
-    # Model selection: CLI <model>/--model > settings.json model.default >
-    # discovery mode (--model-dir). When a model is given, --model-dir is
-    # dropped (mutually exclusive in the CLI serve parser).
+    # Model selection: CLI <model>/--model > settings.json default_model >
+    # settings.json model.default > discovery mode (--model-dir). When a
+    # model is given, --model-dir is dropped (mutually exclusive in the CLI
+    # serve parser). The top-level "default_model" field is the canonical
+    # one (_cli_base._settings_default_model reads it); "model.default" is
+    # a legacy alias kept for back-compat.
     local serve_model="${START_MODEL}"
     if [[ -z "${serve_model}" && -f "${SETTINGS}" ]]; then
-        serve_model=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('model',{}).get('default',''))" 2>/dev/null || echo "")
+        serve_model=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('default_model','') or d.get('model',{}).get('default',''))" 2>/dev/null || echo "")
     fi
     if [[ -n "${serve_model}" ]]; then
         log_info "Model: ${serve_model}"
