@@ -104,7 +104,7 @@ class ModelSettings:
     vlm_mtp_draft_model: str | None = None
     vlm_mtp_draft_block_size: int | None = None
 
-    ngram_spec_enabled: bool = False
+    ngram_spec_enabled: bool | None = None
     ngram_spec_order: int | None = None
     ngram_spec_num_draft: int | None = None
     ngram_spec_break_even: float | None = None

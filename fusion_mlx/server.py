@@ -1966,6 +1966,34 @@ class Server:
         custom_ceiling_gb = 0.0
         if tier_str == "custom" and getattr(mem_cfg, "custom_limit_mb", None):
             custom_ceiling_gb = float(mem_cfg.custom_limit_mb) / 1024.0
+        # OP-901 regression: some boot paths (start.sh → serve_command builds
+        # the Server BEFORE _stage_server_config updates the singleton) reach
+        # this point with the ServerConfig default tier ("balanced") even
+        # though settings.json declares custom + ceiling — the later singleton
+        # update never reaches the enforcer, which is constructed once here.
+        # Fall back to settings.json directly so the operator's tier/ceiling
+        # always wins at enforcer construction.
+        try:
+            from ._cli_base import (
+                _settings_memory_custom_ceiling_gb,
+                _settings_memory_guard_tier,
+            )
+
+            _sj_tier = _settings_memory_guard_tier()
+            if _sj_tier and _sj_tier != tier_str:
+                logger.info(
+                    "memory tier override at enforcer construction "
+                    "(settings.json): %s -> %s",
+                    tier_str,
+                    _sj_tier,
+                )
+                tier_str = _sj_tier
+            if tier_str == "custom" and not custom_ceiling_gb:
+                _sj_gb = _settings_memory_custom_ceiling_gb()
+                if _sj_gb:
+                    custom_ceiling_gb = float(_sj_gb)
+        except Exception:  # non-fatal: settings read must never block boot
+            logger.debug("settings.json memory tier fallback failed", exc_info=True)
         self.pool.set_process_memory_enforcer(
             ProcessMemoryEnforcer(
                 engine_pool=self.pool,
