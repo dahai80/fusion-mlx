@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed — context_length missing from /v1/models + Ollama API (#1147)
+- Claude Code reads `context_length` from the OpenAI-compatible
+  `/v1/models` response to compute precompact thresholds. When the field
+  was absent, Claude Code rejected prompts during precompact with
+  "prompt is too long". Added `context_length: int | None` to `ModelInfo`
+  and wired it into the `/v1/models` list handler with engine fallback
+  (`get_model_max_context`) when the discovery-time `model_context_length`
+  is unset (e.g. directly-served models that bypass discovery).
+- Ollama `/api/tags` and `/api/show` gained the same engine fallback via
+  `_entry_context_length` helper — previously only `/api/tags` returned
+  `context_length` for pool-discovered models, and `/api/show` missed it
+  entirely for served models.
+- Tests: `tests/unit/test_context_length_models_endpoint.py` — 8 tests
+  covering discovery path, engine fallback, none-when-unloaded, multiple
+  models, and Ollama tags/show endpoints.
+
 ### Added — BNUP Socratic DSL v3.0 GBNF grammar (#1142)
 - New `fusion_mlx/grammars/socratic_dsl_v3.gbnf` — GBNF grammar constraining
   model output to `<thinking>` + `<dsl>` structure with the 8-value

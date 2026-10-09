@@ -32,6 +32,7 @@ from . import _common
 from ._common import (
     _get_settings,
     _resolve_capabilities,
+    _resolve_context_length,
     _resolve_modality,
     logger,
     router,
@@ -290,6 +291,7 @@ async def list_models(
             modality=_resolve_modality(mid),
             capabilities=_resolve_capabilities(mid),
             default_for_chat=True if (default_model and mid == default_model) else None,
+            context_length=_resolve_context_length(mid),
         )
         for mid in model_ids
     ]

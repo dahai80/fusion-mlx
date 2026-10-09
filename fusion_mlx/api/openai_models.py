@@ -752,6 +752,7 @@ class ModelInfo(BaseModel):
     modality: str = "text"
     capabilities: dict | None = None
     default_for_chat: bool | None = None
+    context_length: int | None = None
 
 
 class ModelsResponse(BaseModel):
