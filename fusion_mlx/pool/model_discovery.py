@@ -1058,6 +1058,18 @@ def estimate_model_size(model_path: Path) -> int:
                 candidates.append((f, f.stat().st_size))
             except OSError:
                 pass
+    # H3/multi-component video models: weights in subdir (transformer/,
+    # text_encoder/, video_vae/, audio_vae/) but root may have a LoRA
+    # .safetensors. If root-level is small AND subdirs have safetensors,
+    # merge subdir weights so the size estimate covers all components.
+    # Exclude LoRA/adapter files from the base model size — they load
+    # on top, not as the model itself.
+    _LORA_PATTERNS = ("lora", "adapter", "inversion")
+    candidates = [
+        (p, sz)
+        for p, sz in candidates
+        if not any(pat in p.name.lower() for pat in _LORA_PATTERNS)
+    ]
     if not candidates:
         for f in model_path.glob("**/*.safetensors"):
             if f.is_file() or f.is_symlink():
@@ -1065,6 +1077,21 @@ def estimate_model_size(model_path: Path) -> int:
                     candidates.append((f, f.stat().st_size))
                 except OSError:
                     pass
+    else:
+        # Root had non-LoRA safetensors; still check subdirs for multi-
+        # component layouts (H3: transformer/ + text_encoder/ + VAEs).
+        subdir_files = [
+            f
+            for f in model_path.glob("**/*.safetensors")
+            if (f.is_file() or f.is_symlink())
+            and not any(pat in f.name.lower() for pat in _LORA_PATTERNS)
+            and f not in {p for p, _ in candidates}
+        ]
+        for f in subdir_files:
+            try:
+                candidates.append((f, f.stat().st_size))
+            except OSError:
+                pass
     if not candidates:
         for f in model_path.glob("*.bin"):
             name_lower = f.name.lower()
