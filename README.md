@@ -531,7 +531,7 @@ export HF_MIRROR=https://hf-mirror.com
 | STT | `STTEngine` | Whisper, VibeVoice-ASR |
 | TTS | `TTSEngine` | Kokoro, VibeVoice |
 | Music | `MusicGenEngine` | ACE-Step1.5 turbo (text-to-music DiT) |
-| ImageGen | `ImageGenEngine` | Flux 2, SD3-Medium, SDXL, Stable Cascade |
+| ImageGen | `ImageGenEngine` | Flux 2, SD3-Medium, SDXL, Stable Cascade, Qwen-Image-2512, Qwen-Image-2.1 (RGBA transparent PNG) |
 | VideoGen | `VideoGenEngine` | LTX-2, Wan2, SkyReels-V3 (pure-MLX ports) |
 
 > **Rerank note:** the `max_chunks_per_doc` field is accepted in the request schema for forward compatibility but is not yet honored at runtime — passing it returns HTTP 400 with a clear message. Chunking is fixed by the model's tokenizer window today.
@@ -583,7 +583,7 @@ The macOS app offers a mode toggle between:
 | OpenAI Responses | `/v1/responses`, `/v1/responses/{id}`, `/v1/responses/compact`, `WS /v1/responses/ws` | ✅ Stateful chains (`previous_response_id`), base64 compaction blobs, WebSocket transport |
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ Fully compatible |
 | Audio | `/v1/audio/transcriptions`, `/v1/audio/speech`, `/v1/audio/music` | ✅ Supported |
-| Images | `/v1/images/generate`, `/v1/images/generations`, `/v1/images/edits`, `/v1/images/super-resolution` | ✅ Generate (Flux 2, SD3-Medium, SDXL, Stable Cascade, Qwen-Image-2.1 RGBA); edits (OpenAI SDK multipart, Fill/Kontext); Super-resolution (RealESRGAN x4plus, pure MLX, #752) |
+| Images | `/v1/images/generate`, `/v1/images/generations`, `/v1/images/edits`, `/v1/images/super-resolution` | ✅ Generate (Flux 2, SD3-Medium, SDXL, Stable Cascade, Qwen-Image-2512, Qwen-Image-2.1 RGBA); edits (OpenAI SDK multipart, Fill/Kontext); Super-resolution (RealESRGAN x4plus, pure MLX, #752) |
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | 3D | `/v1/3d/generate` | ✅ Hunyuan3D-2.1 image→textured GLB (shape MoE DiT + ShapeVAE + marching cubes + paint multiview diffusion + xatlas UV bake) |
 | Embeddings | `/v1/embeddings` | ✅ Supported |
@@ -2466,6 +2466,24 @@ curl -s http://127.0.0.1:11434/v1/images/generations \
 Qwen-Image-2.1 is a base (non-distilled) DiT: use `steps>=20` and
 `guidance=4.0`. The full fp16 model is ~33 GB; set `FUSION_FLUX_QUANT=4` for
 a 4-bit load (~9 GB) on constrained Macs (memory, not speed).
+
+## Qwen-Image-2512 (native mflux, 2026-09)
+
+`Qwen/Qwen-Image-2512` and `mlx-community/Qwen-Image-2512-4bit` are served
+natively via the vendored mflux `QwenImage` pipeline (MMDiT architecture).
+The `_infer_variant` function routes any model id containing `qwen-image`
+(not `qwen-image-2.1` or `qwen-image-edit`) to the `qwen_image` variant.
+Default 30 diffusion steps (the `#823` report — 4 steps was too few for
+full-diffusion DiTs). Supports `negative_prompt` and img2img.
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com hf download mlx-community/Qwen-Image-2512-4bit \
+  --local-dir ~/.fusion-mlx/models/Qwen-Image-2512-4bit
+fusion-mlx serve --model-dir ~/.fusion-mlx/models --port 11434
+curl -s http://127.0.0.1:11434/v1/images/generations \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"mlx-community/Qwen-Image-2512-4bit","prompt":"a cute orange cat, watercolor style","width":512,"height":512,"steps":30,"guidance":4.0}'
+```
 
 ## Flux-1.lite-8B-MLX Deep Optimization (2026-07-19)
 
