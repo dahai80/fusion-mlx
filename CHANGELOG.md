@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Fixed — spec decode silently off on default-profile serves (efficiency)
+- The profile presets advertise spec decode as default-on for
+  standard/full/turbo (`_PRESET_SPEC_DEFAULT`), and the startup banner even
+  prints `spec_decode=ON(default)` — but the argparse default was `"none"`
+  and nothing bridged the preset to `args.spec_decode`. Every default-profile
+  serve ran stock decode with the proven +52% MTP speedup (and n-gram suffix
+  for non-MTP models) silently left on the table.
+- New `resolve_spec_decode_from_profile()` helper in `profile.py` bridges the
+  gap: when the operator hasn't selected a method (`--spec-decode none`) and
+  the active profile is default-on, `args.spec_decode` is resolved to `"auto"`
+  so the SpecAutoRouter picks MTP for eligible checkpoints (Qwen3.5/3.6) and
+  n-gram suffix (zero GPU cost, 3-5x on tool/JSON/code workloads) for the
+  rest. `"lite"` profile stays OFF; an explicit `--spec-decode` flag always
+  wins.
+- Also back-fills `scheduler_config.enable_suffix_decoding` after auto-resolve
+  (the SchedulerConfig was built before auto-resolve mutated `args`, so a
+  resolved n-gram suffix never reached the engine).
+
 ### Changed — 3D multiview texture approximation now surfaced as warning (#1026)
 - **#1026**: The 3D generation paint diffusion pipeline currently generates a
   single texture and broadcasts it to all 6 rasterized views — true multiview
