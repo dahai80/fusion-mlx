@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added — admin Scheduler/Memory/Cloud advanced config tab (#1076)
+- **#1076**: The admin Settings page now exposes the low-level
+  SchedulerConfig, MemoryConfig (advanced), and cloud-routing fields that
+  were previously env/CLI-only. Three new GUI sections render 22 controls
+  (max_num_seqs, max_num_batched_tokens, scheduling policy, prefill/
+  completion batch sizes, paged-cache knobs, enable_mtp, spec_decode,
+  gpu_memory_utilization, per-engine memory %, soft/hard thresholds, cloud
+  router enabled/model/api_key/api_base/threshold/fallback consent). All are
+  marked restart-required via the #1077 metadata-driven badge. GET
+  `/admin/api/global-settings` returns `scheduler_advanced` / `memory_advanced`
+  / `cloud` sections (live config with settings.json fallback; cloud API key
+  masked). POST persists them to settings.json under `scheduler` / `memory` /
+  `cloud` keys. i18n strings added (en + zh).
+
 ### Added — video generation job-ification + GUI panel (#1079)
 - **#1079**: Video generation is now job-capable. New endpoints:
   `POST /v1/videos/jobs` (submit a VideoGenerateRequest, returns job_id

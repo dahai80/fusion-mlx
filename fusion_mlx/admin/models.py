@@ -254,6 +254,34 @@ class GlobalSettingsRequest(BaseModel):
     api_key: str | None = None
     skip_api_key_verification: bool | None = None
 
+    # #1076: advanced scheduler config (all restart-required except where noted)
+    scheduler_max_num_seqs: int | None = Field(default=None, ge=1)
+    scheduler_max_num_batched_tokens: int | None = Field(default=None, ge=1)
+    scheduler_policy: str | None = None
+    scheduler_prefill_batch_size: int | None = Field(default=None, ge=1)
+    scheduler_completion_batch_size: int | None = Field(default=None, ge=1)
+    scheduler_prefill_step_size: int | None = Field(default=None, ge=1)
+    scheduler_max_waiting: int | None = Field(default=None, ge=0)
+    scheduler_use_paged_cache: bool | None = None
+    scheduler_paged_cache_block_size: int | None = Field(default=None, ge=1)
+    scheduler_max_cache_blocks: int | None = Field(default=None, ge=1)
+    scheduler_enable_mtp: bool | None = None
+    scheduler_spec_decode: str | None = None
+    scheduler_gpu_memory_utilization: float | None = Field(default=None, ge=0.1, le=1.0)
+
+    # #1076: advanced memory config (tier is hot-reloadable; rest restart)
+    memory_per_engine_pct: float | None = Field(default=None, ge=0.0, le=1.0)
+    memory_soft_threshold: float | None = Field(default=None, ge=0.1, le=1.0)
+    memory_hard_threshold: float | None = Field(default=None, ge=0.1, le=1.0)
+
+    # #1076: cloud routing config (all restart-required)
+    cloud_router_enabled: bool | None = None
+    cloud_router_model: str | None = None
+    cloud_router_api_key: str | None = None
+    cloud_router_api_base: str | None = None
+    cloud_router_threshold: int | None = Field(default=None, ge=1)
+    cloud_fallback_consent: bool | None = None
+
 
 class HFDownloadRequest(BaseModel):
     """Request model for starting a HuggingFace model download."""
