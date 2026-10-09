@@ -12,6 +12,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -45,6 +46,7 @@ from .helpers import (
     _get_engine_pool,
     _get_rich_global_settings,
     _get_server_state,
+    _get_settings_manager,
     _schedule_self_terminate,
     get_ssd_disk_info,
     get_system_memory_info,
@@ -448,6 +450,36 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
         ] = request.skip_api_key_verification
         runtime_applied.append("skip_api_key_verification")
 
+    # #1076: advanced scheduler config (all restart-required)
+    _adv_fields = [
+        ("scheduler_max_num_seqs", "scheduler", "max_num_seqs"),
+        ("scheduler_max_num_batched_tokens", "scheduler", "max_num_batched_tokens"),
+        ("scheduler_policy", "scheduler", "policy"),
+        ("scheduler_prefill_batch_size", "scheduler", "prefill_batch_size"),
+        ("scheduler_completion_batch_size", "scheduler", "completion_batch_size"),
+        ("scheduler_prefill_step_size", "scheduler", "prefill_step_size"),
+        ("scheduler_max_waiting", "scheduler", "max_waiting"),
+        ("scheduler_use_paged_cache", "scheduler", "use_paged_cache"),
+        ("scheduler_paged_cache_block_size", "scheduler", "paged_cache_block_size"),
+        ("scheduler_max_cache_blocks", "scheduler", "max_cache_blocks"),
+        ("scheduler_enable_mtp", "scheduler", "enable_mtp"),
+        ("scheduler_spec_decode", "scheduler", "spec_decode"),
+        ("scheduler_gpu_memory_utilization", "scheduler", "gpu_memory_utilization"),
+        ("memory_per_engine_pct", "memory", "per_engine_pct"),
+        ("memory_soft_threshold", "memory", "soft_threshold"),
+        ("memory_hard_threshold", "memory", "hard_threshold"),
+        ("cloud_router_enabled", "cloud", "cloud_router_enabled"),
+        ("cloud_router_model", "cloud", "cloud_router_model"),
+        ("cloud_router_api_key", "cloud", "cloud_router_api_key"),
+        ("cloud_router_api_base", "cloud", "cloud_router_api_base"),
+        ("cloud_router_threshold", "cloud", "cloud_router_threshold"),
+        ("cloud_fallback_consent", "cloud", "cloud_fallback_consent"),
+    ]
+    for req_field, section, json_key in _adv_fields:
+        val = getattr(request, req_field, None)
+        if val is not None:
+            sj.setdefault(section, {})[json_key] = val
+
     # Persist
     try:
         _write_settings_json(sj)
@@ -607,6 +639,7 @@ def _build_fallback_global_settings() -> dict:
         "ui": {"language": ""},
         "idle_timeout": {"idle_timeout_seconds": None},
         "requires_restart_fields": _get_requires_restart_fields(),
+        **_read_live_advanced_config(),
     }
 
 
@@ -848,6 +881,8 @@ async def get_global_settings(is_admin: bool = Depends(require_admin)):
         # take effect. The dashboard badges the matching controls so the
         # operator knows a change won't apply until restart.
         "requires_restart_fields": _get_requires_restart_fields(),
+        # #1076: advanced scheduler/memory/cloud config (read from live config)
+        **_read_live_advanced_config(),
     }
 
 
@@ -862,6 +897,114 @@ def _get_requires_restart_fields() -> list[str]:
     except Exception:
         logger.debug("requires_restart metadata unavailable", exc_info=True)
         return []
+
+
+def _read_live_advanced_config() -> dict[str, Any]:
+    # #1076: read the live SchedulerConfig + MemoryConfig + cloud routing
+    # config from the running server. Falls back to settings.json if the
+    # server config is not yet initialized (standalone/admin-only mode).
+    try:
+        from ..config import get_config
+
+        cfg = get_config()
+        sched = cfg.scheduler
+        mem = cfg.memory
+        return {
+            "scheduler_advanced": {
+                "max_num_seqs": sched.max_num_seqs,
+                "max_num_batched_tokens": sched.max_num_batched_tokens,
+                "policy": (
+                    sched.policy.value
+                    if hasattr(sched.policy, "value")
+                    else str(sched.policy)
+                ),
+                "prefill_batch_size": sched.prefill_batch_size,
+                "completion_batch_size": sched.completion_batch_size,
+                "prefill_step_size": sched.prefill_step_size,
+                "max_waiting": sched.max_waiting,
+                "use_paged_cache": sched.use_paged_cache,
+                "paged_cache_block_size": sched.paged_cache_block_size,
+                "max_cache_blocks": sched.max_cache_blocks,
+                "enable_mtp": sched.enable_mtp,
+                "spec_decode": sched.spec_decode,
+                "gpu_memory_utilization": sched.gpu_memory_utilization,
+            },
+            "memory_advanced": {
+                "per_engine_pct": mem.per_engine_pct,
+                "soft_threshold": mem.soft_threshold,
+                "hard_threshold": mem.hard_threshold,
+            },
+            "cloud": {
+                "cloud_router_enabled": cfg.cloud_router_enabled,
+                "cloud_router_model": cfg.cloud_router_model,
+                "cloud_router_api_key": (
+                    _mask_api_key(cfg.cloud_router_api_key)
+                    if cfg.cloud_router_api_key
+                    else None
+                ),
+                "cloud_router_api_base": cfg.cloud_router_api_base,
+                "cloud_router_threshold": cfg.cloud_router_threshold,
+                "cloud_fallback_consent": cfg.cloud_fallback_consent,
+            },
+        }
+    except Exception:
+        logger.debug(
+            "advanced config read failed, falling back to settings.json", exc_info=True
+        )
+    try:
+        sm = _get_settings_manager()
+        if sm is not None:
+            sj = sm.load_settings()
+            sched_sj = sj.get("scheduler", {})
+            mem_sj = sj.get("memory", {})
+            cloud_sj = sj.get("cloud", {})
+            return {
+                "scheduler_advanced": {
+                    "max_num_seqs": sched_sj.get("max_num_seqs", 256),
+                    "max_num_batched_tokens": sched_sj.get(
+                        "max_num_batched_tokens", 65536
+                    ),
+                    "policy": sched_sj.get("policy", "FCFS"),
+                    "prefill_batch_size": sched_sj.get("prefill_batch_size", 8),
+                    "completion_batch_size": sched_sj.get("completion_batch_size", 32),
+                    "prefill_step_size": sched_sj.get("prefill_step_size", 2048),
+                    "max_waiting": sched_sj.get("max_waiting", 0),
+                    "use_paged_cache": sched_sj.get("use_paged_cache", False),
+                    "paged_cache_block_size": sched_sj.get(
+                        "paged_cache_block_size", 64
+                    ),
+                    "max_cache_blocks": sched_sj.get("max_cache_blocks", 1000),
+                    "enable_mtp": sched_sj.get("enable_mtp", False),
+                    "spec_decode": sched_sj.get("spec_decode", "none"),
+                    "gpu_memory_utilization": sched_sj.get(
+                        "gpu_memory_utilization", 0.9
+                    ),
+                },
+                "memory_advanced": {
+                    "per_engine_pct": mem_sj.get("per_engine_pct", 0.7),
+                    "soft_threshold": mem_sj.get("soft_threshold", 0.85),
+                    "hard_threshold": mem_sj.get("hard_threshold", 0.95),
+                },
+                "cloud": {
+                    "cloud_router_enabled": cloud_sj.get("cloud_router_enabled", False),
+                    "cloud_router_model": cloud_sj.get("cloud_router_model"),
+                    "cloud_router_api_key": (
+                        _mask_api_key(cloud_sj.get("cloud_router_api_key"))
+                        if cloud_sj.get("cloud_router_api_key")
+                        else None
+                    ),
+                    "cloud_router_api_base": cloud_sj.get("cloud_router_api_base"),
+                    "cloud_router_threshold": cloud_sj.get(
+                        "cloud_router_threshold", 32768
+                    ),
+                    "cloud_fallback_consent": cloud_sj.get(
+                        "cloud_fallback_consent", False
+                    ),
+                },
+            }
+    except Exception:
+        logger.debug("settings.json fallback for advanced config failed", exc_info=True)
+    return {"scheduler_advanced": {}, "memory_advanced": {}, "cloud": {}}
 
 
 @_router.post("/api/global-settings")
@@ -1338,6 +1481,52 @@ async def update_global_settings(
                 previous_embedding_batch_size
             )
         raise HTTPException(status_code=500, detail="Failed to save settings")
+
+    # #1076: persist advanced scheduler/memory/cloud fields to settings.json.
+    # These are not part of the rich GlobalSettings model — they live in the
+    # scheduler/memory/cloud sections of settings.json and are read by the
+    # config loader on server start. Re-read + merge to avoid clobbering the
+    # rich save above.
+    _adv_req_fields = [
+        ("scheduler_max_num_seqs", "scheduler", "max_num_seqs"),
+        ("scheduler_max_num_batched_tokens", "scheduler", "max_num_batched_tokens"),
+        ("scheduler_policy", "scheduler", "policy"),
+        ("scheduler_prefill_batch_size", "scheduler", "prefill_batch_size"),
+        ("scheduler_completion_batch_size", "scheduler", "completion_batch_size"),
+        ("scheduler_prefill_step_size", "scheduler", "prefill_step_size"),
+        ("scheduler_max_waiting", "scheduler", "max_waiting"),
+        ("scheduler_use_paged_cache", "scheduler", "use_paged_cache"),
+        ("scheduler_paged_cache_block_size", "scheduler", "paged_cache_block_size"),
+        ("scheduler_max_cache_blocks", "scheduler", "max_cache_blocks"),
+        ("scheduler_enable_mtp", "scheduler", "enable_mtp"),
+        ("scheduler_spec_decode", "scheduler", "spec_decode"),
+        ("scheduler_gpu_memory_utilization", "scheduler", "gpu_memory_utilization"),
+        ("memory_per_engine_pct", "memory", "per_engine_pct"),
+        ("memory_soft_threshold", "memory", "soft_threshold"),
+        ("memory_hard_threshold", "memory", "hard_threshold"),
+        ("cloud_router_enabled", "cloud", "cloud_router_enabled"),
+        ("cloud_router_model", "cloud", "cloud_router_model"),
+        ("cloud_router_api_key", "cloud", "cloud_router_api_key"),
+        ("cloud_router_api_base", "cloud", "cloud_router_api_base"),
+        ("cloud_router_threshold", "cloud", "cloud_router_threshold"),
+        ("cloud_fallback_consent", "cloud", "cloud_fallback_consent"),
+    ]
+    has_adv = any(getattr(request, f, None) is not None for f, _, _ in _adv_req_fields)
+    if has_adv:
+        try:
+            sj_adv = _read_settings_json()
+            for req_field, section, json_key in _adv_req_fields:
+                val = getattr(request, req_field, None)
+                if val is not None:
+                    sj_adv.setdefault(section, {})[json_key] = val
+            _write_settings_json(sj_adv)
+            logger.info(
+                "advanced scheduler/memory/cloud settings saved to settings.json"
+            )
+        except Exception:
+            logger.warning(
+                "failed to persist advanced config to settings.json", exc_info=True
+            )
 
     if pending_embedding_batch_size is not None:
         from ..server import _server_state

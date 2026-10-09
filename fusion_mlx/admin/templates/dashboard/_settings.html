@@ -538,6 +538,344 @@
                             </div>
                         </div>
 
+                        <!-- #1076: Scheduler (Advanced) Section -->
+                        <div class="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
+                            <div class="flex items-center justify-between px-6 py-4 bg-neutral-100 border-b border-neutral-200">
+                                <div class="flex items-center gap-3">
+                                    <i data-lucide="cpu" class="w-4 h-4 text-neutral-500"></i>
+                                    <span class="text-xs font-bold uppercase tracking-wider text-neutral-600">{{ t('settings.advanced.scheduler_section') }}</span>
+                                </div>
+                                <span class="px-2 py-0.5 text-[10px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">
+                                    {{ t('settings.resource.restart_badge') }}
+                                </span>
+                            </div>
+                            <div class="divide-y divide-neutral-100">
+                                <!-- Max Sequences -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.max_num_seqs') }}</label>
+                                            <span x-show="needsRestart('scheduler_max_num_seqs')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.max_num_seqs_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.scheduler_advanced.max_num_seqs" min="1"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Max Batched Tokens -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.max_num_batched_tokens') }}</label>
+                                            <span x-show="needsRestart('scheduler_max_num_batched_tokens')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.max_num_batched_tokens_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.scheduler_advanced.max_num_batched_tokens" min="1"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Scheduling Policy -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.policy') }}</label>
+                                            <span x-show="needsRestart('scheduler_policy')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.policy_hint') }}</p>
+                                    </div>
+                                    <select x-model="globalSettings.scheduler_advanced.policy"
+                                            class="w-full sm:w-48 px-3 py-2 text-sm border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all bg-white">
+                                        <option value="FCFS">FCFS</option>
+                                        <option value="PRIORITY">PRIORITY</option>
+                                    </select>
+                                </div>
+                                <!-- Prefill Batch Size -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.prefill_batch_size') }}</label>
+                                            <span x-show="needsRestart('scheduler_prefill_batch_size')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.prefill_batch_size_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.scheduler_advanced.prefill_batch_size" min="1"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Completion Batch Size -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.completion_batch_size') }}</label>
+                                            <span x-show="needsRestart('scheduler_completion_batch_size')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.completion_batch_size_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.scheduler_advanced.completion_batch_size" min="1"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Prefill Step Size -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.prefill_step_size') }}</label>
+                                            <span x-show="needsRestart('scheduler_prefill_step_size')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.prefill_step_size_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.scheduler_advanced.prefill_step_size" min="1"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Max Waiting Requests -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.max_waiting') }}</label>
+                                            <span x-show="needsRestart('scheduler_max_waiting')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.max_waiting_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.scheduler_advanced.max_waiting" min="0"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Paged KV Cache -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.use_paged_cache') }}</label>
+                                            <span x-show="needsRestart('scheduler_use_paged_cache')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.use_paged_cache_hint') }}</p>
+                                    </div>
+                                    <button type="button"
+                                            @click="globalSettings.scheduler_advanced.use_paged_cache = !globalSettings.scheduler_advanced.use_paged_cache"
+                                            :class="globalSettings.scheduler_advanced.use_paged_cache ? 'bg-black' : 'bg-neutral-200'"
+                                            class="relative w-11 h-6 rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black">
+                                        <span :class="globalSettings.scheduler_advanced.use_paged_cache ? 'translate-x-5' : 'translate-x-0'"
+                                              class="block w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform duration-300 absolute top-0.5 left-0.5"></span>
+                                    </button>
+                                </div>
+                                <!-- Paged Cache Block Size -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.paged_cache_block_size') }}</label>
+                                            <span x-show="needsRestart('scheduler_paged_cache_block_size')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.paged_cache_block_size_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.scheduler_advanced.paged_cache_block_size" min="1"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Max Cache Blocks -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.max_cache_blocks') }}</label>
+                                            <span x-show="needsRestart('scheduler_max_cache_blocks')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.max_cache_blocks_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.scheduler_advanced.max_cache_blocks" min="1"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Enable MTP -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.enable_mtp') }}</label>
+                                            <span x-show="needsRestart('scheduler_enable_mtp')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.enable_mtp_hint') }}</p>
+                                    </div>
+                                    <button type="button"
+                                            @click="globalSettings.scheduler_advanced.enable_mtp = !globalSettings.scheduler_advanced.enable_mtp"
+                                            :class="globalSettings.scheduler_advanced.enable_mtp ? 'bg-black' : 'bg-neutral-200'"
+                                            class="relative w-11 h-6 rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black">
+                                        <span :class="globalSettings.scheduler_advanced.enable_mtp ? 'translate-x-5' : 'translate-x-0'"
+                                              class="block w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform duration-300 absolute top-0.5 left-0.5"></span>
+                                    </button>
+                                </div>
+                                <!-- Speculative Decode -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.spec_decode') }}</label>
+                                            <span x-show="needsRestart('scheduler_spec_decode')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.spec_decode_hint') }}</p>
+                                    </div>
+                                    <select x-model="globalSettings.scheduler_advanced.spec_decode"
+                                            class="w-full sm:w-48 px-3 py-2 text-sm border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all bg-white">
+                                        <option value="none">none</option>
+                                        <option value="eagle">eagle</option>
+                                        <option value="dflash">dflash</option>
+                                        <option value="dspark">dspark</option>
+                                        <option value="ngram">ngram</option>
+                                    </select>
+                                </div>
+                                <!-- GPU Memory Utilization -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.gpu_memory_utilization') }}</label>
+                                            <span x-show="needsRestart('scheduler_gpu_memory_utilization')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.gpu_memory_utilization_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.scheduler_advanced.gpu_memory_utilization" min="0.1" max="1.0" step="0.05"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- #1076: Memory (Advanced) Section -->
+                        <div class="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
+                            <div class="flex items-center justify-between px-6 py-4 bg-neutral-100 border-b border-neutral-200">
+                                <div class="flex items-center gap-3">
+                                    <i data-lucide="memory-stick" class="w-4 h-4 text-neutral-500"></i>
+                                    <span class="text-xs font-bold uppercase tracking-wider text-neutral-600">{{ t('settings.advanced.memory_section') }}</span>
+                                </div>
+                                <span class="px-2 py-0.5 text-[10px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">
+                                    {{ t('settings.resource.restart_badge') }}
+                                </span>
+                            </div>
+                            <div class="divide-y divide-neutral-100">
+                                <!-- Per-Engine Memory % -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.per_engine_pct') }}</label>
+                                            <span x-show="needsRestart('memory_per_engine_pct')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.per_engine_pct_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.memory_advanced.per_engine_pct" min="0" max="1" step="0.05"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Soft Threshold -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.soft_threshold') }}</label>
+                                            <span x-show="needsRestart('memory_soft_threshold')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.soft_threshold_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.memory_advanced.soft_threshold" min="0.1" max="1.0" step="0.05"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Hard Threshold -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.hard_threshold') }}</label>
+                                            <span x-show="needsRestart('memory_hard_threshold')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.hard_threshold_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.memory_advanced.hard_threshold" min="0.1" max="1.0" step="0.05"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- #1076: Cloud Routing Section -->
+                        <div class="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
+                            <div class="flex items-center justify-between px-6 py-4 bg-neutral-100 border-b border-neutral-200">
+                                <div class="flex items-center gap-3">
+                                    <i data-lucide="cloud" class="w-4 h-4 text-neutral-500"></i>
+                                    <span class="text-xs font-bold uppercase tracking-wider text-neutral-600">{{ t('settings.advanced.cloud_section') }}</span>
+                                </div>
+                                <span class="px-2 py-0.5 text-[10px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">
+                                    {{ t('settings.resource.restart_badge') }}
+                                </span>
+                            </div>
+                            <div class="divide-y divide-neutral-100">
+                                <!-- Enable Cloud Router -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.cloud_router_enabled') }}</label>
+                                            <span x-show="needsRestart('cloud_router_enabled')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.cloud_section_desc') }}</p>
+                                    </div>
+                                    <button type="button"
+                                            @click="globalSettings.cloud.cloud_router_enabled = !globalSettings.cloud.cloud_router_enabled"
+                                            :class="globalSettings.cloud.cloud_router_enabled ? 'bg-black' : 'bg-neutral-200'"
+                                            class="relative w-11 h-6 rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black">
+                                        <span :class="globalSettings.cloud.cloud_router_enabled ? 'translate-x-5' : 'translate-x-0'"
+                                              class="block w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform duration-300 absolute top-0.5 left-0.5"></span>
+                                    </button>
+                                </div>
+                                <!-- Cloud Model -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.cloud_router_model') }}</label>
+                                            <span x-show="needsRestart('cloud_router_model')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.cloud_router_model_hint') }}</p>
+                                    </div>
+                                    <input type="text" x-model="globalSettings.cloud.cloud_router_model" placeholder="gpt-4o"
+                                           class="w-full sm:w-64 px-3 py-2 text-sm border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Cloud API Key -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.cloud_router_api_key') }}</label>
+                                            <span x-show="needsRestart('cloud_router_api_key')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">sk-•••• (masked in GET; re-type to update)</p>
+                                    </div>
+                                    <input type="password" x-model="globalSettings.cloud.cloud_router_api_key" placeholder="••••••••"
+                                           class="w-full sm:w-64 px-3 py-2 text-sm border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Cloud API Base -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.cloud_router_api_base') }}</label>
+                                            <span x-show="needsRestart('cloud_router_api_base')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.cloud_router_api_base_hint') }}</p>
+                                    </div>
+                                    <input type="text" x-model="globalSettings.cloud.cloud_router_api_base" placeholder="https://api.openai.com/v1"
+                                           class="w-full sm:w-64 px-3 py-2 text-sm border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Cloud Routing Threshold -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.cloud_router_threshold') }}</label>
+                                            <span x-show="needsRestart('cloud_router_threshold')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.cloud_router_threshold_hint') }}</p>
+                                    </div>
+                                    <input type="number" x-model.number="globalSettings.cloud.cloud_router_threshold" min="1"
+                                           class="w-full sm:w-48 px-3 py-2 text-sm text-right border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all">
+                                </div>
+                                <!-- Cloud Fallback Consent -->
+                                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4">
+                                    <div>
+                                        <div class="flex items-center gap-2">
+                                            <label class="text-sm text-neutral-700">{{ t('settings.advanced.cloud_fallback_consent') }}</label>
+                                            <span x-show="needsRestart('cloud_fallback_consent')" x-cloak class="px-1.5 py-0.5 text-[9px] font-medium rounded-full bg-amber-50 text-amber-600 border border-amber-200">{{ t('settings.resource.restart_badge') }}</span>
+                                        </div>
+                                        <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.advanced.cloud_fallback_consent_hint') }}</p>
+                                    </div>
+                                    <button type="button"
+                                            @click="globalSettings.cloud.cloud_fallback_consent = !globalSettings.cloud.cloud_fallback_consent"
+                                            :class="globalSettings.cloud.cloud_fallback_consent ? 'bg-black' : 'bg-neutral-200'"
+                                            class="relative w-11 h-6 rounded-full transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black">
+                                        <span :class="globalSettings.cloud.cloud_fallback_consent ? 'translate-x-5' : 'translate-x-0'"
+                                              class="block w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform duration-300 absolute top-0.5 left-0.5"></span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Cache Section -->
                         <div class="bg-white rounded-2xl border border-neutral-200 overflow-hidden">
                             <div class="flex items-center justify-between px-6 py-4 bg-neutral-100 border-b border-neutral-200">
