@@ -639,6 +639,34 @@ async def create_transcription(
     )
 
 
+@router.get(
+    "/v1/audio/voices",
+    dependencies=[Depends(verify_api_key)],
+)
+async def list_voices():
+    """#1085: voice capability metadata — lets clients discover which
+    voices support which languages instead of getting silent/garbled
+    audio from a mismatched voice."""
+    from fusion_mlx.audio.registry import list_audio_aliases
+
+    voices: list[dict] = []
+    for entry in list_audio_aliases():
+        if entry.type != "tts":
+            continue
+        voice_info: dict = {
+            "model": entry.alias,
+            "default_voice": entry.default_voice,
+            "languages": (entry.languages.split(",") if entry.languages else None),
+            "family": entry.family,
+        }
+        if entry.family == "kokoro":
+            from fusion_mlx.audio.cjk import kokoro_voice_capabilities
+
+            voice_info["mandarin_voices"] = kokoro_voice_capabilities()
+        voices.append(voice_info)
+    return {"voices": voices}
+
+
 @router.post(
     "/v1/audio/speech",
     dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],

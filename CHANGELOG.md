@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added — Mandarin (zh-CN) TTS support (#1085)
+- **#1085**: Kokoro TTS now produces correct Mandarin output automatically:
+  1. **Language-aware routing**: CJK text detected via Unicode range check →
+     `lang_code="z"` (misaki ZHG2P, pypinyin+jieba) instead of the default
+     English espeak pipeline which produced gibberish phonemes.
+  2. **Default voice override**: when CJK text is detected and the caller did
+     not specify a Mandarin voice (`zf_*`/`zm_*`), the English default voice
+     (`af_heart`) is overridden to `zf_xiaoxiao` — an English voice with
+     `lang_code="z"` still produces broken output.
+  3. **CJK text normalization** (pre-G2P): `56%` → `百分之五十六`, `3.14` →
+     `三点一四`, `3/4` → `四分之三`, `π` → `圆周率`, `°C` → `摄氏度`,
+     `×`/`÷`/`≈`/`≤`/`≥` → spoken Chinese equivalents. Covers K-12 narration
+     math notation.
+  4. **Voice capability metadata**: new `GET /v1/audio/voices` endpoint
+     returns voice capabilities (`{"model": "kokoro", "languages": ["en","zh"],
+     "mandarin_voices": [...]}`) so clients can validate voice choice.
+  5. **aliases.json**: kokoro entries now declare `languages: "en,zh"`.
+- New module `fusion_mlx/audio/cjk.py` with shared CJK helpers
+  (`is_cjk_text`, `normalize_cjk_text`, `is_mandarin_voice`,
+  `resolve_mandarin_voice`, `kokoro_voice_capabilities`).
+
 ### Fixed — MiniMax-H3 quantized fork repos misdetected as LLM (#1137)
 - **#1137**: Three discovery + weight-loading fixes for MiniMax-H3 repos
   that ship non-standard layouts:
