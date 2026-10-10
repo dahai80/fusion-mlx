@@ -126,13 +126,13 @@ def _test_accepts(text, should_accept=True):
     stopped = m.is_stopped()
 
     if should_accept:
-        assert stopped, (
-            f"expected acceptance but rejected: consumed={consumed} stopped={stopped} err={m.get_error()}"
-        )
+        assert (
+            stopped
+        ), f"expected acceptance but rejected: consumed={consumed} stopped={stopped} err={m.get_error()}"
     else:
-        assert not stopped, (
-            f"expected rejection but accepted: consumed={consumed} stopped={stopped}"
-        )
+        assert (
+            not stopped
+        ), f"expected rejection but accepted: consumed={consumed} stopped={stopped}"
 
 
 _VALID_DSL = (
