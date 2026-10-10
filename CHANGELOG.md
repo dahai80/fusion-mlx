@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added — laya-mlx decision endpoints + VRAM priority tiers (#1157, #1158)
+- `POST /v1/laya/decide` — issue #1157: typed-decision endpoint accepting
+  `{prompt, preset, questions}`. Presets: `router`, `guard`, `moderation`
+  (mutually exclusive with custom `questions`). Returns structured answers
+  with type/confidence/choice|score|noul + latency_ms. Sub-15ms warm
+  latency verified on real model (7.97ms moderation preset).
+- `GET /v1/laya/status` — model loaded state + P0_NEVER_EVICT priority.
+- `EnginePool.priority_tier` field (#1158): `P0_NEVER_EVICT` |
+  `P0_DYNAMIC` | `P1_TDM`. Laya model auto-pinned P0_NEVER_EVICT on load.
+- `pin_model(model_id, tier=...)` API on EnginePool.
+- `GET /v1/memory/tiers` — per-tier memory breakdown (P0/P1) including
+  pool entries + laya singleton.
+- Tests: 15 tests in `test_laya_vram_tiers_1157_1158.py`.
+
 ### Fixed — H3 i2va/l2va condition image tempfile rejected by path guard
 - The MiniMax-H3 backend's condition-image path safety check
   (`is_safe_local_path`) rejected server-generated tempfiles produced by

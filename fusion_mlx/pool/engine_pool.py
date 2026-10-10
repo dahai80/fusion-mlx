@@ -160,6 +160,7 @@ class EngineEntry:
     loading_started_at: float | None = None  # Timestamp when current load started
     loading_event: asyncio.Event | None = None  # Signaled when loading completes
     is_pinned: bool = False  # Never evict if True
+    priority_tier: str = "P0_DYNAMIC"  # P0_NEVER_EVICT | P0_DYNAMIC | P1_TDM
     abort_loading: bool = False  # Set by memory enforcer to abort in-progress load
     last_load_failed: bool = (
         False  # E-19 (#811): last load raised; waiters fast-fail, don't retry
@@ -888,6 +889,45 @@ class EnginePool:
                 return False
             entry.is_pinned = pinned
             return True
+
+    _VALID_TIERS = frozenset({"P0_NEVER_EVICT", "P0_DYNAMIC", "P1_TDM"})
+
+    def pin_model(self, model_id: str, tier: str = "P0_NEVER_EVICT") -> bool:
+        if tier not in self._VALID_TIERS:
+            logger.warning(
+                "pin_model: invalid tier %r (valid: %s)", tier, self._VALID_TIERS
+            )
+            return False
+        with self._pinned_lock:
+            entry = self._entries.get(model_id)
+            if entry is None:
+                return False
+            entry.priority_tier = tier
+            entry.is_pinned = tier == "P0_NEVER_EVICT"
+            logger.info(
+                "pin_model: %s tier=%s pinned=%s", model_id, tier, entry.is_pinned
+            )
+            return True
+
+    def get_memory_tiers(self) -> dict[str, list[dict]]:
+        rows: dict[str, list[dict]] = {"P0": [], "P1": []}
+        for mid, ent in self._entries.items():
+            if ent.engine is None:
+                continue
+            mb = max((ent.actual_size or ent.estimated_size or 0), 0) // (1024 * 1024)
+            tier = ent.priority_tier or "P0_DYNAMIC"
+            bucket = "P0" if tier.startswith("P0") else "P1"
+            rows[bucket].append(
+                {
+                    "model": mid,
+                    "tier": tier,
+                    "mb": mb,
+                    "pinned": ent.is_pinned,
+                    "in_use": ent.in_use,
+                    "loaded": ent.engine is not None,
+                }
+            )
+        return rows
 
     def _case_insensitive_entry_match(self, name: str) -> str | None:
         """Find a model entry matching *name* case-insensitively.
