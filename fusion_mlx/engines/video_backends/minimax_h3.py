@@ -5,6 +5,7 @@
 import asyncio
 import gc
 import logging
+from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
@@ -162,11 +163,24 @@ class MiniMaxH3Backend(VideoBackend):
             await self.start()
 
         # 条件帧路径安全校验（i2va/l2va）。绝对路径需在允许目录内。
+        # 例外：API 层 _resolve_image_to_path 把客户端 data-URL 解码成系统临时
+        # 目录下的 tempfile（tempfile.mkstemp 默认 /var/folders/...），那是服务端
+        # 自产文件而非客户端任意路径——放行，否则 i2va 首帧被误拒（400）。
+        import tempfile as _tempfile
+
+        _tmp_root = Path(_tempfile.gettempdir()).resolve()
+
+        def _is_server_tempfile(candidate: str) -> bool:
+            try:
+                return Path(candidate).resolve().is_relative_to(_tmp_root)
+            except (ValueError, OSError):
+                return False
+
         cond_image = params.image
         cond_last = params.last_frame_image
         for p in (cond_image, cond_last):
             if p is not None and (p.startswith(("/", "~")) or ".." in p):
-                if not is_safe_local_path(p):
+                if not _is_server_tempfile(p) and not is_safe_local_path(p):
                     raise ValueError(f"condition image outside allowed dirs: {p}")
 
         from fusion_mlx.video.minimax_h3.generate import generate_video

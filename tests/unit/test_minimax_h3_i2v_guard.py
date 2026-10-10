@@ -104,6 +104,39 @@ class TestGenerateAcceptsConditioning:
         with pytest.raises(ValueError, match="(?i)outside allowed|condition image"):
             await b.generate(p)
 
+    async def test_generate_allows_server_tempfile_image(self):
+        # API 层 _resolve_image_to_path 把 data-URL 解码到系统临时目录 tempfile。
+        # 路径在 tempdir 内 → 放行（服务端自产文件，非客户端任意路径）。
+        import tempfile
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp.close()
+        try:
+            b = MiniMaxH3Backend("h3-model")
+            b._loaded = True
+            p = VideoGenParams(
+                prompt="test",
+                num_frames=97,
+                width=768,
+                height=768,
+                n=1,
+                image=tmp.name,
+            )
+            raised = None
+            try:
+                await b.generate(p)
+            except ValueError as e:
+                raised = e
+            except Exception as e:
+                raised = e
+            if isinstance(raised, ValueError):
+                assert "outside allowed" not in str(raised)
+                assert "condition image" not in str(raised)
+        finally:
+            import os
+
+            os.unlink(tmp.name)
+
     async def test_generate_allows_plain_t2va(self):
         # 无条件帧路径保持开放（t2va），不抛 guard ValueError。
         b = self._backend()

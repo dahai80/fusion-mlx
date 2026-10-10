@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed — H3 i2va/l2va condition image tempfile rejected by path guard
+- The MiniMax-H3 backend's condition-image path safety check
+  (`is_safe_local_path`) rejected server-generated tempfiles produced by
+  the API layer's `_resolve_image_to_path` (which decodes client data-URLs
+  into `tempfile.mkstemp` files in the system temp dir). This caused i2va
+  first-frame and l2va last-frame requests with data-URL image input to
+  fail with `400 condition image outside allowed dirs`.
+- Fix: paths within the system temp directory (`tempfile.gettempdir()`)
+  are now recognized as server-produced files and bypass the
+  `is_safe_local_path` check — they are not arbitrary client paths.
+- Test: `test_generate_allows_server_tempfile_image` in
+  `test_minimax_h3_i2v_guard.py`.
+
 ### Fixed — grammar constraint silently skipped for multimodal models (#1153)
 - `resolve_vocab_size` (`utils/tokenizer.py`) only checked `args.vocab_size`
   for multimodal models — never descended into `args.text_config`. When
