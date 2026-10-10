@@ -259,7 +259,10 @@ class TestUpdateGlobalSettingsRestartResponse:
         with patch.object(
             admin_settings, "_get_rich_global_settings", return_value=None
         ):
-            result = admin_settings._save_global_settings_fallback(request)
+            with patch.object(admin_settings, "_read_settings_json", return_value={}):
+                with patch.object(admin_settings, "_write_settings_json"):
+                    with patch.object(admin_settings, "_apply_log_level_runtime"):
+                        result = admin_settings._save_global_settings_fallback(request)
         assert result["requires_restart"] is False
         assert result["restart_fields"] == []
 

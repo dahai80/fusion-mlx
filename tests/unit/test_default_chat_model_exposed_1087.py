@@ -168,11 +168,18 @@ class TestChatErrorEchoesResolvedModel:
         client_app.dependency_overrides[verify_api_key] = lambda: True
         _common._pool = _NoEnginePool()
         _common._request_router = None
-        client = TestClient(client_app)
-        resp = client.post(
-            "/v1/chat/completions",
-            json={"model": "default", "messages": [{"role": "user", "content": "hi"}]},
-        )
+        with patch(
+            "fusion_mlx.server.resolve_model_id",
+            side_effect=lambda mid: mid,
+        ):
+            client = TestClient(client_app)
+            resp = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "default",
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
         assert resp.status_code == 404
         body = resp.json()
         detail = body.get("detail", body)

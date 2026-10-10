@@ -111,7 +111,8 @@ class TestValidateModelName:
             },
         )
         assert r.status_code == 404
-        assert "wrong-model" in r.json()["detail"]
+        detail = r.json().get("detail", r.json())
+        assert "wrong-model" in str(detail)
 
 
 # ---------------------------------------------------------------------------

@@ -532,6 +532,13 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # cold-start TTFT optimization — never selects model / parser /
         # tier; the forward output is discarded and failures are non-fatal.
         "FUSION_MLX_PREWARM",
+        # Sync-engine-load timeout (seconds, float) for
+        # EnginePool.get_engine(_lease=True) when a caller needs the engine
+        # loaded synchronously before proceeding (e.g. admin warm-up,
+        # fine-tune score_text). Defaults to 30s. Pure deadline knob —
+        # never selects model / parser / tier; only bounds how long the
+        # caller waits for an in-progress load to finish.
+        "FUSION_MLX_SYNC_TIMEOUT",
     }
 )
 
