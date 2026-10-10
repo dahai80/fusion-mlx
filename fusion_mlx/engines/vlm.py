@@ -577,10 +577,14 @@ class VLMBatchedEngine(BaseEngine):
         # _try_spec_decode runs ngram_spec_step on them - same path as text.
 
         # CLI master switch: --spec-decode none disables n-gram spec
-        # regardless of env default or model_settings absence.
-        if (
-            not getattr(self._scheduler_config, "enable_suffix_decoding", False)
-            and getattr(self._scheduler_config, "spec_decode", "none") == "none"
+        # regardless of env default or model_settings absence. _scheduler_config
+        # may be unset when called on a partially-constructed engine (tests use
+        # __new__); treat absent config as "cannot determine" -> skip the
+        # short-circuit and fall through to the model_settings path.
+        _sc = getattr(self, "_scheduler_config", None)
+        if _sc is not None and (
+            not getattr(_sc, "enable_suffix_decoding", False)
+            and getattr(_sc, "spec_decode", "none") == "none"
         ):
             try:
                 self._engine.engine.scheduler._ngram_spec_state = None
