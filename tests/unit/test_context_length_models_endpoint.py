@@ -19,11 +19,18 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from fusion_mlx.api.openai import router as openai_router
 from fusion_mlx.api.openai._common import set_openai_context
+
+
+@pytest.fixture(autouse=True)
+def _reset_openai_pool():
+    yield
+    set_openai_context(None, None)
 
 
 class _Entry:

@@ -203,3 +203,68 @@ def test_all_visual_types_accepted():
             "</dsl>"
         )
         _test_accepts(dsl, should_accept=True)
+
+
+# ─── fallback_type enum (spec line 1016: tape_diagram | flow_card only) ──────
+
+
+def test_grammar_file_has_fallback_type_enum():
+    content = _GBNF_FILE.read_text(encoding="utf-8")
+    assert "fallback-type-enum" in content, "fallback-type-enum rule missing"
+    assert (
+        'fallback-type-enum ::= "\\"tape_diagram\\"" | "\\"flow_card\\""' in content
+    ), "fallback-type-enum must be exactly tape_diagram | flow_card (spec line 1016)"
+    assert "fallback_type" in content
+
+
+def test_valid_fallback_types_accepted():
+    for ft in ("tape_diagram", "flow_card"):
+        dsl = _VALID_DSL.replace(
+            '"fallback_type":"flow_card"', f'"fallback_type":"{ft}"'
+        )
+        _test_accepts(dsl, should_accept=True)
+
+
+def test_invalid_fallback_type_rejected():
+    invalid = _VALID_DSL.replace(
+        '"fallback_type":"flow_card"', '"fallback_type":"array_grid"'
+    )
+    _test_accepts(invalid, should_accept=False)
+
+
+def test_invalid_fallback_geometry_rejected():
+    invalid = _VALID_DSL.replace(
+        '"fallback_type":"flow_card"', '"fallback_type":"geometry_2d"'
+    )
+    _test_accepts(invalid, should_accept=False)
+
+
+# ─── xgrammar compilation (gap 2: both backends must compile) ────────────────
+
+
+def test_grammar_compiles_xgrammar():
+    xgrammar = pytest.importorskip("xgrammar")
+    from fusion_mlx._torch_stub import install as _install_torch_stub
+
+    _install_torch_stub()
+
+    gbnf_text = _GBNF_FILE.read_text(encoding="utf-8")
+    grammar = xgrammar.Grammar.from_ebnf(gbnf_text)
+    assert grammar is not None
+    compiler = xgrammar.GrammarCompiler(xgrammar.TokenizerInfo(["<pad>"], vocab_size=1))
+    compiled = compiler.compile_grammar(grammar)
+    assert compiled is not None
+
+
+def test_grammar_compiles_xgrammar_matcher():
+    xgrammar = pytest.importorskip("xgrammar")
+    from fusion_mlx._torch_stub import install as _install_torch_stub
+
+    _install_torch_stub()
+
+    gbnf_text = _GBNF_FILE.read_text(encoding="utf-8")
+    grammar = xgrammar.Grammar.from_ebnf(gbnf_text)
+    compiler = xgrammar.GrammarCompiler(xgrammar.TokenizerInfo(["<pad>"], vocab_size=1))
+    compiled = compiler.compile_grammar(grammar)
+    matcher = xgrammar.GrammarMatcher(compiled)
+    assert matcher is not None
