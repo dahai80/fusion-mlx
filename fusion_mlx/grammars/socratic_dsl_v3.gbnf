@@ -25,10 +25,13 @@ dsl-block ::= "<dsl>" ws dsl-json ws "</dsl>"
 dsl-json ::= "{" ws "\"meta\"" ws ":" ws meta-obj ws "," ws "\"parameters\"" ws ":" ws parameters-obj ws "," ws "\"entities\"" ws ":" ws entities-arr ws "," ws "\"pipeline\"" ws ":" ws pipeline-arr ws "}"
 
 # meta: id/grade/topic/visual_type/fallback_type
-meta-obj ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"grade\"" ws ":" ws integer ws "," ws "\"topic\"" ws ":" ws string ws "," ws "\"visual_type\"" ws ":" ws visual-type-enum ws "," ws "\"fallback_type\"" ws ":" ws visual-type-enum ws "}"
+meta-obj ::= "{" ws "\"id\"" ws ":" ws string ws "," ws "\"grade\"" ws ":" ws integer ws "," ws "\"topic\"" ws ":" ws string ws "," ws "\"visual_type\"" ws ":" ws visual-type-enum ws "," ws "\"fallback_type\"" ws ":" ws fallback-type-enum ws "}"
 
 # 8 visual primitives (Socratic DSL v3.0)
 visual-type-enum ::= "\"array_grid\"" | "\"tape_diagram\"" | "\"geometry_2d\"" | "\"isometric_3d\"" | "\"track_timeline\"" | "\"bucket_divider\"" | "\"data_chart\"" | "\"flow_card\""
+
+# fallback: only tape_diagram or flow_card (spec line 1016)
+fallback-type-enum ::= "\"tape_diagram\"" | "\"flow_card\""
 
 # parameters: flexible key-value object
 parameters-obj ::= "{" ws (string ws ":" ws value (ws "," ws string ws ":" ws value)*)? ws "}"
