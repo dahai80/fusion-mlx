@@ -312,7 +312,13 @@ def pytest_configure(config):
 
 @pytest.fixture(autouse=True)
 def mock_mlx():
-    pass
+    yield
+    try:
+        from fusion_mlx.api.openai._common import set_openai_context
+
+        set_openai_context(None, None)
+    except Exception:
+        pass
 
 
 @pytest.fixture
