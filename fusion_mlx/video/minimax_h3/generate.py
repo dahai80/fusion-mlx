@@ -125,6 +125,11 @@ def generate_t2va_video(
         latents = scheduler.step(model_output, t, latents)
         # 物化并释放计算图，避免多步累积 OOM（MLX lazy，需显式 eval）。
         mx.eval(latents)
+        # #1163: clear MLX metal cache between steps — activation tensors
+        # accumulate in the 64GB cache and push RSS over 120GB ceiling on
+        # 128GB machines by step 16. eval materializes latents; clear_cache
+        # frees the intermediate graph activations.
+        _clear_metal_cache()
         if i % 10 == 0 or i == len(timesteps) - 1:
             logger.info(
                 "h3 t2va generate: step %d/%d t=%.4f", i, len(timesteps), t_video
@@ -133,6 +138,7 @@ def generate_t2va_video(
     # 去噪结束：反归一化 → VAE 解码 → [0,1]。
     latents = denormalize_latents(latents.astype(mx.float32))
     logger.info("h3 t2va generate: decoding latents shape=%s", latents.shape)
+    _clear_metal_cache()
     decoded = vae.decode(latents)
     frames = _to_frames(decoded)
     logger.info("h3 t2va generate: done frames=%d", len(frames))
@@ -234,6 +240,8 @@ def generate_t2va_av(
         video_latents = scheduler_video.step(video_model, v_timesteps[i], video_latents)
         audio_latents = scheduler_audio.step(audio_model, a_timesteps[i], audio_latents)
         mx.eval(video_latents, audio_latents)
+        # #1163: clear MLX metal cache between steps — same fix as t2va loop.
+        _clear_metal_cache()
         if i % 10 == 0 or i == n_steps - 1:
             logger.info(
                 "h3 t2va-av generate: step %d/%d t_v=%.4f t_a=%.4f",
@@ -248,6 +256,7 @@ def generate_t2va_av(
     logger.info(
         "h3 t2va-av generate: decoding video latents shape=%s", video_latents.shape
     )
+    _clear_metal_cache()
     decoded = vae.decode(video_latents)
     frames = _to_frames(decoded)
 
@@ -452,6 +461,8 @@ def generate_fl2va_video(
         )
         gen_latents = scheduler.step(model_output, t, gen_latents)
         mx.eval(gen_latents)
+        # #1163: clear MLX metal cache between steps — same fix as t2va loop.
+        _clear_metal_cache()
         # #736 Surface C: frozen-region re-composite after each step.
         # DiT-agnostic, latent-space only; None -> passthrough.
         if inpaint_mask is not None and init_latent is not None:
@@ -465,6 +476,7 @@ def generate_fl2va_video(
     # 生成行去噪结束 → 反归一化 → VAE 解码。
     gen_latents = denormalize_latents(gen_latents.astype(mx.float32))
     logger.info("h3 fl2va generate: decoding latents shape=%s", gen_latents.shape)
+    _clear_metal_cache()
     decoded = vae.decode(gen_latents)
     frames = _to_frames(decoded)
     logger.info("h3 fl2va generate: done frames=%d", len(frames))
