@@ -280,7 +280,7 @@ class TestLatencyThreshold:
 
 
 class TestLayaPoolRegistration:
-    def test_laya_registered_and_pinned_in_pool(self):
+    async def test_laya_registered_and_pinned_in_pool(self):
         from fusion_mlx.pool.engine_pool import EnginePool
 
         pool = EnginePool()
@@ -294,17 +294,14 @@ class TestLayaPoolRegistration:
                     "fusion_mlx.service.helpers._get_engine_pool",
                     return_value=pool,
                 ):
-                    import asyncio
-
                     from fusion_mlx.api.decisions_routes import _get_engine
 
-                    result = asyncio.get_event_loop().run_until_complete(
-                        _get_engine(None)
-                    )
+                    result = await _get_engine(None)
         assert result is eng
         assert eng.model_name in pool._entries
         entry = pool._entries[eng.model_name]
         assert entry.is_pinned is True
         assert entry.priority_tier == "P0_NEVER_EVICT"
-        assert pool.get_memory_tiers()["P0"][0]["model"] == eng.model_name
-        assert pool.get_memory_tiers()["P0"][0]["mb"] == 512
+        tiers = pool.get_memory_tiers()
+        laya_entry = [m for m in tiers["P0"] if m["model"] == eng.model_name][0]
+        assert laya_entry["mb"] == 512
