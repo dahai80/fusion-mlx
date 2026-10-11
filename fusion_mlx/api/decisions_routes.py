@@ -41,7 +41,11 @@ async def _get_engine(model: str | None):
         from ..engines.laya_engine import LayaDecisionEngine
 
         eng = LayaDecisionEngine(model or "aac6fef/laya-multilingual-mlx")
-        await eng.start()
+        try:
+            await eng.start()
+        except Exception as exc:
+            logger.error("Laya engine load failed: %s", exc)
+            raise HTTPException(503, "Laya decision model unavailable")
         _engine = eng
         logger.info(
             "Laya decision engine lazy-started: %s (P0_NEVER_EVICT)", eng.model_name
@@ -51,9 +55,25 @@ async def _get_engine(model: str | None):
 
             pool = _get_engine_pool()
             if pool is not None:
+                from ..pool.engine_pool import EngineEntry
+
+                entry = EngineEntry(
+                    model_id=eng.model_name,
+                    model_path="",
+                    model_type="llm",
+                    engine_type="simple",
+                    estimated_size=eng.memory_mb * 1024 * 1024,
+                    engine=eng,
+                    is_pinned=True,
+                    priority_tier="P0_NEVER_EVICT",
+                )
+                pool._entries[eng.model_name] = entry
                 pool.pin_model(eng.model_name, tier="P0_NEVER_EVICT")
+                logger.info(
+                    "Laya registered in EnginePool: %s (pinned P0)", eng.model_name
+                )
         except Exception:
-            logger.debug("pin_model for laya skipped (pool unavailable)", exc_info=True)
+            logger.debug("EnginePool registration for laya skipped", exc_info=True)
         return _engine
 
 
