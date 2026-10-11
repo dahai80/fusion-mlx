@@ -23,6 +23,9 @@ def _client() -> TestClient:
 
 
 class _FakeEngine:
+    async def start(self):
+        pass
+
     async def decide(self, state, questions):
         return {
             "answers": {
@@ -36,8 +39,18 @@ class _FakeEngine:
     def model_name(self):
         return "test-laya"
 
+    @property
+    def memory_mb(self):
+        return 512
+
     def get_stats(self):
-        return {"model_name": "test-laya", "loaded": True}
+        return {
+            "model_name": "test-laya",
+            "loaded": True,
+            "memory_mb": 512,
+            "priority_tier": "P0_NEVER_EVICT",
+            "pinned": True,
+        }
 
 
 @pytest.fixture
@@ -231,3 +244,67 @@ class TestLayaStatusEndpoint:
         assert data["loaded"] is True
         assert data["model"] == "test-laya"
         assert "stats" in data
+
+    def test_status_has_memory_footprint(self, laya_engine):
+        client = _client()
+        resp = client.get("/v1/laya/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["stats"]["memory_mb"] == 512
+
+
+class TestLayaLoadFailure503:
+    def test_load_failure_returns_503(self):
+        with patch("fusion_mlx.api.decisions_routes._engine", None):
+            with patch(
+                "fusion_mlx.engines.laya_engine.LayaDecisionEngine.start",
+                side_effect=RuntimeError("model load failed"),
+            ):
+                client = _client()
+                resp = client.post(
+                    "/v1/laya/decide",
+                    json={"prompt": "hi", "preset": "router"},
+                )
+        assert resp.status_code == 503
+
+
+class TestLatencyThreshold:
+    def test_warm_latency_under_15ms(self, laya_engine):
+        client = _client()
+        resp = client.post(
+            "/v1/laya/decide",
+            json={"prompt": "hi", "preset": "router"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["latency_ms"] < 15.0
+
+
+class TestLayaPoolRegistration:
+    def test_laya_registered_and_pinned_in_pool(self):
+        from fusion_mlx.pool.engine_pool import EnginePool
+
+        pool = EnginePool()
+        eng = _FakeEngine()
+        with patch("fusion_mlx.api.decisions_routes._engine", None):
+            with patch(
+                "fusion_mlx.engines.laya_engine.LayaDecisionEngine"
+            ) as MockEngine:
+                MockEngine.return_value = eng
+                with patch(
+                    "fusion_mlx.service.helpers._get_engine_pool",
+                    return_value=pool,
+                ):
+                    import asyncio
+
+                    from fusion_mlx.api.decisions_routes import _get_engine
+
+                    result = asyncio.get_event_loop().run_until_complete(
+                        _get_engine(None)
+                    )
+        assert result is eng
+        assert eng.model_name in pool._entries
+        entry = pool._entries[eng.model_name]
+        assert entry.is_pinned is True
+        assert entry.priority_tier == "P0_NEVER_EVICT"
+        assert pool.get_memory_tiers()["P0"][0]["model"] == eng.model_name
+        assert pool.get_memory_tiers()["P0"][0]["mb"] == 512

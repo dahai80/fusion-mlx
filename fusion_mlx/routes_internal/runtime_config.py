@@ -126,24 +126,6 @@ async def memory_tiers() -> dict[str, Any]:
             p0 = tiers.get("P0", [])
             p1 = tiers.get("P1", [])
 
-        try:
-            from ..api.decisions_routes import _engine as _laya
-
-            if _laya is not None:
-                p0.insert(
-                    0,
-                    {
-                        "model": _laya.model_name,
-                        "tier": "P0_NEVER_EVICT",
-                        "mb": 0,
-                        "pinned": True,
-                        "in_use": 0,
-                        "loaded": True,
-                    },
-                )
-        except Exception:
-            logger.debug("laya singleton not available for memory/tiers", exc_info=True)
-
         return {
             "P0": p0,
             "P1": p1,

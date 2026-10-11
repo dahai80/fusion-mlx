@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 _DEFAULT_LAYA_MODEL = "aac6fef/laya-multilingual-mlx"
 
 
+def _measure_rss_mb() -> int:
+    try:
+        import psutil
+
+        return int(psutil.Process().memory_info().rss // (1024 * 1024))
+    except Exception:
+        return 0
+
+
 class LayaDecisionEngine(BaseNonStreamingEngine):
     _non_streaming_engine = True
 
@@ -31,15 +40,25 @@ class LayaDecisionEngine(BaseNonStreamingEngine):
         self._model_name = model_name
         self._agent: Any = None
         self._lock = threading.Lock()
+        self._rss_before_mb: int = 0
+        self._rss_after_mb: int = 0
 
     @property
     def model_name(self) -> str:
         return self._model_name
 
+    @property
+    def memory_mb(self) -> int:
+        if self._rss_after_mb == 0:
+            return 0
+        delta = self._rss_after_mb - self._rss_before_mb
+        return max(delta, 0)
+
     async def start(self) -> None:
         if self._agent is not None:
             return
         logger.info("Starting Laya decision engine: %s", self._model_name)
+        self._rss_before_mb = _measure_rss_mb()
 
         def _load_sync():
             from .laya import Agent
@@ -49,12 +68,18 @@ class LayaDecisionEngine(BaseNonStreamingEngine):
         self._agent = await self._run_via_executor(
             _load_sync, executor_name="llm", timeout=180.0
         )
-        logger.info("Laya decision engine loaded: %s", self._model_name)
+        self._rss_after_mb = _measure_rss_mb()
+        logger.info(
+            "Laya decision engine loaded: %s (rss_delta=%dMB)",
+            self._model_name,
+            self.memory_mb,
+        )
 
     async def stop(self) -> None:
         if self._agent is None:
             return
         self._agent = None
+        self._rss_after_mb = 0
         await self._teardown_cache(executor_name="llm", timeout=5.0)
 
     async def decide(
@@ -81,6 +106,9 @@ class LayaDecisionEngine(BaseNonStreamingEngine):
         return {
             "model_name": self._model_name,
             "loaded": self._agent is not None,
+            "memory_mb": self.memory_mb,
+            "priority_tier": "P0_NEVER_EVICT",
+            "pinned": True,
         }
 
     def __repr__(self) -> str:
