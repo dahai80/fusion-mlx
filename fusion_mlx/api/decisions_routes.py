@@ -32,6 +32,41 @@ _router_lock = asyncio.Lock()
 
 _PRESETS = {"router", "guard", "moderation"}
 
+_CALIBRATION_LOW_DIM_THRESHOLD = 0.01
+_CALIBRATION_HARM_DISCOUNT = 0.6
+
+
+def _calibrate_guard_result(result: dict, preset: str | None) -> dict:
+    if preset != "guard":
+        return result
+    answers = result.get("answers", {})
+    harm = answers.get("harm_severity", {})
+    raw_score = harm.get("score")
+    if raw_score is None or not isinstance(raw_score, (int, float)):
+        return result
+    if raw_score < 2.0:
+        return result
+    low_dims = [
+        answers.get(k, {}).get("noul", 1.0)
+        for k in ("jailbreak", "prompt_injection", "sensitive_data")
+    ]
+    if any(d >= _CALIBRATION_LOW_DIM_THRESHOLD for d in low_dims):
+        return result
+    adjusted = round(raw_score * _CALIBRATION_HARM_DISCOUNT, 4)
+    harm["score"] = adjusted
+    harm["raw_score"] = raw_score
+    harm["calibration"] = (
+        "harm_severity discounted: all other dimensions below "
+        f"{_CALIBRATION_LOW_DIM_THRESHOLD} (likely false positive on "
+        "digit-heavy or formulaic prompt)"
+    )
+    logger.info(
+        "laya guard calibration: harm_severity %.4f -> %.4f (low-dim clean)",
+        raw_score,
+        adjusted,
+    )
+    return result
+
 
 def _laya_executor():
     from ..engine_core import get_executor
@@ -210,7 +245,7 @@ async def laya_decide(req: LayaDecideRequest):
                 req.preset or "custom",
                 latency_ms,
             )
-            return result
+            return _calibrate_guard_result(result, req.preset)
         engine = await _get_engine(req.model)
         result = await engine.decide(req.prompt, questions)
         latency_ms = (time.perf_counter() - t0) * 1000.0
@@ -222,7 +257,7 @@ async def laya_decide(req: LayaDecideRequest):
             len(questions),
             latency_ms,
         )
-        return result
+        return _calibrate_guard_result(result, req.preset)
     except HTTPException:
         raise
     except ValueError as exc:

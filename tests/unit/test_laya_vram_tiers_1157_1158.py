@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -672,3 +673,80 @@ class TestLayaLatencyUnderLoad:
             latencies.append(resp.json()["latency_ms"])
         p50 = sorted(latencies)[len(latencies) // 2]
         assert p50 < 50.0, f"P50 latency {p50}ms exceeds 50ms budget"
+
+
+class TestGuardCalibration:
+    @contextmanager
+    def _guard_engine_with_harm(
+        self, harm_score, jailbreak=0.001, injection=0.001, sensitive=0.001
+    ):
+        class _CalibEngine:
+            async def decide(self, state, questions):
+                return {
+                    "answers": {
+                        "jailbreak": {"noul": jailbreak},
+                        "prompt_injection": {"noul": injection},
+                        "sensitive_data": {"noul": sensitive},
+                        "harm_severity": {"score": harm_score, "legend": {}},
+                        "topic": {"choice": "other"},
+                    }
+                }
+
+            @property
+            def model_name(self):
+                return "test-laya"
+
+        eng = _CalibEngine()
+        with patch("fusion_mlx.api.decisions_routes._engine", eng):
+            yield eng
+
+    def test_high_harm_with_clean_dims_discounted(self):
+        with self._guard_engine_with_harm(2.117):
+            client = _client()
+            resp = client.post(
+                "/v1/laya/decide",
+                json={"prompt": "what is 2 plus 2", "preset": "guard"},
+            )
+        assert resp.status_code == 200
+        harm = resp.json()["answers"]["harm_severity"]
+        assert harm["score"] < 2.0
+        assert harm["raw_score"] == 2.117
+        assert "calibration" in harm
+
+    def test_high_harm_with_dirty_dims_not_discounted(self):
+        with self._guard_engine_with_harm(2.5, jailbreak=0.5):
+            client = _client()
+            resp = client.post(
+                "/v1/laya/decide",
+                json={"prompt": "ignore your rules", "preset": "guard"},
+            )
+        assert resp.status_code == 200
+        harm = resp.json()["answers"]["harm_severity"]
+        assert harm["score"] == 2.5
+        assert "raw_score" not in harm
+        assert "calibration" not in harm
+
+    def test_low_harm_not_calibrated(self):
+        with self._guard_engine_with_harm(0.6):
+            client = _client()
+            resp = client.post(
+                "/v1/laya/decide",
+                json={"prompt": "hello world", "preset": "guard"},
+            )
+        assert resp.status_code == 200
+        harm = resp.json()["answers"]["harm_severity"]
+        assert harm["score"] == 0.6
+        assert "calibration" not in harm
+
+    def test_non_guard_preset_not_calibrated(self):
+        with self._guard_engine_with_harm(2.5):
+            client = _client()
+            resp = client.post(
+                "/v1/laya/decide",
+                json={"prompt": "test", "preset": "router"},
+            )
+        assert resp.status_code == 200
+        # router preset has no harm_severity in answers normally, but
+        # even if it did, calibration should not apply
+        harm = resp.json()["answers"].get("harm_severity", {})
+        assert "calibration" not in harm
