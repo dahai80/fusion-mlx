@@ -8,13 +8,25 @@
   (mutually exclusive with custom `questions`). Returns structured answers
   with type/confidence/choice|score|noul + latency_ms. Sub-15ms warm
   latency verified on real model (7.97ms moderation preset).
-- `GET /v1/laya/status` — model loaded state + P0_NEVER_EVICT priority.
+- `GET /v1/laya/status` — model loaded state + P0_NEVER_EVICT priority +
+  Router availability (loaded checkpoints, max_loaded, default).
+- `use_router` + `lang` fields on `/v1/laya/decide` (#1157 AC4): auto-detect
+  language via script analysis, route to english (Latin) or multilingual
+  (non-Latin) checkpoint. Explicit `lang` hint overrides detection.
 - `EnginePool.priority_tier` field (#1158): `P0_NEVER_EVICT` |
   `P0_DYNAMIC` | `P1_TDM`. Laya model auto-pinned P0_NEVER_EVICT on load.
 - `pin_model(model_id, tier=...)` API on EnginePool.
-- `GET /v1/memory/tiers` — per-tier memory breakdown (P0/P1) including
-  pool entries + laya singleton.
-- Tests: 15 tests in `test_laya_vram_tiers_1157_1158.py`.
+- TDM behavior (#1158 AC3): `_find_lru_victim` evicts P1_TDM before
+  P0_DYNAMIC (yield-to-P0). `swap_idle_tdm_models()` TTL-based swap to
+  cold layer, hooked into `ProcessMemoryEnforcer._check_ttl` periodic
+  loop. `set_tdm_ttl(secs)` configures idle threshold (default 300s).
+- `GET /v1/memory/tiers` — per-tier memory breakdown (P0/P1) with
+  `status` field (active/idle_over_ttl/swapped_to_ssd/unloaded) +
+  `idle_secs` for P1 models.
+- `POST /v1/memory/tdm/swap` — manual TDM swap trigger (ops).
+- `POST /v1/memory/tdm/ttl` — set TDM idle TTL at runtime.
+- Tests: 32 tests in `test_laya_vram_tiers_1157_1158.py` (Router routing,
+  TDM priority eviction, TDM swap, memory pressure, TDM endpoints).
 
 ### Fixed — H3 i2va/l2va condition image tempfile rejected by path guard
 - The MiniMax-H3 backend's condition-image path safety check

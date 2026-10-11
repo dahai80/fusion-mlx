@@ -27,8 +27,30 @@ router = APIRouter(tags=["decisions"])
 
 _engine: Any = None
 _engine_lock = asyncio.Lock()
+_router_instance: Any = None
+_router_lock = asyncio.Lock()
 
 _PRESETS = {"router", "guard", "moderation"}
+
+
+async def _get_router():
+    global _router_instance
+    if _router_instance is not None:
+        return _router_instance
+    async with _router_lock:
+        if _router_instance is not None:
+            return _router_instance
+
+        def _build_router():
+            from ..engines.laya import Router
+
+            return Router(default="english", max_loaded=2)
+
+        _router_instance = await asyncio.get_event_loop().run_in_executor(
+            None, _build_router
+        )
+        logger.info("Laya Router initialized (english+multilingual auto-route)")
+        return _router_instance
 
 
 async def _get_engine(model: str | None):
@@ -138,6 +160,13 @@ class LayaDecideRequest(BaseModel):
         description="router | guard | moderation (mutually exclusive with questions)",
     )
     model: str | None = Field(None, description="Laya model id override")
+    use_router: bool = Field(
+        False,
+        description="auto-detect language and route to english/multilingual checkpoint",
+    )
+    lang: str | None = Field(
+        None, description="explicit language hint for router (e.g. 'en', 'zh')"
+    )
 
 
 @router.post("/v1/laya/decide", dependencies=[Depends(verify_api_key)])
@@ -154,6 +183,26 @@ async def laya_decide(req: LayaDecideRequest):
     questions = req.questions if req.questions else _resolve_preset(req.preset)
     t0 = time.perf_counter()
     try:
+        if req.use_router:
+            laya_router = await _get_router()
+
+            def _predict_sync():
+                return laya_router.predict(req.prompt, questions, lang=req.lang)
+
+            result = await asyncio.get_event_loop().run_in_executor(None, _predict_sync)
+            routing = result.get("routing", {})
+            model_name = routing.get("model", "router")
+            latency_ms = (time.perf_counter() - t0) * 1000.0
+            result["model"] = model_name
+            result["latency_ms"] = round(latency_ms, 2)
+            result["routing"] = routing
+            logger.info(
+                "laya/decide: router model=%s preset=%s latency=%.1fms",
+                model_name,
+                req.preset or "custom",
+                latency_ms,
+            )
+            return result
         engine = await _get_engine(req.model)
         result = await engine.decide(req.prompt, questions)
         latency_ms = (time.perf_counter() - t0) * 1000.0
@@ -184,9 +233,18 @@ async def laya_status():
         "model": _engine.model_name if loaded else None,
         "priority_tier": "P0_NEVER_EVICT",
         "pinned": True,
+        "router_available": _router_instance is not None,
     }
     if loaded:
         stats = _engine.get_stats()
         info["stats"] = stats
-    logger.debug("laya/status: loaded=%s", loaded)
+    if _router_instance is not None:
+        info["router"] = {
+            "loaded_checkpoints": _router_instance.loaded,
+            "max_loaded": _router_instance.max_loaded,
+            "default": _router_instance.default,
+        }
+    logger.debug(
+        "laya/status: loaded=%s router=%s", loaded, _router_instance is not None
+    )
     return info

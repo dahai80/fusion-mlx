@@ -17,6 +17,7 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 
 from ..middleware.auth import verify_api_key_or_x_api_key
 
@@ -139,6 +140,43 @@ async def memory_tiers() -> dict[str, Any]:
     except Exception:
         logger.exception("memory/tiers failed")
         return {"P0": [], "P1": [], "error": "unavailable"}
+
+
+@router.post("/v1/memory/tdm/swap")
+async def tdm_swap_now() -> dict[str, Any]:
+    logger.info("POST /v1/memory/tdm/swap")
+    try:
+        from ..service.helpers import _get_engine_pool
+
+        pool = _get_engine_pool()
+        if pool is None:
+            return {"swapped": 0, "error": "pool unavailable"}
+        swapped = await pool.swap_idle_tdm_models()
+        logger.info("TDM manual swap: %d model(s) moved to cold", swapped)
+        return {"swapped": swapped}
+    except Exception:
+        logger.exception("memory/tdm/swap failed")
+        return {"swapped": 0, "error": "unavailable"}
+
+
+class TdmTtlRequest(BaseModel):
+    seconds: float = Field(..., description="TDM idle TTL in seconds (0 = never swap)")
+
+
+@router.post("/v1/memory/tdm/ttl")
+async def tdm_set_ttl(req: TdmTtlRequest) -> dict[str, Any]:
+    logger.info("POST /v1/memory/tdm/ttl seconds=%s", req.seconds)
+    try:
+        from ..service.helpers import _get_engine_pool
+
+        pool = _get_engine_pool()
+        if pool is None:
+            return {"ok": False, "error": "pool unavailable"}
+        pool.set_tdm_ttl(req.seconds)
+        return {"ok": True, "tdm_ttl_secs": pool._tdm_ttl_secs}
+    except Exception:
+        logger.exception("memory/tdm/ttl failed")
+        return {"ok": False, "error": "unavailable"}
 
 
 def _rollback_leaf_count() -> int:
