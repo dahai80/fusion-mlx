@@ -14,6 +14,16 @@
 - Real model verified: "what is 2 plus 2" 2.1168 → 1.2701 (below threshold).
   "hello world" 0.6231 unchanged (below 2.0, no calibration).
 
+### Fixed — laya latency under multi-model contention via mx.compile (#1161)
+- `LayaDecisionEngine` + `Router` now create `Agent(compile=True)`.
+- `compile=True` fuses the ModernBERT encoder forward pass into fewer
+  Metal kernels → less GPU command-queue depth → less wait behind
+  concurrent LLM generation. Warmup call during `start()` pre-compiles
+  so first request pays no penalty.
+- Real model verified under concurrent LLM generation: P50=7.83ms
+  (was 47-110ms under load). Cold compile: ~3.5s (one-time, at engine
+  start, not per-request).
+
 ### Fixed — laya decide latency regression under multi-model load (#1161)
 - `POST /v1/laya/decide` regressed from P50=8ms to 4-6s when 35+ models loaded.
 - Root cause: laya predict used `executor_name="llm"` (max_workers=1) shared
