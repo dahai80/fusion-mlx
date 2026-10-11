@@ -1537,6 +1537,12 @@ class ProcessMemoryEnforcer:
             self._settings_manager,
             global_idle_timeout_seconds=self.get_global_idle_timeout_seconds(),
         )
+        try:
+            swapped = await self._engine_pool.swap_idle_tdm_models()
+            if swapped > 0:
+                logger.info("TDM TTL swap: %d P1 model(s) moved to cold", swapped)
+        except Exception:
+            logger.debug("TDM swap sweep failed", exc_info=True)
 
     def _maybe_escalate_unrecoverable(self, current: int, ceiling: int) -> None:
         # R-9 (#811): unrecoverable pressure — over the real ceiling with

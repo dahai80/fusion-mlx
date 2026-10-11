@@ -911,23 +911,78 @@ class EnginePool:
 
     def get_memory_tiers(self) -> dict[str, list[dict]]:
         rows: dict[str, list[dict]] = {"P0": [], "P1": []}
+        now = time.time()
         for mid, ent in self._entries.items():
-            if ent.engine is None:
-                continue
-            mb = max((ent.actual_size or ent.estimated_size or 0), 0) // (1024 * 1024)
             tier = ent.priority_tier or "P0_DYNAMIC"
             bucket = "P0" if tier.startswith("P0") else "P1"
+            est_mb = max((ent.actual_size or ent.estimated_size or 0), 0) // (
+                1024 * 1024
+            )
+            if ent.engine is None:
+                rows[bucket].append(
+                    {
+                        "model": mid,
+                        "tier": tier,
+                        "mb": 0,
+                        "estimated_mb": est_mb,
+                        "pinned": ent.is_pinned,
+                        "in_use": ent.in_use,
+                        "loaded": False,
+                        "status": "swapped_to_ssd" if tier == "P1_TDM" else "unloaded",
+                    }
+                )
+                continue
+            idle_secs = now - ent.last_access if ent.last_access > 0 else 0
+            status = "active"
+            if tier == "P1_TDM" and idle_secs > self._tdm_ttl_secs:
+                status = "idle_over_ttl"
             rows[bucket].append(
                 {
                     "model": mid,
                     "tier": tier,
-                    "mb": mb,
+                    "mb": est_mb,
+                    "estimated_mb": est_mb,
                     "pinned": ent.is_pinned,
                     "in_use": ent.in_use,
-                    "loaded": ent.engine is not None,
+                    "loaded": True,
+                    "idle_secs": round(idle_secs, 1),
+                    "status": status,
                 }
             )
         return rows
+
+    _tdm_ttl_secs: float = 300.0
+
+    def set_tdm_ttl(self, secs: float) -> None:
+        self._tdm_ttl_secs = max(0.0, float(secs))
+        logger.info("TDM TTL set to %.1fs", self._tdm_ttl_secs)
+
+    async def swap_idle_tdm_models(self) -> int:
+        now = time.time()
+        swapped = 0
+        snapshot = list(self._entries.items())
+        for mid, ent in snapshot:
+            if ent.engine is None or ent.is_pinned:
+                continue
+            tier = getattr(ent, "priority_tier", "P0_DYNAMIC") or "P0_DYNAMIC"
+            if tier != "P1_TDM":
+                continue
+            if ent.in_use > 0:
+                continue
+            idle_secs = now - ent.last_access if ent.last_access > 0 else 0
+            if idle_secs > self._tdm_ttl_secs:
+                logger.info(
+                    "TDM swap: '%s' idle %.1fs > TTL %.1fs, unloading to cold",
+                    mid,
+                    idle_secs,
+                    self._tdm_ttl_secs,
+                )
+                try:
+                    await self.unload_engine_async(mid, with_settle=False)
+                    swapped += 1
+                except Exception:
+                    logger.exception("TDM swap unload failed for '%s'", mid)
+        return swapped
 
     def _case_insensitive_entry_match(self, name: str) -> str | None:
         """Find a model entry matching *name* case-insensitively.
@@ -1999,8 +2054,11 @@ class EnginePool:
         # Take a shallow atomic snapshot (dict.copy() is atomic in CPython) and
         # iterate that. Selection is advisory — the next admission iteration
         # re-checks current usage — so a slightly stale snapshot is safe.
+        # #1158: P1_TDM models yield memory first (time-division multiplexing),
+        # then P0_DYNAMIC. P0_NEVER_EVICT is never selected (is_pinned=True).
         snapshot = list(self._entries.items())
-        candidates = []
+        p1_candidates = []
+        p0_candidates = []
         for mid, e in snapshot:
             if e.engine is None or e.is_pinned:
                 continue
@@ -2012,11 +2070,20 @@ class EnginePool:
             if self._entry_has_active_requests(e):
                 logger.debug(f"Skipping victim '{mid}': has active requests")
                 continue
-            candidates.append((e.last_access, mid))
-        if not candidates:
-            return None
-        candidates.sort()  # Sort by last_access (oldest first)
-        return candidates[0][1]
+            tier = getattr(e, "priority_tier", "P0_DYNAMIC") or "P0_DYNAMIC"
+            if tier == "P1_TDM":
+                p1_candidates.append((e.last_access, mid))
+            else:
+                p0_candidates.append((e.last_access, mid))
+        if p1_candidates:
+            p1_candidates.sort()
+            victim = p1_candidates[0][1]
+            logger.info("TDM eviction: P1 model '%s' yields memory to P0", victim)
+            return victim
+        if p0_candidates:
+            p0_candidates.sort()
+            return p0_candidates[0][1]
+        return None
 
     async def _detach_engine(self, model_id: str) -> int | None:
         # Stop and detach an engine (set entry.engine = None). Fast teardown:

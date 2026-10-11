@@ -136,14 +136,20 @@ class TestPriorityTiers:
             model_path="/p",
             model_type="llm",
             engine_type="batched",
-            estimated_size=1000,
+            estimated_size=1024 * 1024 * 500,
         )
         pool._entries["loaded"] = loaded
         pool._entries["unloaded"] = unloaded
         tiers = pool.get_memory_tiers()
-        assert len(tiers["P0"]) == 1
-        assert tiers["P0"][0]["model"] == "loaded"
-        assert tiers["P0"][0]["pinned"] is True
+        assert len(tiers["P0"]) == 2
+        loaded_row = [m for m in tiers["P0"] if m["model"] == "loaded"][0]
+        assert loaded_row["pinned"] is True
+        assert loaded_row["loaded"] is True
+        unloaded_row = [m for m in tiers["P0"] if m["model"] == "unloaded"][0]
+        assert unloaded_row["loaded"] is False
+        assert unloaded_row["status"] == "unloaded"
+        assert unloaded_row["mb"] == 0
+        assert unloaded_row["estimated_mb"] > 0
         assert len(tiers["P1"]) == 0
 
     def test_get_memory_tiers_p1_bucket(self):
@@ -305,3 +311,364 @@ class TestLayaPoolRegistration:
         tiers = pool.get_memory_tiers()
         laya_entry = [m for m in tiers["P0"] if m["model"] == eng.model_name][0]
         assert laya_entry["mb"] == 512
+
+
+class _FakeRouter:
+    def __init__(self):
+        self.default = "english"
+        self.max_loaded = 2
+        self.loaded = ["english", "multilingual"]
+
+    def predict(self, prompt, questions, lang=None):
+        if lang == "zh" or any(ord(c) > 0x4E00 for c in prompt):
+            model = "multilingual"
+            reason = "non-latin script detected"
+        else:
+            model = "english"
+            reason = "latin script"
+        return {
+            "answers": {
+                qid: {"type": q["type"], "confidence": 0.9}
+                for qid, q in questions.items()
+            },
+            "routing": {
+                "model": model,
+                "reason": reason,
+                "detection": {"lang": lang or "en"},
+            },
+        }
+
+
+class TestLayaRouter:
+    def test_router_english_routes_to_english(self):
+        fake = _FakeRouter()
+        with patch("fusion_mlx.api.decisions_routes._router_instance", fake):
+            client = _client()
+            resp = client.post(
+                "/v1/laya/decide",
+                json={
+                    "prompt": "hello world",
+                    "preset": "router",
+                    "use_router": True,
+                },
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["model"] == "english"
+        assert data["routing"]["model"] == "english"
+
+    def test_router_chinese_routes_to_multilingual(self):
+        fake = _FakeRouter()
+        with patch("fusion_mlx.api.decisions_routes._router_instance", fake):
+            client = _client()
+            resp = client.post(
+                "/v1/laya/decide",
+                json={
+                    "prompt": "你好世界",
+                    "preset": "router",
+                    "use_router": True,
+                },
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["model"] == "multilingual"
+        assert data["routing"]["model"] == "multilingual"
+
+    def test_router_explicit_lang_override(self):
+        fake = _FakeRouter()
+        with patch("fusion_mlx.api.decisions_routes._router_instance", fake):
+            client = _client()
+            resp = client.post(
+                "/v1/laya/decide",
+                json={
+                    "prompt": "hello",
+                    "preset": "router",
+                    "use_router": True,
+                    "lang": "zh",
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["routing"]["model"] == "multilingual"
+
+    def test_status_shows_router_available(self):
+        fake = _FakeRouter()
+        with patch("fusion_mlx.api.decisions_routes._router_instance", fake):
+            with patch("fusion_mlx.api.decisions_routes._engine", _FakeEngine()):
+                client = _client()
+                resp = client.get("/v1/laya/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["router_available"] is True
+        assert data["router"]["default"] == "english"
+        assert data["router"]["max_loaded"] == 2
+
+
+class TestTdmPriorityEviction:
+    def test_p1_evicted_before_p0(self):
+        import time
+
+        pool = EnginePool()
+        p0 = EngineEntry(
+            model_id="llm-a",
+            model_path="/p",
+            model_type="llm",
+            engine_type="batched",
+            estimated_size=1024 * 1024 * 4000,
+        )
+        p0.engine = SimpleNamespace()
+        p0.priority_tier = "P0_DYNAMIC"
+        p0.last_access = time.time() - 100
+        p1 = EngineEntry(
+            model_id="diffusion-b",
+            model_path="/p",
+            model_type="video",
+            engine_type="video_gen",
+            estimated_size=1024 * 1024 * 20000,
+        )
+        p1.engine = SimpleNamespace()
+        p1.priority_tier = "P1_TDM"
+        p1.last_access = time.time() - 10
+        pool._entries["llm-a"] = p0
+        pool._entries["diffusion-b"] = p1
+        victim = pool._find_lru_victim()
+        assert victim == "diffusion-b"
+
+    def test_p0_never_evict_skipped(self):
+        import time
+
+        pool = EnginePool()
+        laya = EngineEntry(
+            model_id="laya",
+            model_path="/p",
+            model_type="llm",
+            engine_type="simple",
+            estimated_size=1024 * 1024 * 805,
+        )
+        laya.engine = SimpleNamespace()
+        laya.is_pinned = True
+        laya.priority_tier = "P0_NEVER_EVICT"
+        laya.last_access = time.time() - 9999
+        pool._entries["laya"] = laya
+        assert pool._find_lru_victim() is None
+
+    def test_in_use_p1_not_evicted(self):
+        import time
+
+        pool = EnginePool()
+        p1 = EngineEntry(
+            model_id="diffusion",
+            model_path="/p",
+            model_type="video",
+            engine_type="video_gen",
+            estimated_size=1024 * 1024 * 20000,
+        )
+        p1.engine = SimpleNamespace()
+        p1.priority_tier = "P1_TDM"
+        p1.in_use = 2
+        p1.last_access = time.time() - 9999
+        pool._entries["diffusion"] = p1
+        assert pool._find_lru_victim() is None
+
+
+class TestTdmSwap:
+    async def test_swap_idle_p1_after_ttl(self):
+        import time
+
+        pool = EnginePool()
+        pool.set_tdm_ttl(1.0)
+        p1 = EngineEntry(
+            model_id="diffusion-old",
+            model_path="/p",
+            model_type="video",
+            engine_type="video_gen",
+            estimated_size=1024 * 1024 * 20000,
+        )
+        p1.engine = SimpleNamespace()
+        p1.priority_tier = "P1_TDM"
+        p1.last_access = time.time() - 10
+        pool._entries["diffusion-old"] = p1
+        unloaded = []
+
+        async def fake_unload(mid, with_settle=True):
+            unloaded.append(mid)
+            pool._entries[mid].engine = None
+
+        with patch.object(pool, "unload_engine_async", side_effect=fake_unload):
+            swapped = await pool.swap_idle_tdm_models()
+        assert swapped == 1
+        assert "diffusion-old" in unloaded
+        assert pool._entries["diffusion-old"].engine is None
+
+    async def test_swap_skips_recent_p1(self):
+        import time
+
+        pool = EnginePool()
+        pool.set_tdm_ttl(300.0)
+        p1 = EngineEntry(
+            model_id="diffusion-recent",
+            model_path="/p",
+            model_type="video",
+            engine_type="video_gen",
+            estimated_size=1024 * 1024 * 20000,
+        )
+        p1.engine = SimpleNamespace()
+        p1.priority_tier = "P1_TDM"
+        p1.last_access = time.time()
+        pool._entries["diffusion-recent"] = p1
+        swapped = await pool.swap_idle_tdm_models()
+        assert swapped == 0
+        assert pool._entries["diffusion-recent"].engine is not None
+
+    async def test_swap_skips_p0(self):
+        import time
+
+        pool = EnginePool()
+        pool.set_tdm_ttl(0.0)
+        p0 = EngineEntry(
+            model_id="llm",
+            model_path="/p",
+            model_type="llm",
+            engine_type="batched",
+            estimated_size=1024 * 1024 * 4000,
+        )
+        p0.engine = SimpleNamespace()
+        p0.priority_tier = "P0_DYNAMIC"
+        p0.last_access = time.time() - 9999
+        pool._entries["llm"] = p0
+        swapped = await pool.swap_idle_tdm_models()
+        assert swapped == 0
+
+
+class TestTdmEndpoints:
+    def _client_full(self):
+        from fusion_mlx.middleware.auth import verify_api_key_or_x_api_key
+        from fusion_mlx.routes_internal.runtime_config import (
+            router as runtime_router,
+        )
+
+        app = FastAPI()
+        app.include_router(decisions_router)
+        app.include_router(runtime_router)
+        app.dependency_overrides[verify_api_key] = lambda: True
+        app.dependency_overrides[verify_api_key_or_x_api_key] = lambda: True
+        return TestClient(app)
+
+    def test_tdm_swap_endpoint(self):
+        import time
+
+        pool = EnginePool()
+        pool.set_tdm_ttl(0.0)
+        p1 = EngineEntry(
+            model_id="diffusion-x",
+            model_path="/p",
+            model_type="video",
+            engine_type="video_gen",
+            estimated_size=1024 * 1024 * 20000,
+        )
+        p1.engine = SimpleNamespace()
+        p1.priority_tier = "P1_TDM"
+        p1.last_access = time.time() - 10
+        pool._entries["diffusion-x"] = p1
+
+        async def fake_unload(mid, with_settle=True):
+            pool._entries[mid].engine = None
+
+        with patch.object(pool, "unload_engine_async", side_effect=fake_unload):
+            with patch(
+                "fusion_mlx.service.helpers._get_engine_pool",
+                return_value=pool,
+            ):
+                client = self._client_full()
+                resp = client.post("/v1/memory/tdm/swap")
+        assert resp.status_code == 200
+        assert resp.json()["swapped"] == 1
+
+    def test_tdm_ttl_endpoint(self):
+        pool = EnginePool()
+        with patch(
+            "fusion_mlx.service.helpers._get_engine_pool",
+            return_value=pool,
+        ):
+            client = self._client_full()
+            resp = client.post("/v1/memory/tdm/ttl", json={"seconds": 120})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["tdm_ttl_secs"] == 120.0
+
+
+class TestMemoryPressureLayaResident:
+    def test_laya_survives_llm_load_pressure(self):
+        import time
+
+        pool = EnginePool()
+        laya = EngineEntry(
+            model_id="aac6fef/laya-multilingual-mlx",
+            model_path="",
+            model_type="llm",
+            engine_type="simple",
+            estimated_size=805 * 1024 * 1024,
+        )
+        laya.engine = SimpleNamespace()
+        laya.is_pinned = True
+        laya.priority_tier = "P0_NEVER_EVICT"
+        laya.last_access = time.time()
+        llm = EngineEntry(
+            model_id="qwen3-32b",
+            model_path="/p",
+            model_type="llm",
+            engine_type="batched",
+            estimated_size=20 * 1024 * 1024 * 1024,
+        )
+        llm.engine = SimpleNamespace()
+        llm.priority_tier = "P0_DYNAMIC"
+        llm.last_access = time.time()
+        pool._entries["aac6fef/laya-multilingual-mlx"] = laya
+        pool._entries["qwen3-32b"] = llm
+        victim = pool._find_lru_victim()
+        assert victim == "qwen3-32b"
+        assert pool._entries["aac6fef/laya-multilingual-mlx"].engine is not None
+        tiers = pool.get_memory_tiers()
+        laya_tier = [m for m in tiers["P0"] if "laya" in m["model"]][0]
+        assert laya_tier["pinned"] is True
+        assert laya_tier["status"] == "active"
+
+
+class TestLayaDedicatedExecutor:
+    def test_laya_executor_not_shared_with_llm(self):
+        from fusion_mlx.engine_core import get_executor
+
+        laya_ex = get_executor("laya")
+        llm_ex = get_executor("llm")
+        assert laya_ex is not llm_ex
+
+    def test_laya_executor_max_workers_one(self):
+        from fusion_mlx.engine_core import _executor_config
+
+        assert "laya" in _executor_config
+        assert _executor_config["laya"]["max_workers"] == 1
+
+    def test_laya_engine_uses_dedicated_executor(self):
+        import inspect
+
+        from fusion_mlx.engines.laya_engine import LayaDecisionEngine
+
+        src = inspect.getsource(LayaDecisionEngine)
+        assert 'executor_name="laya"' in src
+        assert 'executor_name="llm"' not in src
+
+
+class TestLayaLatencyUnderLoad:
+    def test_decide_latency_under_simulated_load(self, laya_engine):
+
+        client = _client()
+        latencies = []
+        for _ in range(5):
+            resp = client.post(
+                "/v1/laya/decide",
+                json={"prompt": "test", "preset": "router"},
+            )
+            assert resp.status_code == 200
+            latencies.append(resp.json()["latency_ms"])
+        p50 = sorted(latencies)[len(latencies) // 2]
+        assert p50 < 50.0, f"P50 latency {p50}ms exceeds 50ms budget"
