@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v0.10.10] — 2026-10-11
+
 ### Fixed — MiniMax-H3 MLX cache accumulation OOM during denoise (#1163)
 - H3 33B with `quantize=dit8_te4` loads (~40GB) but denoise loop accumulates
   MLX metal cache activations → RSS exceeds 120GB ceiling on 128GB machines
