@@ -63,16 +63,30 @@ class LayaDecisionEngine(BaseNonStreamingEngine):
         def _load_sync():
             from .laya import Agent
 
-            return Agent(self._model_name, dtype="float16")
+            return Agent(self._model_name, dtype="float16", compile=True)
 
         self._agent = await self._run_via_executor(
             _load_sync, executor_name="laya", timeout=180.0
         )
         self._rss_after_mb = _measure_rss_mb()
         logger.info(
-            "Laya decision engine loaded: %s (rss_delta=%dMB)",
+            "Laya decision engine loaded: %s (rss_delta=%dMB compile=True)",
             self._model_name,
             self.memory_mb,
+        )
+
+        def _warmup_compile():
+            try:
+                self._agent.system_one(
+                    "warmup",
+                    {"q": {"type": "noul", "instructions": "warmup"}},
+                )
+                logger.info("Laya compile warmup done")
+            except Exception:
+                logger.debug("Laya compile warmup skipped", exc_info=True)
+
+        await self._run_via_executor(
+            _warmup_compile, executor_name="laya", timeout=60.0
         )
 
     async def stop(self) -> None:

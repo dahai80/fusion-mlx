@@ -82,7 +82,13 @@ _ALIASES = {
 # Question-id signatures of the four typed-decisions workflows, used only when
 # auto_task_detection is enabled.
 _TYPED_DECISION_WORKFLOWS = {
-    "agent_trace_observability": {"action", "needs_review", "outcome", "risk", "urgency"},
+    "agent_trace_observability": {
+        "action",
+        "needs_review",
+        "outcome",
+        "risk",
+        "urgency",
+    },
     "customer_service": {"action", "category", "churn_risk", "needs_human", "urgency"},
     "invoice_processing": {
         "discrepancy_severity",
@@ -211,7 +217,12 @@ class Router:
 
             repo, sub = _split(self.models[key])
             agent = Agent(
-                repo, device=self.device, token=self.token, subfolder=sub, dtype=self.dtype
+                repo,
+                device=self.device,
+                token=self.token,
+                subfolder=sub,
+                dtype=self.dtype,
+                compile=True,
             )
             self._agents[key] = agent
             self._order.append(key)
@@ -356,13 +367,17 @@ class Router:
         elif not det["is_english"]:
             key = "multilingual"
             if det["language"]:
-                reason = "Latin script but language looks like %r, not English" % det["language"]
+                reason = (
+                    "Latin script but language looks like %r, not English"
+                    % det["language"]
+                )
             else:
                 # Unidentified Latin-script language: routed on the non-English letters alone,
                 # because no stopword list here covers it.
                 reason = (
                     "Latin script, language not identified but %.0f%% non-English letters; "
-                    "not safe for the English checkpoint" % (100 * float(det["diacritic_rate"]))
+                    "not safe for the English checkpoint"
+                    % (100 * float(det["diacritic_rate"]))
                 )
         else:
             key = "english"
