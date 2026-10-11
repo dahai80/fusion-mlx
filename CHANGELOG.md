@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed — MiniMax-H3 MLX cache accumulation OOM during denoise (#1163)
+- H3 33B with `quantize=dit8_te4` loads (~40GB) but denoise loop accumulates
+  MLX metal cache activations → RSS exceeds 120GB ceiling on 128GB machines
+  → job cancelled (503) + server crash.
+- Root cause: denoise loops in `generate_t2va_video`, `generate_t2va_av`,
+  `generate_fl2va_video` called `mx.eval(latents)` but never
+  `mx.clear_cache()` between steps. Intermediate activation tensors piled up
+  in the 64GB metal cache.
+- Fix: `_clear_metal_cache()` called after `mx.eval()` in every denoise step
+  + before VAE decode in all 3 generate functions.
+- Impact: 20-step 768x768 25fps now completes (was OOM at step 16).
+
 ### Fixed — laya guard harm_severity false positive on digit-heavy prompts (#1164)
 - `POST /v1/laya/decide` preset=guard scored "what is 2 plus 2" with
   `harm_severity=2.117` (above 2.0 threshold → false-positive 403 block).
