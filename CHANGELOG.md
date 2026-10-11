@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed — laya guard harm_severity false positive on digit-heavy prompts (#1164)
+- `POST /v1/laya/decide` preset=guard scored "what is 2 plus 2" with
+  `harm_severity=2.117` (above 2.0 threshold → false-positive 403 block).
+- Root cause: laya model's harm_severity head miscalibrated for digit-heavy
+  prompts (model-level issue, not fixable without retraining).
+- Fix: deterministic post-processing calibration in `_calibrate_guard_result()`.
+  When `harm_severity >= 2.0` AND all other dimensions (jailbreak,
+  prompt_injection, sensitive_data) are below 0.01, score is discounted by
+  0.6x. Raw score preserved in `raw_score` field + `calibration` explanation.
+- Real model verified: "what is 2 plus 2" 2.1168 → 1.2701 (below threshold).
+  "hello world" 0.6231 unchanged (below 2.0, no calibration).
+
 ### Fixed — laya decide latency regression under multi-model load (#1161)
 - `POST /v1/laya/decide` regressed from P50=8ms to 4-6s when 35+ models loaded.
 - Root cause: laya predict used `executor_name="llm"` (max_workers=1) shared
