@@ -101,6 +101,13 @@ _executor_config: dict[str, dict[str, Any]] = {
     # "no Stream(gpu, N) in current thread").
     "audio": {"max_workers": 1, "prefix": "mlx-audio"},
     "io": {"max_workers": 2, "prefix": "mlx-io"},
+    # laya (#1161): dedicated executor so typed-decision predict does NOT
+    # queue behind LLM token generation on the shared "llm" (max_workers=1)
+    # pool. Without this, /v1/laya/decide latency regresses to 4-6s when 35+
+    # models are loaded and an LLM is mid-generation. max_workers=1 is fine
+    # because laya predict is ~7ms of Metal work — it interleaves at the
+    # Metal command-queue boundary, not the Python thread boundary.
+    "laya": {"max_workers": 1, "prefix": "mlx-laya"},
 }
 _global_executors: dict[str, concurrent.futures.ThreadPoolExecutor] = {}
 

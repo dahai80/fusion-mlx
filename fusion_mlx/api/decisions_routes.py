@@ -33,6 +33,12 @@ _router_lock = asyncio.Lock()
 _PRESETS = {"router", "guard", "moderation"}
 
 
+def _laya_executor():
+    from ..engine_core import get_executor
+
+    return get_executor("laya")
+
+
 async def _get_router():
     global _router_instance
     if _router_instance is not None:
@@ -47,7 +53,7 @@ async def _get_router():
             return Router(default="english", max_loaded=2)
 
         _router_instance = await asyncio.get_event_loop().run_in_executor(
-            None, _build_router
+            _laya_executor(), _build_router
         )
         logger.info("Laya Router initialized (english+multilingual auto-route)")
         return _router_instance
@@ -189,7 +195,9 @@ async def laya_decide(req: LayaDecideRequest):
             def _predict_sync():
                 return laya_router.predict(req.prompt, questions, lang=req.lang)
 
-            result = await asyncio.get_event_loop().run_in_executor(None, _predict_sync)
+            result = await asyncio.get_event_loop().run_in_executor(
+                _laya_executor(), _predict_sync
+            )
             routing = result.get("routing", {})
             model_name = routing.get("model", "router")
             latency_ms = (time.perf_counter() - t0) * 1000.0

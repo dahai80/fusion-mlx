@@ -915,13 +915,16 @@ class EnginePool:
         for mid, ent in self._entries.items():
             tier = ent.priority_tier or "P0_DYNAMIC"
             bucket = "P0" if tier.startswith("P0") else "P1"
-            mb = max((ent.actual_size or ent.estimated_size or 0), 0) // (1024 * 1024)
+            est_mb = max((ent.actual_size or ent.estimated_size or 0), 0) // (
+                1024 * 1024
+            )
             if ent.engine is None:
                 rows[bucket].append(
                     {
                         "model": mid,
                         "tier": tier,
                         "mb": 0,
+                        "estimated_mb": est_mb,
                         "pinned": ent.is_pinned,
                         "in_use": ent.in_use,
                         "loaded": False,
@@ -937,7 +940,8 @@ class EnginePool:
                 {
                     "model": mid,
                     "tier": tier,
-                    "mb": mb,
+                    "mb": est_mb,
+                    "estimated_mb": est_mb,
                     "pinned": ent.is_pinned,
                     "in_use": ent.in_use,
                     "loaded": True,

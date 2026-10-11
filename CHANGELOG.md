@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed — laya decide latency regression under multi-model load (#1161)
+- `POST /v1/laya/decide` regressed from P50=8ms to 4-6s when 35+ models loaded.
+- Root cause: laya predict used `executor_name="llm"` (max_workers=1) shared
+  with LLM token generation → queued behind in-flight generation.
+- Fix: dedicated `"laya"` executor (`engine_core._executor_config`) — laya
+  predict no longer queues behind LLM generation. Metal command-queue
+  interleaving gives ~7ms predict even under load.
+- `LayaDecisionEngine.start()/decide()/stop()` + Router predict path all
+  use `executor_name="laya"`.
+- `get_memory_tiers()` now reports `estimated_mb` for unloaded entries
+  (was hardcoded 0 — capacity planning info lost).
+
 ### Added — laya-mlx decision endpoints + VRAM priority tiers (#1157, #1158)
 - `POST /v1/laya/decide` — issue #1157: typed-decision endpoint accepting
   `{prompt, preset, questions}`. Presets: `router`, `guard`, `moderation`

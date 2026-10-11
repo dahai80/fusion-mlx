@@ -66,7 +66,7 @@ class LayaDecisionEngine(BaseNonStreamingEngine):
             return Agent(self._model_name, dtype="float16")
 
         self._agent = await self._run_via_executor(
-            _load_sync, executor_name="llm", timeout=180.0
+            _load_sync, executor_name="laya", timeout=180.0
         )
         self._rss_after_mb = _measure_rss_mb()
         logger.info(
@@ -80,7 +80,7 @@ class LayaDecisionEngine(BaseNonStreamingEngine):
             return
         self._agent = None
         self._rss_after_mb = 0
-        await self._teardown_cache(executor_name="llm", timeout=5.0)
+        await self._teardown_cache(executor_name="laya", timeout=5.0)
 
     async def decide(
         self, state: str | dict, questions: dict[str, dict]
@@ -96,7 +96,7 @@ class LayaDecisionEngine(BaseNonStreamingEngine):
                 return self._agent.predict(state, questions)
 
             result = await self._run_via_executor(
-                _predict_sync, executor_name="llm", timeout=60.0
+                _predict_sync, executor_name="laya", timeout=60.0
             )
             return result
         finally:

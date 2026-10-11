@@ -133,6 +133,8 @@ async def memory_tiers() -> dict[str, Any]:
             "summary": {
                 "P0_total_mb": sum(m["mb"] for m in p0),
                 "P1_total_mb": sum(m["mb"] for m in p1),
+                "P0_estimated_mb": sum(m.get("estimated_mb", 0) for m in p0),
+                "P1_estimated_mb": sum(m.get("estimated_mb", 0) for m in p1),
                 "P0_count": len(p0),
                 "P1_count": len(p1),
             },

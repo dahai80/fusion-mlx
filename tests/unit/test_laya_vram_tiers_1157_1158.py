@@ -136,7 +136,7 @@ class TestPriorityTiers:
             model_path="/p",
             model_type="llm",
             engine_type="batched",
-            estimated_size=1000,
+            estimated_size=1024 * 1024 * 500,
         )
         pool._entries["loaded"] = loaded
         pool._entries["unloaded"] = unloaded
@@ -148,6 +148,8 @@ class TestPriorityTiers:
         unloaded_row = [m for m in tiers["P0"] if m["model"] == "unloaded"][0]
         assert unloaded_row["loaded"] is False
         assert unloaded_row["status"] == "unloaded"
+        assert unloaded_row["mb"] == 0
+        assert unloaded_row["estimated_mb"] > 0
         assert len(tiers["P1"]) == 0
 
     def test_get_memory_tiers_p1_bucket(self):
@@ -630,3 +632,43 @@ class TestMemoryPressureLayaResident:
         laya_tier = [m for m in tiers["P0"] if "laya" in m["model"]][0]
         assert laya_tier["pinned"] is True
         assert laya_tier["status"] == "active"
+
+
+class TestLayaDedicatedExecutor:
+    def test_laya_executor_not_shared_with_llm(self):
+        from fusion_mlx.engine_core import get_executor
+
+        laya_ex = get_executor("laya")
+        llm_ex = get_executor("llm")
+        assert laya_ex is not llm_ex
+
+    def test_laya_executor_max_workers_one(self):
+        from fusion_mlx.engine_core import _executor_config
+
+        assert "laya" in _executor_config
+        assert _executor_config["laya"]["max_workers"] == 1
+
+    def test_laya_engine_uses_dedicated_executor(self):
+        import inspect
+
+        from fusion_mlx.engines.laya_engine import LayaDecisionEngine
+
+        src = inspect.getsource(LayaDecisionEngine)
+        assert 'executor_name="laya"' in src
+        assert 'executor_name="llm"' not in src
+
+
+class TestLayaLatencyUnderLoad:
+    def test_decide_latency_under_simulated_load(self, laya_engine):
+
+        client = _client()
+        latencies = []
+        for _ in range(5):
+            resp = client.post(
+                "/v1/laya/decide",
+                json={"prompt": "test", "preset": "router"},
+            )
+            assert resp.status_code == 200
+            latencies.append(resp.json()["latency_ms"])
+        p50 = sorted(latencies)[len(latencies) // 2]
+        assert p50 < 50.0, f"P50 latency {p50}ms exceeds 50ms budget"
