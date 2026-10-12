@@ -614,14 +614,28 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
             n,
             _oom_exc,
         )
+        # #1171: the prior path submitted mx.synchronize()+clear_cache to
+        # get_mlx_executor() and called .result() — but _step_prefill_chunk
+        # itself runs ON that executor's single worker. Submitting to a
+        # max_workers=1 pool from its own worker is a self-deadlock: the
+        # future queues, .result() blocks waiting for it, the worker that
+        # would drain it is the one blocked. The G2 watchdog fires at 120s
+        # but the stuck thread holds the GIL over the wedged native
+        # mx.synchronize() call, stalling the event loop so new connections
+        # are not accepted either.
+        #
+        # Fix: clear the MLX buffer cache inline on the current thread
+        # (no cross-executor submit). mx.clear_cache() releases cached Metal
+        # buffers without waiting on pending command buffers, so it cannot
+        # block on a wedged command queue. mx.synchronize() is skipped in
+        # the OOM path deliberately — if the command buffer is wedged, sync
+        # would hang forever and the retry cannot help anyway. If the retry
+        # still OOMs, prefill_oom_retries (capped at 1) propagates the
+        # exception → finish_reason="error" / 507, worker stays alive.
         try:
-            from ..engine_core import get_mlx_executor
-
-            _f = get_mlx_executor().submit(lambda: (mx.synchronize(), mx.clear_cache()))
-            _f.result()
-        except Exception:
-            mx.synchronize()
             mx.clear_cache()
+        except Exception:
+            logger.debug("mx.clear_cache failed in OOM retry path", exc_info=True)
         self.model(chunk, cache=state.cache)
         mx.eval([c.state for c in state.cache])
     _throttle_post = get_phys_footprint()

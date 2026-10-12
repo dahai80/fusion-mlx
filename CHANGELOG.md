@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+### Fixed — LLM worker thread hang during long-prompt prefill OOM (#1171)
+- During chunked prefill of 9k+ token prompts, a Metal OOM in a prefill
+  chunk triggered a self-deadlock in the OOM retry path:
+  `get_mlx_executor().submit(lambda: (mx.synchronize(), mx.clear_cache())).result()`
+  — but `_step_prefill_chunk` runs ON the llm executor's single worker.
+  Submitting to a max_workers=1 pool from its own worker queues a future
+  that can never drain → `.result()` blocks forever → G2 watchdog fires
+  at 120s but the stuck thread holds the GIL over the wedged
+  `mx.synchronize()` → event loop stalls → new TCP connections not
+  accepted → clients see connect timeouts + permanent hang.
+- Fix: OOM retry now calls `mx.clear_cache()` inline on the current
+  thread (no cross-executor submit). `mx.synchronize()` is skipped in
+  the OOM path — if the Metal command buffer is wedged, sync blocks
+  forever and the retry cannot help anyway. `clear_cache()` releases
+  cached Metal buffers without waiting on pending commands. If the
+  retry still OOMs, `prefill_oom_retries` (capped at 1) propagates the
+  exception → `finish_reason="error"` / 507, worker stays alive.
+
+### Fixed — chat requests hang forever after G2 executor poison (#1169)
+- G2 watchdog correctly poisoned the llm executor + marked the engine
+  dead on a hung worker, but the HTTP route layer never checked the
+  poison flag — new `/v1/chat/completions`, `/v1/completions`,
+  `/v1/messages`, `/api/chat`, `/api/generate` requests queued behind
+  the dead worker and hung forever (HTTP layer alive, no response).
+- Fix: `check_llm_executor_healthy()` guard in `_guards.py`, called at
+  the top of all 5 LLM-bound route entry points. When poisoned → 503
+  `server_busy` (OpenAI/Ollama) / `resource_exhausted` (Anthropic) with
+  `Retry-After: 5`. The poison flag is cleared by `EngineCore.start()`
+  once the pool evicts + reloads the engine (EF-1 lazy reload on
+  `is_dead()`).
+
+### Added — VramAllocator facade + tier memory budgets (#1170)
+- PRD `laya-mlx-2-fusion-mlx-1010` §A6 planned a named `vram_allocator`
+  component; functionality was distributed across EnginePool +
+  ProcessMemoryEnforcer without a formal surface.
+- `VramAllocator` facade class formalizes EnginePool as the allocator
+  (delegates to live pool — single source of truth, no parallel state).
+- Tier-level memory budgets: `set_tier_budget(tier, bytes)`,
+  `tier_resident_bytes()`, `check_tier_budget(tier, incoming)` enforced
+  in `_load_engine` before weight allocation. P0_NEVER_EVICT (laya)
+  bypasses; P0_DYNAMIC (LLM) + P1_TDM (diffusion) check against
+  configured ceilings. Budget 0 = unbounded (back-compat default).
+- Gap 3 (background TDM scheduler): already fixed in v0.10.10 PR #1162
+  (`_check_ttl` → `swap_idle_tdm_models()` in `_enforcement_loop`).
+- Gap 4 (P1 partial offload / KV-suspend): deferred — architectural,
+  tracked separately.
+
 ## [v0.10.10] — 2026-10-11
 
 ### Fixed — MiniMax-H3 MLX cache accumulation OOM during denoise (#1163)

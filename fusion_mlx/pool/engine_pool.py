@@ -984,6 +984,59 @@ class EnginePool:
                     logger.exception("TDM swap unload failed for '%s'", mid)
         return swapped
 
+    # #1170: tier-level memory budgets. PRD laya-mlx-2-fusion-mlx-1010 §A6
+    # requires laya ~1GB reserved (P0_NEVER_EVICT), fusion-mlx LLM 60-80GB
+    # dynamic paging window (P0_DYNAMIC), Diffusion 20-30GB cap (P1_TDM).
+    # estimated_size is tracked per entry; these budgets enforce a ceiling
+    # per tier so a P1 diffusion load cannot crowd out P0 LLM residency.
+    # Budgets are 0 = unbounded (back-compat default).
+    _tier_budgets_bytes: dict[str, int] = {
+        "P0": 0,
+        "P1": 0,
+    }
+
+    def set_tier_budget(self, tier: str, bytes_: int) -> bool:
+        key = "P0" if tier.startswith("P0") else "P1" if tier.startswith("P1") else None
+        if key is None:
+            logger.warning("set_tier_budget: invalid tier %r", tier)
+            return False
+        self._tier_budgets_bytes[key] = max(0, int(bytes_))
+        logger.info(
+            "Tier budget set: %s = %.2fGB", key, self._tier_budgets_bytes[key] / 1024**3
+        )
+        return True
+
+    def tier_resident_bytes(self) -> dict[str, int]:
+        # Sum actual/estimated size of loaded engines per tier bucket.
+        out = {"P0": 0, "P1": 0}
+        for ent in self._entries.values():
+            if ent.engine is None:
+                continue
+            tier = ent.priority_tier or "P0_DYNAMIC"
+            key = "P0" if tier.startswith("P0") else "P1"
+            size = ent.actual_size or ent.estimated_size or 0
+            out[key] += size
+        return out
+
+    def check_tier_budget(self, tier: str, incoming_bytes: int) -> tuple[bool, str]:
+        # #1170 gap 2: before loading a model, check its tier budget. Returns
+        # (ok, reason). If the tier budget is 0 (unbounded, the default),
+        # always ok. P0_NEVER_EVICT models bypass the check (pinned, reserved).
+        if tier == "P0_NEVER_EVICT":
+            return True, "pinned-bypass"
+        key = "P0" if tier.startswith("P0") else "P1"
+        budget = self._tier_budgets_bytes.get(key, 0)
+        if budget <= 0:
+            return True, "unbounded"
+        resident = self.tier_resident_bytes().get(key, 0)
+        if resident + incoming_bytes > budget:
+            return False, (
+                f"{key} tier budget exceeded: resident={resident / 1024**3:.2f}GB "
+                f"+ incoming={incoming_bytes / 1024**3:.2f}GB > "
+                f"budget={budget / 1024**3:.2f}GB"
+            )
+        return True, "ok"
+
     def _case_insensitive_entry_match(self, name: str) -> str | None:
         """Find a model entry matching *name* case-insensitively.
 
@@ -2830,6 +2883,21 @@ class EnginePool:
             ModelLoadingError: If model load is aborted by memory enforcer
         """
         entry = self._entries[model_id]
+        # #1170 gap 2: enforce tier memory budget before the expensive load.
+        # P0_NEVER_EVICT (laya) bypasses — pinned, reserved. P0_DYNAMIC (LLM)
+        # and P1_TDM (diffusion) check against their configured ceiling. A
+        # rejection here raises before allocating weights, so the caller gets
+        # a 503/413 instead of an OOM mid-load. Budget 0 = unbounded default.
+        tier = entry.priority_tier or "P0_DYNAMIC"
+        incoming = entry.actual_size or entry.estimated_size or 0
+        if incoming > 0:
+            ok, reason = self.check_tier_budget(tier, incoming)
+            if not ok:
+                logger.warning("Tier budget reject for '%s': %s", model_id, reason)
+                entry.is_loading = False
+                from ..exceptions import ModelTooLargeError
+
+                raise ModelTooLargeError(reason)
         # get_engine phase 1 reserves the loading slot under the lock before
         # calling us; the admin reload path (models_route) arrives here without
         # a reservation after unload_engine_async. Only reserve when no one has;
@@ -3726,3 +3794,44 @@ class EnginePool:
                 logger.error(f"Failed to unload expired model {model_id}: {e}")
 
         return expired
+
+
+class VramAllocator:
+    """#1170: unified VRAM lifecycle facade over EnginePool.
+
+    PRD ``architecture/laya-mlx-2-fusion-mlx-1010.md`` planned a named
+    ``vram_allocator`` component (originally ``fusion-gateway/core/
+    vram_allocator.py``). The functionality — priority tiers, pinning,
+    LRU eviction, TDM time-sliced swap, tier budgets, in-use lease
+    protection — is implemented and tested in ``EnginePool`` +
+    ``ProcessMemoryEnforcer``. This facade formalizes that distribution as
+    a single named surface so external consumers and docs can reference
+    "the VRAM allocator" without coupling to EnginePool internals.
+
+    Design decision (Rule 7 — surface conflicts, don't average): rather
+    than duplicate state into a parallel component (two sources of truth
+    for residency → drift), this facade delegates to the live EnginePool.
+    EnginePool IS the allocator; VramAllocator is its documented name.
+    """
+
+    def __init__(self, pool: EnginePool):
+        self._pool = pool
+
+    @property
+    def tiers(self) -> dict[str, list[dict]]:
+        return self._pool.get_memory_tiers()
+
+    def resident_bytes(self) -> dict[str, int]:
+        return self._pool.tier_resident_bytes()
+
+    def set_budget(self, tier: str, bytes_: int) -> bool:
+        return self._pool.set_tier_budget(tier, bytes_)
+
+    def check_load(self, tier: str, incoming_bytes: int) -> tuple[bool, str]:
+        return self._pool.check_tier_budget(tier, incoming_bytes)
+
+    async def swap_idle_p1(self) -> int:
+        return await self._pool.swap_idle_tdm_models()
+
+    def pin(self, model_id: str, tier: str = "P0_NEVER_EVICT") -> bool:
+        return self._pool.pin_model(model_id, tier)

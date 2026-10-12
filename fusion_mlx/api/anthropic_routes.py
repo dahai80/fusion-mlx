@@ -813,6 +813,10 @@ async def anthropic_messages(
         getattr(request, "top_p", None),
         prompt_preview,
     )
+    # #1169: fast-fail if the LLM executor was poisoned by the G2 watchdog.
+    from ._guards import check_llm_executor_healthy
+
+    check_llm_executor_healthy(request.model or "", adapter="anthropic")
     try:
         if request.stream:
             # Resolve engine BEFORE creating StreamingResponse so that

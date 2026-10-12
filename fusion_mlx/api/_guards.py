@@ -40,6 +40,52 @@ def _build_insufficient_memory_detail(exc: InsufficientMemoryError) -> dict[str,
     return detail
 
 
+def check_llm_executor_healthy(model: str = "", *, adapter: str = "openai") -> None:
+    # #1169: fast-fail when the G2 watchdog poisoned the LLM executor (a
+    # prior worker hung on a Metal OOM/assertion during long-prompt prefill).
+    # Without this gate, new requests queue behind the dead worker and hang
+    # forever — the HTTP layer stays alive but never responds. The poison
+    # flag is cleared by EngineCore.start() once the pool evicts + reloads
+    # the engine (EF-1 lazy reload on next get_engine after is_dead()).
+    try:
+        from ..engine_core import is_llm_executor_poisoned
+
+        if not is_llm_executor_poisoned():
+            return
+    except Exception:
+        logger.debug("LLM poison check failed", exc_info=True)
+        return
+    logger.warning(
+        "%s request rejected: LLM executor poisoned (G2 watchdog). model=%s",
+        adapter,
+        model,
+    )
+    if adapter == "anthropic":
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "type": "error",
+                "error": {
+                    "type": "resource_exhausted",
+                    "message": "LLM executor is recovering from a hung worker "
+                    "(Metal OOM/assertion). Retry shortly.",
+                },
+            },
+            headers={"Retry-After": "5"},
+        )
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "error": {
+                "message": "LLM executor is recovering from a hung worker "
+                "(Metal OOM/assertion). Retry shortly.",
+                "type": "server_busy",
+            }
+        },
+        headers={"Retry-After": "5"},
+    )
+
+
 def build_model_error_response(
     exc: Exception, *, adapter: str = "openai"
 ) -> HTTPException:
