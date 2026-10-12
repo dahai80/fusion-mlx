@@ -49,6 +49,42 @@
 - Gap 4 (P1 partial offload / KV-suspend): deferred — architectural,
   tracked separately.
 
+### Fixed — models without ttl_seconds stay resident forever (#1172)
+- Models without `ttl_seconds` in their `model_settings.json` and no
+  global `idle_timeout` configured stayed resident indefinitely after
+  generation. Large image models (e.g. FLUX.1-dev ~34GB) crowded out
+  subsequent text/agent workloads → Metal command buffer crash on
+  concurrent load.
+- Fix: `_resolve_effective_ttl()` returns `_DEFAULT_TTL_SECONDS` (600)
+  as a last-resort fallback when neither per-model `ttl_seconds` nor
+  global `idle_timeout` is set. Override via
+  `FUSION_MLX_DEFAULT_TTL_SECONDS`. Pinned models are protected by
+  `is_pinned` in `check_ttl_expirations`, so the default TTL on a
+  pinned model is harmless (never fires).
+
+### Fixed — silent hang during eviction + wrong victim on soft pressure (#1174)
+- **Bug 1a**: `abort_all_requests()` called `mx.synchronize()` on the
+  event loop thread — a blocking C call that waits for ALL pending GPU
+  work across engines sharing the default Metal stream. This blocked
+  other engines' HTTP responses from being dispatched, causing
+  in-flight requests on non-evicted models to vanish without error.
+  Fix: sync+clear+gc moved to `loop.run_in_executor(self._mlx_executor,
+  _sync_clear_gc)`.
+- **Bug 1b**: `generate()` awaited `ctx.finished_event.wait()` with no
+  timeout — if the engine was evicted/stopped and
+  `_fail_unfinished_contexts` lost the race (e.g. event loop blocked by
+  a blocking C call on another path), the event was never set and
+  `generate()` hung forever. Fix: `asyncio.wait_for(..., timeout=600)`
+  via `FUSION_MLX_GENERATE_TIMEOUT_S` (0 = unbounded). TimeoutError →
+  abort + cleanup + raise RuntimeError.
+- **Bug 2**: soft memory pressure with no idle evictable model evicted
+  an innocent bystander by aborting its active requests, while the
+  model causing the pressure (which had active requests) was protected.
+  Fix: under soft pressure, if no idle evictable model exists, warn +
+  wait for a model to go idle instead of aborting active requests on a
+  bystander. Hard pressure still falls through to the intentional
+  busy-victim abort path (abort is expected + logged there).
+
 ## [v0.10.10] — 2026-10-11
 
 ### Fixed — MiniMax-H3 MLX cache accumulation OOM during denoise (#1163)

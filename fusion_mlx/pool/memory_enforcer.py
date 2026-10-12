@@ -1781,6 +1781,33 @@ class ProcessMemoryEnforcer:
                         continue
 
                     victim = self._engine_pool._find_lru_victim()
+                    if victim is None and new_level != "hard":
+                        # #1174 Bug 2: no idle non-pinned victim available
+                        # under soft pressure. All loaded models are either
+                        # pinned or have active requests. Do NOT evict an
+                        # active model — that aborts in-flight requests on an
+                        # innocent bystander while the model causing pressure
+                        # stays resident. Wait for a model to go idle instead.
+                        # Hard pressure falls through to the busy-victim path
+                        # below where abort is intentional and logged.
+                        active_models = [
+                            mid
+                            for mid, e in self._engine_pool._entries.items()
+                            if e.engine is not None
+                            and not e.is_pinned
+                            and self._engine_pool._entry_has_active_requests(e)
+                        ]
+                        logger.warning(
+                            "Soft memory pressure %s but no idle evictable "
+                            "model (all non-pinned loaded models have active "
+                            "requests: %s). Waiting for a model to go idle; "
+                            "memory will stay high until then. Consider "
+                            "unloading a model manually via POST "
+                            "/v1/models/{id}/unload.",
+                            new_level,
+                            active_models,
+                        )
+                        break
                     if victim is not None:
                         loaded_non_pinned = [
                             mid

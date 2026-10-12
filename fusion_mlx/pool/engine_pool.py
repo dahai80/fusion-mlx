@@ -3645,21 +3645,35 @@ class EnginePool:
                 logger.warning("get_global_idle_timeout_seconds failed: %s", e)
         return None
 
+    # #1172: default TTL for non-pinned models when neither per-model
+    # ttl_seconds nor global idle_timeout is set. Without this, large image
+    # models (e.g. FLUX.1-dev ~34GB) stay resident forever after generation,
+    # crowding out subsequent text/agent workloads → Metal command buffer
+    # crash on concurrent load. 600s matches the value most configured
+    # models use; override via FUSION_MLX_DEFAULT_TTL_SECONDS.
+    _DEFAULT_TTL_SECONDS = int(os.getenv("FUSION_MLX_DEFAULT_TTL_SECONDS", "600"))
+
     def _resolve_effective_ttl(self, model_id: str) -> int | None:
         if self._settings_manager is None:
-            return None
+            return self._DEFAULT_TTL_SECONDS
         get_settings = getattr(self._settings_manager, "get_settings", None)
         if not callable(get_settings):
-            return None
+            return self._DEFAULT_TTL_SECONDS
         try:
             settings = get_settings(model_id)
         except Exception as e:
             logger.warning("get_settings(%s) failed: %s", model_id, e)
-            return None
+            return self._DEFAULT_TTL_SECONDS
         per_model = getattr(settings, "ttl_seconds", None)
         if per_model is not None:
             return per_model
-        return self._global_idle_timeout_seconds()
+        global_ttl = self._global_idle_timeout_seconds()
+        if global_ttl is not None:
+            return global_ttl
+        # #1172: last-resort default so non-pinned models always auto-evict.
+        # Pinned models are protected by is_pinned in check_ttl_expirations,
+        # so a default TTL on a pinned model is harmless (never fires).
+        return self._DEFAULT_TTL_SECONDS
 
     def get_status(self) -> dict:
         """
