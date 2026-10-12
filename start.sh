@@ -406,8 +406,13 @@ do_start() {
         # process never holds a dead tty. Without this, tqdm (writes to
         # stderr) crashes once the launching terminal closes -> image
         # generation 500 (#501). show_log/show_errors already tail this
-        # file. Truncate on each start (singular server.log convention).
-        : > "${LOG_DIR}/server.log"
+        # file.
+        # #1176 Bug 4: rotate the previous log instead of truncating.
+        # Truncation destroyed the crash trace before diagnosis. Keep the
+        # last restart's log as server.log.prev for post-mortem.
+        if [[ -f "${LOG_DIR}/server.log" ]]; then
+            mv "${LOG_DIR}/server.log" "${LOG_DIR}/server.log.prev"
+        fi
         fusion-mlx serve \
             ${model_or_dir} \
             --log-level "${log_level}" \
@@ -765,7 +770,10 @@ _run_with_watchdog() {
             model_or_dir="--model-dir ${model_dir}"
         fi
         # Redirect to server.log (same tty-detach fix as do_start, #501).
-        : > "${LOG_DIR}/server.log"
+        # #1176 Bug 4: rotate previous log instead of truncating.
+        if [[ -f "${LOG_DIR}/server.log" ]]; then
+            mv "${LOG_DIR}/server.log" "${LOG_DIR}/server.log.prev"
+        fi
         fusion-mlx serve \
             ${model_or_dir} \
             --log-level "${log_level}" \

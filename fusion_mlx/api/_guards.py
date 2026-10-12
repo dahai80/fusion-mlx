@@ -1,6 +1,8 @@
 """Shared route-level guard helpers for OpenAI and Anthropic API routes."""
 
+import asyncio
 import logging
+import threading
 from typing import Any
 
 from fastapi import HTTPException
@@ -40,13 +42,85 @@ def _build_insufficient_memory_detail(exc: InsufficientMemoryError) -> dict[str,
     return detail
 
 
+# #1176 Bug 1: module-level flag so the async reload is triggered once per
+# poison event, not on every inbound request while the flag is set.
+_poison_reload_triggered = False
+_poison_reload_lock = threading.Lock()
+
+
+def _trigger_poisoned_engine_reload(model: str = "") -> None:
+    # #1176 Bug 1: the G2 watchdog poisons the executor + marks the engine
+    # dead, but the 503 guard fires BEFORE get_engine() can see is_dead()
+    # and trigger EF-1 lazy reload. Without this trigger the pool never
+    # evicts the dead engine and every subsequent request gets 503 forever
+    # — the "process alive but HTTP-unresponsive" freeze. This schedules
+    # an async unload of all dead engines so the next request after
+    # Retry-After reaches get_engine() which loads a fresh engine. The
+    # new engine's start() clears the poison flag via
+    # reset_llm_executor_poison().
+    global _poison_reload_triggered
+    with _poison_reload_lock:
+        if _poison_reload_triggered:
+            return
+        _poison_reload_triggered = True
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("No running loop for poisoned engine reload")
+        return
+
+    async def _reload_dead_engines():
+        global _poison_reload_triggered
+        try:
+            from ..service.helpers import _get_engine_pool
+
+            pool = _get_engine_pool()
+            if pool is None:
+                return
+            dead_models = [
+                mid
+                for mid, e in pool._entries.items()
+                if e.engine is not None
+                and callable(getattr(e.engine, "is_dead", None))
+                and e.engine.is_dead()
+            ]
+            if not dead_models:
+                logger.debug("Poison flag set but no dead engine found; clearing")
+                from ..engine_core import reset_llm_executor_poison
+
+                reset_llm_executor_poison()
+                return
+            for mid in dead_models:
+                logger.warning(
+                    "Triggering async unload of dead engine '%s' "
+                    "(G2 poison recovery #1176)",
+                    mid,
+                )
+                try:
+                    await pool.unload_engine_async(mid)
+                except Exception:
+                    logger.exception(
+                        "Failed to unload dead engine '%s' during " "poison recovery",
+                        mid,
+                    )
+        except Exception:
+            logger.exception("Poisoned engine reload task failed")
+        finally:
+            with _poison_reload_lock:
+                _poison_reload_triggered = False
+
+    loop.create_task(_reload_dead_engines())
+
+
 def check_llm_executor_healthy(model: str = "", *, adapter: str = "openai") -> None:
     # #1169: fast-fail when the G2 watchdog poisoned the LLM executor (a
     # prior worker hung on a Metal OOM/assertion during long-prompt prefill).
     # Without this gate, new requests queue behind the dead worker and hang
-    # forever — the HTTP layer stays alive but never responds. The poison
-    # flag is cleared by EngineCore.start() once the pool evicts + reloads
-    # the engine (EF-1 lazy reload on next get_engine after is_dead()).
+    # forever — the HTTP layer stays alive but never responds.
+    # #1176 Bug 1: trigger async reload of the dead engine so the pool
+    # evicts it (EF-1 lazy reload on next get_engine). Without this the
+    # guard 503s every request forever — the pool never sees is_dead()
+    # because the guard short-circuits before get_engine() is reached.
     try:
         from ..engine_core import is_llm_executor_poisoned
 
@@ -60,6 +134,7 @@ def check_llm_executor_healthy(model: str = "", *, adapter: str = "openai") -> N
         adapter,
         model,
     )
+    _trigger_poisoned_engine_reload(model)
     if adapter == "anthropic":
         raise HTTPException(
             status_code=503,
