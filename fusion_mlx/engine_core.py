@@ -1563,14 +1563,26 @@ class EngineCore:
             # at 100+ GB after abort and the engine can't process new
             # requests. gc.collect() helps release stranded Python refs to
             # large arrays before the next retry (#1002).
+            #
+            # #1174: run sync+clear+gc on the MLX executor, NOT the event
+            # loop thread. mx.synchronize() is a blocking C call that waits
+            # for ALL pending GPU work (across engines sharing the default
+            # stream). Running it on the event loop blocks other engines'
+            # HTTP responses from being dispatched — the primary cause of
+            # the "silent hang" where in-flight requests on non-evicted
+            # models vanish without error during eviction.
             try:
                 import gc
 
                 import mlx.core as _mx
 
-                _mx.synchronize()
-                _mx.clear_cache()
-                gc.collect()
+                def _sync_clear_gc():
+                    _mx.synchronize()
+                    _mx.clear_cache()
+                    gc.collect()
+
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(self._mlx_executor, _sync_clear_gc)
                 logger.info(
                     "Cleared MLX buffer cache after memory-pressure abort "
                     "(freed unused Metal buffers)"
@@ -1754,13 +1766,35 @@ class EngineCore:
         # is pop-only and may drop the dict entry once the request is finished,
         # but a held reference still drains.
         collector = ctx.collector
+        # #1174: watchdog timeout on finished_event. If the engine is
+        # evicted/stopped and _fail_unfinished_contexts loses the race
+        # (e.g. event loop blocked by a blocking C call on another path),
+        # the event is never set and generate() hangs forever. The timeout
+        # is generous (default 600s) and turns a silent hang into a 503.
+        # Override via FUSION_MLX_GENERATE_TIMEOUT_S; 0 = unbounded.
+        _gen_timeout = float(os.getenv("FUSION_MLX_GENERATE_TIMEOUT_S", "600"))
         try:
-            await ctx.finished_event.wait()
+            if _gen_timeout > 0:
+                await asyncio.wait_for(ctx.finished_event.wait(), timeout=_gen_timeout)
+            else:
+                await ctx.finished_event.wait()
         except asyncio.CancelledError:
             logger.info("Request %s cancelled, aborting", request_id)
             await self.abort_request(request_id)
             self._cleanup_request(request_id)
             raise
+        except TimeoutError:
+            logger.error(
+                "Request %s timed out after %.0fs (finished_event never set "
+                "— engine may have been evicted). Aborting.",
+                request_id,
+                _gen_timeout,
+            )
+            await self.abort_request(request_id)
+            self._cleanup_request(request_id)
+            raise RuntimeError(
+                f"Request {request_id} timed out after {_gen_timeout:.0f}s"
+            )
 
         final_output = None
         while True:

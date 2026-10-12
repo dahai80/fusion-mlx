@@ -539,6 +539,18 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # never selects model / parser / tier; only bounds how long the
         # caller waits for an in-progress load to finish.
         "FUSION_MLX_SYNC_TIMEOUT",
+        # #1172: default TTL (seconds) for non-pinned models when neither
+        # per-model ttl_seconds nor global idle_timeout is set. Read by
+        # EnginePool._resolve_effective_ttl only. Pure capacity knob —
+        # bounds how long an idle model stays resident before auto-evict;
+        # never selects model / parser / tier.
+        "FUSION_MLX_DEFAULT_TTL_SECONDS",
+        # #1174: watchdog timeout (seconds, float) on generate()'s
+        # finished_event.wait(). Read by EngineCore.generate only. 0 =
+        # unbounded. Pure deadline knob — turns a silent hang (event
+        # never set after engine eviction) into a RuntimeError; never
+        # selects model / parser / tier.
+        "FUSION_MLX_GENERATE_TIMEOUT_S",
     }
 )
 

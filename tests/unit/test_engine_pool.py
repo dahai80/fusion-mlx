@@ -365,8 +365,10 @@ class TestEnginePoolStatus:
         # Per-model: in_use refcount + effective ttl_seconds present.
         model_a_status = next(m for m in status["models"] if m["id"] == "model-a")
         assert model_a_status["in_use"] == 0
-        # No settings manager wired -> per-model TTL falls back to None.
-        assert model_a_status["ttl_seconds"] is None
+        # No settings manager wired -> per-model TTL falls back to the
+        # default (#1172): _DEFAULT_TTL_SECONDS (600) so non-pinned models
+        # always auto-evict instead of staying resident forever.
+        assert model_a_status["ttl_seconds"] == 600
 
     def test_get_status_ttl_resolves_per_model_then_global(self):
         """#647: effective ttl_seconds uses per-model setting then global fallback."""
