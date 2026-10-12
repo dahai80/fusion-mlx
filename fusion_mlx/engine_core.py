@@ -254,9 +254,13 @@ _llm_step_deadline: float = 0.0
 # Watchdog thread handle (single, daemon).
 _llm_watchdog_thread: threading.Thread | None = None
 _llm_watchdog_stop = threading.Event()
-# Default: 120s without a heartbeat while a step is pending = hung worker.
-# Override via FUSION_LLM_WATCHDOG_TIMEOUT.
-_LLM_WATCHDOG_TIMEOUT_S = float(os.environ.get("FUSION_LLM_WATCHDOG_TIMEOUT", "120"))
+# #1176 Bug 2: raised from 120s to 300s. A 19k-token prefill on a 4-bit
+# model under memory pressure can take >120s for a single chunk without
+# the worker being hung (heartbeat advances between chunks, but a single
+# large chunk in swap can exceed 120s). 300s still catches genuine Metal
+# assertion/OOM hangs within 5 min while giving slow-but-progressing
+# prefills enough headroom. Override via FUSION_LLM_WATCHDOG_TIMEOUT.
+_LLM_WATCHDOG_TIMEOUT_S = float(os.environ.get("FUSION_LLM_WATCHDOG_TIMEOUT", "300"))
 # G2 auto-rebuild (#862): weakref to the live EngineCore so the watchdog can
 # mark it dead on hung-worker detection. Weakref survives reload churn — when
 # the pool evicts + rebuilds the engine, the old ref dies and the new engine
@@ -266,6 +270,16 @@ _LLM_WATCHDOG_TIMEOUT_S = float(os.environ.get("FUSION_LLM_WATCHDOG_TIMEOUT", "1
 # (same accepted hazard as the video/image poison path).
 _llm_watchdog_engine_ref: weakref.ref | None = None
 _llm_engine_ref_lock = threading.Lock()
+# #1176 Bug 3: consecutive poison counter. Each poison event abandons a
+# stuck Metal thread that holds GPU memory never freed. If the process
+# accumulates too many poison events without a clean reload, memory is
+# exhausted and the process can't serve any request. Trigger fatal_exit
+# so the supervisor restarts with a clean state. Reset to 0 on successful
+# engine reload (reset_llm_executor_poison).
+_llm_poison_count = 0
+_LLM_POISON_FATAL_THRESHOLD = int(
+    os.environ.get("FUSION_LLM_POISON_FATAL_THRESHOLD", "3")
+)
 # G2-SR: media job active flag. When a media job (super-resolution, in-process
 # image gen) is running on the shared Metal command queue, it starves the LLM
 # worker thread — the heartbeat goes stale not because the worker hung (Metal
@@ -346,9 +360,10 @@ def reset_video_executor_poison() -> None:
 
 
 def reset_llm_executor_poison() -> None:
-    global _llm_executor_poisoned
+    global _llm_executor_poisoned, _llm_poison_count
     with _llm_executor_poison_lock:
         _llm_executor_poisoned = False
+        _llm_poison_count = 0
 
 
 def update_llm_heartbeat() -> None:
@@ -358,7 +373,7 @@ def update_llm_heartbeat() -> None:
 
 
 def _llm_watchdog_tick() -> None:
-    global _llm_executor_poisoned, _media_defer_start, _media_defer_logged
+    global _llm_executor_poisoned, _media_defer_start, _media_defer_logged, _llm_poison_count
     while not _llm_watchdog_stop.is_set():
         _llm_watchdog_stop.wait(10.0)
         if _llm_watchdog_stop.is_set():
@@ -412,6 +427,22 @@ def _llm_watchdog_tick() -> None:
                 now - hb,
             )
             poison_executor("llm")
+            # #1176 Bug 3: increment consecutive poison counter. Each poison
+            # abandons a stuck Metal thread holding GPU memory. If the count
+            # crosses the threshold, the process can't recover — fatal_exit
+            # so the supervisor restarts clean. reset_llm_executor_poison
+            # zeroes the counter on successful engine reload.
+            _llm_poison_count += 1
+            if _llm_poison_count >= _LLM_POISON_FATAL_THRESHOLD:
+                from .utils.fatal import fatal_exit
+
+                fatal_exit(
+                    f"G2 llm watchdog: {_llm_poison_count} consecutive "
+                    f"poison events (threshold="
+                    f"{_LLM_POISON_FATAL_THRESHOLD}) — stuck Metal "
+                    f"threads hold GPU memory that cannot be reclaimed. "
+                    f"Restart to recover."
+                )
             # G2 auto-rebuild (#862): mark the live engine dead so
             # EnginePool.get_engine triggers EF-1 lazy reload (evict +
             # _load_engine) on the next request, instead of leaving the

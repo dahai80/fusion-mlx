@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Fixed — G2 watchdog recovery fails, process hangs HTTP-unresponsive (#1176)
+- **Bug 1 (silent hang):** `check_llm_executor_healthy` guard returned 503
+  when the LLM executor was poisoned, but never triggered pool eviction +
+  reload. The guard fired before `get_engine()` could see `is_dead()` and
+  trigger EF-1 lazy reload — every subsequent request got 503 forever.
+  Fix: guard now calls `_trigger_poisoned_engine_reload()` which schedules
+  an async task to unload all dead engines. The next request after
+  Retry-After reaches `get_engine()` which loads a fresh engine.
+- **Bug 2 (timeout too aggressive):** `_LLM_WATCHDOG_TIMEOUT_S` default
+  raised from 120s to 300s. A 19k-token prefill on a 4-bit model under
+  memory pressure can exceed 120s for a single chunk without the worker
+  being hung. 300s still catches genuine Metal assertion/OOM hangs within
+  5 min. Override via `FUSION_LLM_WATCHDOG_TIMEOUT`.
+- **Bug 3 (stuck thread memory leak):** Each poison event abandons a
+  stuck Metal thread holding unreclaimable GPU memory. Added a
+  consecutive poison counter (`_llm_poison_count`); after
+  `FUSION_LLM_POISON_FATAL_THRESHOLD` (default 3) poison events,
+  `fatal_exit()` restarts the process so the supervisor reclaims all
+  memory. Counter resets to 0 on successful engine reload
+  (`reset_llm_executor_poison`).
+- **Bug 4 (log truncation):** `start.sh` truncated `server.log` on each
+  restart (`: > server.log`), destroying the crash trace before
+  diagnosis. Fix: rotates to `server.log.prev` before starting the new
+  server, preserving the previous run's log for post-mortem.
+
 ### Fixed — LLM worker thread hang during long-prompt prefill OOM (#1171)
 - During chunked prefill of 9k+ token prompts, a Metal OOM in a prefill
   chunk triggered a self-deadlock in the OOM retry path:
