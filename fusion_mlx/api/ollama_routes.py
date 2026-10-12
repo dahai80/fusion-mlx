@@ -272,6 +272,10 @@ async def api_generate(
     logger.info(
         "Ollama /api/generate model=%s stream=%s", request.model, request.stream
     )
+    # #1169: fast-fail if the LLM executor was poisoned by the G2 watchdog.
+    from ._guards import check_llm_executor_healthy
+
+    check_llm_executor_healthy(request.model or "", adapter="openai")
 
     messages = _build_openai_messages_generate(request.prompt, request.system)
     params = _options_to_params(request.options)
@@ -394,6 +398,10 @@ async def api_chat(
         request.stream,
         len(request.messages),
     )
+    # #1169: fast-fail if the LLM executor was poisoned by the G2 watchdog.
+    from ._guards import check_llm_executor_healthy
+
+    check_llm_executor_healthy(request.model or "", adapter="openai")
 
     messages = _build_openai_messages_chat(request.messages)
     params = _options_to_params(request.options)

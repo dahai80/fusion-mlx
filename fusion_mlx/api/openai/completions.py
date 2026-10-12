@@ -19,7 +19,7 @@ from ...exceptions import (
 )
 from ...middleware.auth import check_rate_limit, request_principal, verify_api_key
 from .._concurrency import acquire_request_slot, release_request_slot
-from .._guards import build_model_error_response
+from .._guards import build_model_error_response, check_llm_executor_healthy
 from ..openai_models import (
     ChatCompletionRequest,
     CompletionChoice,
@@ -203,6 +203,8 @@ async def completions(
         )
     # #226 IDOR scope: bind recorded session stats to the authenticated caller.
     principal = request_principal(http_request)
+    # #1169: fast-fail if the LLM executor was poisoned by the G2 watchdog.
+    check_llm_executor_healthy(request.model or "", adapter="openai")
     try:
         # Convert completion to chat format
         chat_req = ChatCompletionRequest(

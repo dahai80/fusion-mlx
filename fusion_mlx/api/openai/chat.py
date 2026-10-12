@@ -28,6 +28,7 @@ from .._concurrency import (
 from .._guards import (
     build_model_error_response,
     check_chat_capability,
+    check_llm_executor_healthy,
     check_multimodal_content,
     check_tool_choice_support,
 )
@@ -528,6 +529,10 @@ async def chat_completions(
 
     # #226 IDOR scope: bind recorded session stats to the authenticated caller.
     principal = request_principal(http_request)
+    # #1169: fast-fail if the LLM executor was poisoned by the G2 watchdog
+    # (a prior worker hung on Metal OOM/assertion). Without this the request
+    # queues behind the dead worker and hangs forever.
+    check_llm_executor_healthy(request.model or "", adapter="openai")
     # Log request entry (Ollama-style)
     prompt_preview = ""
     if request.messages:
