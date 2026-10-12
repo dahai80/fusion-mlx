@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v0.10.11] — 2026-10-13
+
 ### Fixed — G2 watchdog recovery fails, process hangs HTTP-unresponsive (#1176)
 - **Bug 1 (silent hang):** `check_llm_executor_healthy` guard returned 503
   when the LLM executor was poisoned, but never triggered pool eviction +
