@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+### Fixed — G2 watchdog false-positive + recovery wedge: whole server freezes (#1179)
+- **Fix A (watchdog false-positive):** The watchdog window now scales with
+  the pending prefill chunk size (`max_num_batched_tokens / 50 tok/s +
+  base`, capped at 1800s via `FUSION_LLM_WATCHDOG_MAX_TIMEOUT`). A single
+  legitimately-slow step — a 16k-token prefill chunk under multi-process
+  GPU contention (in-process trainer + FLUX + LLM on one Metal device) —
+  no longer trips the static 300s window and poisons a healthy engine.
+  On top of the scaled window, a cross-tick step-counter confirmation
+  defers poison while `_steps_executed` is still advancing (slow, not
+  hung); the counter must be frozen for two consecutive ticks before
+  poison fires.
+- **Fix B (add_request unbounded wait):** `add_request` now bounds its
+  executor submit with `FUSION_LLM_ADD_REQUEST_TIMEOUT` (default 120s).
+  Previously a wedged/grinding single-worker MLX executor hung every new
+  request forever with no log — the add_request-tail freeze signature
+  seen in every production freeze. On timeout the request fails fast,
+  the context is cleaned up, and a deferred `abort_request` removes any
+  late scheduler insert.
+- **Fix C (recovery itself fatal):** `EngineCore.close()` no longer
+  submits scheduler teardown to the abandoned executor when the engine
+  is dead — that queued the teardown behind the stuck step and the
+  60s `.result()` timeout `fatal_exit`'d the whole server mid-"recovery".
+  Teardown for a dead engine runs on a throwaway `mlx-teardown-*`
+  thread instead.
+- **Fix D (traffic-dependent recovery):** The watchdog now schedules the
+  dead-engine unload itself via `loop.call_soon_threadsafe` right after
+  marking the engine dead. Previously recovery depended on new HTTP
+  traffic hitting the request-path guard — but every request hung on the
+  wedged executor, so the guard never fired and the dead engine was
+  never evicted.
+- **Fix E (/metrics event-loop freeze):** `/metrics` renders in a worker
+  thread under a hard 10s timeout; a blocked render returns 503 instead
+  of freezing the event loop. /metrics was the request found mid-render
+  in every production freeze tail.
+- **Test debt:** `test_metrics_route.py` rewritten to pin the current
+  `fusion_mlx_*` exposition contract (the #0907 ops-audit rewrite
+  replaced the old `rapid_mlx_*` engine-stats series but the tests were
+  never updated — 15 stale failures). `prometheus-client` added to dev
+  extras for the official-parser format-compliance tests.
+
 ## [v0.10.11] — 2026-10-13
 
 ### Fixed — G2 watchdog recovery fails, process hangs HTTP-unresponsive (#1176)
