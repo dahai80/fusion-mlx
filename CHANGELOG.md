@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v0.10.12] — 2026-10-14
+
 ### Fixed — G2 watchdog false-positive + recovery wedge: whole server freezes (#1179)
 - **Fix A (watchdog false-positive):** The watchdog window now scales with
   the pending prefill chunk size (`max_num_batched_tokens / 50 tok/s +
