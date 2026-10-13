@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 import logging
 import threading
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from .._version import __version__
@@ -26,6 +27,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+# #1179: hard cap for /metrics render in the worker thread.
+_METRICS_RENDER_TIMEOUT_S = 10.0
 
 
 class _StickyCounterAccumulator:
@@ -1379,7 +1382,27 @@ def render_prometheus_metrics() -> str:
 
 @router.get("/metrics")
 async def prometheus_metrics(_auth: bool = Depends(verify_management_access)):
-    body = render_prometheus_metrics()
+    # #1179: render off the event loop with a hard timeout. The render
+    # walks engine/scheduler/cache state and historically ran inline on
+    # the loop thread; any blocking callee (lock, allocator, IO) froze
+    # the whole server — /metrics was the request found mid-render in
+    # every production freeze tail. A worker thread + bounded wait turns
+    # that into a 503 while the loop stays responsive.
+    loop = asyncio.get_running_loop()
+    try:
+        body = await asyncio.wait_for(
+            loop.run_in_executor(None, render_prometheus_metrics),
+            timeout=_METRICS_RENDER_TIMEOUT_S,
+        )
+    except TimeoutError:
+        logger.warning(
+            "/metrics render timed out after %.0fs — returning 503",
+            _METRICS_RENDER_TIMEOUT_S,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=f"metrics render timed out after {_METRICS_RENDER_TIMEOUT_S:.0f}s",
+        )
     return PlainTextResponse(content=body, media_type=_CONTENT_TYPE)
 
 

@@ -251,9 +251,19 @@ _llm_heartbeat_lock = threading.Lock()
 # cleared after it returns). The watchdog uses this to know a step is
 # pending and how long it has been pending.
 _llm_step_deadline: float = 0.0
+# #1179: effective staleness window for the current burst. Equals
+# _LLM_WATCHDOG_TIMEOUT_S unless the pending prefill chunk is large enough
+# that one contended step can legitimately exceed it; the engine loop arms
+# a scaled window in that case so the watchdog only fires on true hangs.
+_llm_step_window: float = 0.0
 # Watchdog thread handle (single, daemon).
 _llm_watchdog_thread: threading.Thread | None = None
 _llm_watchdog_stop = threading.Event()
+# #1179: last-seen EngineCore._steps_executed and a one-shot log flag for
+# the progress deferral below. Watchdog thread is the only writer, so no
+# lock is needed.
+_llm_watchdog_last_steps: int = -1
+_llm_progress_defer_logged = False
 # #1176 Bug 2: raised from 120s to 300s. A 19k-token prefill on a 4-bit
 # model under memory pressure can take >120s for a single chunk without
 # the worker being hung (heartbeat advances between chunks, but a single
@@ -261,6 +271,46 @@ _llm_watchdog_stop = threading.Event()
 # assertion/OOM hangs within 5 min while giving slow-but-progressing
 # prefills enough headroom. Override via FUSION_LLM_WATCHDOG_TIMEOUT.
 _LLM_WATCHDOG_TIMEOUT_S = float(os.environ.get("FUSION_LLM_WATCHDOG_TIMEOUT", "300"))
+# #1179: upper bound for the scaled watchdog window. Bounds hang detection
+# even when max_num_batched_tokens is huge. Override via
+# FUSION_LLM_WATCHDOG_MAX_TIMEOUT.
+_LLM_WATCHDOG_MAX_TIMEOUT_S = float(
+    os.environ.get("FUSION_LLM_WATCHDOG_MAX_TIMEOUT", "1800")
+)
+# #1179: conservative prefill throughput floor (tok/s) used to scale the
+# watchdog window for a pending prefill chunk under multi-process GPU
+# contention (in-process fine-tune trainer + media subprocesses). A 16k
+# chunk at this floor exceeds the 300s base window while the worker is
+# still healthy.
+_LLM_WATCHDOG_PREFILL_TOK_PER_S = 50.0
+# #1179: how long add_request may wait for the single-worker MLX executor
+# before failing the request. Prevents the infinite client hang when the
+# worker is wedged or grinding a multi-minute contended prefill (the
+# add_request-tail freeze signature: last log line, no error, no recovery).
+# Override via FUSION_LLM_ADD_REQUEST_TIMEOUT.
+_ADD_REQUEST_SUBMIT_TIMEOUT_S = float(
+    os.environ.get("FUSION_LLM_ADD_REQUEST_TIMEOUT", "120")
+)
+
+
+def _llm_watchdog_window_for_pending(scheduler: Any) -> float:
+    # #1179: one scheduler.step() processes up to max_num_batched_tokens of
+    # prefill in a single forward pass. Under heavy GPU contention that one
+    # step can take far longer than the static watchdog window while the
+    # worker is alive (production freezes #1-#3 fired exactly this way on
+    # 16-17k-token tool-call prompts). Scale the window with the chunk size
+    # so the watchdog distinguishes "slow contended prefill" from "hung".
+    base = _LLM_WATCHDOG_TIMEOUT_S
+    try:
+        chunk = int(getattr(scheduler.config, "max_num_batched_tokens", 0) or 0)
+    except Exception:
+        return base
+    if chunk <= 0:
+        return base
+    scaled = chunk / _LLM_WATCHDOG_PREFILL_TOK_PER_S + base
+    return min(scaled, _LLM_WATCHDOG_MAX_TIMEOUT_S)
+
+
 # G2 auto-rebuild (#862): weakref to the live EngineCore so the watchdog can
 # mark it dead on hung-worker detection. Weakref survives reload churn — when
 # the pool evicts + rebuilds the engine, the old ref dies and the new engine
@@ -361,9 +411,14 @@ def reset_video_executor_poison() -> None:
 
 def reset_llm_executor_poison() -> None:
     global _llm_executor_poisoned, _llm_poison_count
+    global _llm_watchdog_last_steps, _llm_progress_defer_logged
     with _llm_executor_poison_lock:
         _llm_executor_poisoned = False
         _llm_poison_count = 0
+    # #1179: also clear the progress-defer state so a freshly reloaded
+    # engine starts with a clean watchdog baseline.
+    _llm_watchdog_last_steps = -1
+    _llm_progress_defer_logged = False
 
 
 def update_llm_heartbeat() -> None:
@@ -374,6 +429,7 @@ def update_llm_heartbeat() -> None:
 
 def _llm_watchdog_tick() -> None:
     global _llm_executor_poisoned, _media_defer_start, _media_defer_logged, _llm_poison_count
+    global _llm_watchdog_last_steps, _llm_progress_defer_logged
     while not _llm_watchdog_stop.is_set():
         _llm_watchdog_stop.wait(10.0)
         if _llm_watchdog_stop.is_set():
@@ -381,12 +437,17 @@ def _llm_watchdog_tick() -> None:
         with _llm_heartbeat_lock:
             hb = _llm_heartbeat
             deadline = _llm_step_deadline
+            window = _llm_step_window
         if deadline == 0.0 or hb == 0.0:
             continue
+        if window <= 0.0:
+            window = _LLM_WATCHDOG_TIMEOUT_S
         now = time.monotonic()
         # A step is pending (deadline != 0) and the heartbeat has not
         # advanced within the watchdog window — the worker is hung.
-        if now - hb > _LLM_WATCHDOG_TIMEOUT_S:
+        # #1179: the window is per-burst (may be scaled up for a large
+        # pending prefill chunk — see _llm_watchdog_window_for_pending).
+        if now - hb > window:
             # G2-SR: if a media job is active, the LLM worker is likely
             # starved on the shared Metal command queue (not hung). Defer
             # poison so the engine survives; the heartbeat advances once
@@ -419,6 +480,40 @@ def _llm_watchdog_tick() -> None:
             with _llm_executor_poison_lock:
                 if _llm_executor_poisoned:
                     continue
+            # #1179: progress check — heartbeat only advances BETWEEN steps,
+            # so one legitimately-slow step (a 16k-token prefill chunk under
+            # multi-process GPU contention can exceed the watchdog window
+            # while still making progress) looks identical to a hang. Read
+            # the engine's step counter: if it advanced since the last tick
+            # the worker completed a step and is slow, not hung. Defer poison
+            # so a healthy engine is not killed mid-burst (the poison ->
+            # fail_all -> mark-dead cascade is what wedged recovery in
+            # production). When the counter is unavailable (-1) or frozen,
+            # fall through to the hang path as before.
+            with _llm_engine_ref_lock:
+                ref = _llm_watchdog_engine_ref
+            engine_for_progress = ref() if ref is not None else None
+            engine_steps = -1
+            if engine_for_progress is not None:
+                try:
+                    engine_steps = int(engine_for_progress._steps_executed)
+                except Exception:
+                    engine_steps = -1
+            if engine_steps >= 0:
+                if engine_steps != _llm_watchdog_last_steps:
+                    _llm_watchdog_last_steps = engine_steps
+                    if _llm_progress_defer_logged:
+                        _llm_progress_defer_logged = False
+                    continue
+                if not _llm_progress_defer_logged:
+                    _llm_progress_defer_logged = True
+                    logger.warning(
+                        "G2 llm watchdog: heartbeat stale %.0fs and step "
+                        "counter frozen at %d — confirming hang before poison",
+                        now - hb,
+                        engine_steps,
+                    )
+            _llm_watchdog_last_steps = engine_steps
             logger.error(
                 "G2 llm watchdog: worker thread hung for %.0fs (heartbeat "
                 "stale). Poisoning llm executor + marking engine dead for "
@@ -458,6 +553,31 @@ def _llm_watchdog_tick() -> None:
                     engine.mark_dead(
                         "G2 hung LLM worker thread (heartbeat stale %.0fs)" % (now - hb)
                     )
+                    # #1179: don't wait for new HTTP traffic to trigger the
+                    # pool reload — the request-path guard may never fire
+                    # while every request hangs on the wedged executor.
+                    # Schedule the dead-engine unload from this watchdog
+                    # thread via the engine's loop. If the loop itself is
+                    # wedged the callback queues harmlessly; the scaled
+                    # watchdog window + bounded add_request prevent that
+                    # wedge in the first place.
+                    loop_ref = getattr(engine, "_loop", None)
+                    if loop_ref is not None and loop_ref.is_running():
+                        try:
+                            from .api._guards import _trigger_poisoned_engine_reload
+
+                            loop_ref.call_soon_threadsafe(
+                                _trigger_poisoned_engine_reload
+                            )
+                            logger.info(
+                                "G2 watchdog: scheduled dead-engine unload "
+                                "on the event loop (#1179 recovery)"
+                            )
+                        except Exception:
+                            logger.debug(
+                                "watchdog reload scheduling failed",
+                                exc_info=True,
+                            )
 
 
 def start_llm_watchdog() -> None:
@@ -1144,14 +1264,20 @@ class EngineCore:
                 if self.scheduler.has_requests():
                     # G2: set step deadline so the watchdog knows a step is
                     # pending. Cleared after run_in_executor returns.
-                    global _llm_step_deadline
+                    # #1179: arm the scaled staleness window too — a large
+                    # pending prefill chunk legitimately needs longer than
+                    # the base window under GPU contention.
+                    global _llm_step_deadline, _llm_step_window
+                    step_window = _llm_watchdog_window_for_pending(self.scheduler)
                     with _llm_heartbeat_lock:
-                        _llm_step_deadline = time.monotonic() + _LLM_WATCHDOG_TIMEOUT_S
+                        _llm_step_deadline = time.monotonic() + step_window
+                        _llm_step_window = step_window
                     step_outputs = await loop.run_in_executor(
                         self._mlx_executor, self._step_burst
                     )
                     with _llm_heartbeat_lock:
                         _llm_step_deadline = 0.0
+                        _llm_step_window = 0.0
                     self._steps_executed += len(step_outputs)
                     # P2-7: a successful step resets the circuit breaker.
                     if self._consecutive_loop_errors:
@@ -1479,8 +1605,42 @@ class EngineCore:
             # on the Metal stream.
             loop = asyncio.get_running_loop()
             try:
-                await loop.run_in_executor(
-                    self._mlx_executor, self.scheduler.add_request, request
+                # #1179: bound the wait. The MLX executor is single-worker;
+                # when the worker is wedged (or grinding a multi-minute
+                # contended prefill) every new request queued here hung
+                # forever with no log — the add_request-tail freeze
+                # signature. Fail fast instead; the deferred abort below
+                # cleans up the late insert.
+                await asyncio.wait_for(
+                    loop.run_in_executor(
+                        self._mlx_executor, self.scheduler.add_request, request
+                    ),
+                    timeout=_ADD_REQUEST_SUBMIT_TIMEOUT_S,
+                )
+            except TimeoutError:
+                logger.error(
+                    "add_request: id=%s admission timed out after %.0fs "
+                    "(executor busy or wedged) — failing request, "
+                    "scheduler abort enqueued for late insert cleanup",
+                    request_id,
+                    _ADD_REQUEST_SUBMIT_TIMEOUT_S,
+                )
+                # No consumer holds this ctx yet (add_request never
+                # returned), so plain cleanup is enough.
+                self._cleanup_request(request_id)
+                try:
+                    fut = self._mlx_executor.submit(
+                        self.scheduler.abort_request, request_id
+                    )
+                    fut.result(timeout=5.0)
+                except Exception as abort_exc:
+                    logger.warning(
+                        "post-timeout abort for %s failed: %s", request_id, abort_exc
+                    )
+                raise RuntimeError(
+                    f"Request {request_id} admission timed out after "
+                    f"{_ADD_REQUEST_SUBMIT_TIMEOUT_S:.0f}s (engine executor "
+                    "busy or wedged; retry)"
                 )
             except BaseException:
                 # If the caller is cancelled or the insert fails, the request
@@ -2109,6 +2269,30 @@ class EngineCore:
             if self.scheduler
             else ()
         ):
+            # #1179: the single-worker MLX executor may still be grinding
+            # the step that triggered the poison (the worker is abandoned,
+            # not dead — its current task runs to completion). Submitting
+            # teardown to it queues behind that task, so .result(60s) times
+            # out and fatal_exit kills the WHOLE server for one engine's
+            # teardown — the "recovery never happens" failure. For a dead
+            # engine (the only path that reaches teardown after poison),
+            # run teardown on a throwaway thread instead; stream-bound
+            # calls raise RuntimeError there, which we tolerate exactly like
+            # the existing caller-thread fallback below.
+            if self._engine_dead or self._mlx_executor is None:
+                th = threading.Thread(
+                    target=fn,
+                    name=f"mlx-teardown-{self._engine_id[:8]}",
+                    daemon=True,
+                )
+                th.start()
+                th.join(FATAL_TEARDOWN_TIMEOUT_S)
+                if th.is_alive():
+                    fatal_exit(
+                        f"scheduler teardown (fresh thread) timed out after "
+                        f"{FATAL_TEARDOWN_TIMEOUT_S}s"
+                    )
+                continue
             try:
                 self._mlx_executor.submit(fn).result(timeout=FATAL_TEARDOWN_TIMEOUT_S)
             except concurrent.futures.TimeoutError:
