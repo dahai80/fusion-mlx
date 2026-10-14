@@ -593,7 +593,15 @@ def start_llm_watchdog() -> None:
 
 
 def stop_llm_watchdog() -> None:
+    global _llm_watchdog_thread
     _llm_watchdog_stop.set()
+    # Join so an immediate start_llm_watchdog() doesn't see the dying thread
+    # as alive and silently skip the restart (watchdog never ticks again).
+    t = _llm_watchdog_thread
+    if t is not None and t is not threading.current_thread():
+        t.join(timeout=2.0)
+    if t is not None and not t.is_alive():
+        _llm_watchdog_thread = None
 
 
 def poison_executor(pool_type: str = "video") -> None:
