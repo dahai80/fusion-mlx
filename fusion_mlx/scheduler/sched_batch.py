@@ -22,6 +22,7 @@ from typing import Any
 import mlx.core as mx
 from mlx_lm.models.cache import make_prompt_cache
 
+from ..exceptions import PrefillMemoryExceededError
 from ..prefill_progress import get_prefill_tracker
 from ..request import Request, RequestOutput, RequestStatus
 from ..utils.proc_memory import get_phys_footprint
@@ -354,6 +355,15 @@ def _do_external_prefill(
 # headroom for the next chunk's intermediates.
 _PREFILL_STEP_TIERS: tuple[int, ...] = (1024, 512, 256, 128)
 
+# #1204: never throttle below this floor. Per-step fixed overhead (the
+# transient measurement pair + boundary snapshot + eval/sync) dominates
+# small chunks: 64-token chunks ran an 83K-token prompt at ~25 tok/s
+# for 55 minutes. Memory safety stays guaranteed by the chunk-end
+# hard-limit check in _step_prefill_chunk (RuntimeError → #1405 reject)
+# and the preflight safety guard, both of which use this floor via
+# _prefill_min_chunk_tokens alignment in the enforcer.
+_PREFILL_THROTTLE_FLOOR_TOKENS: int = 512
+
 
 def _adaptive_chunk_size(
     self,
@@ -378,7 +388,11 @@ def _adaptive_chunk_size(
     - first 25% of band               → 1024
     - 25%–50%                          → 512
     - 50%–75%                          → 256
-    - 75%+                             → 128 (floor at min_chunk)
+    - 75%+                             → 128
+    All tiers clamp to max(_prefill_min_chunk_tokens,
+    _PREFILL_THROTTLE_FLOOR_TOKENS=512) — #1204: below ~512 tokens the
+    per-step fixed overhead dominates and throughput collapses (~25
+    tok/s on an 83K prompt), defeating the throttle's own purpose.
 
     The chunk-end memory check (``self._memory_hard_limit_bytes``
     comparison in the prefill loops) remains as the safety net: if
@@ -420,7 +434,7 @@ def _adaptive_chunk_size(
     else:
         target = _PREFILL_STEP_TIERS[3]  # 128
 
-    target = max(target, self._prefill_min_chunk_tokens)
+    target = max(target, self._prefill_min_chunk_tokens, _PREFILL_THROTTLE_FLOOR_TOKENS)
     if requested <= target:
         return requested
 
@@ -437,6 +451,25 @@ def _adaptive_chunk_size(
         over_ratio,
     )
     return target
+
+
+def _next_chunk_token_load(self, request: "Request") -> int:
+    # #1204: tokens this in-flight chunked-prefill request contributes to
+    # the NEXT forward pass — one prefill_step_size chunk, not its whole
+    # remaining prompt. _advance_chunked_prefills advances every prefilling
+    # request by exactly one chunk per step, so admission budgeting against
+    # the full remaining length starved every waiting request behind one
+    # oversized prompt (83K tokens, ~55min, waiting=3 running=0). Memory
+    # stays bounded by the per-chunk hard-limit check in _step_prefill_chunk
+    # and the KV-headroom admission guard.
+    state = self._prefill_states.get(request.request_id)
+    if state is not None and state.tokens_remaining.shape[1] > 0:
+        return min(self.config.prefill_step_size, state.tokens_remaining.shape[1])
+    return len(
+        request.remaining_tokens
+        if request.remaining_tokens is not None
+        else request.prompt_token_ids
+    )
 
 
 def _record_chunk_transient(
@@ -953,6 +986,35 @@ def _advance_chunked_prefills(
                     finished=True,
                     finish_reason="error",
                     error=str(e),
+                )
+            )
+            continue
+        except PrefillMemoryExceededError as e:
+            # Deterministic capacity rejection (the preflight guard's typed
+            # error class): never retried as transient OOM — surface with
+            # error_code so the route layer maps it to a 4xx-class response
+            # (matches the _schedule_waiting preflight rejection contract).
+            # PrefillMemoryExceededError is not a RuntimeError subclass, so
+            # without this branch it would propagate uncaught out of the
+            # scheduling loop.
+            logger.error("Chunked prefill capacity-exceeded for %s: %s", rid, e)
+            self._prefill_states.pop(rid, None)
+            self._release_paged_cache_for_request(rid)
+            self.requests.pop(rid, None)
+            get_prefill_tracker().remove(rid)
+            _sync_and_clear_cache()
+            rejected.append(
+                RequestOutput(
+                    request_id=rid,
+                    finished=True,
+                    finish_reason="error",
+                    error=str(e),
+                    error_code="prefill_memory_exceeded",
+                    error_metadata={
+                        "request_id": e.request_id,
+                        "estimated_bytes": e.estimated_bytes,
+                        "limit_bytes": e.limit_bytes,
+                    },
                 )
             )
             continue

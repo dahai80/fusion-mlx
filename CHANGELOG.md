@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+### Fixed — head-of-line blocking behind one oversized chunked-prefill prompt (#1204)
+- **Per-chunk admission budgeting:** `_schedule_waiting` counted an
+  in-flight chunked prefill's FULL remaining prompt (an 83,254-token
+  prompt = 83K tokens) against `max_num_batched_tokens`, so every waiting
+  request starved until the whole prefill finished (observed: 55+ min at
+  ~25 tok/s with waiting=3, running=0). The budget now counts only the
+  NEXT chunk (`prefill_step_size`, clamped to what's left) of each
+  in-flight prefill — what a forward pass actually contains — via the new
+  `_next_chunk_token_load()`. Memory stays bounded by the per-chunk
+  hard-limit check in `_step_prefill_chunk` and the KV-headroom admission
+  guard.
+- **Throttle floor at 512 tokens:** the adaptive prefill chunk-size
+  throttle could shrink chunks to 64 tokens, where per-step fixed
+  overhead dominates and throughput collapses (~25 tok/s on the 83K
+  prompt). Throttled chunks now floor at
+  `_PREFILL_THROTTLE_FLOOR_TOKENS = 512`, and the enforcer's
+  `prefill_min_chunk_tokens` default moves 256 → 512.
+- **Typed capacity rejection mid-chunk:** a `PrefillMemoryExceededError`
+  raised during `_advance_chunked_prefills` is no longer an uncaught
+  exception crashing the scheduling loop (it is not a `RuntimeError`
+  subclass, so the existing handler missed it). It now surfaces as
+  `finish_reason="error"` with `error_code="prefill_memory_exceeded"` and
+  request/estimated/limit metadata, matching the preflight rejection
+  contract.
+- **Test debt cleared:** `tests/unit/test_scheduler_chunked_prefill.py`
+  (10 stale failures, quarantined since 2026-08-22) rescued and removed
+  from `debt_modules.txt` — config-default drift, GLM adaptive-prefill
+  relocation (now in `patches/glm_moe_dsa`, covered by its own tests),
+  chunked-OOM requeue → in-place retry (#1171) contract, throttle patch
+  targets, and `_PreflightRejection` import path.
+
 ### Fixed — fatal-exit path no longer silently destroys fine-tune jobs (#1205)
 - **Tolerant job recovery:** persisted `jobs.json` records written by older
   versions (or newer ones — unknown `config`/`progress` keys) are now

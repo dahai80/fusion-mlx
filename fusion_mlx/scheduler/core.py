@@ -37,6 +37,7 @@ from .sched_admission import *  # noqa: F403
 from .sched_batch import *  # noqa: F403
 from .sched_batch import (
     _emit_final_boundary_if_needed,
+    _next_chunk_token_load,
     _step_prefill_chunk,
 )
 from .sched_boundary import *  # noqa: F403
@@ -111,6 +112,7 @@ class Scheduler:
     """Orchestrator — delegates to split modules."""
 
     _PREFILL_STEP_TIERS: tuple[int, ...] = (1024, 512, 256, 128)
+    _PREFILL_THROTTLE_FLOOR_TOKENS: int = 512
     _ROTATING_BLOCK_SIZE_MIN: int = 512
     _ROTATING_BLOCK_SIZE_MAX: int = 1024
     _ARRAYS_CACHE_BLOCK_SIZE: int = 2048
@@ -121,6 +123,9 @@ class Scheduler:
 
     def _step_prefill_chunk(self, *args, **kwargs):
         return _step_prefill_chunk(self, *args, **kwargs)
+
+    def _next_chunk_token_load(self, *args, **kwargs):
+        return _next_chunk_token_load(self, *args, **kwargs)
 
     def _emit_final_boundary_if_needed(self, *args, **kwargs):
         return _emit_final_boundary_if_needed(self, *args, **kwargs)
