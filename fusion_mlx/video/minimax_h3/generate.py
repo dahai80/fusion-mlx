@@ -691,6 +691,10 @@ def generate_video(
     controlnet_latent=None,
     inpaint_mask=None,
     init_latent=None,
+    # #1212 Turbo LoRA：str=显式 LoRA 路径；True=自动探测模型根目录的
+    # turbo_lora.safetensors / minimax_h3_turbo*.safetensors；None/False=关。
+    # 附加后少步采样（4-8 步有用区间，>8 无收益且过锐）。
+    lora=None,
 ):
     # H3 t2va/fl2va 顶层编排。
     #
@@ -840,6 +844,39 @@ def generate_video(
 
         # DiT 8-bit：跳过 F32 小层与输出投影，adaLN/ffn/attn 大线性层量化。
         quantize_dit(dit, bits=8, group_size=64)
+
+    # #1212 Turbo LoRA 附加（量化后再挂——旁路包住 QuantizedLinear）。
+    lora_attached = False
+    if lora is not None and lora is not False:
+        from .transformer import apply_lora
+
+        if lora is True:
+            import glob as _glob
+
+            candidates = sorted(
+                _glob.glob(os.path.join(model_path, "turbo_lora.safetensors"))
+            ) + sorted(
+                _glob.glob(
+                    os.path.join(model_path, "minimax_h3_turbo*.safetensors")
+                )
+            )
+            if not candidates:
+                raise ValueError(
+                    "h3 lora=True but no turbo_lora.safetensors / "
+                    "minimax_h3_turbo*.safetensors next to the model"
+                )
+            lora_file = candidates[0]
+        else:
+            lora_file = str(lora)
+        apply_lora(dit, lora_file)
+        lora_attached = True
+        if num_inference_steps > 8:
+            logger.warning(
+                "h3 turbo lora active: steps=%d clamped to 8 (turbo useful "
+                "range 4-8, >8 adds over-sharp artifacts, no benefit)",
+                num_inference_steps,
+            )
+            num_inference_steps = 8
 
     vae_path = _resolve_subdir(model_path, "video_vae")
     vae = MiniMaxH3VideoVAE.from_pretrained(vae_path, config=H3VAEConfig())

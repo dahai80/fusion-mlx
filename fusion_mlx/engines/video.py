@@ -121,6 +121,10 @@ class VideoGenEngine(BaseNonStreamingEngine):
             tiling=kwargs.get("tiling"),
             no_compile=kwargs.get("no_compile"),
             enhance_prompt=kwargs.get("enhance_prompt"),
+            # #1212 Turbo/LoRA adapter path (MiniMax-H3 few-step sampling):
+            # True=auto-detect bundled turbo_lora.safetensors, str=explicit
+            # path, None=off. Forwarded to backend params (minimax_h3).
+            lora=kwargs.get("lora"),
             on_step=on_step,
             session_id=kwargs.get("session_id"),
             output_format=output_format,
