@@ -1460,13 +1460,8 @@ def _is_video_model(path: Path) -> bool:
         # gate misclassifies the repo as an LLM and load fails with "Model
         # type ti2v not supported". Weight-file guard: a bare config.json
         # with no weights is not loadable (stray-manifest equivalent, #948).
-        if (
-            mt in VIDEO_CONFIG_MODEL_TYPES
-            and any(
-                p.suffix in (".safetensors", ".bin")
-                for p in path.iterdir()
-                if p.is_file()
-            )
+        if mt in VIDEO_CONFIG_MODEL_TYPES and any(
+            p.suffix in (".safetensors", ".bin") for p in path.iterdir() if p.is_file()
         ):
             return True
         # 无子目录入口 (非 broken symlink) 且无 task manifest -> 非可加载视频模型.
