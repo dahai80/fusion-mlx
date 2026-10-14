@@ -48,6 +48,7 @@ def _clean_state(monkeypatch):
     with ec._llm_heartbeat_lock:
         ec._llm_heartbeat = 0.0
         ec._llm_step_deadline = 0.0
+        ec._llm_step_window = 0.0
     monkeypatch.setattr(ec, "_llm_watchdog_stop", _FastEvent())
     # Tests below assign _LLM_WATCHDOG_* constants directly; restore them so
     # the values never leak into later suites.
@@ -61,6 +62,7 @@ def _clean_state(monkeypatch):
     set_media_job_active(False)
     with ec._llm_heartbeat_lock:
         ec._llm_step_deadline = 0.0
+        ec._llm_step_window = 0.0
 
 
 class TestMediaFlag:

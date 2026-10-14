@@ -1940,9 +1940,13 @@ class EnginePool:
         """Return True if model_id has a discovered/registered pool entry."""
         return model_id in self._entries
 
-    def register_engine(self, model_id: str, engine) -> None:
+    def register_engine(self, model_id: str, engine, model_path: str = "") -> None:
         """Register an externally-created engine in the pool."""
-        self._register_entry(model_id, "", "llm", "batched", engine=engine)
+        # #1205: model_path must survive registration — the fine-tune
+        # service resolves the trainer's model dir via entry.model_path;
+        # an empty string made _execute_training call mlx_lm load("") and
+        # die on a relative 'config.json' for every serve-booted model.
+        self._register_entry(model_id, model_path, "llm", "batched", engine=engine)
 
     def register_audio_engine_entry(
         self,

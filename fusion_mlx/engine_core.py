@@ -1285,12 +1285,18 @@ class EngineCore:
                     with _llm_heartbeat_lock:
                         _llm_step_deadline = time.monotonic() + step_window
                         _llm_step_window = step_window
-                    step_outputs = await loop.run_in_executor(
-                        self._mlx_executor, self._step_burst
-                    )
-                    with _llm_heartbeat_lock:
-                        _llm_step_deadline = 0.0
-                        _llm_step_window = 0.0
+                    try:
+                        step_outputs = await loop.run_in_executor(
+                            self._mlx_executor, self._step_burst
+                        )
+                    finally:
+                        # A raising or cancelled step must not leave the
+                        # deadline/window armed — a leaked window permanently
+                        # disarms the watchdog (its staleness comparison
+                        # reads _llm_step_window, #1205 CI rest-shard flake).
+                        with _llm_heartbeat_lock:
+                            _llm_step_deadline = 0.0
+                            _llm_step_window = 0.0
                     self._steps_executed += len(step_outputs)
                     # P2-7: a successful step resets the circuit breaker.
                     if self._consecutive_loop_errors:

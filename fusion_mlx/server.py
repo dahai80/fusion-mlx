@@ -2725,10 +2725,10 @@ class Server:
                 lora_path=pending.get("lora_path"),
             )
         await engine.start()
-        self.pool.register_engine(served, engine)
+        self.pool.register_engine(served, engine, model_path=model_path)
         orig = pending.get("original_name")
         if orig and orig != served:
-            self.pool.register_engine(orig, engine)
+            self.pool.register_engine(orig, engine, model_path=model_path)
         # Track for unload/shutdown (unload_model calls core.stop()).
         self.engine_cores[served] = engine
         logger.info(
