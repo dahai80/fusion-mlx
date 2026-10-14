@@ -43,6 +43,7 @@ def _clean_poison_state(monkeypatch):
     with ec._llm_heartbeat_lock:
         ec._llm_heartbeat = 0.0
         ec._llm_step_deadline = 0.0
+        ec._llm_step_window = 0.0
     monkeypatch.setattr(ec, "_llm_watchdog_stop", _FastEvent())
     # Tests below assign ec._LLM_WATCHDOG_TIMEOUT_S directly; restore it so
     # the value never leaks into later suites (breaks window-scaling math).
@@ -52,6 +53,7 @@ def _clean_poison_state(monkeypatch):
     reset_llm_executor_poison()
     with ec._llm_heartbeat_lock:
         ec._llm_step_deadline = 0.0
+        ec._llm_step_window = 0.0
 
 
 class TestLLMPoisonFlag:
