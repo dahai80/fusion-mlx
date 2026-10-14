@@ -20,6 +20,12 @@
   is marked `failed` with a `resume via init_adapter_path` hint and
   persisted via a fatal hook before the process exits — previously the
   9h-training-loss scenario from #1182 also destroyed the job bookkeeping.
+- **Fine-tune on serve-booted models fixed (found during #1205
+  verification):** `EnginePool.register_engine` dropped the model path
+  (hardcoded `""`), so `_resolve_model_path` returned an empty string and
+  the trainer called `mlx_lm load("")`, dying on a relative `config.json`
+  for every model loaded via the single-model serve path. The path is now
+  passed through and lands on `entry.model_path`.
 
 ### Fixed — SFT fine-tune can resume from an adapter checkpoint (#1182)
 - `FineTuneConfig` gains `init_adapter_path` (same naming as
