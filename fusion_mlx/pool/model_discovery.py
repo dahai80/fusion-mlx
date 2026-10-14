@@ -1443,16 +1443,30 @@ def _is_video_model(path: Path) -> bool:
     # unambiguous video types (no LLM uses them), so accept them when the
     # diffusers subdirs are present. Without this a ti2v model is misdetected
     # as an LLM and mlx-lm raises "Model type ti2v not supported" on load.
+    config_path = path / "config.json"
+    mt = None
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                mt = json.load(f).get("model_type", "")
+        except (OSError, json.JSONDecodeError):
+            mt = None
     if not has_diffusers_subdirs:
+        # Flat Wan2.2 MLX layout (#1207): quantized forks (e.g. Anes1032
+        # Wan2.2-TI2V-5B-mlx-q8) ship root-level model.safetensors +
+        # t5_encoder.safetensors + vae.safetensors + config.json with no
+        # diffusers subdirs and no task manifest. The wan2 backend resolves
+        # these flat files (_resolve_model_file is flat-first), so the subdir
+        # gate misclassifies the repo as an LLM and load fails with "Model
+        # type ti2v not supported". Weight-file guard: a bare config.json
+        # with no weights is not loadable (stray-manifest equivalent, #948).
+        if mt in VIDEO_CONFIG_MODEL_TYPES and any(
+            p.suffix in (".safetensors", ".bin") for p in path.iterdir() if p.is_file()
+        ):
+            return True
         # 无子目录入口 (非 broken symlink) 且无 task manifest -> 非可加载视频模型.
         return False
-    config_path = path / "config.json"
-    if not config_path.exists():
-        return False
-    try:
-        with open(config_path) as f:
-            mt = json.load(f).get("model_type", "")
-    except (OSError, json.JSONDecodeError):
+    if mt is None:
         return False
     return mt in VIDEO_CONFIG_MODEL_TYPES
 
