@@ -45,6 +45,10 @@ class VideoGenParams:
     tiling: str | None = None
     no_compile: bool | None = None
     enhance_prompt: bool | None = None
+    # LoRA adapter (#1212, MiniMax-H3 turbo first): True = auto-detect the
+    # turbo_lora.safetensors bundled with the model; str = explicit adapter
+    # path; None = off. Few-step sampling when active (4-8 useful range).
+    lora: bool | str | None = None
     # Streaming progress hook (issue #171). Async callback fired once per
     # denoise step as on_step(step, total) with 1-indexed step. Backends that
     # run denoise in a thread executor bridge it via make_sync_step_callback.

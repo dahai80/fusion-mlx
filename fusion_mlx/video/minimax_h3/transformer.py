@@ -565,3 +565,96 @@ def load_dit_from_pretrained(model_path, config=None):
         )
     model.update(tree_unflatten(loaded))
     return model
+
+
+class LoRALinear(nn.Module):
+    # #1212 Runtime LoRA sidepath over a base Linear/QuantizedLinear。
+    # y = base(x) + scale * (x @ A^T) @ B^T   (W_eff = W + scale * B @ A)。
+    # 前向旁路而非权重合并：基座保持 4bit 量化（dequant+GEMM 合并路线在等价
+    # mlx-serve 包上实测 -13%/步），LoRA 权重 bf16 上转 fp32 对齐基座精度。
+    def __init__(self, base, lora_a, lora_b, scale=1.0):
+        super().__init__()
+        self.base = base
+        self.lora_A = lora_a.astype(mx.float32)
+        self.lora_B = lora_b.astype(mx.float32)
+        self.scale = scale
+
+    def __call__(self, x):
+        out = self.base(x)
+        # A/B 2D：.T 转置（transpose(0,1) 是恒等置换，勿用）。
+        delta = (x @ self.lora_A.T) @ self.lora_B.T
+        return out + self.scale * delta
+
+
+def _resolve_module_path(model, path):
+    # "blocks.3.attn.qkv_proj" -> (parent_obj, attr_name)；数字段索引 list
+    # （MiniMaxH3DiTModel.blocks/token_refiner.blocks 是普通 list）。
+    parts = path.split(".")
+    parent = model
+    for part in parts[:-1]:
+        parent = parent[int(part)] if part.isdigit() else getattr(parent, part)
+    leaf = parts[-1]
+    module = parent[int(leaf)] if leaf.isdigit() else getattr(parent, leaf)
+    return parent, leaf, module
+
+
+def apply_lora(model, lora_path, *, scale=1.0, require_complete=True):
+    # #1212 把 Turbo/风格 LoRA 文件附加到已加载的 MiniMaxH3DiTModel。
+    # 键即模块树路径：blocks.{i}.{attn.qkv_proj,attn.out_proj,mlp.fc1,
+    # mlp.fc2,adaln_proj.linear} + token_refiner.blocks.{i}.* +
+    # final_layer.adaln_proj.linear，各带 lora_A.weight [r,in] /
+    # lora_B.weight [out,r]（W_eff = W + lora_B @ lora_A，metadata 声明）。
+    #
+    # qkv_proj.lora_B 行序为原始 per-head 交错（与原始 checkpoint 同源），
+    # 必须过 reorder_interleaved_qkv 行置换，否则 delta 落错行（基座在
+    # _remap_transformer_weights 已反交错）。
+    #
+    # 返回附加模块数。require_complete=True 时任何 shipped 模块未命中即抛错
+    # ——半挂载的 Turbo 静默降质（对齐 mlx-serve turboAttachComplete）。
+    flat = mx.load(lora_path)
+    pairs = {}
+    for k, v in flat.items():
+        if ".lora_A.weight" in k:
+            mod_path = k[: -len(".lora_A.weight")]
+            pairs.setdefault(mod_path, {})["A"] = v
+        elif ".lora_B.weight" in k:
+            mod_path = k[: -len(".lora_B.weight")]
+            pairs.setdefault(mod_path, {})["B"] = v
+    if not pairs:
+        raise ValueError(f"no lora_A/lora_B tensors in {lora_path}")
+
+    cfg = model.config
+    attached = 0
+    missed = []
+    for mod_path, tensors in sorted(pairs.items()):
+        if "A" not in tensors or "B" not in tensors:
+            missed.append(f"{mod_path} (incomplete A/B pair)")
+            continue
+        try:
+            parent, leaf, module = _resolve_module_path(model, mod_path)
+        except (AttributeError, IndexError, TypeError) as e:
+            missed.append(f"{mod_path} ({e})")
+            continue
+        lora_b = tensors["B"]
+        if mod_path.endswith(".attn.qkv_proj"):
+            lora_b = reorder_interleaved_qkv(lora_b, cfg.num_heads, cfg.head_dim)
+        wrapper = LoRALinear(module, tensors["A"], lora_b, scale=scale)
+        if leaf.isdigit():
+            parent[int(leaf)] = wrapper
+        else:
+            setattr(parent, leaf, wrapper)
+        attached += 1
+
+    if missed and require_complete:
+        raise ValueError(
+            f"lora {lora_path}: {len(missed)}/{len(pairs)} modules failed to "
+            f"attach (turbo must attach complete): {missed[:10]}"
+        )
+    logger.info(
+        "minimax_h3 lora: attached %d/%d modules from %s (scale=%.2f)",
+        attached,
+        len(pairs),
+        lora_path,
+        scale,
+    )
+    return attached

@@ -265,6 +265,11 @@ class VideoGenerateRequest(BaseModel):
     tiling: str | None = None
     no_compile: bool | None = None
     enhance_prompt: bool | None = None
+    # Turbo LoRA (MiniMax-H3, #1212): True = auto-detect the bundled
+    # turbo_lora.safetensors (few-step sampling, 4-8 useful range);
+    # str = explicit adapter path. Currently honored by the H3 backend only.
+    turbo: bool | None = None
+    lora: str | None = None
     # Session ID for multi-shot latent reuse (Phase-2 UMA Radix Latent cache).
     # Same session_id across sequential requests enables tail→first-frame reuse.
     session_id: str | None = None
@@ -633,6 +638,11 @@ async def _execute_video_generation(
             gen_kwargs["no_compile"] = request.no_compile
         if request.enhance_prompt is not None:
             gen_kwargs["enhance_prompt"] = request.enhance_prompt
+        # #1212 Turbo/LoRA: explicit path wins over turbo=True auto-detect.
+        if request.lora is not None:
+            gen_kwargs["lora"] = request.lora
+        elif request.turbo:
+            gen_kwargs["lora"] = True
         if request.session_id is not None:
             gen_kwargs["session_id"] = request.session_id
         if request.ip_adapter_image is not None:

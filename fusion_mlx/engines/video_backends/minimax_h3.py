@@ -215,6 +215,7 @@ class MiniMaxH3Backend(VideoBackend):
                                 controlnet_image=params.controlnet_image,
                                 inpaint_mask=params.inpaint_mask,
                                 init_latent=params.init_latent,
+                                lora=params.lora,
                             ),
                         ),
                         timeout=timeout,
