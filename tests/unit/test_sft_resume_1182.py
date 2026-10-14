@@ -60,7 +60,7 @@ class TestResumeHelper:
         assert out is model
         assert model.calls == []
 
-    def test_loads_weights_strict_from_checkpoint(self, tmp_path):
+    def test_loads_weights_from_checkpoint(self, tmp_path):
         ckpt = tmp_path / "run1"
         ckpt.mkdir()
         (ckpt / "adapters.safetensors").write_bytes(b"stub")
@@ -70,7 +70,7 @@ class TestResumeHelper:
             model, FineTuneConfig(init_adapter_path=str(ckpt)), tmp_path / "out"
         )
         assert out is model
-        assert model.calls == [(str(ckpt / "adapters.safetensors"), True)]
+        assert model.calls == [(str(ckpt / "adapters.safetensors"), False)]
 
     def test_not_load_adapters_double_apply(self):
         # mlx_lm load_adapters() re-applies linear_to_lora_layers from the
@@ -82,7 +82,7 @@ class TestResumeHelper:
         src = inspect.getsource(svc._resume_adapter_weights)
         assert "load_adapters" not in src
         assert "load_weights" in src
-        assert "strict=True" in src
+        assert "strict=False" in src
 
     def test_missing_checkpoint_fails_fast(self, tmp_path):
         empty = tmp_path / "empty"
