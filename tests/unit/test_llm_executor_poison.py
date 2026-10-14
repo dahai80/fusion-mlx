@@ -94,33 +94,30 @@ class TestWatchdog:
 
     def test_no_trigger_with_fresh_heartbeat(self):
         ec._LLM_WATCHDOG_TIMEOUT_S = 2.0
-        start_llm_watchdog()
         with ec._llm_heartbeat_lock:
             ec._llm_step_deadline = time.monotonic() + 10.0
         update_llm_heartbeat()
-        time.sleep(0.3)
+        ec._llm_watchdog_check()
         assert is_llm_executor_poisoned() is False
-        stop_llm_watchdog()
 
     def test_triggers_on_stale_heartbeat(self):
         ec._LLM_WATCHDOG_TIMEOUT_S = 0.2
-        start_llm_watchdog()
         with ec._llm_heartbeat_lock:
             ec._llm_step_deadline = time.monotonic() + 10.0
             ec._llm_heartbeat = time.monotonic() - 5.0
-        time.sleep(0.6)
+        # Two checks: a leaked engine ref from another suite makes the first
+        # check defer on the step counter; the second confirms and poisons.
+        ec._llm_watchdog_check()
+        ec._llm_watchdog_check()
         assert is_llm_executor_poisoned() is True
-        stop_llm_watchdog()
 
     def test_no_trigger_without_pending_step(self):
         ec._LLM_WATCHDOG_TIMEOUT_S = 0.2
         with ec._llm_heartbeat_lock:
             ec._llm_step_deadline = 0.0
             ec._llm_heartbeat = time.monotonic() - 999.0
-        start_llm_watchdog()
-        time.sleep(0.5)
+        ec._llm_watchdog_check()
         assert is_llm_executor_poisoned() is False
-        stop_llm_watchdog()
 
 
 class _FakeEngine:
@@ -148,30 +145,27 @@ class TestWatchdogAutoRebuild:
         engine = _FakeEngine()
         register_llm_engine_for_watchdog(engine)
         try:
-            start_llm_watchdog()
             with ec._llm_heartbeat_lock:
                 ec._llm_step_deadline = time.monotonic() + 10.0
                 ec._llm_heartbeat = time.monotonic() - 5.0
-            time.sleep(0.6)
+            ec._llm_watchdog_check()
+            ec._llm_watchdog_check()
             assert is_llm_executor_poisoned() is True
             assert engine.is_dead() is True
             assert engine.reason is not None
             assert "G2" in engine.reason
-            stop_llm_watchdog()
         finally:
             unregister_llm_engine_from_watchdog()
 
     def test_no_mark_dead_when_no_engine_registered(self):
         ec._LLM_WATCHDOG_TIMEOUT_S = 0.2
         unregister_llm_engine_from_watchdog()
-        start_llm_watchdog()
         with ec._llm_heartbeat_lock:
             ec._llm_step_deadline = time.monotonic() + 10.0
             ec._llm_heartbeat = time.monotonic() - 5.0
-        time.sleep(0.6)
+        ec._llm_watchdog_check()
         # Poison flag still set (fast-fail), but no engine to mark — no crash.
         assert is_llm_executor_poisoned() is True
-        stop_llm_watchdog()
 
     def test_weakref_survives_engine_teardown(self):
         engine = _FakeEngine()
@@ -181,13 +175,11 @@ class TestWatchdogAutoRebuild:
         del engine
         # Weakref dies with the engine — watchdog tick must not crash.
         ec._LLM_WATCHDOG_TIMEOUT_S = 0.2
-        start_llm_watchdog()
         with ec._llm_heartbeat_lock:
             ec._llm_step_deadline = time.monotonic() + 10.0
             ec._llm_heartbeat = time.monotonic() - 5.0
-        time.sleep(0.6)
+        ec._llm_watchdog_check()
         assert is_llm_executor_poisoned() is True
-        stop_llm_watchdog()
         unregister_llm_engine_from_watchdog()
 
     def test_reset_poison_clears_for_rebuild(self):

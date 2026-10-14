@@ -134,14 +134,14 @@ class TestPoisonCounterAndFatalExit:
 
     def test_watchdog_tick_increments_counter(self):
         ec = _import_engine_core()
-        src = textwrap.dedent(inspect.getsource(ec._llm_watchdog_tick))
+        src = textwrap.dedent(inspect.getsource(ec._llm_watchdog_check))
         assert (
             "_llm_poison_count" in src
         ), "#1176 Bug 3: watchdog tick must increment _llm_poison_count"
 
     def test_watchdog_tick_calls_fatal_exit_at_threshold(self):
         ec = _import_engine_core()
-        src = textwrap.dedent(inspect.getsource(ec._llm_watchdog_tick))
+        src = textwrap.dedent(inspect.getsource(ec._llm_watchdog_check))
         assert "fatal_exit" in src, (
             "#1176 Bug 3: watchdog tick must call fatal_exit when "
             "poison count exceeds threshold"
@@ -149,11 +149,13 @@ class TestPoisonCounterAndFatalExit:
 
     def test_watchdog_tick_has_global_decl_for_counter(self):
         ec = _import_engine_core()
-        src = inspect.getsource(ec._llm_watchdog_tick)
-        first_line = src.strip().split("\n")[1].strip()
-        assert "_llm_poison_count" in first_line, (
-            "#1176 Bug 3: _llm_watchdog_tick must declare " "global _llm_poison_count"
-        )
+        src = inspect.getsource(ec._llm_watchdog_check)
+        global_lines = [
+            line for line in src.split("\n") if line.strip().startswith("global ")
+        ]
+        assert any(
+            "_llm_poison_count" in line for line in global_lines
+        ), "#1176 Bug 3: _llm_watchdog_check must declare global _llm_poison_count"
 
 
 # ---------------------------------------------------------------------------

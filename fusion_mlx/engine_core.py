@@ -427,157 +427,162 @@ def update_llm_heartbeat() -> None:
         _llm_heartbeat = time.monotonic()
 
 
-def _llm_watchdog_tick() -> None:
+def _llm_watchdog_check() -> None:
+    # One watchdog evaluation. Split out of the tick loop so tests can drive
+    # it synchronously — thread-scheduling races on loaded CI runners made
+    # sleep-based tests flaky (6 spurious failures).
     global _llm_executor_poisoned, _media_defer_start, _media_defer_logged, _llm_poison_count
     global _llm_watchdog_last_steps, _llm_progress_defer_logged
+    with _llm_heartbeat_lock:
+        hb = _llm_heartbeat
+        deadline = _llm_step_deadline
+        window = _llm_step_window
+    if deadline == 0.0 or hb == 0.0:
+        return
+    if window <= 0.0:
+        window = _LLM_WATCHDOG_TIMEOUT_S
+    now = time.monotonic()
+    # A step is pending (deadline != 0) and the heartbeat has not
+    # advanced within the watchdog window — the worker is hung.
+    # #1179: the window is per-burst (may be scaled up for a large
+    # pending prefill chunk — see _llm_watchdog_window_for_pending).
+    if now - hb > window:
+        # G2-SR: if a media job is active, the LLM worker is likely
+        # starved on the shared Metal command queue (not hung). Defer
+        # poison so the engine survives; the heartbeat advances once
+        # the media job releases the GPU. Bounded by the media defer
+        # budget so a truly stuck media job still triggers recovery.
+        if is_media_job_active():
+            if _media_defer_start == 0.0:
+                _media_defer_start = now
+            if now - _media_defer_start < _LLM_WATCHDOG_MEDIA_DEFER_S:
+                if not _media_defer_logged:
+                    _media_defer_logged = True
+                    logger.warning(
+                        "G2 llm watchdog: heartbeat stale %.0fs but "
+                        "media job active — deferring poison (GPU "
+                        "starvation suspected, not hang). LLM will "
+                        "recover when the media job releases the GPU.",
+                        now - hb,
+                    )
+                return
+            else:
+                logger.error(
+                    "G2 llm watchdog: media job active for %.0fs, "
+                    "heartbeat stale %.0fs — exceeded media defer budget "
+                    "(%ds). Poisoning; the media job may be stuck.",
+                    now - _media_defer_start,
+                    now - hb,
+                    _LLM_WATCHDOG_MEDIA_DEFER_S,
+                )
+                # fall through to poison
+        with _llm_executor_poison_lock:
+            if _llm_executor_poisoned:
+                return
+        # #1179: progress check — heartbeat only advances BETWEEN steps,
+        # so one legitimately-slow step (a 16k-token prefill chunk under
+        # multi-process GPU contention can exceed the watchdog window
+        # while still making progress) looks identical to a hang. Read
+        # the engine's step counter: if it advanced since the last tick
+        # the worker completed a step and is slow, not hung. Defer poison
+        # so a healthy engine is not killed mid-burst (the poison ->
+        # fail_all -> mark-dead cascade is what wedged recovery in
+        # production). When the counter is unavailable (-1) or frozen,
+        # fall through to the hang path as before.
+        with _llm_engine_ref_lock:
+            ref = _llm_watchdog_engine_ref
+        engine_for_progress = ref() if ref is not None else None
+        engine_steps = -1
+        if engine_for_progress is not None:
+            try:
+                engine_steps = int(engine_for_progress._steps_executed)
+            except Exception:
+                engine_steps = -1
+        if engine_steps >= 0:
+            if engine_steps != _llm_watchdog_last_steps:
+                _llm_watchdog_last_steps = engine_steps
+                if _llm_progress_defer_logged:
+                    _llm_progress_defer_logged = False
+                return
+            if not _llm_progress_defer_logged:
+                _llm_progress_defer_logged = True
+                logger.warning(
+                    "G2 llm watchdog: heartbeat stale %.0fs and step "
+                    "counter frozen at %d — confirming hang before poison",
+                    now - hb,
+                    engine_steps,
+                )
+        _llm_watchdog_last_steps = engine_steps
+        logger.error(
+            "G2 llm watchdog: worker thread hung for %.0fs (heartbeat "
+            "stale). Poisoning llm executor + marking engine dead for "
+            "pool auto-rebuild (#862). The stuck thread is abandoned; "
+            "the pool will evict + reload on the next request.",
+            now - hb,
+        )
+        poison_executor("llm")
+        # #1176 Bug 3: increment consecutive poison counter. Each poison
+        # abandons a stuck Metal thread holding GPU memory. If the count
+        # crosses the threshold, the process can't recover — fatal_exit
+        # so the supervisor restarts clean. reset_llm_executor_poison
+        # zeroes the counter on successful engine reload.
+        _llm_poison_count += 1
+        if _llm_poison_count >= _LLM_POISON_FATAL_THRESHOLD:
+            from .utils.fatal import fatal_exit
+
+            fatal_exit(
+                f"G2 llm watchdog: {_llm_poison_count} consecutive "
+                f"poison events (threshold="
+                f"{_LLM_POISON_FATAL_THRESHOLD}) — stuck Metal "
+                f"threads hold GPU memory that cannot be reclaimed. "
+                f"Restart to recover."
+            )
+        # G2 auto-rebuild (#862): mark the live engine dead so
+        # EnginePool.get_engine triggers EF-1 lazy reload (evict +
+        # _load_engine) on the next request, instead of leaving the
+        # engine reported as "loaded" while every request hangs. The
+        # stuck loop task is cancelled by EngineCore.stop() during
+        # _detach_engine. mark_dead is a sync flag set + log — safe
+        # to call from this watchdog thread.
+        with _llm_engine_ref_lock:
+            ref = _llm_watchdog_engine_ref
+        if ref is not None:
+            engine = ref()
+            if engine is not None and not engine.is_dead():
+                engine.mark_dead(
+                    "G2 hung LLM worker thread (heartbeat stale %.0fs)" % (now - hb)
+                )
+                # #1179: don't wait for new HTTP traffic to trigger the
+                # pool reload — the request-path guard may never fire
+                # while every request hangs on the wedged executor.
+                # Schedule the dead-engine unload from this watchdog
+                # thread via the engine's loop. If the loop itself is
+                # wedged the callback queues harmlessly; the scaled
+                # watchdog window + bounded add_request prevent that
+                # wedge in the first place.
+                loop_ref = getattr(engine, "_loop", None)
+                if loop_ref is not None and loop_ref.is_running():
+                    try:
+                        from .api._guards import _trigger_poisoned_engine_reload
+
+                        loop_ref.call_soon_threadsafe(_trigger_poisoned_engine_reload)
+                        logger.info(
+                            "G2 watchdog: scheduled dead-engine unload "
+                            "on the event loop (#1179 recovery)"
+                        )
+                    except Exception:
+                        logger.debug(
+                            "watchdog reload scheduling failed",
+                            exc_info=True,
+                        )
+
+
+def _llm_watchdog_tick() -> None:
     while not _llm_watchdog_stop.is_set():
         _llm_watchdog_stop.wait(10.0)
         if _llm_watchdog_stop.is_set():
             break
-        with _llm_heartbeat_lock:
-            hb = _llm_heartbeat
-            deadline = _llm_step_deadline
-            window = _llm_step_window
-        if deadline == 0.0 or hb == 0.0:
-            continue
-        if window <= 0.0:
-            window = _LLM_WATCHDOG_TIMEOUT_S
-        now = time.monotonic()
-        # A step is pending (deadline != 0) and the heartbeat has not
-        # advanced within the watchdog window — the worker is hung.
-        # #1179: the window is per-burst (may be scaled up for a large
-        # pending prefill chunk — see _llm_watchdog_window_for_pending).
-        if now - hb > window:
-            # G2-SR: if a media job is active, the LLM worker is likely
-            # starved on the shared Metal command queue (not hung). Defer
-            # poison so the engine survives; the heartbeat advances once
-            # the media job releases the GPU. Bounded by the media defer
-            # budget so a truly stuck media job still triggers recovery.
-            if is_media_job_active():
-                if _media_defer_start == 0.0:
-                    _media_defer_start = now
-                if now - _media_defer_start < _LLM_WATCHDOG_MEDIA_DEFER_S:
-                    if not _media_defer_logged:
-                        _media_defer_logged = True
-                        logger.warning(
-                            "G2 llm watchdog: heartbeat stale %.0fs but "
-                            "media job active — deferring poison (GPU "
-                            "starvation suspected, not hang). LLM will "
-                            "recover when the media job releases the GPU.",
-                            now - hb,
-                        )
-                    continue
-                else:
-                    logger.error(
-                        "G2 llm watchdog: media job active for %.0fs, "
-                        "heartbeat stale %.0fs — exceeded media defer budget "
-                        "(%ds). Poisoning; the media job may be stuck.",
-                        now - _media_defer_start,
-                        now - hb,
-                        _LLM_WATCHDOG_MEDIA_DEFER_S,
-                    )
-                    # fall through to poison
-            with _llm_executor_poison_lock:
-                if _llm_executor_poisoned:
-                    continue
-            # #1179: progress check — heartbeat only advances BETWEEN steps,
-            # so one legitimately-slow step (a 16k-token prefill chunk under
-            # multi-process GPU contention can exceed the watchdog window
-            # while still making progress) looks identical to a hang. Read
-            # the engine's step counter: if it advanced since the last tick
-            # the worker completed a step and is slow, not hung. Defer poison
-            # so a healthy engine is not killed mid-burst (the poison ->
-            # fail_all -> mark-dead cascade is what wedged recovery in
-            # production). When the counter is unavailable (-1) or frozen,
-            # fall through to the hang path as before.
-            with _llm_engine_ref_lock:
-                ref = _llm_watchdog_engine_ref
-            engine_for_progress = ref() if ref is not None else None
-            engine_steps = -1
-            if engine_for_progress is not None:
-                try:
-                    engine_steps = int(engine_for_progress._steps_executed)
-                except Exception:
-                    engine_steps = -1
-            if engine_steps >= 0:
-                if engine_steps != _llm_watchdog_last_steps:
-                    _llm_watchdog_last_steps = engine_steps
-                    if _llm_progress_defer_logged:
-                        _llm_progress_defer_logged = False
-                    continue
-                if not _llm_progress_defer_logged:
-                    _llm_progress_defer_logged = True
-                    logger.warning(
-                        "G2 llm watchdog: heartbeat stale %.0fs and step "
-                        "counter frozen at %d — confirming hang before poison",
-                        now - hb,
-                        engine_steps,
-                    )
-            _llm_watchdog_last_steps = engine_steps
-            logger.error(
-                "G2 llm watchdog: worker thread hung for %.0fs (heartbeat "
-                "stale). Poisoning llm executor + marking engine dead for "
-                "pool auto-rebuild (#862). The stuck thread is abandoned; "
-                "the pool will evict + reload on the next request.",
-                now - hb,
-            )
-            poison_executor("llm")
-            # #1176 Bug 3: increment consecutive poison counter. Each poison
-            # abandons a stuck Metal thread holding GPU memory. If the count
-            # crosses the threshold, the process can't recover — fatal_exit
-            # so the supervisor restarts clean. reset_llm_executor_poison
-            # zeroes the counter on successful engine reload.
-            _llm_poison_count += 1
-            if _llm_poison_count >= _LLM_POISON_FATAL_THRESHOLD:
-                from .utils.fatal import fatal_exit
-
-                fatal_exit(
-                    f"G2 llm watchdog: {_llm_poison_count} consecutive "
-                    f"poison events (threshold="
-                    f"{_LLM_POISON_FATAL_THRESHOLD}) — stuck Metal "
-                    f"threads hold GPU memory that cannot be reclaimed. "
-                    f"Restart to recover."
-                )
-            # G2 auto-rebuild (#862): mark the live engine dead so
-            # EnginePool.get_engine triggers EF-1 lazy reload (evict +
-            # _load_engine) on the next request, instead of leaving the
-            # engine reported as "loaded" while every request hangs. The
-            # stuck loop task is cancelled by EngineCore.stop() during
-            # _detach_engine. mark_dead is a sync flag set + log — safe
-            # to call from this watchdog thread.
-            with _llm_engine_ref_lock:
-                ref = _llm_watchdog_engine_ref
-            if ref is not None:
-                engine = ref()
-                if engine is not None and not engine.is_dead():
-                    engine.mark_dead(
-                        "G2 hung LLM worker thread (heartbeat stale %.0fs)" % (now - hb)
-                    )
-                    # #1179: don't wait for new HTTP traffic to trigger the
-                    # pool reload — the request-path guard may never fire
-                    # while every request hangs on the wedged executor.
-                    # Schedule the dead-engine unload from this watchdog
-                    # thread via the engine's loop. If the loop itself is
-                    # wedged the callback queues harmlessly; the scaled
-                    # watchdog window + bounded add_request prevent that
-                    # wedge in the first place.
-                    loop_ref = getattr(engine, "_loop", None)
-                    if loop_ref is not None and loop_ref.is_running():
-                        try:
-                            from .api._guards import _trigger_poisoned_engine_reload
-
-                            loop_ref.call_soon_threadsafe(
-                                _trigger_poisoned_engine_reload
-                            )
-                            logger.info(
-                                "G2 watchdog: scheduled dead-engine unload "
-                                "on the event loop (#1179 recovery)"
-                            )
-                        except Exception:
-                            logger.debug(
-                                "watchdog reload scheduling failed",
-                                exc_info=True,
-                            )
+        _llm_watchdog_check()
 
 
 def start_llm_watchdog() -> None:
