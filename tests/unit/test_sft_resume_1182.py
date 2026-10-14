@@ -14,7 +14,6 @@ from __future__ import annotations
 import inspect
 import logging
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -44,58 +43,64 @@ class TestConfigSurface:
         assert cfg.lora_rank == 16
 
 
+class _StubModel:
+    # Stand-in exposing load_weights like mlx.nn.Module; records the call.
+    def __init__(self):
+        self.calls = []
+
+    def load_weights(self, file_or_weights, strict=True):
+        self.calls.append((str(file_or_weights), strict))
+        return self
+
+
 class TestResumeHelper:
     def test_noop_when_unset(self):
-        model = SimpleNamespace(touched=False)
+        model = _StubModel()
         out = _resume_adapter_weights(model, FineTuneConfig(), Path("/tmp/adt"))
         assert out is model
+        assert model.calls == []
 
-    def test_loads_weights_from_checkpoint(self, tmp_path, monkeypatch):
-        pytest.importorskip("mlx_lm.tuner.utils")
-        import mlx_lm.tuner.utils as tuner_utils
-
+    def test_loads_weights_strict_from_checkpoint(self, tmp_path):
         ckpt = tmp_path / "run1"
         ckpt.mkdir()
         (ckpt / "adapters.safetensors").write_bytes(b"stub")
 
-        calls = {}
-
-        def fake_load_adapters(model, adapter_path):
-            calls["adapter_path"] = adapter_path
-            return model
-
-        monkeypatch.setattr(tuner_utils, "load_adapters", fake_load_adapters)
-
-        model = SimpleNamespace(touched=False)
+        model = _StubModel()
         out = _resume_adapter_weights(
             model, FineTuneConfig(init_adapter_path=str(ckpt)), tmp_path / "out"
         )
         assert out is model
-        assert calls["adapter_path"] == str(ckpt)
+        assert model.calls == [(str(ckpt / "adapters.safetensors"), True)]
+
+    def test_not_load_adapters_double_apply(self):
+        # mlx_lm load_adapters() re-applies linear_to_lora_layers from the
+        # saved config — double-apply on our already-built LoRA tree
+        # ("Can't convert layer of type LoRALinear to LoRA", caught in
+        # real-model verification). The helper must not call it.
+        import fusion_mlx.training.service as svc
+
+        src = inspect.getsource(svc._resume_adapter_weights)
+        assert "load_adapters" not in src
+        assert "load_weights" in src
+        assert "strict=True" in src
 
     def test_missing_checkpoint_fails_fast(self, tmp_path):
         empty = tmp_path / "empty"
         empty.mkdir()
         with pytest.raises(ValueError, match="no adapters.safetensors"):
             _resume_adapter_weights(
-                SimpleNamespace(),
+                _StubModel(),
                 FineTuneConfig(init_adapter_path=str(empty)),
                 tmp_path / "out",
             )
 
-    def test_in_place_resume_warns(self, tmp_path, caplog, monkeypatch):
-        pytest.importorskip("mlx_lm.tuner.utils")
-        import mlx_lm.tuner.utils as tuner_utils
-
+    def test_in_place_resume_warns(self, tmp_path, caplog):
         ckpt = tmp_path / "run1"
         ckpt.mkdir()
         (ckpt / "adapters.safetensors").write_bytes(b"stub")
-        monkeypatch.setattr(
-            tuner_utils, "load_adapters", lambda model, adapter_path: model
-        )
         with caplog.at_level(logging.WARNING, logger="fusion_mlx.training.service"):
             _resume_adapter_weights(
-                SimpleNamespace(),
+                _StubModel(),
                 FineTuneConfig(init_adapter_path=str(ckpt), steps_per_save=100),
                 ckpt,
             )

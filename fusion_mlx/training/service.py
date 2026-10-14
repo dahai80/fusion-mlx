@@ -387,11 +387,9 @@ def _resume_adapter_weights(model, cfg: FineTuneConfig, adapter_path: Path):
     # layers. Must run AFTER linear_to_lora_layers (needs the adapter
     # modules to exist) and BEFORE train(). Warn when resuming in-place —
     # the trainer's first checkpoint save overwrites adapters.safetensors
-    # in the same dir. mlx_lm imported locally: training deps are optional.
+    # in the same dir.
     if not cfg.init_adapter_path:
         return model
-    from mlx_lm.tuner.utils import load_adapters
-
     resume_file = Path(cfg.init_adapter_path) / "adapters.safetensors"
     if not resume_file.exists():
         raise ValueError(
@@ -405,7 +403,15 @@ def _resume_adapter_weights(model, cfg: FineTuneConfig, adapter_path: Path):
             "first save (step %d)",
             cfg.steps_per_save,
         )
-    model = load_adapters(model, cfg.init_adapter_path)
+    # Not the mlx-lm tuner-utils loader: it re-applies
+    # linear_to_lora_layers from the saved adapter_config.json,
+    # double-applying on our already-built LoRA tree ("Can't convert layer
+    # of type LoRALinear to LoRA", found in real-model verification). The
+    # layers are already built by this run's cfg (including #746 per-module
+    # keys); load only the weights.
+    # strict=True: a rank/shape mismatch between the checkpoint and the new
+    # config fails loudly instead of silently training wrong layers.
+    model.load_weights(str(resume_file), strict=True)
     logger.info("Resumed adapter weights from %s (#1182)", cfg.init_adapter_path)
     return model
 
