@@ -26,6 +26,11 @@
   the trainer called `mlx_lm load("")`, dying on a relative `config.json`
   for every model loaded via the single-model serve path. The path is now
   passed through and lands on `entry.model_path`.
+- **Watchdog disarmed by leaked step window:** a raising or cancelled
+  LLM step left `_llm_step_window` armed (the post-step clear only ran
+  on success), permanently disarming the hang watchdog — its staleness
+  comparison read the leaked giant window. The clear now runs in a
+  `finally`, and the watchdog test fixtures reset the window.
 
 ### Fixed — SFT fine-tune can resume from an adapter checkpoint (#1182)
 - `FineTuneConfig` gains `init_adapter_path` (same naming as
