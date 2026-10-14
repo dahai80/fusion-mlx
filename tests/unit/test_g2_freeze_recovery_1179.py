@@ -79,7 +79,7 @@ class TestWatchdogWindowScaling:
 
     def test_tick_uses_dynamic_window(self):
         ec = _import_engine_core()
-        src = inspect.getsource(ec._llm_watchdog_tick)
+        src = inspect.getsource(ec._llm_watchdog_check)
         assert "_llm_step_window" in src, (
             "#1179 Fix A: the tick must compare staleness against the "
             "per-burst window, not the static constant"
@@ -113,7 +113,7 @@ class TestWatchdogProgressConfirm:
 
     def test_tick_reads_steps_counter(self):
         ec = _import_engine_core()
-        src = inspect.getsource(ec._llm_watchdog_tick)
+        src = inspect.getsource(ec._llm_watchdog_check)
         assert "_steps_executed" in src, (
             "#1179: the tick must confirm the step counter froze before "
             "poisoning — a step that just completed means slow, not hung"
@@ -295,7 +295,7 @@ class TestCloseTeardownFreshThread:
 class TestWatchdogSchedulesRecovery:
     def test_tick_schedules_reload_after_mark_dead(self):
         ec = _import_engine_core()
-        src = inspect.getsource(ec._llm_watchdog_tick)
+        src = inspect.getsource(ec._llm_watchdog_check)
         assert "call_soon_threadsafe" in src, (
             "#1179 Fix D: the watchdog must schedule the dead-engine unload "
             "itself; the request-path guard may never fire while every "

@@ -409,9 +409,11 @@ def _resume_adapter_weights(model, cfg: FineTuneConfig, adapter_path: Path):
     # of type LoRALinear to LoRA", found in real-model verification). The
     # layers are already built by this run's cfg (including #746 per-module
     # keys); load only the weights.
-    # strict=True: a rank/shape mismatch between the checkpoint and the new
-    # config fails loudly instead of silently training wrong layers.
-    model.load_weights(str(resume_file), strict=True)
+    # strict=False: adapter files hold only LoRA params — strict=True would
+    # demand the full model tree and fail ("Missing 704 parameters"). Same
+    # convention as the mlx-lm tuner loader. Resuming with a different
+    # rank/layers cfg than the source run is the caller's responsibility.
+    model.load_weights(str(resume_file), strict=False)
     logger.info("Resumed adapter weights from %s (#1182)", cfg.init_adapter_path)
     return model
 

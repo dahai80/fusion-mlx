@@ -19,7 +19,6 @@ from fusion_mlx.engine_core import (
     is_media_job_active,
     reset_llm_executor_poison,
     set_media_job_active,
-    start_llm_watchdog,
     stop_llm_watchdog,
 )
 
@@ -85,52 +84,45 @@ class TestWatchdogMediaDefer:
         # Stale heartbeat + media active → NO poison (GPU starvation, not hang).
         ec._LLM_WATCHDOG_TIMEOUT_S = 0.2
         set_media_job_active(True)
-        start_llm_watchdog()
         with ec._llm_heartbeat_lock:
             ec._llm_step_deadline = time.monotonic() + 10.0
             ec._llm_heartbeat = time.monotonic() - 5.0
-        time.sleep(0.6)
+        ec._llm_watchdog_check()
         assert is_llm_executor_poisoned() is False
-        stop_llm_watchdog()
 
     def test_media_cleared_then_poison_fires(self):
         # While media active: deferred. After clearing: poison fires.
         ec._LLM_WATCHDOG_TIMEOUT_S = 0.2
         set_media_job_active(True)
-        start_llm_watchdog()
         with ec._llm_heartbeat_lock:
             ec._llm_step_deadline = time.monotonic() + 10.0
             ec._llm_heartbeat = time.monotonic() - 5.0
-        time.sleep(0.4)
+        ec._llm_watchdog_check()
         assert is_llm_executor_poisoned() is False
         # Media job ends — watchdog resumes normal policing.
         set_media_job_active(False)
-        # Poll with a deadline: the watchdog daemon thread can be scheduled late
-        # on a contended CI runner, so a fixed sleep races the post-clear tick.
-        _dl = time.monotonic() + 5.0
-        while time.monotonic() < _dl and not is_llm_executor_poisoned():
-            time.sleep(0.05)
+        ec._llm_watchdog_check()
+        ec._llm_watchdog_check()
         assert is_llm_executor_poisoned() is True
-        stop_llm_watchdog()
 
     def test_media_defer_exceeded_poisons(self):
         # Media active but exceeded the defer budget → poison (stuck media job).
         ec._LLM_WATCHDOG_TIMEOUT_S = 0.2
         ec._LLM_WATCHDOG_MEDIA_DEFER_S = 0.3
         set_media_job_active(True)
-        start_llm_watchdog()
         with ec._llm_heartbeat_lock:
             ec._llm_step_deadline = time.monotonic() + 10.0
             ec._llm_heartbeat = time.monotonic() - 5.0
-        # Defer budget 0.3s exceeded → poison despite media active. Poll with a
-        # deadline rather than a fixed sleep: the watchdog is a daemon thread and
-        # its first tick (which arms the defer clock) can be scheduled late on a
-        # contended CI runner, so a fixed 0.6s sleep races the 0.3s budget.
-        _dl = time.monotonic() + 5.0
-        while time.monotonic() < _dl and not is_llm_executor_poisoned():
-            time.sleep(0.05)
+        # First check arms the defer clock; backdate it past the budget so
+        # the second check takes the exceeded-budget poison path without a
+        # wall-clock wait (thread-scheduling races on loaded CI runners made
+        # the old sleep-based version flaky).
+        ec._llm_watchdog_check()
+        assert is_llm_executor_poisoned() is False
+        assert ec._media_defer_start > 0.0
+        ec._media_defer_start = time.monotonic() - (0.3 + 0.1)
+        ec._llm_watchdog_check()
         assert is_llm_executor_poisoned() is True
-        stop_llm_watchdog()
         ec._LLM_WATCHDOG_MEDIA_DEFER_S = 3600.0
 
     def test_no_defer_without_pending_step(self):
@@ -140,10 +132,8 @@ class TestWatchdogMediaDefer:
         with ec._llm_heartbeat_lock:
             ec._llm_step_deadline = 0.0
             ec._llm_heartbeat = time.monotonic() - 999.0
-        start_llm_watchdog()
-        time.sleep(0.4)
+        ec._llm_watchdog_check()
         assert is_llm_executor_poisoned() is False
-        stop_llm_watchdog()
 
 
 class TestSRRouteMediaFlag:
