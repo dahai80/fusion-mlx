@@ -541,6 +541,50 @@ class TestComfySingleFileLayout:
         (root / "split_model.json").write_text('{"recipe": "ltx-2.5"}')
         assert not _is_flat_ltx2_5_layout(root)
 
+    def test_flat_wan2_layout_detected_as_video(self, tmp_path):
+        # Issue #1207: Anes1032/Wan2.2-TI2V-5B-mlx-q8 ships root-level
+        # model.safetensors + t5_encoder.safetensors + vae.safetensors +
+        # config.json (model_type=ti2v), no diffusers subdirs and no task
+        # manifest. The wan2 backend's flat-first _resolve_model_file loads
+        # this layout, so the subdir gate must not reject it as an LLM.
+        from fusion_mlx.pool.model_discovery import (
+            _is_hf_cache_mlx_compatible,
+            _is_video_model,
+            detect_model_type,
+        )
+
+        root = tmp_path / "Wan2.2-TI2V-5B-mlx-q8"
+        root.mkdir()
+        (root / "model.safetensors").write_bytes(b"x")
+        (root / "t5_encoder.safetensors").write_bytes(b"x")
+        (root / "vae.safetensors").write_bytes(b"x")
+        (root / "config.json").write_text('{"model_type": "ti2v"}')
+        assert _is_video_model(root)
+        assert detect_model_type(root) == "video"
+        assert _is_hf_cache_mlx_compatible(root, "Anes1032/Wan2.2-TI2V-5B-mlx-q8")
+
+    def test_flat_wan2_layout_rejects_missing_weights(self, tmp_path):
+        # Bare config.json with model_type=ti2v but no weight files is not
+        # loadable — stray-manifest equivalent of the flat layout (#948).
+        from fusion_mlx.pool.model_discovery import _is_video_model
+
+        root = tmp_path / "manifest-only"
+        root.mkdir()
+        (root / "config.json").write_text('{"model_type": "ti2v"}')
+        assert not _is_video_model(root)
+
+    def test_flat_llm_layout_stays_llm(self, tmp_path):
+        # Root weights + config.json with an LLM model_type and no video
+        # subdirs must stay non-video (the flat branch only accepts
+        # VIDEO_CONFIG_MODEL_TYPES).
+        from fusion_mlx.pool.model_discovery import _is_video_model
+
+        root = tmp_path / "llm-flat"
+        root.mkdir()
+        (root / "model.safetensors").write_bytes(b"x")
+        (root / "config.json").write_text('{"model_type": "qwen2"}')
+        assert not _is_video_model(root)
+
     def test_hf_cache_accepts_diffusers_subdir_layout(self, tmp_path):
         # Issue #843: black-forest-labs/FLUX.1-dev canonical HF-cache layout
         # is a raw diffusers repo: model_index.json + transformer/vae/
