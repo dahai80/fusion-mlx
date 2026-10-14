@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Fixed — SFT fine-tune can resume from an adapter checkpoint (#1182)
+- `FineTuneConfig` gains `init_adapter_path` (same naming as
+  `DPOService`'s #1149 field). Re-submitting a job with
+  `init_adapter_path` pointing at a previous run's output directory
+  (e.g. `~/.fusion-mlx/adapters/<model>/<name>` containing a
+  `0000400_adapters.safetensors`-style checkpoint, or its
+  `adapters.safetensors`) loads those weights into the freshly-built
+  LoRA layers before training starts — previously the run silently
+  restarted from step 0 and the first checkpoint save overwrote the
+  interrupted run's weights (~500 steps of 9h 32B QLoRA compute lost
+  per occurrence).
+- Exposed via `POST /admin/api/fine-tune/jobs` config payload
+  (`init_adapter_path`); recorded as `resume_adapter_file` in the
+  saved `adapter_config.json` for parity with mlx-lm's config surface.
+- Missing checkpoint weights fail fast with a clear error before the
+  training loop; resuming in-place (source dir == output dir) logs a
+  warning that the first `steps_per_save` save overwrites the source
+  checkpoint.
+- Step-counter continuation (resuming at step N instead of 0) requires
+  optimizer-state persistence in mlx-lm's `train()` and remains a
+  follow-up.
+
 ## [v0.10.12] — 2026-10-14
 
 ### Fixed — G2 watchdog false-positive + recovery wedge: whole server freezes (#1179)

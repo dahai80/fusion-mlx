@@ -93,6 +93,13 @@ class FineTuneConfig:
     weight_decay: float = 0.0
     max_grad_norm: float | None = None
     lora_target_modules: list[str] | None = None
+    # #1182: resume an interrupted SFT run from a saved adapter checkpoint
+    # (adapters.safetensors written every steps_per_save steps). Weights are
+    # loaded into the freshly-built LoRA layers before train(); the step
+    # counter restarts at 0 (optimizer-state persistence for true step
+    # continuation is a follow-up). Same naming as DPOService's
+    # init_adapter_path (#1149) for cross-service consistency.
+    init_adapter_path: str = ""
 
     def to_mlx_args(self, adapter_path: str, data_path: str, model_path: str):
         lora_params = {
@@ -133,7 +140,11 @@ class FineTuneConfig:
             "lr_schedule": self.lr_schedule,
             "hf_dataset": False,
             "test": False,
-            "resume_adapter_file": None,
+            "resume_adapter_file": (
+                str(Path(self.init_adapter_path) / "adapters.safetensors")
+                if self.init_adapter_path
+                else None
+            ),
             "report_to": None,
             "project_name": None,
             "adapter_file": str(Path(adapter_path) / "adapters.safetensors"),
@@ -369,6 +380,34 @@ class _ProgressCallback:
             self._loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_notify()))
         except RuntimeError:
             pass
+
+
+def _resume_adapter_weights(model, cfg: FineTuneConfig, adapter_path: Path):
+    # #1182: load a saved adapter checkpoint into the freshly-built LoRA
+    # layers. Must run AFTER linear_to_lora_layers (needs the adapter
+    # modules to exist) and BEFORE train(). Warn when resuming in-place —
+    # the trainer's first checkpoint save overwrites adapters.safetensors
+    # in the same dir. mlx_lm imported locally: training deps are optional.
+    if not cfg.init_adapter_path:
+        return model
+    from mlx_lm.tuner.utils import load_adapters
+
+    resume_file = Path(cfg.init_adapter_path) / "adapters.safetensors"
+    if not resume_file.exists():
+        raise ValueError(
+            f"init_adapter_path has no adapters.safetensors: "
+            f"{resume_file} (issue #1182)"
+        )
+    if str(Path(cfg.init_adapter_path).resolve()) == str(adapter_path.resolve()):
+        logger.warning(
+            "init_adapter_path equals the output adapter_path — the "
+            "trainer will overwrite the resumed checkpoint at the "
+            "first save (step %d)",
+            cfg.steps_per_save,
+        )
+    model = load_adapters(model, cfg.init_adapter_path)
+    logger.info("Resumed adapter weights from %s (#1182)", cfg.init_adapter_path)
+    return model
 
 
 class FineTuneService:
@@ -677,6 +716,11 @@ class FineTuneService:
             raise ValueError(f"Unknown fine_tune_type: {cfg.fine_tune_type}")
 
         print_trainable_parameters(model)
+
+        # #1182: resume weights into the freshly-built LoRA layers. Must run
+        # AFTER linear_to_lora_layers (needs the adapter modules to exist) and
+        # BEFORE train().
+        model = _resume_adapter_weights(model, cfg, adapter_path)
 
         # Save adapter config
         save_config(vars(args), adapter_path / "adapter_config.json")
