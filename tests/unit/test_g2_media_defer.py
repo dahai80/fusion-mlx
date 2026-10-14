@@ -50,6 +50,12 @@ def _clean_state(monkeypatch):
         ec._llm_heartbeat = 0.0
         ec._llm_step_deadline = 0.0
     monkeypatch.setattr(ec, "_llm_watchdog_stop", _FastEvent())
+    # Tests below assign _LLM_WATCHDOG_* constants directly; restore them so
+    # the values never leak into later suites.
+    monkeypatch.setattr(ec, "_LLM_WATCHDOG_TIMEOUT_S", ec._LLM_WATCHDOG_TIMEOUT_S)
+    monkeypatch.setattr(
+        ec, "_LLM_WATCHDOG_MEDIA_DEFER_S", ec._LLM_WATCHDOG_MEDIA_DEFER_S
+    )
     yield
     stop_llm_watchdog()
     reset_llm_executor_poison()
