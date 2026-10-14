@@ -637,9 +637,7 @@ def apply_lora(model, lora_path, *, scale=1.0, require_complete=True):
             continue
         lora_b = tensors["B"]
         if mod_path.endswith(".attn.qkv_proj"):
-            lora_b = reorder_interleaved_qkv(
-                lora_b, cfg.num_heads, cfg.head_dim
-            )
+            lora_b = reorder_interleaved_qkv(lora_b, cfg.num_heads, cfg.head_dim)
         wrapper = LoRALinear(module, tensors["A"], lora_b, scale=scale)
         if leaf.isdigit():
             parent[int(leaf)] = wrapper

@@ -176,9 +176,7 @@ class TestApplyLora:
         # 用行标识值验证置换：B[r,:] = r，置换后读出原行号。
         num_heads, head_dim = 2, 2
         rows = num_heads * 3 * head_dim
-        b = mx.arange(rows, dtype=mx.float32).reshape(rows, 1) @ mx.ones(
-            (1, 3)
-        )
+        b = mx.arange(rows, dtype=mx.float32).reshape(rows, 1) @ mx.ones((1, 3))
         out = reorder_interleaved_qkv(b, num_heads, head_dim)
         got = out[:, 0].tolist()
         # 交错 [h0:q,k,v | h1:q,k,v] -> [q_all, k_all, v_all]

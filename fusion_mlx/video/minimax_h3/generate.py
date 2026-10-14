@@ -856,9 +856,7 @@ def generate_video(
             candidates = sorted(
                 _glob.glob(os.path.join(model_path, "turbo_lora.safetensors"))
             ) + sorted(
-                _glob.glob(
-                    os.path.join(model_path, "minimax_h3_turbo*.safetensors")
-                )
+                _glob.glob(os.path.join(model_path, "minimax_h3_turbo*.safetensors"))
             )
             if not candidates:
                 raise ValueError(
