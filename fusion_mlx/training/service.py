@@ -26,9 +26,11 @@ import io
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
+from dataclasses import fields as _dc_fields
 from enum import Enum
 from pathlib import Path
 
@@ -237,6 +239,12 @@ class FineTuneProgress:
     eta_seconds: float = 0.0
 
 
+# #1205: known-field sets for tolerant persisted-job recovery (schema drift
+# between releases must drop unknown keys, not the whole record).
+_CONFIG_FIELDS = {f.name for f in _dc_fields(FineTuneConfig)}
+_PROGRESS_FIELDS = {f.name for f in _dc_fields(FineTuneProgress)}
+
+
 @dataclass
 class FineTuneJob:
     job_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
@@ -435,7 +443,46 @@ class FineTuneService:
         # M-P3-3 (#0908 audit): hold strong refs to ensure_future tasks —
         # asyncio only weak-references Tasks; GC can cancel mid-training.
         self._pending_tasks: set = set()
+        # #1205: set when the process must die (fatal_exit path) while a
+        # training job is in flight. The training thread can't flush a
+        # checkpoint on demand (saves happen inside mlx_lm train() at
+        # steps_per_save boundaries), so the graceful-exit contract is:
+        # mark the job interrupted in the persisted store NOW, and let the
+        # bounded defer window cover the wait for the next trainer-side
+        # checkpoint save before the process exits.
+        self._interrupted: threading.Event = threading.Event()
         self._load_jobs()
+
+    def has_active_job(self) -> bool:
+        # #1205: True while a training job is executing (not queued). Used by
+        # the memory enforcer to defer a process-fatal exit so the trainer's
+        # periodic checkpoint can land.
+        return self._current_job_id is not None and not self._interrupted.is_set()
+
+    def interrupt_active_job(self) -> FineTuneJob | None:
+        # #1205: mark the in-flight job interrupted and persist it, so a
+        # fatal process exit leaves a resumable record (#1182 resume chain).
+        # Returns the job (or None when nothing in flight). Idempotent.
+        job = self._jobs.get(self._current_job_id or "")
+        if job is None:
+            self._interrupted.set()
+            return None
+        if job.status in (JobStatus.RUNNING, JobStatus.QUEUED):
+            job.status = JobStatus.FAILED
+            job.error = (
+                "interrupted by fatal memory pressure before exit; "
+                "resume via init_adapter_path (issue #1205)"
+            )
+            job.terminal = True
+            job.finished_at = time.time()
+            self._persist_jobs()
+            logger.warning(
+                "Fine-tune job %s marked interrupted before fatal exit "
+                "(adapter checkpoints at steps_per_save cadence survive)",
+                job.job_id,
+            )
+        self._interrupted.set()
+        return job
 
     def set_engine_pool(self, pool):
         self._engine_pool = pool
@@ -990,12 +1037,37 @@ class FineTuneService:
             return
         for item in data:
             try:
-                config_data = item.get("config", {})
+                # #1205: persisted configs outlive the dataclass schema — a
+                # field renamed/removed between releases made every entry
+                # fail FineTuneConfig(**...) ("unexpected keyword"), so
+                # recovery silently dropped the whole store ("Loaded 0
+                # persisted jobs"). Filter to known fields and warn on the
+                # dropped keys instead of losing the record.
+                config_data = {
+                    k: v
+                    for k, v in item.get("config", {}).items()
+                    if k in _CONFIG_FIELDS
+                }
+                unknown_cfg = set(item.get("config", {})) - _CONFIG_FIELDS
+                if unknown_cfg:
+                    logger.warning(
+                        "Job %s: dropping unknown config keys from persisted "
+                        "entry: %s",
+                        item.get("job_id", "?"),
+                        sorted(unknown_cfg),
+                    )
                 config = FineTuneConfig(**config_data)
-                progress_data = item.get("progress", {})
+                progress_data = {
+                    k: v
+                    for k, v in item.get("progress", {}).items()
+                    if k in _PROGRESS_FIELDS
+                }
                 progress = FineTuneProgress(**progress_data)
                 status_str = item.get("status", "queued")
-                status = JobStatus(status_str)
+                try:
+                    status = JobStatus(status_str)
+                except ValueError:
+                    status = JobStatus.FAILED
                 if status in (JobStatus.RUNNING, JobStatus.QUEUED):
                     status = JobStatus.CANCELLED
                 job = FineTuneJob(

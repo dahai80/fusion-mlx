@@ -170,6 +170,25 @@ _UNRECOVERABLE_POLL_THRESHOLD = 3
 _UNRECOVERABLE_FATAL_THRESHOLD = int(
     os.environ.get("FUSION_UNRECOVERABLE_FATAL_POLLS", "6")
 )
+# #1205: when a fine-tune job is in flight at the fatal-exit point, defer
+# the exit by this many extra poll cycles (1s poll interval) so the
+# trainer's periodic checkpoint (steps_per_save cadence) can land. The
+# trainer cannot flush on demand — saves happen inside mlx_lm train() at
+# step boundaries — so the grace is expressed in polls, not a thread
+# signal. Bounded so a wedged trainer still exits.
+_TRAINING_GRACE_POLLS = int(os.environ.get("FUSION_TRAINING_FATAL_GRACE_POLLS", "30"))
+
+
+def _fine_tune_service_if_running():
+    # #1205: the FineTuneService instance is bound to the admin route module
+    # at server startup; import lazily so the enforcer never imports training
+    # deps (optional extras) when no server wiring happened (tests).
+    try:
+        from ..admin import fine_tune_route
+
+        return getattr(fine_tune_route, "_fine_tune_service", None)
+    except Exception:
+        return None
 
 
 def _format_gb(b: int) -> str:
@@ -1588,6 +1607,35 @@ class ProcessMemoryEnforcer:
             and self._unrecoverable_polls
             >= _UNRECOVERABLE_POLL_THRESHOLD + _UNRECOVERABLE_FATAL_THRESHOLD
         ):
+            # #1205: never hard-exit while a fine-tune job is in flight until
+            # the training-grace window has elapsed — the job is hours of GPU
+            # work whose periodic checkpoint (steps_per_save cadence, written
+            # by mlx_lm train()) is the only recoverable state; os._exit
+            # destroys it. Defer fatal_exit for _TRAINING_GRACE_S (bounded —
+            # a truly wedged trainer still exits), and register a pre-exit
+            # hook that marks the job interrupted in the persisted store so
+            # #1182's init_adapter_path resume can find it after restart.
+            svc = _fine_tune_service_if_running()
+            if svc is not None and svc.has_active_job():
+                if not getattr(self, "_training_grace_logged", False):
+                    self._training_grace_logged = True
+                    from ..utils.fatal import register_fatal_hook
+
+                    register_fatal_hook(svc.interrupt_active_job)
+                    logger.critical(
+                        "UNRECOVERABLE memory pressure WITH fine-tune job "
+                        "in flight: deferring fatal exit up to %ds so the "
+                        "trainer's periodic adapter checkpoint can land "
+                        "(job will be marked interrupted; resume via "
+                        "init_adapter_path, issue #1205)",
+                        _TRAINING_GRACE_POLLS,
+                    )
+                if self._unrecoverable_polls < (
+                    _UNRECOVERABLE_POLL_THRESHOLD
+                    + _UNRECOVERABLE_FATAL_THRESHOLD
+                    + _TRAINING_GRACE_POLLS
+                ):
+                    return
             from ..utils.fatal import fatal_exit
 
             fatal_exit(

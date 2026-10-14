@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed — fatal-exit path no longer silently destroys fine-tune jobs (#1205)
+- **Tolerant job recovery:** persisted `jobs.json` records written by older
+  versions (or newer ones — unknown `config`/`progress` keys) are now
+  loaded with unknown keys dropped and a warning, instead of the whole
+  record (and every job after it in the file) being discarded. Unknown
+  status strings map to `failed` rather than raising.
+- **Graceful fatal path:** `fusion_mlx.utils.fatal.fatal_exit` runs
+  registered pre-exit hooks (bounded 10s total, exceptions logged and
+  skipped) before `os._exit`, so in-flight state can be persisted on the
+  way out.
+- **Training defer + checkpoint-on-exit:** `ProcessMemoryEnforcer` defers
+  the unrecoverable-memory fatal exit by up to
+  `FUSION_TRAINING_FATAL_GRACE_POLLS` (default 30) extra polls while a
+  fine-tune job is in flight, giving the trainer's periodic
+  `steps_per_save` adapter checkpoint a chance to land. The in-flight job
+  is marked `failed` with a `resume via init_adapter_path` hint and
+  persisted via a fatal hook before the process exits — previously the
+  9h-training-loss scenario from #1182 also destroyed the job bookkeeping.
+
 ### Fixed — SFT fine-tune can resume from an adapter checkpoint (#1182)
 - `FineTuneConfig` gains `init_adapter_path` (same naming as
   `DPOService`'s #1149 field). Re-submitting a job with
