@@ -273,6 +273,11 @@ class MemoryConfig:
     # under physical * line. Calibrated on 128GB: observed fine-tune peak
     # 64.9GB (#1186) under a resident serving set must clear the line.
     heavy_admission_safety_line: float = 0.85
+    # #1194: VramAllocator tier budgets in GB (0 = unbounded, back-compat).
+    # P0 covers P0_NEVER_EVICT/P0_DYNAMIC (LLM/serving), P1 covers P1_TDM
+    # (diffusion). Enforced at every pool model-load entry point.
+    tier_budget_p0_gb: float = 0.0
+    tier_budget_p1_gb: float = 0.0
 
     def __post_init__(self):
         if self.per_engine_pct < 0 or self.per_engine_pct > 1:
@@ -303,6 +308,11 @@ class MemoryConfig:
             self.heavy_admission_safety_line > 0.99
         ):
             self.heavy_admission_safety_line = 0.85
+        # #1194: negative budgets are config errors — clamp to unbounded.
+        if self.tier_budget_p0_gb < 0:
+            self.tier_budget_p0_gb = 0.0
+        if self.tier_budget_p1_gb < 0:
+            self.tier_budget_p1_gb = 0.0
         # Ensure soft < hard
         if self.soft_threshold >= self.hard_threshold:
             self.hard_threshold = min(0.99, self.soft_threshold + 0.1)
