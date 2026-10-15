@@ -53,9 +53,8 @@ class _CLIPEncoderLayer(nn.Module):
             .transpose(0, 2, 1, 3)
         )
         scale = self._head_dim**-0.5
-        attn = (q * scale) @ k.transpose(0, 1, 3, 2)
-        attn = mx.softmax(attn, axis=-1)
-        out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, L, -1)
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale)
+        out = out.transpose(0, 2, 1, 3).reshape(B, L, -1)
         x = x + self.self_attn.out_proj(out)
         x = x + self.mlp.fc2(nn.gelu(self.mlp.fc1(self.layer_norm2(x))))
         return x
@@ -134,11 +133,8 @@ class _LlamaAttention(nn.Module):
             k = mx.repeat(k, n_rep, axis=1)
             v = mx.repeat(v, n_rep, axis=1)
         scale = self.head_dim**-0.5
-        attn = (q * scale) @ k.transpose(0, 1, 3, 2)
-        if mask is not None:
-            attn = attn + mask
-        attn = mx.softmax(attn, axis=-1)
-        out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, L, -1)
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
+        out = out.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return self.o_proj(out)
 
 
