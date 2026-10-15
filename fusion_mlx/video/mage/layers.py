@@ -167,9 +167,7 @@ class MageFlowAttention(nn.Module):
             k = _apply_rotary_emb(k, rope)
 
         scale = self.head_dim**-0.5
-        attn = (q * scale) @ k.transpose(0, 1, 3, 2)
-        attn = nn.softmax(attn.astype(mx.float32), axis=-1).astype(q.dtype)
-        out = attn @ v
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale)
         out = out.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return self.to_out(out)
 

@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Changed — 5 slow-path attention families moved to mx.fast SDPA (#1201)
+- hunyuanvideo (dit.py x3, text_encoder.py x2, vae.py), svd (unet.py x3,
+  clip_vision.py), opensora (transformer.py x3), latentsync_mlx
+  (attention.py, vae.py) and mage (layers.py) implemented attention as
+  manual `(q*scale) @ k^T -> softmax -> @ v`, materializing the O(N^2)
+  score matrix every denoising step. All 16 sites now call
+  `mx.fast.scaled_dot_product_attention` (cosmos-style, minimal change);
+  masked sites pass the additive mask through unchanged; headless sites
+  (hunyuanvideo/svd VAE mid-attention) get a temporary head axis.
+- Op-level bench (benchmarks/sdpa_1201_bench.py, bf16, 15 iters,
+  M-series GPU): hunyuanvideo dit 6.5-7x, svd spatial 12.6x, opensora
+  2.9x, mage 2.75x, hunyuanvideo text_encoder self 3.9x; no site
+  regresses meaningfully (largest loss 0.04 -> 0.09 ms on the one-shot
+  text-encoder cross site). Full-model step-time/visual spot-checks are
+  not runnable today: these families have no cached weights and stub
+  serving backends; equivalence is covered by unit tests
+  (tests/unit/test_slow_path_sdpa_1201.py, manual-reference parity +
+  per-family forward smoke tests).
+
+## [v0.10.13] — 2026-10-15
+
 ### Fixed — Wan2.2-TI2V-5B q8 fp32-poisoning of the residual stream + chunk tuning (#1208)
 - **fp32 containment (`_q8_fp32_accum`):** the #500/#503 NaN fix cast the
   residual stream to float32 before every q8 QuantizedLinear once

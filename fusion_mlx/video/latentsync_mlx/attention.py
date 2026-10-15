@@ -40,9 +40,8 @@ class Attention(nn.Module):
         k = k.reshape(B, Sk, self.heads, self.dim_head).transpose(0, 2, 1, 3)
         v = v.reshape(B, Sk, self.heads, self.dim_head).transpose(0, 2, 1, 3)
 
-        scores = (q * self.scale) @ k.transpose(0, 1, 3, 2)
-        attn = mx.softmax(scores, axis=-1)
-        out = (attn @ v).transpose(0, 2, 1, 3).reshape(B, S, -1)
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
+        out = out.transpose(0, 2, 1, 3).reshape(B, S, -1)
 
         return self.to_out(out)
 

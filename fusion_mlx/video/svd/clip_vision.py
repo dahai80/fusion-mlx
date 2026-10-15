@@ -108,9 +108,7 @@ class CLIPAttention(nn.Module):
             .reshape(B, L, self.num_heads, self.head_dim)
             .transpose(0, 2, 1, 3)
         )
-        attn = mx.matmul(q, k.transpose(0, 1, 3, 2)) * self.scale
-        attn = mx.softmax(attn, axis=-1)
-        out = mx.matmul(attn, v)
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
         out = out.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return self.out_proj(out)
 

@@ -93,9 +93,7 @@ class SelfAttention(nn.Module):
         q, k = self.norm(q, k)
         q, k = apply_rope(q, k, pe)
         scale = self.head_dim**-0.5
-        attn = mx.matmul(q, k.transpose(0, 1, 3, 2)) * scale
-        attn = mx.softmax(attn, axis=-1)
-        out = mx.matmul(attn, v)
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale)
         out = out.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return self.proj(out)
 
@@ -193,9 +191,7 @@ class DoubleStreamBlock(nn.Module):
 
         q, k = apply_rope(q, k, pe)
         scale = self.head_dim**-0.5
-        attn = mx.matmul(q, k.transpose(0, 1, 3, 2)) * scale
-        attn = mx.softmax(attn, axis=-1)
-        attn_out = mx.matmul(attn, v)
+        attn_out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale)
 
         txt_len = txt_q.shape[2]
         txt_attn_out = (
@@ -274,9 +270,7 @@ class SingleStreamBlock(nn.Module):
         q, k = apply_rope(q, k, pe)
 
         scale_val = self.head_dim**-0.5
-        attn = mx.matmul(q, k.transpose(0, 1, 3, 2)) * scale_val
-        attn = mx.softmax(attn, axis=-1)
-        attn_out = mx.matmul(attn, v)
+        attn_out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale_val)
         attn_out = attn_out.transpose(0, 2, 1, 3).reshape(B, L, -1)
 
         mlp_activated = mlp * mx.sigmoid(1.702 * mlp)
