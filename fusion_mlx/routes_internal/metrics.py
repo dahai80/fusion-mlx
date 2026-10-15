@@ -1225,6 +1225,40 @@ def _render_admission_metrics() -> list[str]:
     return lines
 
 
+def _render_tier_budget_metrics() -> list[str]:
+    # #1194: tier-budget rejections per tier (P0/P1). Sparse per-tier series:
+    # tiers not yet seen are absent, which is correct Prometheus behavior for
+    # a sparse counter; the whole render is skipped until the first
+    # rejection so idle servers emit nothing.
+    lines: list[str] = []
+    try:
+        sm = get_server_metrics()
+        total = sm.tier_budget_rejections_total
+        if total <= 0:
+            return lines
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_tier_budget_rejections_total",
+                "counter",
+                "Model-load paths rejected by the VramAllocator tier budget.",
+                int(total),
+            )
+        )
+        for tier, count in sorted(sm.tier_budget_rejections_by_tier.items()):
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_tier_budget_rejections_by_tier",
+                    "counter",
+                    "Tier-budget rejections broken down by tier.",
+                    int(count),
+                    {"tier": str(tier)},
+                )
+            )
+    except Exception:
+        logger.debug("tier budget metrics render error", exc_info=True)
+    return lines
+
+
 def _render_preload_failure_metrics() -> list[str]:
     # OP-18 (#0907 audit): expose pinned-model preload failures so an operator
     # sees a missing critical model on the dashboard rather than a buried
@@ -1414,6 +1448,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_ane_metrics())
     lines.extend(_render_engine_eviction_metrics())
     lines.extend(_render_admission_metrics())
+    lines.extend(_render_tier_budget_metrics())
     lines.extend(_render_preload_failure_metrics())
     lines.extend(_render_degradation_metrics())
     lines.extend(_render_queue_metrics())
