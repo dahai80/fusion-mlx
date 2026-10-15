@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added — hang diagnosis tooling: one-command before-restart capture + H1-H4 playbook (#1188)
+- **`scripts/hang-capture.sh <PID> [PORT] [OUTDIR]`:** gathers process
+  state, per-thread CPU, SIGUSR1 faulthandler dump, py-spy / native
+  `sample` profiles, fd usage vs `ulimit -n`, the kernel Metal log (10m),
+  live /metrics (watchdog / fd / admission / eviction series, with
+  auth-key pickup from settings.json) and the workload state at hang time
+  (admission status + fine-tune jobs — the #1184 overlap check), then
+  prints classification hints.
+- **`docs/hang-diagnosis.md`:** H1-H4 fingerprint table (which capture
+  artifact decides each hypothesis), tooling that already ships, and the
+  report template. Attribution of the next hang is intentionally pending
+  — tooling only, no speculative fixes per the issue.
+
 ### Added — unified heavy-workload admission gate (#1187)
 - **Single safety line for heavy work:** training, image and video
   workloads now pass one gate before starting compute:
