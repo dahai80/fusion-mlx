@@ -42,7 +42,11 @@ own — it is already the starved party):
 - **LLM TPS**: the engine loop reports windowed steps/s vs its own learned
   solo baseline (running max — self-calibrating, no config).
 - **Diffusion FPS**: the video engine's wrapped `on_step` callback reports
-  inter-step FPS vs the engine's learned baseline.
+  inter-step FPS vs the engine's learned baseline. Only fires for
+  engine-layer callers that supply `on_step` (ComfyUI/SDK paths) — the
+  plain HTTP video route passes none (the #171 contract forbids the
+  engine injecting a callback the caller did not ask for), so API-served
+  video relies on the stage-1 static gate alone.
 
 Controller: multiplicative decrease (x0.8) after a sustained bad streak
 (3 consecutive samples < 0.85 ratio — single-sample noise never
