@@ -36,6 +36,8 @@
 - **Fixed latent bug:** the pre-existing reject branch raised
   `ModelTooLargeError(reason)` with the wrong signature (TypeError whenever
   any budget was set) — now constructs the exception correctly.
+## [Unreleased]
+
 ### Added — active FD watchdog: per-type accounting + 80% warn / 90% new-stream rejection (#1192)
 - **In-engine FD counter:** `fusion_mlx/fd_watchdog.py` samples open fds
   (/proc/self/fd or /dev/fd), classifies each (socket / file / pipe /
@@ -53,7 +55,21 @@
   `fusion_mlx_fd_by_type{type}`, `fusion_mlx_fd_pressure_rejections_total`,
   `fusion_mlx_fd_warn_total`. Knobs: `FUSION_MLX_FD_WARN_RATIO` /
   `FUSION_MLX_FD_REJECT_RATIO` (defaults 0.80 / 0.90).
-
+### Added — lock inventory + global ordering discipline + debug assertions (#1190)
+- **Inventory committed:** `docs/LOCK_INVENTORY.md` — 140 lock sites
+  inventoried, pool-package lock table, all verified nested-acquisition
+  edges, and an 11-site TOCTOU register. No reverse-order (deadlock) pairs
+  exist today; the declared order codifies the de-facto one.
+- **Debug lock-order assertions:** `fusion_mlx/pool/lock_order.py` —
+  TrackedAsyncLock / TrackedThreadLock wrappers (drop-in subclasses) wired
+  into the pool's main/pinned/discover-sync/adapter-swap locks and the
+  enforcer's state lock. Off by default; `FUSION_MLX_LOCK_DEBUG=1` logs
+  violations, `+FUSION_MLX_LOCK_DEBUG_STRICT=1` raises.
+- **Two TOCTOU fixes:** `_last_evicted_at` write and `_eviction_marked`
+  discard in `ProcessMemoryEnforcer` now happen under `_state_lock`
+  (previously raced `prune_model_state`).
+- **Fixed pre-existing NameError:** `apply_embedding_batch_size` crashed
+  when no embedding engine was lazily loaded yet.
 ### Added — unified heavy-workload admission gate (#1187)
 - **Single safety line for heavy work:** training, image and video
   workloads now pass one gate before starting compute:

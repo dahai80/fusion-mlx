@@ -33,7 +33,6 @@ import inspect
 import logging
 import os
 import subprocess
-import threading
 import time
 from contextlib import suppress
 from enum import Enum
@@ -43,6 +42,7 @@ import mlx.core as mx
 
 from ..utils import psutil_compat
 from ..utils.proc_memory import get_phys_footprint
+from .lock_order import TrackedThreadLock
 
 if TYPE_CHECKING:
     from .engine_pool import EnginePool
@@ -426,7 +426,8 @@ class ProcessMemoryEnforcer:
         self._scheduler_resolve_warned: set[str] = set()
         self._eviction_marked: set[str] = set()
         self._loaded_model_bytes: int = 0
-        self._state_lock = threading.Lock()
+        # #1190: debug-gated lock-order tracking (FUSION_MLX_LOCK_DEBUG).
+        self._state_lock = TrackedThreadLock("enforcer.state")
         self._last_evicted_at: dict[str, float] = {}
         self._unrecoverable_polls: int = 0
         self._drain_flipped: bool = False
@@ -478,7 +479,7 @@ class ProcessMemoryEnforcer:
         # _last_evicted_at doesn't grow one entry per ever-loaded model.
         with self._state_lock:
             self._last_evicted_at.pop(model_id, None)
-        self._eviction_marked.discard(model_id)
+            self._eviction_marked.discard(model_id)
 
     def get_loaded_model_bytes(self) -> int:
         """Return current loaded model byte count (thread-safe)."""
@@ -1897,7 +1898,12 @@ class ProcessMemoryEnforcer:
                             logger.warning(
                                 f"Evicting model '{victim}' (pressure={new_level})"
                             )
-                            self._last_evicted_at[victim] = time.monotonic()
+                            # #1190 TOCTOU: prune_model_state pops this key
+                            # under _state_lock; the cooldown write must be
+                            # under the same lock. Nested pool.main ->
+                            # enforcer.state is the declared order.
+                            with self._state_lock:
+                                self._last_evicted_at[victim] = time.monotonic()
                             self._engine_pool._lock.release()
                             _lock_held = False
                             await self._engine_pool.unload_engine_async(victim)
