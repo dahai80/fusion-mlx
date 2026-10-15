@@ -1257,6 +1257,55 @@ def _render_preload_failure_metrics() -> list[str]:
     return lines
 
 
+def _render_watchdog_metrics() -> list[str]:
+    # #1189: executor-watchdog observability. Heartbeat-age gauges only for
+    # watchdogs with an inflight or recent job (skip never-used); poison
+    # counter as a bare total plus a sparse per-executor series (same
+    # semantics as the eviction/preload counters).
+    lines: list[str] = []
+    try:
+        from ..executor_watchdog import executor_watchdog_snapshots
+
+        for snap in executor_watchdog_snapshots():
+            age = snap.get("heartbeat_age_s")
+            # "Recent job" recency bound for the non-inflight case.
+            if age is not None and age <= 600.0:
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_watchdog_heartbeat_age_seconds",
+                        "gauge",
+                        "Seconds since the last watchdog heartbeat of the "
+                        "executor's current or most recent job (#1189).",
+                        float(age),
+                        {"executor": str(snap["executor"])},
+                    )
+                )
+        sm = get_server_metrics()
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_watchdog_poison_total",
+                "counter",
+                "Executor-watchdog hang detections that poisoned an "
+                "executor (#1189).",
+                int(sm.watchdog_poisons_total),
+            )
+        )
+        for executor, count in sorted(sm.watchdog_poisons_by_executor.items()):
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_watchdog_poison_total",
+                    "counter",
+                    "Executor-watchdog hang detections that poisoned an "
+                    "executor (#1189).",
+                    int(count),
+                    {"executor": str(executor)},
+                )
+            )
+    except Exception:
+        logger.debug("watchdog metrics render error", exc_info=True)
+    return lines
+
+
 def _render_degradation_metrics() -> list[str]:
     # OP-2 (#0907 audit): expose degradation events (SSRF rejection, enforcer
     # lock timeout, cloud fallback, rate-limit 429) as Prometheus counters so
@@ -1495,6 +1544,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_admission_metrics())
     lines.extend(_render_fd_metrics())
     lines.extend(_render_preload_failure_metrics())
+    lines.extend(_render_watchdog_metrics())
     lines.extend(_render_degradation_metrics())
     lines.extend(_render_queue_metrics())
     lines.extend(_render_uptime_metal())

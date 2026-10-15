@@ -129,6 +129,29 @@ def _record_audio_request(model_id: str) -> None:
         logger.warning("Failed to record audio metrics for %s: %s", model_id, exc)
 
 
+def _ensure_audio_executor_healthy() -> None:
+    # #1189: fast-fail loudly when the audio executor was poisoned by a
+    # prior hung job. The watchdog's on_hang already swapped a fresh worker
+    # into the registry (poison_executor); the flag stays set until
+    # reset_audio_executor_poison / restart so work still enqueued on the
+    # dead worker is never mistaken for live work.
+    from ..engine_core import is_audio_executor_poisoned
+
+    if not is_audio_executor_poisoned():
+        return
+    logger.error(
+        "audio route: executor poisoned by a prior hang (#1189); "
+        "fast-failing with 503. RESTART fusion-mlx to recover."
+    )
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "audio executor poisoned by a prior hang; " "restart fusion-mlx to recover"
+        ),
+        headers={"Retry-After": "5"},
+    )
+
+
 async def _read_upload(file: UploadFile) -> bytes:
     """Read an uploaded file in chunks, bailing early if it exceeds the limit."""
     chunks: list[bytes] = []
@@ -518,6 +541,7 @@ async def create_transcription(
     # #508: validate/resolve the model BEFORE touching the engine pool so
     # a malformed model id 404s cleanly even when the server has not
     # initialized a pool yet (was 503 "Server not initialized").
+    _ensure_audio_executor_healthy()
     resolved_model = _resolve_model(model)
     pool = _get_engine_pool()
 
@@ -702,6 +726,7 @@ async def create_speech(request: AudioSpeechRequest):
     audio_bytes = _decode_ref_audio_base64(request)
 
     # #508: validate/resolve model before pool init (404 on malformed id).
+    _ensure_audio_executor_healthy()
     resolved_model = _resolve_model(request.model)
     pool = _get_engine_pool()
 
@@ -893,6 +918,7 @@ async def process_audio(
     from fusion_mlx.exceptions import ModelNotFoundError
 
     # #508: validate/resolve model before pool init (404 on malformed id).
+    _ensure_audio_executor_healthy()
     resolved_model = _resolve_model(model)
     pool = _get_engine_pool()
 
@@ -999,6 +1025,7 @@ async def converse(
     from fusion_mlx.engines.tts import TTSEngine
     from fusion_mlx.exceptions import ModelNotFoundError
 
+    _ensure_audio_executor_healthy()
     pool = _get_engine_pool()
 
     # --- Stage 1: STT — transcribe user speech ---
@@ -1229,6 +1256,7 @@ async def create_music(request: AudioMusicRequest):
             },
         )
 
+    _ensure_audio_executor_healthy()
     resolved_model = _resolve_model(request.model)
     pool = _get_engine_pool()
 

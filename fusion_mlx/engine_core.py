@@ -234,6 +234,17 @@ _video_executor_poison_lock = threading.Lock()
 # the dead worker and times out after FUSION_IMAGE_TIMEOUT (600s).
 _image_executor_poisoned = False
 _image_executor_poison_lock = threading.Lock()
+# #1189: audio executor poison — same pattern as video/image. A hung audio
+# job (TTS/STT/STS/music on the single max_workers=1 audio worker) cannot be
+# cancelled from Python; without poison every later audio request queues
+# behind the dead worker and times out (FUSION_TTS/STT/STS_TIMEOUT) forever.
+_audio_executor_poisoned = False
+_audio_executor_poison_lock = threading.Lock()
+# #1189: laya executor poison — the laya pool is max_workers=1 (dedicated
+# typed-decision pool, #1161). A hung predict cannot be cancelled; poison
+# fast-fails later /v1/laya/decide requests with a loud 503.
+_laya_executor_poisoned = False
+_laya_executor_poison_lock = threading.Lock()
 
 # G2/R-2 (audit 0910): llm executor poison + watchdog. A Metal assertion
 # or OOM on the single llm worker thread kills the continuous-batching
@@ -392,6 +403,16 @@ def is_image_executor_poisoned() -> bool:
     return _image_executor_poisoned
 
 
+def is_audio_executor_poisoned() -> bool:
+    # #1189: audio executor poison state (mirror image/video/llm accessors).
+    return _audio_executor_poisoned
+
+
+def is_laya_executor_poisoned() -> bool:
+    # #1189: laya executor poison state (mirror image/video/llm accessors).
+    return _laya_executor_poisoned
+
+
 def is_llm_executor_poisoned() -> bool:
     return _llm_executor_poisoned
 
@@ -400,6 +421,22 @@ def reset_image_executor_poison() -> None:
     global _image_executor_poisoned
     with _image_executor_poison_lock:
         _image_executor_poisoned = False
+
+
+def reset_audio_executor_poison() -> None:
+    # #1189: clear the audio poison flag once the subsystem has recovered
+    # (fresh worker serving jobs again — tests / operator tooling).
+    global _audio_executor_poisoned
+    with _audio_executor_poison_lock:
+        _audio_executor_poisoned = False
+
+
+def reset_laya_executor_poison() -> None:
+    # #1189: clear the laya poison flag once the subsystem has recovered
+    # (fresh worker serving jobs again — tests / operator tooling).
+    global _laya_executor_poisoned
+    with _laya_executor_poison_lock:
+        _laya_executor_poisoned = False
 
 
 def reset_video_executor_poison() -> None:
@@ -618,11 +655,26 @@ def poison_executor(pool_type: str = "video") -> None:
     global _video_executor_poisoned
     global _image_executor_poisoned
     global _llm_executor_poisoned
+    global _audio_executor_poisoned
+    global _laya_executor_poisoned
     with _video_executor_poison_lock:
         if pool_type == "video" and _video_executor_poisoned:
             return
         if pool_type == "image" and _image_executor_poisoned:
             return
+    # #1189: audio/laya poison — check + set atomically under their own
+    # locks (unlike the legacy video/image check/set split above, which is
+    # kept as-is; surgical change).
+    with _audio_executor_poison_lock:
+        if pool_type == "audio":
+            if _audio_executor_poisoned:
+                return
+            _audio_executor_poisoned = True
+    with _laya_executor_poison_lock:
+        if pool_type == "laya":
+            if _laya_executor_poisoned:
+                return
+            _laya_executor_poisoned = True
     with _llm_executor_poison_lock:
         if pool_type == "llm" and _llm_executor_poisoned:
             return
@@ -661,6 +713,20 @@ def poison_executor(pool_type: str = "video") -> None:
                     "RESTART fusion-mlx to recover. Subsequent LLM requests "
                     "will be rejected with 503."
                 )
+            elif pool_type == "audio":
+                logger.error(
+                    "audio executor POISONED (#1189): a TTS/STT/STS/music job "
+                    "hung and could not be cancelled. No executor was "
+                    "registered yet. RESTART fusion-mlx to recover. "
+                    "Subsequent audio requests will be rejected with 503."
+                )
+            elif pool_type == "laya":
+                logger.error(
+                    "laya executor POISONED (#1189): a typed-decision predict "
+                    "hung and could not be cancelled. No executor was "
+                    "registered yet. RESTART fusion-mlx to recover. "
+                    "Subsequent laya requests will be rejected with 503."
+                )
             else:
                 logger.error(
                     "%s executor poisoned but not registered (#811 R-3).",
@@ -696,6 +762,22 @@ def poison_executor(pool_type: str = "video") -> None:
                 "assertion/OOM). New worker spawned; the stuck thread is "
                 "abandoned. RESTART fusion-mlx to reclaim its memory. "
                 "Subsequent LLM requests will reload on the fresh worker."
+            )
+        elif pool_type == "audio":
+            logger.error(
+                "audio executor POISONED (#1189): a TTS/STT/STS/music job "
+                "hung and could not be cancelled. New worker spawned; the "
+                "stuck thread is abandoned. RESTART fusion-mlx to reclaim "
+                "its memory. Subsequent audio requests will be rejected "
+                "with 503 until the poison flag is reset."
+            )
+        elif pool_type == "laya":
+            logger.error(
+                "laya executor POISONED (#1189): a typed-decision predict "
+                "hung and could not be cancelled. New worker spawned; the "
+                "stuck thread is abandoned. RESTART fusion-mlx to reclaim "
+                "its memory. Subsequent laya requests will be rejected "
+                "with 503 until the poison flag is reset."
             )
         else:
             logger.error("%s executor replaced after a hung job (#811 R-3).", pool_type)

@@ -165,12 +165,17 @@ class ServerMetrics:
     admission_admitted_by_kind: dict[str, int] = field(default_factory=dict)
     admission_rejected_by_kind: dict[str, int] = field(default_factory=dict)
     admission_deferred_by_kind: dict[str, int] = field(default_factory=dict)
+    # #1189: executor-watchdog poison observability. Each fire abandons a
+    # stuck Metal thread; a non-zero rate means the operator should look at
+    # GPU contention / raise the watchdog windows rather than discovering
+    # the wedge via 503s.
+    watchdog_poisons_total: int = 0
+    watchdog_poisons_by_executor: dict[str, int] = field(default_factory=dict)
     # #1192: FD pressure observability. Gauges (used/limit/by-type) come
     # from the fd_watchdog snapshot at render time; counters here track
     # gate actions (warns + NEW-stream rejections).
     fd_pressure_rejections_total: int = 0
-    fd_warn_total: int = 0
-    # Note: the loaded-models gauge is served directly from
+    fd_warn_total: int = 0    # Note: the loaded-models gauge is served directly from
     # pool.loaded_model_count by _render_pool_metrics
     # (fusion_mlx_models_loaded), so no separate gauge field is kept here.
 
@@ -408,6 +413,17 @@ class ServerMetrics:
             self.preload_failures_total += 1
             self.preload_failures_by_model[model_id] = (
                 self.preload_failures_by_model.get(model_id, 0) + 1
+            )
+
+    def record_watchdog_poison(self, name: str) -> None:
+        # #1189: executor-watchdog poison counter. Called by
+        # ExecutorWatchdog.check() when a hung executor job fires on_hang,
+        # so /metrics surfaces poison events (per-executor breakdown) rather
+        # than leaving them discoverable only via ERROR log lines.
+        with self._lock:
+            self.watchdog_poisons_total += 1
+            self.watchdog_poisons_by_executor[name] = (
+                self.watchdog_poisons_by_executor.get(name, 0) + 1
             )
 
     def get_ttft_histograms(self) -> dict[str, Histogram]:
