@@ -136,7 +136,20 @@ class MusicGenEngine(BaseNonStreamingEngine):
                 infer_method=infer_method,
             )
 
-        wav = await loop.run_in_executor(get_executor("audio"), _gen)
+        # #1189: audio watchdog brackets the music generation (this dispatch
+        # has NO asyncio timeout — a hung generate_music otherwise blocks
+        # the single audio worker forever with no poison, no recovery).
+        from ..engine_core import poison_executor
+        from ..executor_watchdog import get_executor_watchdog
+
+        _music_watchdog = get_executor_watchdog(
+            "audio", on_hang=lambda _name: poison_executor("audio")
+        )
+        _music_watchdog.begin_job("music_generate")
+        try:
+            wav = await loop.run_in_executor(get_executor("audio"), _gen)
+        finally:
+            _music_watchdog.end_job()
         wav_np = np.array(wav[0], copy=False).astype(np.float32).T  # (samples, 2)
         sr = 48000
         logger.info(

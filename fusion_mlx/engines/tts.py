@@ -248,6 +248,21 @@ class TTSEngine(BaseNonStreamingEngine):
         activity_id = self._begin_activity(
             "synthesizing speech", metadata={"text_length": len(text)}
         )
+        # #1189: audio executor heartbeat watchdog. on_hang →
+        # poison_executor("audio") — a TTS job stuck past the window poisons
+        # the audio executor (fresh worker swapped in) instead of every
+        # later audio request queueing behind the dead worker forever.
+        # Media defer reuses the llm watchdog's media-job signal + budget.
+        from ..engine_core import is_media_job_active, poison_executor
+        from ..executor_watchdog import get_executor_watchdog
+
+        _tts_watchdog = get_executor_watchdog(
+            "audio",
+            on_hang=lambda _name: poison_executor("audio"),
+            defer_check=is_media_job_active,
+        )
+        _tts_watchdog.begin_job("tts_synthesize")
+        _tts_timed_out = False
         try:
             loop = asyncio.get_running_loop()
             # Configurable via FUSION_TTS_TIMEOUT (seconds). Default 180s:
@@ -271,6 +286,11 @@ class TTSEngine(BaseNonStreamingEngine):
                     timeout=timeout,
                 )
             except TimeoutError:
+                # The worker thread keeps running the stuck synthesis —
+                # leave the watchdog job inflight so the watchdog fires
+                # on_hang → poison instead of silently losing track of
+                # the dead worker (#1189).
+                _tts_timed_out = True
                 logger.error(
                     "TTS synthesize timed out after %.0fs (GPU contention? "
                     "raise FUSION_TTS_TIMEOUT to allow longer waits)",
@@ -279,6 +299,8 @@ class TTSEngine(BaseNonStreamingEngine):
                 raise
             return result
         finally:
+            if not _tts_timed_out:
+                _tts_watchdog.end_job()
             await self._finish_activity(activity_id)
 
     async def stream_synthesize_pcm(
@@ -371,6 +393,21 @@ class TTSEngine(BaseNonStreamingEngine):
         activity_id = self._begin_activity(
             "streaming speech", metadata={"text_length": len(text)}
         )
+        # #1189: audio watchdog brackets the streaming loop — begin before
+        # the first chunk dispatch, heartbeat per delivered chunk, end in
+        # finally. On a per-chunk TimeoutError the worker is still running
+        # the stuck chunk, so the job stays inflight and the watchdog fires
+        # on_hang → poison (#1189).
+        from ..engine_core import is_media_job_active, poison_executor
+        from ..executor_watchdog import get_executor_watchdog
+
+        _stream_watchdog = get_executor_watchdog(
+            "audio",
+            on_hang=lambda _name: poison_executor("audio"),
+            defer_check=is_media_job_active,
+        )
+        _stream_watchdog.begin_job("tts_stream")
+        _stream_timed_out = False
         try:
             loop = asyncio.get_running_loop()
             while True:
@@ -382,6 +419,7 @@ class TTSEngine(BaseNonStreamingEngine):
                     break
                 if chunk is None:
                     continue
+                _stream_watchdog.heartbeat()
                 sr, ch, sw, pcm = chunk
                 if not pcm:
                     continue
@@ -391,7 +429,14 @@ class TTSEngine(BaseNonStreamingEngine):
                     activity_id, chunk_count=chunk_count, output_bytes=total_bytes
                 )
                 yield sr, ch, sw, pcm
+        except TimeoutError:
+            # The worker keeps running the stuck chunk — leave the watchdog
+            # job inflight so it fires on_hang → poison (#1189).
+            _stream_timed_out = True
+            raise
         finally:
+            if not _stream_timed_out:
+                _stream_watchdog.end_job()
             await self._finish_activity(activity_id)
 
     def get_stats(self) -> dict[str, Any]:

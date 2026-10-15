@@ -171,6 +171,19 @@ class STTEngine(BaseNonStreamingEngine):
             }
 
         activity_id = self._begin_activity("transcribing", detail="Transcribing")
+        # #1189: audio executor heartbeat watchdog. on_hang →
+        # poison_executor("audio"). Media defer reuses the llm watchdog's
+        # media-job signal + budget (STT shares the Metal command queue).
+        from ..engine_core import is_media_job_active, poison_executor
+        from ..executor_watchdog import get_executor_watchdog
+
+        _stt_watchdog = get_executor_watchdog(
+            "audio",
+            on_hang=lambda _name: poison_executor("audio"),
+            defer_check=is_media_job_active,
+        )
+        _stt_watchdog.begin_job("stt_transcribe")
+        _stt_timed_out = False
         try:
             loop = asyncio.get_running_loop()
             # #1061: configurable via FUSION_STT_TIMEOUT (seconds). Default
@@ -191,7 +204,14 @@ class STTEngine(BaseNonStreamingEngine):
                 timeout=timeout,
             )
             return result
+        except TimeoutError:
+            # The worker keeps running the stuck transcription — leave the
+            # watchdog job inflight so it fires on_hang → poison (#1189).
+            _stt_timed_out = True
+            raise
         finally:
+            if not _stt_timed_out:
+                _stt_watchdog.end_job()
             await self._finish_activity(activity_id)
 
     def get_stats(self) -> dict[str, Any]:
