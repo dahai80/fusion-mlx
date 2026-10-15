@@ -93,6 +93,14 @@ class TestAdmitGeneration:
     def _make_engine(self):
         return ImageGenEngine(model_name="flux-schnell", variant="flux1_schnell")
 
+    @pytest.fixture(autouse=True)
+    def _disable_unified_gate(self, monkeypatch):
+        # #1187: the unified heavy-admission gate runs before the pool gate.
+        # These tests target pool.admit_media_job behavior on small CI
+        # runners (7GB), where the real gate would reject first — turn it
+        # off via its env kill-switch (same var operators use).
+        monkeypatch.setenv("FUSION_MLX_HEAVY_ADMISSION", "off")
+
     @pytest.mark.asyncio
     async def test_admission_skipped_when_pool_none(self):
         engine = self._make_engine()

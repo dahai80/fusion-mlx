@@ -1172,6 +1172,59 @@ def _render_engine_eviction_metrics() -> list[str]:
     return lines
 
 
+def _render_admission_metrics() -> list[str]:
+    # #1187: admission decisions per kind (training/image/video). Sparse
+    # per-kind series like the eviction render — kinds not yet seen are
+    # absent, which is correct Prometheus behavior for a sparse counter.
+    lines: list[str] = []
+    try:
+        sm = get_server_metrics()
+        rows = (
+            (
+                "admitted",
+                sm.admission_admitted_total,
+                sm.admission_admitted_by_kind,
+                "Heavy-workload admission decisions that passed the gate.",
+            ),
+            (
+                "rejected",
+                sm.admission_rejected_total,
+                sm.admission_rejected_by_kind,
+                "Heavy-workload admission decisions rejected by the safety line.",
+            ),
+            (
+                "deferred",
+                sm.admission_deferred_total,
+                sm.admission_deferred_by_kind,
+                "Heavy training jobs held (deferred) while the serving window paused training.",
+            ),
+        )
+        for name, total, by_kind, help_text in rows:
+            if total <= 0:
+                continue
+            lines.extend(
+                _fmt_metric(
+                    f"fusion_mlx_admission_{name}_total",
+                    "counter",
+                    help_text,
+                    int(total),
+                )
+            )
+            for kind, count in sorted(by_kind.items()):
+                lines.extend(
+                    _fmt_metric(
+                        f"fusion_mlx_admission_{name}_total",
+                        "counter",
+                        help_text,
+                        int(count),
+                        {"kind": str(kind)},
+                    )
+                )
+    except Exception:
+        logger.debug("admission metrics render error", exc_info=True)
+    return lines
+
+
 def _render_preload_failure_metrics() -> list[str]:
     # OP-18 (#0907 audit): expose pinned-model preload failures so an operator
     # sees a missing critical model on the dashboard rather than a buried
@@ -1409,6 +1462,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_pool_metrics())
     lines.extend(_render_ane_metrics())
     lines.extend(_render_engine_eviction_metrics())
+    lines.extend(_render_admission_metrics())
     lines.extend(_render_preload_failure_metrics())
     lines.extend(_render_watchdog_metrics())
     lines.extend(_render_degradation_metrics())

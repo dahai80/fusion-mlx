@@ -219,6 +219,41 @@ class RFTService:
             self._process_queue()
             return
 
+        # #1187: unified heavy-admission gate before the job claims the
+        # execution slot. Deferred while paused (recheck scheduled); FAILED
+        # when the safety line is exceeded — a clear error instead of
+        # saturating the GPU for hours (#1184/#1186).
+        from ..admission import (
+            ADMISSION_RECHECK_SECONDS,
+            get_heavy_admission_gate,
+            schedule_recheck,
+        )
+
+        _gate = get_heavy_admission_gate()
+        _budget = _gate.training_budget_bytes(
+            getattr(job.config, "memory_limit_gb", 0.0)
+        )
+        _decision = _gate.admit_training(_budget)
+        if not _decision.admitted:
+            if _decision.deferred:
+                self._queue.insert(0, job_id)
+                schedule_recheck(self)
+                logger.info(
+                    "RFT job %s deferred by admission gate; recheck in %.0fs",
+                    job_id,
+                    ADMISSION_RECHECK_SECONDS,
+                )
+                return
+            job.status = JobStatus.FAILED
+            job.error = _decision.reason
+            job.terminal = True
+            job.finished_at = time.time()
+            self._persist_jobs()
+            self._notify_job(job)
+            logger.warning("RFT job %s rejected by admission gate", job_id)
+            self._process_queue()
+            return
+
         self._current_job_id = job_id
         job.status = JobStatus.RUNNING
         job.started_at = time.time()

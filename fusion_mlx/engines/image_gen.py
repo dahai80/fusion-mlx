@@ -813,6 +813,23 @@ class ImageGenEngine(BaseNonStreamingEngine):
             )
         if required <= 0:
             return
+        # #1187: unified admission gate FIRST — resident + budget vs the
+        # safety line, before the pool eviction loop runs. Reject raises the
+        # same InsufficientMemoryError the pool gate raises (HTTP 507); a
+        # pass logs and falls through to pool.admit_media_job unchanged.
+        from ..admission import get_heavy_admission_gate
+
+        _gate = get_heavy_admission_gate()
+        _decision = _gate.admit_media("image", required)
+        if not _decision.admitted:
+            raise InsufficientMemoryError(
+                required=required,
+                current=0,
+                ceiling=0,
+                message=_decision.reason,
+                model_id=self._model_name,
+                loaded_models=[],
+            )
         ok = await pool.admit_media_job(required, exclude_model_id=self._model_name)
         if not ok:
             raise InsufficientMemoryError(

@@ -268,6 +268,11 @@ class MemoryConfig:
     # Memory enforcer watermark thresholds (fraction of hard ceiling)
     soft_threshold: float = 0.85
     hard_threshold: float = 0.95
+    # #1187: heavy-workload admission safety line (fraction of physical RAM).
+    # A heavy job may start only while resident usage + task budget stays
+    # under physical * line. Calibrated on 128GB: observed fine-tune peak
+    # 64.9GB (#1186) under a resident serving set must clear the line.
+    heavy_admission_safety_line: float = 0.85
 
     def __post_init__(self):
         if self.per_engine_pct < 0 or self.per_engine_pct > 1:
@@ -293,6 +298,11 @@ class MemoryConfig:
             self.soft_threshold = 0.85
         if self.hard_threshold < 0.1 or self.hard_threshold > 0.99:
             self.hard_threshold = 0.95
+        # #1187: clamp the heavy-admission safety line (0.5..0.99).
+        if self.heavy_admission_safety_line < 0.5 or (
+            self.heavy_admission_safety_line > 0.99
+        ):
+            self.heavy_admission_safety_line = 0.85
         # Ensure soft < hard
         if self.soft_threshold >= self.hard_threshold:
             self.hard_threshold = min(0.99, self.soft_threshold + 0.1)

@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added — unified heavy-workload admission gate (#1187)
+- **Single safety line for heavy work:** training, image and video
+  workloads now pass one gate before starting compute:
+  `resident usage + task budget <= physical * safety_line` (default 0.85,
+  MemoryConfig `heavy_admission_safety_line`, env
+  `FUSION_MLX_HEAVY_ADMISSION_LINE` override, `FUSION_MLX_HEAVY_ADMISSION=off`
+  disables). Previously fine-tune and video started with no memory
+  admission at all — a training run alongside resident serving weights
+  saturated the GPU for hours (#1184/#1186).
+- **Training:** jobs are deferred while a serving window holds a pause
+  (`POST /v1/admission/pause` / `resume`, 30s recheck), or FAILED with a
+  clear reason when the line is exceeded; all six training services
+  (fine-tune, VL, GRPO, DPO, RFT, reward) are covered.
+- **Image/video:** rejects raise `InsufficientMemoryError` /
+  `VideoMemoryPressureError` → HTTP 507, before the pool eviction loop /
+  video mutex respectively.
+- **Observability:** `/v1/admission/status` snapshot (GB-rounded) plus
+  `fusion_mlx_admission_{admitted,rejected,deferred}_total` Prometheus
+  counters per kind.
+
 ### Added — executor watchdog generalized to image/video/audio/laya (#1189)
 - **One watchdog, per-executor instances:** new `fusion_mlx/executor_watchdog.py`
   (`ExecutorWatchdog` + shared 1s daemon tick thread) mirrors the llm G2
