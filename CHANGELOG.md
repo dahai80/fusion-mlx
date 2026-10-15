@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed — fine-tune `train()` runs in a spawned process with its own Metal memory limit (#1186)
+- **Process isolation:** text SFT (`FineTuneService`) and VL SFT
+  (`VLMFineTuneService`) now execute training in a spawned child OS
+  process (spawn context, duplex-pipe IPC). The serving process no longer
+  shares the GPU command stream with a multi-hour training run — laya
+  `/v1/laya/decide` P50 stays at 6.6ms under concurrent fine-tune load
+  (was 100-900ms in-process, #1184).
+- **Metal memory budget:** the child applies `mx.set_memory_limit` at
+  startup; default auto = 60% of physical memory (calibrated against the
+  64.9GB observed training peak on 128GB), overridable per job via
+  `memory_limit_gb`.
+- **Kill policy:** new config knobs `execution_mode` (`process` default,
+  `thread` legacy), `on_process_kill` (`mark_failed` default |
+  `auto_restart` with `max_restarts`, `attempts` persisted). Cancel,
+  fatal-interrupt (#1205 chain) and server shutdown all terminate the
+  child. External job-status API semantics unchanged.
+
 ### Changed — 5 slow-path attention families moved to mx.fast SDPA (#1201)
 - hunyuanvideo (dit.py x3, text_encoder.py x2, vae.py), svd (unet.py x3,
   clip_vision.py), opensora (transformer.py x3), latentsync_mlx
