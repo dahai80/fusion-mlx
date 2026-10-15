@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added — Metal submission pacing gate + dynamic TDM throttle (#1197)
+- **`fusion_mlx/pacing.py`**: per-workload-class token buckets (llm /
+  image / video / laya) gating every Metal-bound executor submission.
+  Master switch `FUSION_MLX_PACING=off`; per-class
+  `FUSION_MLX_PACE_<CLASS>_RATE` / `_BURST` knobs.
+- **Stage-2 AIMD controller**: LLM TPS + diffusion FPS quality signals
+  shrink aggressor budgets with hysteresis + cooldown + 25% floors —
+  converges without oscillation (proven by unit test).
+- **Metrics**: per-class rate / submissions / throttled on `/metrics`.
+- Safety: gate runs only on the async side (never inside an executor
+  worker — #1171 self-deadlock shape); llm gate precedes G2 deadline
+  arming; throttled submissions surface explicit errors. See
+  `docs/pacing-gate.md`.
+
 ### Fixed — shim nanobind GIL audit: release GIL across heavy C++ calls (#1193)
 - **Audit table committed:** `fusion_mlx/shim/GIL_AUDIT.md` covers 100% of
   the nanobind bound surface (15 members); a source-level test enforces
