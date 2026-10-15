@@ -35,6 +35,31 @@
   `fusion_mlx_admission_{admitted,rejected,deferred}_total` Prometheus
   counters per kind.
 
+### Added — executor watchdog generalized to image/video/audio/laya (#1189)
+- **One watchdog, per-executor instances:** new `fusion_mlx/executor_watchdog.py`
+  (`ExecutorWatchdog` + shared 1s daemon tick thread) mirrors the llm G2
+  semantics — `begin_job`/`heartbeat()`/`end_job` brackets around every media
+  dispatch, `check()` fires `on_hang` once per wedged job (never re-fires
+  while the same job is inflight). LLM watchdog untouched.
+- **Poison + fast-fail + recovery:** `on_hang` → `poison_executor(<pool>)`
+  (fresh worker swapped into the registry). Image keeps its existing S5
+  in-generate recovery; video reuses the #811 R-3 path; audio and laya gain
+  new poison flags + `is_/reset_` accessors in `engine_core`, with loud
+  503 fast-fail gates (`Retry-After: 5`) on the 5 audio routes and
+  `/v1/laya/decide` before dispatch.
+- **Wiring:** image in-process generate (per-denoise-step heartbeat,
+  subprocess mode excluded — it has real timeout-kill), video generate
+  (on_step heartbeat), TTS synthesize + streaming loop (per-chunk heartbeat),
+  STT transcribe, STS process, ACE-Step music generate (previously had NO
+  dispatch timeout at all), laya router predict. A timed-out dispatch leaves
+  the watchdog job inflight so the orphaned stuck worker still gets poisoned.
+- **Metrics:** `/metrics` now exposes `fusion_mlx_watchdog_heartbeat_age_seconds
+  {executor}` gauges (inflight/recent jobs only) and
+  `fusion_mlx_watchdog_poison_total` (+ per-executor sparse series). Windows:
+  FUSION_{IMAGE,VIDEO,AUDIO,LAYA}_WATCHDOG_TIMEOUT (600/600/300/120s default);
+  image+audio honor the llm watchdog's media-defer budget (GPU starvation is
+  not a hang).
+
 ### Changed — fine-tune `train()` runs in a spawned process with its own Metal memory limit (#1186)
 - **Process isolation:** text SFT (`FineTuneService`) and VL SFT
   (`VLMFineTuneService`) now execute training in a spawned child OS

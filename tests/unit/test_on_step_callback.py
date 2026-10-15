@@ -90,12 +90,19 @@ def test_video_engine_generate_sets_on_step_param(monkeypatch):
     eng._update_activity = lambda *a, **k: None
     eng._finish_activity = AsyncMock()
 
-    async def cb(step, total):
-        pass
+    cb_seen: list[tuple[int, int]] = []
+
+    def cb(step, total):
+        cb_seen.append((step, total))
 
     result = asyncio.run(eng.generate("prompt", on_step=cb))
     assert result == [b"fake"]
-    assert captured["params"].on_step is cb
+    # #1189: generate wraps on_step in the watchdog heartbeat callback —
+    # the wrapper must call through to the user callback, not replace it.
+    wrapped = captured["params"].on_step
+    assert wrapped is not cb
+    wrapped(1, 3)
+    assert cb_seen == [(1, 3)]
 
 
 def test_video_engine_generate_on_step_defaults_none(monkeypatch):
