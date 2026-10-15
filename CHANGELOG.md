@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed — shim nanobind GIL audit: release GIL across heavy C++ calls (#1193)
+- **Audit table committed:** `fusion_mlx/shim/GIL_AUDIT.md` covers 100% of
+  the nanobind bound surface (15 members); a source-level test enforces
+  the table stays complete and that heavy bindings keep their GIL
+  release.
+- **Fixes:** `hardware_probe` / `hardware_probe_dict` released the GIL
+  across the first-call MTLDevice scan (ms-scale) — previously it held
+  the GIL, the H3 event-loop-block fingerprint. `EngineRunner`
+  start/stop/submit already released (now documented).
+- **Proof test:** new `_test_slow_call` binding (GIL released) lets
+  `tests/unit/test_shim_gil_1193.py` deterministically verify a slow
+  shim call does not starve a concurrent asyncio heartbeat / Python
+  thread (native path; skipped when the shim extension is not built).
+
 ### Added — VramAllocator tier budgets enforced on every model-load path (#1194)
 - **Bypass closed:** `serve --model <X>` (`Server._load_single_model`) created
   engines directly and never passed `EnginePool._load_engine` — the only
@@ -20,6 +34,7 @@
 - **Fixed latent bug:** the pre-existing reject branch raised
   `ModelTooLargeError(reason)` with the wrong signature (TypeError whenever
   any budget was set) — now constructs the exception correctly.
+
 
 ### Added — unified heavy-workload admission gate (#1187)
 - **Single safety line for heavy work:** training, image and video
