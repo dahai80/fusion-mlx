@@ -8,6 +8,9 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/tuple.h>
 
+#include <chrono>
+#include <thread>
+
 #include "c_abi_envelope.h"
 #include "engine_runner.h"
 #include "hardware_probe.h"
@@ -79,7 +82,12 @@ NB_MODULE(_ext, m) {
         "hardware_probe",
         []() {
             return fusion_mlx::shim::envelope_value<fusion_mlx::shim::HardwareProbe>(
-                []() { return fusion_mlx::shim::probe_hardware(); },
+                []() {
+                    // #1193: the first-call MTLDevice scan can take
+                    // ms-scale time — must not hold the GIL across it.
+                    nb::gil_scoped_release rel;
+                    return fusion_mlx::shim::probe_hardware();
+                },
                 fusion_mlx::shim::HardwareProbe{},
                 nullptr);
         },
@@ -88,7 +96,16 @@ NB_MODULE(_ext, m) {
     m.def(
         "hardware_probe_dict",
         []() {
-            auto h = fusion_mlx::shim::probe_hardware();
+            fusion_mlx::shim::HardwareProbe h =
+                fusion_mlx::shim::envelope_value<fusion_mlx::shim::HardwareProbe>(
+                    []() {
+                        // #1193: GIL released across the device scan; the
+                        // dict conversion below needs the GIL again.
+                        nb::gil_scoped_release rel;
+                        return fusion_mlx::shim::probe_hardware();
+                    },
+                    fusion_mlx::shim::HardwareProbe{},
+                    nullptr);
             return probe_to_dict(h);
         },
         nb::rv_policy::move);
@@ -123,6 +140,20 @@ NB_MODULE(_ext, m) {
     m.def("last_error_message", []() {
         return fusion_mlx::shim::last_error_message();
     });
+
+    // #1193: test hook — sleeps with the GIL released so the GIL-audit
+    // test can prove a slow shim call does not block an asyncio heartbeat.
+    // Not part of the public shim surface (underscore-prefixed).
+    m.def(
+        "_test_slow_call",
+        [](double seconds) {
+            nb::gil_scoped_release rel;
+            std::this_thread::sleep_for(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::duration<double>(seconds)));
+            return true;
+        },
+        "seconds"_a = 0.0);
 
     // PR-J: EngineRunner — dedicated decode thread, P-core QoS binding.
     nb::class_<fusion_mlx::shim::EngineRunner>(m, "EngineRunner")
