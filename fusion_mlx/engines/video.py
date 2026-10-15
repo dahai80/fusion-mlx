@@ -190,7 +190,27 @@ class VideoGenEngine(BaseNonStreamingEngine):
             logger.debug(
                 "video admission: reservation unavailable; skipping", exc_info=True
             )
+        _vid_watchdog = None
         try:
+            # #1189: video executor heartbeat watchdog. on_hang →
+            # poison_executor("video") (same as the #811 R-3 TimeoutError
+            # path). Heartbeat advances via the wrapped on_step callback so
+            # a steadily-progressing render never trips the window.
+            from ..executor_watchdog import get_executor_watchdog
+
+            _vid_watchdog = get_executor_watchdog(
+                "video", on_hang=lambda _name: poison_executor("video")
+            )
+            if params.on_step is not None:
+                _user_step_cb = params.on_step
+
+                def _wd_step_cb(step: int, total: int) -> None:
+                    # Advance the watchdog heartbeat on every denoise step.
+                    _vid_watchdog.heartbeat()
+                    _user_step_cb(step, total)
+
+                params.on_step = _wd_step_cb
+            _vid_watchdog.begin_job("video_generate")
             try:
                 result = await self._backend.generate(params)
             except TimeoutError:
@@ -217,6 +237,13 @@ class VideoGenEngine(BaseNonStreamingEngine):
             logger.info("VideoGen generated %d video(s) in %.2fs", len(result), elapsed)
             return result
         finally:
+            # #1189: end the video watchdog job. On the TimeoutError path the
+            # handler above already poisoned the executor (#811 R-3).
+            try:
+                if _vid_watchdog is not None:
+                    _vid_watchdog.end_job()
+            except Exception:  # noqa: BLE001
+                logger.debug("video watchdog end_job failed", exc_info=True)
             if _enforcer is not None:
                 try:
                     _enforcer.unregister_media_reservation()

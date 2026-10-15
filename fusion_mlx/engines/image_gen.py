@@ -934,6 +934,33 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         loop = asyncio.get_running_loop()
         sync_cb = make_sync_step_callback(on_step, loop)
+        # #1189: image executor heartbeat watchdog (in-process path only).
+        # on_hang → poison_executor("image") so the existing S5 recovery in
+        # this method replaces the worker and reloads the model. Subprocess
+        # mode has its own timeout-kill (real cancellation) — not wrapped.
+        from ..executor_watchdog import get_executor_watchdog
+
+        def _poison_image_executor() -> None:
+            from ..engine_core import poison_executor
+
+            poison_executor("image")
+
+        from ..engine_core import is_media_job_active
+
+        _img_watchdog = get_executor_watchdog(
+            "image",
+            on_hang=_poison_image_executor,
+            defer_check=is_media_job_active,
+        )
+        if sync_cb is not None:
+            _user_sync_cb = sync_cb
+
+            def _wd_sync_cb(step: int, total: int) -> None:
+                # Advance the watchdog heartbeat on every denoise step.
+                _img_watchdog.heartbeat()
+                _user_sync_cb(step, total)
+
+            sync_cb = _wd_sync_cb
 
         # S3 (audit 0910 §6.2): subprocess isolation. When enabled, image gen
         # runs in a child process — Metal allocations cannot crash the LLM.
@@ -996,6 +1023,9 @@ class ImageGenEngine(BaseNonStreamingEngine):
         from ..engine_core import set_media_job_active
 
         set_media_job_active(True)
+        # #1189: begin watchdog tracking for the in-process dispatch. The
+        # matching end_job runs in this method's finally (media-flag clear).
+        _img_watchdog.begin_job("image_generate_inproc")
 
         def _generate():
             mx.default_stream(mx.default_device())
@@ -1353,6 +1383,10 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 set_media_job_active(False)
             except Exception:  # noqa: BLE001
                 pass
+            # #1189: end the image watchdog job. On the TimeoutError path the
+            # handler above already poisoned the executor (S5), so the
+            # orphaned worker does not need watchdog tracking.
+            _img_watchdog.end_job()
             await self._finish_activity(activity_id)
 
     async def _generate_subprocess(
