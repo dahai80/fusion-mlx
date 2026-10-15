@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed — shim nanobind GIL audit: release GIL across heavy C++ calls (#1193)
+- **Audit table committed:** `fusion_mlx/shim/GIL_AUDIT.md` covers 100% of
+  the nanobind bound surface (15 members); a source-level test enforces
+  the table stays complete and that heavy bindings keep their GIL
+  release.
+- **Fixes:** `hardware_probe` / `hardware_probe_dict` released the GIL
+  across the first-call MTLDevice scan (ms-scale) — previously it held
+  the GIL, the H3 event-loop-block fingerprint. `EngineRunner`
+  start/stop/submit already released (now documented).
+- **Proof test:** new `_test_slow_call` binding (GIL released) lets
+  `tests/unit/test_shim_gil_1193.py` deterministically verify a slow
+  shim call does not starve a concurrent asyncio heartbeat / Python
+  thread (native path; skipped when the shim extension is not built).
+
 ### Added — active FD watchdog: per-type accounting + 80% warn / 90% new-stream rejection (#1192)
 - **In-engine FD counter:** `fusion_mlx/fd_watchdog.py` samples open fds
   (/proc/self/fd or /dev/fd), classifies each (socket / file / pipe /
@@ -19,6 +33,7 @@
   `fusion_mlx_fd_by_type{type}`, `fusion_mlx_fd_pressure_rejections_total`,
   `fusion_mlx_fd_warn_total`. Knobs: `FUSION_MLX_FD_WARN_RATIO` /
   `FUSION_MLX_FD_REJECT_RATIO` (defaults 0.80 / 0.90).
+
 
 ### Added — unified heavy-workload admission gate (#1187)
 - **Single safety line for heavy work:** training, image and video
