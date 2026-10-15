@@ -26,6 +26,10 @@ async def start_resumable_stream(
     _auth: bool = Depends(verify_api_key),
     _rate: bool = Depends(check_rate_limit),
 ) -> Any:
+    # #1192: FD pressure gate — reject NEW streams at >=90% fd usage.
+    from ...fd_watchdog import ensure_stream_fd_capacity
+
+    ensure_stream_fd_capacity()
     # #801 resumable streaming. Starts a generation whose output survives
     # the originating connection so a dropped client can reconnect via
     # GET /v1/streams/lookup and receive the full text. A background task
@@ -127,6 +131,10 @@ async def lookup_resumable_stream(
     # until the session completes. The client receives the same SSE sequence
     # it would have on the original connection, regardless of when it
     # reconnects (until the session TTL of 1h elapses).
+    # #1192: FD pressure gate — reject NEW streams at >=90% fd usage.
+    from ...fd_watchdog import ensure_stream_fd_capacity
+
+    ensure_stream_fd_capacity()
     from ...stream_session import get_store
 
     principal = request_principal(http_request)

@@ -702,6 +702,11 @@ async def _stream_chat(
     handler's exception handlers and become proper HTTP 404/503 responses
     instead of unhandled ASGI 500 errors after the stream has started.
     """
+    # #1192: FD pressure gate — reject NEW streams at >=90% fd usage.
+    # Cheap rejection before engine resolution.
+    from ...fd_watchdog import ensure_stream_fd_capacity
+
+    ensure_stream_fd_capacity()
     from ...server import resolve_model_with_profile
 
     model_name, profile_overrides = resolve_model_with_profile(request.model)
