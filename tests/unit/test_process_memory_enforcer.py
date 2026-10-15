@@ -407,7 +407,9 @@ class TestPrefillSafeZone:
 class TestPrefillMinChunkTokens:
     def test_prefill_min_chunk_tokens_default(self):
         enforcer = _make_enforcer()
-        assert enforcer.prefill_min_chunk_tokens == 256
+        # #1204: floor raised 256 -> 512 so the adaptive throttle never
+        # shrinks chunks into fixed-overhead-dominated territory.
+        assert enforcer.prefill_min_chunk_tokens == 512
 
 
 class TestHotCacheMethods:

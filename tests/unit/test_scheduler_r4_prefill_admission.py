@@ -23,6 +23,7 @@ def _bare_scheduler(max_batched_tokens=65536, max_num_seqs=8):
     s.waiting = deque()
     s.requests = {}
     s.prefilling = deque()
+    s._prefill_states = {}
     s.running = {}
     s._admission_paused = False
     # Downstream guards — disable so ONLY the R-4 guards are exercised.

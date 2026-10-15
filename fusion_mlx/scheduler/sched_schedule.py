@@ -119,8 +119,17 @@ def _schedule_waiting(
         # self.prefilling and consume tokens in the SAME forward pass as the
         # newly scheduled ones. The old budget counted only running + newly
         # scheduled, so 3 mid-prefill chunks (~8k tokens each) + a fresh admit
-        # silently exceeded max_num_batched_tokens -> Metal OOM. Count the
-        # remaining tokens of every in-flight prefill chunk against the budget.
+        # silently exceeded max_num_batched_tokens -> Metal OOM.
+        # #1204: a chunked-prefill request only contributes ONE chunk
+        # (prefill_step_size, not its whole remaining prompt) to each
+        # forward pass — _advance_chunked_prefills advances every
+        # prefilling request by exactly one chunk per step. The old
+        # full-remaining accounting made one 83K-token prompt occupy the
+        # whole budget for its entire ~55min prefill, starving every
+        # waiting request (running=0, waiting=3, prefilling=1) — the
+        # head-of-line block. Count the next chunk only; the per-chunk
+        # hard-limit check in _step_prefill_chunk and the KV-headroom
+        # admission guard still bound memory.
         batched_tokens = (
             len(self.running)
             + sum(
@@ -131,14 +140,7 @@ def _schedule_waiting(
                 )
                 for r in scheduled
             )
-            + sum(
-                len(
-                    r.remaining_tokens
-                    if r.remaining_tokens is not None
-                    else r.prompt_token_ids
-                )
-                for r in self.prefilling
-            )
+            + sum(self._next_chunk_token_load(r) for r in self.prefilling)
         )
         if batched_tokens >= self.config.max_num_batched_tokens:
             break

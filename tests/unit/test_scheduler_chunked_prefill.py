@@ -37,6 +37,9 @@ def _make_scheduler(chunked_prefill: bool = True, step_size: int = 4) -> Schedul
         max_num_seqs=8,
         prefill_step_size=step_size,
         chunked_prefill=chunked_prefill,
+        # __post_init__ syncs chunked_prefill=True whenever tokens > 0 —
+        # pass 0 when disabled or the default 2048 re-enables the fork.
+        chunked_prefill_tokens=step_size if chunked_prefill else 0,
         paged_cache_block_size=0,  # Disable boundary snapshots
     )
 
@@ -122,8 +125,16 @@ def _make_recording_scheduler(model_type: str) -> tuple[Scheduler, _RecordingMod
 
 
 class TestSchedulerConfigChunkedPrefill:
-    def test_default_is_false(self):
+    def test_default_tokens_enable_chunked_prefill(self):
+        # chunked_prefill_tokens defaults to 2048 (>0 = enabled);
+        # __post_init__ syncs the runtime bool mirror from it, so the
+        # default config ships chunked prefill ON.
         config = SchedulerConfig()
+        assert config.chunked_prefill_tokens == 2048
+        assert config.chunked_prefill is True
+
+    def test_zero_tokens_disables_chunked_prefill(self):
+        config = SchedulerConfig(chunked_prefill_tokens=0)
         assert config.chunked_prefill is False
 
     def test_can_be_enabled(self):
@@ -251,16 +262,20 @@ class TestGLMAdaptiveChunkedPrefill:
             "MLX_LM_GLM_DSA_ADAPTIVE_PREFILL_MIN_REMAINING", raising=False
         )
 
+        # The GLM 8192-step adaptive prefill moved OUT of the scheduler to
+        # the mlx_lm patch layer (patches/glm_moe_dsa/generate_patch.py,
+        # covered by test_glm_moe_dsa_patch.py). At scheduler level GLM now
+        # uses the configured prefill_step_size like every other arch.
         sched, model = _make_recording_scheduler("glm_moe_dsa")
         req = _make_request("glm", n_tokens=8194)
         state = _make_prefill_state(sched, req, n_remaining=8193)
 
-        with patch("fusion_mlx.scheduler._sync_and_clear_cache"):
+        with patch("fusion_mlx.scheduler.sched_batch._sync_and_clear_cache"):
             done = sched._step_prefill_chunk(state)
 
         assert not done
-        assert model.chunk_lengths == [8192]
-        assert state.tokens_processed == 8192
+        assert model.chunk_lengths == [2048]
+        assert state.tokens_processed == 2048
 
     def test_non_glm_keeps_configured_prefill_chunk_size(self, monkeypatch):
         monkeypatch.delenv("MLX_LM_GLM_DSA_ADAPTIVE_PREFILL_STEP", raising=False)
@@ -269,7 +284,7 @@ class TestGLMAdaptiveChunkedPrefill:
         req = _make_request("deepseek", n_tokens=8193)
         state = _make_prefill_state(sched, req, n_remaining=8192)
 
-        with patch("fusion_mlx.scheduler._sync_and_clear_cache"):
+        with patch("fusion_mlx.scheduler.sched_batch._sync_and_clear_cache"):
             done = sched._step_prefill_chunk(state)
 
         assert not done
@@ -464,32 +479,47 @@ class TestAdvanceChunkedPrefills:
         assert out.finish_reason == "error"
         assert "kernel panic" in out.error
 
-    def test_memory_error_requeues_instead_of_surfacing(self):
-        """A memory-pressure RuntimeError mid-chunk requeues the request for a
-        fresh attempt instead of immediately surfacing an error to the client."""
+    def test_metal_oom_mid_chunk_retries_in_place(self):
+        """A Metal allocation failure mid-chunk is retried in place
+        (mx.clear_cache + same chunk) instead of surfacing to the client —
+        the chunked-path counterpart of the external path's
+        _requeue_or_fail_prefill (test_prefill_oom_graceful.py). The
+        requeue-to-waiting design this test originally asserted was replaced
+        by this in-place retry (O3.4 / #1171); a persistent OOM (retry
+        budget spent) propagates to the RuntimeError handler above."""
         sched = _make_scheduler()
-        req = _make_request("oom-mem")
-        sched.requests[req.request_id] = req
-        state = _make_prefill_state(sched, req)
-        sched.prefilling.append(req)
-        sched._prefill_states[req.request_id] = state
+        sched._memory_limit_bytes = 0  # skip the post-chunk hard-limit check
+        req = _make_request("oom-mem", n_tokens=4)
+        state = _make_prefill_state(sched, req, n_remaining=4)
 
-        with patch.object(
-            sched,
-            "_step_prefill_chunk",
-            side_effect=RuntimeError("Memory limit exceeded during chunked prefill"),
+        calls = {"n": 0}
+
+        def flaky_model(chunk, cache=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("Metal out of memory")
+            return None
+
+        sched.model = flaky_model
+
+        with (
+            patch("fusion_mlx.scheduler.sched_batch._sync_and_clear_cache"),
+            patch(
+                "fusion_mlx.scheduler.sched_batch.get_phys_footprint", return_value=0
+            ),
+            patch(
+                "fusion_mlx.scheduler.sched_batch.mx.get_active_memory", return_value=0
+            ),
         ):
-            scheduled = []
-            rejected = []
-            sched._advance_chunked_prefills(scheduled, rejected)
+            done = sched._step_prefill_chunk(state)
 
-        # No client-facing error; the request is reset and back on the queue.
-        assert rejected == []
-        assert req.request_id not in sched._prefill_states
-        assert req not in sched.prefilling
-        assert sched.requests.get(req.request_id) is req
-        assert req in sched.waiting
+        # First call OOMed, retry with cleared cache succeeded — no error
+        # surfaced, chunk consumed (prompt done in one chunk), retry spent.
+        assert calls["n"] == 2
+        assert done is True
         assert req.prefill_oom_retries == 1
+        assert state.tokens_processed == 4
+        assert state.tokens_remaining.shape[1] == 0
 
     def test_capacity_error_surfaces_as_typed_request_error(self):
         """A deterministic capacity rejection is not retried as transient OOM."""
@@ -696,11 +726,19 @@ class TestScheduleWaitingChunkedFork:
         return sched
 
     def _mock_current(self, sched, current_gb):
-        """Context manager-ish — patch both memory probes to current_gb."""
+        """Context manager-ish — patch both memory probes to current_gb.
+
+        Targets the sched_batch module globals directly: _adaptive_chunk_size
+        reads get_phys_footprint / mx as module-local names, so the package
+        re-export path doesn't intercept them."""
         target = int(current_gb * 1024**3)
         return patch(
-            "fusion_mlx.scheduler.mx.get_active_memory", return_value=target
-        ), patch("fusion_mlx.scheduler.get_phys_footprint", return_value=target)
+            "fusion_mlx.scheduler.sched_batch.mx.get_active_memory",
+            return_value=target,
+        ), patch(
+            "fusion_mlx.scheduler.sched_batch.get_phys_footprint",
+            return_value=target,
+        )
 
     def test_adaptive_throttle_below_soft_watermark_passthrough(self):
         """current < soft watermark → no throttle, full chunk."""
@@ -943,7 +981,7 @@ class TestPrefillRejectionReleasesPagedCache:
         sched.add_request(req)
         sched.block_aware_cache.reset_mock()
 
-        from fusion_mlx.scheduler import _PreflightRejection
+        from fusion_mlx.scheduler.types import _PreflightRejection
 
         with patch.object(
             sched,
