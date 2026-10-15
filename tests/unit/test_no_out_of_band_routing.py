@@ -571,6 +571,12 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # Neither selects a model, parser, or routing tier.
         "FUSION_MLX_FD_REJECT_RATIO",
         "FUSION_MLX_FD_WARN_RATIO",
+        # #1190: debug-only lock-order checker toggles
+        # (fusion_mlx/pool/lock_order.py). Off by default; enable to log or
+        # strict-raise on nested lock-order violations. Pure diagnostics —
+        # never selects a model, parser, or routing tier.
+        "FUSION_MLX_LOCK_DEBUG",
+        "FUSION_MLX_LOCK_DEBUG_STRICT",
         # #1194: VramAllocator tier budget caps in GB (P0/P1). Pure
         # memory-capacity knobs — they cap how much resident weight memory
         # a tier may hold; never selects a model, parser, or routing tier.
