@@ -64,6 +64,7 @@ from .admin.helpers import (
     set_ms_downloader,
     set_oq_manager,
 )
+from .api.admission_routes import router as admission_router
 from .api.decisions_routes import router as decisions_router
 from .api.ollama_routes import router as ollama_router
 from .api.ollama_routes import set_ollama_context
@@ -1323,6 +1324,7 @@ class Server:
         _profile = self._profile
 
         _ROUTE_REGISTRY: list[tuple[str, str | None, str | None]] = [
+            ("admission", admission_router, None),
             ("ollama", ollama_router, "llm"),
             ("openai", openai_router, "llm"),
             ("anthropic", anthropic_router, "llm"),
@@ -2007,6 +2009,15 @@ class Server:
         self.pool.set_final_ceiling_callback(
             self.pool.process_memory_enforcer.get_final_ceiling
         )
+        # #1187: configure the unified heavy-admission gate from MemoryConfig
+        # (once, at boot). Heavy workloads (training/image/video) consult this
+        # gate before starting compute; the env var
+        # FUSION_MLX_HEAVY_ADMISSION_LINE overrides per-process.
+        from .admission import get_heavy_admission_gate
+
+        get_heavy_admission_gate().configure(
+            safety_line_fraction=mem_cfg.heavy_admission_safety_line
+        )
         # RC-3 (#811 audit 0906): every unload path funnels through
         # EnginePool._detach_engine, but only Server.unload_model popped
         # engine_cores — LRU eviction / admin route / TTL unloaded via
@@ -2233,6 +2244,19 @@ class Server:
         _reward_svc.set_loop(asyncio.get_running_loop())
         set_reward_context(self.pool, _reward_svc)
         self._training_services.append(_reward_svc)
+
+        # #1187: register every training service as a recheck target so
+        # /v1/admission/resume wakes deferred jobs (WeakSet — dead services
+        # drop out automatically; configure() already ran at enforcer init).
+        from .admission import get_heavy_admission_gate
+
+        _admission_gate = get_heavy_admission_gate()
+        for _svc in self._training_services:
+            _admission_gate.add_recheck_target(_svc)
+        logger.info(
+            "heavy admission gate: %d training services registered as recheck targets",
+            len(self._training_services),
+        )
 
         # Auto-add adapters dir to FUSION_LORA_ALLOWED_DIRS so trained
         # adapters can be served via EnginePool hot-swap without manual env config

@@ -551,6 +551,13 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # never set after engine eviction) into a RuntimeError; never
         # selects model / parser / tier.
         "FUSION_MLX_GENERATE_TIMEOUT_S",
+        # #1187: heavy-workload admission gate knobs (fusion_mlx/admission.py).
+        # The line is a fraction-of-physical-RAM capacity threshold for
+        # admitting training/image/video workloads; the disable toggle is a
+        # pure on/off for that gate. Neither selects a model, parser, or
+        # routing tier — they only decide whether heavy work starts.
+        "FUSION_MLX_HEAVY_ADMISSION_LINE",
+        "FUSION_MLX_HEAVY_ADMISSION",
     }
 )
 

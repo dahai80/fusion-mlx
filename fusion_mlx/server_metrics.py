@@ -156,6 +156,15 @@ class ServerMetrics:
     # critical model with no metric surface — only an ERROR log line.
     preload_failures_total: int = 0
     preload_failures_by_model: dict[str, int] = field(default_factory=dict)
+    # #1187: heavy-workload admission observability. admitted/rejected/deferred
+    # per kind (training/image/video) so gate behavior is visible in /metrics
+    # instead of only in logs; deferred = training held while paused.
+    admission_admitted_total: int = 0
+    admission_rejected_total: int = 0
+    admission_deferred_total: int = 0
+    admission_admitted_by_kind: dict[str, int] = field(default_factory=dict)
+    admission_rejected_by_kind: dict[str, int] = field(default_factory=dict)
+    admission_deferred_by_kind: dict[str, int] = field(default_factory=dict)
     # Note: the loaded-models gauge is served directly from
     # pool.loaded_model_count by _render_pool_metrics
     # (fusion_mlx_models_loaded), so no separate gauge field is kept here.
@@ -350,6 +359,28 @@ class ServerMetrics:
             self.engine_evictions_by_reason[reason] = (
                 self.engine_evictions_by_reason.get(reason, 0) + 1
             )
+
+    def record_admission(
+        self, kind: str, admitted: bool, deferred: bool = False
+    ) -> None:
+        # #1187: admission decision counter. Called by HeavyAdmissionGate on
+        # every admit attempt so /metrics surfaces gate behavior per kind.
+        with self._lock:
+            if deferred:
+                self.admission_deferred_total += 1
+                self.admission_deferred_by_kind[kind] = (
+                    self.admission_deferred_by_kind.get(kind, 0) + 1
+                )
+            elif admitted:
+                self.admission_admitted_total += 1
+                self.admission_admitted_by_kind[kind] = (
+                    self.admission_admitted_by_kind.get(kind, 0) + 1
+                )
+            else:
+                self.admission_rejected_total += 1
+                self.admission_rejected_by_kind[kind] = (
+                    self.admission_rejected_by_kind.get(kind, 0) + 1
+                )
 
     def record_preload_failure(self, model_id: str) -> None:
         # OP-18 (#0907 audit): preload failure counter. Called by
