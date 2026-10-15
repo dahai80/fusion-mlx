@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed — Wan2.2-TI2V-5B q8 fp32-poisoning of the residual stream + chunk tuning (#1208)
+- **fp32 containment (`_q8_fp32_accum`):** the #500/#503 NaN fix cast the
+  residual stream to float32 before every q8 QuantizedLinear once
+  `seq > 16384`, but the fp32 GEMM OUTPUT flowed back into the residual —
+  after block 1 every op in all 30 blocks (norms, GELU, SDPA, elementwise,
+  the q8 GEMMs themselves) ran on fp32 activations, collapsing FLOP
+  utilization ~6.7x (~95 s/step at 1280x704x81f). The GEMM input stays
+  fp32 (the q8 kernel needs it: bf16 accumulator saturates to 1.7e38 at
+  long seq), but each output is now cast straight back to the residual
+  dtype — fp32 never re-enters the stream. Self/cross attention q/k/v/o
+  and FFN fc2 all covered; SDPA stays all-bf16 (matches official autocast).
+  Measured on Wan2.2-TI2V-5B q8, 1280x704x81f, seq=18480: 69.9 → 42.8
+  s/step (1.64x).
+- **Geometric chunk derivation:** the auto-enabled
+  `FUSION_WAN2_ATTN_CHUNK` no longer hard-codes 8192. The chunk is the
+  smallest power of two ≥ seq/2 capped at the 16384 freeze threshold, so
+  seq=18480 pays 2 Q-chunks instead of 3, seq=50000 pays 4 instead of 7.
+  Verified safe at chunk=16384/seq=18480 (finite latents, no Metal
+  freeze). Combined: 69.9 → 28.8 s/step (2.43x vs the poisoned baseline,
+  3.3x vs the issue's 95 s/step measurement).
+- `mx.compile` remains OFF for the long-seq chunked path: the chunked-SDPA
+  helper's incremental `mx.eval` (peak-buffer bound) is illegal under
+  compile; short-seq stays opt-in as before.
+
 ## [v0.10.13] — 2026-10-15
 
 ### Fixed — head-of-line blocking behind one oversized chunked-prefill prompt (#1204)

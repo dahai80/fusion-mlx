@@ -30,7 +30,9 @@ def test_auto_chunk_below_threshold_noop(monkeypatch):
 def test_auto_chunk_above_threshold_enables(monkeypatch):
     monkeypatch.delenv("FUSION_WAN2_ATTN_CHUNK", raising=False)
     _auto_enable_attn_chunk(WAN2_SAFE_SEQ + 1)
-    assert os_env_chunk() == "8192"
+    # #1208: geometric derivation — seq just past the threshold gets a
+    # chunk of WAN2_SAFE_SEQ (2 Q-chunks), not the old hard 8192 (3).
+    assert os_env_chunk() == str(WAN2_SAFE_SEQ)
 
 
 def test_auto_chunk_respects_user_override(monkeypatch):
@@ -48,7 +50,8 @@ def test_auto_chunk_user_force_off_honored(monkeypatch):
 def test_auto_chunk_exact_issue_seq(monkeypatch):
     monkeypatch.delenv("FUSION_WAN2_ATTN_CHUNK", raising=False)
     _auto_enable_attn_chunk(27280)
-    assert os_env_chunk() == "8192"
+    # #1208: 27280 -> 2 Q-chunks at chunk=16384 (was 4 at hard 8192).
+    assert os_env_chunk() == str(WAN2_SAFE_SEQ)
 
 
 def test_vae_nan_raises_not_silenced():

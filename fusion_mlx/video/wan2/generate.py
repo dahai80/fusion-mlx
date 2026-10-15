@@ -291,12 +291,23 @@ def _auto_enable_attn_chunk(seq_len: int) -> None:
         return
     if os.getenv("FUSION_WAN2_ATTN_CHUNK"):
         return
-    os.environ["FUSION_WAN2_ATTN_CHUNK"] = "8192"
+    # #1208: derive the chunk geometrically instead of a hard 8192 so
+    # seq just past the threshold does not pay 3 dispatches where 2
+    # suffice (seq=18480: chunk 16384 -> 2 Q-chunks vs 3 at 8192).
+    # Smallest pow2 >= seq/2, capped at WAN2_SAFE_SEQ, minimizes the
+    # per-op matrix while keeping the chunk count at ceil(seq/chunk).
+    half = (seq_len + 1) // 2
+    chunk = 1
+    while chunk < half:
+        chunk *= 2
+    chunk = min(chunk, WAN2_SAFE_SEQ)
+    os.environ["FUSION_WAN2_ATTN_CHUNK"] = str(chunk)
     logger.warning(
         "wan2 seq=%d exceeds safe threshold %d; auto-enabling "
-        "FUSION_WAN2_ATTN_CHUNK=8192 to avoid self-attn NaN (#500)",
+        "FUSION_WAN2_ATTN_CHUNK=%d to avoid self-attn NaN (#500)",
         seq_len,
         WAN2_SAFE_SEQ,
+        chunk,
     )
 
 

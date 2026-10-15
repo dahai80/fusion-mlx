@@ -51,6 +51,22 @@ def _attn_chunk_size() -> int:
         return 0
 
 
+def _q8_fp32_accum(linear, x, out_dtype=None):
+    # #1208: run a q8 QuantizedLinear with fp32 accumulation WITHOUT
+    # leaking fp32 into the residual stream. The #500/#503 NaN fix casts
+    # the GEMM input to float32 (bf16 accumulator overflows the q8 kernel
+    # at seq>=16k), but the fp32 OUTPUT flowed back into the residual, so
+    # after block 1 every subsequent GEMM / norm / elementwise op in all
+    # 30 blocks ran on fp32 activations — ~6.7x worse FLOP utilization
+    # than LTX-2.5 (~95 s/step for Wan2.2-5B q8 at seq=18480).
+    # Containment: fp32 in (kernel accumulates fp32, finite), cast the
+    # output straight back to the residual dtype (bf16).
+    out = linear(x.astype(mx.float32))
+    if out_dtype is not None:
+        out = out.astype(out_dtype)
+    return out
+
+
 def _sdpa(q, k, v, scale, mask=None, *, fast_attn=None, step=0, batch_size=None):
     if fast_attn is not None:
         return fast_attn(q, k, v, step, scale=scale, mask=mask, batch_size=batch_size)
@@ -168,24 +184,29 @@ class WanSelfAttention(nn.Module):
         # q8 q/k/v share the bf16-accumulator overflow of the o-proj (#500/#503):
         # at later blocks the residual grows (b1 entry am~73) and the q8
         # q-proj (3072 in-features) overflows its bf16 accumulator on bf16
-        # input. Cast to float32 above the seq threshold so the q8 matmuls
-        # accumulate in float32. Gated by seq so short-seq runs keep bf16.
+        # input. _q8_fp32_accum keeps the fp32 GEMM input (fp32 accumulation,
+        # finite) but casts each output back to the weight dtype so the fp32
+        # never reaches the residual stream (#1208: fp32 poisoning made every
+        # downstream op in all 30 blocks run fp32, ~6.7x FLOP-utilization
+        # collapse). Gated by seq so short-seq runs keep the bf16 path.
         w_dtype = _linear_dtype(self.q)
         if s > _q8_fp32_seq():
-            x_w = x.astype(mx.float32)
+            q = _q8_fp32_accum(self.q, x)
+            k = _q8_fp32_accum(self.k, x)
+            v = _q8_fp32_accum(self.v, x)
         else:
             x_w = x.astype(w_dtype)
-
-        q = self.q(x_w)
-        k = self.k(x_w)
+            q = self.q(x_w)
+            k = self.k(x_w)
+            v = self.v(x_w)
         if self.norm_q is not None:
             q = self.norm_q(q)
         if self.norm_k is not None:
             k = self.norm_k(k)
 
-        q = q.reshape(b, s, n, d)
-        k = k.reshape(b, s, n, d)
-        v = self.v(x_w).reshape(b, s, n, d)
+        q = q.astype(w_dtype).reshape(b, s, n, d)
+        k = k.astype(w_dtype).reshape(b, s, n, d)
+        v = v.astype(w_dtype).reshape(b, s, n, d)
 
         # RoPE in float32 for precision (official uses float64)
         q = rope_apply(
@@ -236,12 +257,13 @@ class WanSelfAttention(nn.Module):
             out = _sdpa_chunked(q, k, v, self.scale, mask)
 
         out = out.transpose(0, 2, 1, 3).reshape(b, s, -1)
-        # q8 o-proj: cast input to float32 at long seq to avoid bf16
+        # q8 o-proj: fp32 accumulation at long seq to avoid bf16
         # accumulator overflow in the QuantizedLinear matmul (#500/#503).
         # SDPA emits bf16; feeding bf16 to the q8 o-proj saturates to
-        # 1.7e38 at seq>=~16k. fp32 input accumulates in fp32 -> finite.
+        # 1.7e38 at seq>=~16k. #1208: output cast back to the weight
+        # dtype so the fp32 never re-enters the residual stream.
         if s > _q8_fp32_seq():
-            out = out.astype(mx.float32)
+            return _q8_fp32_accum(self.o, out, out_dtype=w_dtype)
         return self.o(out)
 
 
@@ -293,12 +315,16 @@ class WanCrossAttention(nn.Module):
         # Cast to compute dtype for efficient matmul (bfloat16 matching official autocast).
         # q8 q/k/v share the bf16-accumulator overflow of the o-proj (#500/#503):
         # the q-proj input is the residual stream, which grows at later blocks
-        # (b1 entry am~73) and overflows the q8 bf16 accumulator. Cast to
-        # float32 above the seq threshold (denoiser token count x.shape[1]).
+        # (b1 entry am~73) and overflows the q8 bf16 accumulator. _q8_fp32_accum
+        # keeps fp32 GEMM accumulation at long seq but contains the fp32 to the
+        # GEMM — outputs are cast straight back (#1208).
         w_dtype = _linear_dtype(self.q)
         s = x.shape[1]
-        q_in = x.astype(mx.float32) if s > _q8_fp32_seq() else x.astype(w_dtype)
-        q = self.q(q_in)
+        if s > _q8_fp32_seq():
+            q = _q8_fp32_accum(self.q, x)
+        else:
+            q = self.q(x.astype(w_dtype))
+        q = q.astype(w_dtype)
         if self.norm_q is not None:
             q = self.norm_q(q)
         q = q.reshape(b, -1, n, d).transpose(0, 2, 1, 3)
@@ -306,16 +332,20 @@ class WanCrossAttention(nn.Module):
         if kv_cache is not None:
             k, v = kv_cache
         else:
-            ctx_in = (
-                context.astype(mx.float32)
-                if s > _q8_fp32_seq()
-                else context.astype(w_dtype)
-            )
-            k = self.k(ctx_in)
+            # Keep the same fp32-accumulation safety margin the fp32
+            # context cast provided — the context is short (text tokens)
+            # so the fp32 GEMM cost is negligible; outputs stay bf16.
+            if s > _q8_fp32_seq():
+                k = _q8_fp32_accum(self.k, context, out_dtype=w_dtype)
+                v = _q8_fp32_accum(self.v, context, out_dtype=w_dtype)
+            else:
+                ctx = context.astype(w_dtype)
+                k = self.k(ctx)
+                v = self.v(ctx)
             if self.norm_k is not None:
                 k = self.norm_k(k)
-            k = k.reshape(b, -1, n, d).transpose(0, 2, 1, 3)
-            v = self.v(ctx_in).reshape(b, -1, n, d).transpose(0, 2, 1, 3)
+            k = k.astype(w_dtype).reshape(b, -1, n, d).transpose(0, 2, 1, 3)
+            v = v.astype(w_dtype).reshape(b, -1, n, d).transpose(0, 2, 1, 3)
 
         # Optional context masking
         mask = None
@@ -347,7 +377,8 @@ class WanCrossAttention(nn.Module):
         # The o-proj output feeds back into the long-seq residual, so gate on
         # the denoiser token count (x.shape[1], e.g. 27280 for 1280x704x121f),
         # not the short text-context length. Verified: bf16 input (am=1.27
-        # finite) -> cross.o OUT nan=106170; fp32 input -> finite.
+        # finite) -> cross.o OUT nan=106170; fp32 input -> finite. #1208:
+        # output cast back so the fp32 never re-enters the residual stream.
         if x.shape[1] > _q8_fp32_seq():
-            out = out.astype(mx.float32)
+            return _q8_fp32_accum(self.o, out, out_dtype=w_dtype)
         return self.o(out)
