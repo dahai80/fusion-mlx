@@ -55,9 +55,13 @@ class VAEAttention(nn.Module):
         v = self.value_proj(y).reshape(B, H * W, C)
 
         scale = 1 / math.sqrt(C)
-        scores = (q * scale) @ k.transpose(0, 2, 1)
-        attn = mx.softmax(scores, axis=-1)
-        y = (attn @ v).reshape(B, H, W, C)
+        y = mx.fast.scaled_dot_product_attention(
+            mx.expand_dims(q, 1),
+            mx.expand_dims(k, 1),
+            mx.expand_dims(v, 1),
+            scale=scale,
+        )
+        y = y.squeeze(1).reshape(B, H, W, C)
         return x + self.out_proj(y)
 
 

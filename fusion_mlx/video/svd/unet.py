@@ -110,9 +110,7 @@ class SpatialAttention(nn.Module):
             .reshape(B, T * H * W, self.num_heads, self.head_dim)
             .transpose(0, 2, 1, 3)
         )
-        attn = mx.matmul(q, k.transpose(0, 1, 3, 2)) * self.scale
-        attn = mx.softmax(attn, axis=-1)
-        out = mx.matmul(attn, v)
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
         out = out.transpose(0, 2, 1, 3).reshape(B, T * H * W, C)
         out = self.out(out)
         out = out.transpose(0, 2, 1).reshape(B, C, T, H, W)
@@ -151,9 +149,7 @@ class TemporalAttention(nn.Module):
             .reshape(B * H * W, T, self.num_heads, self.head_dim)
             .transpose(0, 2, 1, 3)
         )
-        attn = mx.matmul(q, k.transpose(0, 1, 3, 2)) * self.scale
-        attn = mx.softmax(attn, axis=-1)
-        out = mx.matmul(attn, v)
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
         out = out.transpose(0, 2, 1, 3).reshape(B * H * W, T, C)
         out = self.out(out)
         out = out.reshape(B, H, W, T, C).transpose(0, 4, 3, 1, 2)
@@ -191,9 +187,7 @@ class CrossAttention(nn.Module):
             .reshape(B, -1, self.num_heads, self.head_dim)
             .transpose(0, 2, 1, 3)
         )
-        attn = mx.matmul(q, k.transpose(0, 1, 3, 2)) * self.scale
-        attn = mx.softmax(attn, axis=-1)
-        out = mx.matmul(attn, v)
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
         out = out.transpose(0, 2, 1, 3).reshape(B, T * H * W, C)
         out = self.out(out)
         out = out.transpose(0, 2, 1).reshape(B, C, T, H, W)

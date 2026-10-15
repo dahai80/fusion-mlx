@@ -99,9 +99,7 @@ class _TokenRefinerAttn(nn.Module):
         qkv = qkv.reshape(B, L, 3, self.num_heads, self.head_dim)
         qkv = qkv.transpose(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
-        attn = (q * self.scale) @ k.transpose(0, 1, 3, 2)
-        attn = mx.softmax(attn, axis=-1)
-        out = attn @ v
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
         out = out.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return self.proj(out)
 
@@ -189,9 +187,7 @@ class _DoubleStreamAttn(nn.Module):
             k_img = _apply_rope(k_img, rope_cos, rope_sin)
             q = mx.concatenate([q_img, q[:, :, num_img_tokens:]], axis=2)
             k = mx.concatenate([k_img, k[:, :, num_img_tokens:]], axis=2)
-        attn = (q * self.scale) @ k.transpose(0, 1, 3, 2)
-        attn = mx.softmax(attn, axis=-1)
-        out = attn @ v
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
         out = out.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return self.proj(out)
 
@@ -318,9 +314,7 @@ class _SingleStreamBlock(nn.Module):
             q = mx.concatenate([q_img, q[:, :, num_img_tokens:]], axis=2)
             k = mx.concatenate([k_img, k[:, :, num_img_tokens:]], axis=2)
         scale_f = self.head_dim**-0.5
-        attn = (q * scale_f) @ k.transpose(0, 1, 3, 2)
-        attn = mx.softmax(attn, axis=-1)
-        attn_out = attn @ v
+        attn_out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale_f)
         attn_out = attn_out.transpose(0, 2, 1, 3).reshape(B, L, -1)
         combined = mx.concatenate([attn_out, mlp_h], axis=-1)
         out = self.linear2(combined)
