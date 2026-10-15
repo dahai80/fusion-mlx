@@ -16,7 +16,7 @@ from typing import Any
 
 import mlx.core as mx
 
-from fusion_mlx.engine_core import get_executor
+from fusion_mlx.engine_core import get_executor, get_video_gen_timeout
 from fusion_mlx.engines.video_backends.base import (
     VideoBackend,
     VideoConstraints,
@@ -237,7 +237,8 @@ class UniWorldBackend(VideoBackend):
             return self._generate_sync(params)
 
         result = await asyncio.wait_for(
-            loop.run_in_executor(get_executor("video"), _generate), timeout=600.0
+            loop.run_in_executor(get_executor("video"), _generate),
+            timeout=get_video_gen_timeout(),
         )
         elapsed = time.monotonic() - t0
         logger.info("UniWorld generated in %.2fs", elapsed)
