@@ -86,7 +86,21 @@ async def _resolve_pool_model(model_name: str) -> dict | None:
         }
     try:
         await srv.pool.get_engine(resolved)
+    except HTTPException:
+        raise
     except Exception as e:
+        # #1194 verification: a tier-budget (or memory) rejection from the
+        # pool must surface to the caller — this route shadows the public
+        # /v1/models/{id}/load handler, and swallowing the error here
+        # degraded "load refused for capacity" into 404 "not found".
+        from fusion_mlx.exceptions import (
+            InsufficientMemoryError,
+            ModelTooLargeError,
+        )
+
+        if isinstance(e, (InsufficientMemoryError, ModelTooLargeError)):
+            logger.warning("pool load rejected for %s: %s", model_name, e)
+            raise HTTPException(status_code=503, detail=str(e)) from e
         logger.error("pool fallback load failed for %s: %s", model_name, e)
         return None
     return {"status": "ok", "model_id": model_name, "message": f"Loaded {model_name}"}

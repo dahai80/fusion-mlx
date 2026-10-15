@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed — alias serves bypassed the #1194 tier-budget gate; shadow route hid rejections (#1194)
+- **Boot-gate bypass closed:** `serve --model <hf-repo-id>` passed the bare repo
+  id to the size estimate, which raised "No model weights found" and was
+  swallowed — size stayed 0, so the P0 budget check was skipped AND
+  `tier_resident_bytes` undercounted. The estimate (`_estimate_single_model_size`)
+  now retries the hub-cache snapshot layouts (`HF_HOME`, `~/.fusion-mlx/models`,
+  `~/.cache/huggingface/hub`) and warns loudly when no size can be found.
+- **Shadow-route fix:** the gui_compat `/v1/models/{id}/load` route shadows the
+  public handler and degraded a pool budget rejection into 404 "not found".
+  Budget/memory rejections (`ModelTooLargeError`, `InsufficientMemoryError`) now
+  surface as 503 with the reason, mirroring the public route.
+- Verified on the 11433 debug instance with a real model: 1GB budget rejects a
+  2.97GB boot loudly; 3.5GB budget rejects a second 0.68GB load with
+  `fusion_mlx_tier_budget_rejections_total 1`; 8GB budget loads both models with
+  correct `fusion_mlx_model_memory_bytes` accounting.
+
 ### Added — hang diagnosis tooling: one-command before-restart capture + H1-H4 playbook (#1188)
 - **`scripts/hang-capture.sh <PID> [PORT] [OUTDIR]`:** gathers process
   state, per-thread CPU, SIGUSR1 faulthandler dump, py-spy / native
