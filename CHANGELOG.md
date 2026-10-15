@@ -12,6 +12,19 @@
   stalls are documented-skip: injected at the watchdog-input level
   instead (`docs/chaos-suite.md`).
 
+### Added — hang diagnosis tooling: one-command before-restart capture + H1-H4 playbook (#1188)
+- **`scripts/hang-capture.sh <PID> [PORT] [OUTDIR]`:** gathers process
+  state, per-thread CPU, SIGUSR1 faulthandler dump, py-spy / native
+  `sample` profiles, fd usage vs `ulimit -n`, the kernel Metal log (10m),
+  live /metrics (watchdog / fd / admission / eviction series, with
+  auth-key pickup from settings.json) and the workload state at hang time
+  (admission status + fine-tune jobs — the #1184 overlap check), then
+  prints classification hints.
+- **`docs/hang-diagnosis.md`:** H1-H4 fingerprint table (which capture
+  artifact decides each hypothesis), tooling that already ships, and the
+  report template. Attribution of the next hang is intentionally pending
+  — tooling only, no speculative fixes per the issue.
+
 ### Fixed — shim nanobind GIL audit: release GIL across heavy C++ calls (#1193)
 - **Audit table committed:** `fusion_mlx/shim/GIL_AUDIT.md` covers 100% of
   the nanobind bound surface (15 members); a source-level test enforces
