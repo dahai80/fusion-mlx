@@ -292,6 +292,13 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # name keep working without a rebuild. Identical semantics +
         # call-site to ``FUSION_REASONING_RESCUE``.
         "FUSION_REASONING_CUTOFF_NOTICE",
+        # Per-modality generation timeout knobs (#1191). Bounded-wait
+        # ceilings only — they cap how long a request may wait on its
+        # executor dispatch and never select a model, parser, or
+        # routing tier. Read by engines/music.py (music generation) and
+        # api/decisions_routes.py (laya router dispatch) respectively.
+        "FUSION_MUSIC_TIMEOUT",
+        "FUSION_LAYA_DISPATCH_TIMEOUT",
         # F-K-CAPABILITIES-OMIT-AUDIO opt-in deep audio probe (boolean
         # flag). When set to a truthy value, the lifespan hook runs a
         # tiny dry-run inference on each audio lane (STT + TTS) so

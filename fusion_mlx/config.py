@@ -346,6 +346,7 @@ class ServerConfig:
     default_max_tokens: int = 4096
     default_max_tokens_is_explicit: bool = False
     thinking_token_budget: int = 2048
+    # deprecated: never read; per-modality timeouts are the contract (#1191)
     default_timeout: float = 1800.0
     default_temperature: float | None = None
     default_top_p: float | None = None

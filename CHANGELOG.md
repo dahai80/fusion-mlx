@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added — endpoint timeout inventory + gap closure + timeout-chain doc (#1191)
+- **Three gaps closed:** ACE-Step music generate had NO dispatch timeout
+  (now 600s, `FUSION_MUSIC_TIMEOUT`); laya `/v1/laya/decide` dispatch was
+  unbounded (now 120s, `FUSION_LAYA_DISPATCH_TIMEOUT`, 503 on overrun);
+  uniworld backend hardcoded 600s ignoring the shared knob (now uses
+  `FUSION_VIDEO_GEN_TIMEOUT` like every other video backend).
+- **Inventory committed:** `docs/timeout-chain.md` — every endpoint's
+  timeout (value + env knob + source line), the chain diagram, and the
+  architecture invariant: `mx.eval` is not interruptible, so request
+  timeouts live upstream of eval and the executor watchdog (#1189) is the
+  backstop for wedged GPU work.
+- **Streaming semantics documented:** streams bound per-chunk by heartbeat,
+  never overall — slow-but-progressing streams never time out.
+- `ServerConfig.default_timeout` marked deprecated (never read;
+  per-modality knobs are the contract).
+
 ### Added — unified heavy-workload admission gate (#1187)
 - **Single safety line for heavy work:** training, image and video
   workloads now pass one gate before starting compute:

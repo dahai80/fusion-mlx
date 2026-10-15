@@ -20,6 +20,31 @@ logger = logging.getLogger(__name__)
 ACESTEP_DEFAULT_REPO = "ACE-Step/Ace-Step1.5"
 TEXT_ENCODER_DEFAULT = "Qwen/Qwen3-Embedding-0.6B"
 
+_MUSIC_GEN_TIMEOUT_DEFAULT_S = 600.0
+
+
+def get_music_gen_timeout() -> float:
+    raw = os.environ.get("FUSION_MUSIC_TIMEOUT")
+    if not raw:
+        return _MUSIC_GEN_TIMEOUT_DEFAULT_S
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "FUSION_MUSIC_TIMEOUT=%r is not a number, using default %.0fs",
+            raw,
+            _MUSIC_GEN_TIMEOUT_DEFAULT_S,
+        )
+        return _MUSIC_GEN_TIMEOUT_DEFAULT_S
+    if val <= 0:
+        logger.warning(
+            "FUSION_MUSIC_TIMEOUT=%r <= 0, using default %.0fs",
+            raw,
+            _MUSIC_GEN_TIMEOUT_DEFAULT_S,
+        )
+        return _MUSIC_GEN_TIMEOUT_DEFAULT_S
+    return val
+
 
 class MusicGenEngine(BaseNonStreamingEngine):
     # ACE-Step1.5 turbo music generation engine. model_name is the ACE-Step
@@ -136,7 +161,23 @@ class MusicGenEngine(BaseNonStreamingEngine):
                 infer_method=infer_method,
             )
 
-        wav = await loop.run_in_executor(get_executor("audio"), _gen)
+        timeout = get_music_gen_timeout()
+        try:
+            wav = await asyncio.wait_for(
+                loop.run_in_executor(get_executor("audio"), _gen), timeout=timeout
+            )
+        except TimeoutError:
+            logger.error(
+                "music gen timed out after %.0fs (caption=%r dur=%.1fs) — "
+                "no poison (audio executor is watched by the #1189 watchdog); "
+                "raise FUSION_MUSIC_TIMEOUT to allow longer waits",
+                timeout,
+                caption[:60],
+                duration,
+            )
+            raise RuntimeError(
+                f"music generation exceeded {timeout:.0f}s (FUSION_MUSIC_TIMEOUT)"
+            ) from None
         wav_np = np.array(wav[0], copy=False).astype(np.float32).T  # (samples, 2)
         sr = 48000
         logger.info(
