@@ -175,7 +175,9 @@ class ServerMetrics:
     # model-load path tried to exceed its VramAllocator tier ceiling —
     # visible per tier (P0/P1) instead of only in the reject WARNING log.
     tier_budget_rejections_total: int = 0
-    tier_budget_rejections_by_tier: dict[str, int] = field(default_factory=dict)    # Note: the loaded-models gauge is served directly from
+    tier_budget_rejections_by_tier: dict[str, int] = field(
+        default_factory=dict
+    )  # Note: the loaded-models gauge is served directly from
     # pool.loaded_model_count by _render_pool_metrics
     # (fusion_mlx_models_loaded), so no separate gauge field is kept here.
 
