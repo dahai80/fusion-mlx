@@ -175,7 +175,7 @@ class ServerMetrics:
     # from the fd_watchdog snapshot at render time; counters here track
     # gate actions (warns + NEW-stream rejections).
     fd_pressure_rejections_total: int = 0
-    fd_warn_total: int = 0    # Note: the loaded-models gauge is served directly from
+    fd_warn_total: int = 0  # Note: the loaded-models gauge is served directly from
     # pool.loaded_model_count by _render_pool_metrics
     # (fusion_mlx_models_loaded), so no separate gauge field is kept here.
 
