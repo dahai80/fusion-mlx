@@ -157,6 +157,36 @@ jobs:
                   # must never gate a partial shard (14% per-shard otherwise).
                   pytest $FILES -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-fail-under=0 2>&1 | tee pytest-output.txt
 
+    chaos:
+        # #1195: fault-injection suite (tests/chaos/). Separate job from the
+        # unit shards: the suite injects hang/leak/lock-inversion SHAPES at
+        # the Python boundary (never a real GPU/Metal stall — that would
+        # hang the runner itself). Time-boxed: every scenario asserts its
+        # own detection/recovery bounds; the job timeout is the backstop.
+        runs-on: macos-14
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-python@v7
+              with:
+                  python-version: "3.12"
+            - name: Cache pip wheels
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cache/pip
+                  key: ${{ runner.os }}-pip-3.12-${{ hashFiles('pyproject.toml') }}
+                  restore-keys: ${{ runner.os }}-pip-3.12-
+            - run: pip install -e ".[dev]"
+            - name: Run chaos fault-injection suite
+              run: |
+                  set -eo pipefail
+                  pytest tests/chaos -v --tb=short 2>&1 | tee chaos-output.txt
+                  PASSED=$(grep -cE ' PASSED' chaos-output.txt || echo 0)
+                  if [ "$PASSED" -lt 25 ]; then
+                    echo "FAIL: chaos suite collected too few tests ($PASSED)"
+                    exit 1
+                  fi
+
     eval:
         # G1/S1: evaluation gate (ADVISORY). Runs perf/coherence/tool-call gates.
         # No baseline → ADVISORY (warn, never fail CI). When a baseline file
