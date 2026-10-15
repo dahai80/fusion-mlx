@@ -20,6 +20,31 @@ logger = logging.getLogger(__name__)
 ACESTEP_DEFAULT_REPO = "ACE-Step/Ace-Step1.5"
 TEXT_ENCODER_DEFAULT = "Qwen/Qwen3-Embedding-0.6B"
 
+_MUSIC_GEN_TIMEOUT_DEFAULT_S = 600.0
+
+
+def get_music_gen_timeout() -> float:
+    raw = os.environ.get("FUSION_MUSIC_TIMEOUT")
+    if not raw:
+        return _MUSIC_GEN_TIMEOUT_DEFAULT_S
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "FUSION_MUSIC_TIMEOUT=%r is not a number, using default %.0fs",
+            raw,
+            _MUSIC_GEN_TIMEOUT_DEFAULT_S,
+        )
+        return _MUSIC_GEN_TIMEOUT_DEFAULT_S
+    if val <= 0:
+        logger.warning(
+            "FUSION_MUSIC_TIMEOUT=%r <= 0, using default %.0fs",
+            raw,
+            _MUSIC_GEN_TIMEOUT_DEFAULT_S,
+        )
+        return _MUSIC_GEN_TIMEOUT_DEFAULT_S
+    return val
+
 
 class MusicGenEngine(BaseNonStreamingEngine):
     # ACE-Step1.5 turbo music generation engine. model_name is the ACE-Step
@@ -136,18 +161,37 @@ class MusicGenEngine(BaseNonStreamingEngine):
                 infer_method=infer_method,
             )
 
-        # #1189: audio watchdog brackets the music generation (this dispatch
-        # has NO asyncio timeout — a hung generate_music otherwise blocks
-        # the single audio worker forever with no poison, no recovery).
+        # #1189: audio watchdog brackets the music generation (a hung
+        # generate_music otherwise blocks the single audio worker forever).
+        # #1191: the dispatch is ALSO bounded — FUSION_MUSIC_TIMEOUT
+        # (default 600s). On overrun the watchdog job ends here and audio
+        # executor poison/recovery stays owned by the #1189 watchdog.
         from ..engine_core import poison_executor
         from ..executor_watchdog import get_executor_watchdog
 
         _music_watchdog = get_executor_watchdog(
             "audio", on_hang=lambda _name: poison_executor("audio")
         )
+        _timeout_1191 = get_music_gen_timeout()
         _music_watchdog.begin_job("music_generate")
         try:
-            wav = await loop.run_in_executor(get_executor("audio"), _gen)
+            wav = await asyncio.wait_for(
+                loop.run_in_executor(get_executor("audio"), _gen),
+                timeout=_timeout_1191,
+            )
+        except TimeoutError:
+            logger.error(
+                "music gen timed out after %.0fs (caption=%r dur=%.1fs) — "
+                "no poison here (audio executor is watched by the #1189 "
+                "watchdog); raise FUSION_MUSIC_TIMEOUT to allow longer waits",
+                _timeout_1191,
+                caption[:60],
+                duration,
+            )
+            raise RuntimeError(
+                f"music generation exceeded {_timeout_1191:.0f}s "
+                "(FUSION_MUSIC_TIMEOUT)"
+            ) from None
         finally:
             _music_watchdog.end_job()
         wav_np = np.array(wav[0], copy=False).astype(np.float32).T  # (samples, 2)
