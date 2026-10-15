@@ -782,6 +782,10 @@ async def create_speech(request: AudioSpeechRequest):
         request.voice = _resolve_default_voice_literal(request.model, request.voice)
 
     if request.stream:
+        # #1192: FD pressure gate — reject NEW streams at >=90% fd usage.
+        from ..fd_watchdog import ensure_stream_fd_capacity
+
+        ensure_stream_fd_capacity()
         stream = _stream_speech_response(
             engine,
             request,

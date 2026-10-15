@@ -549,6 +549,10 @@ async def stream_events(
     _is_admin: bool = Depends(require_admin),
 ):
     """SSE stream of agent events for a session."""
+    # #1192: FD pressure gate — reject NEW streams at >=90% fd usage.
+    from ..fd_watchdog import ensure_stream_fd_capacity
+
+    ensure_stream_fd_capacity()
     if session_id not in _sessions:
         raise HTTPException(404, f"Session {session_id} not found")
 
