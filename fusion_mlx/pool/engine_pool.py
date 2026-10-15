@@ -18,7 +18,6 @@ import gc
 import json
 import logging
 import os
-import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -54,6 +53,7 @@ from ..exceptions import (
 )
 from ..scheduler import SchedulerConfig
 from ..utils.proc_memory import get_phys_footprint
+from .lock_order import TrackedAsyncLock, TrackedThreadLock
 from .model_discovery import DiscoveredModel, discover_models, format_size
 
 logger = logging.getLogger(__name__)
@@ -203,17 +203,19 @@ class EnginePool:
             Until the callback is wired up the pool admits unconditionally.
         """
         self._entries: dict[str, EngineEntry] = {}
-        self._lock = asyncio.Lock()
+        # #1190: debug-gated lock-order tracking (FUSION_MLX_LOCK_DEBUG);
+        # TrackedAsyncLock subclasses asyncio.Lock so callers are unchanged.
+        self._lock = TrackedAsyncLock("pool.main")
         # P3 (#811): guards is_pinned writes from a sync/threadpool caller
         # against in-flight unload reads on the event-loop thread.
-        self._pinned_lock = threading.Lock()
+        self._pinned_lock = TrackedThreadLock("pool.pinned")
         # AS-12 (#0907 audit): guards _merge_discovered on the SYNC discover
         # path (discover_models) so a threadpool/admin caller mutating
         # _entries cannot race the event-loop's async
         # discover_models_async/get_engine/enforcer iteration of _entries.
         # The async path is already serialized by self._lock (asyncio.Lock);
         # this threading.Lock covers the remaining sync entry point.
-        self._discover_sync_lock = threading.Lock()
+        self._discover_sync_lock = TrackedThreadLock("pool.discover_sync")
         self._current_model_memory = 0
         self._scheduler_config = scheduler_config or SchedulerConfig()
         self._process_memory_enforcer: object | None = None  # Set by server
@@ -564,9 +566,17 @@ class EnginePool:
 
         async with self._lock:
             self._scheduler_config.embedding_batch_size = batch_size
+            # #1190: EmbeddingEngine is a lazy module attr (TYPE_CHECKING +
+            # module __getattr__); a bare reference NameErrors when no engine
+            # has been loaded yet. Resolve via the same pattern as the load
+            # path so test patches on the module attr still take effect.
+            _g = globals()
+            _EmbeddingEngine = _g.get("EmbeddingEngine") or __getattr__(
+                "EmbeddingEngine"
+            )
             for entry in list(self._entries.values()):
                 engine = entry.engine if entry is not None else None
-                if isinstance(engine, EmbeddingEngine):
+                if isinstance(engine, _EmbeddingEngine):
                     engine._batch_size = batch_size
 
     def _scan_models(self, model_dirs: str | list[str]) -> dict[str, DiscoveredModel]:
@@ -1234,7 +1244,7 @@ class EnginePool:
     def _swap_lock(self, base_model_id: str) -> asyncio.Lock:
         lock = self._adapter_swap_locks.get(base_model_id)
         if lock is None:
-            lock = asyncio.Lock()
+            lock = TrackedAsyncLock("pool.adapter_swap")
             self._adapter_swap_locks[base_model_id] = lock
         return lock
 
@@ -1940,13 +1950,26 @@ class EnginePool:
         """Return True if model_id has a discovered/registered pool entry."""
         return model_id in self._entries
 
-    def register_engine(self, model_id: str, engine, model_path: str = "") -> None:
+    def register_engine(
+        self,
+        model_id: str,
+        engine,
+        model_path: str = "",
+        estimated_size: int = 0,
+    ) -> None:
         """Register an externally-created engine in the pool."""
         # #1205: model_path must survive registration — the fine-tune
         # service resolves the trainer's model dir via entry.model_path;
         # an empty string made _execute_training call mlx_lm load("") and
         # die on a relative 'config.json' for every serve-booted model.
-        self._register_entry(model_id, model_path, "llm", "batched", engine=engine)
+        self._register_entry(
+            model_id,
+            model_path,
+            "llm",
+            "batched",
+            engine=engine,
+            estimated_size=estimated_size,
+        )
 
     def register_audio_engine_entry(
         self,
@@ -1969,6 +1992,7 @@ class EnginePool:
         model_type: str,
         engine_type: str,
         engine=None,
+        estimated_size: int = 0,
     ) -> None:
         entry = self._entries.get(model_id)
         if entry is None:
@@ -1977,7 +2001,7 @@ class EnginePool:
                 model_path=model_path,
                 model_type=model_type,
                 engine_type=engine_type,
-                estimated_size=0,
+                estimated_size=estimated_size,
             )
             self._entries[model_id] = entry
         if engine is not None:
@@ -2898,10 +2922,25 @@ class EnginePool:
             ok, reason = self.check_tier_budget(tier, incoming)
             if not ok:
                 logger.warning("Tier budget reject for '%s': %s", model_id, reason)
+                try:
+                    from ..server_metrics import get_server_metrics
+
+                    get_server_metrics().record_tier_budget_rejection(
+                        "P0" if tier.startswith("P0") else "P1", model_id
+                    )
+                except Exception:
+                    logger.debug("record_tier_budget_rejection failed", exc_info=True)
                 entry.is_loading = False
                 from ..exceptions import ModelTooLargeError
 
-                raise ModelTooLargeError(reason)
+                raise ModelTooLargeError(
+                    model_id,
+                    incoming,
+                    self._tier_budgets_bytes.get(
+                        "P0" if tier.startswith("P0") else "P1", 0
+                    ),
+                    message=reason,
+                )
         # get_engine phase 1 reserves the loading slot under the lock before
         # calling us; the admin reload path (models_route) arrives here without
         # a reservation after unload_engine_async. Only reserve when no one has;

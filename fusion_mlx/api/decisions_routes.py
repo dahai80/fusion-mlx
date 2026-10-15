@@ -13,6 +13,7 @@ going through EnginePool discovery.
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any
 
@@ -72,6 +73,32 @@ def _laya_executor():
     from ..engine_core import get_executor
 
     return get_executor("laya")
+
+
+_LAYA_DISPATCH_TIMEOUT_DEFAULT_S = 120.0
+
+
+def _laya_dispatch_timeout() -> float:
+    raw = os.environ.get("FUSION_LAYA_DISPATCH_TIMEOUT")
+    if not raw:
+        return _LAYA_DISPATCH_TIMEOUT_DEFAULT_S  # matches FUSION_LAYA_WATCHDOG_TIMEOUT default (#1189)
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "FUSION_LAYA_DISPATCH_TIMEOUT=%r is not a number, using default %.0fs",
+            raw,
+            _LAYA_DISPATCH_TIMEOUT_DEFAULT_S,
+        )
+        return _LAYA_DISPATCH_TIMEOUT_DEFAULT_S
+    if val <= 0:
+        logger.warning(
+            "FUSION_LAYA_DISPATCH_TIMEOUT=%r <= 0, using default %.0fs",
+            raw,
+            _LAYA_DISPATCH_TIMEOUT_DEFAULT_S,
+        )
+        return _LAYA_DISPATCH_TIMEOUT_DEFAULT_S
+    return val
 
 
 def _poison_laya() -> None:
@@ -274,16 +301,32 @@ async def laya_decide(req: LayaDecideRequest):
             # #1189: watchdog brackets the laya predict dispatch — begin
             # before run_in_executor, end in finally. on_hang →
             # poison_executor("laya") so later requests fast-fail with 503.
+            # #1191: the dispatch is ALSO bounded —
+            # FUSION_LAYA_DISPATCH_TIMEOUT (default 120s), 503 on overrun.
             from ..executor_watchdog import get_executor_watchdog
 
             _laya_watchdog = get_executor_watchdog(
                 "laya", on_hang=lambda _name: _poison_laya()
             )
+            _dispatch_timeout = _laya_dispatch_timeout()
             _laya_watchdog.begin_job("laya_router_predict")
             try:
-                result = await asyncio.get_event_loop().run_in_executor(
-                    _laya_executor(), _predict_sync
+                result = await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(
+                        _laya_executor(), _predict_sync
+                    ),
+                    timeout=_dispatch_timeout,
                 )
+            except TimeoutError:
+                logger.error(
+                    "laya/decide router dispatch timed out after %.0fs "
+                    "(raise FUSION_LAYA_DISPATCH_TIMEOUT to allow longer waits)",
+                    _dispatch_timeout,
+                )
+                raise HTTPException(
+                    503,
+                    f"laya dispatch exceeded {_dispatch_timeout:.0f}s",
+                ) from None
             finally:
                 _laya_watchdog.end_job()
             routing = result.get("routing", {})

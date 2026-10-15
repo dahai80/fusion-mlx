@@ -171,7 +171,17 @@ class ServerMetrics:
     # the wedge via 503s.
     watchdog_poisons_total: int = 0
     watchdog_poisons_by_executor: dict[str, int] = field(default_factory=dict)
+    # #1192: FD pressure observability. Gauges (used/limit/by-type) come
+    # from the fd_watchdog snapshot at render time; counters here track
+    # gate actions (warns + NEW-stream rejections).
+    fd_pressure_rejections_total: int = 0
+    fd_warn_total: int = 0
+    # #1194: tier-budget rejection observability. A non-zero rate means a
+    # model-load path tried to exceed its VramAllocator tier ceiling —
+    # visible per tier (P0/P1) instead of only in the reject WARNING log.
+    tier_budget_rejections_total: int = 0
     # Note: the loaded-models gauge is served directly from
+    tier_budget_rejections_by_tier: dict[str, int] = field(default_factory=dict)
     # pool.loaded_model_count by _render_pool_metrics
     # (fusion_mlx_models_loaded), so no separate gauge field is kept here.
 
@@ -387,6 +397,28 @@ class ServerMetrics:
                 self.admission_rejected_by_kind[kind] = (
                     self.admission_rejected_by_kind.get(kind, 0) + 1
                 )
+
+    def record_fd_pressure_rejection(self) -> None:
+        # #1192: FD pressure gate action counter. Called by FDWatchdog
+        # when a NEW stream is rejected at >=90% fd usage.
+        with self._lock:
+            self.fd_pressure_rejections_total += 1
+
+    def record_fd_warn(self) -> None:
+        # #1192: FD pressure warn counter. Called by FDWatchdog when the
+        # warn threshold is crossed (throttled inside the watchdog).
+        with self._lock:
+            self.fd_warn_total += 1
+
+    def record_tier_budget_rejection(self, tier: str, model_id: str) -> None:
+        # #1194: tier-budget rejection counter. Called by the pool load path
+        # and the single-model boot path when a tier ceiling rejects a load,
+        # so /metrics surfaces enforcement instead of only the WARNING log.
+        with self._lock:
+            self.tier_budget_rejections_total += 1
+            self.tier_budget_rejections_by_tier[tier] = (
+                self.tier_budget_rejections_by_tier.get(tier, 0) + 1
+            )
 
     def record_preload_failure(self, model_id: str) -> None:
         # OP-18 (#0907 audit): preload failure counter. Called by
