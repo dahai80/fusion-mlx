@@ -1512,6 +1512,8 @@ def _render_pacing_metrics() -> list[str]:
             lines.append(f"pacing_bucket_tokens{{{labels}}} {info['tokens']}")
     except Exception:
         logger.exception("pacing metrics render failed")
+    return lines
+
 
 def _render_fd_metrics() -> list[str]:
     # #1192: FD watchdog observability. Gauges render live from the
