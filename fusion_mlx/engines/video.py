@@ -146,6 +146,28 @@ class VideoGenEngine(BaseNonStreamingEngine):
             audio_vae_weights=kwargs.get("audio_vae_weights"),
         )
 
+        # #1187: unified heavy-admission gate BEFORE begin_task acquires the
+        # video mutex — a reject must not hold the mutex. Budget = on-disk
+        # weight estimate + 40% headroom, the same estimate the media
+        # reservation below registers. Unknown weights (0) skip the gate
+        # (model-load admission still applies).
+        from ..admission import get_heavy_admission_gate
+
+        _weights_1187 = _resolve_video_weight_bytes(self._model_name)
+        if _weights_1187 > 0:
+            _gate = get_heavy_admission_gate()
+            _decision = _gate.admit_media("video", int(_weights_1187 * 1.4))
+            if not _decision.admitted:
+                from ..scheduler.video_unified_scheduler import (
+                    VideoMemoryPressureError,
+                )
+
+                raise VideoMemoryPressureError(_decision.reason)
+        else:
+            logger.debug(
+                "video admission: weight estimate unavailable; unified gate skipped"
+            )
+
         t0 = time.monotonic()
         activity_id = self._begin_activity(
             "generating video",
