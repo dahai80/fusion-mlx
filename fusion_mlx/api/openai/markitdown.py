@@ -19,6 +19,10 @@ from ._common import _get_settings, logger
 async def _create_markitdown_chat_completion(
     request: ChatCompletionRequest,
 ) -> Any:
+    # #1192: FD pressure gate — reject NEW streams at >=90% fd usage.
+    from ...fd_watchdog import ensure_stream_fd_capacity
+
+    ensure_stream_fd_capacity()
     from ..markitdown import (
         MARKITDOWN_MODEL_ID,
         MarkItDownRequestError,

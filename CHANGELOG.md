@@ -16,6 +16,26 @@
   shim call does not starve a concurrent asyncio heartbeat / Python
   thread (native path; skipped when the shim extension is not built).
 
+## [Unreleased]
+
+### Added — active FD watchdog: per-type accounting + 80% warn / 90% new-stream rejection (#1192)
+- **In-engine FD counter:** `fusion_mlx/fd_watchdog.py` samples open fds
+  (/proc/self/fd or /dev/fd), classifies each (socket / file / pipe /
+  other) with a 1s-throttled snapshot and a 60-entry history ring. Every
+  syscall is guarded — the watchdog can never break a request.
+- **Pressure gates:** WARNING at 80% of `RLIMIT_NOFILE` (300s throttle);
+  at 90% NEW streams are rejected with 503 while existing streams are
+  untouched — wired before the StreamingResponse construction on all 7
+  stream entry points (OpenAI chat/resume/markitdown, Anthropic SSE, TTS
+  streaming, OpenClaw).
+- **Leak attribution:** per-type open/close delta over the history window
+  (`fusion_mlx_fd_leak_delta{type}`) makes a leaking path identifiable
+  from /metrics alone.
+- **Metrics:** `fusion_mlx_fd_used`, `fusion_mlx_fd_limit`,
+  `fusion_mlx_fd_by_type{type}`, `fusion_mlx_fd_pressure_rejections_total`,
+  `fusion_mlx_fd_warn_total`. Knobs: `FUSION_MLX_FD_WARN_RATIO` /
+  `FUSION_MLX_FD_REJECT_RATIO` (defaults 0.80 / 0.90).
+
 ### Added — lock inventory + global ordering discipline + debug assertions (#1190)
 - **Inventory committed:** `docs/LOCK_INVENTORY.md` — 140 lock sites
   inventoried, pool-package lock table, all verified nested-acquisition
@@ -31,6 +51,7 @@
   (previously raced `prune_model_state`).
 - **Fixed pre-existing NameError:** `apply_embedding_batch_size` crashed
   when no embedding engine was lazily loaded yet.
+
 
 
 ### Added — unified heavy-workload admission gate (#1187)

@@ -819,6 +819,10 @@ async def anthropic_messages(
     check_llm_executor_healthy(request.model or "", adapter="anthropic")
     try:
         if request.stream:
+            # #1192: FD pressure gate — reject NEW streams at >=90% fd usage.
+            from ..fd_watchdog import ensure_stream_fd_capacity
+
+            ensure_stream_fd_capacity()
             # Resolve engine BEFORE creating StreamingResponse so that
             # ModelNotFoundError / ModelLoadingError become proper HTTP
             # 404/503 instead of unhandled ASGI 500 after stream starts.
