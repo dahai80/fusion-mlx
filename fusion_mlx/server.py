@@ -132,6 +132,22 @@ def _resolve_lazy_route(name: str):
 logger = logging.getLogger(__name__)
 
 
+def _resolve_tier_budget_gb(env_value: str | None, config_value: float) -> float:
+    # #1194: resolve a VramAllocator tier budget in GB. Env override wins;
+    # invalid env values fall back to config with a warning; 0/negative =
+    # unbounded (back-compat default).
+    if env_value is not None and env_value.strip():
+        try:
+            return max(0.0, float(env_value))
+        except ValueError:
+            logger.warning(
+                "Invalid tier budget env value %r; using config value %s",
+                env_value,
+                config_value,
+            )
+    return config_value
+
+
 def _install_sighup_reload() -> None:
     # OPS-P4-6 (#0907 audit): SIGHUP hot-reload. Re-reads settings.json and
     # applies the safe reloadable subset (log level, idle timeout, memory
@@ -2018,6 +2034,28 @@ class Server:
         get_heavy_admission_gate().configure(
             safety_line_fraction=mem_cfg.heavy_admission_safety_line
         )
+        # #1194: wire VramAllocator tier budgets from MemoryConfig (0 =
+        # unbounded default). Env overrides for ops convenience; both env
+        # vars are pure memory-capacity knobs.
+        import os
+
+        _p0_gb = _resolve_tier_budget_gb(
+            os.environ.get("FUSION_MLX_TIER_BUDGET_P0_GB"),
+            mem_cfg.tier_budget_p0_gb,
+        )
+        _p1_gb = _resolve_tier_budget_gb(
+            os.environ.get("FUSION_MLX_TIER_BUDGET_P1_GB"),
+            mem_cfg.tier_budget_p1_gb,
+        )
+        if _p0_gb > 0:
+            self.pool.set_tier_budget("P0", int(_p0_gb * 1024**3))
+        if _p1_gb > 0:
+            self.pool.set_tier_budget("P1", int(_p1_gb * 1024**3))
+        logger.info(
+            "Tier budgets wired: P0=%.1fGB P1=%.1fGB (0=unbounded)",
+            _p0_gb,
+            _p1_gb,
+        )
         # RC-3 (#811 audit 0906): every unload path funnels through
         # EnginePool._detach_engine, but only Server.unload_model popped
         # engine_cores — LRU eviction / admin route / TTL unloaded via
@@ -2748,10 +2786,50 @@ class Server:
                 model_settings=_ms,
                 lora_path=pending.get("lora_path"),
             )
+        # #1194: close the tier-budget bypass — this path creates engines
+        # directly and never went through EnginePool._load_engine. Estimate
+        # on-disk weights and enforce the P0 tier budget BEFORE the load;
+        # a rejection here is a loud boot failure (default budget 0 =
+        # unbounded, so nothing changes for existing deploys).
+        _single_size = 0
+        try:
+            from pathlib import Path as _Path
+
+            from .pool.model_discovery import estimate_model_size
+
+            _single_size = int(estimate_model_size(_Path(model_path)))
+        except Exception:  # noqa: BLE001
+            logger.debug(
+                "tier budget: size estimate failed for %s; skipping check",
+                model_path,
+                exc_info=True,
+            )
+        if _single_size > 0:
+            _ok, _reason = self.pool.check_tier_budget("P0_DYNAMIC", _single_size)
+            if not _ok:
+                from .exceptions import ModelTooLargeError
+
+                logger.error(
+                    "Single-model load rejected by tier budget for '%s': %s",
+                    served,
+                    _reason,
+                )
+                get_server_metrics().record_tier_budget_rejection("P0", served)
+                raise ModelTooLargeError(
+                    served,
+                    _single_size,
+                    self.pool._tier_budgets_bytes.get("P0", 0),
+                    message=_reason,
+                )
         await engine.start()
-        self.pool.register_engine(served, engine, model_path=model_path)
+        self.pool.register_engine(
+            served, engine, model_path=model_path, estimated_size=_single_size
+        )
         orig = pending.get("original_name")
         if orig and orig != served:
+            # Alias entry: omit estimated_size — the served-name entry already
+            # carries the size, and a second entry with the same size would
+            # double-count _current_model_memory / tier_resident_bytes.
             self.pool.register_engine(orig, engine, model_path=model_path)
         # Track for unload/shutdown (unload_model calls core.stop()).
         self.engine_cores[served] = engine
