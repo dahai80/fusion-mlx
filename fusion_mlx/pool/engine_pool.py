@@ -18,7 +18,6 @@ import gc
 import json
 import logging
 import os
-import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -54,6 +53,7 @@ from ..exceptions import (
 )
 from ..scheduler import SchedulerConfig
 from ..utils.proc_memory import get_phys_footprint
+from .lock_order import TrackedAsyncLock, TrackedThreadLock
 from .model_discovery import DiscoveredModel, discover_models, format_size
 
 logger = logging.getLogger(__name__)
@@ -203,17 +203,19 @@ class EnginePool:
             Until the callback is wired up the pool admits unconditionally.
         """
         self._entries: dict[str, EngineEntry] = {}
-        self._lock = asyncio.Lock()
+        # #1190: debug-gated lock-order tracking (FUSION_MLX_LOCK_DEBUG);
+        # TrackedAsyncLock subclasses asyncio.Lock so callers are unchanged.
+        self._lock = TrackedAsyncLock("pool.main")
         # P3 (#811): guards is_pinned writes from a sync/threadpool caller
         # against in-flight unload reads on the event-loop thread.
-        self._pinned_lock = threading.Lock()
+        self._pinned_lock = TrackedThreadLock("pool.pinned")
         # AS-12 (#0907 audit): guards _merge_discovered on the SYNC discover
         # path (discover_models) so a threadpool/admin caller mutating
         # _entries cannot race the event-loop's async
         # discover_models_async/get_engine/enforcer iteration of _entries.
         # The async path is already serialized by self._lock (asyncio.Lock);
         # this threading.Lock covers the remaining sync entry point.
-        self._discover_sync_lock = threading.Lock()
+        self._discover_sync_lock = TrackedThreadLock("pool.discover_sync")
         self._current_model_memory = 0
         self._scheduler_config = scheduler_config or SchedulerConfig()
         self._process_memory_enforcer: object | None = None  # Set by server
@@ -564,9 +566,17 @@ class EnginePool:
 
         async with self._lock:
             self._scheduler_config.embedding_batch_size = batch_size
+            # #1190: EmbeddingEngine is a lazy module attr (TYPE_CHECKING +
+            # module __getattr__); a bare reference NameErrors when no engine
+            # has been loaded yet. Resolve via the same pattern as the load
+            # path so test patches on the module attr still take effect.
+            _g = globals()
+            _EmbeddingEngine = _g.get("EmbeddingEngine") or __getattr__(
+                "EmbeddingEngine"
+            )
             for entry in list(self._entries.values()):
                 engine = entry.engine if entry is not None else None
-                if isinstance(engine, EmbeddingEngine):
+                if isinstance(engine, _EmbeddingEngine):
                     engine._batch_size = batch_size
 
     def _scan_models(self, model_dirs: str | list[str]) -> dict[str, DiscoveredModel]:
@@ -1234,7 +1244,7 @@ class EnginePool:
     def _swap_lock(self, base_model_id: str) -> asyncio.Lock:
         lock = self._adapter_swap_locks.get(base_model_id)
         if lock is None:
-            lock = asyncio.Lock()
+            lock = TrackedAsyncLock("pool.adapter_swap")
             self._adapter_swap_locks[base_model_id] = lock
         return lock
 
