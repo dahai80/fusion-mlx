@@ -157,7 +157,10 @@ class MidAttention(nn.Module):
         v = v.reshape(B * T, C, H * W).transpose(0, 2, 1)
         scale = C**-0.5
         out = mx.fast.scaled_dot_product_attention(
-            mx.expand_dims(q, 1), mx.expand_dims(k, 1), mx.expand_dims(v, 1), scale=scale
+            mx.expand_dims(q, 1),
+            mx.expand_dims(k, 1),
+            mx.expand_dims(v, 1),
+            scale=scale,
         )
         out = out.squeeze(1).transpose(0, 2, 1).reshape(B, C, T, H, W)
         out = self.proj_out(out)

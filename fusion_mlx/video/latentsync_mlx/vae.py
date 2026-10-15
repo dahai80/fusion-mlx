@@ -56,7 +56,10 @@ class VAEAttention(nn.Module):
 
         scale = 1 / math.sqrt(C)
         y = mx.fast.scaled_dot_product_attention(
-            mx.expand_dims(q, 1), mx.expand_dims(k, 1), mx.expand_dims(v, 1), scale=scale
+            mx.expand_dims(q, 1),
+            mx.expand_dims(k, 1),
+            mx.expand_dims(v, 1),
+            scale=scale,
         )
         y = y.squeeze(1).reshape(B, H, W, C)
         return x + self.out_proj(y)
