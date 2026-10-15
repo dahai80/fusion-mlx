@@ -18,6 +18,16 @@
   `fusion_mlx_tier_budget_rejections_total 1`; 8GB budget loads both models with
   correct `fusion_mlx_model_memory_bytes` accounting.
 
+### Added — chaos fault-injection suite (#1195)
+- **`tests/chaos/`**: 6 scenarios (H1 GPU-stall shape, H2 lock-order
+  inversion, H3 executor block, H4 FD leak, #1184 training-contention,
+  long-request + spike) each asserting detection < 60s, recovery < 120s
+  and zero silent request loss, with scaled windows via the production
+  env knobs.
+- **Dedicated CI `chaos` job** (time-boxed, 15 min) — real GPU/Metal
+  stalls are documented-skip: injected at the watchdog-input level
+  instead (`docs/chaos-suite.md`).
+
 ### Added — hang diagnosis tooling: one-command before-restart capture + H1-H4 playbook (#1188)
 - **`scripts/hang-capture.sh <PID> [PORT] [OUTDIR]`:** gathers process
   state, per-thread CPU, SIGUSR1 faulthandler dump, py-spy / native
