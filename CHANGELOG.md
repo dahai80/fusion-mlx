@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [v0.10.13] — 2026-10-15
 
 ### Fixed — head-of-line blocking behind one oversized chunked-prefill prompt (#1204)
 - **Per-chunk admission budgeting:** `_schedule_waiting` counted an
