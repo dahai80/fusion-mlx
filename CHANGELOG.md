@@ -16,6 +16,26 @@
   shim call does not starve a concurrent asyncio heartbeat / Python
   thread (native path; skipped when the shim extension is not built).
 
+### Added — VramAllocator tier budgets enforced on every model-load path (#1194)
+- **Bypass closed:** `serve --model <X>` (`Server._load_single_model`) created
+  engines directly and never passed `EnginePool._load_engine` — the only
+  tier-budget choke point. It now checks the P0 budget BEFORE the load
+  (rejection = loud boot failure with `ModelTooLargeError`) and registers
+  the real on-disk weight size, so the primary model is visible to
+  `tier_resident_bytes` accounting.
+- **Config wiring:** budgets existed since #1170 but nothing ever set them.
+  New MemoryConfig `tier_budget_p0_gb` / `tier_budget_p1_gb` (0 = unbounded
+  default) + env overrides `FUSION_MLX_TIER_BUDGET_P0_GB` /
+  `FUSION_MLX_TIER_BUDGET_P1_GB`, wired at boot.
+- **Observability:** `fusion_mlx_tier_budget_rejections_total` (+ sparse
+  per-tier series) on /metrics.
+- **Inventory:** `docs/tier-budget-load-paths.md` documents all 24 checked
+  load sites, the formerly-bypassing paths and their disposition.
+- **Fixed latent bug:** the pre-existing reject branch raised
+  `ModelTooLargeError(reason)` with the wrong signature (TypeError whenever
+  any budget was set) — now constructs the exception correctly.
+
+
 ### Added — unified heavy-workload admission gate (#1187)
 - **Single safety line for heavy work:** training, image and video
   workloads now pass one gate before starting compute:

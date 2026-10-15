@@ -1940,13 +1940,26 @@ class EnginePool:
         """Return True if model_id has a discovered/registered pool entry."""
         return model_id in self._entries
 
-    def register_engine(self, model_id: str, engine, model_path: str = "") -> None:
+    def register_engine(
+        self,
+        model_id: str,
+        engine,
+        model_path: str = "",
+        estimated_size: int = 0,
+    ) -> None:
         """Register an externally-created engine in the pool."""
         # #1205: model_path must survive registration — the fine-tune
         # service resolves the trainer's model dir via entry.model_path;
         # an empty string made _execute_training call mlx_lm load("") and
         # die on a relative 'config.json' for every serve-booted model.
-        self._register_entry(model_id, model_path, "llm", "batched", engine=engine)
+        self._register_entry(
+            model_id,
+            model_path,
+            "llm",
+            "batched",
+            engine=engine,
+            estimated_size=estimated_size,
+        )
 
     def register_audio_engine_entry(
         self,
@@ -1969,6 +1982,7 @@ class EnginePool:
         model_type: str,
         engine_type: str,
         engine=None,
+        estimated_size: int = 0,
     ) -> None:
         entry = self._entries.get(model_id)
         if entry is None:
@@ -1977,7 +1991,7 @@ class EnginePool:
                 model_path=model_path,
                 model_type=model_type,
                 engine_type=engine_type,
-                estimated_size=0,
+                estimated_size=estimated_size,
             )
             self._entries[model_id] = entry
         if engine is not None:
@@ -2898,10 +2912,25 @@ class EnginePool:
             ok, reason = self.check_tier_budget(tier, incoming)
             if not ok:
                 logger.warning("Tier budget reject for '%s': %s", model_id, reason)
+                try:
+                    from ..server_metrics import get_server_metrics
+
+                    get_server_metrics().record_tier_budget_rejection(
+                        "P0" if tier.startswith("P0") else "P1", model_id
+                    )
+                except Exception:
+                    logger.debug("record_tier_budget_rejection failed", exc_info=True)
                 entry.is_loading = False
                 from ..exceptions import ModelTooLargeError
 
-                raise ModelTooLargeError(reason)
+                raise ModelTooLargeError(
+                    model_id,
+                    incoming,
+                    self._tier_budgets_bytes.get(
+                        "P0" if tier.startswith("P0") else "P1", 0
+                    ),
+                    message=reason,
+                )
         # get_engine phase 1 reserves the loading slot under the lock before
         # calling us; the admin reload path (models_route) arrives here without
         # a reservation after unload_engine_async. Only reserve when no one has;
