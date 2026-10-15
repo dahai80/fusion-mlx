@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added — chaos fault-injection suite (#1195)
+- **`tests/chaos/`**: 6 scenarios (H1 GPU-stall shape, H2 lock-order
+  inversion, H3 executor block, H4 FD leak, #1184 training-contention,
+  long-request + spike) each asserting detection < 60s, recovery < 120s
+  and zero silent request loss, with scaled windows via the production
+  env knobs.
+- **Dedicated CI `chaos` job** (time-boxed, 15 min) — real GPU/Metal
+  stalls are documented-skip: injected at the watchdog-input level
+  instead (`docs/chaos-suite.md`).
+
 ### Fixed — shim nanobind GIL audit: release GIL across heavy C++ calls (#1193)
 - **Audit table committed:** `fusion_mlx/shim/GIL_AUDIT.md` covers 100% of
   the nanobind bound surface (15 members); a source-level test enforces
