@@ -44,6 +44,7 @@
 - **Fixed latent bug:** the pre-existing reject branch raised
   `ModelTooLargeError(reason)` with the wrong signature (TypeError whenever
   any budget was set) — now constructs the exception correctly.
+
 ### Added — active FD watchdog: per-type accounting + 80% warn / 90% new-stream rejection (#1192)
 - **In-engine FD counter:** `fusion_mlx/fd_watchdog.py` samples open fds
   (/proc/self/fd or /dev/fd), classifies each (socket / file / pipe /
@@ -61,6 +62,7 @@
   `fusion_mlx_fd_by_type{type}`, `fusion_mlx_fd_pressure_rejections_total`,
   `fusion_mlx_fd_warn_total`. Knobs: `FUSION_MLX_FD_WARN_RATIO` /
   `FUSION_MLX_FD_REJECT_RATIO` (defaults 0.80 / 0.90).
+
 ### Added — lock inventory + global ordering discipline + debug assertions (#1190)
 - **Inventory committed:** `docs/LOCK_INVENTORY.md` — 140 lock sites
   inventoried, pool-package lock table, all verified nested-acquisition
@@ -76,6 +78,7 @@
   (previously raced `prune_model_state`).
 - **Fixed pre-existing NameError:** `apply_embedding_batch_size` crashed
   when no embedding engine was lazily loaded yet.
+
 ### Added — unified heavy-workload admission gate (#1187)
 - **Single safety line for heavy work:** training, image and video
   workloads now pass one gate before starting compute:
@@ -550,7 +553,6 @@
   covering discovery path, engine fallback, none-when-unloaded, multiple
   models, and Ollama tags/show endpoints.
 
-## [Unreleased]
 - Claude Code reads `context_length` from the OpenAI-compatible
   `/v1/models` response to compute precompact thresholds. When the field
   was absent, Claude Code rejected prompts during precompact with
@@ -3057,7 +3059,6 @@ output bridges — no torch at runtime, offline weight conversion only.
   pin protection, lease blocking, and parallel acquire. Documented in
   `docs/configuration.md` (Concurrent Multi-Model Serving).
 
-## [Unreleased]
 
 ## [0.10.1] — 2026-09-19
 
@@ -3995,7 +3996,6 @@ Patch release — Hub↔MLX API contract alignment (#646) + client-disconnect me
 ### Removed
 - Dead `_disconnect_guard` streaming wrapper, `_force_abort_request`, and always-no-op telemetry recorder stubs — 0 production callers; streaming routes handle disconnect inline (#645).
 
-## [Unreleased]
 
 ## [0.10.1] — 2026-09-19
 
@@ -4598,7 +4598,6 @@ Patch release shipping fixes for #355, #356, #357, a latent converter weight-loa
 - **Lint job runs on Python 3.13.** black's AST safety check needs runner Python >= highest `target-version` (py313). Bumped `.github/workflows/ci.yml` lint job from 3.12 -> 3.13.
 - Reformat `tests/unit/test_active_models_visibility.py` (committed unformatted).
 
-## [Unreleased]
 
 ## [0.10.1] — 2026-09-19
 
@@ -4829,3 +4828,20 @@ Patch release shipping fixes for #355, #356, #357, a latent converter weight-loa
 - The app's server-launch command (`python -m fusion_mlx.cli serve`) is verified coherent
   with this fix. The Swift app code is unchanged. Release `.app` bundles embed the
   `fusion_mlx` package from the worktree, so a rebuilt app includes this fix.
+
+### Added — endpoint timeout inventory + gap closure + timeout-chain doc (#1191)
+- **Three gaps closed:** ACE-Step music generate had NO dispatch timeout
+  (now 600s, `FUSION_MUSIC_TIMEOUT`); laya `/v1/laya/decide` dispatch was
+  unbounded (now 120s, `FUSION_LAYA_DISPATCH_TIMEOUT`, 503 on overrun);
+  uniworld backend hardcoded 600s ignoring the shared knob (now uses
+  `FUSION_VIDEO_GEN_TIMEOUT` like every other video backend).
+- **Inventory committed:** `docs/timeout-chain.md` — every endpoint's
+  timeout (value + env knob + source line), the chain diagram, and the
+  architecture invariant: `mx.eval` is not interruptible, so request
+  timeouts live upstream of eval and the executor watchdog (#1189) is the
+  backstop for wedged GPU work.
+- **Streaming semantics documented:** streams bound per-chunk by heartbeat,
+  never overall — slow-but-progressing streams never time out.
+- `ServerConfig.default_timeout` marked deprecated (never read;
+  per-modality knobs are the contract).
+
