@@ -111,11 +111,22 @@ class TestResumeHelper:
 
 class TestExecuteWiring:
     def test_execute_training_calls_resume_helper(self):
-        # Pins the call site: resume must run inside _execute_training
-        # AFTER linear_to_lora_layers and BEFORE train()/save_config.
-        from fusion_mlx.training.service import FineTuneService
+        # Pins the call site: resume must run inside execute_training_core
+        # (#1186: body shared by thread path and spawned child) AFTER
+        # linear_to_lora_layers and BEFORE train()/save_config.
+        import fusion_mlx.training.service as svc
 
-        src = inspect.getsource(FineTuneService._execute_training)
+        src = inspect.getsource(svc.execute_training_core)
         assert "_resume_adapter_weights" in src
         assert src.index("linear_to_lora_layers") < src.index("_resume_adapter_weights")
         assert src.index("_resume_adapter_weights") < src.index("save_config(")
+
+    def test_execute_paths_share_core(self):
+        # #1186: both execution modes must go through the same core so the
+        # spawned child cannot drift from the legacy thread path.
+        import fusion_mlx.training.service as svc
+
+        thread_src = inspect.getsource(svc.FineTuneService._execute_training)
+        assert "execute_training_core" in thread_src
+        child_src = inspect.getsource(svc.execute_training_spec)
+        assert "execute_training_core" in child_src

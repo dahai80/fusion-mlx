@@ -36,6 +36,8 @@ from pathlib import Path
 
 import mlx.core as mx
 
+from fusion_mlx.training.proc import TrainingProcessKilled
+
 logger = logging.getLogger(__name__)
 
 ADAPTER_BASE_DIR = Path(os.path.expanduser("~/.fusion-mlx/adapters"))
@@ -102,6 +104,19 @@ class FineTuneConfig:
     # continuation is a follow-up). Same naming as DPOService's
     # init_adapter_path (#1149) for cross-service consistency.
     init_adapter_path: str = ""
+    # #1186: process isolation. "process" runs train() in a spawned child
+    # with its own Metal memory limit (serving GPU streams no longer share
+    # the training workload's command stream); "thread" keeps the legacy
+    # in-process path (used by tests / debugging).
+    execution_mode: str = "process"
+    # #1186: child Metal memory budget in GB. 0 = auto (60% of physical —
+    # calibration: observed peak 64.9GB on 128GB while serving was resident).
+    memory_limit_gb: float = 0.0
+    # #1186: policy when the training child dies without reporting
+    # (kill -9 / OOM / crash). "mark_failed" ends the job FAILED (resumable
+    # via init_adapter_path); "auto_restart" re-queues up to max_restarts.
+    on_process_kill: str = "mark_failed"
+    max_restarts: int = 1
 
     def to_mlx_args(self, adapter_path: str, data_path: str, model_path: str):
         lora_params = {
@@ -222,6 +237,21 @@ class FineTuneConfig:
                 "lora_target_modules has no effect with fine_tune_type='full' "
                 "(full fine-tuning unfreezes layers, no LoRA adapters)"
             )
+        # #1186: isolation knobs.
+        if self.execution_mode not in ("process", "thread"):
+            raise ValueError(
+                f"execution_mode must be 'process' or 'thread', "
+                f"got {self.execution_mode!r}"
+            )
+        if self.on_process_kill not in ("mark_failed", "auto_restart"):
+            raise ValueError(
+                f"on_process_kill must be 'mark_failed' or 'auto_restart', "
+                f"got {self.on_process_kill!r}"
+            )
+        if self.memory_limit_gb < 0:
+            raise ValueError(
+                f"memory_limit_gb must be >= 0 (0 = auto), got {self.memory_limit_gb}"
+            )
 
 
 @dataclass
@@ -261,6 +291,8 @@ class FineTuneJob:
     error: str = ""
     events: list[dict] = field(default_factory=list)
     terminal: bool = False
+    # #1186: auto_restart attempts consumed by the kill policy.
+    attempts: int = 0
     cond: asyncio.Condition = field(default_factory=asyncio.Condition)
 
     def to_dict(self) -> dict:
@@ -277,6 +309,7 @@ class FineTuneJob:
             "adapter_path": self.adapter_path,
             "adapter_name": self.adapter_name,
             "error": self.error,
+            "attempts": self.attempts,
         }
 
 
@@ -320,62 +353,84 @@ class _GradClipOptimizer:
         return getattr(self._optimizer, name)
 
 
-class _ProgressCallback:
-    """TrainingCallback that pushes progress events into FineTuneJob."""
+class _BaseProgressCallback:
+    """Builds the canonical progress event payloads. Shared by the
+    in-process job callback and the process-mode pipe callback (#1186) so
+    both paths emit identical event dicts."""
 
-    def __init__(self, job: FineTuneJob, loop: asyncio.AbstractEventLoop):
-        self._job = job
-        self._loop = loop
+    def __init__(self, total_steps: int):
+        self._total = total_steps
         self._start_time = time.monotonic()
+        self._val_loss = None
 
     def on_train_loss_report(self, train_info: dict):
         step = train_info.get("iteration", 0)
-        total = self._job.config.iters
         elapsed = time.monotonic() - self._start_time
         it_sec = train_info.get("iterations_per_second", 0.0)
-        remaining = (total - step) / it_sec if it_sec > 0 else 0.0
-
-        self._job.progress = FineTuneProgress(
-            step=step,
-            total_steps=total,
-            train_loss=train_info.get("train_loss", 0.0),
-            val_loss=self._job.progress.val_loss,
-            learning_rate=train_info.get("learning_rate", 0.0),
-            tokens_per_second=train_info.get("tokens_per_second", 0.0),
-            iterations_per_second=it_sec,
-            trained_tokens=train_info.get("trained_tokens", 0),
-            peak_memory_gb=train_info.get("peak_memory", 0.0),
-            elapsed_seconds=round(elapsed, 1),
-            eta_seconds=round(remaining, 1),
-        )
-        self._push(
+        remaining = (self._total - step) / it_sec if it_sec > 0 else 0.0
+        self._emit_train_loss(
             {
                 "type": "train_loss",
                 "step": step,
-                "total_steps": total,
-                "train_loss": self._job.progress.train_loss,
-                "val_loss": self._job.progress.val_loss,
-                "learning_rate": self._job.progress.learning_rate,
-                "tokens_per_second": self._job.progress.tokens_per_second,
+                "total_steps": self._total,
+                "train_loss": train_info.get("train_loss", 0.0),
+                "val_loss": self._val_loss,
+                "learning_rate": train_info.get("learning_rate", 0.0),
+                "tokens_per_second": train_info.get("tokens_per_second", 0.0),
                 "it_sec": it_sec,
-                "trained_tokens": self._job.progress.trained_tokens,
-                "peak_memory_gb": self._job.progress.peak_memory_gb,
-                "elapsed_seconds": self._job.progress.elapsed_seconds,
-                "eta_seconds": self._job.progress.eta_seconds,
+                "trained_tokens": train_info.get("trained_tokens", 0),
+                "peak_memory_gb": train_info.get("peak_memory", 0.0),
+                "elapsed_seconds": round(elapsed, 1),
+                "eta_seconds": round(remaining, 1),
             }
         )
 
     def on_val_loss_report(self, val_info: dict):
-        val_loss = val_info.get("val_loss", 0.0)
-        self._job.progress.val_loss = val_loss
-        self._push(
+        self._val_loss = val_info.get("val_loss", 0.0)
+        self._emit_val_loss(
             {
                 "type": "val_loss",
                 "step": val_info.get("iteration", 0),
-                "val_loss": val_loss,
+                "val_loss": self._val_loss,
                 "val_time": val_info.get("val_time", 0.0),
             }
         )
+
+    def _emit_train_loss(self, event: dict):
+        raise NotImplementedError
+
+    def _emit_val_loss(self, event: dict):
+        raise NotImplementedError
+
+
+class _ProgressCallback(_BaseProgressCallback):
+    """TrainingCallback that pushes progress events into FineTuneJob."""
+
+    def __init__(self, job: FineTuneJob, loop: asyncio.AbstractEventLoop):
+        super().__init__(job.config.iters)
+        self._job = job
+        self._loop = loop
+        self._val_loss = job.progress.val_loss
+
+    def _emit_train_loss(self, event: dict):
+        self._job.progress = FineTuneProgress(
+            step=event["step"],
+            total_steps=event["total_steps"],
+            train_loss=event["train_loss"],
+            val_loss=event["val_loss"],
+            learning_rate=event["learning_rate"],
+            tokens_per_second=event["tokens_per_second"],
+            iterations_per_second=event["it_sec"],
+            trained_tokens=event["trained_tokens"],
+            peak_memory_gb=event["peak_memory_gb"],
+            elapsed_seconds=event["elapsed_seconds"],
+            eta_seconds=event["eta_seconds"],
+        )
+        self._push(event)
+
+    def _emit_val_loss(self, event: dict):
+        self._job.progress.val_loss = event["val_loss"]
+        self._push(event)
 
     def _push(self, event: dict):
         self._job.events.append(event)
@@ -388,6 +443,44 @@ class _ProgressCallback:
             self._loop.call_soon_threadsafe(lambda: asyncio.ensure_future(_notify()))
         except RuntimeError:
             pass
+
+
+class _PipeProgressCallback(_BaseProgressCallback):
+    """Child-side callback (#1186): sends the same event payloads over the
+    pipe so the parent can map them into job state."""
+
+    def __init__(self, report, total_steps: int):
+        super().__init__(total_steps)
+        self._report = report
+
+    def _emit_train_loss(self, event: dict):
+        self._report(event)
+
+    def _emit_val_loss(self, event: dict):
+        self._report(event)
+
+
+def _apply_progress_event(job: FineTuneJob, event: dict):
+    # #1186: parent-side mapping of a child progress event into job state
+    # (mirror of _ProgressCallback's in-process behavior).
+    etype = event.get("type")
+    if etype == "train_loss":
+        job.progress = FineTuneProgress(
+            step=event.get("step", 0),
+            total_steps=event.get("total_steps", 0),
+            train_loss=event.get("train_loss", 0.0),
+            val_loss=job.progress.val_loss,
+            learning_rate=event.get("learning_rate", 0.0),
+            tokens_per_second=event.get("tokens_per_second", 0.0),
+            iterations_per_second=event.get("it_sec", 0.0),
+            trained_tokens=event.get("trained_tokens", 0),
+            peak_memory_gb=event.get("peak_memory_gb", 0.0),
+            elapsed_seconds=event.get("elapsed_seconds", 0.0),
+            eta_seconds=event.get("eta_seconds", 0.0),
+        )
+    elif etype == "val_loss":
+        job.progress.val_loss = event.get("val_loss", 0.0)
+    job.events.append(event)
 
 
 def _resume_adapter_weights(model, cfg: FineTuneConfig, adapter_path: Path):
@@ -426,6 +519,226 @@ def _resume_adapter_weights(model, cfg: FineTuneConfig, adapter_path: Path):
     return model
 
 
+def execute_training_core(
+    cfg: FineTuneConfig,
+    model_path: str,
+    dataset_path: str,
+    adapter_path: str,
+    callback,
+) -> dict:
+    # #1186: training body shared by the in-process thread path and the
+    # spawned child process. Holds no FineTuneService state, so it is safe
+    # to run in a separate interpreter. Returns the adapter output paths;
+    # callers own job-status marking.
+    import mlx.optimizers as optim
+    from mlx.utils import tree_flatten
+    from mlx_lm.tuner.datasets import CacheDataset, load_dataset
+    from mlx_lm.tuner.trainer import TrainingArgs, train
+    from mlx_lm.tuner.utils import (
+        build_schedule,
+        linear_to_lora_layers,
+        print_trainable_parameters,
+    )
+    from mlx_lm.utils import load, save_config
+
+    # Fail fast on invalid config before the expensive model+dataset load.
+    # #425/#402: validate() is the single source of truth for the
+    # mxfp8 / quant_bits / fine_tune_type guards.
+    cfg.validate()
+
+    adapter_dir = Path(adapter_path)
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    adapter_file = adapter_dir / "adapters.safetensors"
+
+    # Build args for mlx_lm
+    args = cfg.to_mlx_args(
+        adapter_path=str(adapter_dir),
+        data_path=dataset_path,
+        model_path=model_path,
+    )
+
+    # Load model + tokenizer
+    logger.info(f"Loading model for training: {model_path}")
+    model, tokenizer = load(model_path, tokenizer_config={"trust_remote_code": True})
+
+    # Load dataset
+    logger.info(f"Loading dataset: {dataset_path}")
+    train_set, valid_set, test_set = load_dataset(args, tokenizer)
+    if not train_set:
+        raise ValueError("Training dataset is empty")
+
+    # Apply LoRA/DORA layers
+    mx.random.seed(cfg.seed)
+    model.freeze()
+
+    # #402: QLoRA — quantize the frozen base to 4/8-bit before attaching
+    # LoRA. If the base is already a quantized MLX model, quantize_base is
+    # a no-op (LoRALinear.from_base wraps QuantizedLinear as-is). For an
+    # unquantized base, nn.quantize() converts Linears in place.
+    # quant_bits range already enforced by cfg.validate() above.
+    is_qlora = cfg.fine_tune_type == "qlora"
+    if is_qlora or cfg.quantize_base:
+        already_quant = any(
+            hasattr(l, "to_quantized") and getattr(l, "bits", None)
+            for l in model.layers
+        )
+        if not already_quant:
+            logger.info(
+                "QLoRA: quantizing base to %d-bit (group_size=64)",
+                cfg.quant_bits,
+            )
+            import mlx.nn as nn
+
+            nn.quantize(model, group_size=64, bits=cfg.quant_bits)
+        else:
+            logger.info("QLoRA: base already quantized, skipping quantize step")
+
+    if cfg.fine_tune_type == "full":
+        for layer in model.layers[-max(cfg.lora_layers, 0) :]:
+            layer.unfreeze()
+    elif cfg.fine_tune_type in ("lora", "dora", "qlora"):
+        # qlora uses plain LoRA on top of the quantized base (not DoRA:
+        # DoRALinear support for quantized weights is incomplete).
+        use_dora = cfg.fine_tune_type == "dora"
+        lora_params = {
+            "rank": cfg.lora_rank,
+            "dropout": cfg.lora_dropout,
+            "scale": cfg.lora_alpha,
+        }
+        # #746: per-module LoRA targeting. linear_to_lora_layers gates
+        # adapters by config["keys"] (a set of full module paths within
+        # the top lora_layers blocks). When lora_target_modules is set,
+        # collect the full module paths whose class-name basename is in
+        # the target set (e.g. "layers.0.attention.q_proj" → basename
+        # "q_proj"). None/empty = all linears (prior behavior).
+        if cfg.lora_target_modules:
+            targets = {t.strip() for t in cfg.lora_target_modules if t.strip()}
+            keys = set()
+            for layer in model.layers[-max(cfg.lora_layers, 0) :]:
+                for path, mod in layer.named_modules():
+                    basename = path.rsplit(".", 1)[-1]
+                    if basename in targets:
+                        keys.add(path)
+            lora_params["keys"] = keys
+            logger.info(
+                "LoRA targeting %d modules matching %s across top %d layers",
+                len(keys),
+                sorted(targets),
+                cfg.lora_layers,
+            )
+        linear_to_lora_layers(
+            model,
+            cfg.lora_layers,
+            lora_params,
+            use_dora=use_dora,
+        )
+    else:
+        raise ValueError(f"Unknown fine_tune_type: {cfg.fine_tune_type}")
+
+    print_trainable_parameters(model)
+
+    # #1182: resume weights into the freshly-built LoRA layers. Must run
+    # AFTER linear_to_lora_layers (needs the adapter modules to exist) and
+    # BEFORE train().
+    model = _resume_adapter_weights(model, cfg, adapter_dir)
+
+    # Save adapter config
+    save_config(vars(args), adapter_dir / "adapter_config.json")
+
+    # Build training args
+    training_args = TrainingArgs(
+        batch_size=cfg.batch_size,
+        iters=cfg.iters,
+        val_batches=cfg.val_batches,
+        steps_per_report=cfg.steps_per_report,
+        steps_per_eval=cfg.steps_per_eval,
+        steps_per_save=cfg.steps_per_save,
+        adapter_file=str(adapter_file),
+        max_seq_length=cfg.max_seq_length,
+        grad_checkpoint=cfg.gradient_checkpointing,
+        grad_accumulation_steps=cfg.grad_accumulation_steps,
+    )
+
+    # Build optimizer
+    lr = build_schedule(cfg.lr_schedule) if cfg.lr_schedule else cfg.learning_rate
+    opt_map = {
+        "adam": optim.Adam,
+        "adamw": optim.AdamW,
+        "muon": optim.Muon,
+        "sgd": optim.SGD,
+        "adafactor": optim.Adafactor,
+    }
+    opt_class = opt_map.get(cfg.optimizer.lower(), optim.AdamW)
+    # #746: forward weight_decay to the optimizer ctor for the optimizers
+    # that accept it (AdamW/SGD/Muon/Adafactor). Adam has no weight_decay
+    # arg — cfg.validate() already rejected that combination, so we only
+    # pass it for the others. Default weight_decay=0.0 keeps prior behavior.
+    opt_name = cfg.optimizer.lower()
+    if opt_name == "adam":
+        optimizer = opt_class(learning_rate=lr)
+    else:
+        optimizer = opt_class(learning_rate=lr, weight_decay=cfg.weight_decay)
+    # #746: global gradient-norm clipping. mlx-lm 0.31.3 trainer calls
+    # optimizer.update(model, grad) inside the compiled step with no clip
+    # hook. We wrap update to clip the global L2 norm of the grad tree
+    # before delegating to the real optimizer. The wrapper is applied
+    # AFTER construction so optimizer.state is the real one.
+    if cfg.max_grad_norm is not None:
+        optimizer = _GradClipOptimizer(optimizer, max_grad_norm=cfg.max_grad_norm)
+        logger.info(
+            "Gradient clipping enabled: max_grad_norm=%.4f",
+            cfg.max_grad_norm,
+        )
+
+    # Run training
+    logger.info(
+        f"Starting training: iters={cfg.iters} "
+        f"batch_size={cfg.batch_size} lr={cfg.learning_rate}"
+    )
+    # tqdm (used inside mlx_lm trainer for eval/train loops) writes to
+    # sys.stderr; when fusion-mlx runs as a background service the stderr
+    # pipe is closed, and tqdm.status_printer flushes stderr on init →
+    # BrokenPipeError kills the job. Redirect stderr to an in-memory
+    # buffer for the duration of train(). See issue #381.
+    with contextlib.redirect_stderr(io.StringIO()):
+        train(
+            model=model,
+            args=training_args,
+            optimizer=optimizer,
+            train_dataset=CacheDataset(train_set),
+            val_dataset=CacheDataset(valid_set) if valid_set else None,
+            training_callback=callback,
+        )
+
+    # Save final adapter weights
+    adapter_weights = dict(tree_flatten(model.trainable_parameters()))
+    mx.save_safetensors(str(adapter_file), adapter_weights)
+    logger.info(f"Training complete, adapter saved: {adapter_file}")
+
+    # Cleanup: free GPU memory
+    del model
+    del optimizer
+    gc.collect()
+    mx.clear_cache()
+
+    return {"adapter_path": str(adapter_dir), "adapter_file": str(adapter_file)}
+
+
+def execute_training_spec(spec: dict, report) -> dict:
+    # #1186: child-process entrypoint (module-level so spawn can pickle the
+    # target). spec keys: config (FineTuneConfig), model_path, dataset,
+    # adapter_path. Progress events stream through `report(event)`.
+    cfg: FineTuneConfig = spec["config"]
+    callback = _PipeProgressCallback(report, cfg.iters)
+    return execute_training_core(
+        cfg=cfg,
+        model_path=spec["model_path"],
+        dataset_path=spec["dataset"],
+        adapter_path=spec["adapter_path"],
+        callback=callback,
+    )
+
+
 class FineTuneService:
     """Singleton managing fine-tune job queue and execution.
 
@@ -451,6 +764,9 @@ class FineTuneService:
         # bounded defer window cover the wait for the next trainer-side
         # checkpoint save before the process exits.
         self._interrupted: threading.Event = threading.Event()
+        # #1186: handle to the spawned training child (process mode) so
+        # cancel/interrupt/fatal paths can terminate it.
+        self._proc = None
         self._load_jobs()
 
     def has_active_job(self) -> bool:
@@ -459,10 +775,26 @@ class FineTuneService:
         # periodic checkpoint can land.
         return self._current_job_id is not None and not self._interrupted.is_set()
 
+    def _kill_training_process(self) -> bool:
+        # #1186: terminate (SIGTERM then SIGKILL) the spawned training child,
+        # if one is running. Safe to call when there is none.
+        from fusion_mlx.training.proc import kill_training_process
+
+        proc = self._proc
+        self._proc = None
+        killed = kill_training_process(proc)
+        if killed:
+            logger.info("Training child process terminated")
+        return killed
+
     def interrupt_active_job(self) -> FineTuneJob | None:
         # #1205: mark the in-flight job interrupted and persist it, so a
         # fatal process exit leaves a resumable record (#1182 resume chain).
         # Returns the job (or None when nothing in flight). Idempotent.
+        # #1186: in process mode the training child is killed too — a dying
+        # serving process must not leave an orphaned trainer holding GPU
+        # memory.
+        self._kill_training_process()
         job = self._jobs.get(self._current_job_id or "")
         if job is None:
             self._interrupted.set()
@@ -493,6 +825,8 @@ class FineTuneService:
     async def shutdown(self):
         # ENG-02 (#0909 audit): cancel pending training tasks on server
         # shutdown so in-flight jobs don't outlive the event loop.
+        # #1186: process-mode training child dies with the server too.
+        self._kill_training_process()
         cancelled = 0
         for task in list(self._pending_tasks):
             if not task.done():
@@ -558,6 +892,9 @@ class FineTuneService:
             logger.info(f"Fine-tune job cancelled (queued): {job_id}")
             return True
         if job.status == JobStatus.RUNNING:
+            # #1186: in process mode the child must die with the job, or the
+            # GPU keeps training a cancelled run for hours.
+            self._kill_training_process()
             job.status = JobStatus.CANCELLED
             job.terminal = True
             job.finished_at = time.time()
@@ -635,7 +972,14 @@ class FineTuneService:
 
     async def _run_job(self, job: FineTuneJob):
         try:
-            await asyncio.to_thread(self._execute_training, job)
+            if job.config.execution_mode == "process":
+                await self._run_job_in_process(job)
+            else:
+                await asyncio.to_thread(self._execute_training, job)
+            self._mark_job_completed(job)
+        except TrainingProcessKilled as exc:
+            # #1186: child died without reporting — apply the kill policy.
+            self._handle_training_killed(job, exc)
         except Exception as exc:
             logger.exception(f"Fine-tune job {job.job_id} failed: {exc}")
             job.status = JobStatus.FAILED
@@ -645,236 +989,122 @@ class FineTuneService:
             self._persist_jobs()
             self._notify_job(job)
         finally:
+            self._proc = None
             self._current_job_id = None
             self._process_queue()
 
-    def _execute_training(self, job: FineTuneJob):
-        """Run training in a background thread (blocking)."""
+    async def _run_job_in_process(self, job: FineTuneJob):
+        # #1186: spawn train() into a child process with its own Metal
+        # memory budget; progress streams back over a pipe. The serving
+        # process keeps doing inference-only work.
+        from fusion_mlx.training.proc import run_training_process
 
-        import mlx.optimizers as optim
-        from mlx.utils import tree_flatten
-        from mlx_lm.tuner.datasets import CacheDataset, load_dataset
-        from mlx_lm.tuner.trainer import TrainingArgs, train
-        from mlx_lm.tuner.utils import (
-            build_schedule,
-            linear_to_lora_layers,
-            print_trainable_parameters,
-        )
-        from mlx_lm.utils import load, save_config
-
-        model_id = job.model_id
-        dataset_path = job.dataset
         cfg = job.config
-
-        # Fail fast on invalid config before the expensive model+dataset load.
-        # #425/#402: validate() is the single source of truth for the
-        # mxfp8 / quant_bits / fine_tune_type guards.
         cfg.validate()
-
-        model_path = self._resolve_model_path(model_id)
+        model_path = self._resolve_model_path(job.model_id)
         if model_path is None:
-            raise ValueError(f"Model not found: {model_id}")
+            raise ValueError(f"Model not found: {job.model_id}")
 
         # Evict inference model to free GPU memory
-        self._evict_model(model_id)
+        self._evict_model(job.model_id)
 
-        # Build adapter output directory
-        adapter_path = Path(job.adapter_path)
-        adapter_path.mkdir(parents=True, exist_ok=True)
-        adapter_file = adapter_path / "adapters.safetensors"
-
-        # Build args for mlx_lm
-        args = cfg.to_mlx_args(
-            adapter_path=str(adapter_path),
-            data_path=dataset_path,
-            model_path=model_path,
-        )
-
-        # Load model + tokenizer
-        logger.info(f"Loading model for training: {model_path}")
-        model, tokenizer = load(
-            model_path, tokenizer_config={"trust_remote_code": True}
-        )
-
-        # Load dataset
-        logger.info(f"Loading dataset: {dataset_path}")
-        train_set, valid_set, test_set = load_dataset(args, tokenizer)
-        if not train_set:
-            raise ValueError("Training dataset is empty")
-
-        # Apply LoRA/DORA layers
-        mx.random.seed(cfg.seed)
-        model.freeze()
-
-        # #402: QLoRA — quantize the frozen base to 4/8-bit before attaching
-        # LoRA. If the base is already a quantized MLX model, quantize_base is
-        # a no-op (LoRALinear.from_base wraps QuantizedLinear as-is). For an
-        # unquantized base, nn.quantize() converts Linears in place.
-        # quant_bits range already enforced by cfg.validate() above.
-        is_qlora = cfg.fine_tune_type == "qlora"
-        if is_qlora or cfg.quantize_base:
-            already_quant = any(
-                hasattr(l, "to_quantized") and getattr(l, "bits", None)
-                for l in model.layers
-            )
-            if not already_quant:
-                logger.info(
-                    "QLoRA: quantizing base to %d-bit (group_size=64)",
-                    cfg.quant_bits,
-                )
-                import mlx.nn as nn
-
-                nn.quantize(model, group_size=64, bits=cfg.quant_bits)
-            else:
-                logger.info("QLoRA: base already quantized, skipping quantize step")
-
-        if cfg.fine_tune_type == "full":
-            for layer in model.layers[-max(cfg.lora_layers, 0) :]:
-                layer.unfreeze()
-        elif cfg.fine_tune_type in ("lora", "dora", "qlora"):
-            # qlora uses plain LoRA on top of the quantized base (not DoRA:
-            # DoRALinear support for quantized weights is incomplete).
-            use_dora = cfg.fine_tune_type == "dora"
-            lora_params = {
-                "rank": cfg.lora_rank,
-                "dropout": cfg.lora_dropout,
-                "scale": cfg.lora_alpha,
-            }
-            # #746: per-module LoRA targeting. linear_to_lora_layers gates
-            # adapters by config["keys"] (a set of full module paths within
-            # the top lora_layers blocks). When lora_target_modules is set,
-            # collect the full module paths whose class-name basename is in
-            # the target set (e.g. "layers.0.attention.q_proj" → basename
-            # "q_proj"). None/empty = all linears (prior behavior).
-            if cfg.lora_target_modules:
-                targets = {t.strip() for t in cfg.lora_target_modules if t.strip()}
-                keys = set()
-                for layer in model.layers[-max(cfg.lora_layers, 0) :]:
-                    for path, mod in layer.named_modules():
-                        basename = path.rsplit(".", 1)[-1]
-                        if basename in targets:
-                            keys.add(path)
-                lora_params["keys"] = keys
-                logger.info(
-                    "LoRA targeting %d modules matching %s across top %d layers",
-                    len(keys),
-                    sorted(targets),
-                    cfg.lora_layers,
-                )
-            linear_to_lora_layers(
-                model,
-                cfg.lora_layers,
-                lora_params,
-                use_dora=use_dora,
-            )
-        else:
-            raise ValueError(f"Unknown fine_tune_type: {cfg.fine_tune_type}")
-
-        print_trainable_parameters(model)
-
-        # #1182: resume weights into the freshly-built LoRA layers. Must run
-        # AFTER linear_to_lora_layers (needs the adapter modules to exist) and
-        # BEFORE train().
-        model = _resume_adapter_weights(model, cfg, adapter_path)
-
-        # Save adapter config
-        save_config(vars(args), adapter_path / "adapter_config.json")
-
-        # Build training args
-        training_args = TrainingArgs(
-            batch_size=cfg.batch_size,
-            iters=cfg.iters,
-            val_batches=cfg.val_batches,
-            steps_per_report=cfg.steps_per_report,
-            steps_per_eval=cfg.steps_per_eval,
-            steps_per_save=cfg.steps_per_save,
-            adapter_file=str(adapter_file),
-            max_seq_length=cfg.max_seq_length,
-            grad_checkpoint=cfg.gradient_checkpointing,
-            grad_accumulation_steps=cfg.grad_accumulation_steps,
-        )
-
-        # Build optimizer
-        lr = build_schedule(cfg.lr_schedule) if cfg.lr_schedule else cfg.learning_rate
-        opt_map = {
-            "adam": optim.Adam,
-            "adamw": optim.AdamW,
-            "muon": optim.Muon,
-            "sgd": optim.SGD,
-            "adafactor": optim.Adafactor,
+        spec = {
+            "config": cfg,
+            "model_path": model_path,
+            "dataset": job.dataset,
+            "adapter_path": job.adapter_path,
+            "entrypoint": "fusion_mlx.training.service:execute_training_spec",
         }
-        opt_class = opt_map.get(cfg.optimizer.lower(), optim.AdamW)
-        # #746: forward weight_decay to the optimizer ctor for the optimizers
-        # that accept it (AdamW/SGD/Muon/Adafactor). Adam has no weight_decay
-        # arg — cfg.validate() already rejected that combination, so we only
-        # pass it for the others. Default weight_decay=0.0 keeps prior behavior.
-        opt_name = cfg.optimizer.lower()
-        if opt_name == "adam":
-            optimizer = opt_class(learning_rate=lr)
-        else:
-            optimizer = opt_class(learning_rate=lr, weight_decay=cfg.weight_decay)
-        # #746: global gradient-norm clipping. mlx-lm 0.31.3 trainer calls
-        # optimizer.update(model, grad) inside the compiled step with no clip
-        # hook. We wrap update to clip the global L2 norm of the grad tree
-        # before delegating to the real optimizer. The wrapper is applied
-        # AFTER construction so optimizer.state is the real one.
-        if cfg.max_grad_norm is not None:
-            optimizer = _GradClipOptimizer(optimizer, max_grad_norm=cfg.max_grad_norm)
-            logger.info(
-                "Gradient clipping enabled: max_grad_norm=%.4f",
-                cfg.max_grad_norm,
-            )
 
-        # Progress callback
-        loop = self._loop or asyncio.get_event_loop()
-        callback = _ProgressCallback(job, loop)
+        def _on_event(event: dict):
+            _apply_progress_event(job, event)
+            self._notify_job(job)
 
-        # Run training
-        logger.info(
-            f"Starting training: job={job.job_id} iters={cfg.iters} "
-            f"batch_size={cfg.batch_size} lr={cfg.learning_rate}"
+        return await asyncio.to_thread(
+            run_training_process,
+            spec,
+            _on_event,
+            cfg.memory_limit_gb,
+            lambda proc: setattr(self, "_proc", proc),
         )
-        # tqdm (used inside mlx_lm trainer for eval/train loops) writes to
-        # sys.stderr; when fusion-mlx runs as a background service the stderr
-        # pipe is closed, and tqdm.status_printer flushes stderr on init →
-        # BrokenPipeError kills the job. Redirect stderr to an in-memory
-        # buffer for the duration of train(). See issue #381.
-        with contextlib.redirect_stderr(io.StringIO()):
-            train(
-                model=model,
-                args=training_args,
-                optimizer=optimizer,
-                train_dataset=CacheDataset(train_set),
-                val_dataset=CacheDataset(valid_set) if valid_set else None,
-                training_callback=callback,
-            )
 
-        # Save final adapter weights
-        adapter_weights = dict(tree_flatten(model.trainable_parameters()))
-        mx.save_safetensors(str(adapter_file), adapter_weights)
-        logger.info(f"Training complete, adapter saved: {adapter_file}")
-
-        # Mark job completed
+    def _mark_job_completed(self, job: FineTuneJob):
         job.status = JobStatus.COMPLETED
         job.terminal = True
         job.finished_at = time.time()
         job.events.append(
             {
                 "type": "completed",
-                "adapter_path": str(adapter_path),
-                "adapter_file": str(adapter_file),
+                "adapter_path": job.adapter_path,
+                "adapter_file": str(Path(job.adapter_path) / "adapters.safetensors"),
             }
         )
         self._persist_jobs()
         self._notify_job(job)
-
-        # Cleanup: free GPU memory
-        del model
-        del optimizer
-        gc.collect()
-        mx.clear_cache()
-
         logger.info(f"Fine-tune job completed: {job.job_id}")
+
+    def _handle_training_killed(self, job: FineTuneJob, exc: Exception):
+        # #1186 kill policy. A user cancel already terminal-marked the job;
+        # auto_restart re-queues up to max_restarts, otherwise FAILED
+        # (resumable via init_adapter_path per #1182/#1205).
+        if job.status == JobStatus.CANCELLED:
+            logger.info(
+                "Training child death after cancel (job %s) — policy skipped",
+                job.job_id,
+            )
+            return
+        if (
+            job.config.on_process_kill == "auto_restart"
+            and job.attempts < job.config.max_restarts
+        ):
+            job.attempts += 1
+            job.status = JobStatus.QUEUED
+            job.terminal = False
+            job.error = ""
+            logger.warning(
+                "Training child died (%s); auto_restart attempt %d/%d",
+                exc,
+                job.attempts,
+                job.config.max_restarts,
+            )
+            self._queue.append(job.job_id)
+            self._persist_jobs()
+            return
+        logger.error("Training child died (%s); marking job FAILED", exc)
+        job.status = JobStatus.FAILED
+        job.error = str(exc)
+        job.terminal = True
+        job.finished_at = time.time()
+        self._persist_jobs()
+        self._notify_job(job)
+
+    def _execute_training(self, job: FineTuneJob):
+        """Legacy in-process path (execution_mode="thread"): runs training
+        on a background thread. #1186 default is the spawned-process path
+        (_run_job_in_process)."""
+
+        cfg = job.config
+        model_path = self._resolve_model_path(job.model_id)
+        if model_path is None:
+            raise ValueError(f"Model not found: {job.model_id}")
+
+        # Evict inference model to free GPU memory
+        self._evict_model(job.model_id)
+
+        # Progress callback
+        loop = self._loop or asyncio.get_event_loop()
+        callback = _ProgressCallback(job, loop)
+
+        logger.info(
+            f"Starting training (thread mode): job={job.job_id} iters={cfg.iters}"
+        )
+        return execute_training_core(
+            cfg=cfg,
+            model_path=model_path,
+            dataset_path=job.dataset,
+            adapter_path=job.adapter_path,
+            callback=callback,
+        )
 
     # =========================================================================
     # Adapter management
@@ -1081,6 +1311,7 @@ class FineTuneService:
                     started_at=item.get("started_at"),
                     finished_at=item.get("finished_at"),
                     adapter_path=item.get("adapter_path", ""),
+                    attempts=item.get("attempts", 0),
                     adapter_name=item.get("adapter_name", ""),
                     error=item.get("error", ""),
                     terminal=status

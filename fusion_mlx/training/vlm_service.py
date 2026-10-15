@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import types
 import uuid
@@ -34,6 +35,8 @@ from enum import Enum
 from pathlib import Path
 
 import mlx.core as mx
+
+from fusion_mlx.training.proc import TrainingProcessKilled
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +80,11 @@ class VLMFineTuneConfig:
     text_column: str | None = None
     # Number of data-loader workers (passed to VisionDataset via config).
     num_processes: int = 1
+    # #1186: process isolation (same knobs as text SFT FineTuneConfig).
+    execution_mode: str = "process"
+    memory_limit_gb: float = 0.0
+    on_process_kill: str = "mark_failed"
+    max_restarts: int = 1
 
     def validate(self):
         if self.full_finetune and self.train_vision:
@@ -91,6 +99,21 @@ class VLMFineTuneConfig:
             raise ValueError("iters must be > 0")
         if self.batch_size <= 0:
             raise ValueError("batch_size must be > 0")
+        # #1186: isolation knobs.
+        if self.execution_mode not in ("process", "thread"):
+            raise ValueError(
+                f"execution_mode must be 'process' or 'thread', "
+                f"got {self.execution_mode!r}"
+            )
+        if self.on_process_kill not in ("mark_failed", "auto_restart"):
+            raise ValueError(
+                f"on_process_kill must be 'mark_failed' or 'auto_restart', "
+                f"got {self.on_process_kill!r}"
+            )
+        if self.memory_limit_gb < 0:
+            raise ValueError(
+                f"memory_limit_gb must be >= 0 (0 = auto), got {self.memory_limit_gb}"
+            )
 
 
 @dataclass
@@ -120,6 +143,8 @@ class VLMFineTuneJob:
     error: str = ""
     events: list[dict] = field(default_factory=list)
     terminal: bool = False
+    # #1186: auto_restart attempts consumed by the kill policy.
+    attempts: int = 0
     cond: asyncio.Condition = field(default_factory=asyncio.Condition)
 
     def to_dict(self) -> dict:
@@ -136,6 +161,7 @@ class VLMFineTuneJob:
             "adapter_path": self.adapter_path,
             "adapter_name": self.adapter_name,
             "error": self.error,
+            "attempts": self.attempts,
         }
 
 
@@ -149,9 +175,17 @@ class _StdoutProgressReader:
 
     _PREFIX = "Iter "
 
-    def __init__(self, job: VLMFineTuneJob, loop: asyncio.AbstractEventLoop):
+    def __init__(
+        self,
+        job: VLMFineTuneJob,
+        loop: asyncio.AbstractEventLoop | None,
+        emit=None,
+    ):
+        # #1186: emit=None keeps the in-process behavior (job mutation +
+        # cond notify); emit=setter routes events to the process pipe.
         self._job = job
         self._loop = loop
+        self._emit = emit
         self._start = time.monotonic()
         self._buf = ""
         self._stop = False
@@ -225,6 +259,9 @@ class _StdoutProgressReader:
                 pass
 
     def _push(self, event: dict):
+        if self._emit is not None:
+            self._emit(event)
+            return
         self._job.events.append(event)
 
         async def _notify():
@@ -252,6 +289,19 @@ class VLMFineTuneService:
         self._engine_pool = None
         self._running = False
         self._pending_tasks: set = set()
+        # #1186: spawned training child handle (process mode).
+        self._proc = None
+
+    def _kill_training_process(self) -> bool:
+        # #1186: SIGTERM then SIGKILL the training child, if any.
+        from fusion_mlx.training.proc import kill_training_process
+
+        proc = self._proc
+        self._proc = None
+        killed = kill_training_process(proc)
+        if killed:
+            logger.info("VL training child process terminated")
+        return killed
 
     def set_engine_pool(self, pool):
         self._engine_pool = pool
@@ -261,6 +311,8 @@ class VLMFineTuneService:
 
     async def shutdown(self):
         # ENG-02 (#0909 audit): cancel pending tasks on server shutdown.
+        # #1186: the training child dies with the server.
+        self._kill_training_process()
         cancelled = 0
         for task in list(self._pending_tasks):
             if not task.done():
@@ -323,6 +375,8 @@ class VLMFineTuneService:
             logger.info(f"VL fine-tune job cancelled (queued): {job_id}")
             return True
         if job.status == JobStatus.RUNNING:
+            # #1186: the training child must die with the job.
+            self._kill_training_process()
             job.status = JobStatus.CANCELLED
             job.terminal = True
             job.finished_at = time.time()
@@ -388,7 +442,14 @@ class VLMFineTuneService:
 
     async def _run_job(self, job: VLMFineTuneJob):
         try:
-            await asyncio.to_thread(self._execute_training, job)
+            if job.config.execution_mode == "process":
+                await self._run_job_in_process(job)
+            else:
+                await asyncio.to_thread(self._execute_training, job)
+            self._mark_job_completed(job)
+        except TrainingProcessKilled as exc:
+            # #1186: child died without reporting — apply the kill policy.
+            self._handle_training_killed(job, exc)
         except Exception as exc:
             logger.exception(f"VL fine-tune job {job.job_id} failed: {exc}")
             job.status = JobStatus.FAILED
@@ -397,179 +458,111 @@ class VLMFineTuneService:
             job.finished_at = time.time()
             self._notify_job(job)
         finally:
+            self._proc = None
             self._current_job_id = None
             self._process_queue()
 
-    # =========================================================================
-    # Training execution
-    # =========================================================================
+    async def _run_job_in_process(self, job: VLMFineTuneJob):
+        # #1186: spawn train() into a child process with its own Metal
+        # memory budget; stdout progress lines stream over the pipe.
+        from fusion_mlx.training.proc import run_training_process
 
-    def _execute_training(self, job: VLMFineTuneJob):
-        """Run VL training in a background thread (blocking). #797"""
-
-        import mlx.optimizers as optim
-        from mlx_vlm.lora import VisionDataset, load_dataset
-        from mlx_vlm.trainer.sft_trainer import TrainingArgs, train
-        from mlx_vlm.trainer.utils import (
-            save_adapter,
-            setup_model_for_training,
-        )
-        from mlx_vlm.utils import load as vlm_load
-
-        model_id = job.model_id
-        dataset_path = job.dataset
         cfg = job.config
-
         cfg.validate()
-
-        model_path = self._resolve_model_path(model_id)
+        model_path = self._resolve_model_path(job.model_id)
         if model_path is None:
-            raise ValueError(f"Model not found: {model_id}")
+            raise ValueError(f"Model not found: {job.model_id}")
 
         # Evict inference model to free GPU memory (same constraint as text SFT).
-        self._evict_model(model_id)
+        self._evict_model(job.model_id)
 
-        adapter_path = Path(job.adapter_path)
-        adapter_path.mkdir(parents=True, exist_ok=True)
-        adapter_file = adapter_path / "adapters.safetensors"
-
-        # Load VLM + processor (mlx_vlm returns (model, processor), no tokenizer).
-        logger.info(f"Loading VLM for training: {model_path}")
-        model, processor = vlm_load(model_path)
-        processor_config = getattr(processor, "config", None) or {}
-
-        # Load dataset via HuggingFace datasets (Hub id or local dir with
-        # images + jsonl). mlx_vlm.lora.load_dataset = datasets.load_dataset.
-        logger.info(f"Loading VL dataset: {dataset_path}")
-        hf_dataset = load_dataset(dataset_path)
-        if hasattr(hf_dataset, "keys"):
-            # DatasetDict — take the first split as train.
-            split = next(iter(hf_dataset.keys()))
-            hf_dataset = hf_dataset[split]
-
-        train_ds = VisionDataset(
-            hf_dataset,
-            processor_config,
-            processor,
-            image_resize_shape=None,
-        )
-        val_ds = None
-
-        mx.random.seed(cfg.seed)
-
-        # Build a peft-style args namespace for setup_model_for_training, which
-        # expects lora_rank/lora_alpha/lora_dropout/full_finetune/train_vision.
-        setup_args = types.SimpleNamespace(
-            full_finetune=cfg.full_finetune,
-            train_vision=cfg.train_vision,
-            lora_rank=cfg.lora_rank,
-            lora_alpha=cfg.lora_alpha,
-            lora_dropout=cfg.lora_dropout,
-        )
-        model = setup_model_for_training(model, setup_args, adapter_path=None)
-
-        # Save adapter config for reproducibility (mirrors text SFT).
-        config_record = {
-            "model": model_path,
-            "fine_tune_type": "full" if cfg.full_finetune else "lora",
-            "num_layers": cfg.lora_layers,
-            "lora_parameters": {
-                "rank": cfg.lora_rank,
-                "alpha": cfg.lora_alpha,
-                "dropout": cfg.lora_dropout,
-            },
-            "train_vision": cfg.train_vision,
-            "iters": cfg.iters,
-            "batch_size": cfg.batch_size,
-            "learning_rate": cfg.learning_rate,
+        spec = {
+            "config": cfg,
+            "model_path": model_path,
+            "dataset": job.dataset,
+            "adapter_path": job.adapter_path,
+            "entrypoint": "fusion_mlx.training.vlm_service:execute_vlm_training_spec",
         }
-        with open(adapter_path / "adapter_config.json", "w") as f:
-            json.dump(config_record, f, indent=2)
 
-        # Build training args. mlx_vlm TrainingArgs carries learning_rate
-        # directly (no external schedule builder), and adapter_file.
-        training_args = TrainingArgs(
-            batch_size=cfg.batch_size,
-            iters=cfg.iters,
-            val_batches=cfg.val_batches,
-            steps_per_report=cfg.steps_per_report,
-            steps_per_eval=cfg.steps_per_eval,
-            steps_per_save=cfg.steps_per_save,
-            max_seq_length=cfg.max_seq_length,
-            adapter_file=str(adapter_file),
-            grad_checkpoint=cfg.grad_checkpoint,
-            learning_rate=cfg.learning_rate,
-            full_finetune=cfg.full_finetune,
-            gradient_accumulation_steps=cfg.grad_accumulation_steps,
+        def _on_event(event: dict):
+            _apply_vlm_progress_event(job, event)
+            self._notify_job(job)
+
+        return await asyncio.to_thread(
+            run_training_process,
+            spec,
+            _on_event,
+            cfg.memory_limit_gb,
+            lambda proc: setattr(self, "_proc", proc),
         )
 
-        # Build optimizer.
-        opt_map = {
-            "adam": optim.Adam,
-            "adamw": optim.AdamW,
-            "sgd": optim.SGD,
-        }
-        opt_class = opt_map.get(cfg.optimizer.lower(), optim.AdamW)
-        optimizer = opt_class(learning_rate=cfg.learning_rate)
-
-        loop = self._loop or asyncio.get_event_loop()
-        reader = _StdoutProgressReader(job, loop)
-
-        logger.info(
-            f"Starting VL training: job={job.job_id} iters={cfg.iters} "
-            f"batch_size={cfg.batch_size} lr={cfg.learning_rate} "
-            f"full_finetune={cfg.full_finetune} train_vision={cfg.train_vision}"
-        )
-
-        # mlx_vlm reports progress via print() to stdout. Redirect stdout to a
-        # pipe, drain it on a reader thread that parses progress lines and
-        # pushes events. tqdm/mlx_vlm Colors write to stdout/stderr; both are
-        # captured (stderr discarded to avoid BrokenPipeError under a closed
-        # service stderr — same fix as text SFT issue #381).
-        import threading
-
-        read_fd, write_fd = os.pipe()
-        reader_thread = threading.Thread(
-            target=self._drain_pipe, args=(read_fd, reader), daemon=True
-        )
-        reader_thread.start()
-        old_stdout = sys.stdout
-        os.dup2(write_fd, 1)
-        try:
-            with contextlib.redirect_stderr(io.StringIO()):
-                train(
-                    model=model,
-                    optimizer=optimizer,
-                    train_dataset=train_ds,
-                    val_dataset=val_ds,
-                    args=training_args,
-                )
-        finally:
-            sys.stdout = old_stdout
-            os.close(write_fd)
-            reader_thread.join(timeout=10.0)
-
-        # Save final adapter weights.
-        save_adapter(model, str(adapter_file))
-        logger.info(f"VL training complete, adapter saved: {adapter_file}")
-
+    def _mark_job_completed(self, job: VLMFineTuneJob):
         job.status = JobStatus.COMPLETED
         job.terminal = True
         job.finished_at = time.time()
         job.events.append(
             {
                 "type": "completed",
-                "adapter_path": str(adapter_path),
-                "adapter_file": str(adapter_file),
+                "adapter_path": job.adapter_path,
+                "adapter_file": str(Path(job.adapter_path) / "adapters.safetensors"),
             }
         )
         self._notify_job(job)
-
-        del model
-        del optimizer
-        gc.collect()
-        mx.clear_cache()
         logger.info(f"VL fine-tune job completed: {job.job_id}")
+
+    def _handle_training_killed(self, job: VLMFineTuneJob, exc: Exception):
+        # #1186 kill policy (mirror of text SFT).
+        if job.status == JobStatus.CANCELLED:
+            logger.info(
+                "VL training child death after cancel (job %s) — policy skipped",
+                job.job_id,
+            )
+            return
+        if (
+            job.config.on_process_kill == "auto_restart"
+            and job.attempts < job.config.max_restarts
+        ):
+            job.attempts += 1
+            job.status = JobStatus.QUEUED
+            job.terminal = False
+            job.error = ""
+            logger.warning(
+                "VL training child died (%s); auto_restart attempt %d/%d",
+                exc,
+                job.attempts,
+                job.config.max_restarts,
+            )
+            self._queue.append(job.job_id)
+            return
+        logger.error("VL training child died (%s); marking job FAILED", exc)
+        job.status = JobStatus.FAILED
+        job.error = str(exc)
+        job.terminal = True
+        job.finished_at = time.time()
+        self._notify_job(job)
+
+    def _execute_training(self, job: VLMFineTuneJob):
+        """Legacy in-process path (execution_mode="thread")."""
+
+        cfg = job.config
+        model_path = self._resolve_model_path(job.model_id)
+        if model_path is None:
+            raise ValueError(f"Model not found: {job.model_id}")
+
+        # Evict inference model to free GPU memory (same constraint as text SFT).
+        self._evict_model(job.model_id)
+
+        loop = self._loop or asyncio.get_event_loop()
+        reader = _StdoutProgressReader(job, loop)
+
+        return execute_vlm_training_core(
+            cfg=cfg,
+            model_path=model_path,
+            dataset_path=job.dataset,
+            adapter_path=job.adapter_path,
+            emit=None,
+            reader=reader,
+        )
 
     @staticmethod
     def _drain_pipe(read_fd: int, reader: _StdoutProgressReader):
@@ -619,3 +612,188 @@ class VLMFineTuneService:
 
         if self._loop and self._loop.is_running():
             asyncio.ensure_future(_do(), loop=self._loop)
+
+
+def execute_vlm_training_core(
+    cfg: VLMFineTuneConfig,
+    model_path: str,
+    dataset_path: str,
+    adapter_path: str,
+    emit=None,
+    reader=None,
+) -> dict:
+    # #1186: VL training body shared by the in-process thread path and the
+    # spawned child process. emit=None uses the given reader (job-backed);
+    # emit=setter routes parsed stdout events to the caller (pipe).
+    import mlx.optimizers as optim
+    from mlx_vlm.lora import VisionDataset, load_dataset
+    from mlx_vlm.trainer.sft_trainer import TrainingArgs, train
+    from mlx_vlm.trainer.utils import (
+        save_adapter,
+        setup_model_for_training,
+    )
+    from mlx_vlm.utils import load as vlm_load
+
+    cfg.validate()
+
+    adapter_dir = Path(adapter_path)
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    adapter_file = adapter_dir / "adapters.safetensors"
+
+    # Load VLM + processor (mlx_vlm returns (model, processor), no tokenizer).
+    logger.info(f"Loading VLM for training: {model_path}")
+    model, processor = vlm_load(model_path)
+    processor_config = getattr(processor, "config", None) or {}
+
+    # Load dataset via HuggingFace datasets (Hub id or local dir with
+    # images + jsonl). mlx_vlm.lora.load_dataset = datasets.load_dataset.
+    logger.info(f"Loading VL dataset: {dataset_path}")
+    hf_dataset = load_dataset(dataset_path)
+    if hasattr(hf_dataset, "keys"):
+        # DatasetDict — take the first split as train.
+        split = next(iter(hf_dataset.keys()))
+        hf_dataset = hf_dataset[split]
+
+    train_ds = VisionDataset(
+        hf_dataset,
+        processor_config,
+        processor,
+        image_resize_shape=None,
+    )
+    val_ds = None
+
+    mx.random.seed(cfg.seed)
+
+    # Build a peft-style args namespace for setup_model_for_training, which
+    # expects lora_rank/lora_alpha/lora_dropout/full_finetune/train_vision.
+    setup_args = types.SimpleNamespace(
+        full_finetune=cfg.full_finetune,
+        train_vision=cfg.train_vision,
+        lora_rank=cfg.lora_rank,
+        lora_alpha=cfg.lora_alpha,
+        lora_dropout=cfg.lora_dropout,
+    )
+    model = setup_model_for_training(model, setup_args, adapter_path=None)
+
+    # Save adapter config for reproducibility (mirrors text SFT).
+    config_record = {
+        "model": model_path,
+        "fine_tune_type": "full" if cfg.full_finetune else "lora",
+        "num_layers": cfg.lora_layers,
+        "lora_parameters": {
+            "rank": cfg.lora_rank,
+            "alpha": cfg.lora_alpha,
+            "dropout": cfg.lora_dropout,
+        },
+        "train_vision": cfg.train_vision,
+        "iters": cfg.iters,
+        "batch_size": cfg.batch_size,
+        "learning_rate": cfg.learning_rate,
+    }
+    with open(adapter_dir / "adapter_config.json", "w") as f:
+        json.dump(config_record, f, indent=2)
+
+    # Build training args. mlx_vlm TrainingArgs carries learning_rate
+    # directly (no external schedule builder), and adapter_file.
+    training_args = TrainingArgs(
+        batch_size=cfg.batch_size,
+        iters=cfg.iters,
+        val_batches=cfg.val_batches,
+        steps_per_report=cfg.steps_per_report,
+        steps_per_eval=cfg.steps_per_eval,
+        steps_per_save=cfg.steps_per_save,
+        max_seq_length=cfg.max_seq_length,
+        adapter_file=str(adapter_file),
+        grad_checkpoint=cfg.grad_checkpoint,
+        learning_rate=cfg.learning_rate,
+        full_finetune=cfg.full_finetune,
+        gradient_accumulation_steps=cfg.grad_accumulation_steps,
+    )
+
+    # Build optimizer.
+    opt_map = {
+        "adam": optim.Adam,
+        "adamw": optim.AdamW,
+        "sgd": optim.SGD,
+    }
+    opt_class = opt_map.get(cfg.optimizer.lower(), optim.AdamW)
+    optimizer = opt_class(learning_rate=cfg.learning_rate)
+
+    if reader is None:
+        # Child path: a throwaway job carries config.iters for the parser.
+        reader = _StdoutProgressReader(VLMFineTuneJob(config=cfg), None, emit=emit)
+
+    logger.info(
+        f"Starting VL training: iters={cfg.iters} "
+        f"batch_size={cfg.batch_size} lr={cfg.learning_rate} "
+        f"full_finetune={cfg.full_finetune} train_vision={cfg.train_vision}"
+    )
+
+    # mlx_vlm reports progress via print() to stdout. Redirect stdout to a
+    # pipe, drain it on a reader thread that parses progress lines and
+    # pushes events. tqdm/mlx_vlm Colors write to stdout/stderr; both are
+    # captured (stderr discarded to avoid BrokenPipeError under a closed
+    # service stderr — same fix as text SFT issue #381).
+    read_fd, write_fd = os.pipe()
+    reader_thread = threading.Thread(
+        target=VLMFineTuneService._drain_pipe, args=(read_fd, reader), daemon=True
+    )
+    reader_thread.start()
+    old_stdout = sys.stdout
+    os.dup2(write_fd, 1)
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            train(
+                model=model,
+                optimizer=optimizer,
+                train_dataset=train_ds,
+                val_dataset=val_ds,
+                args=training_args,
+            )
+    finally:
+        sys.stdout = old_stdout
+        os.close(write_fd)
+        reader_thread.join(timeout=10.0)
+
+    # Save final adapter weights.
+    save_adapter(model, str(adapter_file))
+    logger.info(f"VL training complete, adapter saved: {adapter_file}")
+
+    del model
+    del optimizer
+    gc.collect()
+    mx.clear_cache()
+
+    return {"adapter_path": str(adapter_dir), "adapter_file": str(adapter_file)}
+
+
+def execute_vlm_training_spec(spec: dict, report) -> dict:
+    # #1186: child-process entrypoint (module-level so spawn can pickle the
+    # target). spec keys: config (VLMFineTuneConfig), model_path, dataset,
+    # adapter_path. Progress events stream through `report(event)`.
+    cfg: VLMFineTuneConfig = spec["config"]
+    return execute_vlm_training_core(
+        cfg=cfg,
+        model_path=spec["model_path"],
+        dataset_path=spec["dataset"],
+        adapter_path=spec["adapter_path"],
+        emit=report,
+    )
+
+
+def _apply_vlm_progress_event(job: VLMFineTuneJob, event: dict):
+    # #1186: parent-side mapping of a child progress event into job state.
+    etype = event.get("type")
+    if etype == "train_loss":
+        job.progress = VLMFineTuneProgress(
+            step=event.get("step", 0),
+            total_steps=event.get("total_steps", 0),
+            train_loss=event.get("train_loss", 0.0),
+            val_loss=job.progress.val_loss,
+            learning_rate=event.get("learning_rate", 0.0),
+            elapsed_seconds=event.get("elapsed_seconds", 0.0),
+            eta_seconds=event.get("eta_seconds", 0.0),
+        )
+    elif etype == "val_loss":
+        job.progress.val_loss = event.get("val_loss", 0.0)
+    job.events.append(event)
