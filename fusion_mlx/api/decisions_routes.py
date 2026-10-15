@@ -101,6 +101,35 @@ def _laya_dispatch_timeout() -> float:
     return val
 
 
+def _poison_laya() -> None:
+    from ..engine_core import poison_executor
+
+    poison_executor("laya")
+
+
+def _ensure_laya_executor_healthy() -> None:
+    # #1189: fast-fail loudly when the laya executor was poisoned by a
+    # prior hung predict. The watchdog's on_hang already swapped a fresh
+    # worker into the registry (poison_executor); the flag stays set until
+    # reset_laya_executor_poison / restart so queued work on the dead
+    # worker is never mistaken for live work.
+    from ..engine_core import is_laya_executor_poisoned
+
+    if not is_laya_executor_poisoned():
+        return
+    logger.error(
+        "laya route: executor poisoned by a prior hung predict (#1189); "
+        "fast-failing with 503. RESTART fusion-mlx to recover."
+    )
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "laya executor poisoned by a prior hang; " "restart fusion-mlx to recover"
+        ),
+        headers={"Retry-After": "5"},
+    )
+
+
 async def _get_router():
     global _router_instance
     if _router_instance is not None:
@@ -250,6 +279,7 @@ async def laya_decide(req: LayaDecideRequest):
 
     questions = req.questions if req.questions else _resolve_preset(req.preset)
     t0 = time.perf_counter()
+    _ensure_laya_executor_healthy()
     try:
         if req.use_router:
             laya_router = await _get_router()
@@ -257,24 +287,37 @@ async def laya_decide(req: LayaDecideRequest):
             def _predict_sync():
                 return laya_router.predict(req.prompt, questions, lang=req.lang)
 
-            dispatch_timeout = _laya_dispatch_timeout()
+            # #1189: watchdog brackets the laya predict dispatch — begin
+            # before run_in_executor, end in finally. on_hang →
+            # poison_executor("laya") so later requests fast-fail with 503.
+            # #1191: the dispatch is ALSO bounded —
+            # FUSION_LAYA_DISPATCH_TIMEOUT (default 120s), 503 on overrun.
+            from ..executor_watchdog import get_executor_watchdog
+
+            _laya_watchdog = get_executor_watchdog(
+                "laya", on_hang=lambda _name: _poison_laya()
+            )
+            _dispatch_timeout = _laya_dispatch_timeout()
+            _laya_watchdog.begin_job("laya_router_predict")
             try:
                 result = await asyncio.wait_for(
                     asyncio.get_event_loop().run_in_executor(
                         _laya_executor(), _predict_sync
                     ),
-                    timeout=dispatch_timeout,
+                    timeout=_dispatch_timeout,
                 )
             except TimeoutError:
                 logger.error(
                     "laya/decide router dispatch timed out after %.0fs "
                     "(raise FUSION_LAYA_DISPATCH_TIMEOUT to allow longer waits)",
-                    dispatch_timeout,
+                    _dispatch_timeout,
                 )
                 raise HTTPException(
                     503,
-                    f"laya dispatch exceeded {dispatch_timeout:.0f}s",
+                    f"laya dispatch exceeded {_dispatch_timeout:.0f}s",
                 ) from None
+            finally:
+                _laya_watchdog.end_job()
             routing = result.get("routing", {})
             model_name = routing.get("model", "router")
             latency_ms = (time.perf_counter() - t0) * 1000.0

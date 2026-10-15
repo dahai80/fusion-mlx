@@ -161,23 +161,39 @@ class MusicGenEngine(BaseNonStreamingEngine):
                 infer_method=infer_method,
             )
 
-        timeout = get_music_gen_timeout()
+        # #1189: audio watchdog brackets the music generation (a hung
+        # generate_music otherwise blocks the single audio worker forever).
+        # #1191: the dispatch is ALSO bounded — FUSION_MUSIC_TIMEOUT
+        # (default 600s). On overrun the watchdog job ends here and audio
+        # executor poison/recovery stays owned by the #1189 watchdog.
+        from ..engine_core import poison_executor
+        from ..executor_watchdog import get_executor_watchdog
+
+        _music_watchdog = get_executor_watchdog(
+            "audio", on_hang=lambda _name: poison_executor("audio")
+        )
+        _timeout_1191 = get_music_gen_timeout()
+        _music_watchdog.begin_job("music_generate")
         try:
             wav = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("audio"), _gen), timeout=timeout
+                loop.run_in_executor(get_executor("audio"), _gen),
+                timeout=_timeout_1191,
             )
         except TimeoutError:
             logger.error(
                 "music gen timed out after %.0fs (caption=%r dur=%.1fs) — "
-                "no poison (audio executor is watched by the #1189 watchdog); "
-                "raise FUSION_MUSIC_TIMEOUT to allow longer waits",
-                timeout,
+                "no poison here (audio executor is watched by the #1189 "
+                "watchdog); raise FUSION_MUSIC_TIMEOUT to allow longer waits",
+                _timeout_1191,
                 caption[:60],
                 duration,
             )
             raise RuntimeError(
-                f"music generation exceeded {timeout:.0f}s (FUSION_MUSIC_TIMEOUT)"
+                f"music generation exceeded {_timeout_1191:.0f}s "
+                "(FUSION_MUSIC_TIMEOUT)"
             ) from None
+        finally:
+            _music_watchdog.end_job()
         wav_np = np.array(wav[0], copy=False).astype(np.float32).T  # (samples, 2)
         sr = 48000
         logger.info(
