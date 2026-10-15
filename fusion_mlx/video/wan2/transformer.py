@@ -6,6 +6,7 @@ from .attention import (
     WanLayerNorm,
     WanSelfAttention,
     _linear_dtype,
+    _q8_fp32_accum,
     _q8_fp32_seq,
 )
 
@@ -109,10 +110,14 @@ class WanFFN(nn.Module):
         # float32. Gated by seq so short-seq runs keep the fast bf16 path.
         s = x.shape[1]
         if s > _q8_fp32_seq():
-            x_w = x.astype(mx.float32)
-            h = self.fc1(x_w)
-            h = self.act(h).astype(mx.float32)
-            return self.fc2(h)
+            # _q8_fp32_accum keeps fp32 GEMM accumulation above the seq
+            # threshold but contains fp32 to the GEMM: fc2 output is cast
+            # back to the residual dtype so the fp32 never poisons the
+            # residual stream (#1208: fp32 poisoning made every op in all
+            # 30 blocks run fp32, ~6.7x FLOP-utilization collapse).
+            h = self.fc1(x.astype(mx.float32))
+            h = self.act(h)
+            return _q8_fp32_accum(self.fc2, h, out_dtype=x.dtype)
         # Cast to compute dtype for efficient matmul (bfloat16 matching official autocast)
         x_w = x.astype(_linear_dtype(self.fc1))
         return self.fc2(self.act(self.fc1(x_w)))
