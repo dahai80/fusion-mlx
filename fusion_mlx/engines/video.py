@@ -271,6 +271,12 @@ class VideoGenEngine(BaseNonStreamingEngine):
                 "owner": self,
             }
 
+            # Wrap ONLY when the caller supplied a callback: #171 contract —
+            # the engine must not inject a callback into the backend the
+            # caller did not ask for. Stage-2 FPS signaling therefore fires
+            # for engine-layer callers (ComfyUI/SDK paths, which pass
+            # on_step); the plain HTTP video route (no on_step) keeps the
+            # stage-1 static pacing gate only. See docs/pacing-gate.md.
             if params.on_step is not None:
                 _user_step_cb = params.on_step
 
@@ -279,13 +285,6 @@ class VideoGenEngine(BaseNonStreamingEngine):
                     _vid_watchdog.heartbeat()
                     _fps_signal(_fps_state)
                     _user_step_cb(step, total)
-
-                params.on_step = _wd_step_cb
-            else:
-                # No user callback: still wrap for the FPS signal alone.
-                def _wd_step_cb(step: int, total: int) -> None:
-                    _vid_watchdog.heartbeat()
-                    _fps_signal(_fps_state)
 
                 params.on_step = _wd_step_cb
             _vid_watchdog.begin_job("video_generate")
