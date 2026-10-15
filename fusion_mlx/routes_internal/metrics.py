@@ -1488,6 +1488,85 @@ def _render_ane_metrics() -> list[str]:
     return lines
 
 
+def _render_fd_metrics() -> list[str]:
+    # #1192: FD watchdog observability. Gauges render live from the
+    # fd_watchdog snapshot (used/limit/per-type); counters come from
+    # server_metrics gate actions. Leak-attribution deltas render only
+    # when the history window is >= 5s and at least one type moved.
+    lines: list[str] = []
+    try:
+        from ..fd_watchdog import get_fd_watchdog
+
+        snap = get_fd_watchdog().snapshot()
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_fd_used",
+                "gauge",
+                "Currently open file descriptors in the server process.",
+                int(snap["total"]),
+            )
+        )
+        lim = int(snap["limit"])
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_fd_limit",
+                "gauge",
+                "RLIMIT_NOFILE soft limit; 0 means unlimited.",
+                lim,
+            )
+        )
+        for kind, count in sorted(snap["by_type"].items()):
+            if count <= 0:
+                continue
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_fd_by_type",
+                    "gauge",
+                    "Open file descriptors by type (socket/file/pipe/other).",
+                    int(count),
+                    {"type": str(kind)},
+                )
+            )
+        sm = get_server_metrics()
+        if sm.fd_pressure_rejections_total > 0:
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_fd_pressure_rejections_total",
+                    "counter",
+                    "NEW streams rejected by the FD pressure gate (#1192).",
+                    int(sm.fd_pressure_rejections_total),
+                )
+            )
+        if sm.fd_warn_total > 0:
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_fd_warn_total",
+                    "counter",
+                    "FD pressure warnings emitted by the watchdog (#1192).",
+                    int(sm.fd_warn_total),
+                )
+            )
+        attribution = snap["attribution"]
+        window = float(attribution["window_seconds"])
+        delta_by_type = attribution["delta_by_type"]
+        if window >= 5.0 and any(delta_by_type.values()):
+            for kind, delta in sorted(delta_by_type.items()):
+                if delta == 0:
+                    continue
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_fd_leak_delta",
+                        "gauge",
+                        "Per-type FD count change across the watchdog history window; sustained positive values indicate a leak.",
+                        int(delta),
+                        {"type": str(kind)},
+                    )
+                )
+    except Exception:
+        logger.debug("fd metrics render error", exc_info=True)
+    return lines
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
@@ -1497,6 +1576,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_ane_metrics())
     lines.extend(_render_engine_eviction_metrics())
     lines.extend(_render_admission_metrics())
+    lines.extend(_render_fd_metrics())
     lines.extend(_render_tier_budget_metrics())
     lines.extend(_render_preload_failure_metrics())
     lines.extend(_render_watchdog_metrics())
