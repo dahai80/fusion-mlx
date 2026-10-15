@@ -7,7 +7,6 @@ memory-efficient. These tests verify numerical equivalence against the
 manual reference plus real forward passes through the converted modules.
 """
 
-
 import mlx.core as mx
 
 from fusion_mlx.video.hunyuanvideo.vae import MidAttention
