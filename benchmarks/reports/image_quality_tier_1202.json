@@ -1,0 +1,106 @@
+{
+  "prompt": "a serene mountain lake at golden hour, snow-capped peaks reflected in still water, soft warm light, photographic detail",
+  "resolution": "1024x1024",
+  "seed": 20261002,
+  "dev_model": "black-forest-labs/FLUX.1-dev",
+  "dev28_e2e_s": 86.64,
+  "fast_e2e_s": 21.46,
+  "fast_speedup_x": 4.04,
+  "dod_gate_4x": true,
+  "noise_floor": {
+    "seeds": [
+      20262002,
+      20263002
+    ],
+    "runs": [
+      {
+        "seed": 20262002,
+        "psnr_vs_dev28": 13.11,
+        "ssim_vs_dev28": 0.4804,
+        "sharpness": 1470.3,
+        "colorfulness": 34.1
+      },
+      {
+        "seed": 20263002,
+        "psnr_vs_dev28": 13.77,
+        "ssim_vs_dev28": 0.4711,
+        "sharpness": 1470.8,
+        "colorfulness": 40.2
+      }
+    ],
+    "sharpness_band": [
+      1470.3,
+      1470.8
+    ],
+    "colorfulness_band": [
+      34.1,
+      40.2
+    ],
+    "psnr_floor_db": 13.11
+  },
+  "image_stats": {
+    "dev28": {
+      "sharpness": 1013.0,
+      "colorfulness": 34.3
+    },
+    "fast_distilled": {
+      "sharpness": 931.5,
+      "colorfulness": 83.4
+    }
+  },
+  "quality_floors": {
+    "sharpness": 0.85,
+    "colorfulness": 0.85
+  },
+  "dod_quality_gate": true,
+  "dev_tuning": [
+    {
+      "steps": 12,
+      "scheduler": "dpmpp_2m",
+      "e2e_s": 64.2,
+      "euler_same_steps_e2e_s": 63.39,
+      "dpmpp_vs_euler_ratio": 1.013,
+      "steps_vs_dev28": "12/28",
+      "psnr_vs_dev28": 17.88,
+      "ssim_vs_dev28": 0.6842,
+      "psnr_gte_noise_floor": true,
+      "sharpness": 1042.8,
+      "colorfulness": 36.5,
+      "sharpness_retention": 1.029,
+      "colorfulness_retention": 1.064,
+      "quality_ok": true
+    },
+    {
+      "steps": 16,
+      "scheduler": "dpmpp_2m",
+      "e2e_s": 78.66,
+      "euler_same_steps_e2e_s": 74.44,
+      "dpmpp_vs_euler_ratio": 1.057,
+      "steps_vs_dev28": "16/28",
+      "psnr_vs_dev28": 13.4,
+      "ssim_vs_dev28": 0.5324,
+      "psnr_gte_noise_floor": true,
+      "sharpness": 1049.1,
+      "colorfulness": 52.9,
+      "sharpness_retention": 1.036,
+      "colorfulness_retention": 1.541,
+      "quality_ok": true
+    },
+    {
+      "steps": 20,
+      "scheduler": "dpmpp_2m",
+      "e2e_s": 97.58,
+      "euler_same_steps_e2e_s": 101.76,
+      "dpmpp_vs_euler_ratio": 0.959,
+      "steps_vs_dev28": "20/28",
+      "psnr_vs_dev28": 13.36,
+      "ssim_vs_dev28": 0.5375,
+      "psnr_gte_noise_floor": true,
+      "sharpness": 1104.7,
+      "colorfulness": 51.9,
+      "sharpness_retention": 1.091,
+      "colorfulness_retention": 1.512,
+      "quality_ok": true
+    }
+  ]
+}
