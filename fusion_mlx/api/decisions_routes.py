@@ -280,6 +280,17 @@ async def laya_decide(req: LayaDecideRequest):
     questions = req.questions if req.questions else _resolve_preset(req.preset)
     t0 = time.perf_counter()
     _ensure_laya_executor_healthy()
+    # #1197: laya probes pass the submission pacing gate first — a busy
+    # Metal queue (llm prefill + diffusion) must not let probe submissions
+    # pile onto the queue unbounded. Throttled = explicit 503, never a
+    # silent drop; P50 budget preserved by the generous laya bucket.
+    from ..pacing import pace_acquire_async
+
+    if not await pace_acquire_async("laya", 0.05):
+        raise HTTPException(
+            status_code=503,
+            detail="laya decide throttled by submission pacing gate (#1197)",
+        )
     try:
         if req.use_router:
             laya_router = await _get_router()

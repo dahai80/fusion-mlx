@@ -1520,6 +1520,33 @@ def _render_ane_metrics() -> list[str]:
     return lines
 
 
+def _render_pacing_metrics() -> list[str]:
+    # #1197: submission pacing gate — per-class rate budget, current
+    # dynamic rate, submissions and throttle drops. Fully guarded: the
+    # metrics render can never break on a gate error.
+    lines: list[str] = []
+    try:
+        from ..pacing import record_pacing_metrics
+
+        snap = record_pacing_metrics()
+        if not snap.get("enabled"):
+            return lines
+        for cls, info in sorted(snap.get("classes", {}).items()):
+            labels = f'class="{cls}"'
+            lines.append(
+                f"pacing_rate_budget_per_second{{{labels}}} {info['initial_rate']}"
+            )
+            lines.append(
+                f"pacing_rate_current_per_second{{{labels}}} {info['rate_per_s']}"
+            )
+            lines.append(f"pacing_submissions_total{{{labels}}} {info['submissions']}")
+            lines.append(f"pacing_throttled_total{{{labels}}} {info['throttled']}")
+            lines.append(f"pacing_bucket_tokens{{{labels}}} {info['tokens']}")
+    except Exception:
+        logger.exception("pacing metrics render failed")
+    return lines
+
+
 def _render_fd_metrics() -> list[str]:
     # #1192: FD watchdog observability. Gauges render live from the
     # fd_watchdog snapshot (used/limit/per-type); counters come from
@@ -1626,6 +1653,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_multimodal_metrics())
     lines.extend(_render_paged_kv_metrics())
     lines.extend(_render_spec_decode_metrics())
+    lines.extend(_render_pacing_metrics())
     lines.extend(_render_moe_shared_cache_metrics())
     lines.extend(_render_lifespan_metrics())
     lines.extend(_render_latency_histograms())

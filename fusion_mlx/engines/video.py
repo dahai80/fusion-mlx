@@ -42,6 +42,34 @@ def _resolve_video_weight_bytes(model_name: str) -> int:
         return 0
 
 
+def _fps_signal(state: dict) -> None:
+    # #1197 stage 2: feed the pacing controller a diffusion FPS quality
+    # ratio (current fps / learned solo baseline). Cheap: one monotonic
+    # read per denoise step; all failures are swallowed (a signal glitch
+    # must never break a render).
+    try:
+        import time as _t
+
+        now = _t.monotonic()
+        last = state.get("last")
+        state["last"] = now
+        if last is None or now <= last:
+            return
+        fps = 1.0 / (now - last)
+        baseline = max(float(state.get("baseline") or 0.0), fps)
+        state["baseline"] = baseline
+        self_ref = state.get("owner")
+        if self_ref is not None:
+            self_ref._fps_baseline = baseline
+        if baseline < 0.05:  # cold start: 20s/step floor before signaling
+            return
+        from ..pacing import get_pacing_gate
+
+        get_pacing_gate().update_signal("video", fps / baseline)
+    except Exception:
+        pass
+
+
 class VideoGenEngine(BaseNonStreamingEngine):
     def __init__(self, model_name: str, **kwargs):
         super().__init__()
@@ -93,6 +121,16 @@ class VideoGenEngine(BaseNonStreamingEngine):
                 "poisoned the worker thread (#811 R-3). Restart fusion-mlx "
                 "to restore video generation. "
                 "Set FUSION_VIDEO_GEN_TIMEOUT to adjust the hang deadline."
+            )
+        # #1197: video submission pacing gate — per-job at the engine
+        # boundary (per-step pacing would need backend hooks; the job-level
+        # token already stops a spike of concurrent diffusions from piling
+        # onto the Metal queue). Throttled = explicit error to the route.
+        from ..pacing import pace_acquire_async
+
+        if not await pace_acquire_async("video", 0.5):
+            raise RuntimeError(
+                "video generation throttled by submission pacing gate (#1197)"
             )
 
         params = VideoGenParams(
@@ -223,12 +261,29 @@ class VideoGenEngine(BaseNonStreamingEngine):
             _vid_watchdog = get_executor_watchdog(
                 "video", on_hang=lambda _name: poison_executor("video")
             )
+            # #1197 stage 2: FPS quality signal — the pacing controller
+            # shrinks AGGRESSOR budgets when diffusion FPS drops vs the
+            # engine's own learned solo baseline (running max FPS; only
+            # reported once the baseline clears the cold-start floor).
+            _fps_state = {
+                "last": None,
+                "baseline": getattr(self, "_fps_baseline", 0.0),
+                "owner": self,
+            }
+
+            # Wrap ONLY when the caller supplied a callback: #171 contract —
+            # the engine must not inject a callback into the backend the
+            # caller did not ask for. Stage-2 FPS signaling therefore fires
+            # for engine-layer callers (ComfyUI/SDK paths, which pass
+            # on_step); the plain HTTP video route (no on_step) keeps the
+            # stage-1 static pacing gate only. See docs/pacing-gate.md.
             if params.on_step is not None:
                 _user_step_cb = params.on_step
 
                 def _wd_step_cb(step: int, total: int) -> None:
                     # Advance the watchdog heartbeat on every denoise step.
                     _vid_watchdog.heartbeat()
+                    _fps_signal(_fps_state)
                     _user_step_cb(step, total)
 
                 params.on_step = _wd_step_cb

@@ -120,6 +120,22 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # of that changes. Read by ``vllm_mlx.scheduler._get_request_sampler``
         # only, never by config / aliases / model_auto_config.
         "FUSION_MLX_DISABLE_FUSED_SAMPLER",
+        # #1197: submission pacing gate knobs — per-class token-bucket
+        # rate/burst + master switch. Pacing, not routing: which model
+        # loads or which parser fires never changes.
+        "FUSION_MLX_PACING",
+        "FUSION_MLX_PACE_LLM_RATE",
+        "FUSION_MLX_PACE_LLM_BURST",
+        "FUSION_MLX_PACE_IMAGE_RATE",
+        "FUSION_MLX_PACE_IMAGE_BURST",
+        "FUSION_MLX_PACE_VIDEO_RATE",
+        "FUSION_MLX_PACE_VIDEO_BURST",
+        "FUSION_MLX_PACE_AUDIO_RATE",
+        "FUSION_MLX_PACE_AUDIO_BURST",
+        "FUSION_MLX_PACE_LAYA_RATE",
+        "FUSION_MLX_PACE_LAYA_BURST",
+        "FUSION_MLX_PACE_TRAINING_RATE",
+        "FUSION_MLX_PACE_TRAINING_BURST",
         # Test/integration helpers — server URL for integration suites,
         # not consulted at runtime by the engine.
         "FUSION_MLX_BASE_URL",

@@ -1338,6 +1338,15 @@ class ImageGenEngine(BaseNonStreamingEngine):
                     images.append(buf.getvalue())
             return images
 
+        # #1197: image submission pacing gate — before the executor
+        # submit (async side only, never inside a worker). Throttled =
+        # explicit error surfaced to the route, never a silent drop.
+        from ..pacing import pace_acquire_async
+
+        if not await pace_acquire_async("image", 0.25):
+            raise RuntimeError(
+                "image generation throttled by submission pacing gate (#1197)"
+            )
         try:
             try:
                 fut = loop.run_in_executor(get_executor("image"), _generate)
