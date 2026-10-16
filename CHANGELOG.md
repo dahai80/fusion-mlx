@@ -17,6 +17,19 @@
   2.97GB boot loudly; 3.5GB budget rejects a second 0.68GB load with
   `fusion_mlx_tier_budget_rejections_total 1`; 8GB budget loads both models with
   correct `fusion_mlx_model_memory_bytes` accounting.
+### Added — Metal submission pacing gate + dynamic TDM throttle (#1197)
+- **`fusion_mlx/pacing.py`**: per-workload-class token buckets (llm /
+  image / video / laya) gating every Metal-bound executor submission.
+  Master switch `FUSION_MLX_PACING=off`; per-class
+  `FUSION_MLX_PACE_<CLASS>_RATE` / `_BURST` knobs.
+- **Stage-2 AIMD controller**: LLM TPS + diffusion FPS quality signals
+  shrink aggressor budgets with hysteresis + cooldown + 25% floors —
+  converges without oscillation (proven by unit test).
+- **Metrics**: per-class rate / submissions / throttled on `/metrics`.
+- Safety: gate runs only on the async side (never inside an executor
+  worker — #1171 self-deadlock shape); llm gate precedes G2 deadline
+  arming; throttled submissions surface explicit errors. See
+  `docs/pacing-gate.md`.
 
 ### Added — chaos fault-injection suite (#1195)
 - **`tests/chaos/`**: 6 scenarios (H1 GPU-stall shape, H2 lock-order

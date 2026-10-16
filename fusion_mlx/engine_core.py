@@ -1103,6 +1103,13 @@ class EngineCore:
         self._wake_event: asyncio.Event | None = None
         self._start_time: float | None = None
         self._steps_executed = 0
+        # #1197 stage 2: LLM throughput quality signal for the pacing
+        # controller. Windowed steps/s vs the engine's own learned solo
+        # baseline (running max) — a drop below 0.85 sustained shrinks
+        # AGGRESSOR class budgets (never the llm's own).
+        self._tps_window_start = time.monotonic()
+        self._tps_window_steps = 0
+        self._tps_baseline = 0.0
         # P2-7: consecutive-error counter for the engine-loop circuit breaker.
         self._consecutive_loop_errors = 0
         # AS-13 (#0907 audit): signature of the last loop error. The counter
@@ -1357,6 +1364,21 @@ class EngineCore:
                     self._reap_orphaned_collectors(now)
 
                 if self.scheduler.has_requests():
+                    # #1197: submission pacing gate — the llm step burst
+                    # passes the per-class token bucket BEFORE the deadline
+                    # is armed (a deferred submission must never leave a
+                    # stale armed deadline — the watchdog would false-poison
+                    # a paced-but-alive loop). Throttled = defer to the next
+                    # loop tick; requests are never errored by the gate.
+                    # Never called from inside the executor worker.
+                    try:
+                        from .pacing import pace_acquire_async
+
+                        if not await pace_acquire_async("llm", 0.05):
+                            await asyncio.sleep(0.01)
+                            continue
+                    except Exception:
+                        logger.debug("pacing gate unavailable", exc_info=True)
                     # G2: set step deadline so the watchdog knows a step is
                     # pending. Cleared after run_in_executor returns.
                     # #1179: arm the scaled staleness window too — a large
@@ -1380,6 +1402,8 @@ class EngineCore:
                             _llm_step_deadline = 0.0
                             _llm_step_window = 0.0
                     self._steps_executed += len(step_outputs)
+                    self._tps_window_steps += len(step_outputs)
+                    self._pacing_tps_signal()
                     # P2-7: a successful step resets the circuit breaker.
                     if self._consecutive_loop_errors:
                         self._consecutive_loop_errors = 0
@@ -1929,6 +1953,29 @@ class EngineCore:
         ctx = self._active_contexts.get(request_id)
         if ctx is not None:
             ctx.finished_event.set()
+
+    def _pacing_tps_signal(self) -> None:
+        # #1197 stage 2: report windowed LLM step throughput as a quality
+        # ratio to the pacing controller (self-calibrating solo baseline
+        # = running max steps/s; no config). Every 5s, cheap. Swallowed
+        # exceptions — a signal glitch must never break the decode loop.
+        try:
+            now = time.monotonic()
+            elapsed = now - self._tps_window_start
+            if elapsed < 5.0:
+                return
+            rate = self._tps_window_steps / elapsed
+            self._tps_window_start = now
+            self._tps_window_steps = 0
+            if rate > self._tps_baseline:
+                self._tps_baseline = rate
+            if self._tps_baseline < 1.0:
+                return  # cold start floor: below 1 step/s never signals
+            from .pacing import get_pacing_gate
+
+            get_pacing_gate().update_signal("llm", rate / self._tps_baseline)
+        except Exception:
+            logger.debug("pacing tps signal failed", exc_info=True)
 
     def _reap_orphaned_collectors(self, now: float, grace: float | None = None) -> int:
         """Drop tracking for finished requests whose consumer never cleaned up.
