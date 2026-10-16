@@ -486,7 +486,11 @@ def _apply_turboquant_kv_empty(self, prompt_cache: list[Any]) -> None:
     _apply_turboquant_merge_patch()
 
     kv_indices = [i for i, c in enumerate(prompt_cache) if isinstance(c, KVCache)]
-    skip_last = self._turboquant_skip_last and len(kv_indices) > 1
+    # Skip the last KVCache layer whenever the cache is multi-entry — this
+    # includes partial restores (existing TQ/rotating layers + one plain
+    # KVCache), where the remaining layer IS the final layer and must stay
+    # fp16. A single-entry cache (1-layer model) still converts fully.
+    skip_last = self._turboquant_skip_last and len(prompt_cache) > 1
     last_kv_idx = kv_indices[-1] if skip_last else -1
 
     converted = 0
@@ -532,7 +536,9 @@ def _apply_turboquant_kv_convert(self, prompt_cache: list[Any]) -> None:
     _apply_turboquant_merge_patch()
 
     kv_indices = [i for i, c in enumerate(prompt_cache) if isinstance(c, KVCache)]
-    skip_last = self._turboquant_skip_last and len(kv_indices) > 1
+    # See _apply_turboquant_kv_empty: partial restores must keep the final
+    # layer fp16 even when it is the only remaining plain KVCache.
+    skip_last = self._turboquant_skip_last and len(prompt_cache) > 1
     last_kv_idx = kv_indices[-1] if skip_last else -1
 
     converted = 0
