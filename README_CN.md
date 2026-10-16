@@ -277,6 +277,8 @@ latent 以 unpacked `(batch, c, h, w)` `mx.array` 在所有阶段间流转（匹
 
 视频后端继承 stage API 的 `NotImplementedError` 默认实现 (issue #170 phase 2)；`LegacyLTXBackend` 与 `Wan2Backend` 接入真实逐步 denoise，`LTX2Backend` / `SkyReelsBackend` 接受但仅打日志。
 
+**权重缺失即失败 (#1219)：** svd / hunyuanvideo / opensora 流水线在转换后权重缺失时抛 `FileNotFoundError`（不再随机初始化静默生成）。opensora 后端 `start()` 额外要求模型目录含 `weights.npz` + `t5_encoder/` + `vae/`，生成时加载真实 UMT5 文本编码器 + HunyuanVideo VAE — 移除了 stub/零嵌入与"返回 latent 当视频"的路径。
+
 ### 步进回调 (#171)
 
 `generate()` (图像) 与 `VideoGenEngine.generate()` 接受 `on_step: Callable[[int, int], Awaitable[None]] | None`，在每个 denoise 步后以 `on_step(step, total_steps)` 触发。异步回调经 `asyncio.run_coroutine_threadsafe` 桥接到同步 mflux denoise 循环（fire-and-forget；错误仅记录日志，绝不阻塞生成）。图像在 `flux.callbacks` 上用真实逐步订阅器；视频经 `VideoGenParams.on_step` 接入。

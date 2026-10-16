@@ -492,8 +492,13 @@ class HunyuanVideoDiT(nn.Module):
         dit = cls(config=config)
         safetensor_files = sorted(glob.glob(os.path.join(model_path, "*.safetensors")))
         if not safetensor_files:
-            logger.warning("no safetensors at %s, random init", model_path)
-            return dit
+            # #1219: random-init fallback produced "successful" garbage
+            # generations when weights were missing/unconverted. Fail loud.
+            raise FileNotFoundError(
+                f"hunyuanvideo DiT: no .safetensors found at {model_path} — "
+                "refusing random-init generation (#1219). Convert weights "
+                "into this directory first."
+            )
         from mlx.utils import tree_flatten
 
         all_params = {}

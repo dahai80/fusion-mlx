@@ -701,9 +701,9 @@ class SVDTemporalUNet(nn.Module):
                     glob.glob(os.path.join(unet_dir, "*.safetensors"))
                 )
         if weight_files:
-            from mlx.utils import load_weights
+            from ..common.weights import load_dir_weights
 
-            raw = dict(load_weights(path))
+            raw = dict(load_dir_weights(path))
             mapped = _map_unet_weights(raw)
             model.update(mapped)
             model = model.astype(dtype)
@@ -716,6 +716,11 @@ class SVDTemporalUNet(nn.Module):
                 n_missing,
             )
         else:
-            model = model.astype(dtype)
-            logger.warning("SVD UNet: no weight files found at %s", path)
+            # #1219: random-init fallback produced "successful" garbage
+            # generations when weights were missing. Fail loud.
+            raise FileNotFoundError(
+                f"SVD UNet: no .safetensors found at {path} (or {path}/unet) — "
+                "refusing random-init generation (#1219). Expected diffusers "
+                "layout (stabilityai/stable-video-diffusion-img2vid)."
+            )
         return model

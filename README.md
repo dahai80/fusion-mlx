@@ -1692,6 +1692,14 @@ to the correct pure-MLX implementation. Supported backends:
 Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
 `video2world`, `hunyuan-video`, `hunyuan_video`, `cogvideox`, `ltx-video`, `wan`.
 
+> **Fail-visible weight loading (#1219):** svd / hunyuanvideo / opensora
+> pipelines raise `FileNotFoundError` instead of silently running with
+> random-init weights when converted weights are missing. The opensora
+> backend additionally requires `weights.npz` + `t5_encoder/` + `vae/` in
+> the model directory at `start()` and loads a real UMT5 text encoder +
+> HunyuanVideo VAE for generation — stub/zero-embedding and
+> latent-as-video paths were removed.
+
 > **Video DiT throughput (#367):** HunyuanVideo and Cosmos fuse the
 > uncond+cond CFG pair into a single batched B=2 DiT forward (~2x
 > throughput, no quality change). `cfg_scale <= 1.0` skips the uncond

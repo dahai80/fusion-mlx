@@ -257,8 +257,13 @@ class HunyuanDualTextEncoder(nn.Module):
                 glob.glob(os.path.join(model_path, "*.safetensors"))
             )
             if not safetensor_files:
-                logger.warning("no safetensors at %s, random init", model_path)
-                return enc
+                # #1219: random-init fallback produced "successful" garbage
+                # generations when weights were missing. Fail loud.
+                raise FileNotFoundError(
+                    f"hunyuanvideo text encoder: no .safetensors found at "
+                    f"{model_path} — refusing random-init generation (#1219). "
+                    "Convert weights into this directory first."
+                )
             clip_files = [f for f in safetensor_files if "clip" in f.lower()]
             llama_files = [
                 f

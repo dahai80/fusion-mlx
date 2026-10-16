@@ -548,8 +548,13 @@ class HunyuanVideoVAE(nn.Module):
         vae = cls(**kwargs)
         safetensor_files = sorted(glob.glob(os.path.join(model_path, "*.safetensors")))
         if not safetensor_files:
-            logger.warning("no safetensors found at %s, using random init", model_path)
-            return vae
+            # #1219: random-init fallback produced "successful" garbage
+            # generations when weights were missing. Fail loud.
+            raise FileNotFoundError(
+                f"hunyuanvideo VAE: no .safetensors found at {model_path} — "
+                "refusing random-init generation (#1219). Convert weights "
+                "into this directory first."
+            )
         from mlx.utils import tree_flatten
 
         all_params = {}

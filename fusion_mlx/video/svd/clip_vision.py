@@ -193,11 +193,18 @@ class SVDCLIPVisionEncoder:
                 weight_files = sorted(
                     glob.glob(os.path.join(weight_dir, "*.safetensors"))
                 )
-            if weight_files:
-                from mlx.utils import load_weights
+            if not weight_files:
+                # #1219: silent random-init CLIP produced garbage conditioning
+                # when weights were missing. Fail loud.
+                raise FileNotFoundError(
+                    f"SVD CLIP vision: no .safetensors found at {weight_dir} — "
+                    "refusing random-init image conditioning (#1219). Expected "
+                    "diffusers image_encoder/ layout."
+                )
+            from ..common.weights import load_dir_weights
 
-                weights = load_weights(weight_dir)
-                self._model.update(weights)
+            weights = load_dir_weights(weight_dir)
+            self._model.update(weights)
         self._model = self._model.astype(self._dtype)
         logger.info("SVD CLIP vision: loaded dtype=%s", self._dtype)
 
