@@ -560,3 +560,34 @@ def _apply_turboquant_kv_convert(self, prompt_cache: list[Any]) -> None:
             f"TurboQuant: converted {converted}/{len(prompt_cache)} "
             f"cache layers to {bits}-bit{skip_msg}{mode_msg}"
         )
+        self._sync_expected_layer_signature(prompt_cache)
+
+
+def _sync_expected_layer_signature(self, prompt_cache: list[Any]) -> None:
+    # #1236: blocks are stored with the POST-conversion layer types
+    # (TurboQuantKVCache carries packed 4-bit states), while the SSD
+    # manager's expected signature was captured from the pre-conversion
+    # live config (KVCache). Without this sync every stored block
+    # mismatched the expected signature on the next lookup and every
+    # prefix-cache hit was invalidated — reuse never happened.
+    from mlx_lm.models.cache import CacheList
+
+    manager = getattr(self, "paged_ssd_cache_manager", None)
+    if manager is None:
+        return
+    try:
+        type_names = []
+        for cache_obj in prompt_cache:
+            if isinstance(cache_obj, CacheList):
+                type_names.append("CacheList")
+            else:
+                type_names.append(type(cache_obj).__name__)
+        changed = manager.set_expected_layer_signature(type_names)
+        if changed:
+            logger.info(
+                "TurboQuant: SSD expected layer signature updated to "
+                "post-conversion types (%d layers)",
+                len(type_names),
+            )
+    except Exception as e:
+        logger.warning("TurboQuant: failed to sync expected layer signature: %s", e)

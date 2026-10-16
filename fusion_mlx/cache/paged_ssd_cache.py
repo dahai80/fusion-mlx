@@ -950,6 +950,15 @@ class PagedSSDCacheManager:
         with self._state_lock:
             return self._index.get(block_hash)
 
+    def has_resident_data(self, block_hash: bytes) -> bool:
+        # #1236: True when the block's tensor data is actually retrievable.
+        # SSD-backed mode always True (index implies disk file). In
+        # hot_cache_only mode the hot LRU is the sole store, so an index
+        # entry without a resident hot entry is a stale pointer.
+        if not self._hot_cache_only:
+            return True
+        return self._hot_cache_get(block_hash) is not None
+
     def save_block(
         self,
         block_hash: bytes,
@@ -966,12 +975,27 @@ class PagedSSDCacheManager:
         with self._state_lock:
             already = self._index.contains(block_hash)
             if already and not verify_content:
-                # Content-derived hash: same hash == same content, so dedup
-                # cheaply without re-reading the block. A dedup save is a
-                # save that no-ops, not a read hit (#1040).
-                self._index.touch(block_hash)
-                self._stats["saves_deduped"] += 1
-                return True
+                # #1236: in hot_cache_only mode the hot LRU is the sole
+                # store — an index entry whose hot entry was evicted points
+                # at data that no longer exists. Deduping on the index
+                # alone made evicted blocks permanently unrecoverable (the
+                # store loop trusted the dedup and never re-saved), so
+                # every subsequent prefix hit truncated at the first
+                # evicted block. Only dedup when the data is resident.
+                if not self.has_resident_data(block_hash):
+                    logger.debug(
+                        "SSD hot-cache-only dedup skipped: index entry has "
+                        "no resident hot data, re-saving block %s",
+                        block_hash.hex()[:16],
+                    )
+                    self._index.remove(block_hash)
+                else:
+                    # Content-derived hash: same hash == same content, so
+                    # dedup cheaply without re-reading the block. A dedup
+                    # save is a save that no-ops, not a read hit (#1040).
+                    self._index.touch(block_hash)
+                    self._stats["saves_deduped"] += 1
+                    return True
 
         if cache_data is None:
             return False
@@ -1421,7 +1445,21 @@ class PagedSSDCacheManager:
                             if arr is not None:
                                 items.append(arr)
                             else:
+                                logger.debug(
+                                    "SSD reconstruct: layer %d state %d tensor "
+                                    "restore failed",
+                                    i,
+                                    k,
+                                )
                                 return None
+                        else:
+                            logger.debug(
+                                "SSD reconstruct: layer %d state %d tensor "
+                                "missing (cache-list sub-state path)",
+                                i,
+                                k,
+                            )
+                            return None
                     if len(items) == 2:
                         layers.append((items[0], items[1]))
             else:
@@ -1454,6 +1492,14 @@ class PagedSSDCacheManager:
                         elem is None
                         and file_metadata.get(f"layer_{i}_state_{k}_kind") != "none"
                     ):
+                        logger.debug(
+                            "SSD reconstruct: layer %d state %d element load "
+                            "failed (kind=%s, nstate_class=%s)",
+                            i,
+                            k,
+                            file_metadata.get(f"layer_{i}_state_{k}_kind"),
+                            nstate_class,
+                        )
                         return None
                     items.append(elem)
                 if nstate_class:
@@ -1978,6 +2024,18 @@ class PagedSSDCacheManager:
                     - evict_entry.get("_estimated_bytes", 0),
                 )
                 self._stats["hot_cache_evictions"] += 1
+                logger.debug(
+                    "hot cache LRU evicted block %s (entry_bytes=%s, "
+                    "total_bytes=%s, entries=%s)",
+                    (
+                        evict_hash.hex()[:16]
+                        if isinstance(evict_hash, bytes)
+                        else evict_hash
+                    ),
+                    evict_entry.get("_estimated_bytes", 0),
+                    self._hot_cache_total_bytes,
+                    len(self._hot_cache),
+                )
                 if self._hot_cache_budget is not None:
                     self._hot_cache_budget.forget(self, evict_hash)
 
