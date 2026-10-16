@@ -334,6 +334,35 @@ Generate images from text prompts using Flux 2.
 }
 ```
 
+### Quality tier routing (`/v1/images/generations`)
+
+The OpenAI-compatible images endpoint accepts a `quality` field:
+
+- `"fast"` (default) — plain txt2img requests on a full-diffusion Flux
+  model are routed to the distilled sibling (FLUX.1-dev →
+  FLUX.1-schnell, FLUX.2-dev → FLUX.2-klein). Requests with a variant
+  (kontext/depth/fill/canny/edit) or image input are never routed; if
+  no distilled sibling is loaded the request falls back to the
+  requested model.
+- `"high"` — always uses the requested model.
+
+Routing is logged (`image quality tier: fast routed '<model>' ->
+distilled '<sibling>'`) and counted in `/metrics`:
+
+```
+fusion_mlx_image_quality_tier_total
+fusion_mlx_image_quality_tier_by_tier{tier="fast"|"high"}
+```
+
+### Dev-tier sampler tuning
+
+Dev-tier requests accept the `scheduler` request parameter. The
+contributed `dpmpp_2m` scheduler (DPM-Solver++(2M) for flow matching)
+matches the Euler baseline's sigma schedule but integrates 2nd-order,
+reaching comparable quality in fewer steps (e.g. 12-20 instead of 28).
+Scheduler overrides are logged (`image gen scheduler override=dpmpp_2m
+steps=12`).
+
 ---
 
 ## MCP (Model Context Protocol)

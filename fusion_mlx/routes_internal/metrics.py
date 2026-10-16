@@ -1259,6 +1259,38 @@ def _render_tier_budget_metrics() -> list[str]:
     return lines
 
 
+def _render_image_quality_tier_metrics() -> list[str]:
+    # #1202: image quality-tier counters (quality=fast|high). Sparse until
+    # the first image generation request, matching the tier-budget render.
+    lines: list[str] = []
+    try:
+        sm = get_server_metrics()
+        total = sm.image_quality_tier_total
+        if total <= 0:
+            return lines
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_image_quality_tier_total",
+                "counter",
+                "Image generation requests counted by quality tier.",
+                int(total),
+            )
+        )
+        for tier, count in sorted(sm.image_quality_tier_by_tier.items()):
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_image_quality_tier_by_tier",
+                    "counter",
+                    "Image quality-tier requests broken down by tier.",
+                    int(count),
+                    {"tier": str(tier)},
+                )
+            )
+    except Exception:
+        logger.debug("image quality tier metrics render error", exc_info=True)
+    return lines
+
+
 def _render_preload_failure_metrics() -> list[str]:
     # OP-18 (#0907 audit): expose pinned-model preload failures so an operator
     # sees a missing critical model on the dashboard rather than a buried
@@ -1578,6 +1610,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_admission_metrics())
     lines.extend(_render_fd_metrics())
     lines.extend(_render_tier_budget_metrics())
+    lines.extend(_render_image_quality_tier_metrics())
     lines.extend(_render_preload_failure_metrics())
     lines.extend(_render_watchdog_metrics())
     lines.extend(_render_degradation_metrics())

@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added — image quality-tier routing + DPM-Solver++(2M) dev-tier scheduler (#1202)
+- **Default route is fast**: `POST /v1/images/generations` accepts
+  `quality: "fast"|"high"` (default `fast`). Plain txt2img requests on a
+  full-diffusion Flux model are routed to the loaded distilled sibling
+  (FLUX.1-dev → FLUX.1-schnell, FLUX.2-dev → FLUX.2-klein); variant or
+  image-input requests keep the requested model, and missing siblings
+  fall back cleanly. Measured ≥4x e2e speedup vs the 28-step dev
+  baseline on the same prompt/seed/resolution.
+- **`dpmpp_2m` contrib scheduler**: DPM-Solver++(2M) for mflux
+  flow-matching models (variable-step AB2, exact mirror of the Euler
+  sigma schedule). Request param `scheduler="dpmpp_2m"` reaches it on
+  both single-call and staged paths; registered in the image worker
+  subprocess too. Verified: dev 12-step dpmpp retains sharpness 1.03x /
+  colorfulness 1.06x vs the 28-step Euler reference with paired timing
+  showing no per-step overhead.
+- **Observability**: routing is logged per request and counted in
+  `/metrics` (`fusion_mlx_image_quality_tier_total`,
+  `fusion_mlx_image_quality_tier_by_tier{tier=...}`).
+- **Catalog**: `flux-1` alias now points at the distilled
+  `black-forest-labs/FLUX.1-schnell`. LTX2/LTX-2.5 video models already
+  serve distilled weights by default — no change needed there.
+
 ### Added — chaos fault-injection suite (#1195)
 - **`tests/chaos/`**: 6 scenarios (H1 GPU-stall shape, H2 lock-order
   inversion, H3 executor block, H4 FD leak, #1184 training-contention,

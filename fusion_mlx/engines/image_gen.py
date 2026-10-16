@@ -6,6 +6,7 @@ import gc
 import io
 import logging
 import os
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -377,6 +378,39 @@ def _resolve_weight_bytes(model_path: str) -> int:
         return 0
 
 
+def _fast_sibling_model(model_path: str) -> list[str]:
+    # #1202: candidate distilled siblings for the fast quality tier. FLUX.1-dev
+    # pairs with FLUX.1-schnell (28 -> 4 steps), FLUX.2-dev with FLUX.2-klein.
+    # Returns a candidate LIST: a name-derived sibling (e.g. "FLUX.1-schnell"
+    # derived from the symlink key "FLUX.1-dev") may not itself be a pool key,
+    # so the canonical HF repo id is included as fallback. Empty for distilled
+    # models (schnell/klein have no faster sibling), non-flux families, and
+    # empty paths. The caller falls back to the requested model when no
+    # candidate resolves.
+    name = model_path or ""
+    if not name:
+        return []
+    if re.search(r"(?i)flux\.2-dev", name) or re.search(r"(?i)flux2[_-]?dev", name):
+        candidates = [
+            re.sub(r"(?i)dev", "klein", name, count=1),
+            "black-forest-labs/FLUX.2-klein",
+        ]
+    elif re.search(r"(?i)flux\.1-dev", name) or re.search(r"(?i)flux1[_-]?dev", name):
+        candidates = [
+            re.sub(r"(?i)dev", "schnell", name, count=1),
+            "black-forest-labs/FLUX.1-schnell",
+        ]
+    else:
+        return []
+    # Dedupe while preserving order: the canonical repo id can equal the
+    # derived sibling (e.g. the request already used the HF repo id).
+    out: list[str] = []
+    for c in candidates:
+        if c and c not in out:
+            out.append(c)
+    return out
+
+
 def _infer_variant(model_path: str) -> str:
     name = (model_path or "").lower()
     if "sd3" in name or "stable-diffusion-3" in name:
@@ -672,6 +706,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
             )
             self._mflux_missing = True
             return
+        # #1202: register the DPM-Solver++(2M) contrib scheduler so request
+        # param scheduler="dpmpp_2m" resolves through mflux's registry.
+        from .image_schedulers import register_image_schedulers
+
+        register_image_schedulers()
         module_path, cls_name, config_label, default_guidance = VARIANT_MAP[
             self._variant
         ]
@@ -1058,6 +1097,13 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 )
                 if scheduler is not None:
                     gen_kwargs["scheduler"] = scheduler
+                    # #1202: mirror the staged-path log so single-call
+                    # scheduler overrides are verifiable in server logs.
+                    logger.info(
+                        "image gen scheduler override=%s steps=%d",
+                        scheduler,
+                        steps,
+                    )
                 # #846: denoising_end only applies to the staged denoise() path
                 # (Qwen-Image multi-stage). mflux's single-call generate_image has
                 # no partial-denoise knob, so warn-and-ignore here rather than
