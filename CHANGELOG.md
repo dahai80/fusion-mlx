@@ -23,6 +23,21 @@
 - **Catalog**: `flux-1` alias now points at the distilled
   `black-forest-labs/FLUX.1-schnell`. LTX2/LTX-2.5 video models already
   serve distilled weights by default — no change needed there.
+### Fixed — alias serves bypassed the #1194 tier-budget gate; shadow route hid rejections (#1194)
+- **Boot-gate bypass closed:** `serve --model <hf-repo-id>` passed the bare repo
+  id to the size estimate, which raised "No model weights found" and was
+  swallowed — size stayed 0, so the P0 budget check was skipped AND
+  `tier_resident_bytes` undercounted. The estimate (`_estimate_single_model_size`)
+  now retries the hub-cache snapshot layouts (`HF_HOME`, `~/.fusion-mlx/models`,
+  `~/.cache/huggingface/hub`) and warns loudly when no size can be found.
+- **Shadow-route fix:** the gui_compat `/v1/models/{id}/load` route shadows the
+  public handler and degraded a pool budget rejection into 404 "not found".
+  Budget/memory rejections (`ModelTooLargeError`, `InsufficientMemoryError`) now
+  surface as 503 with the reason, mirroring the public route.
+- Verified on the 11433 debug instance with a real model: 1GB budget rejects a
+  2.97GB boot loudly; 3.5GB budget rejects a second 0.68GB load with
+  `fusion_mlx_tier_budget_rejections_total 1`; 8GB budget loads both models with
+  correct `fusion_mlx_model_memory_bytes` accounting.
 ### Added — Metal submission pacing gate + dynamic TDM throttle (#1197)
 - **`fusion_mlx/pacing.py`**: per-workload-class token buckets (llm /
   image / video / laya) gating every Metal-bound executor submission.
