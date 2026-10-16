@@ -353,6 +353,13 @@ def _is_bfloat16(dtype) -> bool:
 def _extract_tensor_bytes(arr) -> tuple[bytes, str, list[int]]:
     if not HAS_MLX:
         return (b"", "F32", [1])
+    if isinstance(arr, (str, bytes)):
+        # #1236: TQ v2 marker strings used to reach mx.array(str) and crash
+        # every async store. Fail loud instead of silently killing reuse.
+        raise TypeError(
+            f"_extract_tensor_bytes expects mx.array, got {type(arr).__name__}; "
+            "marker/non-tensor element reached generic tensor path"
+        )
     arr = mx.array(arr)
     mx.eval(arr)
     dtype_str = _dtype_to_st_str(arr.dtype)
@@ -466,6 +473,72 @@ def _load_nstate_element(
         ]
         return ("__nstate__", cls, subs)
     return get_tensor(key_prefix)
+
+
+def _store_tq_state(
+    item,
+    key_prefix: str,
+    tensors_raw: dict,
+    file_metadata: dict,
+) -> None:
+    # TurboQuant v2 quantized states are NamedTuples of mx.arrays (vendored
+    # mlx_vlm.turboquant: TurboQuantMSEState, TurboQuantSplitState, ...).
+    # Store them structurally — class name per container, arrays as tensors —
+    # so the load path can rebuild the exact NamedTuple classes. The prefix
+    # cache reconstruct path feeds these to _concat_state, which dispatches
+    # on type and raises TypeError on a plain tuple.
+    if isinstance(item, mx.array):
+        tensors_raw[key_prefix] = _extract_tensor_bytes(item)
+        return
+    if isinstance(item, (tuple, list)):
+        file_metadata[f"{key_prefix}_cls"] = type(item).__name__
+        file_metadata[f"{key_prefix}_count"] = str(len(item))
+        for m, sub in enumerate(item):
+            _store_tq_state(sub, f"{key_prefix}_sub_{m}", tensors_raw, file_metadata)
+        return
+    raise TypeError(
+        f"Unsupported TurboQuant state element at {key_prefix}: "
+        f"{type(item).__name__}"
+    )
+
+
+def _load_tq_state(key_prefix: str, file_metadata: dict, get_tensor):
+    cls_name = file_metadata.get(f"{key_prefix}_cls")
+    if cls_name is None:
+        return get_tensor(key_prefix)
+    count = int(file_metadata.get(f"{key_prefix}_count", 0))
+    subs = [
+        _load_tq_state(f"{key_prefix}_sub_{m}", file_metadata, get_tensor)
+        for m in range(count)
+    ]
+    if cls_name == "tuple":
+        return tuple(subs)
+    if cls_name == "list":
+        return subs
+    try:
+        from mlx_vlm.turboquant import (
+            TurboQuantMSEState,
+            TurboQuantPolarProdState,
+            TurboQuantPolarState,
+            TurboQuantProdState,
+            TurboQuantSplitState,
+        )
+    except ImportError as e:
+        raise TypeError(
+            f"TurboQuant state class {cls_name} unavailable for SSD "
+            f"reconstruction: {e}"
+        ) from e
+    classes = {
+        "TurboQuantMSEState": TurboQuantMSEState,
+        "TurboQuantProdState": TurboQuantProdState,
+        "TurboQuantPolarState": TurboQuantPolarState,
+        "TurboQuantPolarProdState": TurboQuantPolarProdState,
+        "TurboQuantSplitState": TurboQuantSplitState,
+    }
+    cls = classes.get(cls_name)
+    if cls is None:
+        raise TypeError(f"Unknown TurboQuant state class: {cls_name}")
+    return cls(*subs)
 
 
 def _has_zero_dim(shape: tuple[int, ...]) -> bool:
@@ -986,6 +1059,21 @@ class PagedSSDCacheManager:
                 file_metadata[f"layer_{i}_state_count"] = str(len(elements))
                 file_metadata[f"layer_{i}_nstate_class"] = str(layer_data[1])
                 continue
+            # TurboQuant v2 quantized KV (prefix_cache TQ emit path): marker
+            # tuple of two NamedTuple states. #1236 — previously fell through
+            # to the generic tuple path which fed the marker string to
+            # mx.array and crashed every store, so TQ caches never reused.
+            if (
+                isinstance(layer_data, tuple)
+                and len(layer_data) == 2
+                and layer_data[0] == "__turboquant_v2__"
+            ):
+                tq_ks, tq_vs = layer_data[1]
+                _store_tq_state(tq_ks, f"layer_{i}_state_0", tensors_raw, file_metadata)
+                _store_tq_state(tq_vs, f"layer_{i}_state_1", tensors_raw, file_metadata)
+                file_metadata[f"layer_{i}_state_count"] = "2"
+                file_metadata[f"layer_{i}_tq_v2"] = "1"
+                continue
             if isinstance(layer_data, (list, tuple)):
                 state_items = list(layer_data)
                 for k, item in enumerate(state_items):
@@ -1346,6 +1434,17 @@ class PagedSSDCacheManager:
                         return None
                     return _restore_tensor_from_bytes(*raw)
 
+                # TurboQuant v2 quantized state pair (#1236)
+                if file_metadata.get(f"layer_{i}_tq_v2") == "1":
+                    ks = _load_tq_state(
+                        f"layer_{i}_state_0", file_metadata, _get_tensor_raw
+                    )
+                    vs = _load_tq_state(
+                        f"layer_{i}_state_1", file_metadata, _get_tensor_raw
+                    )
+                    layers.append(("__turboquant_v2__", (ks, vs)))
+                    continue
+
                 items = []
                 for k in range(state_count):
                     elem = _load_nstate_element(
@@ -1435,6 +1534,16 @@ class PagedSSDCacheManager:
                     if len(items) == 2:
                         layers.append((items[0], items[1]))
             else:
+                # TurboQuant v2 quantized state pair (#1236)
+                if meta.get(f"layer_{i}_tq_v2") == "1":
+                    ks = _load_tq_state(
+                        f"layer_{i}_state_0", meta, lambda k2: arrays.get(k2)
+                    )
+                    vs = _load_tq_state(
+                        f"layer_{i}_state_1", meta, lambda k2: arrays.get(k2)
+                    )
+                    layers.append(("__turboquant_v2__", (ks, vs)))
+                    continue
                 state_count = int(meta.get(f"layer_{i}_state_count", 2))
                 nstate_class = meta.get(f"layer_{i}_nstate_class")
                 items = []
