@@ -38,6 +38,18 @@ from mlx_vlm.turboquant import (
 
 logger = logging.getLogger(__name__)
 
+# #1230: the vendored mlx_vlm RHT (Hadamard) codec is broken end to end —
+# fused Metal kernels dequantize with the dense matrix regardless of
+# codec.use_rht (134% roundtrip error at power-of-two head dims, bits=4).
+# Force dense rotation codecs; applied at import so every TQ cache
+# construction is covered.
+from .patches.turboquant_fused_rht_guard import apply_turboquant_dense_codec_guard
+
+try:
+    apply_turboquant_dense_codec_guard()
+except Exception as e:
+    logger.warning("TurboQuant dense-codec guard not applied: %s", e)
+
 # A4: TurboQuantKVCache.merge monkey-patch.
 # NOTE: applied at END of module (see bottom), not here — calling before
 # BatchTurboQuantKVCache (below) is defined triggers a self-referential

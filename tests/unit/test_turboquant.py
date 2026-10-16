@@ -803,6 +803,43 @@ def test_decode_single_token_quantize_is_accurate():
     assert rel_err < 0.05, f"decode-token quantize error {rel_err:.1%} (kernel bug?)"
 
 
+def test_dense_codec_guard_forces_dense_rotation():
+    """#1230: the vendored mlx_vlm RHT (Hadamard) codec is broken end to end —
+    fused Metal kernels dequantize with the DENSE matrix regardless of
+    codec.use_rht (measured 134% roundtrip error at power-of-two head dims,
+    bits=4). The guard must force use_rht=False so power-of-two dims use the
+    dense rotation path already exercised by hd=80/96 in production.
+    """
+    import mlx.core as mx
+    from mlx_vlm.turboquant import TurboQuantKVCache
+
+    from fusion_mlx.patches.turboquant_fused_rht_guard import (
+        apply_turboquant_dense_codec_guard,
+    )
+
+    apply_turboquant_dense_codec_guard()
+
+    # head_dim=64 would be RHT; head_dim=80 is dense (control).
+    for hd in (64, 80):
+        ctx_k = mx.random.normal((1, 4, 8, hd)) * 0.1
+        ctx_v = mx.random.normal((1, 4, 8, hd)) * 0.1
+        new_k = mx.random.normal((1, 4, 1, hd)) * 0.1
+        new_v = mx.random.normal((1, 4, 1, hd)) * 0.1
+        tq = TurboQuantKVCache(bits=4.0)
+        tq.update_and_fetch(ctx_k, ctx_v)
+        tq.update_and_fetch(new_k, new_v)
+        dk, _ = tq.dequantize()
+        assert tq.key_codec.use_rht is False
+        rel_err = (
+            mx.mean(mx.abs(dk[:, :, 8:9, :] - new_k)).item()
+            / mx.mean(mx.abs(new_k)).item()
+        )
+        assert rel_err < 0.20, (
+            f"head_dim={hd}: decode-token quantize error {rel_err:.1%} "
+            f"exceeds 20% — dense-codec guard missing?"
+        )
+
+
 def test_batch_masked_decode_is_accurate():
     """Regression: B>1 continuous-batching decode passes an array mask.
 
