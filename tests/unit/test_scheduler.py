@@ -3912,13 +3912,20 @@ class TestDetectNeedsThinkPrefix:
         """
         from unittest.mock import PropertyMock
 
+        # The PropertyMock is installed on the CLASS, so it outlives this
+        # test: without the finally-del every later test touching
+        # MockTokenizer.think_start_id fails with this side_effect
+        # (order-dependent flake — the class-level leak survives the test).
         tokenizer = MockTokenizer()
         type(tokenizer).think_start_id = PropertyMock(
             side_effect=TypeError("object of type 'NoneType' has no len()")
         )
-        scheduler = Scheduler(model=mock_model, tokenizer=tokenizer)
-        request = self._make_request([1, 2, 3])
-        assert scheduler._detect_needs_think_prefix(request) is False
+        try:
+            scheduler = Scheduler(model=mock_model, tokenizer=tokenizer)
+            request = self._make_request([1, 2, 3])
+            assert scheduler._detect_needs_think_prefix(request) is False
+        finally:
+            del type(tokenizer).think_start_id
 
 
 class TestOutputParserSmoke:

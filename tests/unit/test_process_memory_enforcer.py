@@ -583,9 +583,19 @@ class TestMaybeEscalateUnrecoverable:
             assert enforcer._drain_flipped is True
             assert mock_cfg.draining is True
 
-    def test_fatal_exit_after_sustained_pressure(self):
+    def test_fatal_exit_after_sustained_pressure(self, monkeypatch):
         enforcer = _make_enforcer()
         mock_cfg = Mock()
+        # Isolate from module-level fine-tune state: earlier tests in a
+        # shard run can leave a real service bound to the admin route with
+        # an active job, and the #1205 training-grace defer then correctly
+        # suppresses fatal_exit — failing this test for the wrong reason.
+        # The grace interaction has its own suite
+        # (test_fine_tune_fatal_protection_1205.py).
+        monkeypatch.setattr(
+            "fusion_mlx.pool.memory_enforcer._fine_tune_service_if_running",
+            lambda: None,
+        )
         with (
             patch("fusion_mlx.pool.memory_enforcer._UNRECOVERABLE_POLL_THRESHOLD", 2),
             patch("fusion_mlx.pool.memory_enforcer._UNRECOVERABLE_FATAL_THRESHOLD", 1),
