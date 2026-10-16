@@ -708,9 +708,20 @@ class ImageGenEngine(BaseNonStreamingEngine):
             return
         # #1202: register the DPM-Solver++(2M) contrib scheduler so request
         # param scheduler="dpmpp_2m" resolves through mflux's registry.
-        from .image_schedulers import register_image_schedulers
+        # Best-effort: test stubs / partial mflux installs can make the
+        # schedulers package unimportable — log loudly and continue (the
+        # routing tier works without it; scheduler="dpmpp_2m" requests
+        # then fail loudly at request time).
+        try:
+            from .image_schedulers import register_image_schedulers
 
-        register_image_schedulers()
+            register_image_schedulers()
+        except ImportError as exc:
+            logger.warning(
+                "dpmpp_2m contrib scheduler not registered (%s); "
+                "scheduler='dpmpp_2m' requests will be rejected",
+                exc,
+            )
         module_path, cls_name, config_label, default_guidance = VARIANT_MAP[
             self._variant
         ]
