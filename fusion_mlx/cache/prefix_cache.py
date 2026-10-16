@@ -345,7 +345,10 @@ class BlockAwarePrefixCache(CacheManager):
         counterparts, so they can be collapsed for signature comparison.
         TurboQuantKVCache stores packed 4-bit tensors and MUST NOT be
         collapsed to KVCache (fp16) — that would silently mix
-        incompatible cache blocks.
+        incompatible cache blocks. #1236: the SSD manager's
+        _expected_layer_cache_types is updated when TurboQuant conversion
+        is applied to the live cache (sched_token), so stored TQ blocks
+        match the expected signature without collapsing types here.
         """
         if layer_cache_types is None:
             return None
@@ -689,6 +692,21 @@ class BlockAwarePrefixCache(CacheManager):
                     parent_hash,
                     extra_keys=block_extra_keys,
                 )
+                # #1236: a hot_cache_only manager can hold index/hash
+                # entries whose hot data was LRU-evicted. Trusting the hash
+                # registry alone made those blocks permanently unrecoverable
+                # (dedup skipped the re-save) and every later prefix hit
+                # truncated at the first evicted block.
+                if existing_block and self.paged_ssd_cache is not None:
+                    if not self.paged_ssd_cache.has_resident_data(
+                        existing_block.block_hash
+                    ):
+                        logger.debug(
+                            "Dedup skipped for block %s: hash registered but "
+                            "block data not resident (hot_cache_only eviction)",
+                            existing_block.block_id,
+                        )
+                        existing_block = None
                 if existing_block:
                     # Reuse existing block
                     self.paged_cache.increment_ref(existing_block.block_id)
