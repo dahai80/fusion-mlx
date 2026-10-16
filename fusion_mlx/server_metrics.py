@@ -182,6 +182,9 @@ class ServerMetrics:
     tier_budget_rejections_total: int = 0
     # Note: the loaded-models gauge is served directly from
     tier_budget_rejections_by_tier: dict[str, int] = field(default_factory=dict)
+    # #1202: image quality-tier counters (quality=fast|high on image gen)
+    image_quality_tier_total: int = 0
+    image_quality_tier_by_tier: dict[str, int] = field(default_factory=dict)
     # pool.loaded_model_count by _render_pool_metrics
     # (fusion_mlx_models_loaded), so no separate gauge field is kept here.
 
@@ -418,6 +421,15 @@ class ServerMetrics:
             self.tier_budget_rejections_total += 1
             self.tier_budget_rejections_by_tier[tier] = (
                 self.tier_budget_rejections_by_tier.get(tier, 0) + 1
+            )
+
+    def record_image_quality_tier(self, tier: str) -> None:
+        # #1202: image quality-tier counter. Called by the image routes on
+        # every generation request so /metrics surfaces fast/high routing.
+        with self._lock:
+            self.image_quality_tier_total += 1
+            self.image_quality_tier_by_tier[tier] = (
+                self.image_quality_tier_by_tier.get(tier, 0) + 1
             )
 
     def record_preload_failure(self, model_id: str) -> None:

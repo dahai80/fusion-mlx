@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
 from ..engines import ImageGenEngine
-from ..engines.image_gen import VARIANT_MAP
+from ..engines.image_gen import VARIANT_MAP, _fast_sibling_model
 from ..middleware.auth import check_rate_limit, verify_api_key
 from ..pool import EnginePool
 
@@ -83,6 +83,12 @@ class ImageGenerateRequest(BaseModel):
     # NOT remove a background; use the RGBA prompt convention (see
     # https://github.com/QwenLM/Qwen-Image-2.1#transparent-image-generation-rgba).
     transparent: bool = Field(default=False)
+    # #1202: quality tier. "fast" (default) routes plain text-to-image
+    # requests on a full-diffusion model (FLUX.1-dev / FLUX.2-dev) to the
+    # distilled sibling (FLUX.1-schnell 4 steps / FLUX.2-klein); "high"
+    # keeps the requested model as-is. Variant or image-input requests
+    # always use the requested model (distilled siblings ship no adapters).
+    quality: str = Field(default="fast", pattern="^(fast|high)$")
 
     @model_validator(mode="before")
     @classmethod
@@ -154,8 +160,49 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
             model_name = "flux-2"
         model_name = resolve_model_id(model_name) or model_name
 
+        # #1202: quality-tier routing. quality=fast on a full-diffusion model
+        # with a plain text-to-image request resolves the distilled sibling
+        # (FLUX.1-dev -> FLUX.1-schnell, FLUX.2-dev -> FLUX.2-klein); missing
+        # sibling falls back to the requested model — never fails the request.
+        # Variant or image-input requests keep the requested model (distilled
+        # siblings ship no adapter variants).
+        tier = request.quality
+        routed_model = model_name
+        substituted = False
+        has_image_input = any(
+            (
+                request.control_image,
+                request.reference_images,
+                request.edit_image,
+                request.depth_image,
+            )
+        )
+        engine: ImageGenEngine | None = None
+        if tier == "fast" and not has_image_input and variant in (None, "txt2img"):
+            for sibling in _fast_sibling_model(model_name):
+                sibling_name = resolve_model_id(sibling) or sibling
+                try:
+                    sibling_engine = await _pool.get_engine(sibling_name)
+                except ModelNotFoundError:
+                    logger.info(
+                        "quality=fast: distilled sibling '%s' not available",
+                        sibling_name,
+                    )
+                    continue
+                if sibling_engine is not None and isinstance(
+                    sibling_engine, ImageGenEngine
+                ):
+                    engine = sibling_engine
+                    routed_model = sibling_name
+                    substituted = True
+                    break
+                logger.warning(
+                    "quality=fast: sibling '%s' is not an image engine",
+                    sibling_name,
+                )
         try:
-            engine = await _pool.get_engine(model_name)
+            if engine is None:
+                engine = await _pool.get_engine(model_name)
         except ModelNotFoundError as exc:
             avail = (
                 ", ".join(exc.available_models) if exc.available_models else "(none)"
@@ -171,6 +218,20 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
                 f"Image generation model '{model_name}' not loaded. "
                 "Load a Flux model first.",
             )
+        if substituted:
+            logger.info(
+                "image quality tier: fast routed '%s' -> distilled '%s'",
+                model_name,
+                routed_model,
+            )
+        else:
+            logger.info("image quality tier: %s model '%s'", tier, model_name)
+        try:
+            from ..server_metrics import get_server_metrics
+
+            get_server_metrics().record_image_quality_tier(tier)
+        except Exception:
+            logger.debug("image quality tier metric record failed", exc_info=True)
 
         # If engine was started with a different variant, warn
         if variant is not None and engine.variant != variant:
@@ -247,7 +308,7 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
 
             emit.request(
                 endpoint="/v1/images/generate",
-                model_alias=model_name,
+                model_alias=routed_model,
                 stream=False,
                 tool_call_used=False,
                 prompt_tokens=0,

@@ -148,6 +148,24 @@ def _load_model(variant: str, model_path: str, quantize, config_label):
     else:
         from mflux.models.common.config.model_config import ModelConfig
 
+        # #1202: the worker builds its own mflux Config, so the DPM-Solver++(2M)
+        # contrib scheduler must be registered in this process too — the
+        # parent's registration does not cross the subprocess boundary.
+        # Best-effort with a loud log: partial mflux installs must not
+        # block the base model load.
+        try:
+            from fusion_mlx.engines.image_schedulers import (
+                register_image_schedulers,
+            )
+
+            register_image_schedulers()
+        except ImportError as exc:
+            logger.warning(
+                "dpmpp_2m contrib scheduler not registered in worker (%s); "
+                "scheduler='dpmpp_2m' requests will be rejected",
+                exc,
+            )
+
         mc = getattr(ModelConfig, config_label)()
         flux = cls(model_config=mc, model_path=model_path, quantize=quantize)
     return flux
