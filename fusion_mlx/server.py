@@ -807,6 +807,46 @@ def get_app():
     return app
 
 
+def _estimate_single_model_size(model_path: str) -> int:
+    # #1194: on-disk weight estimate for the single-model boot gate.
+    # ``serve --model <alias>`` passes a bare HF repo id here — the
+    # estimate needs the local snapshot dir, so on failure retry the
+    # hub-cache layouts before giving up. A silent 0 both bypasses the
+    # budget gate and undercounts tier_resident_bytes.
+    import os as _os
+    from pathlib import Path as _Path
+
+    from .pool.model_discovery import estimate_model_size
+
+    try:
+        return int(estimate_model_size(_Path(model_path)))
+    except Exception:  # noqa: BLE001
+        pass
+    _cands: list[_Path] = []
+    if "/" in model_path:
+        _norm = model_path.replace("/", "--")
+        _bases = [
+            _Path.home() / ".fusion-mlx" / "models",
+            _Path.home() / ".cache" / "huggingface" / "hub",
+        ]
+        _hf_home = _os.environ.get("HF_HOME")
+        if _hf_home:
+            _bases.insert(0, _Path(_hf_home))
+        for _base in _bases:
+            _cands.extend((_base / f"models--{_norm}").glob("snapshots/*"))
+    for _c in _cands:
+        try:
+            return int(estimate_model_size(_c))
+        except Exception:  # noqa: BLE001
+            continue
+    logger.warning(
+        "tier budget: size estimate failed for %s; budget check skipped "
+        "and tier accounting will undercount",
+        model_path,
+    )
+    return 0
+
+
 def _resolve_single_model_path(name: str) -> str:
     # Resolve a model name to a loadable path/id. Reuses the fusion-mlx
     # model-discovery advantage: a bare name like ``Qwen3.6-27B-mxfp8``
@@ -2791,19 +2831,7 @@ class Server:
         # on-disk weights and enforce the P0 tier budget BEFORE the load;
         # a rejection here is a loud boot failure (default budget 0 =
         # unbounded, so nothing changes for existing deploys).
-        _single_size = 0
-        try:
-            from pathlib import Path as _Path
-
-            from .pool.model_discovery import estimate_model_size
-
-            _single_size = int(estimate_model_size(_Path(model_path)))
-        except Exception:  # noqa: BLE001
-            logger.debug(
-                "tier budget: size estimate failed for %s; skipping check",
-                model_path,
-                exc_info=True,
-            )
+        _single_size = _estimate_single_model_size(model_path)
         if _single_size > 0:
             _ok, _reason = self.pool.check_tier_budget("P0_DYNAMIC", _single_size)
             if not _ok:
