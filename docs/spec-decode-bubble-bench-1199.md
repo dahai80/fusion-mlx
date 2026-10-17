@@ -64,9 +64,9 @@ work (only the non-overlapped remainder is true bubble).
   measured bubble does not justify it on its own.
 
 **#1199 closes as not-worth-it, gate failed, bench archived (this
-document). Raw capture: `sample` output retained in
-`/tmp/1199_sample2.txt` at bench time; the tables above are its
-verbatim leaf aggregation.**
+document). The `sample` raw capture was process data (deleted after
+aggregation per repo policy); the tables above are its verbatim leaf
+aggregation.**
 
 ## Reproduction
 
