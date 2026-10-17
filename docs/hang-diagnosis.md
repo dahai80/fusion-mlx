@@ -56,3 +56,37 @@ path (or its summary.txt), the hypothesis verdict, and the command-output
 evidence. Until the next hang occurs, attribution is intentionally
 pending — this PR ships the tooling + playbook only (no speculative
 fixes, per the issue).
+
+## #1196 spike conclusion: Metal queue priority — Exit B (not feasible)
+
+Time-boxed spike completed 2026-10-17. Evidence, from the mlx 0.32.2
+source tree (`mlx/backend/metal/device.cpp`):
+
+1. **MLX owns its queues internally.** Each `CommandEncoder` constructs
+   its own queue in its constructor:
+   `queue_ = NS::TransferPtr(device_.mtl_device()->newCommandQueue())`.
+   Encoders live in thread-local / global maps keyed by `Stream` index
+   (`get_command_encoder(Stream s)`); there is no constructor parameter,
+   setter, or registry that accepts an externally-owned
+   `MTLCommandQueue` or any scheduling hint.
+2. **Metal itself has no per-queue priority.** `MTLCommandQueue` exposes
+   no priority/QoS property; the hardware scheduler dispatches by
+   encoder. Downstream code cannot make one queue "higher priority" than
+   another on the same `MTLDevice` — not just MLX, the API does not
+   exist.
+3. **The shim cannot redirect MLX work.** `shim/csrc/hardware_probe.cpp`
+   already reaches `mlx::metal::device()` for feature-set queries, so a
+   shim-created queue is possible — but every `mx.*` op Python issues
+   still lands on MLX's internal per-encoder queues. Owning a queue
+   next to them changes nothing about their scheduling.
+
+**Exit B actions (done):**
+- Upstream feature request filed: https://github.com/ml-explore/mlx/issues/4716
+  (external queue injection / scheduling-class API / documented
+  non-feasibility — whichever applies).
+- Isolation mechanism adopted instead: the submission pacing gate
+  (#1197, PR #1233, AIMD + laya floor) — already shipped and
+  E2E-verified (no LLM degradation, laya +7%).
+- #1199 (zero-CPU spec-decode verification loop) is hard-gated on
+  Exit A and therefore closes with this conclusion; its bubble-fraction
+  bench is archived in `docs/spec-decode-bubble-bench-1199.md`.
