@@ -92,16 +92,20 @@ def test_video_engine_generate_sets_on_step_param(monkeypatch):
 
     cb_seen: list[tuple[int, int]] = []
 
-    def cb(step, total):
+    async def cb(step, total):
         cb_seen.append((step, total))
 
     result = asyncio.run(eng.generate("prompt", on_step=cb))
     assert result == [b"fake"]
     # #1189: generate wraps on_step in the watchdog heartbeat callback —
     # the wrapper must call through to the user callback, not replace it.
+    # #1216: the wrapper is async (StepCallback contract) — the old sync
+    # wrapper made make_sync_step_callback's run_coroutine_threadsafe(None)
+    # raise a TypeError that was swallowed at debug level, so the heartbeat
+    # never fired even with a user callback.
     wrapped = captured["params"].on_step
     assert wrapped is not cb
-    wrapped(1, 3)
+    asyncio.run(wrapped(1, 3))
     assert cb_seen == [(1, 3)]
 
 
@@ -126,7 +130,18 @@ def test_video_engine_generate_on_step_defaults_none(monkeypatch):
     eng._finish_activity = AsyncMock()
 
     asyncio.run(eng.generate("prompt"))
-    assert captured["params"].on_step is None
+    # #1216: no user callback still gets a heartbeat-only wrapper injected
+    # (purely internal — emits nothing) so the #1189 watchdog stays fed on
+    # the plain HTTP route; a long-but-progressing render was falsely
+    # poisoned at the 600s staleness window while still denoising.
+    wrapped = captured["params"].on_step
+    assert wrapped is not None
+    from fusion_mlx.executor_watchdog import get_executor_watchdog
+
+    wd = get_executor_watchdog("video")
+    before = wd._heartbeat
+    asyncio.run(wrapped(1, 3))
+    assert wd._heartbeat > before
 
 
 def test_legacy_denoise_on_step_sync_fires_per_step():

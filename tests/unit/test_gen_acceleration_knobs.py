@@ -123,13 +123,15 @@ class TestWan2KnobFlow:
         assert call["no_compile"] is False
         assert call["tiling"] == "none"
 
-    async def test_no_compile_defaults_true_when_none(self, stub):
-        # Safe default: compile OFF unless the caller explicitly opts in.
+    async def test_no_compile_defaults_false_when_none(self, stub):
+        # #1216: compile now defaults ON (chunked-SDPA mx.eval blocker
+        # removed; E2E at seq=18480 verified quality + 2x s/step). Opt-out
+        # is the explicit no_compile=True.
         backend = Wan2Backend("wan2.1")
         await backend.start("wan2.1")
         params = VideoGenParams(prompt="a cat", num_frames=41, width=768, height=512)
         await backend.generate(params)
-        assert stub["generate"][0]["no_compile"] is True
+        assert stub["generate"][0]["no_compile"] is False
 
     async def test_tiling_omitted_when_none(self, stub):
         backend = Wan2Backend("wan2.1")

@@ -279,6 +279,8 @@ latent 以 unpacked `(batch, c, h, w)` `mx.array` 在所有阶段间流转（匹
 
 **权重缺失即失败 (#1219)：** svd / hunyuanvideo / opensora 流水线在转换后权重缺失时抛 `FileNotFoundError`（不再随机初始化静默生成）。opensora 后端 `start()` 额外要求模型目录含 `weights.npz` + `t5_encoder/` + `vae/`，生成时加载真实 UMT5 文本编码器 + HunyuanVideo VAE — 移除了 stub/零嵌入与"返回 latent 当视频"的路径。hunyuanvideo VAE 直接加载 diffusers `AutoencoderKLCausal3D` 官方权重（248/248 张量，键+形状映射已验证），任一张量未匹配即抛错 — 拒绝半随机 VAE。
 
+**Wan2 compile 默认开启 (#1216)：** Wan2.2 DiT 去噪默认走 `mx.compile`（chunked-SDPA 内的 `mx.eval` 阻塞已移除）。Wan2.2-TI2V-5B q8 实测 1280x704x81f（seq=18480）：同一会话下编译后 24.0 s/步 vs eager 48.2 s/步（2.0x），输出 signalstats 逐帧一致，峰值 RSS 18.8 → 20.4 GiB。按请求关闭：`/v1/videos/generate` 传 `"no_compile": true`。
+
 ### 步进回调 (#171)
 
 `generate()` (图像) 与 `VideoGenEngine.generate()` 接受 `on_step: Callable[[int, int], Awaitable[None]] | None`，在每个 denoise 步后以 `on_step(step, total_steps)` 触发。异步回调经 `asyncio.run_coroutine_threadsafe` 桥接到同步 mflux denoise 循环（fire-and-forget；错误仅记录日志，绝不阻塞生成）。图像在 `flux.callbacks` 上用真实逐步订阅器；视频经 `VideoGenParams.on_step` 接入。

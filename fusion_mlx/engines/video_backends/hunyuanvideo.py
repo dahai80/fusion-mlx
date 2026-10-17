@@ -87,7 +87,16 @@ class HunyuanVideoBackend(VideoBackend):
         if not self._loaded:
             await self.start()
 
+        # #1216 E2E: wire the engine-layer step callback through (was
+        # hardcoded None — the #1189 watchdog heartbeat never fired for
+        # hunyuanvideo, so >600s renders were falsely poisoned).
+        # generate_video calls on_step synchronously from the executor
+        # thread; convert the async engine callback with the standard
+        # bridge (schedules onto this loop, fire-and-forget).
+        from fusion_mlx.engines._progress import make_sync_step_callback
         from fusion_mlx.video.hunyuanvideo.generate import generate_video
+
+        _step_sync = make_sync_step_callback(params.on_step, asyncio.get_running_loop())
 
         results = []
         for i in range(params.n):
@@ -112,7 +121,7 @@ class HunyuanVideoBackend(VideoBackend):
                                 image=params.image,
                                 cfg_scale=params.cfg_scale,
                                 num_inference_steps=params.num_inference_steps or 50,
-                                on_step=None,
+                                on_step=_step_sync,
                                 output_path=op,
                                 controlnet_image=params.controlnet_image,
                                 inpaint_mask=params.inpaint_mask,
