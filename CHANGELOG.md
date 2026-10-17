@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Fixed — video pipelines silently generated garbage with missing/random weights (#1219)
+- **Fail-visible weight loading:** svd / hunyuanvideo / opensora pipelines
+  raise `FileNotFoundError` when converted weights are missing instead of
+  silently running with random-init weights and "successfully" producing
+  garbage. The opensora backend `start()` requires `weights.npz` +
+  `t5_encoder/` + `vae/` and loads a real UMT5 text encoder + VAE —
+  stub/zero-embedding and latent-as-video paths were removed. Root cause
+  included `mlx.utils.load_weights` removal in mlx 0.32 breaking every
+  svd-family weight load silently; replaced with a shared
+  `video/common/weights.py` directory loader.
+- **hunyuanvideo VAE real-weight support:** `_remap_vae_weights` maps
+  official diffusers `AutoencoderKLCausal3D` keys to our module names
+  (verified 248/248 key+shape coverage), and `from_pretrained` raises on
+  any unmatched tensor — a partially-random VAE is refused. Real-weights
+  E2E verified: DiT + VAE + CLIP-L/Llama3 dual text encoder loaded from
+  official weights, 720x480 57-frame clip generated with non-degenerate
+  frame statistics (mean range 0.22–0.34, std 0.27–0.37).
+- **Llama3 text-encoder mask dtype:** attention mask built in the
+  activation dtype — fp32 mask crashed `mx.fast` SDPA with real fp16
+  weights.
+
 ### Added — image quality-tier routing + DPM-Solver++(2M) dev-tier scheduler (#1202)
 - **Default route is fast**: `POST /v1/images/generations` accepts
   `quality: "fast"|"high"` (default `fast`). Plain txt2img requests on a
