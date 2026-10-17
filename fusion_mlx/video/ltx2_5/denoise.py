@@ -69,6 +69,7 @@ def denoise_distilled_t2v(
     state: LatentState | None = None,
     negative_context: mx.array | None = None,
     cfg_scale: float = 1.0,
+    on_step=None,
 ) -> mx.array:
     # 两阶段 distilled T2V/I2V 去噪。latents (b,c,f,h,w), sigmas 降序 -> 0。
     # 每步: 展平 latent -> Modality(context=text_embeddings) -> transformer ->
@@ -135,6 +136,9 @@ def denoise_distilled_t2v(
 
     for i in range(num_steps):
         sigma, sigma_next = sigmas[i], sigmas[i + 1]
+        # #1243: per-step progress hook (watchdog heartbeat / progress).
+        if on_step is not None:
+            on_step(i + 1, num_steps)
 
         b, c, f, h, w = latents.shape
         num_tokens = f * h * w
@@ -264,6 +268,7 @@ def denoise_distilled_av(
     init_latent=None,
     video_state: LatentState | None = None,
     audio_frozen: bool = False,
+    on_step=None,
 ) -> tuple[mx.array, mx.array]:
     # 两阶段 distilled A/V 去噪。与 denoise_distilled_t2v 同构 (baked sigma 表,
     # 无 CFG — distilled 已烘焙 guidance), 增 audio Modality 联合前向。
@@ -344,6 +349,9 @@ def denoise_distilled_av(
 
     for i in range(num_steps):
         sigma, sigma_next = sigmas[i], sigmas[i + 1]
+        # #1243: per-step progress hook (watchdog heartbeat / progress).
+        if on_step is not None:
+            on_step(i + 1, num_steps)
 
         b, c, f, h, w = video_latents.shape
         num_video_tokens = f * h * w

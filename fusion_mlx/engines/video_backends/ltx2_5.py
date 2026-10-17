@@ -88,11 +88,12 @@ class LTX2_5Backend(VideoBackend):
                 "no per-backend ControlNet model (see issue #735 follow-up). "
                 "Refusing to silently degrade to T2V (#735)."
             )
-        if params.on_step is not None:
-            logger.debug(
-                "ltx2_5: on_step progress callback accepted but per-step "
-                "streaming not yet emitted for this backend (issue #171 follow-up)"
-            )
+        # #1243: convert the async engine step callback to a sync one the
+        # executor-thread denoise loop can call directly (same as ltx2) —
+        # keeps the #1189 watchdog heartbeat fed.
+        from fusion_mlx.engines._progress import make_sync_step_callback
+
+        _step_sync = make_sync_step_callback(params.on_step, asyncio.get_running_loop())
         base_seed = (
             params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )
@@ -130,6 +131,7 @@ class LTX2_5Backend(VideoBackend):
                     audio=params.audio,
                     audio_frozen=params.audio_frozen,
                     audio_vae_weights=params.audio_vae_weights,
+                    on_step=_step_sync,
                 )
                 results.append(mp4_bytes)
             return results
@@ -244,6 +246,7 @@ def _generate_one(
     audio: bool = False,
     audio_frozen: bool = False,
     audio_vae_weights: str | None = None,
+    on_step=None,
 ) -> bytes:
     from fusion_mlx.video.ltx2_5.config import LTX2_5Variant
     from fusion_mlx.video.ltx2_5.generate import generate_video
@@ -281,6 +284,7 @@ def _generate_one(
         gen_kwargs["audio_frozen"] = audio_frozen
         if audio_vae_weights is not None:
             gen_kwargs["audio_vae_weights"] = audio_vae_weights
+    gen_kwargs["on_step"] = on_step
     with managed_tempfile_path(prefix="fusion_video_", suffix=".mp4") as handle:
         temp_path = handle.path
         gen_kwargs["output_path"] = temp_path

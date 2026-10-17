@@ -91,11 +91,13 @@ class LTX2Backend(VideoBackend):
         )
 
     async def generate(self, params: VideoGenParams) -> list[bytes]:
-        if params.on_step is not None:
-            logger.debug(
-                "ltx2: on_step progress callback accepted but per-step "
-                "streaming not yet emitted for this backend (issue #171 follow-up)"
-            )
+        # #1243: convert the async engine step callback to a sync one the
+        # executor-thread denoise loop can call directly. Keeps the #1189
+        # watchdog heartbeat fed (and real per-step progress) — previously
+        # accepted-but-ignored, so >600s renders falsely poisoned the executor.
+        from fusion_mlx.engines._progress import make_sync_step_callback
+
+        _step_sync = make_sync_step_callback(params.on_step, asyncio.get_running_loop())
         # #738 Surface B: ControlNet not fabricatable (shared adapter is Wan2-arch,
         # no per-backend model). Fail visible — refuse silent T2V degrade.
         if params.controlnet_image is not None:
@@ -146,6 +148,7 @@ class LTX2Backend(VideoBackend):
                     controlnet_image=params.controlnet_image,
                     inpaint_mask=inpaint_mask,
                     init_latent=init_latent,
+                    on_step=_step_sync,
                 )
                 results.append(mp4_bytes)
             return results
@@ -259,6 +262,7 @@ def _generate_one(
     controlnet_image=None,
     inpaint_mask=None,
     init_latent=None,
+    on_step=None,
 ) -> bytes:
     from fusion_mlx.video.ltx2.generate import PipelineType, generate_video
 
@@ -295,6 +299,7 @@ def _generate_one(
     gen_kwargs["controlnet_image"] = controlnet_image
     gen_kwargs["inpaint_mask"] = inpaint_mask
     gen_kwargs["init_latent"] = init_latent
+    gen_kwargs["on_step"] = on_step
     with managed_tempfile_path(prefix="fusion_video_", suffix=".mp4") as handle:
         temp_path = handle.path
         gen_kwargs["output_path"] = temp_path

@@ -35,6 +35,7 @@ def denoise_distilled(
     controlnet_image=None,
     inpaint_mask=None,
     init_latent=None,
+    on_step=None,
 ) -> tuple[mx.array, mx.array | None]:
     # #738 Surface B: ControlNet not fabricatable for ltx2 (shared adapter is
     # Wan2-arch, no per-backend model). Fail visible — refuse silent T2V degrade.
@@ -69,6 +70,9 @@ def denoise_distilled(
 
     for i in range(num_steps):
         sigma, sigma_next = sigmas[i], sigmas[i + 1]
+        # #1243: per-step progress hook (watchdog heartbeat / progress).
+        if on_step is not None:
+            on_step(i + 1, num_steps)
 
         b, c, f, h, w = latents.shape
         num_tokens = f * h * w
@@ -204,6 +208,7 @@ def denoise_dev(
     controlnet_image=None,
     inpaint_mask=None,
     init_latent=None,
+    on_step=None,
 ) -> mx.array:
     # #738 Surface B/C — fail-visible gate + DiT-agnostic video-latent inpaint.
     if controlnet_image is not None:
@@ -252,6 +257,9 @@ def denoise_dev(
     for i in range(num_steps):
         sigma = sigmas_list[i]
         sigma_next = sigmas_list[i + 1]
+        # #1243: per-step progress hook (watchdog heartbeat / progress).
+        if on_step is not None:
+            on_step(i + 1, num_steps)
 
         b, c, f, h, w = latents.shape
         num_tokens = f * h * w
@@ -389,6 +397,7 @@ def denoise_dev_av(
     controlnet_image=None,
     inpaint_mask=None,
     init_latent=None,
+    on_step=None,
 ) -> tuple[mx.array, mx.array]:
     # #738 Surface B/C — fail-visible gate + video-latent inpaint (audio untouched).
     if controlnet_image is not None:
@@ -460,6 +469,9 @@ def denoise_dev_av(
     for i in range(num_steps):
         sigma = sigmas_list[i]
         sigma_next = sigmas_list[i + 1]
+        # #1243: per-step progress hook (watchdog heartbeat / progress).
+        if on_step is not None:
+            on_step(i + 1, num_steps)
 
         b, c, f, h, w = video_latents.shape
         num_video_tokens = f * h * w
@@ -709,6 +721,7 @@ def denoise_res2s_av(
     controlnet_image=None,
     inpaint_mask=None,
     init_latent=None,
+    on_step=None,
 ) -> tuple[mx.array, mx.array]:
     # #738 Surface B/C — fail-visible gate + video-latent inpaint (audio untouched).
     if controlnet_image is not None:
@@ -970,6 +983,9 @@ def denoise_res2s_av(
         sigma = sigmas_list[step_idx]
         sigma_next = sigmas_list[step_idx + 1]
         h = hs[step_idx]
+        # #1243: per-step progress hook (watchdog heartbeat / progress).
+        if on_step is not None:
+            on_step(step_idx + 1, n_full_steps)
 
         x_anchor_video = video_latents
         x_anchor_audio = audio_latents
