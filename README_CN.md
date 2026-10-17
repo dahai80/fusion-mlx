@@ -277,7 +277,7 @@ latent 以 unpacked `(batch, c, h, w)` `mx.array` 在所有阶段间流转（匹
 
 视频后端继承 stage API 的 `NotImplementedError` 默认实现 (issue #170 phase 2)；`LegacyLTXBackend` 与 `Wan2Backend` 接入真实逐步 denoise，`LTX2Backend` / `SkyReelsBackend` 接受但仅打日志。
 
-**权重缺失即失败 (#1219)：** svd / hunyuanvideo / opensora 流水线在转换后权重缺失时抛 `FileNotFoundError`（不再随机初始化静默生成）。opensora 后端 `start()` 额外要求模型目录含 `weights.npz` + `t5_encoder/` + `vae/`，生成时加载真实 UMT5 文本编码器 + HunyuanVideo VAE — 移除了 stub/零嵌入与"返回 latent 当视频"的路径。
+**权重缺失即失败 (#1219)：** svd / hunyuanvideo / opensora 流水线在转换后权重缺失时抛 `FileNotFoundError`（不再随机初始化静默生成）。opensora 后端 `start()` 额外要求模型目录含 `weights.npz` + `t5_encoder/` + `vae/`，生成时加载真实 UMT5 文本编码器 + HunyuanVideo VAE — 移除了 stub/零嵌入与"返回 latent 当视频"的路径。hunyuanvideo VAE 直接加载 diffusers `AutoencoderKLCausal3D` 官方权重（248/248 张量，键+形状映射已验证），任一张量未匹配即抛错 — 拒绝半随机 VAE。
 
 ### 步进回调 (#171)
 

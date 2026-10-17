@@ -1698,7 +1698,10 @@ Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
 > backend additionally requires `weights.npz` + `t5_encoder/` + `vae/` in
 > the model directory at `start()` and loads a real UMT5 text encoder +
 > HunyuanVideo VAE for generation — stub/zero-embedding and
-> latent-as-video paths were removed.
+> latent-as-video paths were removed. The hunyuanvideo VAE loads official
+> diffusers `AutoencoderKLCausal3D` weights directly (248/248 tensors,
+> verified key+shape remap) and raises on any unmatched tensor — a
+> partially-random VAE is refused, not silently produced.
 
 > **Video DiT throughput (#367):** HunyuanVideo and Cosmos fuse the
 > uncond+cond CFG pair into a single batched B=2 DiT forward (~2x

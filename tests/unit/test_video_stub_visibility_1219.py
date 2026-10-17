@@ -50,6 +50,36 @@ class TestHunyuanVideoStubVisibility:
         with pytest.raises(FileNotFoundError, match="text encoder"):
             HunyuanDualTextEncoder.from_pretrained(str(tmp_path))
 
+    def test_vae_refuses_partial_weight_load(self, tmp_path: Path):
+        # #1219: VAE remap must cover every param — partially-random model
+        # produces garbage decode indistinguishable from success.
+        import mlx.core as mx
+        import numpy as np
+
+        from fusion_mlx.video.hunyuanvideo.vae import (
+            HunyuanVideoVAE,
+            _remap_vae_weights,
+        )
+
+        vae = HunyuanVideoVAE()
+        # Feed a diffusers-named subset that remaps cleanly but is incomplete.
+        partial = {
+            "encoder.conv_in.conv.weight": mx.array(
+                np.zeros((128, 3, 3, 3, 3), dtype=np.float32)
+            ),
+            "encoder.conv_in.conv.bias": mx.array(np.zeros((128,), dtype=np.float32)),
+        }
+        assert set(_remap_vae_weights(partial)) == {
+            "encoder.conv_in.conv.weight",
+            "encoder.conv_in.conv.bias",
+        }
+        mx.save_safetensors(
+            str(tmp_path / "vae.safetensors"),
+            partial,
+        )
+        with pytest.raises(ValueError, match="unmatched"):
+            HunyuanVideoVAE.from_pretrained(str(tmp_path))
+
 
 class TestOpenSoraStubVisibility:
     def test_generate_refuses_missing_text_encoder(self, tmp_path: Path):
