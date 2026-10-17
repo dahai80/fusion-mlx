@@ -197,7 +197,9 @@ class Llama3TextEncoder(nn.Module):
     def __call__(self, input_ids):
         x = self.embed_tokens(input_ids)
         T = input_ids.shape[1]
-        mask = mx.triu(mx.full((T, T), -1e9, dtype=mx.float32), k=1)
+        # #1219 E2E: real fp16 weights + mx.fast SDPA require the mask to
+        # promote to the activation dtype — build it in x.dtype.
+        mask = mx.triu(mx.full((T, T), -1e9, dtype=x.dtype), k=1)
         mask = mask[None, None, :, :]
         for i in range(self._num_layers):
             x = getattr(self.layers, str(i))(x, mask)
