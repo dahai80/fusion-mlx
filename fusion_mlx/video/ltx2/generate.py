@@ -193,6 +193,7 @@ def generate_video(
     controlnet_image=None,
     inpaint_mask=None,
     init_latent=None,
+    on_step=None,
 ):
     start_time = time.time()
 
@@ -624,6 +625,7 @@ def generate_video(
             controlnet_image=controlnet_image,
             inpaint_mask=inpaint_mask,
             init_latent=init_latent,
+            on_step=on_step,
         )
 
         logger.info("Upsampling latents %dx...", upscaler_scale)
@@ -711,6 +713,7 @@ def generate_video(
             controlnet_image=controlnet_image,
             inpaint_mask=inpaint_mask,
             init_latent=init_latent,
+            on_step=on_step,
         )
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
@@ -878,6 +881,7 @@ def generate_video(
             controlnet_image=controlnet_image,
             inpaint_mask=inpaint_mask,
             init_latent=init_latent,
+            on_step=on_step,
         )
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
@@ -1073,6 +1077,7 @@ def generate_video(
             controlnet_image=controlnet_image,
             inpaint_mask=inpaint_mask,
             init_latent=init_latent,
+            on_step=on_step,
         )
 
         mx.eval(audio_latents)
@@ -1174,6 +1179,7 @@ def generate_video(
             controlnet_image=controlnet_image,
             inpaint_mask=inpaint_mask,
             init_latent=init_latent,
+            on_step=on_step,
         )
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse
@@ -1393,6 +1399,7 @@ def generate_video(
             controlnet_image=controlnet_image,
             inpaint_mask=inpaint_mask,
             init_latent=init_latent,
+            on_step=on_step,
         )
 
         mx.eval(audio_latents)
@@ -1501,6 +1508,7 @@ def generate_video(
             controlnet_image=controlnet_image,
             inpaint_mask=inpaint_mask,
             init_latent=init_latent,
+            on_step=on_step,
         )
 
         # Phase-2: capture tail-frame latent for multi-shot session reuse

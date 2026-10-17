@@ -261,6 +261,7 @@ def generate_video(
     session_id: str | None = None,
     audio: bool = False,
     audio_frozen: bool = False,
+    on_step=None,
 ) -> bytes:
     # LTX-2.5 两阶段 distilled 生成。audio=True 走联合 A/V denoise (denoise_distilled_av),
     # 生成视频 + 48kHz 立体声 wav, ffmpeg mux 进 mp4。audio_frozen=True (A2V) 冻结输入音频。
@@ -631,6 +632,7 @@ def generate_video(
                 state=dev_state,
                 negative_context=negative_context,
                 cfg_scale=cfg_scale,
+                on_step=on_step,
             )
         mx.eval(latents)
         if audio_latents is not None:
@@ -835,6 +837,7 @@ def generate_video(
             init_latent=init_latent,
             video_state=state1,
             audio_frozen=audio_frozen,
+            on_step=on_step,
         )
     else:
         latents = denoise_distilled_t2v(
@@ -848,6 +851,7 @@ def generate_video(
             inpaint_mask=inpaint_mask,
             init_latent=init_latent,
             state=state1,
+            on_step=on_step,
         )
     mx.eval(latents)
     if audio_latents is not None:
@@ -938,6 +942,7 @@ def generate_video(
             init_latent=init_latent,
             video_state=state2,
             audio_frozen=audio_frozen,
+            on_step=on_step,
         )
     else:
         latents = denoise_distilled_t2v(
@@ -951,6 +956,7 @@ def generate_video(
             inpaint_mask=inpaint_mask,
             init_latent=init_latent,
             state=state2,
+            on_step=on_step,
         )
     mx.eval(latents)
     if audio_latents is not None:

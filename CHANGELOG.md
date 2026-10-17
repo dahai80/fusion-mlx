@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed — ltx2/ltx2_5 now emit per-step progress (#1243)
+- The ltx2 and ltx2_5 backends accepted `on_step` but never fired it, so
+  the #1189 video watchdog heartbeat never advanced on those paths — any
+  LTX-2/LTX-2.5 render over the staleness window (600s default) was
+  falsely reported hung and poisoned the video executor while still
+  denoising. All denoise loops (`denoise_distilled`, `denoise_dev`,
+  `denoise_dev_av`, `denoise_res2s_av`, `denoise_distilled_t2v`,
+  `denoise_distilled_av`) now fire `on_step(step, total)` per step, and
+  both backends convert the async engine callback via
+  `make_sync_step_callback`. E2E: LTX-2.5 121-frame 960x640 two-stage
+  generation (76s) completed clean with a 60s watchdog window (would
+  have poisoned at 60s before the fix).
+
 ### Changed — Wan2 mx.compile now defaults ON (#1216)
 - The chunked-SDPA helper no longer calls `mx.eval` mid-loop (it raised
   "Attempting to eval an array during function transformations" under
