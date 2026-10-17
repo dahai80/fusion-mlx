@@ -6,6 +6,7 @@ import asyncio
 import gc
 import logging
 import random
+from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
@@ -39,13 +40,29 @@ class SVDBackend(VideoBackend):
         p = model_path.lower()
         return "svd" in p or "stable-video-diffusion" in p or "img2vid" in p
 
+    @staticmethod
+    def _resolve_model_path(name: str) -> str:
+        # #1219: generate() used to pass the raw registry name (often an HF
+        # repo id) to the pipeline, which globbed nothing and silently ran
+        # random-init. Resolve to a local snapshot dir first.
+        if Path(name).exists():
+            return name
+        from huggingface_hub import snapshot_download
+
+        try:
+            resolved = snapshot_download(repo_id=name, local_files_only=True)
+        except Exception:
+            resolved = snapshot_download(repo_id=name)
+        logger.info("SVD backend: resolved %s -> %s", name, resolved)
+        return resolved
+
     async def start(self, model_path: str, **kwargs: Any) -> None:
         if self._loaded:
             return
         logger.info("Starting SVD backend (pure-MLX): %s", model_path)
-        self._model_path = model_path
+        self._model_path = self._resolve_model_path(model_path)
         self._loaded = True
-        logger.info("SVD backend ready: %s", model_path)
+        logger.info("SVD backend ready: %s", self._model_path)
 
     async def stop(self) -> None:
         if not self._loaded:
@@ -88,7 +105,7 @@ class SVDBackend(VideoBackend):
             results: list[bytes] = []
             for i in range(max(1, params.n)):
                 mp4_bytes = _generate_one(
-                    self._model_name,
+                    self._model_path,
                     self._dtype,
                     prompt=params.prompt,
                     image=params.image,

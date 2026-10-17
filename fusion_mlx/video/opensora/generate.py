@@ -152,27 +152,39 @@ def generate_video(
         config = OpenSoraConfig()
         logger.info("Using default config (no config.json found)")
 
+    # #1219: validate real components BEFORE touching weights — a request
+    # routed here must never "succeed" against random init.
+    if text_encoder is None:
+        raise RuntimeError(
+            "opensora: no text encoder provided — refusing random-embedding "
+            "generation (#1219). Pass a real DualTextEncoder."
+        )
+    if vae is None:
+        raise RuntimeError(
+            "opensora: no VAE provided — refusing latent-as-video output "
+            "(#1219). Pass a real HunyuanVideoVAE."
+        )
+
     model = MMDiTModel(config)
     weights_path = Path(model_dir) / "weights.npz"
-    if weights_path.exists():
-        weights = mx.load(str(weights_path))
-        model.load_weights(list(weights.items()))
-        logger.info(f"Loaded {len(weights)} weights from {weights_path}")
-    else:
-        logger.warning(f"No weights found at {weights_path}")
+    if not weights_path.exists():
+        # #1219: random-init MMDiT produced "successful" garbage video. Fail loud.
+        raise FileNotFoundError(
+            f"opensora: no weights.npz at {model_dir} — refusing random-init "
+            "generation (#1219). Convert DiT weights first "
+            "(fusion_mlx/video/opensora/convert.py)."
+        )
+    weights = mx.load(str(weights_path))
+    model.load_weights(list(weights.items()))
+    logger.info(f"Loaded {len(weights)} weights from {weights_path}")
 
-    if text_encoder is not None:
-        context, y_vec = text_encoder.encode([prompt, negative_prompt])
-        if image is None:
-            txt = context[:1]
-            y = y_vec[:1]
-        else:
-            txt = context
-            y = y_vec
+    context, y_vec = text_encoder.encode([prompt, negative_prompt])
+    if image is None:
+        txt = context[:1]
+        y = y_vec[:1]
     else:
-        logger.warning("No text encoder provided, using random embeddings")
-        txt = mx.random.normal((1, 512, config.context_in_dim))
-        y = mx.random.normal((1, config.vec_in_dim))
+        txt = context
+        y = y_vec
 
     # in_channels is the packed dim (C_latent * patch_size^2)
     # Raw latent channels before packing
@@ -192,10 +204,13 @@ def generate_video(
 
     cond = None
     if image is not None and config.cond_embed:
-        if vae is not None:
-            image_latent = vae.encode(image)
-        else:
-            image_latent = mx.random.normal((1, latent_channels, 1, latent_h, latent_w))
+        if vae is None:
+            # #1219: random image conditioning produced garbage I2V. Fail loud.
+            raise RuntimeError(
+                "opensora: no VAE provided for image conditioning — refusing "
+                "random-latent I2V (#1219)."
+            )
+        image_latent = vae.encode(image)
         if image_latent.shape[2] < latent_num_frames:
             pad_frames = latent_num_frames - image_latent.shape[2]
             image_latent = mx.pad(
@@ -243,10 +258,12 @@ def generate_video(
     x = unpack(x_packed, latent_h, latent_w, latent_num_frames, config.patch_size)
     # x shape: (B, latent_channels, T, H, W) ready for VAE decode
 
-    if vae is not None:
-        video = vae.decode(x)
-        logger.info(f"Decoded video shape: {video.shape}")
-    else:
-        video = x
-        logger.warning("No VAE provided, returning latent")
+    if vae is None:
+        # #1219: returning raw latents as "video" produced garbage MP4s.
+        raise RuntimeError(
+            "opensora: no VAE provided for decode — refusing latent-as-video "
+            "output (#1219)."
+        )
+    video = vae.decode(x)
+    logger.info(f"Decoded video shape: {video.shape}")
     return video

@@ -262,15 +262,32 @@ class TestDualTextEncoder:
             UMT5Encoder,
         )
 
-        enc = DualTextEncoder()
+        # #1219: DualTextEncoder() now requires t5_path (stub refusal) —
+        # build a bare instance for structural assertions.
+        enc = DualTextEncoder.__new__(DualTextEncoder)
+        enc.t5 = UMT5Encoder()
+        enc.clip = CLIPTextEncoder()
+        enc.t5_max_length = 512
+        enc.clip_max_length = 77
         assert isinstance(enc.t5, UMT5Encoder)
         assert isinstance(enc.clip, CLIPTextEncoder)
+
+    def test_init_refuses_stub_t5(self):
+        # #1219: no t5_path -> ValueError (stub UMT5 would emit zeros)
+        import pytest
+
+        from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
+
+        with pytest.raises(ValueError, match="t5_path"):
+            DualTextEncoder()
 
     def test_encode_returns_correct_shapes(self):
         # Mock the internal encoders to avoid loading real models
         from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
 
-        enc = DualTextEncoder()
+        enc = DualTextEncoder.__new__(DualTextEncoder)
+        enc.t5_max_length = 512
+        enc.clip_max_length = 77
 
         # Override with stubs that return known shapes
         class FakeT5:
@@ -293,7 +310,9 @@ class TestDualTextEncoder:
     def test_encode_single_string(self):
         from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
 
-        enc = DualTextEncoder()
+        enc = DualTextEncoder.__new__(DualTextEncoder)
+        enc.t5_max_length = 512
+        enc.clip_max_length = 77
 
         class FakeT5:
             def encode_text(self, prompt, *, max_length=512):
@@ -316,7 +335,9 @@ class TestDualTextEncoder:
         # CLIP stub mode returns [B, L, dim] instead of [B, dim]
         from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
 
-        enc = DualTextEncoder()
+        enc = DualTextEncoder.__new__(DualTextEncoder)
+        enc.t5_max_length = 512
+        enc.clip_max_length = 77
 
         class FakeT5:
             def encode_text(self, prompt, *, max_length=512):

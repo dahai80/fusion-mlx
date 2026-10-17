@@ -246,10 +246,18 @@ class SVDVideoVAE(nn.Module):
         weight_files = sorted(glob.glob(os.path.join(path, "*.safetensors")))
         if not weight_files:
             weight_files = sorted(glob.glob(os.path.join(path, "*.npz")))
+        if not weight_files:
+            # #1219: silent empty-model fallback produced garbage decode
+            # when weights were missing. Fail loud.
+            raise FileNotFoundError(
+                f"SVD VAE: no .safetensors/.npz found at {path} — refusing "
+                "weightless VAE (#1219). Convert weights into this "
+                "directory first."
+            )
         if weight_files:
-            from mlx.utils import load_weights
+            from ..common.weights import load_dir_weights
 
-            weights = load_weights(path)
+            weights = load_dir_weights(path)
             model.update(weights)
         model = model.astype(dtype)
         logger.info("SVD VAE loaded dtype=%s", dtype)

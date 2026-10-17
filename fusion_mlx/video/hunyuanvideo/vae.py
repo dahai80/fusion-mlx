@@ -247,6 +247,46 @@ class EncoderDownBlock(nn.Module):
         return x
 
 
+def _remap_vae_weights(weights: dict) -> dict:
+    # #1219: map diffusers AutoencoderKLCausal3D keys to our module names.
+    # Verified 248/248 key + shape coverage vs
+    # hunyuanvideo-community/HunyuanVideo vae/diffusion_pytorch_model.safetensors.
+    import re
+
+    out = {}
+    for k, v in weights.items():
+        nk = re.sub(r"\.conv_norm_out\.", ".norm_out.", k)
+        # mid block first: resnets.0/1 -> block_1/2, attentions.0 -> attn_1
+        nk = re.sub(
+            r"\.mid_block\.resnets\.(\d+)\.",
+            lambda m: f".mid.block_{int(m.group(1))+1}.",
+            nk,
+        )
+        nk = re.sub(r"\.mid_block\.attentions\.0\.", ".mid.attn_1.", nk)
+        nk = re.sub(r"\.mid_block\.", ".mid.", nk)
+        nk = re.sub(r"\.down_blocks\.", ".down.", nk)
+        # decoder up order reversed vs ours: raw up_blocks.i -> up.{3-i}
+        m = re.match(r"decoder\.up_blocks\.(\d+)\.(.*)", nk)
+        if m:
+            nk = f"decoder.up.{3-int(m.group(1))}.{m.group(2)}"
+        nk = re.sub(r"\.resnets\.(\d+)\.", r".block.\1.", nk)
+        nk = re.sub(
+            r"\.(down|up)samplers\.0\.conv\.conv\.", r".\1sample.conv.conv.", nk
+        )
+        nk = re.sub(r"\.conv_shortcut\.", ".nin_shortcut.", nk)
+        # mid attention: 2D Linear to_q/to_k/to_v/to_out.0 -> q/k/v/proj_out
+        nk = nk.replace(".group_norm.", ".norm.")
+        for a, b in (
+            (".to_q.", ".q."),
+            (".to_k.", ".k."),
+            (".to_v.", ".v."),
+            (".to_out.0.", ".proj_out."),
+        ):
+            nk = nk.replace(a, b)
+        out[nk] = v
+    return out
+
+
 class HunyuanVideoVAE(nn.Module):
     def __init__(self, latent_channels=LATENT_CHANNELS, in_channels=IN_CHANNELS):
         super().__init__()
@@ -548,8 +588,13 @@ class HunyuanVideoVAE(nn.Module):
         vae = cls(**kwargs)
         safetensor_files = sorted(glob.glob(os.path.join(model_path, "*.safetensors")))
         if not safetensor_files:
-            logger.warning("no safetensors found at %s, using random init", model_path)
-            return vae
+            # #1219: random-init fallback produced "successful" garbage
+            # generations when weights were missing. Fail loud.
+            raise FileNotFoundError(
+                f"hunyuanvideo VAE: no .safetensors found at {model_path} — "
+                "refusing random-init generation (#1219). Convert weights "
+                "into this directory first."
+            )
         from mlx.utils import tree_flatten
 
         all_params = {}
@@ -557,17 +602,18 @@ class HunyuanVideoVAE(nn.Module):
             weights = mx.load(sf)
             all_params.update(weights)
 
+        all_params = _remap_vae_weights(all_params)
+
         flat = tree_flatten(vae.parameters())
         loaded = {}
         matched = 0
         unmatched = []
         for k, v in flat:
             if k in all_params:
-                loaded[k] = (
-                    all_params[k].astype(mx.float16)
-                    if all_params[k].dtype != mx.float16
-                    else all_params[k]
-                )
+                w = all_params[k]
+                if w.ndim == 2 and w.shape == v.shape[:2]:
+                    w = w.reshape(v.shape)
+                loaded[k] = w.astype(mx.float16) if w.dtype != mx.float16 else w
                 matched += 1
             else:
                 loaded[k] = v
@@ -579,8 +625,11 @@ class HunyuanVideoVAE(nn.Module):
             model_path,
         )
         if unmatched:
-            logger.debug(
-                "hunyuan vae: unmatched params (%d): %s", len(unmatched), unmatched[:20]
+            # #1219: partial weight load = partially random model. Fail loud.
+            raise ValueError(
+                f"hunyuanvideo VAE: {len(unmatched)}/{len(flat)} params "
+                f"unmatched from {model_path} (first: {unmatched[:5]}) — "
+                "refusing partially-random VAE (#1219)"
             )
 
         # Build nested dict preserving numeric string keys as dict keys

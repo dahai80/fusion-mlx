@@ -64,7 +64,53 @@ class OpenSoraBackend(VideoBackend):
             self._config = OpenSoraConfig.from_dict(cfg_dict)
         else:
             self._config = OpenSoraConfig()
+        # #1219: require converted artifacts up front — a request routed to
+        # this backend must never "succeed" against random init.
+        if not (Path(model_dir) / "weights.npz").is_file():
+            raise FileNotFoundError(
+                f"opensora: weights.npz not found at {model_dir} — refusing "
+                "to start backend against random-init DiT (#1219). Convert "
+                "weights first (fusion_mlx/video/opensora/convert.py)."
+            )
+        if not (Path(model_dir) / "t5_encoder").is_dir():
+            raise FileNotFoundError(
+                f"opensora: t5_encoder/ not found at {model_dir} — refusing "
+                "stub text-encoder generation (#1219). Expected layout: "
+                "weights.npz + t5_encoder/ + vae/ (+ clip/ optional)."
+            )
+        if not (Path(model_dir) / "vae").is_dir():
+            raise FileNotFoundError(
+                f"opensora: vae/ not found at {model_dir} — refusing "
+                "latent-as-video output (#1219). Expected layout: "
+                "weights.npz + t5_encoder/ + vae/ (+ clip/ optional)."
+            )
         logger.info(f"OpenSoraBackend started: {model_dir}")
+
+    async def _load_generation_components(self) -> None:
+        # #1219: generate() must pass REAL text encoder + VAE into the
+        # pipeline. Lazy-load once on the first generation request.
+        if self._model_dir is None:
+            raise RuntimeError("OpenSoraBackend not started — call start() first")
+        from fusion_mlx.video.hunyuanvideo.vae import HunyuanVideoVAE
+        from fusion_mlx.video.opensora.text_encoder import DualTextEncoder
+
+        model_dir = self._model_dir
+
+        def _load():
+            clip_dir = Path(model_dir) / "clip"
+            clip_path = str(clip_dir) if clip_dir.is_dir() else None
+            enc = DualTextEncoder(
+                t5_path=str(Path(model_dir) / "t5_encoder"), clip_path=clip_path
+            )
+            vae = HunyuanVideoVAE.from_pretrained(str(Path(model_dir) / "vae"))
+            mx.eval(vae.parameters())
+            return enc, vae
+
+        loop = asyncio.get_running_loop()
+        self._text_encoder, self._vae = await loop.run_in_executor(
+            get_executor("io"), _load
+        )
+        logger.info("opensora: generation components loaded (DualTextEncoder + VAE)")
 
     async def stop(self) -> None:
         self._model_dir = None
@@ -77,6 +123,8 @@ class OpenSoraBackend(VideoBackend):
 
         if self._model_dir is None:
             raise RuntimeError("OpenSoraBackend not started — call start() first")
+        if self._text_encoder is None or self._vae is None:
+            await self._load_generation_components()
 
         # #739 Surface B: ControlNet not fabricatable (shared MMDiT adapter,
         # no per-backend control model). Fail visible — refuse silent T2V.

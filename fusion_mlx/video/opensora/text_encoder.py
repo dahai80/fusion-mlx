@@ -21,7 +21,20 @@ class DualTextEncoder:
         t5_max_length: int = 512,
         clip_max_length: int = 77,
     ):
-        self.t5 = UMT5Encoder()
+        if not t5_path:
+            # #1219: weightless UMT5Encoder() is a permanent stub (zero
+            # embeddings) — refuse instead of silently degrading.
+            raise ValueError(
+                "opensora DualTextEncoder: t5_path is required — refusing "
+                "stub UMT5 with zero embeddings (#1219)."
+            )
+        self.t5 = UMT5Encoder.from_pretrained(t5_path)
+        if self.t5.is_stub():
+            raise RuntimeError(
+                f"opensora DualTextEncoder: UMT5 at {t5_path} failed to load "
+                "real weights/tokenizer (stub mode) — refusing zero-embedding "
+                "generation (#1219)."
+            )
         self.clip = CLIPTextEncoder(clip_path)
         self.t5_max_length = t5_max_length
         self.clip_max_length = clip_max_length
