@@ -281,6 +281,8 @@ latent 以 unpacked `(batch, c, h, w)` `mx.array` 在所有阶段间流转（匹
 
 **Wan2 compile 默认开启 (#1216)：** Wan2.2 DiT 去噪默认走 `mx.compile`（chunked-SDPA 内的 `mx.eval` 阻塞已移除）。Wan2.2-TI2V-5B q8 实测 1280x704x81f（seq=18480）：同一会话下编译后 24.0 s/步 vs eager 48.2 s/步（2.0x），输出 signalstats 逐帧一致，峰值 RSS 18.8 → 20.4 GiB。按请求关闭：`/v1/videos/generate` 传 `"no_compile": true`。
 
+**Wan2 turbo 少步 LoRA (#1217)：** `/v1/videos/generate` 在 Wan2.2-TI2V-5B 上支持 `"turbo": true`（或 `"lora": "<路径>"`）。挂载社区 turbo delta LoRA（Wan2.2-TI2V-5B-Turbo，Self-Forcing 4 步蒸馏、CFG 已内化；ComfyUI 导出格式完整消费：lora 对 + `diff_b` 偏置增量 + norm 权重增量），未显式指定时套用预设 steps=4、cfg=1.0（有效区间 4-8，超过 8 截断）。合并在权重空间完成并重量化，保持 q8 显存/速度档位。1280x704x81f seed 42 实测：总耗时 164.4s（去噪 39.6s，9.9 s/步）vs 默认 40 步基线 1416.6s（去噪 1254.1s，31.4 s/步）——端到端 8.6x、纯去噪 31.7x。signalstats 干净、无 NaN、无黑帧。预设详见 `docs/api-reference.md`。
+
 ### 步进回调 (#171)
 
 `generate()` (图像) 与 `VideoGenEngine.generate()` 接受 `on_step: Callable[[int, int], Awaitable[None]] | None`，在每个 denoise 步后以 `on_step(step, total_steps)` 触发。异步回调经 `asyncio.run_coroutine_threadsafe` 桥接到同步 mflux denoise 循环（fire-and-forget；错误仅记录日志，绝不阻塞生成）。图像在 `flux.callbacks` 上用真实逐步订阅器；视频经 `VideoGenParams.on_step` 接入。
