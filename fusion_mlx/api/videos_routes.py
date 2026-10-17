@@ -266,9 +266,11 @@ class VideoGenerateRequest(BaseModel):
     tiling: str | None = None
     no_compile: bool | None = None
     enhance_prompt: bool | None = None
-    # Turbo LoRA (MiniMax-H3, #1212): True = auto-detect the bundled
-    # turbo_lora.safetensors (few-step sampling, 4-8 useful range);
-    # str = explicit adapter path. Currently honored by the H3 backend only.
+    # Turbo LoRA (MiniMax-H3 #1212; Wan2.2 #1217): True = auto-detect a
+    # bundled turbo_lora.safetensors / *turbo*.safetensors (few-step
+    # sampling, 4-8 useful range); str = explicit adapter path. Honored by
+    # the H3 and wan2 backends; wan2 also applies a preset (steps=4,
+    # cfg=1.0) when unset.
     turbo: bool | None = None
     lora: str | None = None
     # Session ID for multi-shot latent reuse (Phase-2 UMA Radix Latent cache).

@@ -165,25 +165,22 @@ def load_wan_model(
             class_predicate=lambda path, m: _quantize_predicate(path, m),
         )
 
-    # Apply LoRAs: dequantize+merge for quantized models, weight merge for bf16
+    # Apply LoRAs: merge in weight space, then re-quantize targeted modules
+    # when the checkpoint is quantized. #1217: turbo-style delta LoRAs
+    # (Wan2.2-TI2V-5B-Turbo) target every Linear layer — the previous
+    # model-space path dequantized each targeted layer to a bf16 Linear,
+    # which for full-coverage LoRAs ballooned the q8 model back to bf16
+    # (memory + ~2x slower steps). Weight-space merge + re-quantize keeps
+    # the q8 profile; the added quantization error on merged layers is the
+    # same order as the original q8 round-trip.
     if loras:
-        if quantization:
-            # Dequantize LoRA-targeted layers, merge delta, replace with bf16 Linear.
-            # Non-LoRA layers stay 4-bit. Zero per-step overhead.
-            from .convert import _load_lora_configs
-            from .lora import apply_loras_to_model
+        from .convert import load_and_apply_loras
 
-            model.load_weights(list(weights.items()), strict=False)
-            mx.eval(model.parameters())
-            module_to_loras = _load_lora_configs(loras)
-            apply_loras_to_model(model, module_to_loras)
-            mx.eval(model.parameters())
-            return model
-        else:
-            # Weight merging: fold LoRA into bf16 weights before loading
-            from .convert import load_and_apply_loras
-
-            weights = load_and_apply_loras(dict(weights), loras)
+        weights = load_and_apply_loras(
+            dict(weights),
+            loras,
+            quantization_bits=quantization["bits"] if quantization else 0,
+        )
 
     model.load_weights(list(weights.items()), strict=False)
     mx.eval(model.parameters())

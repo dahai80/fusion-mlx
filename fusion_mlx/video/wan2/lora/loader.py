@@ -15,6 +15,11 @@ def load_lora_weights(lora_path: Path) -> dict[str, LoRAWeights]:
     # Group weights by module name, handling both naming conventions
     lora_weights = {}
     module_names = set()
+    # #1217: ComfyUI turbo extraction format also ships direct deltas —
+    # {module}.diff_b (bias) and {module}.diff (norm weight). Modules with
+    # only deltas (RMSNorm/LayerNorm targets) carry no low-rank pair.
+    weight_diffs: dict[str, mx.array] = {}
+    bias_diffs: dict[str, mx.array] = {}
 
     for key in all_weights:
         # Format 1: {module}.lora_A.weight / {module}.lora_B.weight
@@ -26,6 +31,15 @@ def load_lora_weights(lora_path: Path) -> dict[str, LoRAWeights]:
         match = re.match(r"(.+)\.lora_(down|up)\.weight$", key)
         if match:
             module_names.add(match.group(1))
+            continue
+        # Format 3 (#1217): direct deltas
+        match = re.match(r"(.+)\.diff_b$", key)
+        if match:
+            bias_diffs[match.group(1)] = all_weights[key]
+            continue
+        match = re.match(r"(.+)\.diff$", key)
+        if match:
+            weight_diffs[match.group(1)] = all_weights[key]
 
     for module_name in module_names:
         # Try both key conventions
@@ -66,6 +80,19 @@ def load_lora_weights(lora_path: Path) -> dict[str, LoRAWeights]:
             rank=rank,
             alpha=alpha,
             module_name=module_name,
+            bias_diff=bias_diffs.pop(module_name, None),
+        )
+
+    # Diff-only modules (norm targets without a low-rank pair)
+    for module_name in set(weight_diffs) | set(bias_diffs):
+        if module_name in lora_weights:
+            if weight_diffs.get(module_name) is not None:
+                lora_weights[module_name].weight_diff = weight_diffs[module_name]
+            continue
+        lora_weights[module_name] = LoRAWeights(
+            module_name=module_name,
+            weight_diff=weight_diffs.get(module_name),
+            bias_diff=bias_diffs.get(module_name),
         )
 
     if not lora_weights:

@@ -27,6 +27,55 @@ from .base import VideoBackend, VideoConstraints, VideoGenParams
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SCHEDULER = "unipc"
+# #1217 turbo LoRA fallback dir — Wan2.2-TI2V-5B-Turbo delta LoRA
+# (hum-ma/Wan22_TI2V_5B_Turbo_lora_rank_64_fp16.safetensors, ComfyUI
+# extraction format) downloaded via the HF mirror. lora=True auto-detects
+# here when nothing sits next to the model directory.
+_TURBO_LORA_FALLBACK_DIR = "~/.fusion-mlx/models/wan22-turbo-lora"
+# Turbo preset: distilled few-step sampling. 4 steps, CFG off (the
+# distillation bakes guidance in; guide_scale=1 skips the uncond pass so
+# each step is a single forward). Useful range 4-8.
+_TURBO_STEPS = 4
+_TURBO_MAX_STEPS = 8
+
+
+def _resolve_turbo_lora(lora: bool | str | None, model_dir: str | None) -> list | None:
+    # #1217: resolve the request-level lora knob to wan2 generate_video's
+    # ``loras=[(path, strength)]`` format. True = auto-detect (model dir
+    # first, then the shared fallback dir); str = explicit path; None = off.
+    if lora is None or lora is False:
+        return None
+    if lora is True:
+        import glob as _glob
+        from pathlib import Path
+
+        candidates: list[str] = []
+        if model_dir:
+            candidates += sorted(
+                _glob.glob(str(Path(model_dir) / "turbo_lora.safetensors"))
+            )
+            candidates += sorted(
+                _glob.glob(str(Path(model_dir) / "*turbo*.safetensors"))
+            )
+        candidates += sorted(
+            _glob.glob(
+                str(Path(_TURBO_LORA_FALLBACK_DIR).expanduser() / "*.safetensors")
+            )
+        )
+        if not candidates:
+            raise ValueError(
+                "wan2 lora=True but no turbo_lora.safetensors / *turbo*.safetensors "
+                f"next to the model or in {Path(_TURBO_LORA_FALLBACK_DIR).expanduser()}"
+            )
+        lora_file = candidates[0]
+    else:
+        from pathlib import Path
+
+        lora_file = str(lora)
+        if not Path(lora_file).expanduser().exists():
+            raise FileNotFoundError(f"wan2 lora file not found: {lora_file}")
+    logger.info("wan2 turbo lora resolved: %s", lora_file)
+    return [(lora_file, 1.0)]
 
 
 def _active_mem() -> int:
@@ -313,6 +362,31 @@ class Wan2Backend(VideoBackend):
         # _sdpa_chunked) is removed; E2E at seq=18480 verified quality and
         # s/step vs the post-#1208 eager baseline. Opt out via no_compile=True.
         no_compile = False if params.no_compile is None else params.no_compile
+        # #1217 turbo LoRA: resolve params.lora (True=auto-detect, str=path)
+        # and apply the few-step preset — steps default 4, guide_scale 1.0
+        # (CFG off) unless the request overrides either.
+        loras = _resolve_turbo_lora(params.lora, self._model_dir)
+        steps = params.num_inference_steps
+        guide_scale = params.guide_scale
+        if loras is not None:
+            if steps is None:
+                steps = _TURBO_STEPS
+            elif steps > _TURBO_MAX_STEPS:
+                logger.warning(
+                    "wan2 turbo lora active: steps=%d clamped to %d (turbo "
+                    "useful range 4-8; above that adds artifacts, no benefit)",
+                    steps,
+                    _TURBO_MAX_STEPS,
+                )
+                steps = _TURBO_MAX_STEPS
+            if guide_scale is None:
+                guide_scale = 1.0
+            logger.info(
+                "wan2 turbo preset: steps=%s guide_scale=%s scheduler=%s",
+                steps,
+                guide_scale,
+                scheduler,
+            )
 
         precomputed = None
         if self._t5_encoder is not None and self._t5_config is not None:
@@ -332,12 +406,13 @@ class Wan2Backend(VideoBackend):
                     width=params.width,
                     height=params.height,
                     num_frames=params.num_frames,
-                    steps=params.num_inference_steps,
-                    guide_scale=params.guide_scale,
+                    steps=steps,
+                    guide_scale=guide_scale,
                     shift=params.shift,
                     seed=base_seed + i,
                     scheduler=scheduler,
                     no_compile=no_compile,
+                    loras=loras,
                     tiling=params.tiling,
                     on_step_sync=sync_cb,
                     session_id=params.session_id,
@@ -1067,6 +1142,7 @@ def _generate_one(
     seed: int,
     scheduler: str,
     no_compile: bool = True,
+    loras: list | None = None,
     tiling: str | None = None,
     on_step_sync: Callable[[int, int], None] | None = None,
     session_id: str | None = None,
@@ -1113,10 +1189,14 @@ def _generate_one(
         gen_kwargs["reference_images"] = reference_images
     if camera_conditions is not None:
         gen_kwargs["camera_conditions"] = camera_conditions
+    if loras is not None:
+        # #1217: turbo/few-step delta LoRA — merged into the DiT weights at
+        # load time by load_wan_model (weight-space merge + re-quantize).
+        gen_kwargs["loras"] = loras
 
     logger.info(
         "Wan2 generate (%s): prompt_len=%d frames=%d %dx%d seed=%d i2v=%s "
-        "steps=%s compile=%s tiling=%s cached=%s vace=%s camera=%s",
+        "steps=%s compile=%s tiling=%s cached=%s vace=%s camera=%s lora=%s",
         "raw" if raw_output else "mp4",
         len(prompt),
         num_frames,
@@ -1130,6 +1210,7 @@ def _generate_one(
         precomputed_context is not None,
         bool(control_video),
         camera_conditions is not None,
+        loras is not None,
     )
 
     if raw_output:

@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Added — Wan2.2 turbo few-step LoRA + preset knob (#1217)
+- `/v1/videos/generate` on Wan2.2-TI2V-5B accepts `"turbo": true` (or
+  `"lora": "<path>"`, explicit path wins). Auto-detect looks for
+  `turbo_lora.safetensors` / `*turbo*.safetensors` next to the model, then
+  `~/.fusion-mlx/models/wan22-turbo-lora/`. The community turbo delta LoRA
+  (Wan2.2-TI2V-5B-Turbo, Self-Forcing distillation) ships the ComfyUI
+  extraction format — the wan2 LoRA runtime now consumes all of it:
+  `lora_down`/`lora_up` pairs, `diff_b` bias deltas, and
+  `norm_q`/`norm_k`/`norm3` weight deltas (previously silently dropped).
+  The merge moved to weight space with re-quantization for q8 checkpoints
+  (the old model-space path dequantized every targeted layer to bf16 —
+  turbo LoRAs target all 457 modules, which would balloon the q8 model
+  back to bf16). Preset applied when the request leaves steps/cfg unset:
+  steps=4 (range 4-8, clamped above 8), cfg=1.0 (distillation bakes
+  guidance in; also skips the uncond pass), scheduler unipc. Measured
+  1280x704x81f seed 42, same session: turbo 164.4s wall / 39.6s denoise
+  (9.9 s/step) vs the 40-step default baseline 1416.6s wall / 1254.1s
+  denoise (31.4 s/step) — 8.6x wall-clock, 31.7x denoise. Clean
+  signalstats (turbo YMIN 20-28 / YMAX 140-158; baseline YMIN 11-19 /
+  YMAX 233-243), no NaN, no black frames on either. Recommended preset
+  documented in `docs/api-reference.md`.
+
 ### Fixed — ltx2/ltx2_5 now emit per-step progress (#1243)
 - The ltx2 and ltx2_5 backends accepted `on_step` but never fired it, so
   the #1189 video watchdog heartbeat never advanced on those paths — any

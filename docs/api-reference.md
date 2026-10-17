@@ -365,6 +365,53 @@ steps=12`).
 
 ---
 
+## Videos
+
+### `POST /v1/videos/generate`
+
+#### Turbo LoRA few-step preset (Wan2.2, #1217)
+
+Wan2.2-TI2V-5B accepts a `turbo`/`lora` request knob that attaches a
+distilled few-step LoRA (community turbo delta extraction of
+[Wan2.2-TI2V-5B-Turbo](https://huggingface.co/quanhaol/Wan2.2-TI2V-5B-Turbo),
+Self-Forcing 4-step distillation with CFG baked in):
+
+- `"turbo": true` — auto-detect `turbo_lora.safetensors` /
+  `*turbo*.safetensors` next to the model directory, then
+  `~/.fusion-mlx/models/wan22-turbo-lora/*.safetensors`.
+- `"lora": "<path>"` — explicit adapter path (wins over `turbo`).
+
+The ComfyUI extraction format is fully consumed: `lora_down`/`lora_up`
+pairs, `diff_b` bias deltas, and `norm_q`/`norm_k`/`norm3` weight deltas,
+merged into the DiT weights at load time (weight-space merge + re-quantize
+for q8 checkpoints, so the q8 memory/speed profile is kept).
+
+Recommended preset (applied automatically when the knob is on and the
+request leaves `num_inference_steps`/`cfg_scale` unset):
+
+| Parameter | Value |
+|---|---|
+| Steps | 4 (useful range 4–8; above 8 is clamped with a warning) |
+| CFG (`guide_scale`) | 1.0 — the distillation bakes guidance in; 1.0 also skips the uncond pass (single forward per step) |
+| Scheduler | `unipc` (default) |
+| Size | 1280x704 / 704x1280 |
+
+Measured at 1280x704x81f seed 42 (same session, Wan2.2-TI2V-5B q8,
+compile ON): turbo 164.4s wall / 39.6s denoise (9.9 s/step) vs the
+40-step default 1416.6s wall / 1254.1s denoise (31.4 s/step) — 8.6x
+wall-clock, 31.7x denoise. Clean signalstats, no NaN, no black frames.
+
+```bash
+curl -X POST /v1/videos/generate -H "Content-Type: application/json" -d '{
+  "model": "Anes1032/Wan2.2-TI2V-5B-mlx-q8",
+  "prompt": "a golden retriever puppy runs along a beach at sunset",
+  "width": 1280, "height": 704, "num_frames": 81,
+  "seed": 42, "turbo": true
+}'
+```
+
+---
+
 ## MCP (Model Context Protocol)
 
 ### `GET /v1/mcp/tools`

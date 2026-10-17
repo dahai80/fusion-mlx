@@ -1728,6 +1728,19 @@ Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
 > identical output signalstats, peak RSS 18.8 → 20.4 GiB. Opt out per
 > request with `"no_compile": true` on `/v1/videos/generate`.
 
+> **Wan2 turbo few-step LoRA (#1217):** `/v1/videos/generate` accepts
+> `"turbo": true` (or `"lora": "<path>"`) on Wan2.2-TI2V-5B. It attaches
+> the community turbo delta LoRA (Wan2.2-TI2V-5B-Turbo, Self-Forcing
+> 4-step distillation, CFG baked in — ComfyUI extraction format fully
+> consumed: lora pairs + `diff_b` bias deltas + norm weight deltas) and
+> applies the preset steps=4, cfg=1.0 when unset (useful range 4-8,
+> clamped above 8). The merge runs in weight space and re-quantizes, so
+> the q8 memory/speed profile is kept. Measured at 1280x704x81f seed 42:
+> 164.4s wall (39.6s denoise, 9.9 s/step) vs the 40-step default baseline
+> 1416.6s wall (1254.1s denoise, 31.4 s/step) — 8.6x wall-clock, 31.7x
+> denoise. Clean signalstats, no NaN, no black frames on either output.
+> Preset details in `docs/api-reference.md`.
+
 ### VACE: Video-Conditioned Auxiliary Control (Wan2.1-VACE-14B)
 
 VACE enables **Video-to-Video (V2V)** and **Audio-to-Video (A2V)** control on

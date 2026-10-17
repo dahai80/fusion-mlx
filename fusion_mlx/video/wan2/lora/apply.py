@@ -12,6 +12,9 @@ def apply_lora_to_linear(
     modified_weight = linear_weight
 
     for weights, strength in lora_weights_and_strengths:
+        # #1217: diff-only entries (norm targets) carry no low-rank pair.
+        if weights.lora_A is None or weights.lora_B is None:
+            continue
         scale = weights.scale
         # Compute delta in float32 for precision, then cast back to avoid
         # promoting model weights (e.g. bfloat16 → float32 causes ~1.5x slowdown)
@@ -19,6 +22,46 @@ def apply_lora_to_linear(
         modified_weight = modified_weight + delta.astype(orig_dtype)
 
     return modified_weight
+
+
+def _apply_weight_diffs(
+    target: mx.array,
+    lora_weights_and_strengths: list[tuple[LoRAWeights, float]],
+) -> mx.array:
+    # #1217: ComfyUI turbo extraction direct deltas — {module}.diff applies
+    # to the module's weight (norms and Linear alike).
+    out = target
+    for weights, strength in lora_weights_and_strengths:
+        if weights.weight_diff is None:
+            continue
+        if list(weights.weight_diff.shape) != list(target.shape):
+            raise ValueError(
+                f"weight_diff shape mismatch for {weights.module_name}: "
+                f"diff={weights.weight_diff.shape} vs target={target.shape}"
+            )
+        delta = weights.weight_diff.astype(mx.float32) * strength
+        out = out + delta.astype(target.dtype)
+    return out
+
+
+def _apply_bias_diffs(
+    target: mx.array,
+    lora_weights_and_strengths: list[tuple[LoRAWeights, float]],
+) -> mx.array:
+    # #1217: {module}.diff_b applies to the module's bias (Linear and
+    # LayerNorm targets).
+    out = target
+    for weights, strength in lora_weights_and_strengths:
+        if weights.bias_diff is None:
+            continue
+        if list(weights.bias_diff.shape) != list(target.shape):
+            raise ValueError(
+                f"bias_diff shape mismatch for {weights.module_name}: "
+                f"diff={weights.bias_diff.shape} vs target={target.shape}"
+            )
+        delta = weights.bias_diff.astype(mx.float32) * strength
+        out = out + delta.astype(target.dtype)
+    return out
 
 
 def _normalize_wan_lora_key(lora_key: str, model_keys: set) -> str:
@@ -198,6 +241,8 @@ def apply_loras_to_weights(
             weight_key = normalized_name
 
         original_weight = modified_weights[weight_key]
+        has_lora = any(w.lora_A is not None for w, _ in loras)
+        has_weight_diff = any(w.weight_diff is not None for w, _ in loras)
 
         # Handle quantized weights: dequantize → apply delta → re-quantize
         scales_key = f"{normalized_name}.scales"
@@ -221,7 +266,11 @@ def apply_loras_to_weights(
                 group_size=group_size,
                 bits=quantization_bits,
             )
-            modified = apply_lora_to_linear(dequantized, loras)
+            modified = (
+                apply_lora_to_linear(dequantized, loras) if has_lora else dequantized
+            )
+            if has_weight_diff:
+                modified = _apply_weight_diffs(modified, loras)
             # Re-quantize with same parameters
             new_w, new_scales, new_biases = mx.quantize(
                 modified, group_size=group_size, bits=quantization_bits
@@ -230,7 +279,23 @@ def apply_loras_to_weights(
             modified_weights[scales_key] = new_scales
             modified_weights[biases_key] = new_biases
         else:
-            modified_weights[weight_key] = apply_lora_to_linear(original_weight, loras)
+            modified = (
+                apply_lora_to_linear(original_weight, loras)
+                if has_lora
+                else original_weight
+            )
+            if has_weight_diff:
+                modified = _apply_weight_diffs(modified, loras)
+            modified_weights[weight_key] = modified
+
+        # #1217: bias delta ({module}.diff_b) — the plain Linear/LayerNorm
+        # bias key, distinct from the per-group quant ``.biases`` above.
+        bias_key = f"{normalized_name}.bias"
+        has_bias_diff = any(w.bias_diff is not None for w, _ in loras)
+        if has_bias_diff and bias_key in modified_weights:
+            modified_weights[bias_key] = _apply_bias_diffs(
+                modified_weights[bias_key], loras
+            )
 
         applied_count += 1
 
@@ -255,6 +320,8 @@ class LoRALinear(nn.Module):
     def __call__(self, x: mx.array) -> mx.array:
         output = self.linear(x)
         for weights, strength in self.lora_weights_and_strengths:
+            if weights.lora_A is None or weights.lora_B is None:
+                continue
             scale = weights.scale
             lora_out = x @ weights.lora_A.T @ weights.lora_B.T
             output = output + (scale * strength * lora_out)
@@ -307,6 +374,9 @@ def apply_loras_to_model(
                 print(f"    DEBUG: '{lora_key}' -> '{module_path}' -> module not found")
             continue
 
+        has_weight_diff = any(w.weight_diff is not None for w, _ in loras)
+        has_bias_diff = any(w.bias_diff is not None for w, _ in loras)
+
         if isinstance(target, nn.QuantizedLinear):
             # Dequantize → merge LoRA → replace with bf16 Linear
             weight = mx.dequantize(
@@ -317,10 +387,17 @@ def apply_loras_to_model(
                 bits=target.bits,
             )
             merged = apply_lora_to_linear(weight, loras)
+            if has_weight_diff:
+                merged = _apply_weight_diffs(merged, loras)
             new_linear = nn.Linear(merged.shape[1], merged.shape[0])
             new_linear.weight = merged
-            if "bias" in target:
-                new_linear.bias = target.bias
+            if "bias" in target and target.bias is not None:
+                # #1217: merge the ComfyUI ``diff_b`` bias delta if present.
+                new_linear.bias = (
+                    _apply_bias_diffs(target.bias, loras)
+                    if has_bias_diff
+                    else target.bias
+                )
             if leaf_name.isdigit():
                 parent[int(leaf_name)] = new_linear
             else:
@@ -329,7 +406,32 @@ def apply_loras_to_model(
             applied_count += 1
         elif isinstance(target, nn.Linear):
             # Merge directly into weight
-            target.weight = apply_lora_to_linear(target.weight, loras)
+            merged = apply_lora_to_linear(target.weight, loras)
+            if has_weight_diff:
+                merged = _apply_weight_diffs(merged, loras)
+            target.weight = merged
+            if "bias" in target and target.bias is not None and has_bias_diff:
+                target.bias = _apply_bias_diffs(target.bias, loras)
+            applied_count += 1
+        elif has_weight_diff or has_bias_diff:
+            # #1217: non-Linear targets (RMSNorm/LayerNorm) carrying direct
+            # deltas from the ComfyUI turbo extraction format.
+            if not hasattr(target, "weight"):
+                skipped.append(lora_key)
+                if verbose:
+                    print(
+                        f"    DEBUG: '{module_path}' is {type(target).__name__}, "
+                        f"no weight parameter"
+                    )
+                continue
+            target.weight = _apply_weight_diffs(target.weight, loras)
+            if has_bias_diff:
+                if getattr(target, "bias", None) is None:
+                    skipped.append(lora_key)
+                    if verbose:
+                        print(f"    DEBUG: '{module_path}' has bias_diff but no bias")
+                    continue
+                target.bias = _apply_bias_diffs(target.bias, loras)
             applied_count += 1
         else:
             skipped.append(lora_key)
