@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Changed — Wan2 mx.compile now defaults ON (#1216)
+- The chunked-SDPA helper no longer calls `mx.eval` mid-loop (it raised
+  "Attempting to eval an array during function transformations" under
+  `mx.compile`), so the long-seq path (1280x704x81f, seq=18480) can
+  compile. Wan2.2 `no_compile` now defaults to compile-ON for both the
+  API generate path and the FusionComfyUI stage path; opt out with
+  `no_compile: true` on `/v1/videos/generate`. Measured on Wan2.2-TI2V-5B
+  q8 (1280x704x81f, seed 42, same session): 48.2 s/step eager vs
+  24.0 s/step compiled (2.0x), identical signalstats, no NaN, peak RSS
+  18.8 -> 20.4 GiB.
+
+### Fixed — video executor falsely poisoned by long-but-progressing generations
+- The #1189 watchdog heartbeat never fired for video: the engine's step
+  wrapper was sync while `StepCallback` is async (`run_coroutine_threadsafe`
+  TypeError swallowed at debug level), no wrapper was injected on the
+  plain HTTP route, and the hunyuanvideo backend hardcoded `on_step=None`.
+  Any wan2/hunyuanvideo render over the 600s staleness window (e.g.
+  1280x704x81f eager at 785s) was reported hung and poisoned the video
+  executor while still denoising. The wrapper is now async, a
+  heartbeat-only wrapper (purely internal, no user-visible callback
+  semantics — #171 contract kept) is injected when the caller passes no
+  `on_step`, and hunyuanvideo converts the async callback via
+  `make_sync_step_callback`. Remaining ltx2 per-step gap tracked in #1243.
+
 ### Fixed — video pipelines silently generated garbage with missing/random weights (#1219)
 - **Fail-visible weight loading:** svd / hunyuanvideo / opensora pipelines
   raise `FileNotFoundError` when converted weights are missing instead of

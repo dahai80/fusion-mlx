@@ -88,3 +88,26 @@ def test_sdpa_chunked_uneven_last_chunk(monkeypatch):
     chunked = _sdpa_chunked(q, k, v, scale)
     mx.eval(direct, chunked)
     assert mx.allclose(direct, chunked, atol=1e-5).item() is True
+
+
+def test_sdpa_chunked_safe_under_mx_compile(monkeypatch):
+    # #1216: the chunked path must not call mx.eval internally — eval
+    # during compile raises "Attempting to eval an array during function
+    # transformations". Compiled chunked result must equal eager chunked.
+    monkeypatch.setenv("FUSION_WAN2_ATTN_CHUNK", "16")
+    # Fixed seed: the global mx RNG state varies with test order, and
+    # compile-fusion reassociation can push fp32 diffs just past a tight
+    # atol on unlucky draws (flaked once at 1e-5 in a combined run).
+    mx.random.seed(1216)
+    q, k, v = _rand_qkv(s=64)
+    scale = (q.shape[-1]) ** -0.5
+
+    def _run(qq, kk, vv):
+        return _sdpa_chunked(qq, kk, vv, scale)
+
+    compiled = mx.compile(_run)
+    eager = _sdpa_chunked(q, k, v, scale)
+    out = compiled(q, k, v)
+    mx.eval(eager, out)
+    assert out.shape == eager.shape
+    assert mx.allclose(eager, out, atol=1e-4, rtol=1e-4).item() is True

@@ -271,22 +271,33 @@ class VideoGenEngine(BaseNonStreamingEngine):
                 "owner": self,
             }
 
-            # Wrap ONLY when the caller supplied a callback: #171 contract —
-            # the engine must not inject a callback into the backend the
-            # caller did not ask for. Stage-2 FPS signaling therefore fires
-            # for engine-layer callers (ComfyUI/SDK paths, which pass
-            # on_step); the plain HTTP video route (no on_step) keeps the
-            # stage-1 static pacing gate only. See docs/pacing-gate.md.
+            # Wrap ALWAYS, but keep the #171 contract: when the caller
+            # supplied no callback we inject a heartbeat-only wrapper —
+            # purely internal (advances the #1189 watchdog, emits nothing),
+            # so no user-visible callback semantics are injected. Without
+            # it, a long-but-progressing render on the plain HTTP route
+            # (wan2/hunyuanvideo 1280x704 > 600s) was falsely poisoned at
+            # the staleness window while still denoising (#1216 E2E hit).
+            # Stage-2 FPS signaling still fires only for engine-layer
+            # callers (ComfyUI/SDK paths, which pass on_step); the plain
+            # HTTP route keeps the stage-1 static pacing gate only. See
+            # docs/pacing-gate.md.
             if params.on_step is not None:
                 _user_step_cb = params.on_step
 
-                def _wd_step_cb(step: int, total: int) -> None:
+                async def _wd_step_cb(step: int, total: int) -> None:
                     # Advance the watchdog heartbeat on every denoise step.
                     _vid_watchdog.heartbeat()
                     _fps_signal(_fps_state)
-                    _user_step_cb(step, total)
+                    await _user_step_cb(step, total)
 
                 params.on_step = _wd_step_cb
+            else:
+
+                async def _wd_hb_only(step: int, total: int) -> None:
+                    _vid_watchdog.heartbeat()
+
+                params.on_step = _wd_hb_only
             _vid_watchdog.begin_job("video_generate")
             try:
                 result = await self._backend.generate(params)

@@ -100,7 +100,13 @@ def _sdpa_chunked(q, k, v, scale, mask=None):
         q_chunk = q[:, :, start:end, :]
         out_chunk = _sdpa(q_chunk, k, v, scale, mask)
         outs.append(out_chunk)
-        mx.eval(out_chunk)
+    # #1216: no incremental mx.eval here — eval inside a compiled graph
+    # raises ("Attempting to eval an array during function transformations")
+    # and blocked mx.compile for the long-seq path. Peak memory is bounded
+    # by the chunk outputs themselves (needed for the final concat); the
+    # per-chunk SDPA intermediates live inside the mx.fast kernel and are
+    # freed at kernel end either way. Eager-path peak re-verified in the
+    # #1216 E2E (no regression at seq=18480).
     return mx.concatenate(outs, axis=2)
 
 

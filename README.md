@@ -1721,6 +1721,13 @@ Aliases: `svd-xt`, `stable-video-diffusion`, `cosmos-1.0`, `predict2`,
 > visibly (raises) instead of silently zeroing pixels into a static
 > clip.
 
+> **Wan2 compile default-ON (#1216):** the Wan2.2 DiT denoise now runs
+> under `mx.compile` by default (the chunked-SDPA `mx.eval` blocker is
+> removed). Measured on Wan2.2-TI2V-5B q8 at 1280x704x81f (seq=18480):
+> 24.0 s/step compiled vs 48.2 s/step eager in the same session (2.0x),
+> identical output signalstats, peak RSS 18.8 → 20.4 GiB. Opt out per
+> request with `"no_compile": true` on `/v1/videos/generate`.
+
 ### VACE: Video-Conditioned Auxiliary Control (Wan2.1-VACE-14B)
 
 VACE enables **Video-to-Video (V2V)** and **Audio-to-Video (A2V)** control on

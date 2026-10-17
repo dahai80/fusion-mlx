@@ -259,8 +259,9 @@ class VideoGenerateRequest(BaseModel):
     shift: float | None = None
     # Diffusion acceleration knobs (forwarded only when set):
     # tiling: VAE/memory tiling strategy ('auto'/'none'/etc).
-    # no_compile: True=mx.compile OFF (safe/verified default); False=compiled
-    #   faster path (opt-in, unverified for some backends).
+    # no_compile: True=mx.compile OFF (opt-out); False/None=compiled faster
+    #   path (wan2 default-ON since #1216; other backends may still default
+    #   eager — backend-specific).
     # enhance_prompt: run backend prompt-enhancer (extra latency, quality boost).
     tiling: str | None = None
     no_compile: bool | None = None

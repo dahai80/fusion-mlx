@@ -309,7 +309,10 @@ class Wan2Backend(VideoBackend):
             params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )
         scheduler = params.scheduler or _DEFAULT_SCHEDULER
-        no_compile = True if params.no_compile is None else params.no_compile
+        # #1216: compile now defaults ON. The blocker (incremental mx.eval in
+        # _sdpa_chunked) is removed; E2E at seq=18480 verified quality and
+        # s/step vs the post-#1208 eager baseline. Opt out via no_compile=True.
+        no_compile = False if params.no_compile is None else params.no_compile
 
         precomputed = None
         if self._t5_encoder is not None and self._t5_config is not None:
@@ -520,7 +523,10 @@ class Wan2Backend(VideoBackend):
         guide_scale = cfg
         shift = config.sample_shift
         scheduler = "unipc"
-        no_compile = True
+        # #1216: same compile default flip as the generate() path above —
+        # _sdpa_chunked is compile-safe now; opt-out not wired on this
+        # stage path (hardcoded like the other stage knobs).
+        no_compile = False
         models = self._stage_dit_models
         on_step = self._stage_on_step
 
