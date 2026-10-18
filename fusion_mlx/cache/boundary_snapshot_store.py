@@ -92,6 +92,12 @@ class BoundarySnapshotSSDStore:
     # constructor cleanup — so the only knob is per-call latency.
     _CLEANUP_ALL_TIMEOUT_S = 5.0
     _CLEANUP_REQUEST_TIMEOUT_S = 2.0
+    # Disk budget for the ephemeral _boundary_snapshots dir. Without a cap a
+    # long-running server accumulates orphaned per-request snapshots until the
+    # volume fills (observed: 224GB → "No space left on device" → scheduler
+    # stall + image admission 507). Evicted snapshots degrade gracefully:
+    # load() returns None on a missing file.
+    _DISK_BUDGET_BYTES = 64 * 1024**3
     # #1032: max lifetime of a cancelled-request counter entry. A live writer
     # drains the counter (and removes the entry) well within this window; a
     # dead/stuck writer never does, so the entry auto-expires in
@@ -106,13 +112,25 @@ class BoundarySnapshotSSDStore:
         prefix_max_bytes: int | None = None,
     ) -> None:
         self._snapshot_dir = base_dir / "_boundary_snapshots"
-        # Clean up orphaned files from previous crashes.
+        # Clean up orphaned files from previous crashes. Retry a few times:
+        # rmtree can race with a dying writer thread recreating files, which
+        # surfaces as Errno 66 and (before the retry) left 100s of GB of
+        # orphans behind permanently.
         if self._snapshot_dir.exists():
-            try:
-                shutil.rmtree(self._snapshot_dir)
-            except Exception as e:
-                logger.warning("Failed to clean up orphaned boundary snapshots: %s", e)
+            for _attempt in range(3):
+                try:
+                    shutil.rmtree(self._snapshot_dir)
+                    break
+                except Exception as e:
+                    logger.warning(
+                        "Failed to clean up orphaned boundary snapshots "
+                        "(attempt %d/3): %s",
+                        _attempt + 1,
+                        e,
+                    )
+                    time.sleep(0.5)
         self._snapshot_dir.mkdir(parents=True, exist_ok=True)
+        self._disk_bytes = self._scan_disk_bytes()
 
         # request_id -> {token_count -> file_path}
         self._file_registry: dict[str, dict[int, Path]] = {}
@@ -1013,6 +1031,78 @@ class BoundarySnapshotSSDStore:
     def _file_path(self, request_id: str, token_count: int) -> Path:
         return self._snapshot_dir / request_id / f"{token_count}.safetensors"
 
+    def _scan_disk_bytes(self) -> int:
+        """Total bytes of snapshot files currently on disk."""
+        total = 0
+        try:
+            for p in self._snapshot_dir.rglob("*.safetensors"):
+                try:
+                    total += p.stat().st_size
+                except OSError:
+                    pass
+        except Exception as e:
+            logger.debug("boundary snapshot disk scan failed: %s", e)
+        return total
+
+    def _enforce_disk_budget(self) -> None:
+        """Evict oldest snapshot files when the dir exceeds the disk budget.
+
+        Called on the writer thread after each successful write. Eviction is
+        safe: load() returns None for a missing file and the scheduler treats
+        that as a cache miss. Registry entries for evicted files are dropped
+        so has() stays truthful.
+        """
+        if self._disk_bytes <= self._DISK_BUDGET_BYTES:
+            return
+        try:
+            files = [
+                p
+                for p in self._snapshot_dir.rglob("*.safetensors")
+                if not p.name.endswith("_tmp.safetensors")
+            ]
+            now = time.time()
+
+            # Oldest first; mtime fallback to now so unstat'able files go first.
+            def _mtime(p: Path) -> float:
+                try:
+                    return p.stat().st_mtime
+                except OSError:
+                    return now
+
+            files.sort(key=_mtime)
+            freed = 0
+            paths_evicted: set[Path] = set()
+            for p in files:
+                if self._disk_bytes - freed <= self._DISK_BUDGET_BYTES:
+                    break
+                try:
+                    size = p.stat().st_size
+                    p.unlink()
+                    freed += size
+                    paths_evicted.add(p)
+                except OSError as e:
+                    logger.debug("boundary snapshot evict failed at %s: %s", p, e)
+            if freed:
+                self._disk_bytes -= freed
+                logger.info(
+                    "Boundary snapshot disk budget exceeded: evicted %d files "
+                    "(%.1f GB freed, %.1f GB remaining)",
+                    len(paths_evicted),
+                    freed / 1024**3,
+                    self._disk_bytes / 1024**3,
+                )
+                # Drop registry entries pointing at evicted files.
+                with self._registry_lock:
+                    for rid in list(self._file_registry):
+                        req_files = self._file_registry[rid]
+                        for tc, fp in list(req_files.items()):
+                            if fp in paths_evicted:
+                                req_files.pop(tc, None)
+                        if not req_files:
+                            self._file_registry.pop(rid, None)
+        except Exception as e:
+            logger.debug("boundary snapshot disk budget check failed: %s", e)
+
     def _writer_loop(self) -> None:
         """Background thread that writes safetensors files."""
         while not self._shutdown.is_set():
@@ -1103,6 +1193,11 @@ class BoundarySnapshotSSDStore:
                 return
 
             os.rename(str(temp_path), str(file_path))
+            try:
+                self._disk_bytes += file_path.stat().st_size
+                self._enforce_disk_budget()
+            except Exception as e:
+                logger.debug("snapshot disk-budget enforcement failed: %s", e)
 
             # Cleanup may race with a queued write; remove any late file.
             if self._is_cancelled(pw_key[0]):

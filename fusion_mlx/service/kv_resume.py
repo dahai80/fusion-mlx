@@ -24,12 +24,19 @@ the persist end is a no-op and the resume end returns None.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 
 logger = logging.getLogger(__name__)
 
 _RESUME_ENV = "FUSION_MLX_KV_CHECKPOINT_INTERVAL"
+
+
+def _prompt_hash(prompt_token_ids: list[int], num_tokens: int) -> str:
+    h = hashlib.sha256()
+    h.update(",".join(map(str, prompt_token_ids[:num_tokens])).encode())
+    return h.hexdigest()
 
 
 def _interval() -> int:
@@ -49,6 +56,7 @@ def persist_request_kv(
     num_tokens: int,
     model_name: str | None = None,
     kv_dtype: str = "bf16",
+    prompt_token_ids: list[int] | None = None,
 ) -> str | None:
     """Persist a live KV cache to disk on disconnect/abort.
 
@@ -57,6 +65,11 @@ def persist_request_kv(
     Writes a single checkpoint at the current token offset regardless of
     the boundary cadence — a disconnect is an unscheduled event and the
     last partial boundary is exactly the state worth resuming from.
+
+    ``prompt_token_ids`` records a content hash of the cached prefix so a
+    RETRY (new request_id, same prompt) can find this checkpoint via
+    ``find_resumable_kv_for_prompt`` — request_id-keyed lookup cannot
+    match retries.
 
     Returns the safetensors path on success, None when disabled or the
     write failed. Never raises: a persistence bug must not block abort.
@@ -80,6 +93,16 @@ def persist_request_kv(
         req_hash = request_hash(request_id, model_name)
         root = get_default_root()
         requires_full = model_requires_full_checkpoint(model_name)
+        extra_metadata = {"source": "disconnect_persist", "request_id": request_id}
+        if prompt_token_ids:
+            try:
+                extra_metadata["prompt_hash"] = _prompt_hash(
+                    list(prompt_token_ids), int(num_tokens)
+                )
+            except Exception as hash_exc:
+                logger.debug(
+                    "[kv_resume] prompt_hash skipped for %s: %s", request_id, hash_exc
+                )
         path = write_checkpoint(
             list(prompt_cache),
             root=root,
@@ -88,7 +111,7 @@ def persist_request_kv(
             kv_dtype=kv_dtype,
             requires_full_checkpoint=requires_full,
             model_name=model_name,
-            extra_metadata={"source": "disconnect_persist", "request_id": request_id},
+            extra_metadata=extra_metadata,
         )
         if path is not None:
             logger.info(
@@ -155,6 +178,89 @@ def load_resumable_kv(
         return loaded
     except Exception as e:
         logger.warning("[kv_resume] load failed for %s: %s", request_id, e)
+        return None
+
+
+def find_resumable_kv_for_prompt(
+    prompt_token_ids: list[int],
+    model_name: str | None = None,
+):
+    """Find a persisted checkpoint whose cached prefix matches this prompt.
+
+    Abort-persisted checkpoints are keyed by the ABORTED request_id, but a
+    client retry arrives with a NEW request_id — request_id-keyed lookup
+    (``load_resumable_kv``) can never match it. This finder matches by
+    content instead: the sidecar's ``prompt_hash`` (sha256 of the cached
+    token prefix, recorded at persist time) plus model_name.
+
+    Scans sidecar JSON only (cheap); loads the safetensors body of the
+    newest match. Returns a ``LoadedCheckpoint`` with token_offset a
+    strict prefix of ``prompt_token_ids``, or None. Never raises.
+    """
+    interval = _interval()
+    if interval <= 0 or not prompt_token_ids:
+        return None
+    try:
+        import json
+
+        from ..runtime.disk_kv_checkpoint import (
+            _CHECKPOINT_EXT,
+            _METADATA_EXT,
+            get_default_root,
+            load_checkpoint,
+            scan_checkpoints,
+        )
+
+        root = get_default_root()
+        entries = scan_checkpoints(root)
+        # Newest first so the freshest abort snapshot wins.
+        entries.sort(key=lambda t: t[1], reverse=True)
+        for path, _mtime, _size in entries:
+            sidecar_path = path.replace(_CHECKPOINT_EXT, _METADATA_EXT)
+            try:
+                with open(sidecar_path, encoding="utf-8") as fh:
+                    meta = json.load(fh)
+            except Exception:
+                continue
+            if meta.get("source") != "disconnect_persist":
+                continue
+            stored_model = meta.get("model_name")
+            if model_name and stored_model and str(stored_model) != str(model_name):
+                continue
+            offset = meta.get("token_offset")
+            if not isinstance(offset, int) or offset <= 0:
+                continue
+            if offset > len(prompt_token_ids):
+                continue
+            if meta.get("prompt_hash") != _prompt_hash(prompt_token_ids, offset):
+                continue
+            loaded = load_checkpoint(path)
+            if loaded is None:
+                continue
+            # Trust the body's own offset over the sidecar copy.
+            final_offset = int(loaded.token_offset) or offset
+            if final_offset <= 0 or final_offset > len(prompt_token_ids):
+                continue
+            if meta.get("prompt_hash") != _prompt_hash(prompt_token_ids, final_offset):
+                logger.warning(
+                    "[kv_resume] body offset %d != sidecar offset %d for %s; "
+                    "skipping mismatched checkpoint",
+                    final_offset,
+                    offset,
+                    path,
+                )
+                continue
+            logger.info(
+                "[kv_resume] retry re-seed match: %d cached tokens for a "
+                "%d-token prompt (from %s)",
+                final_offset,
+                len(prompt_token_ids),
+                path,
+            )
+            return loaded
+        return None
+    except Exception as e:
+        logger.warning("[kv_resume] prompt-based find failed: %s", e)
         return None
 
 

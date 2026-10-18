@@ -450,6 +450,35 @@ def _preflight_memory_check(self, request: "Request") -> _PreflightRejection | N
             limit_bytes=int(hard_limit),
         )
 
+    # Full-context KV budget: the chunked-prefill peak above only covers the
+    # transient of one chunk. The resident KV of the WHOLE prompt is live
+    # wired memory for the life of the request (decode reads all of it every
+    # step) and cannot be evicted to the SSD tier. A 128k prompt slipped past
+    # the chunk check and froze the Metal worker when wired memory ran out
+    # (issue: G2 watchdog poison, step-counter freeze). Reject when the
+    # prompt alone cannot fit the KV headroom; an over-large max_tokens is
+    # handled separately by clamp_max_tokens_to_kv_ceiling (shrinks instead
+    # of rejecting).
+    plan = self.get_memory_plan()
+    if plan is not None and plan.kv_bytes_per_token > 0:
+        kv_headroom_tokens = max(0, hard_limit - current) // plan.kv_bytes_per_token
+        if prompt_tokens > kv_headroom_tokens:
+            prompt_gb = prompt_tokens * plan.kv_bytes_per_token / 1024**3
+            message = (
+                f"Request rejected: prompt of {prompt_tokens} tokens needs "
+                f"{prompt_gb:.1f}GB of resident KV but only "
+                f"{kv_headroom_tokens} tokens fit the current memory headroom "
+                f"(hard_limit={hard_limit / 1024**3:.1f}GB, "
+                f"current={current / 1024**3:.1f}GB, "
+                f"kv_bytes_per_token={plan.kv_bytes_per_token}). "
+                "Reduce context length or free memory."
+            )
+            return _PreflightRejection(
+                message=message,
+                estimated_bytes=int(prompt_tokens * plan.kv_bytes_per_token),
+                limit_bytes=int(hard_limit - current),
+            )
+
     safety_rejection = _preflight_safety_rejection(
         self,
         num_prompt_tokens=prompt_tokens,

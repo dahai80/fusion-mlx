@@ -49,6 +49,72 @@ class FakeStreamingCore:
         self.aborted_request_id = request_id
 
 
+class _DeadFlagCore:
+    """Minimal core exposing is_dead/dead_reason like EngineCore."""
+
+    def __init__(self, dead=False, reason=None):
+        self._dead = dead
+        self._reason = reason
+
+    def is_dead(self):
+        return self._dead
+
+    @property
+    def dead_reason(self):
+        return self._reason
+
+    def mark_dead(self, reason):
+        self._dead = True
+        self._reason = reason
+
+
+class TestBatchedEngineDeadPassthrough:
+    """#1176 recovery bug: BatchedEngine had mark_dead but no is_dead
+    passthrough, so api/_guards.py's poison-recovery scan
+    (getattr(engine, "is_dead", None)) saw NO dead engine, cleared the
+    poison flag, and every later request 503'd forever."""
+
+    def _engine(self, core):
+        from fusion_mlx.engines.batched import BatchedEngine
+
+        eng = BatchedEngine(model_name="test-model")
+        eng._loaded = True
+        eng._engine = SimpleNamespace(engine=core)
+        return eng
+
+    def test_is_dead_delegates_to_inner_core(self):
+        assert self._engine(_DeadFlagCore(dead=True, reason="hung")).is_dead() is True
+
+    def test_is_dead_false_when_core_alive(self):
+        assert self._engine(_DeadFlagCore()).is_dead() is False
+
+    def test_is_dead_false_without_inner_engine(self):
+        from fusion_mlx.engines.batched import BatchedEngine
+
+        eng = BatchedEngine(model_name="test-model")
+        assert eng.is_dead() is False
+
+    def test_dead_reason_delegates_to_inner_core(self):
+        eng = self._engine(_DeadFlagCore(dead=True, reason="G2 hung"))
+        assert eng.dead_reason == "G2 hung"
+
+    def test_dead_reason_none_without_inner_engine(self):
+        from fusion_mlx.engines.batched import BatchedEngine
+
+        eng = BatchedEngine(model_name="test-model")
+        assert eng.dead_reason is None
+
+    def test_guard_scan_finds_marked_engine(self):
+        """End-to-end shape of the #1176 scan: the guard's exact getattr
+        chain must find a mark_dead'd BatchedEngine."""
+        core = _DeadFlagCore()
+        eng = self._engine(core)
+        assert callable(getattr(eng, "is_dead", None))
+        assert eng.is_dead() is False
+        core.mark_dead("G2 hung LLM worker thread")
+        assert eng.is_dead() is True  # scan now finds it → unload + reload
+
+
 class TestGenerationOutput:
     """Tests for GenerationOutput dataclass."""
 

@@ -27,7 +27,11 @@ admin_router = APIRouter(dependencies=[Depends(verify_api_key_or_x_api_key)])
 
 @probe_router.api_route("/", methods=["GET", "HEAD"])
 async def root():
-    return {"status": "ok"}
+    # #1220: web/ monitor SPA when built (union-web shell module); legacy
+    # JSON probe otherwise. {"status": "ok"} stays at /health /healthz /livez.
+    from ..web_static import web_root_or_json
+
+    return await web_root_or_json()
 
 
 @probe_router.get("/health")

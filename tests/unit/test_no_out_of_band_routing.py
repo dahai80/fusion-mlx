@@ -139,6 +139,9 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # Test/integration helpers — server URL for integration suites,
         # not consulted at runtime by the engine.
         "FUSION_MLX_BASE_URL",
+        # #1220: override the directory the web/ monitor SPA is served from
+        # (packaging + tests). Static asset hosting, never engine routing.
+        "FUSION_MLX_WEB_DIST",
         # Telemetry consent toggle (off/on), not engine routing.
         "FUSION_MLX_TELEMETRY",
         # Telemetry debug log toggle (stderr trace of POST attempts to

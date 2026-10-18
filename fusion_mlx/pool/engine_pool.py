@@ -396,6 +396,84 @@ class EnginePool:
             enforcer.update_loaded_model_bytes(-int(tracked - live))
         return max(active_mem, phys, live) + pending_load_bytes
 
+    def _purge_pure_caches(self) -> int:
+        # #1250: drop pure caches before giving up on admission. Prefix KV
+        # blocks, latent caches and boundary snapshots outlive model unloads
+        # and can hold tens of GB of wired memory that no LRU victim accounts
+        # for. All three degrade to a cache miss when dropped.
+        purged = 0
+        for model_id, entry in list(self._entries.items()):
+            engine = entry.engine
+            if engine is None:
+                continue
+            if self._entry_has_active_requests(entry):
+                # block_aware_cache.clear() drops every request table and the
+                # paged manager frees those blocks — doing that under a live
+                # generation would pull the KV out from under it. Skip busy
+                # engines; their caches are not orphaned anyway.
+                logger.info(
+                    "admission purge: skipping '%s' (active requests)",
+                    model_id,
+                )
+                continue
+            core = getattr(getattr(engine, "_engine", None), "engine", None)
+            scheduler = getattr(core, "scheduler", None)
+            if scheduler is None:
+                continue
+            cache = getattr(scheduler, "block_aware_cache", None)
+            if cache is not None:
+                try:
+                    n = cache.clear()
+                    purged += int(n or 0)
+                    logger.info(
+                        "admission purge: prefix cache of '%s' cleared (%s entries)",
+                        model_id,
+                        n,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "admission purge: prefix cache clear failed for '%s': %s",
+                        model_id,
+                        exc,
+                    )
+            store = getattr(scheduler, "_boundary_snapshot_store", None)
+            cleanup = getattr(store, "cleanup_all", None)
+            if callable(cleanup):
+                try:
+                    cleanup()
+                except Exception as exc:
+                    logger.warning(
+                        "admission purge: boundary snapshot cleanup failed for "
+                        "'%s': %s",
+                        model_id,
+                        exc,
+                    )
+        try:
+            from ..cache.latent_cache import clear_all_latent_caches
+
+            latent = clear_all_latent_caches()
+            purged += int(latent or 0)
+            if latent:
+                logger.info("admission purge: %d latent cache entries cleared", latent)
+        except Exception as exc:
+            logger.debug("admission purge: latent cache clear skipped: %s", exc)
+        return purged
+
+    def _admission_breakdown(self) -> str:
+        # #1250: attributable per-model footprint + residual process bytes so
+        # an admission failure names where the phantom residency comes from.
+        parts: list[str] = []
+        accounted = 0
+        for model_id, entry in list(self._entries.items()):
+            if entry.engine is None:
+                continue
+            size = entry.last_observed_size or entry.estimated_size
+            accounted += int(size)
+            parts.append(f"{model_id}={format_size(size)}")
+        residual = max(0, int(get_phys_footprint()) - accounted)
+        parts.append(f"process_residual={format_size(residual)}")
+        return ", ".join(parts)
+
     def _wake_process_memory_enforcer(self, *, active: bool = False) -> None:
         enforcer = self._process_memory_enforcer
         wake = getattr(enforcer, "wake", None) if enforcer is not None else None
@@ -813,6 +891,7 @@ class EnginePool:
                 if ane_budget > 0:
                     ceiling = min(ceiling, ane_budget)
         evicted = 0
+        caches_purged = False
         for _ in range(20):
             current = self._admission_current_usage(exclude_entry_key=exclude_model_id)
             if kind == "ane":
@@ -834,14 +913,35 @@ class EnginePool:
                 return True
             victim = self._find_lru_victim()
             if victim is None:
+                # #1250: KV/prefix-cache bytes outlive the model that owned
+                # them, so the projection can stay above the ceiling with no
+                # evictable LLM left ("phantom residency"). Those caches are
+                # pure — dropping them degrades to a later cache miss — so
+                # purge once and re-project before failing the job with 507.
+                if not caches_purged:
+                    caches_purged = True
+                    purged = self._purge_pure_caches()
+                    if purged:
+                        logger.info(
+                            "%s admission: projected=%s still above ceiling=%s "
+                            "with no evictable model; purged %d cache entries "
+                            "and re-projecting",
+                            kind,
+                            format_size(projected),
+                            format_size(ceiling),
+                            purged,
+                        )
+                        continue
                 logger.warning(
                     "%s admission FAILED: projected=%s ceiling=%s, "
-                    "no evictable LLM model (%d evicted, gap=%s)",
+                    "no evictable LLM model (%d evicted, gap=%s, "
+                    "breakdown=%s)",
                     kind,
                     format_size(projected),
                     format_size(ceiling),
                     evicted,
                     format_size(projected - ceiling),
+                    self._admission_breakdown(),
                 )
                 return False
             logger.info(

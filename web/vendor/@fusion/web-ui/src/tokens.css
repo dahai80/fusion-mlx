@@ -1,0 +1,36 @@
+/* fusion-web-ui design tokens (spec §3).
+   Dark is the default theme; html.light switches to the light palette.
+   No hardcoded hex outside this file (S1). */
+:root {
+    --fs-bg: #0b0e14;
+    --fs-bg-elevated: #131722;
+    --fs-bg-muted: #1a2030;
+    --fs-border: #2a3244;
+    --fs-text-primary: #e6e9f0;
+    --fs-text-secondary: #a8b0c2;
+    --fs-text-muted: #6b7488;
+    --fs-success: #34c778;
+    --fs-running: #3b82f6;
+    --fs-warning: #eab308;
+    --fs-error: #ef4444;
+    --fs-offline: #6b7488;
+    --fs-brand: #4f7cff;
+    color-scheme: dark;
+}
+
+html.light {
+    --fs-bg: #f5f6f8;
+    --fs-bg-elevated: #ffffff;
+    --fs-bg-muted: #eceef2;
+    --fs-border: #d4d9e2;
+    --fs-text-primary: #1a2030;
+    --fs-text-secondary: #4a5468;
+    --fs-text-muted: #8a92a4;
+    --fs-success: #16a34a;
+    --fs-running: #2563eb;
+    --fs-warning: #ca8a04;
+    --fs-error: #dc2626;
+    --fs-offline: #8a92a4;
+    --fs-brand: #2f5fe8;
+    color-scheme: light;
+}

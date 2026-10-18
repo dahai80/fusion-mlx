@@ -117,6 +117,31 @@ def add_request(self, request: Request) -> None:
             request.prompt_token_ids = list(request.prompt)
         request.num_prompt_tokens = len(request.prompt_token_ids)
 
+    # Abort re-seed hook: fetch_cache would miss here, but a PRIOR request
+    # with the same prompt may have persisted its live KV to disk when it
+    # was aborted (kv_resume disconnect-persist). A client retry arrives
+    # with a NEW request_id so request_id-keyed lookup can't match; match
+    # by prompt content instead. Seeds request.prompt_cache so the branch
+    # below treats it like an externally-seeded resume.
+    if request.prompt_cache is None and request.prompt_token_ids:
+        try:
+            from ..service.kv_resume import find_resumable_kv_for_prompt
+
+            loaded = find_resumable_kv_for_prompt(
+                list(request.prompt_token_ids),
+                model_name=getattr(getattr(self, "config", None), "model_name", None),
+            )
+        except Exception as exc:
+            logger.debug("kv_resume re-seed lookup failed: %s", exc)
+            loaded = None
+        if loaded is not None:
+            request.prompt_cache = list(loaded.cache)
+            request.cached_tokens = int(loaded.token_offset)
+            if request.remaining_tokens is None:
+                request.remaining_tokens = request.prompt_token_ids[
+                    request.cached_tokens :
+                ]
+
     # Disconnect KV resume: the caller (kv_resume endpoint) already seeded
     # request.prompt_cache / cached_tokens from a disk checkpoint. Skip the
     # prefix-cache-prep branches so the externally-loaded KV survives into
@@ -146,7 +171,7 @@ def add_request(self, request: Request) -> None:
             request.request_id,
             request.cached_tokens,
         )
-    elif self._inflight_store_futures:
+    elif self._has_unfinished_store_futures():
         self._should_defer_for_cache_freshness(request)
         request.remaining_tokens = request.prompt_token_ids
         logger.debug(
@@ -164,112 +189,134 @@ def add_request(self, request: Request) -> None:
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
         if block_table and block_table.num_tokens > 0:
-            bypass_hot_cache = self._bypass_hot_cache_under_pressure()
-            if bypass_hot_cache:
+            if block_table.num_tokens > _SSD_RECONSTRUCT_MAX_TOKENS:
+                # SSD-tier reconstruct costs ~0.2s per block (measured: a
+                # 9472-token shared prefix needed 30+ min while a full 17k-token
+                # prefill takes ~30s). Above the cap, full prefill is strictly
+                # faster and does not block the engine step loop.
                 logger.info(
-                    "Skipping hot-cache preload for %s under memory pressure",
+                    "Skipping SSD prefix reuse for %s: %d tokens > cap %d",
                     request.request_id,
+                    block_table.num_tokens,
+                    _SSD_RECONSTRUCT_MAX_TOKENS,
                 )
-                _preload_fut = None
+                self.block_aware_cache.clear_request_entry_no_free(request.request_id)
+                request.remaining_tokens = request.prompt_token_ids
             else:
-                _preload_fut = self.block_aware_cache.preload_blocks_async(block_table)
-            if _preload_fut is not None:
-                try:
-                    _preload_fut.result(timeout=10)
-                except Exception as exc:
-                    logger.warning(
-                        "async SSD preload failed for %s: %s",
+                bypass_hot_cache = self._bypass_hot_cache_under_pressure()
+                if bypass_hot_cache:
+                    logger.info(
+                        "Skipping hot-cache preload for %s under memory pressure",
                         request.request_id,
-                        exc,
                     )
-            original_tokens = block_table.num_tokens
-            if bypass_hot_cache:
-                reconstructed = self.block_aware_cache.reconstruct_cache(
-                    block_table,
-                    promote_to_hot_cache=False,
-                )
-            else:
-                reconstructed = self.block_aware_cache.reconstruct_cache(block_table)
-            if reconstructed:
-                request.prompt_cache = reconstructed
-                request.block_table = block_table
-                request.cached_tokens = block_table.num_tokens
-                request.shared_prefix_blocks = len(block_table.block_ids)
-                # Recalculate remaining_tokens in case block_table was truncated
-                request.remaining_tokens = request.prompt_token_ids[
-                    block_table.num_tokens :
-                ]
-                # For exact prefix hits we need cache state at (N-1) and the
-                # last prompt token as input to produce the first decode logit.
-                # Reusing cache state at N and feeding the last token again
-                # shifts the model state and can change greedy output.
-                if len(request.remaining_tokens) == 0 and request.cached_tokens > 0:
-                    if self._cache_list_needs_boundary_snapshot(request.prompt_cache):
-                        # Stateful non-sliceable caches (Rotating/Arrays)
-                        # cannot be safely converted from N to N-1 state
-                        # without cache-type-specific logic.
-                        if self.paged_cache_manager is not None:
-                            self.paged_cache_manager.delete_block_table(
-                                request.request_id
-                            )
-                        request.prompt_cache = None
-                        request.block_table = None
-                        request.cached_tokens = 0
-                        request.shared_prefix_blocks = 0
-                        request.remaining_tokens = request.prompt_token_ids
-                        logger.debug(
-                            f"Request {request.request_id}: exact cache hit with "
-                            f"stateful cache type, falling back to full prefill "
-                            f"for deterministic kickoff"
+                    _preload_fut = None
+                else:
+                    _preload_fut = self.block_aware_cache.preload_blocks_async(
+                        block_table
+                    )
+                if _preload_fut is not None:
+                    try:
+                        _preload_fut.result(timeout=10)
+                    except Exception as exc:
+                        logger.warning(
+                            "async SSD preload failed for %s: %s",
+                            request.request_id,
+                            exc,
                         )
-                    elif self._trim_prompt_cache_for_generation(request.prompt_cache):
-                        request.cached_tokens = max(0, request.cached_tokens - 1)
-                        request.remaining_tokens = request.prompt_token_ids[-1:]
-                        logger.debug(
-                            f"Request {request.request_id}: exact cache hit adjusted "
-                            f"to N-1 state for generation kickoff "
-                            f"(cached_tokens={request.cached_tokens}, "
-                            f"remaining={len(request.remaining_tokens)})"
-                        )
-                    else:
-                        # Fallback to full recompute when cache layers cannot
-                        # be safely trimmed by one token (e.g., non-trimmable
-                        # recurrent state caches).
-                        if self.paged_cache_manager is not None:
-                            self.paged_cache_manager.delete_block_table(
-                                request.request_id
-                            )
-                        request.prompt_cache = None
-                        request.block_table = None
-                        request.cached_tokens = 0
-                        request.shared_prefix_blocks = 0
-                        request.remaining_tokens = request.prompt_token_ids
-                        logger.debug(
-                            f"Request {request.request_id}: exact cache hit could "
-                            f"not be trimmed safely, falling back to full prefill"
-                        )
-                if block_table.num_tokens < original_tokens:
-                    logger.debug(
-                        f"Request {request.request_id}: partial cache hit, "
-                        f"{request.cached_tokens} tokens in {request.shared_prefix_blocks} blocks "
-                        f"(originally {original_tokens} tokens), "
-                        f"{len(request.remaining_tokens)} tokens remaining"
+                original_tokens = block_table.num_tokens
+                if bypass_hot_cache:
+                    reconstructed = self.block_aware_cache.reconstruct_cache(
+                        block_table,
+                        promote_to_hot_cache=False,
                     )
                 else:
-                    logger.debug(
-                        f"Request {request.request_id}: paged cache hit, "
-                        f"{request.cached_tokens} tokens in {request.shared_prefix_blocks} blocks, "
-                        f"{len(request.remaining_tokens)} tokens remaining, cache reconstructed"
+                    reconstructed = self.block_aware_cache.reconstruct_cache(
+                        block_table
                     )
-            else:
-                # Reconstruction failed, treat as cache miss
-                if self.paged_cache_manager is not None:
-                    self.paged_cache_manager.delete_block_table(request.request_id)
-                request.remaining_tokens = request.prompt_token_ids
-                logger.debug(
-                    f"Request {request.request_id}: paged cache reconstruction failed, "
-                    "released shared blocks"
-                )
+                if reconstructed:
+                    request.prompt_cache = reconstructed
+                    request.block_table = block_table
+                    request.cached_tokens = block_table.num_tokens
+                    request.shared_prefix_blocks = len(block_table.block_ids)
+                    # Recalculate remaining_tokens in case block_table was truncated
+                    request.remaining_tokens = request.prompt_token_ids[
+                        block_table.num_tokens :
+                    ]
+                    # For exact prefix hits we need cache state at (N-1) and the
+                    # last prompt token as input to produce the first decode logit.
+                    # Reusing cache state at N and feeding the last token again
+                    # shifts the model state and can change greedy output.
+                    if len(request.remaining_tokens) == 0 and request.cached_tokens > 0:
+                        if self._cache_list_needs_boundary_snapshot(
+                            request.prompt_cache
+                        ):
+                            # Stateful non-sliceable caches (Rotating/Arrays)
+                            # cannot be safely converted from N to N-1 state
+                            # without cache-type-specific logic.
+                            if self.paged_cache_manager is not None:
+                                self.paged_cache_manager.delete_block_table(
+                                    request.request_id
+                                )
+                            request.prompt_cache = None
+                            request.block_table = None
+                            request.cached_tokens = 0
+                            request.shared_prefix_blocks = 0
+                            request.remaining_tokens = request.prompt_token_ids
+                            logger.debug(
+                                f"Request {request.request_id}: exact cache hit with "
+                                f"stateful cache type, falling back to full prefill "
+                                f"for deterministic kickoff"
+                            )
+                        elif self._trim_prompt_cache_for_generation(
+                            request.prompt_cache
+                        ):
+                            request.cached_tokens = max(0, request.cached_tokens - 1)
+                            request.remaining_tokens = request.prompt_token_ids[-1:]
+                            logger.debug(
+                                f"Request {request.request_id}: exact cache hit adjusted "
+                                f"to N-1 state for generation kickoff "
+                                f"(cached_tokens={request.cached_tokens}, "
+                                f"remaining={len(request.remaining_tokens)})"
+                            )
+                        else:
+                            # Fallback to full recompute when cache layers cannot
+                            # be safely trimmed by one token (e.g., non-trimmable
+                            # recurrent state caches).
+                            if self.paged_cache_manager is not None:
+                                self.paged_cache_manager.delete_block_table(
+                                    request.request_id
+                                )
+                            request.prompt_cache = None
+                            request.block_table = None
+                            request.cached_tokens = 0
+                            request.shared_prefix_blocks = 0
+                            request.remaining_tokens = request.prompt_token_ids
+                            logger.debug(
+                                f"Request {request.request_id}: exact cache hit could "
+                                f"not be trimmed safely, falling back to full prefill"
+                            )
+                    if block_table.num_tokens < original_tokens:
+                        logger.debug(
+                            f"Request {request.request_id}: partial cache hit, "
+                            f"{request.cached_tokens} tokens in {request.shared_prefix_blocks} blocks "
+                            f"(originally {original_tokens} tokens), "
+                            f"{len(request.remaining_tokens)} tokens remaining"
+                        )
+                    else:
+                        logger.debug(
+                            f"Request {request.request_id}: paged cache hit, "
+                            f"{request.cached_tokens} tokens in {request.shared_prefix_blocks} blocks, "
+                            f"{len(request.remaining_tokens)} tokens remaining, cache reconstructed"
+                        )
+                else:
+                    # Reconstruction failed, treat as cache miss
+                    if self.paged_cache_manager is not None:
+                        self.paged_cache_manager.delete_block_table(request.request_id)
+                    request.remaining_tokens = request.prompt_token_ids
+                    logger.debug(
+                        f"Request {request.request_id}: paged cache reconstruction failed, "
+                        "released shared blocks"
+                    )
         else:
             request.remaining_tokens = request.prompt_token_ids
     else:
@@ -380,9 +427,19 @@ _CACHE_FRESHNESS_WAIT_MIN_PROMPT_TOKENS = 8192
 _CACHE_FRESHNESS_WAIT_MIN_COMMON_TOKENS = 8192
 _CACHE_FRESHNESS_WAIT_MIN_PROMPT_RATIO = 0.30
 _CACHE_FRESHNESS_WAIT_TIMEOUT_S = 4.0
+# Max cached prefix tokens to reconstruct from the SSD tier. Beyond this,
+# reconstruct is slower than a full prefill (see site comments).
+_SSD_RECONSTRUCT_MAX_TOKENS = 4096
 
 
 # ── Admission blocker helpers ────────────────────────────────────────────
+
+
+def _has_unfinished_store_futures(self) -> bool:
+    # The dict can retain completed futures until the next drain pass; only
+    # an unfinished one can hold the tiered-cache lock against a reconstruct.
+    futures = getattr(self, "_inflight_store_futures", None) or {}
+    return any(not getattr(f, "done", lambda: True)() for f in futures.values())
 
 
 def _clear_memory_admission_blocker(self, request_id: str | None = None) -> None:
@@ -668,13 +725,21 @@ def _should_defer_for_cache_freshness(self, request: Request) -> bool:
 def _prepare_prefix_cache_for_request(self, request: Request) -> None:
     if request.request_id in self._prefix_cache_prepared:
         return
+    logger.debug(
+        "PREFIX-PREP enter %s tokens=%d",
+        request.request_id[:8],
+        len(request.prompt_token_ids or []),
+    )
 
     # CoW concurrent-donation fast path (mirror of add_request): if a live
     # donor shares this prefix, adopt GPU slabs and skip SSD fetch+reconstruct.
+    logger.debug("PREFIX-PREP cow-donate try %s", request.request_id[:8])
     if self._try_cow_donate(request):
+        logger.debug("PREFIX-PREP cow-donate HIT %s", request.request_id[:8])
         self._prefix_cache_prepared.add(request.request_id)
         return
 
+    logger.debug("PREFIX-PREP fetch begin %s", request.request_id[:8])
     if self.block_aware_cache is not None:
         block_table, remaining = self.block_aware_cache.fetch_cache(
             request.request_id,
@@ -684,6 +749,33 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
         if block_table and block_table.num_tokens > 0:
+            # Guard: while any store_cache is in flight the tiered-cache
+            # lock can be held by the store worker; a reconstruct here would
+            # block step() on that lock (observed: 192-token reconstruct
+            # wedged 8+ min). Full prefill is fast and contention-free —
+            # skip the reconstruct. The fetch above is pure metadata and
+            # stays, so callers still see normal cache-lookup behaviour.
+            if self._has_unfinished_store_futures():
+                logger.info(
+                    "PREFIX-PREP skip reconstruct %s: store_cache in flight",
+                    request.request_id[:8],
+                )
+                self.block_aware_cache.clear_request_entry_no_free(request.request_id)
+                request.remaining_tokens = request.prompt_token_ids
+                self._prefix_cache_prepared.add(request.request_id)
+                return
+            if block_table.num_tokens > _SSD_RECONSTRUCT_MAX_TOKENS:
+                logger.info(
+                    "Skipping SSD prefix reuse for %s: %d tokens > cap %d "
+                    "(SSD reconstruct slower than full prefill)",
+                    request.request_id,
+                    block_table.num_tokens,
+                    _SSD_RECONSTRUCT_MAX_TOKENS,
+                )
+                self.block_aware_cache.clear_request_entry_no_free(request.request_id)
+                request.remaining_tokens = request.prompt_token_ids
+                self._prefix_cache_prepared.add(request.request_id)
+                return
             bypass_hot_cache = self._bypass_hot_cache_under_pressure()
             if bypass_hot_cache:
                 logger.info(
@@ -703,6 +795,11 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                         exc,
                     )
             original_tokens = block_table.num_tokens
+            logger.debug(
+                "PREFIX-PREP reconstruct begin %s blocks=%d",
+                request.request_id[:8],
+                block_table.num_tokens,
+            )
             if bypass_hot_cache:
                 reconstructed = self.block_aware_cache.reconstruct_cache(
                     block_table,

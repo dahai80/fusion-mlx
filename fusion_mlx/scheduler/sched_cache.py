@@ -12,6 +12,7 @@ The scheduler follows vLLM's design with:
 """
 
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 from typing import Any
@@ -201,19 +202,43 @@ def _drain_pending_async_removes(self) -> bool:
     entry was drained.
     """
     if not self._pending_async_removes:
+        self._pending_async_removes_since.clear()
         return False
+    now = time.monotonic()
+    stuck_timeout = getattr(self, "_STORE_CACHE_STUCK_TIMEOUT_S", 180.0)
     done_entries = []
     remaining_entries = []
     while self._pending_async_removes:
         uid, request_id, future = self._pending_async_removes.popleft()
         if future is not None and not future.done():
-            # Worker still busy; keep for a later step in original order.
-            remaining_entries.append((uid, request_id, future))
+            first_seen = self._pending_async_removes_since.get(uid)
+            if first_seen is None:
+                self._pending_async_removes_since[uid] = now
+                first_seen = now
+            if now - first_seen >= stuck_timeout:
+                # Worker wedged (e.g. a wedged SSD write): force-finalize the
+                # entry so the admission-gate slot is released. Losing the
+                # cached KV entry only costs a later cache miss; blocking
+                # admission forever wedges the whole scheduler.
+                future.cancel()
+                logger.warning(
+                    "Async store_cache for %s stuck %.0fs — force-draining "
+                    "entry (uid=%s) to unblock admission",
+                    request_id,
+                    now - first_seen,
+                    uid,
+                )
+                done_entries.append((uid, request_id, future))
+            else:
+                # Worker still busy; keep for a later step in original order.
+                remaining_entries.append((uid, request_id, future))
         else:
             done_entries.append((uid, request_id, future))
     self._pending_async_removes.extend(remaining_entries)
     if not done_entries:
         return False
+    for uid, request_id, future in done_entries:
+        self._pending_async_removes_since.pop(uid, None)
     gate = self._store_cache_gate
     for uid, request_id, future in done_entries:
         # Surface worker exceptions for visibility (don't crash step loop).

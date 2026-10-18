@@ -852,6 +852,28 @@ class BatchedEngine(BaseEngine):
                 return
         logger.error("BatchedEngine mark_dead: no inner engine to mark: %s", reason)
 
+    def is_dead(self) -> bool:
+        # #1176 recovery bug: the poison guard (api/_guards.py) scans pool
+        # entries with getattr(engine, "is_dead", None) to find the dead
+        # engine for async unload. BatchedEngine had mark_dead but no
+        # is_dead passthrough, so the scan saw NO dead engine, cleared the
+        # poison flag, and every later request 503'd forever ("Poison flag
+        # set but no dead engine found"). Delegate to the inner core the
+        # same way mark_dead does.
+        if self._engine is not None and hasattr(self._engine, "engine"):
+            inner = getattr(self._engine, "engine", None)
+            if inner is not None and hasattr(inner, "is_dead"):
+                return bool(inner.is_dead())
+        return False
+
+    @property
+    def dead_reason(self) -> str | None:
+        if self._engine is not None and hasattr(self._engine, "engine"):
+            inner = getattr(self._engine, "engine", None)
+            if inner is not None and hasattr(inner, "dead_reason"):
+                return inner.dead_reason
+        return None
+
     def _apply_chat_template(
         self,
         messages: list[dict[str, Any]],
@@ -1486,6 +1508,17 @@ class BatchedEngine(BaseEngine):
 
     def get_stats(self) -> dict[str, Any]:
         return self.get_enginecore_stats("batched")
+
+    def get_stats_snapshot(self) -> dict[str, Any]:
+        # Lock-free snapshot for the /metrics render path — see
+        # EngineCore.get_stats_snapshot. Never blocks behind a long
+        # prefill/decode step, unlike get_stats().
+        inner_wrapper = getattr(self._engine, "engine", None)
+        if inner_wrapper is not None:
+            snap = getattr(inner_wrapper, "get_stats_snapshot", None)
+            if callable(snap):
+                return snap()
+        return {}
 
     def get_cache_stats(self) -> dict[str, Any] | None:
         return self.get_enginecore_cache_stats()

@@ -88,6 +88,11 @@ _LARGE_SYSTEM_CEILING_FRACTION: dict[str, float] = {
 # of physical RAM so the OS always has headroom.
 _WIRED_LIMIT_BUFFER_BYTES = 25 * 1024**3
 _PHYSICAL_RAM_WIRED_CAP_FRACTION = 0.80
+# Fail-fast margin kept BELOW the kernel iogpu.wired_limit_mb sysctl cap.
+# Sitting exactly on the cap turns an over-limit Metal allocation into an
+# indefinite stall (no exception, frozen worker thread); this margin makes
+# the allocation raise instead so the scheduler/enforcer can react.
+_WIRED_LIMIT_KERNEL_HEADROOM_BYTES = 12 * 1024**3
 
 # MLX compile cache / buffer pool hard top. Without this, mx.get_cache_memory()
 # grows monotonically — only released by explicit mx.clear_cache(). O3.1
@@ -681,8 +686,20 @@ class ProcessMemoryEnforcer:
         _tier = getattr(self, "_memory_guard_tier", None)
         _ceiling = getattr(self, "_memory_guard_custom_ceiling_bytes", 0)
         if _tier == "custom" and _ceiling > 0:
-            return min(_ceiling + _WIRED_LIMIT_BUFFER_BYTES, system_bytes)
-        return min(static_ceiling + _WIRED_LIMIT_BUFFER_BYTES, physical_cap)
+            target = min(_ceiling + _WIRED_LIMIT_BUFFER_BYTES, system_bytes)
+        else:
+            target = min(static_ceiling + _WIRED_LIMIT_BUFFER_BYTES, physical_cap)
+        # Never sit exactly on the kernel iogpu.wired_limit_mb cap: at the cap
+        # a Metal allocation that spikes past it no longer fails fast — the
+        # allocator stalls the calling thread indefinitely (observed as a
+        # frozen LLM worker with a stale heartbeat, not an exception). Leave
+        # a fail-fast margin below the kernel cap so an over-limit spike
+        # raises an MLX allocation error the scheduler can catch and the
+        # enforcer (1s poll) can react to.
+        kernel_cap = get_iogpu_wired_limit_bytes()
+        if kernel_cap > _WIRED_LIMIT_KERNEL_HEADROOM_BYTES:
+            target = min(target, kernel_cap - _WIRED_LIMIT_KERNEL_HEADROOM_BYTES)
+        return target
 
     def _apply_mlx_cache_limit(self) -> None:
         """Set MLX compile cache / buffer pool hard top.

@@ -330,15 +330,22 @@ Generate images from text prompts using Flux 2.
             "b64_json": "iVBORw0KGgoAAAANSUhEUgAA...",
             "url": null
         }
-    ]
+    ],
+    "model": "black-forest-labs/FLUX.1-schnell",
+    "requested_model": "black-forest-labs/FLUX.1-dev"
 }
 ```
+
+`model` is the engine that actually produced the image; `requested_model`
+is the id the caller sent. They differ only when `quality="fast"` routed
+to a distilled sibling.
 
 ### Quality tier routing (`/v1/images/generations`)
 
 The OpenAI-compatible images endpoint accepts a `quality` field:
 
-- `"fast"` (default) — plain txt2img requests on a full-diffusion Flux
+- `"auto"` (default) — always uses the requested model. No substitution.
+- `"fast"` — opt-in. Plain txt2img requests on a full-diffusion Flux
   model are routed to the distilled sibling (FLUX.1-dev →
   FLUX.1-schnell, FLUX.2-dev → FLUX.2-klein). Requests with a variant
   (kontext/depth/fill/canny/edit) or image input are never routed; if
@@ -346,8 +353,10 @@ The OpenAI-compatible images endpoint accepts a `quality` field:
   requested model.
 - `"high"` — always uses the requested model.
 
-Routing is logged (`image quality tier: fast routed '<model>' ->
-distilled '<sibling>'`) and counted in `/metrics`:
+A substitution is never silent: it is logged at WARNING (`image quality
+tier: quality=fast routed '<model>' -> distilled '<sibling>'`) and the
+response echoes both `model` and `requested_model`. Counts appear in
+`/metrics`:
 
 ```
 fusion_mlx_image_quality_tier_total

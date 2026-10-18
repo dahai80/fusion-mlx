@@ -2,6 +2,61 @@
 
 ## [Unreleased]
 
+### Added — Union Web monitor SPA as a shell module (#1220)
+- New `web/` package: React + Vite monitor SPA (Models, Metrics, Logs)
+  built against the `@fusion/web-ui` preset, shipped as a union-web shell
+  module. `GET /` serves the built `web/dist/index.html` (JSON probe
+  fallback for source installs without a dist); `/assets/*` is mounted
+  after every API router so it can never shadow an API route.
+- New `GET /admin/api/logs/stream` SSE endpoint: tails `server.log`
+  (rotation-aware), heartbeats every 15s, and parses nothing — clients get
+  raw lines so no log-format change can break the stream.
+- `fusion_mlx/shell_registry.py`: optional gateway registration +
+  heartbeat (`FUSION_SHELL_GATEWAY_URL` + `FUSION_GATEWAY_ADMIN_KEY`, also
+  readable from a `shell` block in `~/.fusion-mlx/settings.json`). A dead
+  gateway is logged, never fatal.
+- Build: `cd web && bun install && bun run build`. Standalone dev uses
+  `VITE_API_KEY`; embedded use inherits the gateway's injected auth.
+
+### Fixed — image quality tier never reroutes silently (#1251)
+- `quality` now defaults to `"auto"` (use the requested model). `"fast"`
+  is an explicit opt-in for distilled-sibling routing. The response echoes
+  `model` (what actually ran) and `requested_model` (what was asked for),
+  and every substitution logs at WARNING.
+
+### Fixed — 507 phantom residency after evicting all LLM models (#1250)
+- Image admission projected over budget with no evictable victim because
+  the ceiling accounting still counted pure KV/prefix-cache bytes that
+  outlive their owning model. The pool now purges pure caches once, then
+  re-projects before rejecting, and the failure log carries a per-model
+  `breakdown=` plus `process_residual` so the next 507 is attributable.
+
+### Fixed — `_boundary_snapshots` grew unbounded (224 GB observed) (#1249)
+- The snapshot store now enforces a 64 GiB disk budget with LRU eviction
+  (oldest mtime first, registry entries dropped with the files), and
+  `rmtree` retries transient failures instead of giving up on the first
+  Errno 66 with an orphan left behind.
+
+### Fixed — scheduler wedged permanently after a finished request (#1248)
+- Root cause: a never-completing `store_cache` future pinned the pending
+  async-remove set, which gates admission forever — the request deferred
+  once and then nothing ran. Stale futures are now force-drained after
+  180s (cancel + WARNING) releasing the gate; SSD tier reuse is skipped
+  while a store is in flight; SSD reconstruct is capped at 4096 cached
+  tokens (a 9472-token reconstruct measured 30+ min vs ~30s full prefill);
+  prefix-prep tracing moved to debug; `/metrics` reads a lock-free stats
+  snapshot so it never blocks behind prefill. Aborted requests re-seed a
+  client retry by prompt hash (`FUSION_MLX_KV_CHECKPOINT_INTERVAL`).
+- The Metal wired-limit fail-fast margin is 12 GiB below
+  `iogpu.wired_limit_mb`, so an over-budget load errors out instead of
+  stalling Metal indefinitely.
+
+### Fixed — model_settings duplicate slash/dash keys logged as conflicts (#1247)
+- Slash/hyphen variants of the same model id collapsed to one canonical
+  key still do, but an identical duplicate is now ignored at debug level
+  and a divergent duplicate keeps the first entry with a single WARNING
+  naming both raw keys (previously an ERROR on every load).
+
 ### Added — Wan2.2 turbo few-step LoRA + preset knob (#1217)
 - `/v1/videos/generate` on Wan2.2-TI2V-5B accepts `"turbo": true` (or
   `"lora": "<path>"`, explicit path wins). Auto-detect looks for

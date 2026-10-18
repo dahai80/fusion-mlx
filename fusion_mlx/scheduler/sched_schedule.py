@@ -91,6 +91,21 @@ def _schedule_waiting(
     scheduled = []
     rejected_outputs: list[RequestOutput] = []
 
+    # Wedge diagnostics (#fusion-drama): rate-limited tick so a silent stall
+    # in admission is visible in the log — without this a blocked admission
+    # branch produces ZERO log lines and the engine looks idle.
+    _now = time.monotonic()
+    _last = getattr(self, "_sched_tick_last", 0.0)
+    if self.waiting and _now - _last >= 10.0:
+        self._sched_tick_last = _now
+        logger.info(
+            "SCHED-TICK: waiting=%d running=%d prefilling=%d head=%s",
+            len(self.waiting),
+            len(self.running),
+            len(self.prefilling),
+            self.waiting[0].request_id[:8] if self.waiting else "-",
+        )
+
     # Track cache status of first scheduled request to ensure homogeneity
     # None = not determined yet, True = has cache, False = no cache
     batch_cache_status: bool | None = None

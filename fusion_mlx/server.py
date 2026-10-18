@@ -1131,6 +1131,7 @@ class Server:
         self._cluster_lb_monitor = None  # #811 multi-instance LB health monitor
         self._training_services: list = []  # ENG-02: cleanup on shutdown
         self._startup_failures: list[str] = []  # ENG-01: track broken subsystems
+        self._shell_registry_task: asyncio.Task | None = None  # #1220 union-web
 
         # R-7: resolve profile early — route registration in __init__ needs it.
         # Sync from global config singleton (set by _stage_server_config via
@@ -1444,6 +1445,13 @@ class Server:
         )
         self._profile_mounted_routes = _mounted
         self._profile_skipped_routes = _skipped
+
+        # #1220: web/ monitor SPA assets. The index itself is served by the
+        # probe root handler (web_static.web_root_or_json). Mount happens
+        # after router includes so /assets never shadows an API route.
+        from .web_static import mount_web_static
+
+        mount_web_static(app)
 
         # #357: /v1/models/status MUST be registered before the gui_compat
         # router's /v1/models/{model_name} catch-all. Starlette matches routes
@@ -2606,9 +2614,36 @@ class Server:
                 ", ".join(self._startup_failures),
             )
 
+        # #1220: union-web shell module registration + heartbeat (PRD §5.2).
+        # Env-gated (FUSION_SHELL_GATEWAY_URL + FUSION_GATEWAY_ADMIN_KEY);
+        # a dead gateway is logged per-round-trip, never fatal here.
+        try:
+            from .shell_registry import run_shell_registry, shell_registration_enabled
+
+            if shell_registration_enabled():
+                self._shell_registry_task = asyncio.create_task(
+                    run_shell_registry(), name="shell_registry_1220"
+                )
+                logger.info("shell registry (#1220): heartbeat task started")
+        except Exception:
+            logger.error("shell registry (#1220): task start failed", exc_info=True)
+            self._startup_failures.append("shell_registry")
+
     async def _shutdown(self):
         """Graceful shutdown."""
         logger.info("fusion-mlx shutting down...")
+
+        # #1220: stop the shell registry heartbeat before anything else —
+        # a cancelled gateway poll must not delay engine teardown.
+        if self._shell_registry_task is not None:
+            self._shell_registry_task.cancel()
+            try:
+                await self._shell_registry_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.debug("shell registry cancel failed (non-fatal)", exc_info=True)
+            self._shell_registry_task = None
 
         # Stop MCP manager
         _mcp_mgr = _server_state.get("mcp_manager")

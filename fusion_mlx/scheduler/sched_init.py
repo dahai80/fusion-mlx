@@ -272,6 +272,11 @@ def __init__(
     # to finish before batch_generator.remove() can safely run. Drained
     # at the start of every step.
     self._pending_async_removes: deque = deque()
+    # uid -> monotonic time the entry was first seen pending. A store_cache
+    # future that never completes otherwise pins its admission-gate slot
+    # forever and silently wedges all subsequent admission (no timeout
+    # existed on the pending-removes deferral path).
+    self._pending_async_removes_since: dict[str, float] = {}
     # Track in-flight store futures per request_id for lookup wait /
     # shutdown wait.
     self._inflight_store_futures: dict[str, concurrent.futures.Future] = {}

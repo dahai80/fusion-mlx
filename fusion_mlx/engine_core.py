@@ -1103,6 +1103,14 @@ class EngineCore:
         self._wake_event: asyncio.Event | None = None
         self._start_time: float | None = None
         self._steps_executed = 0
+        # Lock-free stats snapshot for the /metrics render path: the render
+        # thread must never call scheduler.get_stats() directly — that takes
+        # the paged-cache block/free-queue locks, which the executor thread
+        # holds for the whole of a long prefill/decode step, so /metrics
+        # rendered 503-timeout (>10s) whenever a big generation was active.
+        # The engine loop refreshes this dict after each step burst; readers
+        # get the last completed step's numbers instead of blocking.
+        self._stats_snapshot: dict[str, Any] = {}
         # #1197 stage 2: LLM throughput quality signal for the pacing
         # controller. Windowed steps/s vs the engine's own learned solo
         # baseline (running max) — a drop below 0.85 sustained shrinks
@@ -1404,6 +1412,14 @@ class EngineCore:
                     self._steps_executed += len(step_outputs)
                     self._tps_window_steps += len(step_outputs)
                     self._pacing_tps_signal()
+                    # Refresh the lock-free stats snapshot for /metrics:
+                    # executor locks are released between step bursts, so
+                    # this read is cheap and contention-free here.
+                    try:
+                        if self.scheduler is not None:
+                            self._stats_snapshot = self.scheduler.get_stats()
+                    except Exception:
+                        pass
                     # P2-7: a successful step resets the circuit breaker.
                     if self._consecutive_loop_errors:
                         self._consecutive_loop_errors = 0
@@ -2366,6 +2382,24 @@ class EngineCore:
             "stream_interval": self.config.stream_interval,
             **scheduler_stats,
         }
+
+    def get_stats_snapshot(self) -> dict[str, Any]:
+        """Lock-free stats for non-critical readers (metrics render).
+
+        Returns the snapshot the engine loop refreshed after its last step
+        burst. Takes no locks, so it never blocks behind a long prefill/
+        decode step the way get_stats() (→ scheduler.get_stats() →
+        paged-cache locks) can. Falls back to a lock-free partial view when
+        no step has run yet.
+        """
+        snapshot = dict(self._stats_snapshot)
+        snapshot.setdefault("num_running", 0)
+        snapshot.setdefault("num_waiting", 0)
+        snapshot.setdefault("num_prefilling", 0)
+        snapshot["running"] = self._running
+        snapshot["steps_executed"] = self._steps_executed
+        snapshot["active_requests"] = len(self._active_contexts)
+        return snapshot
 
     def get_cache_stats(self) -> dict[str, Any] | None:
         if self.scheduler:
