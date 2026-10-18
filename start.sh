@@ -230,12 +230,12 @@ preflight() {
     # {"shell": {"gateway_url": ..., "gateway_admin_key": ...}} — env vars
     # win. Present gateway_url + key makes the server register web/manifest
     # with the gateway and heartbeat (fusion_mlx/shell_registry.py).
-    if [[ -z "${FUSION_SHELL_GATEWAY_URL:-}" && -f "${SETTINGS}" ]]; then
-        shell_gw=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('shell',{}).get('gateway_url',''))" 2>/dev/null || echo "")
+    if [[ -z "${FUSION_SHELL_GATEWAY_URL:-}" && -f "${SETTINGS:-}" ]]; then
+        shell_gw=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('shell',{}).get('gateway_url',''))" 2>/dev/null || echo "")
         [[ -n "${shell_gw}" ]] && export FUSION_SHELL_GATEWAY_URL="${shell_gw}"
     fi
-    if [[ -z "${FUSION_GATEWAY_ADMIN_KEY:-}" && -f "${SETTINGS}" ]]; then
-        shell_key=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('shell',{}).get('gateway_admin_key',''))" 2>/dev/null || echo "")
+    if [[ -z "${FUSION_GATEWAY_ADMIN_KEY:-}" && -f "${SETTINGS:-}" ]]; then
+        shell_key=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('shell',{}).get('gateway_admin_key',''))" 2>/dev/null || echo "")
         [[ -n "${shell_key}" ]] && export FUSION_GATEWAY_ADMIN_KEY="${shell_key}"
     fi
     if [[ -n "${FUSION_SHELL_GATEWAY_URL:-}" && -n "${FUSION_GATEWAY_ADMIN_KEY:-}" ]]; then
@@ -246,12 +246,12 @@ preflight() {
     # client retry (new request_id, same prompt) can re-seed instead of
     # re-prefilling. Optional settings.json block
     # {"kv_checkpoint": {"interval": 256}} — env var wins; 0/absent = off.
-    if [[ -z "${FUSION_MLX_KV_CHECKPOINT_INTERVAL:-}" && -f "${SETTINGS}" ]]; then
-        kv_ckpt=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('kv_checkpoint',{}).get('interval',''))" 2>/dev/null || echo "")
+    if [[ -z "${FUSION_MLX_KV_CHECKPOINT_INTERVAL:-}" && -f "${SETTINGS:-}" ]]; then
+        kv_ckpt=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('kv_checkpoint',{}).get('interval',''))" 2>/dev/null || echo "")
         [[ -n "${kv_ckpt}" ]] && export FUSION_MLX_KV_CHECKPOINT_INTERVAL="${kv_ckpt}"
     fi
-    if [[ -z "${FUSION_MLX_GENERATE_TIMEOUT_S:-}" && -f "${SETTINGS}" ]]; then
-        gen_to=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('generate_timeout_s',''))" 2>/dev/null || echo "")
+    if [[ -z "${FUSION_MLX_GENERATE_TIMEOUT_S:-}" && -f "${SETTINGS:-}" ]]; then
+        gen_to=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('generate_timeout_s',''))" 2>/dev/null || echo "")
         [[ -n "${gen_to}" ]] && export FUSION_MLX_GENERATE_TIMEOUT_S="${gen_to}"
     fi
 
