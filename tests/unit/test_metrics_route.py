@@ -260,10 +260,48 @@ def test_metrics_prefix_cache_series_from_ssd_cache_stats(metrics_client, monkey
     )
     _set_pool(monkeypatch, _fake_pool({"m1": _entry(_stub_engine(scheduler=sched))}))
     body = metrics_client.client.get("/metrics").text
-
     assert 'fusion_mlx_prefix_cache_hits_total{engine="m1"} 11' in body
     assert 'fusion_mlx_prefix_cache_misses_total{engine="m1"} 7' in body
     assert 'fusion_mlx_prefix_cache_hit_rate{engine="m1"} 0.6111' in body
+
+
+def test_metrics_queue_gauges_prefer_lockfree_snapshot(metrics_client, monkeypatch):
+    """/metrics must read the engine's lock-free stats snapshot instead of
+    calling get_stats(): the latter walks scheduler.get_stats() → paged-cache
+    block/free-queue locks, which the executor thread holds for the whole of
+    a long prefill/decode step — rendering blocked >10s and 503'd whenever a
+    big generation was active."""
+    snapshot = {"num_running": 5, "num_waiting": 1, "num_prefilling": 2}
+    get_stats_calls = []
+
+    def _blocking_get_stats():
+        get_stats_calls.append(1)
+        return {"num_running": 99}
+
+    engine = SimpleNamespace(
+        get_stats_snapshot=lambda: snapshot,
+        get_stats=_blocking_get_stats,
+    )
+    _set_pool(monkeypatch, _fake_pool({"m1": _entry(engine)}))
+
+    body = metrics_client.client.get("/metrics").text
+    assert "fusion_mlx_requests_running 5" in body
+    assert "fusion_mlx_requests_waiting 1" in body
+    assert "fusion_mlx_requests_prefilling 2" in body
+    assert get_stats_calls == [], (
+        "renderer must not call get_stats() when a lock-free "
+        "get_stats_snapshot() is available"
+    )
+
+
+def test_metrics_queue_gauges_fall_back_to_get_stats(metrics_client, monkeypatch):
+    """Engines without get_stats_snapshot (other modality engines) still
+    render via the legacy get_stats() path."""
+    engine = SimpleNamespace(get_stats=lambda: {"num_running": 4})
+    _set_pool(monkeypatch, _fake_pool({"m1": _entry(engine)}))
+
+    body = metrics_client.client.get("/metrics").text
+    assert "fusion_mlx_requests_running 4" in body
 
 
 def test_metrics_omits_prefix_cache_series_when_scheduler_lacks_stats(

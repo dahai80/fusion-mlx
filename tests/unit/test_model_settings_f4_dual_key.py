@@ -69,7 +69,7 @@ def test_dual_key_collapsed_on_load(tmp_path: Path):
     assert len(mgr._settings) == 1
 
 
-def test_dual_key_conflict_logs_error(tmp_path: Path, caplog):
+def test_dual_key_divergent_logs_warning(tmp_path: Path, caplog):
     settings_file = tmp_path / "model_settings.json"
     settings_file.write_text(
         json.dumps(
@@ -83,9 +83,38 @@ def test_dual_key_conflict_logs_error(tmp_path: Path, caplog):
         ),
         encoding="utf-8",
     )
-    with caplog.at_level(logging.ERROR, logger="fusion_mlx.model_settings"):
-        ModelSettingsManager(tmp_path)
-    assert any("F-4" in r.message and "dual-key" in r.message for r in caplog.records)
+    with caplog.at_level(logging.WARNING, logger="fusion_mlx.model_settings"):
+        mgr = ModelSettingsManager(tmp_path)
+    # #1247: divergent payloads keep the first entry and WARN with both raw
+    # keys; they are not an ERROR-level conflict.
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+    assert any(
+        "duplicate model-name variant" in r.message and r.levelno == logging.WARNING
+        for r in caplog.records
+    )
+    assert mgr._settings["mlx-community--Qwen3.8-27B-4bit"].ttl_seconds == 300
+
+
+def test_dual_key_identical_no_warning(tmp_path: Path, caplog):
+    settings_file = tmp_path / "model_settings.json"
+    settings_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "models": {
+                    "mlx-community/Qwen3.8-27B-4bit": {"ttl_seconds": 300},
+                    "mlx-community--Qwen3.8-27B-4bit": {"ttl_seconds": 300},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with caplog.at_level(logging.WARNING, logger="fusion_mlx.model_settings"):
+        mgr = ModelSettingsManager(tmp_path)
+    # Identical slash/dash variants are expected legacy encoding: one entry,
+    # no WARNING/ERROR noise.
+    assert len(mgr._settings) == 1
+    assert not any(r.levelno >= logging.WARNING for r in caplog.records)
 
 
 def test_write_slash_read_hyphen(tmp_path: Path):

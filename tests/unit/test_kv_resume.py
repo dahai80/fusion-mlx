@@ -133,6 +133,84 @@ class TestPersistLoadCleanup:
         assert loaded is not None
         assert loaded.token_offset == 512
 
+    def test_find_by_prompt_matches_retry_with_new_request_id(
+        self, enabled, temp_root, monkeypatch
+    ):
+        from fusion_mlx.runtime.disk_kv_checkpoint import LoadedCheckpoint
+
+        prompt = list(range(1000, 1200))
+
+        def _fake_write(cache, *, root, req_hash, token_offset, **kwargs):
+            import json
+
+            dst_dir = os.path.join(root, req_hash)
+            os.makedirs(dst_dir, exist_ok=True)
+            body = os.path.join(dst_dir, f"checkpoint-{token_offset}.safetensors")
+            meta = os.path.join(dst_dir, f"checkpoint-{token_offset}.json")
+            with open(body, "wb"):
+                pass
+            with open(meta, "w") as fh:
+                json.dump(
+                    {
+                        "token_offset": token_offset,
+                        "kv_dtype": "bf16",
+                        "model_name": kwargs.get("model_name"),
+                        **kwargs.get("extra_metadata", {}),
+                    },
+                    fh,
+                )
+            return body
+
+        monkeypatch.setattr(
+            "fusion_mlx.runtime.disk_kv_checkpoint.write_checkpoint",
+            _fake_write,
+        )
+        monkeypatch.setattr(
+            "fusion_mlx.runtime.disk_kv_checkpoint.model_requires_full_checkpoint",
+            lambda m: False,
+        )
+
+        path = kv_resume.persist_request_kv(
+            "orig-req",
+            _fake_cache(2),
+            128,
+            model_name="llama",
+            prompt_token_ids=prompt,
+        )
+        assert path is not None
+
+        def _fake_load(p):
+            return LoadedCheckpoint(
+                cache=_fake_cache(2),
+                token_offset=128,
+                kv_dtype="bf16",
+                requires_full_checkpoint=False,
+                metadata={"source": "disconnect_persist"},
+                path=p,
+            )
+
+        monkeypatch.setattr(
+            "fusion_mlx.runtime.disk_kv_checkpoint.load_checkpoint", _fake_load
+        )
+
+        # A retry arrives with a NEW request_id but the same prompt.
+        loaded = kv_resume.find_resumable_kv_for_prompt(prompt, model_name="llama")
+        assert loaded is not None
+        assert loaded.token_offset == 128
+
+        # A different prompt must NOT match.
+        assert (
+            kv_resume.find_resumable_kv_for_prompt(
+                list(range(9000, 9200)), model_name="llama"
+            )
+            is None
+        )
+        # A different model must NOT match.
+        assert kv_resume.find_resumable_kv_for_prompt(prompt, model_name="qwen") is None
+
+    def test_find_by_prompt_disabled(self, disabled, temp_root):
+        assert kv_resume.find_resumable_kv_for_prompt(list(range(10))) is None
+
     def test_load_returns_none_when_no_checkpoint(self, enabled, temp_root):
         loaded = kv_resume.load_resumable_kv("missing", model_name="m")
         assert loaded is None

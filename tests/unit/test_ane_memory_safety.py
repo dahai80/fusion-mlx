@@ -83,6 +83,12 @@ async def test_ane_over_budget_rejected_via_admit(monkeypatch):
         def _record_eviction(self, reason):
             pass
 
+        def _purge_pure_caches(self):
+            return 0
+
+        def _admission_breakdown(self):
+            return ""
+
         async def unload_engine_async(self, mid, **kw):
             pass
 

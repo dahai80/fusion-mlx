@@ -122,6 +122,72 @@ def test_preflight_rejects_when_estimated_peak_exceeds_hard_limit():
     assert rejection.limit_bytes == 1
 
 
+def test_preflight_positive_control_full_kv_budget_passes():
+    """A prompt that fits the KV headroom must NOT trip the full-context
+    KV budget branch (positive control for the G2-hang fix)."""
+    scheduler = _make_scheduler()
+    scheduler._prefill_memory_guard = True
+    scheduler._memory_hard_limit_bytes = 10**18
+    plan = MagicMock()
+    plan.kv_bytes_per_token = 131072  # 128KB/token
+    with (
+        patch("fusion_mlx.scheduler.sched_query.mx.get_active_memory", return_value=0),
+        patch("fusion_mlx.scheduler.sched_query.get_phys_footprint", return_value=0),
+        patch.object(scheduler, "get_memory_plan", return_value=plan),
+    ):
+        assert scheduler._preflight_memory_check(_make_request(32768)) is None
+
+
+def test_preflight_rejects_prompt_exceeding_kv_headroom():
+    """The G2-hang fix: a 128k prompt whose resident KV exceeds the current
+    memory headroom must be rejected at preflight — the chunked-prefill
+    peak check alone let it through and the Metal worker froze mid-decode."""
+    scheduler = _make_scheduler()
+    scheduler._prefill_memory_guard = True
+    # 100GB hard limit, current usage 90GB → ~10GB KV headroom; the 16GB
+    # resident KV of a 128k prompt exceeds it, while the (mostly cached)
+    # chunked-prefill peak (~2GB) still fits.
+    scheduler._memory_hard_limit_bytes = 100 * 1024**3
+    plan = MagicMock()
+    plan.kv_bytes_per_token = 131072  # 128KB/token → 128k prompt = 16GB KV
+    req = _make_request(131072)
+    # Almost-fully-cached long context: only the last chunk is new, so the
+    # chunked-prefill peak check passes — but the WHOLE 128k prompt's KV is
+    # resident live memory and must trip the full-context budget branch.
+    req.cached_tokens = 131072 - 256
+    with (
+        patch(
+            "fusion_mlx.scheduler.sched_query.mx.get_active_memory",
+            return_value=90 * 1024**3,
+        ),
+        patch(
+            "fusion_mlx.scheduler.sched_query.get_phys_footprint",
+            return_value=90 * 1024**3,
+        ),
+        patch.object(scheduler, "get_memory_plan", return_value=plan),
+    ):
+        rejection = scheduler._preflight_memory_check(req)
+
+    assert rejection is not None
+    assert "resident KV" in rejection.message
+    assert "Reduce context length" in rejection.message
+    assert rejection.estimated_bytes == 131072 * 131072
+
+
+def test_preflight_kv_budget_skipped_without_plan():
+    """No memory plan (no model info / no hard limit) → KV budget branch
+    must be a no-op, not a crash."""
+    scheduler = _make_scheduler()
+    scheduler._prefill_memory_guard = True
+    scheduler._memory_hard_limit_bytes = 10**18
+    with (
+        patch("fusion_mlx.scheduler.sched_query.mx.get_active_memory", return_value=0),
+        patch("fusion_mlx.scheduler.sched_query.get_phys_footprint", return_value=0),
+        patch.object(scheduler, "get_memory_plan", return_value=None),
+    ):
+        assert scheduler._preflight_memory_check(_make_request(65536)) is None
+
+
 @pytest.mark.xfail(
     reason="strict=False: prod Scheduler.preflight_eviction_request REMOVED (no longer a method); preflight-eviction-before-rejection path redesigned — REMOVED-FEATURE, needs prod re-port not harness fix"
 )

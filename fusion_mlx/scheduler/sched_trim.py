@@ -143,8 +143,8 @@ def _do_abort_request(self, request_id: str) -> bool:
             pass
 
     # Remove from chunked-prefill queue (if mid-prefill)
-    if request_id in self._prefill_states:
-        self._prefill_states.pop(request_id, None)
+    prefill_state = self._prefill_states.pop(request_id, None)
+    if prefill_state is not None:
         self.prefilling = deque(
             r for r in self.prefilling if r.request_id != request_id
         )
@@ -308,15 +308,52 @@ def _do_abort_request(self, request_id: str) -> bool:
         # tail to disk BEFORE nulling the cache refs so a resumed request
         # can re-seed instead of re-prefilling. Best-effort; a write
         # failure is logged inside the helper and never blocks abort.
+        # Mid-prefill aborts have request.prompt_cache None (the KV lives
+        # in the in-flight _PrefillState.cache) — fall back to that so the
+        # most expensive case (82k-token prompt, minutes of prefill work)
+        # is exactly the one that gets persisted.
         try:
             from ..service.kv_resume import persist_request_kv
 
-            persist_request_kv(
-                request_id,
-                req_to_remove.prompt_cache,
-                int(req_to_remove.num_computed_tokens),
-                model_name=getattr(getattr(self, "config", None), "model_name", None),
-            )
+            decode_phase = int(req_to_remove.num_output_tokens or 0) > 0
+            if decode_phase:
+                logger.debug(
+                    "KV persist skipped for %s: decode-phase abort "
+                    "(%d output tokens); prefill checkpoint kept",
+                    request_id,
+                    int(req_to_remove.num_output_tokens or 0),
+                )
+            live_cache = req_to_remove.prompt_cache
+            live_tokens = int(req_to_remove.num_computed_tokens or 0)
+            if prefill_state is not None and getattr(prefill_state, "cache", None):
+                # Absolute token offset: tokens_processed is relative to the
+                # prefill start; the seed offset comes from base_size (cache
+                # offsets) or request.cached_tokens (set by the kv_resume
+                # re-seed), whichever is larger. Persisting only
+                # tokens_processed or a stale num_computed_tokens would
+                # REGRESS a re-seeded request's checkpoint (40k -> 1.5k
+                # observed) or silently skip the write (offset 0), and
+                # break retry convergence.
+                seed = max(
+                    int(getattr(prefill_state, "base_size", 0) or 0),
+                    int(req_to_remove.cached_tokens or 0),
+                )
+                state_tokens = seed + int(
+                    getattr(prefill_state, "tokens_processed", 0) or 0
+                )
+                if not live_cache or state_tokens > live_tokens:
+                    live_cache = prefill_state.cache
+                    live_tokens = state_tokens
+            if live_cache and not decode_phase:
+                persist_request_kv(
+                    request_id,
+                    live_cache,
+                    live_tokens,
+                    model_name=getattr(
+                        getattr(self, "config", None), "model_name", None
+                    ),
+                    prompt_token_ids=list(req_to_remove.prompt_token_ids or []),
+                )
         except Exception as persist_exc:
             logger.debug(
                 "KV persist on abort failed for %s: %s", request_id, persist_exc

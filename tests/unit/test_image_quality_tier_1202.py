@@ -87,8 +87,14 @@ class TestFastSiblingModel:
 
 
 class TestQualityField:
-    def test_default_fast(self):
+    def test_default_auto(self):
+        # #1251: rerouting is opt-in. The default must NOT silently swap
+        # the caller's requested model for a distilled sibling.
         req = ImageGenerateRequest(prompt="x")
+        assert req.quality == "auto"
+
+    def test_fast_accepted(self):
+        req = ImageGenerateRequest(prompt="x", quality="fast")
         assert req.quality == "fast"
 
     def test_high_accepted(self):
@@ -105,7 +111,9 @@ class TestRouteRouting:
         eng = _engine(POOL_KEY_DEV, variant="flux1_dev")
         fast_eng = _engine(POOL_KEY_SCHNELL, variant="flux1_schnell")
         pool = _pool_with({POOL_KEY_DEV: eng, POOL_KEY_SCHNELL: fast_eng})
-        req = ImageGenerateRequest(model=DEV, prompt="x", response_format="b64_json")
+        req = ImageGenerateRequest(
+            model=DEV, prompt="x", quality="fast", response_format="b64_json"
+        )
         with (
             patch("fusion_mlx.server.resolve_model_id", side_effect=lambda m: m),
             patch("fusion_mlx.api.images._pool", pool),
@@ -114,10 +122,17 @@ class TestRouteRouting:
         fast_eng.generate.assert_awaited_once()
         eng.generate.assert_not_awaited()
         assert resp.data[0].b64_json
+        # #1251: the substitution is echoed so the caller never mistakes a
+        # distilled render for the full model it asked for.
+        assert resp.model == SCHNELL
+        assert resp.requested_model == DEV
 
-    async def test_fallback_when_sibling_missing(self):
+    async def test_auto_keeps_requested_model(self):
+        # #1251: default quality=auto must use exactly the requested model
+        # even when a distilled sibling is loaded.
         eng = _engine(POOL_KEY_DEV, variant="flux1_dev")
-        pool = _pool_with({POOL_KEY_DEV: eng})
+        fast_eng = _engine(POOL_KEY_SCHNELL, variant="flux1_schnell")
+        pool = _pool_with({POOL_KEY_DEV: eng, POOL_KEY_SCHNELL: fast_eng})
         req = ImageGenerateRequest(model=DEV, prompt="x")
         with (
             patch("fusion_mlx.server.resolve_model_id", side_effect=lambda m: m),
@@ -125,6 +140,22 @@ class TestRouteRouting:
         ):
             resp = await generate_image(req)
         eng.generate.assert_awaited_once()
+        fast_eng.generate.assert_not_awaited()
+        assert resp.model == DEV
+        assert resp.requested_model == DEV
+
+    async def test_fallback_when_sibling_missing(self):
+        eng = _engine(POOL_KEY_DEV, variant="flux1_dev")
+        pool = _pool_with({POOL_KEY_DEV: eng})
+        req = ImageGenerateRequest(model=DEV, prompt="x", quality="fast")
+        with (
+            patch("fusion_mlx.server.resolve_model_id", side_effect=lambda m: m),
+            patch("fusion_mlx.api.images._pool", pool),
+        ):
+            resp = await generate_image(req)
+        eng.generate.assert_awaited_once()
+        assert resp.model == DEV
+        assert resp.requested_model == DEV
 
     async def test_high_keeps_model(self):
         eng = _engine(POOL_KEY_DEV, variant="flux1_dev")
@@ -141,7 +172,9 @@ class TestRouteRouting:
         eng = _engine(POOL_KEY_DEV, variant="flux1_dev")
         fast_eng = _engine(POOL_KEY_SCHNELL, variant="flux1_schnell")
         pool = _pool_with({POOL_KEY_DEV: eng, POOL_KEY_SCHNELL: fast_eng})
-        req = ImageGenerateRequest(model=DEV, prompt="x", variant="kontext")
+        req = ImageGenerateRequest(
+            model=DEV, prompt="x", quality="fast", variant="kontext"
+        )
         with (
             patch("fusion_mlx.server.resolve_model_id", side_effect=lambda m: m),
             patch("fusion_mlx.api.images._pool", pool),
@@ -171,7 +204,7 @@ class TestRouteRouting:
         eng = _engine(POOL_KEY_DEV, variant="flux1_dev")
         fast_eng = _engine(SCHNELL, variant="flux1_schnell")
         pool = _pool_with({POOL_KEY_DEV: eng, SCHNELL: fast_eng})
-        req = ImageGenerateRequest(model=POOL_KEY_DEV, prompt="x")
+        req = ImageGenerateRequest(model=POOL_KEY_DEV, prompt="x", quality="fast")
         with (
             patch("fusion_mlx.server.resolve_model_id", side_effect=lambda m: m),
             patch("fusion_mlx.api.images._pool", pool),
@@ -185,7 +218,7 @@ class TestRouteRouting:
         # warning, request falls back to the requested model.
         eng = _engine(POOL_KEY_DEV, variant="flux1_dev")
         pool = _pool_with({POOL_KEY_DEV: eng, POOL_KEY_SCHNELL: object()})
-        req = ImageGenerateRequest(model=DEV, prompt="x")
+        req = ImageGenerateRequest(model=DEV, prompt="x", quality="fast")
         with (
             patch("fusion_mlx.server.resolve_model_id", side_effect=lambda m: m),
             patch("fusion_mlx.api.images._pool", pool),

@@ -83,12 +83,13 @@ class ImageGenerateRequest(BaseModel):
     # NOT remove a background; use the RGBA prompt convention (see
     # https://github.com/QwenLM/Qwen-Image-2.1#transparent-image-generation-rgba).
     transparent: bool = Field(default=False)
-    # #1202: quality tier. "fast" (default) routes plain text-to-image
+    # #1202/#1251: quality tier. "auto" (default) always uses the requested
+    # model. "fast" is an explicit opt-in that routes plain text-to-image
     # requests on a full-diffusion model (FLUX.1-dev / FLUX.2-dev) to the
-    # distilled sibling (FLUX.1-schnell 4 steps / FLUX.2-klein); "high"
+    # distilled sibling (FLUX.1-schnell 4 steps / FLUX.2-klein). "high"
     # keeps the requested model as-is. Variant or image-input requests
     # always use the requested model (distilled siblings ship no adapters).
-    quality: str = Field(default="fast", pattern="^(fast|high)$")
+    quality: str = Field(default="auto", pattern="^(auto|fast|high)$")
 
     @model_validator(mode="before")
     @classmethod
@@ -120,6 +121,10 @@ class ImageGenerateResponse(BaseModel):
 
     data: list[ImageOutput]
     created: int = Field(default_factory=lambda: int(__import__("time").time()))
+    # #1251: model that actually produced the image. Distinct from the
+    # requested id when quality="fast" routed to the distilled sibling.
+    model: str | None = None
+    requested_model: str | None = None
 
 
 @router.post(
@@ -219,13 +224,17 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
                 "Load a Flux model first.",
             )
         if substituted:
-            logger.info(
-                "image quality tier: fast routed '%s' -> distilled '%s'",
+            # #1251: substitution is caller-visible (WARNING + response
+            # fields) — an explicit dev-model request must never look like a
+            # silent downgrade.
+            logger.warning(
+                "image quality tier: quality=fast routed '%s' -> distilled "
+                "'%s' (caller opted in; response echoes actual model)",
                 model_name,
                 routed_model,
             )
         else:
-            logger.info("image quality tier: %s model '%s'", tier, model_name)
+            logger.debug("image quality tier: %s model '%s'", tier, model_name)
         try:
             from ..server_metrics import get_server_metrics
 
@@ -327,7 +336,11 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
                 exc_info=True,
             )
 
-        return ImageGenerateResponse(data=outputs)
+        return ImageGenerateResponse(
+            data=outputs,
+            model=routed_model,
+            requested_model=model_name,
+        )
 
     except HTTPException:
         raise

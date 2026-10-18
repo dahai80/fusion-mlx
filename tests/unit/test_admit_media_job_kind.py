@@ -47,6 +47,14 @@ class _FakePool:
     def _record_eviction(self, reason):
         self.evictions.append(reason)
 
+    def _purge_pure_caches(self):
+        # #1250: pure-cache purge hook. Default frees nothing; subclasses
+        # override to model cache bytes that outlive the owning model.
+        return 0
+
+    def _admission_breakdown(self):
+        return ""
+
     async def unload_engine_async(self, mid, **kwargs):
         self.unloaded.append(mid)
         self._unloaded_victims.add(mid)
@@ -143,3 +151,87 @@ async def test_find_lru_victim_skips_ane_pinned():
     victim = pool._find_lru_victim()
     # ane-b has oldest last_access but is ANE-pinned → skipped; llm-a is next
     assert victim == "llm-a"
+
+
+class _PurgingPool(_FakePool):
+    # #1250: first projection over ceiling with no evictable model → purge
+    # pure caches frees the phantom residency and admission succeeds without
+    # an eviction and without a 507.
+    def __init__(self, ceiling, usage, freed):
+        super().__init__(ceiling=ceiling, usage=usage, victim=None)
+        self._freed = freed
+        self.purge_calls = 0
+
+    def _purge_pure_caches(self):
+        self.purge_calls += 1
+        self._usage -= self._freed
+        return 1
+
+
+@pytest.mark.asyncio
+async def test_phantom_residency_purge_unblocks_admission():
+    pool = _PurgingPool(ceiling=10 * _GB, usage=9 * _GB, freed=4 * _GB)
+    ok = await EnginePool.admit_media_job(pool, required_bytes=5 * _GB)
+    assert ok is True
+    assert pool.purge_calls == 1
+    assert pool.unloaded == []
+
+
+@pytest.mark.asyncio
+async def test_purge_runs_once_then_fails():
+    pool = _PurgingPool(ceiling=10 * _GB, usage=9 * _GB, freed=0)
+    ok = await EnginePool.admit_media_job(pool, required_bytes=5 * _GB)
+    assert ok is False
+    assert pool.purge_calls == 1
+
+
+class _ClearCountingCache:
+    def __init__(self):
+        self.calls = 0
+
+    def clear(self):
+        self.calls += 1
+        return 7
+
+
+class _LiveEngine:
+    def __init__(self, cache, has_active):
+        self._cache = cache
+        self._active = has_active
+        self._engine = type(
+            "Core",
+            (),
+            {"engine": type("E", (), {"scheduler": _Scheduler(cache)})()},
+        )()
+
+    def has_active_requests(self):
+        return self._active
+
+
+class _Scheduler:
+    def __init__(self, cache):
+        self.block_aware_cache = cache
+        self._boundary_snapshot_store = None
+
+
+def _entry(engine):
+    return type("Entry", (), {"engine": engine})()
+
+
+def test_purge_skips_engines_with_active_requests():
+    # #1250: block_aware_cache.clear() frees every live request table, so a
+    # busy engine must never be purged — its KV belongs to an in-flight
+    # generation, not to orphaned cache.
+    cache = _ClearCountingCache()
+    pool = EnginePool.__new__(EnginePool)
+    pool._entries = {"live": _entry(_LiveEngine(cache, has_active=True))}
+    assert pool._purge_pure_caches() == 0
+    assert cache.calls == 0
+
+
+def test_purge_clears_idle_engine_cache():
+    cache = _ClearCountingCache()
+    pool = EnginePool.__new__(EnginePool)
+    pool._entries = {"idle": _entry(_LiveEngine(cache, has_active=False))}
+    assert pool._purge_pure_caches() == 7
+    assert cache.calls == 1

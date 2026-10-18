@@ -339,6 +339,18 @@ def _render_queue_metrics() -> list[str]:
                 engine = getattr(entry, "engine", None)
                 if engine is None:
                     continue
+                # Prefer the lock-free snapshot: get_stats() walks into
+                # scheduler.get_stats() → paged-cache block/free-queue
+                # locks, which the executor thread holds for the whole of
+                # a long prefill/decode step — rendering then blocked >10s
+                # and /metrics 503'd whenever a big generation was active.
+                get_snapshot = getattr(engine, "get_stats_snapshot", None)
+                if callable(get_snapshot):
+                    stats = get_snapshot() or {}
+                    running += int(stats.get("num_running", 0))
+                    waiting += int(stats.get("num_waiting", 0))
+                    prefilling += int(stats.get("num_prefilling", 0))
+                    continue
                 get_stats = getattr(engine, "get_stats", None)
                 if callable(get_stats):
                     stats = get_stats() or {}

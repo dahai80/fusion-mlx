@@ -26,6 +26,7 @@ from fusion_mlx.pool.memory_enforcer import (
     _SMALL_SYSTEM_THRESHOLD,
     _STATIC_RESERVE_LARGE,
     _WIRED_LIMIT_BUFFER_BYTES,
+    _WIRED_LIMIT_KERNEL_HEADROOM_BYTES,
     _format_gb,
 )
 
@@ -214,9 +215,15 @@ class TestWiredLimitTarget:
         from fusion_mlx.pool.memory_enforcer import ProcessMemoryEnforcer
 
         enforcer = ProcessMemoryEnforcer.__new__(ProcessMemoryEnforcer)
-        with patch(
-            "fusion_mlx.pool.settings.get_system_memory",
-            return_value=128 * 1024**3,
+        with (
+            patch(
+                "fusion_mlx.pool.settings.get_system_memory",
+                return_value=128 * 1024**3,
+            ),
+            patch(
+                "fusion_mlx.pool.memory_enforcer.get_iogpu_wired_limit_bytes",
+                return_value=0,
+            ),
         ):
             target = enforcer._get_wired_limit_target(int(128 * 1024**3 * 0.5625))
         physical_cap = int(128 * 1024**3 * 0.80)
@@ -226,3 +233,33 @@ class TestWiredLimitTarget:
         assert target > int(
             128 * 1024**3 * 0.5625
         ), "Wired target must be above enforcer ceiling (buffer zone)"
+
+    def test_wired_target_stays_below_kernel_cap(self):
+        """When the kernel iogpu cap is raised high, the wired target must
+        stay a fail-fast margin BELOW the kernel cap — sitting exactly on it
+        turns an over-limit Metal allocation into an indefinite stall."""
+        from unittest.mock import patch
+
+        from fusion_mlx.pool.memory_enforcer import (
+            _WIRED_LIMIT_KERNEL_HEADROOM_BYTES,
+            ProcessMemoryEnforcer,
+        )
+
+        enforcer = ProcessMemoryEnforcer.__new__(ProcessMemoryEnforcer)
+        kernel_cap = 128 * 1024**3
+        with (
+            patch(
+                "fusion_mlx.pool.settings.get_system_memory",
+                return_value=512 * 1024**3,
+            ),
+            patch(
+                "fusion_mlx.pool.memory_enforcer.get_iogpu_wired_limit_bytes",
+                return_value=kernel_cap,
+            ),
+        ):
+            target = enforcer._get_wired_limit_target(kernel_cap)
+        assert target == kernel_cap - _WIRED_LIMIT_KERNEL_HEADROOM_BYTES
+        assert target < kernel_cap
+
+    def test_kernel_headroom_constant(self):
+        assert _WIRED_LIMIT_KERNEL_HEADROOM_BYTES == 12 * 1024**3

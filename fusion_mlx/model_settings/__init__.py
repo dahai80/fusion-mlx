@@ -185,6 +185,9 @@ class ModelSettingsManager:
         self.templates_file = self.base_path / "global_templates.json"
         self._lock = threading.Lock()
         self._settings: dict[str, ModelSettings] = {}
+        # #1247: canonical key -> first raw key seen, so duplicate-variant
+        # diagnostics can name both raw spellings.
+        self._settings_raw_keys: dict[str, str] = {}
         self._profiles: dict[str, dict[str, dict[str, Any]]] = {}
         self._templates: dict[str, dict[str, Any]] = {}
 
@@ -198,6 +201,7 @@ class ModelSettingsManager:
         if not self.settings_file.exists():
             logger.debug("Settings file not found: %s", self.settings_file)
             self._settings = {}
+            self._settings_raw_keys = {}
             return
         try:
             with open(self.settings_file, encoding="utf-8") as f:
@@ -211,6 +215,7 @@ class ModelSettingsManager:
                 )
             models_data = data.get("models", {})
             self._settings = {}
+            self._settings_raw_keys = {}
             for model_id, model_data in models_data.items():
                 try:
                     parsed = ModelSettings.from_dict(model_data)
@@ -221,25 +226,41 @@ class ModelSettingsManager:
                     continue
                 canonical = _canonical_model_id(model_id)
                 if canonical in self._settings:
-                    # F-4 (#0912): same model stored under both slash and
-                    # hyphen keys. Keep first (deterministic), drop the
-                    # duplicate, log loudly so the operator reconciles.
-                    logger.error(
-                        "F-4 model_settings dual-key conflict: '%s' duplicates "
-                        "already-loaded canonical key '%s'; keeping first, "
-                        "dropping duplicate. Re-apply settings via admin if needed.",
-                        model_id,
-                        canonical,
-                    )
+                    # #1247: slash/dash variants of the SAME model are an
+                    # expected legacy encoding, not a conflict. Identical
+                    # payloads merge silently (INFO); divergent payloads keep
+                    # the first entry and WARN with both raw keys so the
+                    # operator can see exactly which two keys differ.
+                    first_raw = self._settings_raw_keys.get(canonical, canonical)
+                    if parsed == self._settings[canonical]:
+                        logger.debug(
+                            "model_settings duplicate model-name variant "
+                            "'%s' (canonical '%s') ignored",
+                            model_id,
+                            canonical,
+                        )
+                    else:
+                        logger.warning(
+                            "model_settings duplicate model-name variant "
+                            "'%s' differs from '%s' (canonical '%s'); "
+                            "keeping first, dropping duplicate. Re-apply "
+                            "settings via admin if needed.",
+                            model_id,
+                            first_raw,
+                            canonical,
+                        )
                     continue
+                self._settings_raw_keys[canonical] = model_id
                 self._settings[canonical] = parsed
             logger.info("Loaded settings for %d models", len(self._settings))
         except json.JSONDecodeError as e:
             logger.error("Invalid JSON in settings file: %s", e)
             self._settings = {}
+            self._settings_raw_keys = {}
         except Exception as e:
             logger.error("Failed to load settings file: %s", e)
             self._settings = {}
+            self._settings_raw_keys = {}
 
     def _save(self) -> None:
         data = {
@@ -362,17 +383,32 @@ class ModelSettingsManager:
             raw_profiles = data.get("profiles", {}) or {}
             self._profiles = {}
             changed = False
+            profile_raw_keys: dict[str, str] = {}
             for model_id, profiles in raw_profiles.items():
                 canonical = _canonical_model_id(model_id)
                 if canonical in self._profiles:
-                    logger.error(
-                        "F-4 model_profiles dual-key conflict: '%s' duplicates "
-                        "already-loaded canonical key '%s'; keeping first, "
-                        "dropping duplicate.",
-                        model_id,
-                        canonical,
-                    )
+                    # #1247: slash/dash variants of the same model are an
+                    # expected legacy encoding. Identical payloads merge
+                    # quietly; divergent payloads keep the first and warn.
+                    first_raw = profile_raw_keys.get(canonical, canonical)
+                    if profiles == self._profiles[canonical]:
+                        logger.debug(
+                            "model_profiles duplicate model-name variant "
+                            "'%s' (canonical '%s') ignored",
+                            model_id,
+                            canonical,
+                        )
+                    else:
+                        logger.warning(
+                            "model_profiles duplicate model-name variant "
+                            "'%s' differs from '%s' (canonical '%s'); "
+                            "keeping first, dropping duplicate.",
+                            model_id,
+                            first_raw,
+                            canonical,
+                        )
                     continue
+                profile_raw_keys[canonical] = model_id
                 self._profiles[canonical] = profiles
             for model_id, profiles in self._profiles.items():
                 used_api_names: set[str] = set()
