@@ -1,0 +1,55 @@
+{
+  "issue": "#1203",
+  "modality": "image",
+  "model": "black-forest-labs/FLUX.1-dev",
+  "steps": 8,
+  "seed": 20261018,
+  "resolution": [
+    768,
+    768
+  ],
+  "gate": {
+    "ssim_floor": 0.9,
+    "proxy_floor": 0.9
+  },
+  "runs": [
+    {
+      "config": "fp16",
+      "bits": null,
+      "load_s": 0.51,
+      "gen_s": 31.38,
+      "s_per_step": 3.923,
+      "peak_rss_gib": 0.6,
+      "sharpness": 5e-05,
+      "colorfulness": 0.22656
+    },
+    {
+      "config": "int4",
+      "bits": 4,
+      "load_s": 0.19,
+      "gen_s": 25.77,
+      "s_per_step": 3.221,
+      "speedup_vs_fp16": 1.22,
+      "peak_rss_gib": 0.67,
+      "psnr": 23.876,
+      "ssim": 0.95373,
+      "sharpness_retained": 1.3837,
+      "colorfulness_retained": 1.0265,
+      "passed": true
+    },
+    {
+      "config": "int8",
+      "bits": 8,
+      "load_s": 0.15,
+      "gen_s": 26.25,
+      "s_per_step": 3.281,
+      "speedup_vs_fp16": 1.2,
+      "peak_rss_gib": 0.68,
+      "psnr": 38.453,
+      "ssim": 0.99831,
+      "sharpness_retained": 1.0727,
+      "colorfulness_retained": 1.0,
+      "passed": true
+    }
+  ]
+}
