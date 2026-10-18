@@ -171,7 +171,7 @@ def add_request(self, request: Request) -> None:
             request.request_id,
             request.cached_tokens,
         )
-    elif self._inflight_store_futures:
+    elif self._has_unfinished_store_futures():
         self._should_defer_for_cache_freshness(request)
         request.remaining_tokens = request.prompt_token_ids
         logger.debug(
@@ -179,7 +179,7 @@ def add_request(self, request: Request) -> None:
             "(in-flight store_cache present)",
             request.request_id,
         )
-    elif self.block_aware_cache is not None and not self._inflight_store_futures:
+    elif self.block_aware_cache is not None:
         # Use paged cache
         block_table, remaining = self.block_aware_cache.fetch_cache(
             request.request_id,
@@ -433,6 +433,13 @@ _SSD_RECONSTRUCT_MAX_TOKENS = 4096
 
 
 # ── Admission blocker helpers ────────────────────────────────────────────
+
+
+def _has_unfinished_store_futures(self) -> bool:
+    # The dict can retain completed futures until the next drain pass; only
+    # an unfinished one can hold the tiered-cache lock against a reconstruct.
+    futures = getattr(self, "_inflight_store_futures", None) or {}
+    return any(not getattr(f, "done", lambda: True)() for f in futures.values())
 
 
 def _clear_memory_admission_blocker(self, request_id: str | None = None) -> None:
@@ -724,20 +731,6 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
         len(request.prompt_token_ids or []),
     )
 
-    # Guard: while any store_cache is in flight the tiered-cache lock can be
-    # held by the store worker; a reconstruct here would block step() on that
-    # lock (observed: 192-token reconstruct wedged 8+ min). Full prefill is
-    # fast and contention-free — skip SSD reuse during the window.
-    if getattr(self, "_inflight_store_futures", None):
-        logger.info(
-            "PREFIX-PREP skip %s: store_cache in flight",
-            request.request_id[:8],
-        )
-        self.block_aware_cache.clear_request_entry_no_free(request.request_id)
-        request.remaining_tokens = request.prompt_token_ids
-        self._prefix_cache_prepared.add(request.request_id)
-        return
-
     # CoW concurrent-donation fast path (mirror of add_request): if a live
     # donor shares this prefix, adopt GPU slabs and skip SSD fetch+reconstruct.
     logger.debug("PREFIX-PREP cow-donate try %s", request.request_id[:8])
@@ -756,6 +749,21 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
         if block_table and block_table.num_tokens > 0:
+            # Guard: while any store_cache is in flight the tiered-cache
+            # lock can be held by the store worker; a reconstruct here would
+            # block step() on that lock (observed: 192-token reconstruct
+            # wedged 8+ min). Full prefill is fast and contention-free —
+            # skip the reconstruct. The fetch above is pure metadata and
+            # stays, so callers still see normal cache-lookup behaviour.
+            if self._has_unfinished_store_futures():
+                logger.info(
+                    "PREFIX-PREP skip reconstruct %s: store_cache in flight",
+                    request.request_id[:8],
+                )
+                self.block_aware_cache.clear_request_entry_no_free(request.request_id)
+                request.remaining_tokens = request.prompt_token_ids
+                self._prefix_cache_prepared.add(request.request_id)
+                return
             if block_table.num_tokens > _SSD_RECONSTRUCT_MAX_TOKENS:
                 logger.info(
                     "Skipping SSD prefix reuse for %s: %d tokens > cap %d "
