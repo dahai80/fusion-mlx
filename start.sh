@@ -226,6 +226,35 @@ preflight() {
     export HF_ENDPOINT="${HF_MIRROR}"
     export HUGGINGFACE_HUB_CACHE="${HOME}/.fusion-mlx/models"
 
+    # #1220: union-web shell registration. Optional settings.json block
+    # {"shell": {"gateway_url": ..., "gateway_admin_key": ...}} — env vars
+    # win. Present gateway_url + key makes the server register web/manifest
+    # with the gateway and heartbeat (fusion_mlx/shell_registry.py).
+    if [[ -z "${FUSION_SHELL_GATEWAY_URL:-}" && -f "${SETTINGS}" ]]; then
+        shell_gw=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('shell',{}).get('gateway_url',''))" 2>/dev/null || echo "")
+        [[ -n "${shell_gw}" ]] && export FUSION_SHELL_GATEWAY_URL="${shell_gw}"
+    fi
+    if [[ -z "${FUSION_GATEWAY_ADMIN_KEY:-}" && -f "${SETTINGS}" ]]; then
+        shell_key=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('shell',{}).get('gateway_admin_key',''))" 2>/dev/null || echo "")
+        [[ -n "${shell_key}" ]] && export FUSION_GATEWAY_ADMIN_KEY="${shell_key}"
+    fi
+    if [[ -n "${FUSION_SHELL_GATEWAY_URL:-}" && -n "${FUSION_GATEWAY_ADMIN_KEY:-}" ]]; then
+        log_info "Union-web shell registration enabled (gateway=${FUSION_SHELL_GATEWAY_URL})"
+    fi
+
+    # Abort-KV re-seed: persist aborted requests' live KV to disk so a
+    # client retry (new request_id, same prompt) can re-seed instead of
+    # re-prefilling. Optional settings.json block
+    # {"kv_checkpoint": {"interval": 256}} — env var wins; 0/absent = off.
+    if [[ -z "${FUSION_MLX_KV_CHECKPOINT_INTERVAL:-}" && -f "${SETTINGS}" ]]; then
+        kv_ckpt=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('kv_checkpoint',{}).get('interval',''))" 2>/dev/null || echo "")
+        [[ -n "${kv_ckpt}" ]] && export FUSION_MLX_KV_CHECKPOINT_INTERVAL="${kv_ckpt}"
+    fi
+    if [[ -z "${FUSION_MLX_GENERATE_TIMEOUT_S:-}" && -f "${SETTINGS}" ]]; then
+        gen_to=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('generate_timeout_s',''))" 2>/dev/null || echo "")
+        [[ -n "${gen_to}" ]] && export FUSION_MLX_GENERATE_TIMEOUT_S="${gen_to}"
+    fi
+
     # #398: start.sh is the standalone launcher (loopback, no gateway
     # injecting X-Fusion-Route). Default to route-guard warn-only so
     # local /v1/* calls are not rejected. Gateway deployments inject the
@@ -289,7 +318,7 @@ _parse_start_args() {
             # boolean spec-decode flags (no value)
             --enable-dflash|--enable-dflash2|--enable-dspark|--enable-mtp|\
             --no-spec-decode|--force-spec-decode|--mtp-optimistic|--mtp-sidecar|\
-            --suffix-decoding)
+            --suffix-decoding|--disable-prefix-cache)
                 extra+=("$1")
                 shift
                 ;;

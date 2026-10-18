@@ -1,0 +1,20 @@
+{
+    "name": "@fusion/web-sdk",
+    "version": "0.1.0",
+    "description": "postMessage bridge client for fusion-web-shell modules (http proxy, toast, tab, theme, devices)",
+    "license": "Apache-2.0",
+    "type": "module",
+    "main": "src/index.ts",
+    "types": "src/index.ts",
+    "exports": {
+        ".": "./src/index.ts",
+        "./host": "./src/host.ts"
+    },
+    "scripts": {
+        "typecheck": "tsc --noEmit",
+        "build": "bun run typecheck && bun build src/index.ts --outdir dist --target browser --format esm"
+    },
+    "devDependencies": {
+        "typescript": "^5.6.3"
+    }
+}
