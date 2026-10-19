@@ -331,6 +331,17 @@ def _llm_watchdog_window_for_pending(scheduler: Any) -> float:
 # (same accepted hazard as the video/image poison path).
 _llm_watchdog_engine_ref: weakref.ref | None = None
 _llm_engine_ref_lock = threading.Lock()
+# #1261: per-engine watchdog registry. The singular ref above tracked only
+# the LAST registered engine and _llm_heartbeat is process-global, so a
+# wedged engine was invisible while any sibling kept advancing the shared
+# heartbeat (27B hung forever, 15 leases piled up, restart required). The
+# dict keys on engine id (weakref values) so each live engine's own
+# heartbeat is evaluated independently. Engines WITHOUT per-engine inputs
+# (test fakes predating #1261) fall back to the legacy global evaluation.
+_llm_watchdog_engine_refs: dict[str, weakref.ref] = {}
+# #1261: last-seen step counter per engine id for the progress-deferral
+# check (watchdog thread is the only writer — no lock needed).
+_llm_watchdog_last_steps_by_id: dict[str, int] = {}
 # #1176 Bug 3: consecutive poison counter. Each poison event abandons a
 # stuck Metal thread that holds GPU memory never freed. If the process
 # accumulates too many poison events without a clean reload, memory is
@@ -384,15 +395,37 @@ def register_llm_engine_for_watchdog(engine: Any) -> None:
     # weakref so engine teardown (pool evict) is not blocked by the watchdog.
     global _llm_watchdog_engine_ref
     with _llm_engine_ref_lock:
+        key = getattr(engine, "_engine_id", None) or str(id(engine))
+        _llm_watchdog_engine_refs[key] = weakref.ref(engine)
         _llm_watchdog_engine_ref = weakref.ref(engine)
 
 
-def unregister_llm_engine_from_watchdog() -> None:
+def unregister_llm_engine_from_watchdog(engine: Any = None) -> None:
     # Called from EngineCore.stop() so a stopping engine is not marked dead
-    # by a racing watchdog tick.
+    # by a racing watchdog tick. With an explicit engine only that engine's
+    # entry is dropped (#1261: other resident engines stay watched); the
+    # no-arg form clears everything (pre-#1261 single-ref world + tests).
     global _llm_watchdog_engine_ref
     with _llm_engine_ref_lock:
-        _llm_watchdog_engine_ref = None
+        if engine is None:
+            _llm_watchdog_engine_refs.clear()
+            _llm_watchdog_engine_ref = None
+            return
+        key = getattr(engine, "_engine_id", None) or str(id(engine))
+        _llm_watchdog_engine_refs.pop(key, None)
+        if (
+            _llm_watchdog_engine_ref is not None
+            and _llm_watchdog_engine_ref() is engine
+        ):
+            _llm_watchdog_engine_ref = None
+
+
+def llm_watchdog_has_engines() -> bool:
+    # #1261: true while at least one live engine is registered — EngineCore.
+    # stop() uses it to keep the shared watchdog thread alive for the
+    # remaining engines instead of killing it on the first engine stop.
+    with _llm_engine_ref_lock:
+        return any(ref() is not None for ref in _llm_watchdog_engine_refs.values())
 
 
 def is_video_executor_poisoned() -> bool:
@@ -456,6 +489,9 @@ def reset_llm_executor_poison() -> None:
     # engine starts with a clean watchdog baseline.
     _llm_watchdog_last_steps = -1
     _llm_progress_defer_logged = False
+    # #1261: per-engine progress-defer baselines reset with the same
+    # lifecycle as the legacy one.
+    _llm_watchdog_last_steps_by_id.clear()
 
 
 def update_llm_heartbeat() -> None:
@@ -464,12 +500,206 @@ def update_llm_heartbeat() -> None:
         _llm_heartbeat = time.monotonic()
 
 
+def _recover_wedged_engine(engine: Any, stale_s: float) -> None:
+    # #1261: targeted recovery for one wedged engine — cancel the wedged
+    # loop task (unblocks the run_in_executor await the loop is parked on),
+    # fail every unfinished context (unblocks the HTTP requests awaiting
+    # finished_event; their release paths drop the pool leases as they
+    # unwind), then trigger the pool's dead-engine unload (EF-1) so a fresh
+    # engine replaces the wedged one. The actual work is scheduled on the
+    # engine's event loop via call_soon_threadsafe — the loop itself is
+    # alive (only its loop TASK is parked on the wedged executor future),
+    # so the callbacks run. Runs on the watchdog thread.
+    loop = getattr(engine, "_loop", None)
+    if loop is None or not loop.is_running():
+        logger.error(
+            "#1261 wedged-engine recovery: engine loop not running — "
+            "marking dead only; pool EF-1 reload on next get_engine"
+        )
+        try:
+            engine.mark_dead(
+                f"G2 hung LLM worker thread (heartbeat stale {stale_s:.0f}s, #1261)"
+            )
+        except Exception:
+            logger.exception("mark_dead on wedged engine failed")
+        return
+    reason = (
+        f"G2 hung LLM worker thread (heartbeat stale {stale_s:.0f}s, "
+        "#1261 per-engine watchdog)"
+    )
+
+    def _recover() -> None:
+        try:
+            task = getattr(engine, "_task", None)
+            if task is not None and not task.done():
+                task.cancel()
+                logger.warning("#1261: cancelled wedged engine loop task")
+            try:
+                leaked = engine._fail_unfinished_contexts(reason)
+            except Exception:
+                logger.exception("_fail_unfinished_contexts on wedged engine failed")
+                leaked = 0
+            if leaked:
+                logger.warning(
+                    "#1261 recovery: force-finished %d context(s) awaiting "
+                    "the wedged engine",
+                    leaked,
+                )
+        except Exception:
+            loop_thread = threading.current_thread().name
+            logger.exception(
+                "#1261 wedged-engine recovery callback failed (thread=%s)",
+                loop_thread,
+            )
+
+    try:
+        loop.call_soon_threadsafe(_recover)
+    except RuntimeError:
+        # Loop closed between the is_running() check and the call.
+        try:
+            engine.mark_dead(reason)
+        except Exception:
+            logger.exception("mark_dead on wedged engine failed")
+
+    # Trigger the pool's dead-engine unload (EF-1) on the loop thread — it
+    # re-reads the pool, finds is_dead() engines and unloads them. While
+    # the failed requests drain, the R-6 lease guard defers the teardown
+    # via the pending-unload marker, which drains on the last release.
+    try:
+        from .api._guards import _trigger_poisoned_engine_reload
+
+        loop.call_soon_threadsafe(_trigger_poisoned_engine_reload)
+    except RuntimeError:
+        pass
+
+
 def _llm_watchdog_check() -> None:
     # One watchdog evaluation. Split out of the tick loop so tests can drive
     # it synchronously — thread-scheduling races on loaded CI runners made
     # sleep-based tests flaky (6 spurious failures).
+    # #1261: engines registered WITH per-engine watchdog inputs (_hb et al.)
+    # are each evaluated against their own heartbeat — a wedged engine can
+    # no longer hide behind a sibling's fresh heartbeat. Recovery is
+    # targeted (mark-dead + loop-task cancel + context fail + pool reload);
+    # the process-global poison flag is deliberately NOT set, because every
+    # healthy engine's loop checks it and would fast-fail all requests.
+    # Engines without per-engine inputs (test fakes) and an empty registry
+    # fall through to the legacy process-global evaluation below, which
+    # keeps the pre-#1261 single-engine contract (poison_executor etc.).
     global _llm_executor_poisoned, _media_defer_start, _media_defer_logged, _llm_poison_count
     global _llm_watchdog_last_steps, _llm_progress_defer_logged
+    now = time.monotonic()
+    per_engine: list = []
+    with _llm_engine_ref_lock:
+        registry_snapshot = list(_llm_watchdog_engine_refs.items())
+    for key, ref in registry_snapshot:
+        engine = ref()
+        if engine is None:
+            # Weakref died with the engine — prune on sight.
+            with _llm_engine_ref_lock:
+                if _llm_watchdog_engine_refs.get(key) is ref:
+                    _llm_watchdog_engine_refs.pop(key, None)
+            continue
+        if getattr(engine, "_hb", None) is None:
+            # No per-engine inputs (pre-#1261 test fake) — the legacy
+            # global evaluation below covers it.
+            continue
+        per_engine.append(engine)
+    if per_engine:
+        for engine in per_engine:
+            dead = getattr(engine, "is_dead", None)
+            if callable(dead) and dead():
+                continue
+            running = getattr(engine, "is_running", None)
+            if callable(running) and not running():
+                continue
+            hb = engine._hb
+            deadline = getattr(engine, "_step_deadline", 0.0)
+            window = getattr(engine, "_step_window", 0.0)
+            if deadline == 0.0 or hb == 0.0:
+                continue
+            if window <= 0.0:
+                window = _LLM_WATCHDOG_TIMEOUT_S
+            if now - hb <= window:
+                continue
+            # G2-SR: a media job starves every LLM worker on the shared
+            # Metal command queue (not a hang) — defer, bounded.
+            if is_media_job_active():
+                if _media_defer_start == 0.0:
+                    _media_defer_start = now
+                if now - _media_defer_start < _LLM_WATCHDOG_MEDIA_DEFER_S:
+                    if not _media_defer_logged:
+                        _media_defer_logged = True
+                        logger.warning(
+                            "G2 per-engine watchdog: engine %s heartbeat "
+                            "stale %.0fs but media job active — deferring "
+                            "recovery (GPU starvation suspected, not hang).",
+                            getattr(engine, "_engine_id", "?"),
+                            now - hb,
+                        )
+                    continue
+                logger.error(
+                    "G2 per-engine watchdog: media job active for %.0fs "
+                    "with engine %s heartbeat stale %.0fs — exceeded "
+                    "media defer budget (%ds). Recovering; the media job "
+                    "may be stuck.",
+                    now - _media_defer_start,
+                    getattr(engine, "_engine_id", "?"),
+                    now - hb,
+                    int(_LLM_WATCHDOG_MEDIA_DEFER_S),
+                )
+            with _llm_executor_poison_lock:
+                if _llm_executor_poisoned:
+                    return
+            # #1179: progress check — heartbeat only advances BETWEEN
+            # steps, so one legitimately-slow step looks identical to a
+            # hang. Read this engine's step counter; if it advanced since
+            # the last tick the worker is slow, not hung.
+            key = getattr(engine, "_engine_id", None) or str(id(engine))
+            engine_steps = -1
+            try:
+                engine_steps = int(getattr(engine, "_steps_executed", -1))
+            except Exception:
+                engine_steps = -1
+            if engine_steps >= 0:
+                last_steps = _llm_watchdog_last_steps_by_id.get(key, -1)
+                if engine_steps != last_steps:
+                    _llm_watchdog_last_steps_by_id[key] = engine_steps
+                    if _llm_progress_defer_logged:
+                        _llm_progress_defer_logged = False
+                    continue
+            _llm_watchdog_last_steps_by_id[key] = engine_steps
+            logger.error(
+                "G2 per-engine watchdog: engine %s worker hung for %.0fs "
+                "(own heartbeat stale, steps frozen at %d) — targeted "
+                "recovery: mark dead + cancel loop task + fail requests + "
+                "pool reload (#1261). Sibling engines unaffected.",
+                key,
+                now - hb,
+                engine_steps,
+            )
+            if not engine.is_dead():
+                engine.mark_dead(
+                    "G2 hung LLM worker thread (heartbeat stale %.0fs, "
+                    "#1261 per-engine watchdog)" % (now - hb)
+                )
+            _recover_wedged_engine(engine, now - hb)
+            # #1176 Bug 3: each wedged engine abandons an executor thread
+            # holding GPU memory — count toward the fatal threshold, same
+            # hazard as the legacy path.
+            _llm_poison_count += 1
+            if _llm_poison_count >= _LLM_POISON_FATAL_THRESHOLD:
+                from .utils.fatal import fatal_exit
+
+                fatal_exit(
+                    f"G2 per-engine watchdog: {_llm_poison_count} "
+                    f"consecutive wedge events (threshold="
+                    f"{_LLM_POISON_FATAL_THRESHOLD}) — abandoned engine "
+                    f"threads hold GPU memory that cannot be reclaimed. "
+                    f"Restart to recover."
+                )
+        return
+    # ---- legacy process-global evaluation (no per-engine inputs) ----
     with _llm_heartbeat_lock:
         hb = _llm_heartbeat
         deadline = _llm_step_deadline
@@ -1103,6 +1333,14 @@ class EngineCore:
         self._wake_event: asyncio.Event | None = None
         self._start_time: float | None = None
         self._steps_executed = 0
+        # #1261: per-engine watchdog inputs. The module-level _llm_heartbeat
+        # trio is shared by every engine in the process; a wedged engine's
+        # stale heartbeat was masked by any sibling still generating. These
+        # are written by this engine's own loop/_step_burst (single writer)
+        # and read by the watchdog thread — GIL-atomic attribute access.
+        self._hb = 0.0
+        self._step_window = 0.0
+        self._step_deadline = 0.0
         # Lock-free stats snapshot for the /metrics render path: the render
         # thread must never call scheduler.get_stats() directly — that takes
         # the paged-cache block/free-queue locks, which the executor thread
@@ -1150,6 +1388,10 @@ class EngineCore:
         self._last_loop_error_sig = None
         self._start_time = time.time()
         self._task = asyncio.create_task(self._engine_loop())
+        # #1261: a loop task that ends while the engine still believes it is
+        # running means the loop exited without the EF-1 dead-flag paths —
+        # mark dead so the pool reloads instead of serving a dead loop.
+        self._task.add_done_callback(self._on_loop_task_done)
         # G2: start llm worker watchdog (detects hung Metal thread).
         start_llm_watchdog()
         # G2 auto-rebuild (#862): a fresh start clears any inherited poison
@@ -1166,10 +1408,14 @@ class EngineCore:
     async def stop(self) -> None:
         self._running = False
         # G2: unregister this engine before stopping the watchdog so a
-        # racing tick does not mark a stopping engine dead.
-        unregister_llm_engine_from_watchdog()
-        # G2: stop watchdog on engine stop.
-        stop_llm_watchdog()
+        # racing tick does not mark a stopping engine dead. #1261: drop only
+        # THIS engine's registry entry — other resident engines stay watched.
+        unregister_llm_engine_from_watchdog(self)
+        # G2: stop the shared watchdog thread only when the LAST engine in
+        # the process stops — stopping one engine used to kill the watchdog
+        # for every remaining engine (#1261).
+        if not llm_watchdog_has_engines():
+            stop_llm_watchdog()
         if self._wake_event is not None:
             self._wake_event.set()
         if self._task:
@@ -1225,6 +1471,33 @@ class EngineCore:
         self._engine_dead_reason = reason
         logger.error("Engine marked dead: %s", reason)
 
+    def _on_loop_task_done(self, task: "asyncio.Task") -> None:
+        # #1261: a loop task that ends while the engine still thinks it is
+        # running means the loop exited without the EF-1 dead-flag paths
+        # (poison exit / circuit breaker / BaseException handler) having
+        # run — e.g. an exception escaping the loop's own handlers. Mark
+        # dead so the pool reloads instead of serving a dead loop forever.
+        if self._engine_dead or not self._running:
+            return
+        if task.cancelled():
+            return
+        self.mark_dead(
+            "engine loop task ended unexpectedly "
+            f"({task.exception()!r}) (#1261 loop-death callback)"
+        )
+
+    def _touch_heartbeat(self) -> None:
+        # #1261: per-engine heartbeat alongside the legacy global one — the
+        # watchdog evaluates each engine's own staleness independently so a
+        # wedged engine cannot hide behind a sibling's fresh heartbeat.
+        # One time.monotonic() read shared by both clocks (the global write
+        # mirrors update_llm_heartbeat but reuses the same timestamp).
+        global _llm_heartbeat
+        now = time.monotonic()
+        self._hb = now
+        with _llm_heartbeat_lock:
+            _llm_heartbeat = now
+
     def _wake_engine_loop(self) -> None:
         """Wake the idle engine loop after scheduler-visible state changes."""
         event = getattr(self, "_wake_event", None)
@@ -1263,7 +1536,7 @@ class EngineCore:
         Runs on the MLX executor thread. Returns the SchedulerOutputs in order.
         """
         # G2: heartbeat so the watchdog knows the worker is alive.
-        update_llm_heartbeat()
+        self._touch_heartbeat()
         max_steps = self.config.decode_burst_max_steps
         outputs = [self.scheduler.step()]
         if max_steps <= 1:
@@ -1302,7 +1575,7 @@ class EngineCore:
                     exc_info=True,
                 )
                 break
-            update_llm_heartbeat()
+            self._touch_heartbeat()
         return outputs
 
     async def _engine_loop(self) -> None:
@@ -1397,6 +1670,10 @@ class EngineCore:
                     with _llm_heartbeat_lock:
                         _llm_step_deadline = time.monotonic() + step_window
                         _llm_step_window = step_window
+                    # #1261: mirror the arm on this engine's own watchdog
+                    # inputs (the global trio above is process-shared).
+                    self._step_window = step_window
+                    self._step_deadline = time.monotonic() + step_window
                     try:
                         step_outputs = await loop.run_in_executor(
                             self._mlx_executor, self._step_burst
@@ -1409,6 +1686,9 @@ class EngineCore:
                         with _llm_heartbeat_lock:
                             _llm_step_deadline = 0.0
                             _llm_step_window = 0.0
+                        # #1261: disarm this engine's own watchdog window too.
+                        self._step_deadline = 0.0
+                        self._step_window = 0.0
                     self._steps_executed += len(step_outputs)
                     self._tps_window_steps += len(step_outputs)
                     self._pacing_tps_signal()
