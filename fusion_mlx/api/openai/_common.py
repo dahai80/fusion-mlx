@@ -10,6 +10,7 @@ all route decorators across the package register on the same router.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from fastapi import APIRouter
@@ -397,3 +398,76 @@ def _get_settings() -> Any:
     from ...server import get_settings
 
     return get_settings()
+
+
+# ---------------------------------------------------------------------------
+# Claude Code request normalization (OpenAI-route companion to the #0913
+# Anthropic-route thinking-default fix)
+#
+# Claude Code reaches fusion-mlx through an Anthropic->OpenAI converter
+# (fusion-gateway) that drops the Anthropic-style ``thinking`` param and
+# rewrites temperature to its own 0.7 default. The OpenAI chat route then
+# hits the legacy AtomCode force-False default in
+# resolve_enable_thinking_default (only the Anthropic route got the #0913
+# model-aware fix), so thinking-family models (Qwen3.8-27B-4bit) run
+# non-thinking on large agent contexts and degenerate to terse echoes
+# ("No response requested.", finish=stop, 4 tokens) with zero API-level
+# errors. Detect Claude Code requests by their stable system-prompt
+# signature and force enable_thinking + cap temperature at the
+# Qwen3 thinking-mode recommendation (0.6).
+# ---------------------------------------------------------------------------
+
+_CLAUDE_CODE_SYSTEM_SIG = "You are Claude Code"
+_CLAUDE_CODE_TEMP_CAP = 0.6
+
+
+def is_claude_code_prompt(req: ChatCompletionRequest) -> bool:
+    for _m in req.messages or []:
+        if getattr(_m, "role", None) != "system":
+            continue
+        _c = getattr(_m, "content", "")
+        if isinstance(_c, str) and _CLAUDE_CODE_SYSTEM_SIG in _c:
+            return True
+        if isinstance(_c, list):
+            for _part in _c:
+                _text = ""
+                if isinstance(_part, dict):
+                    _text = str(_part.get("text", ""))
+                elif isinstance(_part, str):
+                    _text = _part
+                else:
+                    # pydantic coerces dict parts to ContentPart objects
+                    _text = str(getattr(_part, "text", "") or "")
+                if _CLAUDE_CODE_SYSTEM_SIG in _text:
+                    return True
+    return False
+
+
+def normalize_claude_code_request(req: ChatCompletionRequest) -> bool:
+    # Force enable_thinking + cap temperature for Claude Code requests.
+    # Mutates the request in place BEFORE the sampling/thinking defaults
+    # run, so both the streaming and non-streaming paths (which read
+    # request.enable_thinking via client_thinking_from_request) inherit the
+    # forced values without any per-path wiring. An explicit client
+    # enable_thinking=False still wins (honor-explicit precedence, same rule
+    # as resolve_enable_thinking_default). Returns True when detected.
+    if os.environ.get("FUSION_MLX_CC_THINKING_FORCE", "1").strip() != "1":
+        return False
+    if not is_claude_code_prompt(req):
+        return False
+    _old_temp = req.temperature
+    if _old_temp is None:
+        req.temperature = _CLAUDE_CODE_TEMP_CAP
+    else:
+        req.temperature = min(_old_temp, _CLAUDE_CODE_TEMP_CAP)
+    _forced_thinking = False
+    if req.enable_thinking is None:
+        req.enable_thinking = True
+        _forced_thinking = True
+    logger.info(
+        "Claude Code request detected: enable_thinking forced=%s, temp %s -> %s",
+        _forced_thinking,
+        _old_temp,
+        req.temperature,
+    )
+    return True

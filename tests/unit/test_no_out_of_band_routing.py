@@ -173,6 +173,12 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # Operator request-shape safety cap for nested tool schemas.
         # Bounds validation recursion only; never chooses model/routing.
         "FUSION_MLX_MAX_TOOL_SCHEMA_DEPTH",
+        # #1266: kill switch for the Claude Code request normalization
+        # (force enable_thinking + temperature cap on detected CC system
+        # prompts). Defaults ON; setting it to any value other than "1"
+        # disables the normalization. A sampling-params adjustment for an
+        # already-admitted request — which model loads never changes.
+        "FUSION_MLX_CC_THINKING_FORCE",
         # Operator request-shape safety cap for nested JSON bodies.
         # Bounds validation recursion only; never chooses model/routing.
         "FUSION_MLX_MAX_BODY_DEPTH",
