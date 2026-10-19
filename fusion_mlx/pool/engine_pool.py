@@ -2480,18 +2480,35 @@ class EnginePool:
                 # stale counter. Deferring on a phantom would leave the leak
                 # uncleaned and the engine permanently "busy".
                 if entry.in_use > 0:
-                    self._mark_pending_unload_locked(
-                        model_id,
-                        "unload_engine_async: deferred (busy)",
-                    )
-                    logger.info(
-                        "unload_engine_async('%s') deferred: in_use=%d busy=%s "
-                        "(#811 R-6 use-after-stop guard)",
-                        model_id,
-                        entry.in_use,
-                        self._entry_has_active_requests(entry),
-                    )
-                    return
+                    # #1261: a DEAD engine's leases belong to requests the
+                    # recovery path has just force-failed (their release
+                    # paths drop the lease count as they unwind) — they can
+                    # never complete on their own, so deferring would
+                    # deadlock the EF-1 reload (a restart was the only
+                    # recovery). A live engine keeps the R-6 use-after-stop
+                    # guard untouched.
+                    _dead = getattr(entry.engine, "is_dead", None)
+                    if callable(_dead) and _dead():
+                        logger.warning(
+                            "unload_engine_async('%s'): engine is dead with "
+                            "%d stale lease(s) — proceeding with teardown "
+                            "(#1261 dead-engine override)",
+                            model_id,
+                            entry.in_use,
+                        )
+                    else:
+                        self._mark_pending_unload_locked(
+                            model_id,
+                            "unload_engine_async: deferred (busy)",
+                        )
+                        logger.info(
+                            "unload_engine_async('%s') deferred: in_use=%d busy=%s "
+                            "(#811 R-6 use-after-stop guard)",
+                            model_id,
+                            entry.in_use,
+                            self._entry_has_active_requests(entry),
+                        )
+                        return
                 entry.is_unloading = True
                 marker_set = True
         else:
@@ -2506,18 +2523,31 @@ class EnginePool:
                         # R-6 (#811): real lease — defer to avoid
                         # use-after-stop. See the caller_holds_lock branch
                         # for the phantom-vs-real-lease rationale.
-                        self._mark_pending_unload_locked(
-                            model_id,
-                            "unload_engine_async: deferred (busy)",
-                        )
-                        logger.info(
-                            "unload_engine_async('%s') deferred: in_use=%d "
-                            "busy=%s (#811 R-6 use-after-stop guard)",
-                            model_id,
-                            entry.in_use,
-                            self._entry_has_active_requests(entry),
-                        )
-                        return
+                        # #1261: except a DEAD engine — its leases are the
+                        # wedge victims being failed by recovery, and the
+                        # EF-1 reload must not deadlock behind them.
+                        _dead = getattr(entry.engine, "is_dead", None)
+                        if callable(_dead) and _dead():
+                            logger.warning(
+                                "unload_engine_async('%s'): engine is dead "
+                                "with %d stale lease(s) — proceeding with "
+                                "teardown (#1261 dead-engine override)",
+                                model_id,
+                                entry.in_use,
+                            )
+                        else:
+                            self._mark_pending_unload_locked(
+                                model_id,
+                                "unload_engine_async: deferred (busy)",
+                            )
+                            logger.info(
+                                "unload_engine_async('%s') deferred: in_use=%d "
+                                "busy=%s (#811 R-6 use-after-stop guard)",
+                                model_id,
+                                entry.in_use,
+                                self._entry_has_active_requests(entry),
+                            )
+                            return
                     entry.is_unloading = True
                     marker_set = True
         try:

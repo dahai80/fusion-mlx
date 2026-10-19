@@ -182,6 +182,56 @@ def _render_pool_metrics() -> list[str]:
                     mem,
                 )
             )
+            # #1261: per-engine step lag + dead flag so "engine X is not
+            # stepping" is visible from dashboards — a wedged engine shows
+            # a growing lag while /health still reports ready. The watchdog
+            # inputs live on the inner EngineCore: pool engines may be
+            # BatchedEngine wrappers (._engine.engine) — walk to the core.
+            import time as _time
+
+            now = _time.monotonic()
+            entries = getattr(pool, "_entries", {}) or {}
+            for mid, ent in entries.items():
+                engine = getattr(ent, "engine", None)
+                if engine is None:
+                    continue
+                core = engine
+                if getattr(core, "_hb", None) is None:
+                    inner = getattr(core, "_engine", None)
+                    nested = (
+                        getattr(inner, "engine", None) if inner is not None else None
+                    )
+                    if nested is not None and getattr(nested, "_hb", None) is not None:
+                        core = nested
+                eid = getattr(core, "_engine_id", None) or mid
+                dead = getattr(engine, "is_dead", None)
+                if callable(dead):
+                    try:
+                        is_dead = 1 if dead() else 0
+                    except Exception:
+                        is_dead = 0
+                    lines.extend(
+                        _fmt_metric(
+                            "fusion_mlx_engine_dead",
+                            "gauge",
+                            "1 when the engine's loop is marked dead (EF-1 reload pending).",
+                            is_dead,
+                            {"model": str(mid), "engine": str(eid[:8])},
+                        )
+                    )
+                hb = getattr(core, "_hb", None)
+                if hb is None or hb <= 0.0:
+                    continue
+                lag = max(0.0, now - hb)
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_engine_step_lag_seconds",
+                        "gauge",
+                        "Seconds since the engine's worker last stepped; sustained growth = wedged worker (#1261).",
+                        round(lag, 3),
+                        {"model": str(mid), "engine": str(eid[:8])},
+                    )
+                )
     except Exception as e:
         logger.debug("pool metrics render error: %s", e)
     return lines
