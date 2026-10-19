@@ -186,14 +186,16 @@ def _do_external_prefill(
         remaining = input_arr.shape[1]
         n_to_process = min(prefill_step_size, remaining)
 
-        # Boundary-limited step size
+        # #1259: boundary-ALIGN the step (round up to a block_size
+        # multiple) instead of truncating to the next boundary — the old
+        # clamp reduced every chunk to block_size tokens (64), defeating
+        # the #1204 throttle floor and stretching long prefills ~8x.
+        # Chunk starts stay boundary-aligned (base_size and prior chunks
+        # are block multiples), so snapshots still fire exactly at the
+        # chunk end, just far less often.
         if boundary_enabled and block_size > 0:
-            current_total = base_size + processed_tokens
-            next_boundary = ((current_total // block_size) + 1) * block_size
-            target_boundary_prefill = next_boundary - base_size
-            delta = target_boundary_prefill - processed_tokens
-            if delta > 0:
-                n_to_process = min(n_to_process, delta)
+            n_to_process = ((n_to_process + block_size - 1) // block_size) * block_size
+            n_to_process = min(n_to_process, remaining)
             n_to_process = max(1, n_to_process)
 
         # Adaptive throttle: shrink chunk when entering the caution zone
@@ -551,6 +553,17 @@ def _begin_prefill(
             request.cached_tokens,
         )
         base_size = request.cached_tokens
+    # #1259: boundary-aligned chunking assumes the chunk stream starts on a
+    # block boundary. Warn when it does not — snapshots would silently stop
+    # firing and KV resume would lose checkpoints.
+    if boundary_enabled and block_size > 0 and base_size % block_size != 0:
+        logger.warning(
+            "boundary snapshots degraded: base_size %d not block-aligned "
+            "(block=%d) for %s — resume checkpoints will be sparse (#1259)",
+            base_size,
+            block_size,
+            request.request_id,
+        )
 
     prefill_tokens = tokens[:-1]
     last_token = tokens[-1:]
@@ -589,13 +602,19 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
 
     n = min(self.config.prefill_step_size, state.tokens_remaining.shape[1])
 
-    # Clamp to the next block boundary so boundary snapshots fire exactly.
+    # #1259: ALIGN chunks to block boundaries (round up to a multiple of
+    # block_size) instead of TRUNCATING each chunk to the next boundary.
+    # The old min(n, delta) clamp made every chunk exactly block_size
+    # tokens (64) whenever boundary snapshots were enabled — the #1204
+    # throttle floor (>=512) could never apply and a 56k-token prompt ran
+    # ~875 steps at ~0.6s each (~9min TTFT). Chunk starts are boundary-
+    # aligned (base_size and all prior chunks are block multiples), so a
+    # block-multiple chunk still ENDS exactly on a boundary and snapshots
+    # fire at chunk end — just 8x less often, which also calms the
+    # per-step boundary-snapshot disk-eviction storm from the same issue.
     if state.boundary_enabled and state.block_size > 0:
-        current_total = state.base_size + state.tokens_processed
-        next_boundary = ((current_total // state.block_size) + 1) * state.block_size
-        delta = (next_boundary - state.base_size) - state.tokens_processed
-        if delta > 0:
-            n = min(n, delta)
+        n = ((n + state.block_size - 1) // state.block_size) * state.block_size
+        n = min(n, state.tokens_remaining.shape[1])
         n = max(1, n)
 
     # Adaptive throttle — see _adaptive_chunk_size docstring. Raises
