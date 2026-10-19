@@ -1086,33 +1086,76 @@ async def generate_video(
         response = await asyncio.wait_for(
             asyncio.shield(job_task), timeout=_SYNC_VIDEO_WAIT_SECONDS
         )
+        # #1254: job completed within the sync window — answer the connected
+        # client directly with the encoded response (same shape as before).
+        return response
     except TimeoutError:
-        # Still running when the client's own patience ran out — hand back the
-        # job id so the client can reattach instead of losing the work.
-        from fastapi.responses import JSONResponse
+        # Distinguish the two TimeoutError sources: the sync wait window
+        # expiring while the job is still healthy (→ 202 + job id, client
+        # reattaches) vs the generation itself raising TimeoutError (→ the
+        # recorded error_code maps to the same 5xx as any other failure).
+        if job["status"] in ("queued", "running"):
+            from fastapi.responses import JSONResponse
 
-        return JSONResponse(
-            status_code=202,
-            content={
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "error": {
+                        "message": (
+                            "Video generation still in progress; poll GET "
+                            f"/v1/videos/jobs/{job['job_id']} or fetch output at "
+                            f"/v1/videos/jobs/{job['job_id']}/output/0"
+                        ),
+                        "type": "video_job_pending",
+                        "code": "video_job_pending",
+                        "job_id": job["job_id"],
+                    }
+                },
+            )
+        # #1083 contract: a failed generation must surface a structured 5xx,
+        # never escape to ASGI as an unhandled error.
+        code = job.get("error_code") or "generation_failed"
+        if code == "video_mutex_busy":
+            raise HTTPException(
+                503,
+                f"Video generation failed: {job['error']}",
+                headers={"Retry-After": "10"},
+            ) from None
+        if code == "memory_guard":
+            raise HTTPException(
+                507,
+                f"Video generation failed: {job['error']}",
+                headers={"Retry-After": "5"},
+            ) from None
+        raise HTTPException(
+            500,
+            {
                 "error": {
-                    "message": (
-                        "Video generation still in progress; poll GET "
-                        f"/v1/videos/jobs/{job['job_id']} or fetch output at "
-                        f"/v1/videos/jobs/{job['job_id']}/output/0"
-                    ),
-                    "type": "video_job_pending",
-                    "code": "video_job_pending",
-                    "job_id": job["job_id"],
+                    "message": f"Video generation failed: {job['error']}",
+                    "type": "api_error",
+                    "code": code,
                 }
             },
-        )
+        ) from None
     except HTTPException:
         raise
     except asyncio.CancelledError:
-        # #1254: the request task was cancelled (client disconnect, or server
-        # shutdown). The shielded job task keeps running server-side; a 202
-        # cannot be delivered on a cancelled task, so propagate the
-        # cancellation per the asyncio contract.
+        # #1254: two cancellation sources. If the JOB failed server-side
+        # (memory guard abort / DELETE cancel / shutdown) while the request task
+        # is still alive, surface a structured 503 (#1083 contract) instead
+        # of an ASGI 500. If the REQUEST task itself was cancelled (client
+        # disconnect), the shielded job keeps running server-side; no HTTP
+        # response can be delivered on a cancelled task, so propagate per
+        # the asyncio contract.
+        if job["status"] == "failed" and job.get("error_code"):
+            logger.warning(
+                "video job %s cancelled server-side: %s", job["job_id"], job["error"]
+            )
+            raise HTTPException(
+                503,
+                f"Video generation cancelled: {job['error']}",
+                headers={"Retry-After": "10"},
+            ) from None
         logger.warning(
             "video /generate request cancelled; job %s continues in "
             "background (retrieve via GET /v1/videos/jobs/%s)",

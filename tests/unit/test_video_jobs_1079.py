@@ -279,17 +279,22 @@ class TestRunVideoJob:
         req = _make_request()
         job = vr._new_video_job(req)
         vr._video_jobs[job["job_id"]] = job
-        with pytest.MonkeyPatch().context() as m:
-            m.setattr(
+        with pytest.MonkeyPatch().context() as so:
+            so.setattr(
                 vr,
                 "_execute_video_generation",
                 AsyncMock(
                     side_effect=HTTPException(status_code=422, detail="bad params")
                 ),
             )
-            asyncio.run(vr._run_video_job(job, req))
+            # #1254: the failure is recorded in the job registry, then
+            # re-raised so the sync /generate caller (which awaits the same
+            # task) can map it to the right HTTP status.
+            with pytest.raises(HTTPException):
+                asyncio.run(vr._run_video_job(job, req))
         assert job["status"] == "failed"
         assert "bad params" in job["error"]
+        assert job["error_code"] == "http_error"
 
     def test_skips_when_cancelled(self):
         self._reset()
