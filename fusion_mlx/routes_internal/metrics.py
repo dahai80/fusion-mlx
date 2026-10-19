@@ -1429,6 +1429,27 @@ def _render_watchdog_metrics() -> list[str]:
                     {"executor": str(executor)},
                 )
             )
+        # #1264: KV block out-of-capacity counters (paged/prefix layers).
+        for _scope, _count in sorted(sm.kv_block_oob_by_scope.items()):
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_kv_block_oob_total",
+                    "counter",
+                    "KV block allocation failures from cache-cap exhaustion "
+                    "(#1264).",
+                    int(_count),
+                    {"scope": str(_scope)},
+                )
+            )
+        lines.extend(
+            _fmt_metric(
+                "fusion_mlx_kv_block_oob_total",
+                "counter",
+                "KV block allocation failures from cache-cap exhaustion "
+                "(#1264).",
+                int(sm.kv_block_oob_total),
+            )
+        )
     except Exception:
         logger.debug("watchdog metrics render error", exc_info=True)
     return lines

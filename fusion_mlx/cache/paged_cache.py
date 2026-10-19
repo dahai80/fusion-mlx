@@ -737,7 +737,19 @@ class PagedCacheManager(CacheManager):
                 min(256, self.max_blocks - self._current_allocated_count)
             )
             if grown == 0:
-                logger.warning("Out of cache blocks (max reached)")
+                # #1264: surface block-cap exhaustion in /metrics too, and
+                # log the cap so an operator can tell "cap below model
+                # context" (structurally undersized) from transient pressure.
+                from ..server_metrics import get_server_metrics
+
+                get_server_metrics().record_kv_block_oob("paged")
+                logger.warning(
+                    "Out of cache blocks (max reached): max_blocks=%d "
+                    "allocated=%d model=%r",
+                    self.max_blocks,
+                    self._current_allocated_count,
+                    self.model_name,
+                )
                 return None
 
         block = self.free_block_queue.popleft()
