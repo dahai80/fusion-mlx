@@ -171,6 +171,14 @@ class ServerMetrics:
     # the wedge via 503s.
     watchdog_poisons_total: int = 0
     watchdog_poisons_by_executor: dict[str, int] = field(default_factory=dict)
+    # #1264: KV block out-of-capacity observability. Fires when the paged
+    # cache or prefix cache cannot allocate a block because the configured
+    # block cap is below what the model's context demands — operators
+    # should raise max_cache_blocks (or rely on the context-derived floor
+    # from the same fix) rather than discovering 64k+ prompt degradation
+    # through silent fallback paths.
+    kv_block_oob_total: int = 0
+    kv_block_oob_by_scope: dict[str, int] = field(default_factory=dict)
     # #1192: FD pressure observability. Gauges (used/limit/by-type) come
     # from the fd_watchdog snapshot at render time; counters here track
     # gate actions (warns + NEW-stream rejections).
@@ -452,6 +460,16 @@ class ServerMetrics:
             self.watchdog_poisons_total += 1
             self.watchdog_poisons_by_executor[name] = (
                 self.watchdog_poisons_by_executor.get(name, 0) + 1
+            )
+
+    def record_kv_block_oob(self, scope: str) -> None:
+        # #1264: KV block out-of-capacity counter. Called by the paged cache
+        # ("paged") and prefix cache ("prefix") allocation-failure sites so
+        # /metrics surfaces block-cap exhaustion per layer.
+        with self._lock:
+            self.kv_block_oob_total += 1
+            self.kv_block_oob_by_scope[scope] = (
+                self.kv_block_oob_by_scope.get(scope, 0) + 1
             )
 
     def get_ttft_histograms(self) -> dict[str, Histogram]:

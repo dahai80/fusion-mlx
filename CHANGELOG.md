@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed — paged-cache block cap scaled to model context (#1264)
+- `max_cache_blocks` (default 1000 → 64k tokens at block_size=64) was
+  independent of the loaded model's context length: any prompt beyond
+  cap*block_size tokens hit "Out of cache blocks" and lost KV resume on
+  models with larger contexts (e.g. Qwen3.8-27B @ 262,144).
+- The scheduler now raises the cap to `ceil(context_length / block_size)`
+  when the configured value is below that floor (configured values above
+  the floor still win); INFO log when raised.
+- New `/metrics` counters `fusion_mlx_kv_block_oob_total{scope=paged|prefix}`
+  surface block-cap exhaustion at both allocation-failure sites, with the
+  cap/model included in the warnings.
+
 ### Fixed — Claude Code thinking/temp normalization on the OpenAI chat surface
 - Claude Code reaches fusion-mlx through the Anthropic→OpenAI converter
   (fusion-gateway) which drops the Anthropic-style `thinking` param and
@@ -17,6 +29,7 @@
   client explicitly disabled it) + cap temperature at 0.6 (Qwen3
   thinking-mode recommendation, only lowered, never raised). Kill switch:
   `FUSION_MLX_CC_THINKING_FORCE=0`.
+
 
 ### Added — Union Web monitor SPA as a shell module (#1220)
 - New `web/` package: React + Vite monitor SPA (Models, Metrics, Logs)

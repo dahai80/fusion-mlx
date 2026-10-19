@@ -327,7 +327,11 @@ def __init__(
     if self.config.enable_prefix_cache or self.config.paged_ssd_cache_dir:
         # Calculate max_blocks automatically if not specified
         if self.config.max_cache_blocks is not None:
-            max_blocks = self.config.max_cache_blocks
+            max_blocks = _effective_max_blocks(
+                self.config.max_cache_blocks,
+                model,
+                self.config.paged_cache_block_size,
+            )
         else:
             max_blocks = self._calculate_max_blocks()
 
@@ -591,3 +595,64 @@ def _should_periodic_clear_cache(self) -> bool:
     if interval <= 0 or self._step_counter % interval != 0:
         return False
     return cache_mem > threshold
+
+
+def _model_context_length(model: Any) -> int | None:
+    # #1264: read the model's real context length. Covers the observed
+    # shapes: args/config as object or dict, top-level max_position_embeddings,
+    # text_config as nested object or plain dict (qwen3_5 ModelArgs keeps
+    # text_config: dict), and language_model.args (wrapper models).
+    # Returns None when nothing readable — the configured cap then stands.
+    def _read_int(src: Any, key: str) -> int:
+        if src is None:
+            return 0
+        val = src.get(key, None) if isinstance(src, dict) else getattr(src, key, None)
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return 0
+
+    for holder in (getattr(model, "args", None), getattr(model, "config", None)):
+        ctx = _read_int(holder, "max_position_embeddings")
+        if ctx > 0:
+            return ctx
+    for holder in (getattr(model, "args", None), getattr(model, "config", None)):
+        if holder is None:
+            continue
+        text_cfg = (
+            holder.get("text_config")
+            if isinstance(holder, dict)
+            else getattr(holder, "text_config", None)
+        )
+        ctx = _read_int(text_cfg, "max_position_embeddings")
+        if ctx > 0:
+            return ctx
+    lm = getattr(model, "language_model", None)
+    if lm is not None:
+        ctx = _read_int(getattr(lm, "args", None), "max_position_embeddings")
+        if ctx > 0:
+            return ctx
+    return None
+
+
+def _effective_max_blocks(configured: int, model: Any, block_size: int) -> int:
+    # #1264: a configured cap below ceil(context/block_size) is structurally
+    # undersized for this model — every prompt beyond cap*block_size tokens
+    # hits "Out of cache blocks" and loses KV resume. Raise the floor to
+    # cover the model's real context; the configured value still wins ABOVE
+    # the floor (operator intent to raise beyond context coverage honored).
+    _ctx = _model_context_length(model)
+    if not _ctx or _ctx <= 0 or block_size <= 0:
+        return configured
+    _needed = -(-_ctx // block_size)  # ceil div
+    if _needed > configured:
+        logger.info(
+            "max_cache_blocks raised %d -> %d to cover context_length=%d "
+            "(block_size=%d)",
+            configured,
+            _needed,
+            _ctx,
+            block_size,
+        )
+        return _needed
+    return configured

@@ -719,7 +719,15 @@ class BlockAwarePrefixCache(CacheManager):
             if not block:
                 # Handle memory pressure
                 if not self.paged_cache.handle_memory_pressure(1):
-                    logger.warning(f"Cannot allocate block for {request_id}")
+                    # #1264: prefix-cache store cannot get a block — count
+                    # it so /metrics shows block-cap exhaustion per layer.
+                    from ..server_metrics import get_server_metrics
+
+                    get_server_metrics().record_kv_block_oob("prefix")
+                    logger.warning(
+                        f"Cannot allocate block for {request_id} "
+                        f"(max_blocks={self.paged_cache.max_blocks})"
+                    )
                     break
                 block = self.paged_cache.allocate_block()
                 if not block:
