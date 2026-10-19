@@ -13,15 +13,43 @@ class TestDeferredInvalidation:
             block_size=4, max_blocks=max_blocks, initial_blocks=max_blocks
         )
 
+    @staticmethod
+    def _locks_free(mgr):
+        # RLock.locked() only exists on 3.14+; probe from other threads so
+        # this works on 3.11-3.13. A non-blocking acquire from another thread
+        # succeeds iff the lock is free.
+        result = {}
+
+        def probe(name, lock):
+            got = lock.acquire(blocking=False)
+            result[name] = bool(got)
+            if got:
+                lock.release()
+
+        threads = [
+            threading.Thread(
+                target=probe, args=("hash_map", mgr._hash_map_lock), daemon=True
+            ),
+            threading.Thread(
+                target=probe, args=("block_table", mgr._block_table_lock), daemon=True
+            ),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return result
+
     def test_callback_not_fired_under_paged_lock(self):
         # The wedge: eviction/free fired the prefix callback inline while
         # _hash_map_lock was held; callback takes prefix _cache_lock -> ABBA.
         mgr = self._manager()
+        seen = []
         lock_state = {}
 
         def cb(block_id):
-            lock_state["hash_map_locked"] = mgr._hash_map_lock.locked()
-            lock_state["block_table_locked"] = mgr._block_table_lock.locked()
+            seen.append(block_id)
+            lock_state.update(self._locks_free(mgr))
 
         mgr.register_block_freed_callback(cb)
         block = mgr.allocate_block()
@@ -29,7 +57,8 @@ class TestDeferredInvalidation:
         block.block_hash = b"abc"
         assert mgr.free_block(block.block_id) is True
         # Callback ran, and ran AFTER the paged locks were released.
-        assert lock_state == {"hash_map_locked": False, "block_table_locked": False}
+        assert seen == [block.block_id]
+        assert lock_state == {"hash_map": True, "block_table": True}
 
     def test_memory_pressure_reclaim_fires_deferred_callback(self):
         # Production shape: store_cache worker retains blocks in the hash
@@ -40,7 +69,7 @@ class TestDeferredInvalidation:
 
         def cb(block_id):
             seen.append(block_id)
-            assert not mgr._hash_map_lock.locked()
+            assert self._locks_free(mgr) == {"hash_map": True, "block_table": True}
 
         mgr.register_block_freed_callback(cb)
         blocks = mgr.get_new_blocks(3)
