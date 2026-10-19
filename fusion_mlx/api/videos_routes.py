@@ -20,6 +20,11 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+# #1254: how long the sync /generate endpoint holds the HTTP response before
+# handing back a job id (video jobs run 3–5 min; 10 min covers slow configs
+# while keeping truly-stuck jobs reattachable).
+_SYNC_VIDEO_WAIT_SECONDS = 600.0
+
 from ..engines import VideoGenEngine
 from ..engines.video_backends import constraints_for, validate_params
 from ..exceptions import InsufficientMemoryError, ModelNotFoundError, ModelTooLargeError
@@ -858,6 +863,7 @@ def _new_video_job(request: VideoGenerateRequest) -> dict[str, Any]:
         "output_meta": [],
         "warnings": [],
         "error": None,
+        "error_code": None,
         "created_at": now,
         "updated_at": now,
     }
@@ -929,14 +935,18 @@ def shutdown_video_jobs() -> None:
 atexit.register(shutdown_video_jobs)
 
 
-async def _run_video_job(job: dict[str, Any], request: VideoGenerateRequest) -> None:
+async def _run_video_job(
+    job: dict[str, Any], request: VideoGenerateRequest
+) -> VideoGenerateResponse | None:
     # #1079: run video generation in the background. The result videos are
     # written to temp files (paths stored in the job dict) so the GET /output
     # endpoint can stream them without holding bytes in memory.
+    # #1254: returns the VideoGenerateResponse so the sync /generate endpoint
+    # can delegate to this job and still answer a connected client directly.
     with _video_jobs_lock:
         if job["status"] == "cancelled":
             logger.info("video job %s skipped (cancelled while queued)", job["job_id"])
-            return
+            return None
     _set_video_job(job, status="running", progress=0.1)
     logger.info(
         "video job %s running: model=%s prompt_len=%d",
@@ -976,20 +986,38 @@ async def _run_video_job(job: dict[str, Any], request: VideoGenerateRequest) -> 
             warnings=response.warnings,
         )
         logger.info("video job %s done: %d output(s)", job["job_id"], len(output_files))
+        return response
     except asyncio.CancelledError:
+        # #1254: distinguish the two CancelledError sources. A memory-guard
+        # abort arms the scheduler's abort reason before the task is
+        # cancelled; a client disconnect leaves no abort reason behind.
+        reason = ""
+        try:
+            from fusion_mlx.scheduler.video_unified_scheduler import (
+                _VIDEO_ABORT_REASON,
+            )
+
+            reason = _VIDEO_ABORT_REASON[-1] if _VIDEO_ABORT_REASON else ""
+        except Exception:
+            reason = ""
+        if reason:
+            error = f"cancelled by memory guard: {reason}"
+            error_code = "memory_guard"
+        else:
+            error = "cancelled (task abort or server shutdown)"
+            error_code = "cancelled"
         _set_video_job(
-            job,
-            status="failed",
-            progress=1.0,
-            error="cancelled by memory guard or client disconnect",
+            job, status="failed", progress=1.0, error=error, error_code=error_code
         )
-        logger.warning("video job %s cancelled", job["job_id"])
+        logger.warning("video job %s cancelled: %s", job["job_id"], error)
+        raise
     except HTTPException as exc:
         _set_video_job(
             job,
             status="failed",
             progress=1.0,
             error=exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+            error_code="http_error",
         )
         logger.warning(
             "video job %s failed (HTTP %d): %s",
@@ -997,9 +1025,40 @@ async def _run_video_job(job: dict[str, Any], request: VideoGenerateRequest) -> 
             exc.status_code,
             exc.detail,
         )
+        raise
     except Exception as exc:
-        _set_video_job(job, status="failed", progress=1.0, error=str(exc))
+        from fusion_mlx.scheduler.video_unified_scheduler import (
+            VideoMemoryPressureError,
+            VideoMutexBusyError,
+        )
+
+        if isinstance(exc, VideoMutexBusyError):
+            error_code = "video_mutex_busy"
+        elif isinstance(exc, VideoMemoryPressureError):
+            error_code = "memory_guard"
+        else:
+            error_code = "generation_failed"
+        _set_video_job(
+            job, status="failed", progress=1.0, error=str(exc), error_code=error_code
+        )
         logger.exception("video job %s failed", job["job_id"])
+        raise
+
+
+def _log_unretrieved_job_task(task: asyncio.Task) -> None:
+    # #1254: _run_video_job re-raises after recording the failure in the job
+    # registry, so a fire-and-forget task (POST /jobs, or a disconnected sync
+    # caller) would otherwise spam "Task exception was never retrieved" when
+    # the failure is already user-visible via GET /jobs/{id}.
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.info(
+            "video job task finished with recorded failure: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
 
 
 @router.post("/generate")
@@ -1008,20 +1067,102 @@ async def generate_video(
     _auth: bool = Depends(verify_api_key),
     _rate: bool = Depends(check_rate_limit),
 ) -> VideoGenerateResponse:
+    # #1254: the generation no longer runs on the request-scoped task. It is
+    # wrapped in a job (same registry as POST /jobs) and shielded, so a client
+    # disconnect cancels only the HTTP response — the multi-minute GPU work
+    # completes and its output stays retrievable via GET /jobs/{job_id}
+    # (and /jobs/{job_id}/output/{index}) instead of being thrown away.
+    job = _new_video_job(request)
+    with _video_jobs_lock:
+        _video_jobs_prune_locked()
+        _video_jobs[job["job_id"]] = job
+    job_task = asyncio.create_task(_run_video_job(job, request))
+    job_task.add_done_callback(_log_unretrieved_job_task)
+    # Shield INNERMOST: wait_for(shield(task)) — a wait_for timeout or a
+    # client-disconnect cancellation lands on the shield wrapper, and the
+    # job task itself keeps running. The reverse order (shield(wait_for()))
+    # would cancel the generation on both paths.
     try:
-        return await _execute_video_generation(request)
+        response = await asyncio.wait_for(
+            asyncio.shield(job_task), timeout=_SYNC_VIDEO_WAIT_SECONDS
+        )
+        # #1254: job completed within the sync window — answer the connected
+        # client directly with the encoded response (same shape as before).
+        return response
+    except TimeoutError:
+        # Distinguish the two TimeoutError sources: the sync wait window
+        # expiring while the job is still healthy (→ 202 + job id, client
+        # reattaches) vs the generation itself raising TimeoutError (→ the
+        # recorded error_code maps to the same 5xx as any other failure).
+        if job["status"] in ("queued", "running"):
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "error": {
+                        "message": (
+                            "Video generation still in progress; poll GET "
+                            f"/v1/videos/jobs/{job['job_id']} or fetch output at "
+                            f"/v1/videos/jobs/{job['job_id']}/output/0"
+                        ),
+                        "type": "video_job_pending",
+                        "code": "video_job_pending",
+                        "job_id": job["job_id"],
+                    }
+                },
+            )
+        # #1083 contract: a failed generation must surface a structured 5xx,
+        # never escape to ASGI as an unhandled error.
+        code = job.get("error_code") or "generation_failed"
+        if code == "video_mutex_busy":
+            raise HTTPException(
+                503,
+                f"Video generation failed: {job['error']}",
+                headers={"Retry-After": "10"},
+            ) from None
+        if code == "memory_guard":
+            raise HTTPException(
+                507,
+                f"Video generation failed: {job['error']}",
+                headers={"Retry-After": "5"},
+            ) from None
+        raise HTTPException(
+            500,
+            {
+                "error": {
+                    "message": f"Video generation failed: {job['error']}",
+                    "type": "api_error",
+                    "code": code,
+                }
+            },
+        ) from None
     except HTTPException:
         raise
     except asyncio.CancelledError:
+        # #1254: two cancellation sources. If the JOB failed server-side
+        # (memory guard abort / DELETE cancel / shutdown) while the request task
+        # is still alive, surface a structured 503 (#1083 contract) instead
+        # of an ASGI 500. If the REQUEST task itself was cancelled (client
+        # disconnect), the shielded job keeps running server-side; no HTTP
+        # response can be delivered on a cancelled task, so propagate per
+        # the asyncio contract.
+        if job["status"] == "failed" and job.get("error_code"):
+            logger.warning(
+                "video job %s cancelled server-side: %s", job["job_id"], job["error"]
+            )
+            raise HTTPException(
+                503,
+                f"Video generation cancelled: {job['error']}",
+                headers={"Retry-After": "10"},
+            ) from None
         logger.warning(
-            "Video generation cancelled (memory guard / task abort) — "
-            "returning 503 Retry-After"
+            "video /generate request cancelled; job %s continues in "
+            "background (retrieve via GET /v1/videos/jobs/%s)",
+            job["job_id"],
+            job["job_id"],
         )
-        raise HTTPException(
-            503,
-            "Video generation cancelled by memory guard — retry later",
-            headers={"Retry-After": "10"},
-        ) from None
+        raise
     except ValueError as exc:
         logger.warning("Video generation rejected: %s", exc)
         raise HTTPException(400, str(exc))
@@ -1041,7 +1182,16 @@ async def generate_video(
             logger.warning("Video generation aborted (memory pressure): %s", exc)
             raise HTTPException(507, str(exc), headers={"Retry-After": "5"}) from exc
         logger.exception("Video generation failed")
-        raise HTTPException(500, "Internal server error")
+        raise HTTPException(
+            500,
+            {
+                "error": {
+                    "message": "Internal server error",
+                    "type": "api_error",
+                    "code": "video_generation_failed",
+                }
+            },
+        ) from exc
 
 
 # --- #1079: video job endpoints ------------------------------------------
@@ -1070,7 +1220,8 @@ async def submit_video_job(
         request.model,
         len(request.prompt),
     )
-    asyncio.create_task(_run_video_job(job, request))
+    job_task = asyncio.create_task(_run_video_job(job, request))
+    job_task.add_done_callback(_log_unretrieved_job_task)
     return VideoJobSubmitResponse(job_id=job["job_id"], status="queued")
 
 

@@ -507,7 +507,19 @@ async def _run_chat(
             )
         except Exception:
             logger.debug("telemetry error emit failed", exc_info=True)
-        raise HTTPException(500, "Internal server error")
+        # #1257: a bare "Internal server error" gave clients no way to tell a
+        # transient engine-dispatch race (retryable) from a permanent fault.
+        # Echo a machine-readable error_code.
+        raise HTTPException(
+            500,
+            {
+                "error": {
+                    "message": "Internal server error",
+                    "type": "api_error",
+                    "code": "chat_generation_failed",
+                }
+            },
+        ) from exc
     finally:
         await _release()
 
@@ -676,4 +688,15 @@ async def chat_completions(
         ) from exc
     except Exception as exc:
         logger.exception("Chat completion failed: %s(%s)", type(exc).__name__, exc)
-        raise HTTPException(500, "Internal server error")
+        # #1257: structured error_code so clients can distinguish retryable
+        # transient races from permanent faults (same contract as images).
+        raise HTTPException(
+            500,
+            {
+                "error": {
+                    "message": "Internal server error",
+                    "type": "api_error",
+                    "code": "chat_generation_failed",
+                }
+            },
+        ) from exc
