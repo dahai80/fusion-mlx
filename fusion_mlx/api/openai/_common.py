@@ -48,6 +48,8 @@ _MODEL_TYPE_TO_MODALITY: dict[str, str] = {
     "audio_sts": "audio",
     "image": "image",
     "video": "video",
+    # #1260: spec-decode draft checkpoints — annotated, not chat-servable.
+    "draft": "draft",
 }
 
 

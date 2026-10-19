@@ -36,6 +36,9 @@ ModelType = Literal[
     "audio_sts",
     "image",
     "video",
+    # #1260: speculative-decoding draft checkpoints (DFlash2DraftModel etc.)
+    # are discovered and annotated but never standalone-servable.
+    "draft",
 ]
 EngineType = Literal[
     "batched",
@@ -48,7 +51,22 @@ EngineType = Literal[
     "audio_sts",
     "image_gen",
     "video_gen",
+    # #1260: draft checkpoints have no engine — get_engine refuses them.
+    "draft",
 ]
+
+# #1260: speculative-decoding draft architectures. A draft checkpoint is
+# attachable to its teacher (dflash_config.target_layer_ids) but has no
+# lm_head-complete standalone chat capability; serving it standalone 500s
+# mid-load. Discovered as model_type "draft" so the list can annotate it
+# and get_engine can refuse with an explicit 4xx instead of a 500.
+DRAFT_ARCHITECTURES: set[str] = {
+    "DFlash2DraftModel",
+}
+
+# Config sub-config keys that mark a checkpoint as a spec-decode draft
+# regardless of its architecture name.
+_DRAFT_CONFIG_KEYS = ("dflash_config", "draft_config")
 
 # Known VLM (Vision-Language Model) types from mlx-vlm
 VLM_MODEL_TYPES = {
@@ -476,6 +494,29 @@ def _is_unsupported_model(model_path: Path) -> bool:
     )
 
 
+def _is_draft_model(model_path: Path) -> bool:
+    # #1260: True when the checkpoint is a speculative-decoding draft —
+    # a known draft architecture, any architecture whose name contains
+    # "draft", or a spec-decode draft sub-config (dflash_config).
+    config_path = model_path / "config.json"
+    if not config_path.exists():
+        return False
+
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    if any(key in config for key in _DRAFT_CONFIG_KEYS):
+        return True
+
+    architectures = config.get("architectures", [])
+    return any(
+        arch in DRAFT_ARCHITECTURES or "draft" in arch.lower() for arch in architectures
+    )
+
+
 def _effective_model_name(model_path: Path) -> str:
     """Name used for keyword heuristics.
 
@@ -686,6 +727,12 @@ def detect_model_type(model_path: Path) -> ModelType:
     # entirely (_is_model_dir) and the NER route 404s on every gliner model.
     if (model_path / "gliner_config.json").exists():
         return "ner"
+
+    # #1260: spec-decode draft checkpoints are annotated, never standalone-
+    # servable. Checked before the LLM fall-through so a draft config whose
+    # model_type collides with a chat family cannot land in "llm".
+    if _is_draft_model(model_path):
+        return "draft"
 
     config_path = model_path / "config.json"
     if not config_path.exists():
@@ -1826,6 +1873,8 @@ def _register_model(
             engine_type = "image_gen"
         elif model_type == "video":
             engine_type = "video_gen"
+        elif model_type == "draft":
+            engine_type = "draft"
         else:
             engine_type = "batched"
         estimated_size = estimate_model_size(model_dir)

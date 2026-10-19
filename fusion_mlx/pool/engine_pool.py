@@ -778,6 +778,9 @@ class EnginePool:
         "audio_music": "audio_music",
         "image": "image_gen",
         "video": "video_gen",
+        # #1260: draft checkpoints are discovered/annotated but refused at
+        # get_engine — no standalone serving.
+        "draft": "draft",
         "ti2v": "video_gen",
         # SkyReels-V3 分支类型 (fix #127)
         "r2v_14b": "video_gen",
@@ -3203,6 +3206,22 @@ class EnginePool:
                 return await self._evict_idle_lru_for_prefill(
                     exclude_model_id=_model_id,
                     eviction_request=eviction_request,
+                )
+
+            # #1260: draft checkpoints (DFlash2DraftModel etc.) have no
+            # standalone engine — refuse with an explicit 4xx
+            # (ModelNotFoundError → 404) instead of a 500 from a mlx_lm load
+            # that can never succeed. Raised OUTSIDE the engine-build try so
+            # it is not wrapped in constructor-failure logging.
+            if engine is None and effective_type == "draft":
+                raise ModelNotFoundError(
+                    model_id,
+                    list(self._entries.keys()),
+                    message=(
+                        f"{model_id} is a speculative-decoding draft model — "
+                        "attach it as a spec-decode draft to its teacher, "
+                        "not standalone chat (#1260)"
+                    ),
                 )
 
             # Create engine based on engine type (if DFlash not active)
