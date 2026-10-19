@@ -42,6 +42,11 @@ async def start_resumable_stream(
     from ...stream_session import get_store
 
     principal = request_principal(http_request)
+    # Claude Code normalization (same contract as /chat/completions): force
+    # enable_thinking + cap temperature for converter-stripped requests.
+    from ._common import normalize_claude_code_request
+
+    normalize_claude_code_request(request)
     store = get_store()
     # #801 DoS guard: cap concurrent live sessions per caller.
     if store.count_for_principal(principal) >= _MAX_SESSIONS_PER_PRINCIPAL:
@@ -242,6 +247,13 @@ async def resume_completion(
         top_p=body.top_p if body.top_p is not None else 0.9,
         stream=body.stream,
     )
+    # Claude Code normalization (same /chat/completions contract): the
+    # reconstructed request carries the client's messages, so a Claude Code
+    # caller resuming a disconnected stream gets the same thinking/temp
+    # normalization as a fresh request.
+    from ._common import normalize_claude_code_request
+
+    normalize_claude_code_request(chat_req)
 
     if not body.stream:
         # Non-stream resume: seed via the engine add_request resume path

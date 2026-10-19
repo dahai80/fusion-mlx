@@ -14,6 +14,23 @@
   surface block-cap exhaustion at both allocation-failure sites, with the
   cap/model included in the warnings.
 
+### Fixed — Claude Code thinking/temp normalization on the OpenAI chat surface
+- Claude Code reaches fusion-mlx through the Anthropic→OpenAI converter
+  (fusion-gateway) which drops the Anthropic-style `thinking` param and
+  rewrites temperature to 0.7. The OpenAI route then applies the legacy
+  AtomCode force-False thinking default (the #0913 model-aware fix only
+  covered the Anthropic route), so thinking-family models (Qwen3.8-27B)
+  ran non-thinking on large agent contexts and degenerated to terse
+  echoes ("No response requested.", finish=stop, 4 tokens) with zero
+  API-level errors.
+- `POST /v1/chat/completions`, `POST /v1/stream`, and `POST /v1/resume`
+  now detect Claude Code requests by their stable system-prompt signature
+  ("You are Claude Code") and force `enable_thinking=True` (unless the
+  client explicitly disabled it) + cap temperature at 0.6 (Qwen3
+  thinking-mode recommendation, only lowered, never raised). Kill switch:
+  `FUSION_MLX_CC_THINKING_FORCE=0`.
+
+
 ### Added — Union Web monitor SPA as a shell module (#1220)
 - New `web/` package: React + Vite monitor SPA (Models, Metrics, Logs)
   built against the `@fusion/web-ui` preset, shipped as a union-web shell

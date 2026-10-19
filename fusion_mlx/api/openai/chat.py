@@ -545,6 +545,13 @@ async def chat_completions(
     # (a prior worker hung on Metal OOM/assertion). Without this the request
     # queues behind the dead worker and hangs forever.
     check_llm_executor_healthy(request.model or "", adapter="openai")
+    # Claude Code normalization: force enable_thinking + cap temperature for
+    # requests whose Anthropic-style thinking intent was dropped upstream by
+    # the Anthropic->OpenAI converter. Runs BEFORE the entry log so the log
+    # line reflects the effective (forced) temperature.
+    from ._common import normalize_claude_code_request
+
+    normalize_claude_code_request(request)
     # Log request entry (Ollama-style)
     prompt_preview = ""
     if request.messages:
