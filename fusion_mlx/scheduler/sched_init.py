@@ -327,7 +327,11 @@ def __init__(
     if self.config.enable_prefix_cache or self.config.paged_ssd_cache_dir:
         # Calculate max_blocks automatically if not specified
         if self.config.max_cache_blocks is not None:
-            max_blocks = self.config.max_cache_blocks
+            max_blocks = _effective_max_blocks(
+                self.config.max_cache_blocks,
+                model,
+                self.config.paged_cache_block_size,
+            )
         else:
             max_blocks = self._calculate_max_blocks()
 
@@ -591,3 +595,50 @@ def _should_periodic_clear_cache(self) -> bool:
     if interval <= 0 or self._step_counter % interval != 0:
         return False
     return cache_mem > threshold
+
+
+def _model_context_length(model: Any) -> int | None:
+    # #1264: read the model's real context length the same way
+    # service.helpers.get_model_max_context does (direct args, then the
+    # text_config nesting VLMs use). Returns None when the model exposes
+    # nothing readable — the configured cap then stands unchanged.
+    args = getattr(model, "args", None)
+    if args is None:
+        return None
+    try:
+        ctx = int(getattr(args, "max_position_embeddings", None))
+    except (TypeError, ValueError):
+        ctx = 0
+    if ctx <= 0:
+        text_cfg = getattr(args, "text_config", None)
+        if text_cfg is not None:
+            try:
+                ctx = int(getattr(text_cfg, "max_position_embeddings", None))
+            except (TypeError, ValueError):
+                ctx = 0
+    if ctx and ctx > 0:
+        return ctx
+    return None
+
+
+def _effective_max_blocks(configured: int, model: Any, block_size: int) -> int:
+    # #1264: a configured cap below ceil(context/block_size) is structurally
+    # undersized for this model — every prompt beyond cap*block_size tokens
+    # hits "Out of cache blocks" and loses KV resume. Raise the floor to
+    # cover the model's real context; the configured value still wins ABOVE
+    # the floor (operator intent to raise beyond context coverage honored).
+    _ctx = _model_context_length(model)
+    if not _ctx or _ctx <= 0 or block_size <= 0:
+        return configured
+    _needed = -(-_ctx // block_size)  # ceil div
+    if _needed > configured:
+        logger.info(
+            "max_cache_blocks raised %d -> %d to cover context_length=%d "
+            "(block_size=%d)",
+            configured,
+            _needed,
+            _ctx,
+            block_size,
+        )
+        return _needed
+    return configured
