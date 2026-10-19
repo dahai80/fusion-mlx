@@ -299,8 +299,6 @@ def install_signal_handlers() -> None:
         # the frame's caller chain and whether the handler was chained).
         sender = "unknown"
         try:
-            import ctypes
-
             # /proc-style attribution is not available on macOS; report the
             # process's own parent + session leader as context so operators
             # can at least tell "parent sent it" from "external kill".

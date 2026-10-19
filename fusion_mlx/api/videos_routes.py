@@ -17,7 +17,7 @@ import uuid
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 # #1254: how long the sync /generate endpoint holds the HTTP response before
@@ -863,6 +863,7 @@ def _new_video_job(request: VideoGenerateRequest) -> dict[str, Any]:
         "output_meta": [],
         "warnings": [],
         "error": None,
+        "error_code": None,
         "created_at": now,
         "updated_at": now,
     }
@@ -934,7 +935,9 @@ def shutdown_video_jobs() -> None:
 atexit.register(shutdown_video_jobs)
 
 
-async def _run_video_job(job: dict[str, Any], request: VideoGenerateRequest) -> VideoGenerateResponse | None:
+async def _run_video_job(
+    job: dict[str, Any], request: VideoGenerateRequest
+) -> VideoGenerateResponse | None:
     # #1079: run video generation in the background. The result videos are
     # written to temp files (paths stored in the job dict) so the GET /output
     # endpoint can stream them without holding bytes in memory.
@@ -986,24 +989,26 @@ async def _run_video_job(job: dict[str, Any], request: VideoGenerateRequest) -> 
         return response
     except asyncio.CancelledError:
         # #1254: distinguish the two CancelledError sources. A memory-guard
-        # abort arrives as a CancelledError on this task while the client is
-        # still connected; a client disconnect surfaces as the request-scoped
-        # task being cancelled by Starlette. Either way the GPU work is lost
-        # today — record the source so the error string stops conflating them.
+        # abort arms the scheduler's abort reason before the task is
+        # cancelled; a client disconnect leaves no abort reason behind.
         reason = ""
         try:
             from fusion_mlx.scheduler.video_unified_scheduler import (
                 _VIDEO_ABORT_REASON,
             )
 
-            reason = (_VIDEO_ABORT_REASON[-1] if _VIDEO_ABORT_REASON else "")
+            reason = _VIDEO_ABORT_REASON[-1] if _VIDEO_ABORT_REASON else ""
         except Exception:
             reason = ""
         if reason:
             error = f"cancelled by memory guard: {reason}"
+            error_code = "memory_guard"
         else:
-            error = "cancelled (client disconnect or task abort)"
-        _set_video_job(job, status="failed", progress=1.0, error=error)
+            error = "cancelled (task abort or server shutdown)"
+            error_code = "cancelled"
+        _set_video_job(
+            job, status="failed", progress=1.0, error=error, error_code=error_code
+        )
         logger.warning("video job %s cancelled: %s", job["job_id"], error)
         raise
     except HTTPException as exc:
@@ -1012,6 +1017,7 @@ async def _run_video_job(job: dict[str, Any], request: VideoGenerateRequest) -> 
             status="failed",
             progress=1.0,
             error=exc.detail if isinstance(exc.detail, str) else str(exc.detail),
+            error_code="http_error",
         )
         logger.warning(
             "video job %s failed (HTTP %d): %s",
@@ -1021,15 +1027,43 @@ async def _run_video_job(job: dict[str, Any], request: VideoGenerateRequest) -> 
         )
         raise
     except Exception as exc:
-        _set_video_job(job, status="failed", progress=1.0, error=str(exc))
+        from fusion_mlx.scheduler.video_unified_scheduler import (
+            VideoMemoryPressureError,
+            VideoMutexBusyError,
+        )
+
+        if isinstance(exc, VideoMutexBusyError):
+            error_code = "video_mutex_busy"
+        elif isinstance(exc, VideoMemoryPressureError):
+            error_code = "memory_guard"
+        else:
+            error_code = "generation_failed"
+        _set_video_job(
+            job, status="failed", progress=1.0, error=str(exc), error_code=error_code
+        )
         logger.exception("video job %s failed", job["job_id"])
         raise
+
+
+def _log_unretrieved_job_task(task: asyncio.Task) -> None:
+    # #1254: _run_video_job re-raises after recording the failure in the job
+    # registry, so a fire-and-forget task (POST /jobs, or a disconnected sync
+    # caller) would otherwise spam "Task exception was never retrieved" when
+    # the failure is already user-visible via GET /jobs/{id}.
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.info(
+            "video job task finished with recorded failure: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
 
 
 @router.post("/generate")
 async def generate_video(
     request: VideoGenerateRequest,
-    http_request: Request,
     _auth: bool = Depends(verify_api_key),
     _rate: bool = Depends(check_rate_limit),
 ) -> VideoGenerateResponse:
@@ -1043,16 +1077,23 @@ async def generate_video(
         _video_jobs_prune_locked()
         _video_jobs[job["job_id"]] = job
     job_task = asyncio.create_task(_run_video_job(job, request))
+    job_task.add_done_callback(_log_unretrieved_job_task)
+    # Shield INNERMOST: wait_for(shield(task)) — a wait_for timeout or a
+    # client-disconnect cancellation lands on the shield wrapper, and the
+    # job task itself keeps running. The reverse order (shield(wait_for()))
+    # would cancel the generation on both paths.
     try:
-        response = await asyncio.shield(
-            asyncio.wait_for(job_task, timeout=_SYNC_VIDEO_WAIT_SECONDS)
+        response = await asyncio.wait_for(
+            asyncio.shield(job_task), timeout=_SYNC_VIDEO_WAIT_SECONDS
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # Still running when the client's own patience ran out — hand back the
         # job id so the client can reattach instead of losing the work.
-        raise HTTPException(
-            202,
-            {
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=202,
+            content={
                 "error": {
                     "message": (
                         "Video generation still in progress; poll GET "
@@ -1068,30 +1109,17 @@ async def generate_video(
     except HTTPException:
         raise
     except asyncio.CancelledError:
-        # #1254: the client disconnected (request task cancelled by
-        # Starlette). The shielded job task keeps running server-side.
+        # #1254: the request task was cancelled (client disconnect, or server
+        # shutdown). The shielded job task keeps running server-side; a 202
+        # cannot be delivered on a cancelled task, so propagate the
+        # cancellation per the asyncio contract.
         logger.warning(
-            "video /generate client disconnected; job %s continues in "
+            "video /generate request cancelled; job %s continues in "
             "background (retrieve via GET /v1/videos/jobs/%s)",
             job["job_id"],
             job["job_id"],
         )
-        raise HTTPException(
-            503,
-            {
-                "error": {
-                    "message": (
-                        "Client disconnected before completion; generation "
-                        f"continues as job {job['job_id']} — poll GET "
-                        f"/v1/videos/jobs/{job['job_id']}"
-                    ),
-                    "type": "video_job_continued",
-                    "code": "video_job_continued",
-                    "job_id": job["job_id"],
-                }
-            },
-            headers={"Retry-After": "10"},
-        ) from None
+        raise
     except ValueError as exc:
         logger.warning("Video generation rejected: %s", exc)
         raise HTTPException(400, str(exc))
@@ -1149,7 +1177,8 @@ async def submit_video_job(
         request.model,
         len(request.prompt),
     )
-    asyncio.create_task(_run_video_job(job, request))
+    job_task = asyncio.create_task(_run_video_job(job, request))
+    job_task.add_done_callback(_log_unretrieved_job_task)
     return VideoJobSubmitResponse(job_id=job["job_id"], status="queued")
 
 

@@ -28,6 +28,7 @@ Memory red line (PRD §3.2): global peak <= 98GB (was 105GB).
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import logging
 import threading
@@ -255,6 +256,12 @@ class VideoUnifiedScheduler:
         # immediately -> VideoMutexBusyError -> 503 Retry-After (A survives).
         self._video_mtx = threading.Lock()
         self._active_model: str | None = None
+        # #1253: the asyncio task that owns the current acquire→release
+        # bracket. A held mutex whose owner task is DONE (failed/cancelled
+        # without reaching end_task) is stale — a live owner is a real
+        # PRD §3.2 conflict. None (no owner recorded) is treated as live,
+        # conservatively.
+        self._owner_task: asyncio.Task | None = None
         self._cache: NF4DequantCache | None = None
         logger.info("VideoUnifiedScheduler ready (red_line=%dGB)", red_line_gb)
 
@@ -394,18 +401,19 @@ class VideoUnifiedScheduler:
         # resident (lock held), fail fast with VideoMutexBusyError -> 503
         # Retry-After. The in-flight generation is NOT killed.
         if not self._video_mtx.acquire(timeout=0):
-            # #1253: a lock held by the *same* model that has no live
-            # generation is a stale lock left behind by a failed/cancelled
-            # job that never reached end_task (e.g. the client disconnected
-            # before the finally block ran). A real PRD §3.2 conflict only
-            # exists when a *different* model is mid-generation. Re-arm a
-            # fresh mutex and admit the caller instead of 503ing on a
-            # generation that will never complete.
+            # #1253: the mutex can be stale-held by a failed/cancelled job
+            # whose finally never ran end_task (e.g. a leak in release()
+            # itself, or a cancellation that skipped the bracket). A held
+            # mutex whose OWNER TASK is done cannot be mid-generation — no
+            # coroutine is left to protect — so re-arm and admit instead of
+            # 503ing on a generation that will never complete. A live owner
+            # (or no owner recorded) is a real PRD §3.2 conflict: fail fast.
             other = self._active_model or "unknown"
-            if other == model_name and not is_video_generating():
+            owner = self._owner_task
+            if owner is not None and owner.done():
                 logger.warning(
-                    "video mutex stale-held by %s with no in-flight "
-                    "generation (#1253) — re-arming mutex and admitting %s",
+                    "video mutex stale-held by %s (owner task done without "
+                    "release, #1253) — re-arming mutex and admitting %s",
                     other,
                     model_name,
                 )
@@ -418,6 +426,12 @@ class VideoUnifiedScheduler:
                 )
         try:
             self._active_model = model_name
+            # Sync callers (tests, CLI) run outside an event loop — no owner
+            # task exists; treat as conservative live-holder downstream.
+            try:
+                self._owner_task = asyncio.current_task()
+            except RuntimeError:
+                self._owner_task = None
             self._cache = NF4DequantCache()
             # #951-downstream: clear any stale abort from a prior task so the
             # new generation starts clean.
@@ -429,23 +443,35 @@ class VideoUnifiedScheduler:
             raise
 
     def release(self, model_name: str) -> None:
-        if self._cache is not None:
-            self._cache.release()
-            self._cache = None
-        gc.collect()
+        # #1253: every step is guarded — a raise anywhere above the mutex
+        # release (the dequant-cache teardown in particular) leaked the lock
+        # permanently and every later video request 503ed until restart.
         try:
-            self._clear_cache()
-        except Exception:
-            pass
-        self._active_model = None
-        # #951-downstream: disarm the abort event so a waiter (parent watchdog)
-        # sees the generation as ended.
-        _VIDEO_ABORT_EVENT.clear()
-        _VIDEO_ABORT_REASON.clear()
-        try:
-            self._video_mtx.release()
-        except RuntimeError:
-            pass
+            if self._cache is not None:
+                try:
+                    self._cache.release()
+                except Exception:
+                    logger.exception(
+                        "dequant cache release failed for %s (continuing)",
+                        model_name,
+                    )
+                self._cache = None
+            gc.collect()
+            try:
+                self._clear_cache()
+            except Exception:
+                pass
+        finally:
+            self._active_model = None
+            self._owner_task = None
+            # #951-downstream: disarm the abort event so a waiter (parent
+            # watchdog) sees the generation as ended.
+            _VIDEO_ABORT_EVENT.clear()
+            _VIDEO_ABORT_REASON.clear()
+            try:
+                self._video_mtx.release()
+            except RuntimeError:
+                pass
         logger.info("video scheduler released by %s", model_name)
 
     # -- task lifecycle --------------------------------------------------
