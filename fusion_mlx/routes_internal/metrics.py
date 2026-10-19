@@ -1435,8 +1435,7 @@ def _render_watchdog_metrics() -> list[str]:
                 _fmt_metric(
                     "fusion_mlx_kv_block_oob_total",
                     "counter",
-                    "KV block allocation failures from cache-cap exhaustion "
-                    "(#1264).",
+                    "KV block allocation failures from cache-cap exhaustion (#1264).",
                     int(_count),
                     {"scope": str(_scope)},
                 )
@@ -1445,8 +1444,7 @@ def _render_watchdog_metrics() -> list[str]:
             _fmt_metric(
                 "fusion_mlx_kv_block_oob_total",
                 "counter",
-                "KV block allocation failures from cache-cap exhaustion "
-                "(#1264).",
+                "KV block allocation failures from cache-cap exhaustion (#1264).",
                 int(sm.kv_block_oob_total),
             )
         )
