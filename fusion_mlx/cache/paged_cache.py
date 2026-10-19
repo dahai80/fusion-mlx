@@ -612,6 +612,16 @@ class PagedCacheManager(CacheManager):
         # block_id (e.g. RadixPrefixCache trie) can detach the stale pointer
         # and avoid serving wrong KV after the block_id is reallocated (#807 P0).
         self._block_freed_callbacks: list[Callable[[int], None]] = []
+        # #1269: block-content invalidation callbacks must never fire while
+        # the paged-cache locks are held. Eviction/free paths run under
+        # (_block_table_lock, _hash_map_lock, _free_queue_lock) and the
+        # registered callbacks acquire the prefix cache's _cache_lock —
+        # while the store worker holds _cache_lock and acquires
+        # _hash_map_lock (find_cached_block): firing inline is an ABBA
+        # deadlock (production wedge 2026-10-19). Notifications are queued
+        # here and flushed by the public entry points after their locks
+        # are released.
+        self._pending_content_invalidated: list[int] = []
 
         logger.info(
             f"PagedCacheManager initialized: block_size={block_size}, "
@@ -636,13 +646,31 @@ class PagedCacheManager(CacheManager):
         self._block_freed_callbacks.append(callback)
 
     def _notify_block_content_invalidated(self, block_id: int) -> None:
-        if not self._block_freed_callbacks:
+        # #1269: queue-only under the paged-cache locks; the registered
+        # callbacks take the prefix cache's _cache_lock, which must never be
+        # acquired while _hash_map_lock is held (ABBA with the store worker).
+        self._pending_content_invalidated.append(block_id)
+
+    def _flush_content_invalidated(self) -> None:
+        # Fire queued invalidation callbacks with no paged-cache lock held.
+        # Safe against re-entrancy: callbacks only mutate their own indexes
+        # (prefix _cache_lock / radix trie lock) and never call back into
+        # PagedCacheManager. List swap is atomic under the GIL; appends that
+        # race the swap land in the fresh list and flush on the next call.
+        if not self._block_freed_callbacks or not self._pending_content_invalidated:
             return
-        for cb in self._block_freed_callbacks:
-            try:
-                cb(block_id)
-            except Exception as e:
-                logger.debug("block-freed callback error for block %d: %s", block_id, e)
+        pending, self._pending_content_invalidated = (
+            self._pending_content_invalidated,
+            [],
+        )
+        for block_id in pending:
+            for cb in self._block_freed_callbacks:
+                try:
+                    cb(block_id)
+                except Exception as e:
+                    logger.debug(
+                        "block-freed callback error for block %d: %s", block_id, e
+                    )
 
     # =========================================================================
     # Dynamic Block Pool Growth (Elastic KV Cache)
@@ -697,7 +725,9 @@ class PagedCacheManager(CacheManager):
             CacheBlock if available, None if out of memory.
         """
         with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
-            return self._allocate_block_internal()
+            block = self._allocate_block_internal()
+        self._flush_content_invalidated()
+        return block
 
     def _allocate_block_internal(self) -> CacheBlock | None:
         """Lock-free allocation body. Caller must hold all 3 locks."""
@@ -765,6 +795,8 @@ class PagedCacheManager(CacheManager):
             self.stats.free_blocks -= num_blocks
 
             return blocks
+
+        self._flush_content_invalidated()
 
     def _maybe_evict_cached_block(self, block: CacheBlock) -> bool:
         """
@@ -836,9 +868,11 @@ class PagedCacheManager(CacheManager):
                 self.stats.free_blocks += 1
                 self.stats.total_tokens_cached -= block.token_count
 
-                return True
-
-            return False
+                freed = True
+            else:
+                freed = False
+        self._flush_content_invalidated()
+        return freed
 
     def free_blocks_batch(self, blocks: Iterable[CacheBlock]) -> None:
         """
@@ -888,6 +922,8 @@ class PagedCacheManager(CacheManager):
 
             # Add to free queue (back = MRU, evicted last)
             self.free_block_queue.append_n(to_free)
+
+        self._flush_content_invalidated()
 
     def touch(self, blocks: Iterable[CacheBlock]) -> None:
         """
@@ -1137,7 +1173,10 @@ class PagedCacheManager(CacheManager):
                 num_cached_tokens += self.block_size
                 self.stats.hits += 1
 
-            return cached_blocks, num_cached_tokens
+        # Lazy restore may have evicted hash entries; flush their
+        # invalidation callbacks outside the paged locks (#1269).
+        self._flush_content_invalidated()
+        return cached_blocks, num_cached_tokens
 
     # =========================================================================
     # Legacy hash methods (for backwards compatibility)
@@ -1481,23 +1520,30 @@ class PagedCacheManager(CacheManager):
     def evict_lru_blocks(self, num_blocks: int) -> int:
         """Evict least recently used free blocks from the cache."""
         with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
-            return self._evict_lru_blocks_locked(num_blocks)
+            evicted = self._evict_lru_blocks_locked(num_blocks)
+        self._flush_content_invalidated()
+        return evicted
 
     def handle_memory_pressure(self, requested_blocks: int) -> bool:
         """Handle memory pressure by evicting blocks."""
         with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
             if self.free_block_queue.num_free_blocks >= requested_blocks:
-                return True
-            needed = requested_blocks - self.free_block_queue.num_free_blocks
-            self._evict_lru_blocks_locked(needed)
-            if self.free_block_queue.num_free_blocks < requested_blocks:
-                # Free-queue LRU exhausted — reclaim ref==0 cached blocks
-                # that survived request completion (store_cache worker
-                # retains them in the hash index for prefix reuse). Evict
-                # oldest by last_access so hot prefixes stay resident.
-                still_needed = requested_blocks - self.free_block_queue.num_free_blocks
-                self._evict_cached_blocks_locked(still_needed)
-            return self.free_block_queue.num_free_blocks >= requested_blocks
+                ok = True
+            else:
+                needed = requested_blocks - self.free_block_queue.num_free_blocks
+                self._evict_lru_blocks_locked(needed)
+                if self.free_block_queue.num_free_blocks < requested_blocks:
+                    # Free-queue LRU exhausted — reclaim ref==0 cached blocks
+                    # that survived request completion (store_cache worker
+                    # retains them in the hash index for prefix reuse). Evict
+                    # oldest by last_access so hot prefixes stay resident.
+                    still_needed = (
+                        requested_blocks - self.free_block_queue.num_free_blocks
+                    )
+                    self._evict_cached_blocks_locked(still_needed)
+                ok = self.free_block_queue.num_free_blocks >= requested_blocks
+        self._flush_content_invalidated()
+        return ok
 
     def _evict_cached_blocks_locked(self, num_blocks: int) -> int:
         # Evict ref==0 cached blocks still held in allocated_blocks (kept

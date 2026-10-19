@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed — Paged-cache invalidation callbacks deferred out of the paged locks (#1269)
+- ABBA deadlock between `PagedCacheManager._hash_map_lock` and the prefix
+  cache's `_cache_lock` wedged decode + `/metrics` on production during a
+  large Claude Code session (eviction fired the block-freed callback while
+  holding `_hash_map_lock`; the store worker holds `_cache_lock` across the
+  whole store and acquires `_hash_map_lock` in `find_cached_block`).
+- Callbacks are now queued and flushed by the public entry points after
+  their paged locks are released; fetch-path dead-block validation
+  (P1-2/P1-07) keeps the #808 invariant under the deferred-strip window.
+
 ### Added — Union Web monitor SPA as a shell module (#1220)
 - New `web/` package: React + Vite monitor SPA (Models, Metrics, Logs)
   built against the `@fusion/web-ui` preset, shipped as a union-web shell
