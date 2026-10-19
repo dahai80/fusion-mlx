@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Fixed — completion summary ttft/prompt_eval measured backwards (#1265)
+- `_log_completion_summary` computed `ttft = now - first_token_at` — the
+  decode window — instead of time TO the first token. An 84s 68,808-token
+  prefill logged `ttft=0.28s | prompt_eval=0.0ms/token`; monitoring built
+  on these fields was invalid for any long prefill.
+- ttft is now `first_token_at - (generation_started_at or arrival_time)`;
+  prefill rates divide by actually-prefilled tokens
+  (`prompt_tokens - cached_tokens`); decode window derived consistently.
+- Secondary: `first_token_at` was only stamped when
+  `num_output_tokens == 1`, so a spec-decode/MTP first step emitting >1
+  token never got a timestamp; guard is now `>= 1`.
+- Log line field names/format unchanged (parser-compatible).
+
+## [Unreleased]
 ### Added — Union Web monitor SPA as a shell module (#1220)
 - New `web/` package: React + Vite monitor SPA (Models, Metrics, Logs)
   built against the `@fusion/web-ui` preset, shipped as a union-web shell
