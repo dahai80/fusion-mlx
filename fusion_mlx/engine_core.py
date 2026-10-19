@@ -1490,9 +1490,13 @@ class EngineCore:
         # #1261: per-engine heartbeat alongside the legacy global one — the
         # watchdog evaluates each engine's own staleness independently so a
         # wedged engine cannot hide behind a sibling's fresh heartbeat.
+        # One time.monotonic() read shared by both clocks (the global write
+        # mirrors update_llm_heartbeat but reuses the same timestamp).
+        global _llm_heartbeat
         now = time.monotonic()
         self._hb = now
-        update_llm_heartbeat()
+        with _llm_heartbeat_lock:
+            _llm_heartbeat = now
 
     def _wake_engine_loop(self) -> None:
         """Wake the idle engine loop after scheduler-visible state changes."""
