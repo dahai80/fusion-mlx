@@ -44,11 +44,56 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _install_rope_parameters_shim() -> bool:
+    # #1260-secondary: transformers 5.x checkpoints (z-lab originals) carry
+    # the NESTED rope convention `rope_parameters: {rope_theta, rope_type}`
+    # while mlx-lm 0.31.x ModelArgs dataclasses require the FLAT
+    # `rope_theta` signature parameter. from_dict filters config keys against
+    # the signature → TypeError: missing 'rope_theta' → opaque 500 mid-load.
+    # Flatten the nested block into the flat keys mlx-lm expects. Applied at
+    # the mlx_lm.utils.load_config boundary so every text-model load path
+    # (mlx_lm.load / load_model) is covered without touching model files.
+    try:
+        import mlx_lm.utils as lm_utils
+    except ImportError:
+        return False  # Linux CI / no mlx → no mlx_lm either
+
+    if getattr(lm_utils, "_fusion_rope_parameters_shim", False):
+        return True
+
+    original_load_config = lm_utils.load_config
+
+    def load_config_compat(model_path):
+        config = original_load_config(model_path)
+        rope_params = config.get("rope_parameters")
+        if isinstance(rope_params, dict) and "rope_theta" not in config:
+            theta = rope_params.get("rope_theta")
+            if theta is not None:
+                config["rope_theta"] = theta
+                scaling = rope_params.get("rope_scaling")
+                if scaling is not None and "rope_scaling" not in config:
+                    config["rope_scaling"] = scaling
+                logger.info(
+                    "rope_parameters shim: flattened nested rope_theta=%s (%s)",
+                    theta,
+                    model_path,
+                )
+        return config
+
+    lm_utils.load_config = load_config_compat
+    lm_utils._fusion_rope_parameters_shim = True
+    logger.info("rope_parameters compat shim installed (#1260, nested→flat).")
+    return True
+
+
 # Install M5-compat shim. Safe to call multiple times (idempotent).
 # No-op when mlx.core can't be imported (non-Apple-Silicon CI). Logging is at
 # debug level on success to keep startup quiet for the 99% of users on
 # hardware where the original API works.
 def install() -> None:
+    # #1260: config-format shim first — it must be in place before any
+    # mlx_lm model load and does not depend on a working Metal device.
+    _install_rope_parameters_shim()
     try:
         import mlx.core as mx
     except ImportError:
