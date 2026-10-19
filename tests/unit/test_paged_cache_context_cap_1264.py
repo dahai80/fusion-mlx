@@ -34,6 +34,31 @@ class TestModelContextLength:
         model = SimpleNamespace(args=SimpleNamespace(max_position_embeddings="abc"))
         assert _model_context_length(model) is None
 
+    def test_text_config_as_plain_dict(self):
+        # qwen3_5.ModelArgs keeps text_config: dict (mlx_lm), not a nested
+        # object — dict-key read must work or the cap silently stays 1000.
+        model = SimpleNamespace(
+            args=SimpleNamespace(text_config={"max_position_embeddings": 262144})
+        )
+        assert _model_context_length(model) == 262144
+
+    def test_args_as_plain_dict(self):
+        model = SimpleNamespace(args={"max_position_embeddings": 40960})
+        assert _model_context_length(model) == 40960
+
+    def test_language_model_wrapper(self):
+        model = SimpleNamespace(
+            args=SimpleNamespace(text_config={}),
+            language_model=SimpleNamespace(
+                args=SimpleNamespace(max_position_embeddings=131072)
+            ),
+        )
+        assert _model_context_length(model) == 131072
+
+    def test_empty_text_config_falls_through_to_none(self):
+        model = SimpleNamespace(args=SimpleNamespace(text_config={}))
+        assert _model_context_length(model) is None
+
 
 class TestEffectiveMaxBlocks:
     def test_floor_raises_configured_cap(self):

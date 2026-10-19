@@ -598,26 +598,40 @@ def _should_periodic_clear_cache(self) -> bool:
 
 
 def _model_context_length(model: Any) -> int | None:
-    # #1264: read the model's real context length the same way
-    # service.helpers.get_model_max_context does (direct args, then the
-    # text_config nesting VLMs use). Returns None when the model exposes
-    # nothing readable — the configured cap then stands unchanged.
-    args = getattr(model, "args", None)
-    if args is None:
-        return None
-    try:
-        ctx = int(getattr(args, "max_position_embeddings", None))
-    except (TypeError, ValueError):
-        ctx = 0
-    if ctx <= 0:
-        text_cfg = getattr(args, "text_config", None)
-        if text_cfg is not None:
-            try:
-                ctx = int(getattr(text_cfg, "max_position_embeddings", None))
-            except (TypeError, ValueError):
-                ctx = 0
-    if ctx and ctx > 0:
-        return ctx
+    # #1264: read the model's real context length. Covers the observed
+    # shapes: args/config as object or dict, top-level max_position_embeddings,
+    # text_config as nested object or plain dict (qwen3_5 ModelArgs keeps
+    # text_config: dict), and language_model.args (wrapper models).
+    # Returns None when nothing readable — the configured cap then stands.
+    def _read_int(src: Any, key: str) -> int:
+        if src is None:
+            return 0
+        val = src.get(key, None) if isinstance(src, dict) else getattr(src, key, None)
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return 0
+
+    for holder in (getattr(model, "args", None), getattr(model, "config", None)):
+        ctx = _read_int(holder, "max_position_embeddings")
+        if ctx > 0:
+            return ctx
+    for holder in (getattr(model, "args", None), getattr(model, "config", None)):
+        if holder is None:
+            continue
+        text_cfg = (
+            holder.get("text_config")
+            if isinstance(holder, dict)
+            else getattr(holder, "text_config", None)
+        )
+        ctx = _read_int(text_cfg, "max_position_embeddings")
+        if ctx > 0:
+            return ctx
+    lm = getattr(model, "language_model", None)
+    if lm is not None:
+        ctx = _read_int(getattr(lm, "args", None), "max_position_embeddings")
+        if ctx > 0:
+            return ctx
     return None
 
 
