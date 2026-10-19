@@ -394,12 +394,28 @@ class VideoUnifiedScheduler:
         # resident (lock held), fail fast with VideoMutexBusyError -> 503
         # Retry-After. The in-flight generation is NOT killed.
         if not self._video_mtx.acquire(timeout=0):
+            # #1253: a lock held by the *same* model that has no live
+            # generation is a stale lock left behind by a failed/cancelled
+            # job that never reached end_task (e.g. the client disconnected
+            # before the finally block ran). A real PRD §3.2 conflict only
+            # exists when a *different* model is mid-generation. Re-arm a
+            # fresh mutex and admit the caller instead of 503ing on a
+            # generation that will never complete.
             other = self._active_model or "unknown"
-            raise VideoMutexBusyError(
-                f"video model {model_name} cannot load: {other} is resident "
-                f"(dual-model mutex, PRD §3.2). Retry after the current "
-                f"generation completes."
-            )
+            if other == model_name and not is_video_generating():
+                logger.warning(
+                    "video mutex stale-held by %s with no in-flight "
+                    "generation (#1253) — re-arming mutex and admitting %s",
+                    other,
+                    model_name,
+                )
+                self._video_mtx = threading.Lock()
+            else:
+                raise VideoMutexBusyError(
+                    f"video model {model_name} cannot load: {other} is resident "
+                    f"(dual-model mutex, PRD §3.2). Retry after the current "
+                    f"generation completes."
+                )
         try:
             self._active_model = model_name
             self._cache = NF4DequantCache()

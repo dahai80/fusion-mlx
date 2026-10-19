@@ -366,8 +366,33 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
         logger.warning("Image generation memory admission failed: %s", exc)
         raise HTTPException(507, str(exc), headers={"Retry-After": "5"}) from exc
     except Exception as exc:
+        # #1255: the bare "Internal server error" body gave clients no way to
+        # distinguish a retryable worker failure from a permanent fault, and
+        # the worker's stderr (OOM, segfault, exit code) never left the
+        # server. Echo a machine-readable error_code plus a short cause.
         logger.exception("Image generation failed")
-        raise HTTPException(500, "Internal server error")
+        cause = str(exc) or exc.__class__.__name__
+        if isinstance(exc, RuntimeError) and "worker" in cause:
+            raise HTTPException(
+                500,
+                {
+                    "error": {
+                        "message": f"Image generation failed: {cause[:500]}",
+                        "type": "api_error",
+                        "code": "image_worker_failed",
+                    }
+                },
+            ) from exc
+        raise HTTPException(
+            500,
+            {
+                "error": {
+                    "message": "Internal server error",
+                    "type": "api_error",
+                    "code": "image_generation_failed",
+                }
+            },
+        ) from exc
 
 
 async def _upload_to_b64(upload: UploadFile | None) -> str | None:

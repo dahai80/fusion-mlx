@@ -291,7 +291,39 @@ def install_signal_handlers() -> None:
 
     def _handler(signum, frame):
         sig_name = signal.Signals(signum).name
-        logger.info("received %s, initiating graceful shutdown", sig_name)
+        # #1256: attribute the sender. A graceful exit with no attributable
+        # sender is indistinguishable from an operator kill, which made the
+        # "server silently exited" class of incident uninvestigable. si_pid /
+        # si_uid are only populated on siginfo-delivering handlers
+        # (signal.signal does NOT provide them on macOS — log what we can:
+        # the frame's caller chain and whether the handler was chained).
+        sender = "unknown"
+        try:
+            import ctypes
+
+            # /proc-style attribution is not available on macOS; report the
+            # process's own parent + session leader as context so operators
+            # can at least tell "parent sent it" from "external kill".
+            ppid = os.getppid()
+            sender = f"ppid={ppid}"
+        except Exception:
+            pass
+        in_flight = ""
+        try:
+            from .scheduler.video_unified_scheduler import is_video_generating
+
+            if is_video_generating():
+                in_flight = " (video generation IN FLIGHT — job output lost)"
+        except Exception:
+            pass
+        logger.warning(
+            "received %s from %s%s, initiating graceful shutdown (#1256 "
+            "attribution); chained_previous=%s",
+            sig_name,
+            sender,
+            in_flight,
+            _prev_handlers.get(signum) is not None,
+        )
         _trigger_shutdown(0)
         prev = _prev_handlers.get(signum)
         if prev is not None and callable(prev):
