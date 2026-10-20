@@ -47,6 +47,20 @@ HEAD
   surface) and `GET /api/notifications` (OOM-risk from `/v1/health` +
   resident models from `/admin/api/models`).
 
+### Fixed — tiered-store per-block throughput 9.3x (#1272)
+- The tiered-store path evaluated every KV tensor separately inside
+  `_extract_tensor_bytes` (`mx.array` re-wrap + `mx.eval` per tensor): a
+  192-block × 64-token × 32-layer store issued ~12k device syncs →
+  52 ms/block, slow enough that the store worker stayed in flight while
+  later requests skipped reconstruct ("store_cache in flight").
+- `store_cache` now batch-evals each block's lazy slices once (one
+  `mx.eval(*arrays)` per block), and `_extract_tensor_bytes` skips the
+  re-wrap + eval for already-materialized arrays: 52 → 5.6 ms/block
+  A/B on real MLX with a disk-backed SSD tier (~178 blocks/s).
+- The per-tensor sync storm mostly hit small-block models — hybrid
+  models with ArraysCache (e.g. Qwen3.5) get block size enlarged to
+  2048 tokens, which hides the cost on the server path.
+
 ### Added — web monitor module bridge: serve + gateway wiring (#1276)
 - `fusion-mlx web-serve [--port 11471]` serves the built `web/dist` UI plus
   a reverse proxy of the engine API surface (`/v1` `/admin` `/metrics`
