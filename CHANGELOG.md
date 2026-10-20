@@ -21,6 +21,22 @@
   (Models/Metrics/Logs) so Metrics/Logs are reachable; the shell keeps
   owning the app chrome. Standalone mode unchanged (BottomNav).
 
+### Fixed — single-model serve now applies the settings.json cache section (#1288)
+- The `--model-dir` path applied the admin-panel `cache` section of
+  settings.json; the single-model `serve <model>` path (the start.sh prod
+  path) never did, so prod booted a 1GiB in-memory LRU (hot_cache_only, no
+  SSD dir) while settings.json configured a 20GB hot cache + SSD dir.
+- With 38k-token agent prompts (600 blocks × ~4.2MB KV), the hot LRU evicted
+  entries while the same store was still saving → dedup defeated → every turn
+  re-stored all blocks → 4096-block pool exhausted (17.9k OOB warnings, 29
+  store_cache force-drains) → every agent turn serialized behind a ~3min
+  store stall (Claude Code "hung" 2.5h).
+- `_apply_settings_cache_section` (serve_command.py) mirrors the --model-dir
+  application: `paged_ssd_cache_dir`, `hot_cache_max_size`, `hot_cache_only`,
+  `initial_cache_blocks`, `ssd_cache_max_size`; no-op when the file/section
+  is missing.
+
+
 ### Added — web monitor module bridge: serve + gateway wiring (#1276)
 - `fusion-mlx web-serve [--port 11471]` serves the built `web/dist` UI plus
   a reverse proxy of the engine API surface (`/v1` `/admin` `/metrics`
