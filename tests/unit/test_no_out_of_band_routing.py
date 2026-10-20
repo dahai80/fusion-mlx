@@ -607,6 +607,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # a tier may hold; never selects a model, parser, or routing tier.
         "FUSION_MLX_TIER_BUDGET_P0_GB",
         "FUSION_MLX_TIER_BUDGET_P1_GB",
+        # #1271: SSD-tier reconstruct cap in tokens (sched_admission). Pure
+        # admission-cost knob — caps how many cached prefix tokens may be
+        # reconstructed from the SSD tier instead of re-prefilling; never
+        # selects a model, parser, or routing tier.
+        "FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS",
     }
 )
 
