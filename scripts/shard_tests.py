@@ -26,6 +26,7 @@ unknown. Designed for CI:
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -203,8 +204,10 @@ SHARDS: dict[str, list[str]] = {
     ],
 }
 
-# "rest" is implicit — files not claimed by any shard above.
-KNOWN_SHARDS = list(SHARDS) + ["rest"]
+# "rest" is implicit — files not claimed by any shard above. rest/rest2 are a
+# deterministic even/odd split of that catch-all (sorted order), so no test is
+# silently dropped and the catch-all wall-clock halves.
+KNOWN_SHARDS = list(SHARDS) + ["rest", "rest2"]
 
 TESTS_DIR = Path(__file__).resolve().parent.parent / "tests" / "unit"
 _DEBT_FILE = TESTS_DIR / "debt_modules.txt"
@@ -245,8 +248,22 @@ def files_for(shard: str) -> list[str]:
             file=sys.stderr,
         )
         return []
-    files: list[str] = []
     debt = _debt_basenames()
+    if shard in ("rest", "rest2"):
+        rest_files = [
+            str(p)
+            for p in sorted(TESTS_DIR.glob("test_*.py"))
+            if p.name not in debt and _shard_for(p.name) == "rest"
+        ]
+        half = rest_files[0::2] if shard == "rest" else rest_files[1::2]
+        logging.getLogger(__name__).info(
+            "shard %s: %d of %d rest files",
+            shard,
+            len(half),
+            len(rest_files),
+        )
+        return half
+    files: list[str] = []
     for p in sorted(TESTS_DIR.glob("test_*.py")):
         if p.name in debt:
             continue

@@ -66,30 +66,29 @@ jobs:
         # canonical dev version). Lint already covers 3.13; the 3-version
         # matrix was single-dim and serialized all 14k tests on one runner.
         # Shards run in parallel → faster feedback, smaller blast radius.
-        # A pip wheel cache (keyed on pyproject + lockfile) speeds install.
+        # astral-sh/setup-uv does the install: parallel downloads + fast
+        # editable builds — ~20 min pip -e setup cut to a few minutes.
         strategy:
             fail-fast: false
             matrix:
-                shard: ["core", "llm", "modal", "infra", "exp", "rest"]
+                shard: ["core", "llm", "modal", "infra", "exp", "rest", "rest2"]
         runs-on: macos-14
         steps:
             - uses: actions/checkout@v7
             - uses: actions/setup-python@v7
               with:
                   python-version: "3.12"
-            - name: Cache pip wheels
-              uses: actions/cache@v4
-              with:
-                  path: ~/.cache/pip
-                  key: ${{ runner.os }}-pip-3.12-${{ hashFiles('pyproject.toml') }}
-                  restore-keys: ${{ runner.os }}-pip-3.12-
+            - uses: astral-sh/setup-uv@v6
             # Install [vlm] so conftest's mlx_vlm mock is NOT triggered on
             # macOS CI (real mlx_vlm 0.5.0 installs cleanly on Apple Silicon).
             # Without it, 38 VLM tests fail: `from mlx_vlm.models.X import Y`
             # resolves Y to MagicMock → isinstance/issubclass always False.
             # macOS-14 runners are M1 → mlx + mlx_vlm wheels available.
-            - run: pip install -e ".[dev,vlm]"
-            - run: pip install pytest-cov
+            # uv: parallel downloads + fast editable install. macOS pip -e
+            # rebuilds were ~20 min per job; uv cuts setup to a few minutes.
+            - name: Install with uv
+              run: |
+                  uv pip install --system -e ".[dev,vlm]" pytest-cov pytest-timeout
             - name: Resolve shard file list
               id: shard
               run: |
@@ -106,7 +105,12 @@ jobs:
                   # full suite; --cov-fail-under=0 overrides it per-shard so the
                   # gate never fires on a partial run. The xml artifact is still
                   # uploaded for cross-shard combining if needed.
-                  pytest ${{ steps.shard.outputs.files }} -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-report=xml --cov-fail-under=0 --junitxml=pytest-junit.xml 2>&1 | tee pytest-output.txt
+                  # --timeout=600: a hung test dumps its stack and fails at
+                  # 10 min instead of burning the 6 h job timeout (#1268
+                  # macOS rest-shard hang). Default method (signal, with
+                  # faulthandler fallback) — the process method is not
+                  # offered by pytest-timeout on macOS runners.
+                  pytest ${{ steps.shard.outputs.files }} -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-report=xml --cov-fail-under=0 --timeout=600 --junitxml=pytest-junit.xml 2>&1 | tee pytest-output.txt
             - name: Guard against excessive skips
               if: always()
               run: |
@@ -140,14 +144,9 @@ jobs:
             - uses: actions/setup-python@v7
               with:
                   python-version: ${{ matrix.python-version }}
-            - name: Cache pip wheels
-              uses: actions/cache@v4
-              with:
-                  path: ~/.cache/pip
-                  key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
-                  restore-keys: ${{ runner.os }}-pip-${{ matrix.python-version }}-
-            - run: pip install -e ".[dev,vlm]"
-            - run: pip install pytest-cov
+            - uses: astral-sh/setup-uv@v6
+            - name: Install with uv (version job)
+              run: uv pip install --system -e ".[dev,vlm]" pytest-cov pytest-timeout
             - name: Run core shard (version coverage)
               run: |
                   set -eo pipefail
@@ -155,7 +154,7 @@ jobs:
                   # --cov-fail-under=0: same per-shard rationale as the test job
                   # above — pyproject fail_under=40 applies to the full suite and
                   # must never gate a partial shard (14% per-shard otherwise).
-                  pytest $FILES -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-fail-under=0 2>&1 | tee pytest-output.txt
+                  pytest $FILES -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-fail-under=0 --timeout=600 2>&1 | tee pytest-output.txt
 
     chaos:
         # #1195: fault-injection suite (tests/chaos/). Separate job from the
