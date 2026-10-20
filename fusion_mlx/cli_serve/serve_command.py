@@ -20,6 +20,8 @@ from .config_resolve import (
     _apply_mtp_cli_model_type_reconciliation,
     _autoconfig_parsers,
     _boot_guard_checks,
+    _load_settings_cache_section,
+    _parse_size_to_bytes,
     _print_profile_banner,
     _print_startup_banner,
     _serve_from_model_dir,
@@ -33,6 +35,46 @@ from .preflight import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_settings_cache_section(scheduler_config, settings_dir: str | None) -> bool:
+    # #1288: the single-model serve path never read the settings.json cache
+    # section (only --model-dir did, via config_resolve) — prod booted the
+    # 1GiB in-memory LRU (hot_cache_only, no SSD dir) while settings.json
+    # configured a 20GB hot cache + SSD dir. Agent-scale prompts (38k tokens
+    # = 600 blocks x ~4.2MB KV) then thrashed the hot LRU (dedup defeated,
+    # re-store every turn) and the 4096-block pool (17.9k OOB warnings, 29
+    # store_cache force-drains, ~3min per-turn stalls). Mirrors the
+    # --model-dir application in config_resolve.
+    try:
+        cache_sj = _load_settings_cache_section(settings_dir)
+    except Exception as e:
+        logger.warning("#1288: failed to read settings.json cache section: %s", e)
+        return False
+    if not cache_sj:
+        return False
+    _ssd_dir = cache_sj.get("paged_ssd_cache_dir") or cache_sj.get("ssd_cache_dir")
+    if _ssd_dir:
+        scheduler_config.paged_ssd_cache_dir = str(_ssd_dir)
+    _hot = _parse_size_to_bytes(cache_sj.get("hot_cache_max_size"))
+    if _hot:
+        scheduler_config.hot_cache_max_size = _hot
+    if "hot_cache_only" in cache_sj:
+        scheduler_config.hot_cache_only = bool(cache_sj["hot_cache_only"])
+    if cache_sj.get("initial_cache_blocks"):
+        scheduler_config.initial_cache_blocks = int(cache_sj["initial_cache_blocks"])
+    _ssd_max = _parse_size_to_bytes(cache_sj.get("ssd_cache_max_size"))
+    if _ssd_max:
+        scheduler_config.paged_ssd_cache_max_size = _ssd_max
+    logger.info(
+        "cache settings applied from settings.json (single-model serve): "
+        "ssd_dir=%s hot_cache_max=%s hot_cache_only=%s initial_blocks=%s",
+        scheduler_config.paged_ssd_cache_dir,
+        scheduler_config.hot_cache_max_size,
+        scheduler_config.hot_cache_only,
+        scheduler_config.initial_cache_blocks,
+    )
+    return True
 
 
 _RAM_TIERS = [
@@ -680,6 +722,11 @@ def serve_command(args):
         # silently recreating the D-METAL-CAP regression.
         gpu_memory_utilization=args.gpu_memory_utilization,
     )
+
+    # #1288: apply the settings.json cache section (admin-panel surface) —
+    # previously only the --model-dir path did, so a single-model serve
+    # always booted the 1GiB in-memory LRU and agent-scale stores thrashed.
+    _apply_settings_cache_section(scheduler_config, None)
 
     print("Mode: Continuous batching (for multiple concurrent users)")
     if args.chunked_prefill_tokens > 0:
