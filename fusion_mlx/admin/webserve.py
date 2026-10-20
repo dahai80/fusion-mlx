@@ -118,6 +118,82 @@ def create_web_app(dist_dir=None):
             "engine": engine_url,
         }
 
+    # --- manifest ext endpoints (#1281): ⌘K search + notification center ---
+    # Both are plain same-origin fetches by the shell host through the
+    # gateway /shell proxy, served here off data that already exists on the
+    # engine (no new engine surface).
+
+    @app.get("/api/search/models")
+    async def search_models(request: Request, q: str = ""):
+        if not _client_auth_ok(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        query = (q or "").strip().lower()
+        headers = _upstream_headers(request)
+        try:
+            resp = await client.get("/admin/api/models", headers=headers)
+            models = resp.json().get("models", [])
+        except (httpx.HTTPError, ValueError) as e:
+            logger.warning("search models upstream failed: %s", e)
+            return JSONResponse({"items": []})
+        items = []
+        for m in models:
+            hay = " ".join(
+                str(m.get(k) or "")
+                for k in ("id", "engine_type", "model_type", "config_model_type")
+            ).lower()
+            if query and query not in hay:
+                continue
+            items.append({"title": m.get("id"), "route": "/models"})
+            if len(items) >= 8:
+                break
+        return JSONResponse({"items": items})
+
+    @app.get("/api/notifications")
+    async def notifications(request: Request):
+        if not _client_auth_ok(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        headers = _upstream_headers(request)
+        items = []
+        try:
+            health_resp = await client.get("/v1/health", headers=headers)
+            health = health_resp.json()
+            risk = health.get("oom_risk")
+            if risk == "imminent":
+                items.append(
+                    {
+                        "id": "mlx-oom-imminent",
+                        "title": "memory pressure: OOM imminent",
+                        "level": "error",
+                        "route": "/metrics",
+                    }
+                )
+            elif risk == "high":
+                items.append(
+                    {
+                        "id": "mlx-oom-high",
+                        "title": "memory pressure high",
+                        "level": "warning",
+                        "route": "/metrics",
+                    }
+                )
+        except (httpx.HTTPError, ValueError) as e:
+            logger.warning("notifications health poll failed: %s", e)
+        try:
+            models_resp = await client.get("/admin/api/models", headers=headers)
+            for m in models_resp.json().get("models", []):
+                if m.get("loaded"):
+                    items.append(
+                        {
+                            "id": f"mlx-model-loaded:{m.get('id')}",
+                            "title": f"model loaded: {m.get('id')}",
+                            "level": "info",
+                            "route": "/models",
+                        }
+                    )
+        except (httpx.HTTPError, ValueError) as e:
+            logger.warning("notifications models poll failed: %s", e)
+        return JSONResponse({"count": len(items), "items": items})
+
     def _client_auth_ok(request):
         if not web_key:
             return True
