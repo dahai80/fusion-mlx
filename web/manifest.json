@@ -10,6 +10,11 @@
     "entry": "/shell/fusion-mlx/",
     "health": "http://127.0.0.1:11432/shell/fusion-mlx/health",
     "backend": "http://127.0.0.1:11432/shell/fusion-mlx/",
-    "devices": ["desktop", "mobile-ready"],
-    "category": "platform"
+    "devices": [
+        "desktop",
+        "mobile-ready"
+    ],
+    "category": "platform",
+    "upstream": "http://127.0.0.1:11471",
+    "api_key_env": "FUSION_MLX_WEB_API_KEY"
 }

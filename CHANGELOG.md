@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added — web monitor module bridge: serve + gateway wiring (#1276)
+- `fusion-mlx web-serve [--port 11471]` serves the built `web/dist` UI plus
+  a reverse proxy of the engine API surface (`/v1` `/admin` `/metrics`
+  `/stats`) — the upstream that `web/manifest.json` now declares
+  (`upstream` + `api_key_env: FUSION_MLX_WEB_API_KEY`), so gateway #232
+  dynamic proxy resolves the module and `/shell/fusion-mlx/` stops 502ing.
+- Auth: `FUSION_MLX_WEB_API_KEY` (when set) gates API-prefix paths on the
+  bridge; forwarded requests carry the engine key resolved the same way
+  the engine does (env > settings.json), so the embedded UI ships no
+  secret. Unset = open, loopback posture.
+- `start.sh web start|stop|status` lifecycle for the bridge; registration
+  + heartbeat with the union-web shell gateway remains engine-side
+  (`FUSION_SHELL_GATEWAY_URL` / `FUSION_GATEWAY_ADMIN_KEY`, #1220).
+- UI build: `cd web && bun install && bun run build` (dist gitignored;
+  the bridge logs a loud warning and keeps `/health` + the API proxy up
+  when dist is missing).
+
 ### Fixed — completion summary ttft/prompt_eval measured backwards (#1265)
 - `_log_completion_summary` computed `ttft = now - first_token_at` — the
   decode window — instead of time TO the first token. An 84s 68,808-token

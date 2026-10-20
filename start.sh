@@ -939,6 +939,69 @@ do_doctor() {
     fusion-mlx doctor 2>&1 || true
 }
 
+# ── Web module bridge (#1276) ───────────────────────────────────────
+WEB_PORT="${FUSION_MLX_WEB_PORT:-11471}"
+web_pid() {
+    lsof -tiTCP:"${WEB_PORT}" -sTCP:LISTEN -t 2>/dev/null | head -1
+}
+
+do_web() {
+    ensure_venv
+    local sub="${1:-start}"
+    case "${sub}" in
+        start)
+            if [[ -n "$(web_pid)" ]]; then
+                log_warn "Web bridge already running on :${WEB_PORT} (PID $(web_pid))"
+                return 0
+            fi
+            if [[ ! -f "${PROJ_DIR}/web/dist/index.html" ]]; then
+                log_error "web/dist not built — run: cd ${PROJ_DIR}/web && bun install && bun run build"
+                exit 1
+            fi
+            log_step "Starting web module bridge on :${WEB_PORT}"
+            fusion-mlx web-serve --port "${WEB_PORT}" \
+                > "${LOG_DIR}/web.log" 2>&1 &
+            local wp=$!
+            local waited=0
+            while (( waited < 15 )); do
+                if curl -sf "http://127.0.0.1:${WEB_PORT}/health" > /dev/null 2>&1; then
+                    log_info "Web bridge ready on :${WEB_PORT} (PID ${wp}); log: ${LOG_DIR}/web.log"
+                    return 0
+                fi
+                sleep 1
+                (( waited += 1 ))
+            done
+            log_error "Web bridge failed to become healthy in 15s — check ${LOG_DIR}/web.log"
+            exit 1
+            ;;
+        stop)
+            local wp
+            wp=$(web_pid)
+            if [[ -z "${wp}" ]]; then
+                log_warn "Web bridge not running on :${WEB_PORT}"
+                return 0
+            fi
+            log_step "Stopping web bridge (PID ${wp})"
+            kill -TERM "${wp}" 2>/dev/null || true
+            sleep 1
+            kill -0 "${wp}" 2>/dev/null && kill -KILL "${wp}" 2>/dev/null || true
+            log_info "Web bridge stopped"
+            ;;
+        status)
+            if [[ -n "$(web_pid)" ]]; then
+                log_info "Web bridge running on :${WEB_PORT} (PID $(web_pid))"
+                curl -sf "http://127.0.0.1:${WEB_PORT}/health" 2>/dev/null && echo
+            else
+                log_warn "Web bridge not running on :${WEB_PORT}"
+            fi
+            ;;
+        *)
+            log_error "Usage: $0 web [start|stop|status]"
+            exit 1
+            ;;
+    esac
+}
+
 # ── Usage ───────────────────────────────────────────────────────────
 usage() {
     cat <<'EOF'
@@ -995,6 +1058,7 @@ case "${cmd}" in
     tune)              do_tune    ;;
     clean)             do_clean   ;;
     doctor)            do_doctor  ;;
+    web)               do_web "$@" ;;
     install-launchd)   do_install_launchd ;;
     uninstall-launchd) do_uninstall_launchd ;;
     help|-h|--help)    usage ;;

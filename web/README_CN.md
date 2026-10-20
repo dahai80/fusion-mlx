@@ -27,6 +27,23 @@ VITE_API_KEY=<引擎 api key> bun run dev     # http://127.0.0.1:11471
 `FUSION_DEV_BACKEND`（默认 `http://127.0.0.1:11434`）。独立构建发送
 `Authorization: Bearer <VITE_API_KEY>`；嵌入构建不发送认证头，由网关注入。
 
+## 运行（生产，#1276）
+
+```bash
+~/fusion/fusion-mlx/start.sh web start    # 需先构建 dist；服务端口 :11471
+~/fusion/fusion-mlx/start.sh web status
+~/fusion/fusion-mlx/start.sh web stop
+# 或直接：fusion-mlx web-serve [--port 11471]
+```
+
+`fusion_mlx/admin/webserve.py` 在 `/` 托管 `web/dist`，并把
+`/v1`、`/admin`、`/metrics`、`/stats` 反向代理到引擎（默认
+`http://127.0.0.1:11434`，可用 `FUSION_MLX_WEB_ENGINE_URL` 覆盖）——
+即 manifest 声明的 `upstream`。设置了 `FUSION_MLX_WEB_API_KEY` 时这些
+API 路径在桥接层校验；转发请求携带引擎密钥（env > settings.json），
+UI 产物不含任何密钥。注册时的 upstream 可用 `FUSION_MLX_WEB_UPSTREAM`
+覆盖。
+
 ## 嵌入 union-web 网关
 
 `manifest.json` 描述模块（`entry: /shell/fusion-mlx/`）。两种注册方式：
