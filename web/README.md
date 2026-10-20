@@ -30,6 +30,24 @@ The dev server proxies `/v1`, `/admin`, `/metrics`, `/health`, `/stats` to
 send `Authorization: Bearer <VITE_API_KEY>`; embedded builds send no auth
 header and rely on the gateway's injected credentials.
 
+## Serve (production, #1276)
+
+```bash
+~/fusion/fusion-mlx/start.sh web start    # builds assumed; serves :11471
+~/fusion/fusion-mlx/start.sh web status
+~/fusion/fusion-mlx/start.sh web stop
+# or directly: fusion-mlx web-serve [--port 11471]
+```
+
+`fusion_mlx/admin/webserve.py` serves `web/dist` at `/` and reverse-proxies
+`/v1` `/admin` `/metrics` `/stats` to the engine (default
+`http://127.0.0.1:11434`, override `FUSION_MLX_WEB_ENGINE_URL`) — this is
+the `upstream` the manifest declares. `FUSION_MLX_WEB_API_KEY` (when set)
+gates those API paths on the bridge; forwarded requests carry the engine
+key (env > settings.json), so the UI bundle holds no secret.
+`FUSION_MLX_WEB_UPSTREAM` overrides the manifest upstream at registration
+time.
+
 ## Embed in the union-web gateway
 
 `manifest.json` describes the module (`entry: /shell/fusion-mlx/`). Register

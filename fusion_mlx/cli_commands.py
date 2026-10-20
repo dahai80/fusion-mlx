@@ -2540,3 +2540,10 @@ def doctor_command(args):
     from fusion_mlx.doctor.cli import doctor_command as _doctor_command
 
     _doctor_command(args)
+
+
+def web_serve_command(args):
+    """Serve the web monitor UI + engine API proxy (#1276)."""
+    from fusion_mlx.admin.webserve import serve_web
+
+    serve_web(port=args.port, host=args.host)

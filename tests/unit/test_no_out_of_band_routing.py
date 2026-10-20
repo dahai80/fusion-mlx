@@ -612,6 +612,13 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # reconstructed from the SSD tier instead of re-prefilling; never
         # selects a model, parser, or routing tier.
         "FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS",
+        # #1276: web module bridge (admin/webserve). Deployment endpoint
+        # knobs — upstream/engine-URL/key for the static+proxy bridge
+        # (FUSION_MLX_WEB_DIST already allowlisted above, #1220); never
+        # selects a model, parser, or routing tier.
+        "FUSION_MLX_WEB_UPSTREAM",
+        "FUSION_MLX_WEB_API_KEY",
+        "FUSION_MLX_WEB_ENGINE_URL",
     }
 )
 

@@ -38,6 +38,7 @@ from fusion_mlx.cli_commands import (
     rm_command,
     telemetry_command,
     upgrade_command,
+    web_serve_command,
 )
 from fusion_mlx.cli_serve import (
     _add_pflash_args,
@@ -1878,6 +1879,24 @@ Examples:
         help=argparse.SUPPRESS,
     )
 
+    # Web module serve (#1276) — web/dist static + engine API reverse proxy
+    # + shell gateway registration. Lives in admin/webserve.py.
+    web_serve_parser = subparsers.add_parser(
+        "web-serve",
+        help="Serve the web monitor UI (web/dist) + engine API proxy on :11471",
+    )
+    web_serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=11471,
+        help="Port for the web module bridge (default: 11471)",
+    )
+    web_serve_parser.add_argument(
+        "--host",
+        default=None,
+        help="Bind address (default: FUSION_BIND_HOST or 127.0.0.1)",
+    )
+
     # Telemetry subcommand — opt-in anonymous usage data (Issue #236).
     # See fusion_mlx/telemetry/ for what we collect / don't collect, and
     # the README "Telemetry" section for the user-facing summary.
@@ -2377,6 +2396,8 @@ Examples:
         agents_command(args)
     elif args.command == "doctor":
         doctor_command(args)
+    elif args.command == "web-serve":
+        web_serve_command(args)
     elif args.command == "telemetry":
         telemetry_command(args)
     elif args.command == "share":
