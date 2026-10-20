@@ -958,6 +958,17 @@ do_web() {
                 log_error "web/dist not built — run: cd ${PROJ_DIR}/web && bun install && bun run build"
                 exit 1
             fi
+            # Shell registry envs: same settings.json fallback as do_start's
+            # preflight (engine re-exports them; the bridge process needs its
+            # own copy to run the registration loop).
+            if [[ -z "${FUSION_SHELL_GATEWAY_URL:-}" && -f "${SETTINGS:-}" ]]; then
+                shell_gw=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('shell',{}).get('gateway_url',''))" 2>/dev/null || echo "")
+                [[ -n "${shell_gw}" ]] && export FUSION_SHELL_GATEWAY_URL="${shell_gw}"
+            fi
+            if [[ -z "${FUSION_GATEWAY_ADMIN_KEY:-}" && -f "${SETTINGS:-}" ]]; then
+                shell_key=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('shell',{}).get('gateway_admin_key',''))" 2>/dev/null || echo "")
+                [[ -n "${shell_key}" ]] && export FUSION_GATEWAY_ADMIN_KEY="${shell_key}"
+            fi
             log_step "Starting web module bridge on :${WEB_PORT}"
             fusion-mlx web-serve --port "${WEB_PORT}" \
                 > "${LOG_DIR}/web.log" 2>&1 &
