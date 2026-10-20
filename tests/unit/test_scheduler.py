@@ -2003,6 +2003,11 @@ class TestSchedulerBoundarySnapshots:
         scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer, config=config)
         scheduler.block_aware_cache = MagicMock()
         scheduler._boundary_snapshot_required = True
+        # Pin the in-memory fallback: with a live SSD store, save() may succeed
+        # (mx.array accepts the MagicMock layer on some mlx builds) and the
+        # entry is intentionally recorded as None, which made this test
+        # environment-dependent (CI flake: assert None == [BatchArraysCache]).
+        scheduler._boundary_snapshot_store = None
 
         # New API: _extract_boundary_snapshot uses batch_generator.extract_cache()
         # which returns {uid: (cache_list, tokens_list)}.

@@ -57,6 +57,24 @@ def _percentile(values: collections.deque, pct: float) -> float:
     return round(s[idx], 4)
 
 
+def _collect_store_arrays(data: Any, arrays: list) -> None:
+    # #1272: collect mx arrays from extracted block slices (list of
+    # per-layer tuples) for one batched mx.eval — one device sync per
+    # block instead of one sync per tensor inside _extract_tensor_bytes.
+    # Duck-typed on nbytes+dtype: isinstance(mx.array) breaks under the CI
+    # mlx.core mock (arg 2 not a type).
+    if isinstance(data, (list, tuple)):
+        for item in data:
+            _collect_store_arrays(item, arrays)
+        return
+    if (
+        not isinstance(data, (str, bytes, bytearray, int, float, bool))
+        and hasattr(data, "nbytes")
+        and hasattr(data, "dtype")
+    ):
+        arrays.append(data)
+
+
 class BlockAwarePrefixCache(CacheManager):
     """
     Prefix cache that uses PagedCacheManager for block-based storage.
@@ -851,6 +869,15 @@ class BlockAwarePrefixCache(CacheManager):
                             else:
                                 per_block.append(layer_meta_states[lidx])
                         block_meta = per_block
+
+                    # #1272: batch-eval this block's lazy slices once — one
+                    # device sync per block instead of one sync per tensor
+                    # inside _extract_tensor_bytes (~64 tensors/block; a
+                    # 187-block store was ~12k syncs, the wall cost).
+                    arrays: list = []
+                    _collect_store_arrays(block_kv_data, arrays)
+                    if arrays:
+                        mx.eval(*arrays)
 
                     # Save to paged SSD via PagedSSDCacheManager with cache type info
                     saved = self.paged_ssd_cache.save_block(

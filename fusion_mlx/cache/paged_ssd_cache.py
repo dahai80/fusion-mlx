@@ -353,6 +353,21 @@ def _is_bfloat16(dtype) -> bool:
 def _extract_tensor_bytes(arr) -> tuple[bytes, str, list[int]]:
     if not HAS_MLX:
         return (b"", "F32", [1])
+    if hasattr(arr, "nbytes") and hasattr(arr, "dtype"):
+        # #1272: caller already batch-eval'd this array (per-block eval in
+        # prefix_cache store loop) — skip the mx.array re-wrap + per-tensor
+        # eval syncs. memoryview read is sync-free post-eval. bfloat16 path
+        # still needs the uint16 view; it re-syncs but only once per tensor.
+        dtype_str = _dtype_to_st_str(arr.dtype)
+        shape = list(arr.shape)
+        try:
+            if _is_bfloat16(arr.dtype):
+                raw = bytes(memoryview(arr.view(mx.uint16)))
+            else:
+                raw = bytes(memoryview(arr))
+        except TypeError:
+            raw = bytes(arr) if hasattr(arr, "__bytes__") else b""
+        return raw, dtype_str, shape
     if isinstance(arr, (str, bytes)):
         # #1236: TQ v2 marker strings used to reach mx.array(str) and crash
         # every async store. Fail loud instead of silently killing reuse.
