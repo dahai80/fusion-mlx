@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed — completion summary ttft/prompt_eval measured backwards (#1265)
+- `_log_completion_summary` computed `ttft = now - first_token_at` — the
+  decode window — instead of time TO the first token. An 84s 68,808-token
+  prefill logged `ttft=0.28s | prompt_eval=0.0ms/token`; monitoring built
+  on these fields was invalid for any long prefill.
+- ttft is now `first_token_at - (generation_started_at or arrival_time)`;
+  prefill rates divide by actually-prefilled tokens
+  (`prompt_tokens - cached_tokens`); decode window derived consistently.
+- Secondary: `first_token_at` was only stamped when
+  `num_output_tokens == 1`, so a spec-decode/MTP first step emitting >1
+  token never got a timestamp; guard is now `>= 1`.
+- Log line field names/format unchanged (parser-compatible).
+
+## [Unreleased]
+
 ### Fixed — paged-cache block cap scaled to model context (#1264)
 - `max_cache_blocks` (default 1000 → 64k tokens at block_size=64) was
   independent of the loaded model's context length: any prompt beyond
@@ -13,6 +28,7 @@
 - New `/metrics` counters `fusion_mlx_kv_block_oob_total{scope=paged|prefix}`
   surface block-cap exhaustion at both allocation-failure sites, with the
   cap/model included in the warnings.
+
 
 ### Fixed — Claude Code thinking/temp normalization on the OpenAI chat surface
 - Claude Code reaches fusion-mlx through the Anthropic→OpenAI converter

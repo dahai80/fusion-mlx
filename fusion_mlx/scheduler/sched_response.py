@@ -25,24 +25,26 @@ def _log_completion_summary(request, output):
     cached_tokens = output.cached_tokens
     finish_reason = output.finish_reason or "unknown"
 
-    # Calculate timing
+    # Calculate timing (#1265): ttft = time TO the first token (queue wait
+    # + prefill), not time SINCE it — the old now-minus-first_token_at
+    # formula reported the decode window as ttft and collapsed prompt_eval
+    # toward 0.0 ms/token on long prefills. Prefill rates divide by the
+    # tokens actually prefill'd (prompt minus KV-resume cache hits).
     now = time.monotonic()
     total_time = (now - request.arrival_time) if request.arrival_time else 0
-    gen_time = (
-        (now - request.generation_started_at)
-        if request.generation_started_at
-        else total_time
-    )
-    ttft = (now - request.first_token_at) if request.first_token_at else 0
+    gen_start = request.generation_started_at or request.arrival_time
+    gen_time = now - gen_start
+    ttft = max(0.0, request.first_token_at - gen_start) if request.first_token_at else 0
 
     # Token-per-second (Ollama style: ms/token)
-    prompt_ms_per_token = (ttft * 1000 / prompt_tokens) if prompt_tokens > 0 else 0
+    prefill_tokens = max(prompt_tokens - cached_tokens, 1)
+    prompt_ms_per_token = (ttft * 1000 / prefill_tokens) if ttft > 0 else 0
     completion_ms_per_token = (
         ((gen_time - ttft) * 1000 / max(completion_tokens - 1, 1))
         if gen_time > ttft
         else 0
     )
-    prompt_tps = (prompt_tokens / ttft) if ttft > 0 else 0
+    prompt_tps = (prefill_tokens / ttft) if ttft > 0 else 0
     completion_tps = (
         (completion_tokens / max(gen_time - ttft, 0.001)) if gen_time > ttft else 0
     )
@@ -208,7 +210,7 @@ def _process_batch_responses(
             response.logprobs = None
 
         # Track first token arrival time
-        if request.num_output_tokens == 1 and request.first_token_at is None:
+        if request.first_token_at is None and request.num_output_tokens >= 1:
             request.first_token_at = time.monotonic()
 
         # Create output — skip O(N) output_token_ids copy for streaming;
