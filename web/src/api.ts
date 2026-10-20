@@ -131,6 +131,16 @@ export interface MetricSample {
     models_loaded: number;
     models_discovered: number;
     uptime_seconds: number;
+    // capacity gauges (#1278) — single-value series on /metrics
+    paged_kv_utilization?: number;
+    metal_active_bytes?: number;
+    metal_wired_bytes?: number;
+    metal_peak_bytes?: number;
+    phys_footprint_bytes?: number;
+    response_cache_hit_rate?: number;
+    spec_decode_accept_rate?: number;
+    tps_sum?: number;
+    tps_count?: number;
 }
 
 const METRIC_NAMES = [
@@ -143,6 +153,16 @@ const METRIC_NAMES = [
     "fusion_mlx_models_loaded",
     "fusion_mlx_models_discovered",
     "fusion_mlx_uptime_seconds",
+    // capacity gauges (#1278)
+    "fusion_mlx_paged_kv_utilization",
+    "fusion_mlx_metal_active_bytes",
+    "fusion_mlx_metal_wired_bytes",
+    "fusion_mlx_metal_peak_bytes",
+    "fusion_mlx_phys_footprint_bytes",
+    "fusion_mlx_response_cache_hit_rate",
+    "fusion_mlx_spec_decode_accept_rate",
+    "fusion_mlx_tps_sum",
+    "fusion_mlx_tps_count",
 ] as const;
 
 const SHORT: Record<string, keyof MetricSample> = {
@@ -155,6 +175,15 @@ const SHORT: Record<string, keyof MetricSample> = {
     fusion_mlx_models_loaded: "models_loaded",
     fusion_mlx_models_discovered: "models_discovered",
     fusion_mlx_uptime_seconds: "uptime_seconds",
+    fusion_mlx_paged_kv_utilization: "paged_kv_utilization",
+    fusion_mlx_metal_active_bytes: "metal_active_bytes",
+    fusion_mlx_metal_wired_bytes: "metal_wired_bytes",
+    fusion_mlx_metal_peak_bytes: "metal_peak_bytes",
+    fusion_mlx_phys_footprint_bytes: "phys_footprint_bytes",
+    fusion_mlx_response_cache_hit_rate: "response_cache_hit_rate",
+    fusion_mlx_spec_decode_accept_rate: "spec_decode_accept_rate",
+    fusion_mlx_tps_sum: "tps_sum",
+    fusion_mlx_tps_count: "tps_count",
 };
 
 export function parsePrometheus(text: string): Partial<MetricSample> {

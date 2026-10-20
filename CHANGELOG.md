@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added — web monitor GUI upgrade: capacity gauge, retrospection, cards, log inspector (#1278)
+- Metrics first screen: memory-pressure gauge (unified used/total bar) plus
+  capacity tiles read straight from `/metrics` gauges — KV utilization,
+  Metal active/wired, phys footprint, resident-model count/bytes, response
+  cache hit rate, spec-decode accept rate.
+- Usage retrospection: 5m/30m/2h/24h window selector with requests/failed/
+  tokens/avg-TPS totals and a per-minute request chart. Frontend-only
+  aggregation over the local sample ring persisted to localStorage
+  (`web/src/components/usageStore.ts`) — no backend surface changes.
+- Models page: registry cards grouped by modality (collapsible groups,
+  one-click load/unload) replacing the flat paginated table.
+- Logs page: inspector filters — level floor (all/≥debug/≥info/≥warn/≥error),
+  case-insensitive keyword, "from HH:MM" time jump, with shown/total count.
+
+### Added — embedded sub-page navigation (#1277)
+- Shell-embedded web UI now renders a minimal in-module tab bar
+  (Models/Metrics/Logs) so Metrics/Logs are reachable; the shell keeps
+  owning the app chrome. Standalone mode unchanged (BottomNav).
+
 ### Added — web monitor module bridge: serve + gateway wiring (#1276)
 - `fusion-mlx web-serve [--port 11471]` serves the built `web/dist` UI plus
   a reverse proxy of the engine API surface (`/v1` `/admin` `/metrics`
