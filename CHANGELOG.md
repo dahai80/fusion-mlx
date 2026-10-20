@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 HEAD
+
+### Fixed — chat path resolves dynamic model aliases (#1290)
+- `resolve_model_id` (server.py) now falls back to the dynamic alias
+  registry (`aliases.json`) after the static `DEFAULT_ALIASES` table, so
+  `/v1/chat/completions` with `model: "qwen3.5-9b-4bit"` lands on the loaded
+  HF id instead of returning 404. Exact HF ids and unknown ids pass through
+  unchanged; provider-prefix stripping is unchanged.
+- The same resolver serves Anthropic/Ollama/Responses/audio/image routes,
+  so alias ids now work on every API surface.
 ### Added — web monitor GUI upgrade: capacity gauge, retrospection, cards, log inspector (#1278)
 - Metrics first screen: memory-pressure gauge (unified used/total bar) plus
   capacity tiles read straight from `/metrics` gauges — KV utilization,

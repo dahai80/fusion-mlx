@@ -1020,6 +1020,22 @@ def resolve_model_id(model_id: str) -> str:
     resolved = DEFAULT_ALIASES.get(model_id)
     if resolved:
         return resolved
+    # #1290: consult the dynamic alias registry (aliases.json) too. The API
+    # path only read the static DEFAULT_ALIASES table, so an alias id such as
+    # "qwen3.5-9b-4bit" 404'd even though /v1/models lists it. resolve_model
+    # returns the input unchanged for exact HF ids and raises ValueError for
+    # path-like ids outside the allowed model dirs — fall back to the raw id
+    # in both cases.
+    try:
+        from .model_aliases import resolve_model
+
+        dyn = resolve_model(model_id)
+    except Exception as e:
+        logger.debug("resolve_model_id(%s): alias lookup failed: %s", model_id, e)
+        dyn = model_id
+    if dyn and dyn != model_id:
+        logger.info("resolve_model_id(%s) -> alias: %s", model_id, dyn)
+        return dyn
     # Only strip known provider prefixes — preserve HF paths
     for prefix in ["fusion-mlx/", "fusion/"]:
         if model_id.startswith(prefix):
