@@ -12,7 +12,6 @@ Skips when the model is not cached. Run directly to write the report:
     python tests/test_turboquant_batch_memory.py
 """
 
-import importlib.util
 from pathlib import Path
 
 import mlx.core as mx
@@ -27,12 +26,21 @@ OCC_LEN = 512  # multiple of TurboQuant cache_step (256) → no over-alloc slack
 
 
 def _model_path():
-    try:
-        from huggingface_hub import snapshot_download
-
-        return snapshot_download(MODEL_REPO, local_files_only=True)
-    except Exception:
+    # tests/conftest.py replaces huggingface_hub with a MagicMock, so scan the
+    # local model cache directly instead of calling snapshot_download.
+    root = (
+        Path.home()
+        / ".fusion-mlx"
+        / "models"
+        / f"models--{MODEL_REPO.replace('/', '--')}"
+        / "snapshots"
+    )
+    if not root.is_dir():
         return None
+    for snap in sorted(root.iterdir(), reverse=True):
+        if (snap / "config.json").is_file():
+            return snap
+    return None
 
 
 pytestmark = [
@@ -43,12 +51,9 @@ pytestmark = [
 
 
 def _helpers():
-    spec = importlib.util.spec_from_file_location(
-        "itest", str(Path(__file__).parent / "integration" / "test_full_integration.py")
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    from tests.unit import turboquant_generate_helpers
+
+    return turboquant_generate_helpers
 
 
 def _prompts(tokenizer):

@@ -12,6 +12,18 @@ HEAD
   unchanged; provider-prefix stripping is unchanged.
 - The same resolver serves Anthropic/Ollama/Responses/audio/image routes,
   so alias ids now work on every API surface.
+
+### Fixed — restore real-model TurboQuant test helpers (#1287)
+- `test_turboquant_ssd` / `test_turboquant_batch_memory` loaded helpers from
+  a non-existent `tests/unit/integration/test_full_integration.py`, so all 4
+  real-model tests failed with FileNotFoundError on any machine with the
+  model cached.
+- New `tests/unit/turboquant_generate_helpers.py` drives the current
+  Scheduler (paged SSD dir, block size, TurboQuant bits + attention patch),
+  drains async `store_cache` futures, and closes the SSD manager between
+  runs so the second scheduler's startup repair can't race the writer.
+- Both tests resolve the model from the local `~/.fusion-mlx/models` cache
+  directly (conftest replaces huggingface_hub with a MagicMock).
 ### Added — web monitor GUI upgrade: capacity gauge, retrospection, cards, log inspector (#1278)
 - Metrics first screen: memory-pressure gauge (unified used/total bar) plus
   capacity tiles read straight from `/metrics` gauges — KV utilization,
