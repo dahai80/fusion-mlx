@@ -7,15 +7,20 @@ import pytest
 logger = logging.getLogger(__name__)
 
 
-def _make_pool(num_blocks=8, block_size=4, n_kv_heads=2, head_dim=4):
+def _make_pool(num_blocks=8, block_size=4, n_kv_heads=2, head_dim=4, cow=False):
     from fusion_mlx.custom_kernels.paged_kv_pool import FusionPagedKVPool
 
-    return FusionPagedKVPool(
+    pool = FusionPagedKVPool(
         block_size=block_size,
         num_blocks=num_blocks,
         n_kv_heads=n_kv_heads,
         head_dim=head_dim,
     )
+    # Non-CoW pools keep KV in the per-cache flat buffer and never allocate
+    # pool blocks (paged_kv_pool update_and_fetch fast path) — tests that
+    # assert block accounting must opt in to CoW.
+    pool._cow_enabled = cow
+    return pool
 
 
 def _make_cache(pool, request_id):
@@ -40,7 +45,7 @@ def test_free_paged_pool_cache_restores_available():
 
     from fusion_mlx.scheduler.sched_response import _free_paged_pool_cache
 
-    pool = _make_pool(num_blocks=8, block_size=4, n_kv_heads=2, head_dim=4)
+    pool = _make_pool(num_blocks=8, block_size=4, n_kv_heads=2, head_dim=4, cow=True)
     initial = pool.available()
 
     c1 = _make_cache(pool, "pool_0")
@@ -63,12 +68,15 @@ def test_free_paged_pool_cache_restores_available():
 def test_free_paged_pool_cache_empty_request():
     from fusion_mlx.scheduler.sched_response import _free_paged_pool_cache
 
+    # #955 fallback reads self.model — the helper is a scheduler method and
+    # callers pass a scheduler; None was never a valid self.
+    sched = types.SimpleNamespace(model=None)
     request = types.SimpleNamespace(request_id="x", prompt_cache=None)
-    freed = _free_paged_pool_cache(None, request)
+    freed = _free_paged_pool_cache(sched, request)
     assert freed == 0
 
     request2 = types.SimpleNamespace(request_id="y", prompt_cache=[])
-    freed2 = _free_paged_pool_cache(None, request2)
+    freed2 = _free_paged_pool_cache(sched, request2)
     assert freed2 == 0
 
 
@@ -77,7 +85,7 @@ def test_free_paged_pool_cache_mixed_caches():
 
     from fusion_mlx.scheduler.sched_response import _free_paged_pool_cache
 
-    pool = _make_pool(num_blocks=8, block_size=4, n_kv_heads=2, head_dim=4)
+    pool = _make_pool(num_blocks=8, block_size=4, n_kv_heads=2, head_dim=4, cow=True)
     initial = pool.available()
 
     c1 = _make_cache(pool, "pool_0")
@@ -97,7 +105,10 @@ def test_free_paged_pool_cache_mixed_caches():
 def test_merge_batched_caches_shape_and_padding():
     import mlx.core as mx
 
-    from fusion_mlx.custom_kernels.paged_kv_pool import FusionPagedRequestCache
+    from fusion_mlx.custom_kernels.paged_kv_pool import (
+        FusionPagedRequestCache,
+        MergedPagedCacheView,
+    )
 
     pool = _make_pool(num_blocks=16, block_size=4, n_kv_heads=2, head_dim=4)
     c0 = _make_cache(pool, "pool_0")
@@ -105,14 +116,32 @@ def test_merge_batched_caches_shape_and_padding():
     _fill_cache(c0, 6)
     _fill_cache(c1, 3)
 
+    # merge() returns a writable MergedPagedCacheView over the constituents,
+    # not a materialized _is_merged snapshot (the snapshot path crashed on
+    # the first generation append — see merge() docstring).
     merged = FusionPagedRequestCache.merge([c0, c1])
-    assert merged._is_merged is True
+    assert isinstance(merged, MergedPagedCacheView)
+    assert merged.constituents == [c0, c1]
     assert merged.offset == 6, "merged offset must equal max length"
     mk, mv = merged.state
     assert mk.shape == (2, 2, 6, 4), f"unexpected merged keys shape {mk.shape}"
     assert mv.shape == (2, 2, 6, 4), f"unexpected merged values shape {mv.shape}"
-    assert merged._merged_padding == [0, 3], f"padding={merged._merged_padding}"
-    mx.eval(mk, mv)
+    # Row 1 is c1 (3 tokens) left-aligned then zero-padded to 6.
+    assert (
+        int(mx.count_nonzero(mk[1, :, 3:, :]).item()) == 0
+    ), "row 1 must be zero-padded past offset 3"
+    # Batched append exercises left-padding bookkeeping: offsets [6, 3]
+    # align to write position 6 → padding [0, 3].
+    step_k = mx.zeros((2, 2, 1, 4), dtype=mx.float32)
+    step_v = mx.zeros((2, 2, 1, 4), dtype=mx.float32)
+    rk, rv = merged.update_and_fetch(step_k, step_v)
+    assert rk.shape == (2, 2, 7, 4), f"unexpected post-append shape {rk.shape}"
+    assert merged.offset == 7
+    assert merged._left_padding.tolist() == [
+        0,
+        3,
+    ], f"padding={merged._left_padding.tolist()}"
+    mx.eval(rk, rv)
     mx.clear_cache()
 
 
@@ -121,7 +150,7 @@ def test_merge_then_free_restores_pool():
 
     from fusion_mlx.custom_kernels.paged_kv_pool import FusionPagedRequestCache
 
-    pool = _make_pool(num_blocks=16, block_size=4, n_kv_heads=2, head_dim=4)
+    pool = _make_pool(num_blocks=16, block_size=4, n_kv_heads=2, head_dim=4, cow=True)
     initial = pool.available()
 
     c0 = _make_cache(pool, "pool_0")
@@ -136,7 +165,7 @@ def test_merge_then_free_restores_pool():
     freed1 = c1.free_all()
     assert (freed0 + freed1) > 0
     freed_merged = merged.free_all()
-    assert freed_merged == 0, "merged cache holds no pool blocks"
+    assert freed_merged == 0, "merged cache holds no un-freed pool blocks"
     assert pool.available() == initial, "pool must be restored after merge+free"
     mx.clear_cache()
 

@@ -151,9 +151,11 @@ class TestDSparkSpecState:
         state = DSparkSpecState(MagicMock())
         state.on_new_request("req-001")
         assert state._last_request_id == "req-001"
+        # #1074: total_spec_steps is a lifecycle cumulative counter (Prometheus
+        # _total gauge) — on_new_request resets per-request session state only.
         state.total_spec_steps = 5
         state.on_new_request("req-002")
-        assert state.total_spec_steps == 0
+        assert state.total_spec_steps == 5
 
 
 # ---- dflash_spec_step ----

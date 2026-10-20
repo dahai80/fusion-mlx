@@ -97,6 +97,10 @@ class SVDBackend(VideoBackend):
                 raise ValueError(
                     f"model_path outside allowed directories: {self._model_name}"
                 )
+        # generate() before start() crashed on missing _model_path (set only
+        # in start()); lazy-start here matches the hunyuanvideo backend.
+        if not self._loaded:
+            await self.start(self._model_name)
         base_seed = (
             params.seed if params.seed is not None else random.randint(0, 2**31 - 1)
         )

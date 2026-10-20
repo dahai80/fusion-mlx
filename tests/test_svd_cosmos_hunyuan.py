@@ -51,7 +51,10 @@ class TestSVDBackend:
 
     def test_generate_mp4(self, monkeypatch, tmp_path):
         b = SVDBackend("svd-test")
+        # Post-start state: generate() reads _model_path (resolved in
+        # start()); without it generate raised AttributeError (#1275).
         b._loaded = True
+        b._model_path = "svd-test"
 
         def fake_generate_video(*args, **kwargs):
             output_path = kwargs.get("output_path")
