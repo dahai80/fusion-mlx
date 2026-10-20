@@ -34,6 +34,7 @@ export function App() {
 
     return (
         <div className={embedded ? "h-full" : "flex h-full flex-col"}>
+            {embedded && <EmbeddedTabs route={route} onChange={setRoute} />}
             <main className={`min-h-0 flex-1 ${embedded ? "" : "pb-16 pt-4"}`}>
                 {route === "models" && <ModelsPage />}
                 {route === "metrics" && <MetricsPage />}
@@ -41,6 +42,39 @@ export function App() {
             </main>
             {!embedded && <BottomNav route={route} onChange={setRoute} />}
         </div>
+    );
+}
+
+// #1277: embedded the shell owns the app chrome (title/actions) but the
+// module still needs page-level nav — without it Metrics/Logs are
+// unreachable (the shell menu has only a single module-root entry).
+// Minimal top tab bar: page switching only, no chrome of its own.
+function EmbeddedTabs({
+    route,
+    onChange,
+}: { route: Route; onChange: (r: Route) => void }) {
+    const items: Array<{ id: Route; label: string }> = [
+        { id: "models", label: "Models" },
+        { id: "metrics", label: "Metrics" },
+        { id: "logs", label: "Logs" },
+    ];
+    return (
+        <nav className="flex shrink-0 border-b border-border bg-bg-elevated">
+            {items.map((it) => (
+                <button
+                    key={it.id}
+                    type="button"
+                    onClick={() => onChange(it.id)}
+                    className={`flex-1 py-2 text-center text-xs uppercase tracking-wide ${
+                        route === it.id
+                            ? "border-b-2 border-brand text-brand"
+                            : "text-text-secondary"
+                    }`}
+                >
+                    {it.label}
+                </button>
+            ))}
+        </nav>
     );
 }
 
