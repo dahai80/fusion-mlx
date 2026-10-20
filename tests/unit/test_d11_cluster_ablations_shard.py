@@ -243,7 +243,15 @@ def test_shard_script_known_shards():
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert set(mod.KNOWN_SHARDS) == {"core", "llm", "modal", "infra", "exp", "rest", "rest2"}
+    assert set(mod.KNOWN_SHARDS) == {
+        "core",
+        "llm",
+        "modal",
+        "infra",
+        "exp",
+        "rest",
+        "rest2",
+    }
 
 
 def test_shard_script_full_coverage():
