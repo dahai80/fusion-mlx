@@ -105,10 +105,12 @@ jobs:
                   # full suite; --cov-fail-under=0 overrides it per-shard so the
                   # gate never fires on a partial run. The xml artifact is still
                   # uploaded for cross-shard combining if needed.
-                  # --timeout=600 --timeout-method=process: a hung test dumps all
-                  # thread stacks and hard-fails the run at 10 min instead of
-                  # burning the 6 h job timeout (#1268 macOS rest-shard hang).
-                  pytest ${{ steps.shard.outputs.files }} -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-report=xml --cov-fail-under=0 --timeout=600 --timeout-method=process --junitxml=pytest-junit.xml 2>&1 | tee pytest-output.txt
+                  # --timeout=600: a hung test dumps its stack and fails at
+                  # 10 min instead of burning the 6 h job timeout (#1268
+                  # macOS rest-shard hang). Default method (signal, with
+                  # faulthandler fallback) — the process method is not
+                  # offered by pytest-timeout on macOS runners.
+                  pytest ${{ steps.shard.outputs.files }} -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-report=xml --cov-fail-under=0 --timeout=600 --junitxml=pytest-junit.xml 2>&1 | tee pytest-output.txt
             - name: Guard against excessive skips
               if: always()
               run: |
@@ -152,7 +154,7 @@ jobs:
                   # --cov-fail-under=0: same per-shard rationale as the test job
                   # above — pyproject fail_under=40 applies to the full suite and
                   # must never gate a partial shard (14% per-shard otherwise).
-                  pytest $FILES -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-fail-under=0 --timeout=600 --timeout-method=process 2>&1 | tee pytest-output.txt
+                  pytest $FILES -v --tb=short --cov=fusion_mlx --cov-report=term-missing --cov-fail-under=0 --timeout=600 2>&1 | tee pytest-output.txt
 
     chaos:
         # #1195: fault-injection suite (tests/chaos/). Separate job from the
