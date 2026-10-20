@@ -15,29 +15,33 @@ import {
     parsePrometheus,
 } from "../api";
 import { PageHeader } from "../components/PageHeader";
-
-interface Sample {
-    t: number;
-    requests: number;
-    completion: number;
-    prompt: number;
-}
+import {
+    type UsageSample,
+    WINDOWS,
+    appendSample,
+    loadSamples,
+    windowSeries,
+} from "../components/usageStore";
 
 const POLL_MS = 3000;
-const MAX_SAMPLES = 240; // 12 min at 3s cadence
+const RING_MAX = 4000; // matches usageStore persistence cap
 
-// QPS / latency / memory surface: polls /metrics (Prometheus counters) and
-// /v1/health (memory JSON), derives per-second rates from counter deltas.
+// QPS / capacity / retrospection surface: polls /metrics (Prometheus) and
+// /v1/health (memory JSON) at POLL_MS. Capacity gauge (#1278) from health
+// memory + /metrics gauges; usage windows (#1278) aggregate the local sample
+// ring persisted to localStorage (components/usageStore.ts) — no backend.
 export function MetricsPage() {
     const [health, setHealth] = useState<HealthReport | null>(null);
     const [last, setLast] = useState<Partial<MetricSample> | null>(null);
-    const [samples, setSamples] = useState<Sample[]>([]);
+    const [samples, setSamples] = useState<UsageSample[]>([]);
+    const [winKey, setWinKey] = useState("5m");
     const [error, setError] = useState<string | null>(null);
     const [loaded, setLoaded] = useState(false);
-    const samplesRef = useRef<Sample[]>([]);
+    const samplesRef = useRef<UsageSample[]>([]);
     samplesRef.current = samples;
 
     useEffect(() => {
+        setSamples(loadSamples());
         let alive = true;
         const poll = async () => {
             try {
@@ -52,23 +56,23 @@ export function MetricsPage() {
                 setError(null);
                 const now = Date.now();
                 const prev = samplesRef.current[samplesRef.current.length - 1];
+                const next: UsageSample = {
+                    t: now,
+                    requests: m.requests_total ?? prev?.requests ?? 0,
+                    failed: m.requests_failed_total ?? prev?.failed ?? 0,
+                    completion:
+                        m.completion_tokens_total ?? prev?.completion ?? 0,
+                    prompt: m.prompt_tokens_total ?? prev?.prompt ?? 0,
+                    tpsSum: m.tps_sum ?? prev?.tpsSum,
+                    tpsCount: m.tps_count ?? prev?.tpsCount,
+                };
                 setSamples((prevSamples) => {
-                    const out = [
-                        ...prevSamples,
-                        {
-                            t: now,
-                            requests: m.requests_total ?? prev?.requests ?? 0,
-                            completion:
-                                m.completion_tokens_total ??
-                                prev?.completion ??
-                                0,
-                            prompt: m.prompt_tokens_total ?? prev?.prompt ?? 0,
-                        },
-                    ];
-                    return out.length > MAX_SAMPLES
-                        ? out.slice(out.length - MAX_SAMPLES)
+                    const out = [...prevSamples, next];
+                    return out.length > RING_MAX
+                        ? out.slice(out.length - RING_MAX)
                         : out;
                 });
+                appendSample(next);
                 setLoaded(true);
             } catch (e) {
                 if (!alive) return;
@@ -109,6 +113,8 @@ export function MetricsPage() {
             points: derivePoints(samples, (s) => s.completion),
         },
     ];
+    const win = WINDOWS.find((w) => w.key === winKey) ?? WINDOWS[0];
+    const winRes = windowSeries(samples, win.ms, Date.now());
 
     return (
         <div className="mx-auto max-w-5xl px-4">
@@ -139,7 +145,8 @@ export function MetricsPage() {
                     {error} — retrying
                 </div>
             ) : null}
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <CapacityGauge mem={mem} last={last} perModel={perModel} />
+            <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
                 <MetricTile
                     label="Requests"
                     value={fmt(last?.requests_total)}
@@ -177,6 +184,7 @@ export function MetricsPage() {
                     value={formatBytes(mem?.rss_bytes ?? Number.NaN)}
                 />
             </div>
+            <UsageWindow winKey={winKey} onWin={setWinKey} res={winRes} />
             <div className="mt-4 grid gap-3 md:grid-cols-2">
                 <MetricChart series={qpsSeries} unit="req/s" />
                 <MetricChart series={tokSeries} unit="tok/s" />
@@ -223,6 +231,156 @@ export function MetricsPage() {
     );
 }
 
+// Capacity gauge (#1278 G8/C5): unified-memory pressure bar + engine
+// capacity tiles. Numbers read straight from /v1/health memory and /metrics
+// gauges so the UI matches the prometheus surface exactly.
+function CapacityGauge({
+    mem,
+    last,
+    perModel,
+}: {
+    mem?: HealthReport["memory"];
+    last: Partial<MetricSample> | null;
+    perModel: Array<{ name: string; bytes: number }>;
+}) {
+    const usedB = mem?.used_bytes ?? 0;
+    const totalB = mem?.total_bytes ?? 0;
+    const pct = totalB > 0 ? Math.min(100, (usedB / totalB) * 100) : null;
+    const residentBytes = perModel.reduce((acc, p) => acc + p.bytes, 0);
+    const barColor =
+        pct === null
+            ? "bg-bg-muted"
+            : pct < 70
+              ? "bg-success"
+              : pct < 85
+                ? "bg-warning"
+                : "bg-error";
+    return (
+        <div className="mt-4 rounded-card border border-border bg-bg-elevated p-4">
+            <div className="flex items-center justify-between text-sm">
+                <span className="text-text-primary">Memory pressure</span>
+                <span className="font-mono text-xs tabular-nums text-text-secondary">
+                    {pct === null ? "-" : `${pct.toFixed(0)}%`} ·{" "}
+                    {formatBytes(usedB)} / {formatBytes(totalB)}
+                </span>
+            </div>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-bg-muted">
+                <div
+                    className={`h-full rounded-full ${barColor}`}
+                    style={{ width: `${pct ?? 0}%` }}
+                />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
+                <MetricTile
+                    label="KV utilization"
+                    value={pctGauge(last?.paged_kv_utilization)}
+                />
+                <MetricTile
+                    label="Metal active"
+                    value={formatBytes(last?.metal_active_bytes ?? Number.NaN)}
+                />
+                <MetricTile
+                    label="Metal wired"
+                    value={formatBytes(last?.metal_wired_bytes ?? Number.NaN)}
+                />
+                <MetricTile
+                    label="Phys footprint"
+                    value={formatBytes(
+                        last?.phys_footprint_bytes ?? Number.NaN,
+                    )}
+                />
+                <MetricTile
+                    label="Resident models"
+                    value={`${perModel.length} · ${formatBytes(residentBytes)}`}
+                />
+                <MetricTile
+                    label="Cache hit / spec accept"
+                    value={`${pctGauge(last?.response_cache_hit_rate)} / ${pctGauge(last?.spec_decode_accept_rate)}`}
+                />
+            </div>
+        </div>
+    );
+}
+
+// Usage retrospection card (#1278 G8): window totals + per-minute request
+// chart. Data = local sample ring (localStorage), so 2h/24h windows fill in
+// as the page stays open / across reloads; no backend aggregation.
+function UsageWindow({
+    winKey,
+    onWin,
+    res,
+}: {
+    winKey: string;
+    onWin: (k: string) => void;
+    res: {
+        points: Array<{ t: number; v: number }>;
+        totals: {
+            req: number;
+            failed: number;
+            tok: number;
+            tps: number | null;
+        };
+    };
+}) {
+    return (
+        <div className="mt-4 rounded-card border border-border bg-bg-elevated p-4">
+            <div className="flex items-center justify-between">
+                <span className="text-sm text-text-primary">
+                    Usage retrospection
+                </span>
+                <div className="flex gap-1">
+                    {WINDOWS.map((w) => (
+                        <button
+                            key={w.key}
+                            type="button"
+                            onClick={() => onWin(w.key)}
+                            className={`rounded-md px-2 py-1 text-xs ${
+                                winKey === w.key
+                                    ? "bg-brand text-white"
+                                    : "border border-border text-text-secondary"
+                            }`}
+                        >
+                            {w.label}
+                        </button>
+                    ))}
+                </div>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4">
+                <MetricTile label="Requests" value={String(res.totals.req)} />
+                <MetricTile
+                    label="Failed"
+                    value={`${res.totals.failed} (${pctGauge(res.totals.req > 0 ? res.totals.failed / res.totals.req : null)})`}
+                />
+                <MetricTile
+                    label="Tokens"
+                    value={formatTokenCount(res.totals.tok)}
+                />
+                <MetricTile
+                    label="Avg TPS"
+                    value={
+                        res.totals.tps === null
+                            ? "-"
+                            : res.totals.tps.toFixed(1)
+                    }
+                />
+            </div>
+            <div className="mt-3">
+                <MetricChart
+                    series={[{ label: "requests/min", points: res.points }]}
+                    unit="req/min"
+                />
+            </div>
+        </div>
+    );
+}
+
+// Gauge/percent formatter: metrics expose 0..1 ratios (kv utilization,
+// hit rates); null/NaN prints "-".
+function pctGauge(v: number | undefined | null): string {
+    if (!Number.isFinite(v ?? Number.NaN)) return "-";
+    return `${((v as number) * 100).toFixed(1)}%`;
+}
+
 interface Point {
     t: number;
     v: number;
@@ -230,8 +388,8 @@ interface Point {
 
 // Counter → per-second rate series: v[i] = (c[i] - c[i-1]) / dt.
 function derivePoints(
-    samples: Sample[],
-    pick: (s: Sample) => number,
+    samples: UsageSample[],
+    pick: (s: UsageSample) => number,
 ): Array<Point> {
     const out: Array<Point> = [];
     for (let i = 1; i < samples.length; i++) {

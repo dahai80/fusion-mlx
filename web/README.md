@@ -61,11 +61,24 @@ it one of two ways:
 Because the SPA is built with a relative base and a hash router, the same
 dist works at `/` and under `/shell/fusion-mlx/`.
 
+## Features (#1278)
+
+- **Metrics**: capacity gauge first screen — memory-pressure bar
+  (unified used/total), KV utilization / Metal / footprint tiles read from
+  `/metrics`; usage retrospection with 5m/30m/2h/24h windows aggregated
+  client-side from the localStorage sample ring (`src/components/usageStore.ts`).
+- **Models**: cards grouped by modality, collapsible groups, one-click
+  load/unload.
+- **Logs**: level floor / keyword / "from HH:MM" filters over the live tail.
+- **Embedded** (#1277): minimal top tab bar (Models/Metrics/Logs) when served
+  inside the shell; standalone keeps the bottom nav.
+
 ## Layout
 
 ```
-src/api.ts               API client (auth header, log-line parser)
-src/sdk.ts               shell host bridge (standalone vs embedded)
+src/api.ts                  API client (auth header, log-line parser)
+src/sdk.ts                  shell host bridge (standalone vs embedded)
+src/components/usageStore.ts  localStorage usage sample ring (#1278)
 src/pages/ModelsPage.tsx
 src/pages/MetricsPage.tsx
 src/pages/LogsPage.tsx
