@@ -13,6 +13,7 @@ The scheduler follows vLLM's design with:
 
 import concurrent.futures
 import logging
+import os
 import time
 
 logger = logging.getLogger(__name__)
@@ -428,8 +429,23 @@ _CACHE_FRESHNESS_WAIT_MIN_COMMON_TOKENS = 8192
 _CACHE_FRESHNESS_WAIT_MIN_PROMPT_RATIO = 0.30
 _CACHE_FRESHNESS_WAIT_TIMEOUT_S = 4.0
 # Max cached prefix tokens to reconstruct from the SSD tier. Beyond this,
-# reconstruct is slower than a full prefill (see site comments).
+# reconstruct is slower than a full re-prefill. #1271: the 4096 default made
+# a found 49216-token agent prefix unusable (full 69k re-prefill, 142s TTFT,
+# client abort loop), so the cap is env-overridable for measurement and
+# per-deployment tuning. Cost model (measured 2026-10-20, see issue):
+# reconstruct ≈ tokens/64 × s_per_block vs re-prefill ≈ tokens / prefill_tok_s.
 _SSD_RECONSTRUCT_MAX_TOKENS = 4096
+_raw_reconstruct_cap = os.environ.get("FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS")
+if _raw_reconstruct_cap:
+    try:
+        _SSD_RECONSTRUCT_MAX_TOKENS = int(_raw_reconstruct_cap)
+    except ValueError:
+        logging.getLogger(__name__).warning(
+            "Bad %s=%r — using default %d",
+            "FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS",
+            _raw_reconstruct_cap,
+            _SSD_RECONSTRUCT_MAX_TOKENS,
+        )
 
 
 # ── Admission blocker helpers ────────────────────────────────────────────
