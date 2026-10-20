@@ -291,6 +291,7 @@ python_files = ["test_*.py"]
 asyncio_mode = "auto"
 markers = [
     "real_model: tests that load a real MLX model (gated by FUSION_MLX_REAL_MODEL_TESTS env var)",
+    "realmodel: tests that load a real checkpoint and self-skip when it is not downloaded (e.g. LTX-2.5 22B)",
 ]
 
 [tool.coverage.run]

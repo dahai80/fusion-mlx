@@ -64,6 +64,10 @@ def test_interleaved_writes_no_cross_contamination():
 
 def test_pool_evict_then_reuse():
     pool = FusionPagedKVPool(block_size=4, num_blocks=4, n_kv_heads=2, head_dim=8)
+    # Non-CoW pools keep KV in the per-cache flat buffer and never allocate
+    # pool blocks (paged_kv_pool update_and_fetch fast path), so block
+    # accounting is only observable with CoW enabled.
+    pool._cow_enabled = True
     a = FusionPagedRequestCache(pool, request_id="a")
     for _ in range(8):
         k = mx.random.normal(shape=(1, 2, 1, 8)) * 0.1

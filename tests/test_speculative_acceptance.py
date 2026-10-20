@@ -43,12 +43,14 @@ class TestDraftAcceptanceRate:
         dec.add_prompt_tokens([1, 2, 3, 1, 2, 3, 1, 2, 3])
         drafts1 = dec.get_draft_tokens()
         if drafts1:
-            dec.record_accepted(2)
-        # Add more tokens, generate another draft
-        dec.add_generated_token(99)
+            # Partial accept: 2 of len(drafts1) → partial_accept_drafts.
+            dec.record_accepted(2, len(drafts1))
+        # Continue the repeating pattern so round 2 drafts too; full accept
+        # (num_accepted == num_drafted) is what #1074 counts as successful.
+        dec.add_generated_token(1)
         drafts2 = dec.get_draft_tokens()
         if drafts2:
-            dec.record_accepted(1)
+            dec.record_accepted(len(drafts2), len(drafts2))
 
         stats = dec.get_stats()
         assert stats["total_drafts"] >= 1
