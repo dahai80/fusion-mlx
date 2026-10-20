@@ -69,6 +69,23 @@ def upstream(monkeypatch):
     def metrics():
         return PlainTextResponse("metric 1\nmetric 2\n")
 
+    @up.get("/v1/health")
+    def v1_health():
+        return {"status": "ok", "oom_risk": "high"}
+
+    @up.get("/admin/api/models")
+    def admin_models():
+        return {
+            "models": [
+                {
+                    "id": "mlx-community/Qwen3.5-4B-MLX-4bit",
+                    "loaded": True,
+                    "engine_type": "batched",
+                },
+                {"id": "BAAI/bge-m3", "loaded": False, "engine_type": "embedding"},
+            ]
+        }
+
     @up.middleware("http")
     async def capture(request, call_next):
         response = await call_next(request)
@@ -131,3 +148,52 @@ def test_registration_disabled_without_gateway_env(monkeypatch):
     monkeypatch.delenv("FUSION_SHELL_GATEWAY_URL", raising=False)
     monkeypatch.delenv("FUSION_GATEWAY_ADMIN_KEY", raising=False)
     assert webserve._registration_enabled() is False
+
+
+def test_manifest_declares_ext_fields_1281():
+    # schema v1 ext (#1281): sub-page deep links, model search provider,
+    # engine notification source — gateway validates shapes at registration.
+    m = _manifest()
+    assert [p["route"] for p in m["pages"]] == ["/models", "/metrics", "/logs"]
+    (sp,) = m["searchProviders"]
+    assert sp["endpoint"] == "/shell/fusion-mlx/api/search/models"
+    (n,) = m["notifications"]
+    assert n["kind"] == "engine"
+    assert n["endpoint"] == "/shell/fusion-mlx/api/notifications"
+
+
+def test_search_models_matches_id(upstream, monkeypatch):
+    monkeypatch.delenv("FUSION_MLX_WEB_API_KEY", raising=False)
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
+    app = webserve.create_web_app()
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/api/search/models", params={"q": "qwen"})
+    assert r.status_code == 200
+    items = r.json()["items"]
+    assert items and items[0]["title"] == "mlx-community/Qwen3.5-4B-MLX-4bit"
+    assert items[0]["route"] == "/models"
+
+
+def test_search_models_no_match_empty(upstream, monkeypatch):
+    monkeypatch.delenv("FUSION_MLX_WEB_API_KEY", raising=False)
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
+    app = webserve.create_web_app()
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/api/search/models", params={"q": "zzz-nope"})
+    assert r.status_code == 200
+    assert r.json()["items"] == []
+
+
+def test_notifications_lists_oom_and_loaded(upstream, monkeypatch):
+    monkeypatch.delenv("FUSION_MLX_WEB_API_KEY", raising=False)
+    monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
+    app = webserve.create_web_app()
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/api/notifications")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == len(body["items"]) == 2
+    levels = {i["level"] for i in body["items"]}
+    assert levels == {"warning", "info"}
+    assert any(i["id"] == "mlx-oom-high" for i in body["items"])
+    assert any(i["id"].startswith("mlx-model-loaded:") for i in body["items"])

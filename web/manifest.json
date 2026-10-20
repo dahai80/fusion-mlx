@@ -16,5 +16,39 @@
     ],
     "category": "platform",
     "upstream": "http://127.0.0.1:11471",
-    "api_key_env": "FUSION_MLX_WEB_API_KEY"
+    "api_key_env": "FUSION_MLX_WEB_API_KEY",
+    "pages": [
+        {
+            "route": "/models",
+            "title": "模型",
+            "title_en": "Models"
+        },
+        {
+            "route": "/metrics",
+            "title": "指标",
+            "title_en": "Metrics"
+        },
+        {
+            "route": "/logs",
+            "title": "日志",
+            "title_en": "Logs"
+        }
+    ],
+    "searchProviders": [
+        {
+            "id": "models",
+            "label": "模型",
+            "label_en": "Models",
+            "endpoint": "/shell/fusion-mlx/api/search/models"
+        }
+    ],
+    "notifications": [
+        {
+            "id": "engine",
+            "label": "引擎事件",
+            "label_en": "Engine events",
+            "endpoint": "/shell/fusion-mlx/api/notifications",
+            "kind": "engine"
+        }
+    ]
 }

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+HEAD
 ### Added — web monitor GUI upgrade: capacity gauge, retrospection, cards, log inspector (#1278)
 - Metrics first screen: memory-pressure gauge (unified used/total bar) plus
   capacity tiles read straight from `/metrics` gauges — KV utilization,
@@ -36,6 +37,15 @@
   `initial_cache_blocks`, `ssd_cache_max_size`; no-op when the file/section
   is missing.
 
+### Added — shell manifest ext fields: sub-pages, model search, engine notifications (#1281)
+- `web/manifest.json` declares schema v1 ext fields: `pages`
+  (/models /metrics /logs deep links), `searchProviders`
+  (model search over the discovered registry), `notifications`
+  (engine kind) — shell ⌘K + sidebar + bell consume them.
+- Web bridge serves the two endpoints the ext entries point at:
+  `GET /api/search/models?q=` (id/modality match, capped 8, no new engine
+  surface) and `GET /api/notifications` (OOM-risk from `/v1/health` +
+  resident models from `/admin/api/models`).
 
 ### Added — web monitor module bridge: serve + gateway wiring (#1276)
 - `fusion-mlx web-serve [--port 11471]` serves the built `web/dist` UI plus
