@@ -62,7 +62,7 @@ def converse_client():
         patch("fusion_mlx.api.audio_routes._pool", pool),
         patch(
             "fusion_mlx.api.audio_routes._resolve_model",
-            side_effect=lambda m: m,
+            side_effect=lambda m, _default=None: m,
         ),
         patch("fusion_mlx.server.resolve_model_id", return_value="test-llm"),
         patch(
@@ -156,7 +156,7 @@ def test_converse_empty_transcript_returns_422():
         patch("fusion_mlx.api.audio_routes._pool", pool),
         patch(
             "fusion_mlx.api.audio_routes._resolve_model",
-            side_effect=lambda m: m,
+            side_effect=lambda m, _default=None: m,
         ),
         patch("fusion_mlx.engines.stt.STTEngine", MagicMock),
         TestClient(app, raise_server_exceptions=False) as client,
@@ -183,7 +183,7 @@ def test_converse_empty_llm_reply_returns_422():
         patch("fusion_mlx.api.audio_routes._pool", pool),
         patch(
             "fusion_mlx.api.audio_routes._resolve_model",
-            side_effect=lambda m: m,
+            side_effect=lambda m, _default=None: m,
         ),
         patch("fusion_mlx.server.resolve_model_id", return_value="test-llm"),
         patch("fusion_mlx.engines.stt.STTEngine", MagicMock),
