@@ -78,7 +78,11 @@ def test_v1_health_returns_200_and_full_shape(health_client):
     assert mem["mlx_peak_bytes"] == 0
     assert mem["total_bytes"] > 0
     assert mem["rss_bytes"] > 0
-    assert mem["per_model"] == [{"name": "qwen3.5-4b", "bytes": 2 * 1024**3}]
+    # #1296 added loaded_at/resident_seconds; name/bytes keep their contract.
+    assert mem["per_model"][0]["name"] == "qwen3.5-4b"
+    assert mem["per_model"][0]["bytes"] == 2 * 1024**3
+    assert mem["per_model"][0]["loaded_at"] is None
+    assert mem["per_model"][0]["resident_seconds"] is None
 
 
 def test_v1_health_no_pool_no_models(health_client):

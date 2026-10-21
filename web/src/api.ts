@@ -41,7 +41,19 @@ export interface HealthReport {
         mlx_active_bytes?: number | null;
         mlx_cache_bytes?: number | null;
         mlx_peak_bytes?: number | null;
-        per_model?: Array<{ name: string; bytes: number }>;
+        // swap gauges + rate (#1296); null/absent = source unavailable
+        swap_total_bytes?: number | null;
+        swap_used_bytes?: number | null;
+        swap_free_bytes?: number | null;
+        swap_percent?: number | null;
+        swap_rate_bytes_per_second?: number | null;
+        per_model?: Array<{
+            name: string;
+            bytes: number;
+            // residency (#1296); null = load time unknown
+            loaded_at?: number | null;
+            resident_seconds?: number | null;
+        }>;
     };
     oom_risk?: string;
 }
@@ -143,6 +155,13 @@ export interface MetricSample {
     phys_footprint_bytes?: number;
     response_cache_hit_rate?: number;
     spec_decode_accept_rate?: number;
+    // #1296 monitor additions
+    swap_total_bytes?: number;
+    swap_used_bytes?: number;
+    swap_free_bytes?: number;
+    swap_percent?: number;
+    swap_rate_bytes_per_second?: number;
+    ttft_p95_seconds?: number;
     tps_sum?: number;
     tps_count?: number;
 }
@@ -165,6 +184,13 @@ const METRIC_NAMES = [
     "fusion_mlx_phys_footprint_bytes",
     "fusion_mlx_response_cache_hit_rate",
     "fusion_mlx_spec_decode_accept_rate",
+    // #1296 monitor additions
+    "fusion_mlx_swap_total_bytes",
+    "fusion_mlx_swap_used_bytes",
+    "fusion_mlx_swap_free_bytes",
+    "fusion_mlx_swap_percent",
+    "fusion_mlx_swap_rate_bytes_per_second",
+    "fusion_mlx_request_latency_p95_seconds",
     "fusion_mlx_tps_sum",
     "fusion_mlx_tps_count",
 ] as const;
@@ -186,6 +212,12 @@ const SHORT: Record<string, keyof MetricSample> = {
     fusion_mlx_phys_footprint_bytes: "phys_footprint_bytes",
     fusion_mlx_response_cache_hit_rate: "response_cache_hit_rate",
     fusion_mlx_spec_decode_accept_rate: "spec_decode_accept_rate",
+    fusion_mlx_swap_total_bytes: "swap_total_bytes",
+    fusion_mlx_swap_used_bytes: "swap_used_bytes",
+    fusion_mlx_swap_free_bytes: "swap_free_bytes",
+    fusion_mlx_swap_percent: "swap_percent",
+    fusion_mlx_swap_rate_bytes_per_second: "swap_rate_bytes_per_second",
+    fusion_mlx_request_latency_p95_seconds: "ttft_p95_seconds",
     fusion_mlx_tps_sum: "tps_sum",
     fusion_mlx_tps_count: "tps_count",
 };

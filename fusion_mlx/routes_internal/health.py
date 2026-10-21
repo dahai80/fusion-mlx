@@ -241,11 +241,18 @@ async def v1_health(_auth: bool = Depends(verify_management_access)):
     except Exception:
         logger.debug("v1/health: psutil unavailable", exc_info=True)
 
+    # #1296: swap pressure for the monitor capacity gauge. sample_swap()
+    # returns nulls when psutil is unavailable and a null rate until a second
+    # sample exists — never a fabricated zero.
+    from ..utils.swap_stats import sample_swap
+
+    swap = sample_swap()
+
     mlx = _mlx_memory_stats()
     mlx_peak = mlx["peak"]
     mlx_peak_ratio = (mlx_peak / mem_total) if (mlx_peak and mem_total) else None
 
-    per_model: list[dict[str, int | str]] = []
+    per_model: list[dict[str, int | float | str | None]] = []
     active_models: list[str] = []
     if pool is not None:
         try:
@@ -255,7 +262,12 @@ async def v1_health(_auth: bool = Depends(verify_management_access)):
                 mid = m.get("id") or m.get("name") or ""
                 active_models.append(mid)
                 per_model.append(
-                    {"name": mid, "bytes": int(m.get("estimated_size", 0) or 0)}
+                    {
+                        "name": mid,
+                        "bytes": int(m.get("estimated_size", 0) or 0),
+                        "loaded_at": m.get("loaded_at"),
+                        "resident_seconds": m.get("resident_seconds"),
+                    }
                 )
         except Exception:
             logger.debug("v1/health: pool status failed", exc_info=True)
@@ -284,6 +296,11 @@ async def v1_health(_auth: bool = Depends(verify_management_access)):
             "mlx_active_bytes": mlx["active"],
             "mlx_cache_bytes": mlx["cache"],
             "mlx_peak_bytes": mlx["peak"],
+            "swap_total_bytes": swap["swap_total_bytes"],
+            "swap_used_bytes": swap["swap_used_bytes"],
+            "swap_free_bytes": swap["swap_free_bytes"],
+            "swap_percent": swap["swap_percent"],
+            "swap_rate_bytes_per_second": swap["swap_rate_bytes_per_second"],
             "per_model": per_model,
         },
         "oom_risk": risk,
