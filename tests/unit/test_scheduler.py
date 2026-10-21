@@ -857,6 +857,90 @@ class TestSchedulerAddRequest:
         assert scheduler._should_defer_for_cache_freshness(request) is False
         assert request.request_id not in scheduler._cache_freshness_waits
 
+    def test_prepare_prefix_skips_reconstruct_for_relevant_inflight_store(
+        self, mock_model, mock_tokenizer
+    ):
+        from fusion_mlx.cache.paged_cache import BlockTable
+
+        scheduler = self._scheduler_with_mock_block_cache(
+            mock_model,
+            mock_tokenizer,
+        )
+
+        prompt = list(range(9000))
+        block_table = BlockTable(
+            request_id="req-cc",
+            block_ids=list(range(140)),
+            num_tokens=8960,
+        )
+        scheduler.block_aware_cache.fetch_cache.return_value = (
+            block_table,
+            prompt[block_table.num_tokens :],
+        )
+
+        future = MagicMock()
+        future.done.return_value = False
+        scheduler._inflight_store_futures["req-prev"] = future
+        scheduler._inflight_store_info["req-prev"] = (
+            scheduler_module._InflightStoreInfo(tokens=list(range(8990)))
+        )
+
+        request = Request(
+            request_id="req-cc",
+            prompt=prompt,
+            prompt_token_ids=prompt,
+            sampling_params=SamplingParams(max_tokens=16),
+        )
+        scheduler._prepare_prefix_cache_for_request(request)
+
+        scheduler.block_aware_cache.reconstruct_cache.assert_not_called()
+        assert request.remaining_tokens == prompt
+        assert request.request_id in scheduler._prefix_cache_prepared
+
+    def test_prepare_prefix_reconstructs_under_unrelated_inflight_store(
+        self, mock_model, mock_tokenizer
+    ):
+        from fusion_mlx.cache.paged_cache import BlockTable
+
+        scheduler = self._scheduler_with_mock_block_cache(
+            mock_model,
+            mock_tokenizer,
+        )
+        scheduler._current_usage_bytes = MagicMock(return_value=99)
+
+        prompt = list(range(9000))
+        block_table = BlockTable(
+            request_id="req-cc",
+            block_ids=list(range(60)),
+            num_tokens=3840,
+        )
+        scheduler.block_aware_cache.fetch_cache.return_value = (
+            block_table,
+            prompt[block_table.num_tokens :],
+        )
+        scheduler.block_aware_cache.reconstruct_cache.return_value = [MagicMock()]
+
+        future = MagicMock()
+        future.done.return_value = False
+        scheduler._inflight_store_futures["req-other-session"] = future
+        scheduler._inflight_store_info["req-other-session"] = (
+            scheduler_module._InflightStoreInfo(tokens=list(range(1000, 10000)))
+        )
+
+        request = Request(
+            request_id="req-cc",
+            prompt=prompt,
+            prompt_token_ids=prompt,
+            sampling_params=SamplingParams(max_tokens=16),
+        )
+        scheduler._prepare_prefix_cache_for_request(request)
+
+        scheduler.block_aware_cache.reconstruct_cache.assert_called_once_with(
+            block_table
+        )
+        assert request.cached_tokens == block_table.num_tokens
+        assert request.remaining_tokens == prompt[block_table.num_tokens :]
+
     def test_admission_does_not_defer_for_short_prompt_even_with_high_ratio(
         self, mock_model, mock_tokenizer
     ):

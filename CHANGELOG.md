@@ -4,6 +4,51 @@
 
 HEAD
 
+### Fixed — SSD prefix reuse no longer skipped on unrelated store activity (#1299)
+- Second wiring hole found while verifying: `get_app()` built `Server()`
+  with a fresh default `ServerConfig()`, so pool-loaded engines (any model
+  requested after boot) never saw the settings.json cache section even
+  after the #1289 serve_command fix — the 27B booted the 1GiB pure-memory
+  prefix cache while the boot-time 4B got the SSD-backed config.
+  `get_app()` now builds `Server(get_config())`, and serve_command applies
+  the cache section to the `get_config().scheduler` singleton as well as
+  its local config.
+- `_prepare_prefix_cache_for_request` skipped SSD reconstruct whenever ANY
+  `store_cache` future was in flight — a global guard, so with parallel
+  Claude Code sessions some other session's store almost always blocked
+  reconstruct and every turn fell back to a full 37-110s re-prefill
+  despite a warm SSD block table (~24k tokens, ~2s reconstruct at
+  5.6ms/block post-#1286). The guard is now scoped: only a
+  *same-conversation* (common-prefix ≥8192 or ratio ≥0.30) in-flight store
+  keeps the skip, preserving freshness semantics; unrelated stores proceed
+  with bounded lock contention.
+- New optional setting `ssd_reconstruct_max_tokens` (`~/.fusion-mlx/settings.json`,
+  env `FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS` wins) overrides the stale
+  4096-token SSD reconstruct cap — with the batch-eval tiered store,
+  reconstruct (~11k tok/s) beats re-prefill (~528 tok/s solo) by ~20x;
+  `start.sh` maps the setting into the server environment.
+- `fetch_cache` no longer truncates at the hash-map boundary: the
+  `find_shared_prefix` lookup stops at the first block whose table entry is
+  missing, and the early return shadowed a deeper `_prefix_index` match —
+  a store that partially de-duplicated (13 of 32 blocks reused) made every
+  later request hit only those 13 blocks and re-prefill ~39k tokens.
+  Both lookups now run, the longer one wins, and a fully-evicted index
+  entry falls back to the hash-map hit instead of reporting a miss.
+- Hook-seeded resumes no longer shadow a larger paged block table: the
+  kv_resume re-seed hook (disconnect checkpoints) often carries a tiny
+  early checkpoint (2048 tokens) that short-circuited the paged-SSD path
+  and forced a 100s+ re-prefill on every resumed turn. The scheduler now
+  runs prefix prep for hook-seeded requests and keeps whichever seed
+  covers more tokens (`Request.kv_resume_seeded`).
+- SSD blocks now survive across turns and restarts: two engines (the
+  boot-time serve model and any pool-loaded model, e.g. 4B + 27B) each
+  built a `PagedSSDCacheManager` over the same `ssd_cache` dir, and the
+  idle manager's 60s orphan sweep deleted the other manager's freshly
+  stored blocks as "unindexed orphans" (observed: 19+23+6 blocks removed,
+  restart scans always 0 compatible). Swapping is now disabled while more
+  than one manager shares a cache dir (live count read at sweep time,
+  deregistered on `close()`).
+
 ### Fixed — SSE keepalive now fires during prefill (Claude Code disconnects)
 - Streaming `/v1/chat/completions` responses were silent between request
   admission and the first decoded token: the loop-level

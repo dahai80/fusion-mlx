@@ -35,6 +35,17 @@ _MAX_ENFORCE_SIZE_LIMIT_ITERATIONS = 1000
 # re-saved (fresh mtime from the rename) is never mistaken for an orphan.
 _ORPHAN_SWEEP_INTERVAL_S = 60.0
 _ORPHAN_SWEEP_MIN_AGE_S = 30.0
+
+# #1299: live PagedSSDCacheManager count per resolved cache_dir. Multiple
+# engines (e.g. a 4B serve model and a pool-loaded 27B VLM) each build their
+# own manager over the same directory; each manager only knows its own
+# index, so any other manager's freshly stored blocks look orphaned to it
+# and the periodic sweep deleted them within a minute (observed: 19 and 23
+# blocks removed at 16:35/16:37). With more than one manager on a dir,
+# sweeping is disabled — orphan reclaim is a space optimization, deleting
+# a live manager's blocks is data loss.
+_ACTIVE_MANAGERS_BY_CACHE_DIR: dict[str, int] = {}
+_ACTIVE_MANAGERS_LOCK = threading.Lock()
 # #1037: single-hex-char shard subdirs created under the cache dir (see
 # __init__). The default cache dir is a shared global path, so the startup
 # repair must only touch .tmp files inside our own shard layout.
@@ -854,6 +865,27 @@ class PagedSSDCacheManager:
             else None
         )
         self._signature_sweep_completed = False
+        # #1299: see _ACTIVE_MANAGERS_BY_CACHE_DIR — sweeps are disabled
+        # while another manager shares this cache_dir. The live count is
+        # checked at sweep time (not here): the first manager constructed
+        # would otherwise stay enabled and delete the second manager's
+        # blocks.
+        self._cache_dir_key = None
+        if self._cache_dir is not None and not hot_cache_only:
+            self._cache_dir_key = str(self._cache_dir.resolve())
+            with _ACTIVE_MANAGERS_LOCK:
+                _ACTIVE_MANAGERS_BY_CACHE_DIR[self._cache_dir_key] = (
+                    _ACTIVE_MANAGERS_BY_CACHE_DIR.get(self._cache_dir_key, 0) + 1
+                )
+                active = _ACTIVE_MANAGERS_BY_CACHE_DIR[self._cache_dir_key]
+            if active > 1:
+                logger.warning(
+                    "SSD orphan sweep disabled for %s: %d PagedSSDCacheManager "
+                    "instances share this cache_dir — sweeping would delete "
+                    "another manager's blocks",
+                    self._cache_dir,
+                    active,
+                )
         self._hot_cache_only = hot_cache_only
         self._hot_cache_max_bytes = hot_cache_max_bytes
         self._hot_cache_budget = hot_cache_budget
@@ -1809,6 +1841,20 @@ class PagedSSDCacheManager:
 
     def close(self):
         self._shutting_down = True
+        if self._cache_dir_key is not None:
+            with _ACTIVE_MANAGERS_LOCK:
+                remaining = (
+                    _ACTIVE_MANAGERS_BY_CACHE_DIR.get(self._cache_dir_key, 1) - 1
+                )
+                if remaining > 0:
+                    _ACTIVE_MANAGERS_BY_CACHE_DIR[self._cache_dir_key] = remaining
+                else:
+                    _ACTIVE_MANAGERS_BY_CACHE_DIR.pop(self._cache_dir_key, None)
+            logger.debug(
+                "SSD manager deregistered for %s (%d active)",
+                self._cache_dir,
+                max(remaining, 0),
+            )
         if self._hot_cache_budget is not None:
             self._hot_cache_budget.forget_owner(self)
         if self._writer_thread is not None:
@@ -2659,6 +2705,16 @@ class PagedSSDCacheManager:
         """
         if self._cache_dir is None:
             return 0
+        if self._cache_dir_key is not None:
+            # #1299: another manager shares this cache_dir; our index cannot
+            # distinguish its live blocks from orphans.
+            with _ACTIVE_MANAGERS_LOCK:
+                active = _ACTIVE_MANAGERS_BY_CACHE_DIR.get(self._cache_dir_key, 1)
+            if active > 1:
+                logger.debug(
+                    "SSD orphan sweep skipped: shared cache_dir %s", self._cache_dir
+                )
+                return 0
         # Snapshot the indexed hashes once (single lock hold) so the per-file
         # orphan check below does not churn _state_lock for every file.
         with self._state_lock:

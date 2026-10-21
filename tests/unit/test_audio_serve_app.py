@@ -39,7 +39,7 @@ def test_get_app_returns_callable_not_none(monkeypatch):
         class _StubServer:
             app = sentinel
 
-        monkeypatch.setattr(srv, "Server", lambda: _StubServer())
+        monkeypatch.setattr(srv, "Server", lambda *a, **k: _StubServer())
         got = srv.get_app()
         assert got is sentinel, "get_app() returned None — audio serve would 500"
     finally:
@@ -53,7 +53,7 @@ def test_get_app_double_checked_lock_single_construction(monkeypatch):
         constructs = []
 
         class _StubServer:
-            def __init__(self):
+            def __init__(self, *a, **k):
                 constructs.append(threading.current_thread().name)
                 self.app = object()
 

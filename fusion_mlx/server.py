@@ -801,7 +801,16 @@ def get_app():
     if _server_instance is None:
         with _app_init_lock:
             if _server_instance is None:
-                _server_instance = Server()
+                # #1299: build from the get_config() singleton, not a fresh
+                # ServerConfig(). serve_command stages CLI/settings state
+                # (profile, memory tier, the #1288 cache section) onto the
+                # singleton BEFORE load_model triggers this construction; a
+                # fresh ServerConfig() threw all of it away, so pool-loaded
+                # engines booted defaults (1GiB pure-memory prefix cache)
+                # while the single-model engine got the real settings.
+                from .config import get_config
+
+                _server_instance = Server(get_config())
     if app is None:
         app = _server_instance.app
     return app

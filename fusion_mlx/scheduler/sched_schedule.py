@@ -423,7 +423,16 @@ def _schedule_waiting(
         # never runs and cross-request prefix reuse is silently skipped.
         # Skip resume requests (seeded prompt_cache) so externally-loaded
         # KV isn't overwritten; _prepare's own guard handles already-prepped.
-        if request.prompt_cache is None or request.cached_tokens == 0:
+        # #1299: hook-seeded requests (kv_resume re-seed in add_request)
+        # still get prefix prep — the seed is often a tiny disconnect
+        # checkpoint (2048 tokens) while the paged-SSD block table covers
+        # the full context; _prepare upgrades the seed only when the block
+        # table covers strictly more tokens.
+        if (
+            request.prompt_cache is None
+            or request.cached_tokens == 0
+            or getattr(request, "kv_resume_seeded", False)
+        ):
             self._prepare_prefix_cache_for_request(request)
 
         # SpecPrefill: score remaining tokens on the executor thread

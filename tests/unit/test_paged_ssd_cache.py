@@ -802,6 +802,64 @@ class TestPagedSSDCacheManager:
         finally:
             mgr.close()
 
+    def test_orphan_sweep_disabled_when_second_manager_shares_cache_dir(
+        self, tmp_path: Path, monkeypatch
+    ):
+        from fusion_mlx.cache import paged_ssd_cache as ssd_cache_module
+
+        monkeypatch.setattr(ssd_cache_module, "_ORPHAN_SWEEP_MIN_AGE_S", 0.0)
+        cache_dir = tmp_path / "shared_sweep"
+        mgr1 = PagedSSDCacheManager(
+            cache_dir=cache_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=False,
+        )
+        mgr2 = PagedSSDCacheManager(
+            cache_dir=cache_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=False,
+        )
+        try:
+            other_owner_hash = bytes.fromhex("0a0b0c0d0e0f1011")
+            other_owner = cache_dir / "0" / f"{other_owner_hash.hex()}.safetensors"
+            other_owner.parent.mkdir(parents=True, exist_ok=True)
+            other_owner.write_bytes(b"stub")
+            os.utime(other_owner, (time.time() - 100.0, time.time() - 100.0))
+
+            # Neither manager's index knows this file, but the shared-dir
+            # guard keeps it for both — it may be live for the other manager.
+            assert mgr1._sweep_orphaned_files() == 0
+            assert mgr2._sweep_orphaned_files() == 0
+            assert other_owner.exists()
+
+            # Deregistering the second manager re-enables the sweep for the
+            # first, which then reclaims the orphan.
+            mgr2.close()
+            assert mgr1._sweep_orphaned_files() == 1
+            assert not other_owner.exists()
+        finally:
+            mgr1.close()
+            mgr2.close()
+
+        # A solo manager on a different dir is not gated (registry keyed per
+        # cache_dir).
+        solo_dir = tmp_path / "solo_sweep"
+        mgr3 = PagedSSDCacheManager(
+            cache_dir=solo_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=False,
+        )
+        try:
+            solo_hash = bytes.fromhex("2a2b2c2d2e2f3031")
+            solo = solo_dir / "2" / f"{solo_hash.hex()}.safetensors"
+            solo.parent.mkdir(parents=True, exist_ok=True)
+            solo.write_bytes(b"stub")
+            os.utime(solo, (time.time() - 100.0, time.time() - 100.0))
+            assert mgr3._sweep_orphaned_files() == 1
+            assert not solo.exists()
+        finally:
+            mgr3.close()
+
 
 class TestVerifyAndRepairIndex:
     """#1037: startup repair must only remove our own .tmp files."""

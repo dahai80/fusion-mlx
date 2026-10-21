@@ -433,31 +433,27 @@ class BlockAwarePrefixCache(CacheManager):
             extra_key_ranges=extra_key_ranges,
         )
 
-        if shared_block_ids:
-            # Create block table for this request with shared blocks
-            block_table = self.paged_cache.create_block_table(request_id)
+        shared_prefix_tokens = len(tokens) - len(remaining)
 
-            for block_id in shared_block_ids:
-                # Increment ref count for sharing
-                self.paged_cache.increment_ref(block_id)
-                block = self.paged_cache.allocated_blocks.get(block_id)
-                if block:
-                    block_table.block_ids.append(block_id)
-                    block_table.num_tokens += block.token_count
+        # The hash-map lookup above stops at the first block whose table entry
+        # is missing (evicted, or registered under a chain that the live
+        # table never reproduced). The prefix index can still hold a deeper
+        # match, so compare both and keep the longer one — otherwise a store
+        # that only partially de-duplicates silently truncates every later
+        # hit (#1299 follow-up).
+        with self._cache_lock:
+            best_match = self._find_best_prefix_match(tokens, extra_keys=extra_keys)
+        index_prefix_tokens = best_match[0] if best_match else 0
 
-            num_prefix_tokens = len(tokens) - len(remaining)
-            self._hits += 1
-            self._tokens_saved += num_prefix_tokens
-            self._tokens_matched_total += num_prefix_tokens
-            self._tokens_requested_total += len(tokens)
-            self._record_bucket_hit(num_prefix_tokens)
-
+        if best_match and index_prefix_tokens > shared_prefix_tokens:
             logger.debug(
-                f"Cache hit for {request_id}: "
-                f"{len(shared_block_ids)} blocks, {num_prefix_tokens} tokens"
+                "Prefix index extends shared-prefix hit for %s: %d > %d tokens",
+                request_id,
+                index_prefix_tokens,
+                shared_prefix_tokens,
             )
-
-            return block_table, remaining
+        else:
+            best_match = None
 
         # Try prefix index for longer matches.
         # P1-07/RT-05 (#0910 audit): hold _cache_lock through the entire
@@ -466,9 +462,8 @@ class BlockAwarePrefixCache(CacheManager):
         # the window between _find_best_prefix_match (which releases the
         # lock) and the allocated_blocks.get() call below, causing silent
         # KV mismatch → garbage decode.
-        with self._cache_lock:
-            best_match = self._find_best_prefix_match(tokens, extra_keys=extra_keys)
-            if best_match:
+        if best_match:
+            with self._cache_lock:
                 prefix_len, matched_block_ids, num_blocks = best_match
 
                 # Fork the matched blocks. P1-2: a cached block may have been
@@ -501,25 +496,51 @@ class BlockAwarePrefixCache(CacheManager):
                     live_count += 1
 
                 if live_count == 0:
-                    # entire match evicted — treat as miss
-                    self._misses += 1
+                    # entire match evicted — fall through to the hash-map hit
+                    logger.debug(
+                        "Prefix index match for %s fully evicted, using hash-map prefix",
+                        request_id,
+                    )
+                else:
+                    remaining = tokens[live_prefix_len:]
+                    self._hits += 1
+                    self._tokens_saved += live_prefix_len
+                    self._tokens_matched_total += live_prefix_len
                     self._tokens_requested_total += len(tokens)
-                    self._record_bucket_miss(len(tokens))
-                    return None, tokens
+                    self._record_bucket_hit(live_prefix_len)
 
-                remaining = tokens[live_prefix_len:]
-                self._hits += 1
-                self._tokens_saved += live_prefix_len
-                self._tokens_matched_total += live_prefix_len
-                self._tokens_requested_total += len(tokens)
-                self._record_bucket_hit(live_prefix_len)
+                    logger.debug(
+                        f"Prefix index hit for {request_id}: {live_prefix_len} tokens matched"
+                        f" (index claimed {prefix_len}, {num_blocks - live_count} evicted)"
+                    )
 
-                logger.debug(
-                    f"Prefix index hit for {request_id}: {live_prefix_len} tokens matched"
-                    f" (index claimed {prefix_len}, {num_blocks - live_count} evicted)"
-                )
+                    return block_table, remaining
 
-                return block_table, remaining
+        if shared_block_ids:
+            # Create block table for this request with shared blocks
+            block_table = self.paged_cache.create_block_table(request_id)
+
+            for block_id in shared_block_ids:
+                # Increment ref count for sharing
+                self.paged_cache.increment_ref(block_id)
+                block = self.paged_cache.allocated_blocks.get(block_id)
+                if block:
+                    block_table.block_ids.append(block_id)
+                    block_table.num_tokens += block.token_count
+
+            num_prefix_tokens = len(tokens) - len(remaining)
+            self._hits += 1
+            self._tokens_saved += num_prefix_tokens
+            self._tokens_matched_total += num_prefix_tokens
+            self._tokens_requested_total += len(tokens)
+            self._record_bucket_hit(num_prefix_tokens)
+
+            logger.debug(
+                f"Cache hit for {request_id}: "
+                f"{len(shared_block_ids)} blocks, {num_prefix_tokens} tokens"
+            )
+
+            return block_table, remaining
 
         # No cache hit
         self._misses += 1
