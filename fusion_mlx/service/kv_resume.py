@@ -213,9 +213,14 @@ def find_resumable_kv_for_prompt(
 
         root = get_default_root()
         entries = scan_checkpoints(root)
-        # Newest first so the freshest abort snapshot wins.
-        entries.sort(key=lambda t: t[1], reverse=True)
-        for path, _mtime, _size in entries:
+        # #1308: a prompt hash matches every strict prefix of the prompt, so
+        # the largest matching offset always reuses the most KV. Scanning
+        # newest-first returned whichever checkpoint happened to be written
+        # last (usually a small early one, e.g. 2048 tokens for a 69845-token
+        # prompt), discarding a larger valid prefix. Sidecars are cheap to
+        # read, so collect every valid candidate and sort by offset desc.
+        candidates: list[tuple[int, float, str, dict]] = []
+        for path, mtime, _size in entries:
             sidecar_path = path.replace(_CHECKPOINT_EXT, _METADATA_EXT)
             try:
                 with open(sidecar_path, encoding="utf-8") as fh:
@@ -234,6 +239,11 @@ def find_resumable_kv_for_prompt(
                 continue
             if meta.get("prompt_hash") != _prompt_hash(prompt_token_ids, offset):
                 continue
+            candidates.append((offset, mtime, path, meta))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda row: (-row[0], -row[1]))
+        for offset, _mtime, path, meta in candidates:
             loaded = load_checkpoint(path)
             if loaded is None:
                 continue

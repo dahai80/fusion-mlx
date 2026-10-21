@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed — KV checkpoint disk cap enforced, resume prefers largest prefix (#1308)
+- `enforce_disk_cap()` (20 GiB default, `FUSION_MLX_KV_CHECKPOINT_MAX_BYTES`)
+  had no production caller — checkpoints reached 220 GB on disk. A
+  throttled (5 min) pass now runs after every successful checkpoint write
+  and logs `disk cap evicted N checkpoint(s), X GB remaining`.
+- `find_resumable_kv_for_prompt()` returned the newest-mtime match, which
+  is usually a small early checkpoint: a retry re-seeded 2048 tokens for a
+  69845-token prompt while a 57344-token checkpoint for the same prompt sat
+  on disk. Candidates are now sorted by offset (newest as tie-break), so
+  the largest valid prefix wins.
+
 ### Added — monitor capacity gauges: swap rate, residency, p95 latency (#1296)
 - `/metrics` now exposes swap gauges + a signed swap I/O rate
   (`fusion_mlx_swap_*`, `fusion_mlx_swap_rate_bytes_per_second`) sampled

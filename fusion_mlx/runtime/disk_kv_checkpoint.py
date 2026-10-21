@@ -217,6 +217,13 @@ _STATS = CheckpointStats()
 _STATS_LOCK = threading.Lock()
 _DISK_LOCK = threading.RLock()
 
+# #1308: the disk cap used to be enforced only by tests, so checkpoint dirs
+# grew without bound (220 GB observed). A throttled pass after each
+# successful write keeps the cache inside resolve_max_disk_bytes().
+_CAP_PASS_MIN_INTERVAL_S = 300.0
+_LAST_CAP_PASS: float = 0.0
+_CAP_PASS_LOCK = threading.Lock()
+
 
 def get_stats() -> dict[str, int]:
     """Snapshot the process-monotonic counters as a dict.
@@ -637,7 +644,29 @@ def maybe_write_checkpoint(
         # Don't advance the watermark when the write failed — the next
         # boundary still gets a try.
         return last_checkpoint_at, None
+    _maybe_enforce_disk_cap(root)
     return new_boundary, path
+
+
+def _maybe_enforce_disk_cap(root: str) -> None:
+    global _LAST_CAP_PASS
+    now = time.monotonic()
+    with _CAP_PASS_LOCK:
+        if _LAST_CAP_PASS and now - _LAST_CAP_PASS < _CAP_PASS_MIN_INTERVAL_S:
+            return
+        _LAST_CAP_PASS = now
+    try:
+        evicted, remaining = enforce_disk_cap(root)
+    except Exception as exc:
+        logger.warning(f"[disk_kv_checkpoint] disk cap pass failed: {exc}")
+        return
+    if evicted:
+        logger.info(
+            "[disk_kv_checkpoint] disk cap evicted %d checkpoint(s), "
+            "%.1f GB remaining",
+            evicted,
+            remaining / (1024.0**3),
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -513,6 +513,70 @@ def test_maybe_write_checkpoint_below_boundary_is_noop(root: str):
     assert path is None
 
 
+def test_maybe_write_checkpoint_runs_disk_cap(root: str, monkeypatch):
+    """#1308: a successful write must trigger the (throttled) disk cap pass —
+    nothing outside the tests used to call enforce_disk_cap, so the cache
+    dir grew without bound (220 GB observed)."""
+    calls = []
+    monkeypatch.setattr(
+        _dkc, "enforce_disk_cap", lambda r, **kw: calls.append(r) or (0, 0)
+    )
+    monkeypatch.setattr(_dkc, "_LAST_CAP_PASS", 0.0)
+    cache_in = _seed_kv_cache(num_tokens=8)
+    _new_offset, path = _dkc.maybe_write_checkpoint(
+        cache_in,
+        root=root,
+        req_hash="rh-cap",
+        num_tokens=256,
+        last_checkpoint_at=0,
+    )
+    assert path is not None
+    assert calls == [root]
+
+
+def test_maybe_write_checkpoint_cap_pass_is_throttled(root: str, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        _dkc, "enforce_disk_cap", lambda r, **kw: calls.append(r) or (0, 0)
+    )
+    monkeypatch.setattr(_dkc, "_LAST_CAP_PASS", 0.0)
+    cache_in = _seed_kv_cache(num_tokens=8)
+    _dkc.maybe_write_checkpoint(
+        cache_in,
+        root=root,
+        req_hash="rh-cap-a",
+        num_tokens=256,
+        last_checkpoint_at=0,
+    )
+    _dkc.maybe_write_checkpoint(
+        cache_in,
+        root=root,
+        req_hash="rh-cap-b",
+        num_tokens=512,
+        last_checkpoint_at=0,
+    )
+    assert calls == [root]
+
+
+def test_failed_write_does_not_run_disk_cap(root: str, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        _dkc, "enforce_disk_cap", lambda r, **kw: calls.append(r) or (0, 0)
+    )
+    monkeypatch.setattr(_dkc, "_LAST_CAP_PASS", 0.0)
+    monkeypatch.setattr(_dkc, "write_checkpoint", lambda *a, **kw: None)
+    cache_in = _seed_kv_cache(num_tokens=8)
+    _new_offset, path = _dkc.maybe_write_checkpoint(
+        cache_in,
+        root=root,
+        req_hash="rh-cap-fail",
+        num_tokens=256,
+        last_checkpoint_at=0,
+    )
+    assert path is None
+    assert calls == []
+
+
 def test_maybe_write_checkpoint_above_boundary_snaps_to_multiple(root: str):
     """A step that overshoots the boundary (320 tokens) must snap the
     watermark to the largest multiple of ``interval`` that is ≤
