@@ -465,6 +465,93 @@ def _render_queue_metrics() -> list[str]:
     return lines
 
 
+def _render_swap_metrics() -> list[str]:
+    # #1296: swap pressure for the monitor capacity gauge. psutil is the
+    # source; when it is unavailable every field is None and the family is
+    # omitted rather than rendered as a fake zero. The rate is null on the
+    # first scrape of a process (needs two samples).
+    lines: list[str] = []
+    try:
+        from ..utils.swap_stats import sample_swap
+
+        snap = sample_swap()
+        rows = (
+            (
+                "fusion_mlx_swap_total_bytes",
+                "Total swap space in bytes.",
+                snap.get("swap_total_bytes"),
+            ),
+            (
+                "fusion_mlx_swap_used_bytes",
+                "Swap space currently in use in bytes.",
+                snap.get("swap_used_bytes"),
+            ),
+            (
+                "fusion_mlx_swap_free_bytes",
+                "Swap space currently free in bytes.",
+                snap.get("swap_free_bytes"),
+            ),
+            (
+                "fusion_mlx_swap_percent",
+                "Swap used as a percentage of total swap.",
+                snap.get("swap_percent"),
+            ),
+        )
+        for name, help_text, value in rows:
+            if value is None:
+                continue
+            lines.extend(_fmt_metric(name, "gauge", help_text, float(value)))
+        rate = snap.get("swap_rate_bytes_per_second")
+        if rate is not None:
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_swap_rate_bytes_per_second",
+                    "gauge",
+                    "Swap page-in + page-out rate in bytes/second between scrapes.",
+                    round(float(rate), 3),
+                )
+            )
+        else:
+            logger.debug("swap rate unavailable (no prior sample); omitted")
+    except Exception:
+        logger.debug("swap metrics render error", exc_info=True)
+    return lines
+
+
+def _render_model_residency_metrics() -> list[str]:
+    # #1296: per-model residency duration for the monitor table. Only
+    # loaded entries with a known loaded_at render; unknown load times are
+    # omitted instead of guessed.
+    lines: list[str] = []
+    try:
+        import time
+
+        from ..server import _server_state
+
+        pool = _server_state.get("engine_pool")
+        if pool is None:
+            return lines
+        now = time.time()
+        for mid, ent in sorted((getattr(pool, "_entries", {}) or {}).items()):
+            if getattr(ent, "engine", None) is None:
+                continue
+            loaded_at = float(getattr(ent, "loaded_at", 0.0) or 0.0)
+            if loaded_at <= 0:
+                continue
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_model_resident_seconds",
+                    "gauge",
+                    "Seconds since the model engine was loaded into the pool.",
+                    round(max(0.0, now - loaded_at), 1),
+                    {"model": str(mid)},
+                )
+            )
+    except Exception:
+        logger.debug("model residency metrics render error", exc_info=True)
+    return lines
+
+
 def _render_uptime_metal() -> list[str]:
     lines: list[str] = []
     try:
@@ -1529,6 +1616,51 @@ def _render_degradation_metrics() -> list[str]:
     return lines
 
 
+def _histogram_quantile(hist: Any, quantile: float) -> float | None:
+    # Nearest-rank quantile over a cumulative Prometheus histogram. Returns
+    # the upper bound of the bucket holding the rank; the +Inf bucket falls
+    # back to the observed max so the result stays finite.
+    if hist is None or int(getattr(hist, "count", 0) or 0) <= 0:
+        return None
+    rank = quantile * hist.count
+    for i, count in enumerate(hist.counts):
+        if count >= rank:
+            bound = hist.buckets[i]
+            if bound == float("inf"):
+                return float(hist.max)
+            return float(bound)
+    return float(hist.max)
+
+
+def _merged_histogram_quantile(hists: dict[str, Any], quantile: float) -> float | None:
+    # Aggregate quantile across per-model histograms: merge cumulative
+    # bucket counts, then run the nearest-rank search once. All histograms
+    # come from the same _TTFT_BUCKETS layout; a mismatch returns None
+    # rather than blending incompatible buckets.
+    active = [h for h in hists.values() if int(getattr(h, "count", 0) or 0) > 0]
+    total = sum(h.count for h in active)
+    if total <= 0:
+        return None
+    buckets = list(active[0].buckets)
+    counts = [0] * len(buckets)
+    max_value = 0.0
+    for h in active:
+        if len(h.buckets) != len(buckets):
+            logger.debug("merged quantile skipped: histogram bucket mismatch")
+            return None
+        for i, count in enumerate(h.counts):
+            counts[i] += count
+        max_value = max(max_value, float(h.max))
+    rank = quantile * total
+    for i, count in enumerate(counts):
+        if count >= rank:
+            bound = buckets[i]
+            if bound == float("inf"):
+                return max_value
+            return float(bound)
+    return max_value
+
+
 def _render_latency_histograms() -> list[str]:
     # OPS-P2-2 (#0907 audit): TTFT/TPS histograms were collected in
     # ServerMetrics.record_request_complete (fills _ttft_hist/_tps_hist) and
@@ -1543,6 +1675,30 @@ def _render_latency_histograms() -> list[str]:
         for model_id, hist in sorted(ttft.items()):
             labels = {"model": str(model_id)}
             lines.extend(hist.render("fusion_mlx_ttft_seconds", labels))
+            # #1296: p95 gauge for the monitor usage-retrospection view.
+            p95 = _histogram_quantile(hist, 0.95)
+            if p95 is not None:
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_ttft_p95_seconds",
+                        "gauge",
+                        "Time-to-first-token p95 from the ttft histogram buckets (seconds).",
+                        round(p95, 4),
+                        labels,
+                    )
+                )
+        # #1296: one unlabeled series across all models so the UI can plot
+        # a single p95 latency line without summing per-model gauges.
+        merged_p95 = _merged_histogram_quantile(ttft, 0.95)
+        if merged_p95 is not None:
+            lines.extend(
+                _fmt_metric(
+                    "fusion_mlx_request_latency_p95_seconds",
+                    "gauge",
+                    "Aggregate time-to-first-token p95 across all models (seconds), bucketed from fusion_mlx_ttft_seconds.",
+                    round(merged_p95, 4),
+                )
+            )
         tps = sm.get_tps_histograms()
         for model_id, hist in sorted(tps.items()):
             labels = {"model": str(model_id)}
@@ -1723,6 +1879,8 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_watchdog_metrics())
     lines.extend(_render_degradation_metrics())
     lines.extend(_render_queue_metrics())
+    lines.extend(_render_swap_metrics())
+    lines.extend(_render_model_residency_metrics())
     lines.extend(_render_uptime_metal())
     lines.extend(_render_kv_cache_dtype_gauge())
     lines.extend(_render_response_format_metrics())

@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added — monitor capacity gauges: swap rate, residency, p95 latency (#1296)
+- `/metrics` now exposes swap gauges + a signed swap I/O rate
+  (`fusion_mlx_swap_*`, `fusion_mlx_swap_rate_bytes_per_second`) sampled
+  from `psutil.swap_memory()`; the rate is null on the first scrape and
+  derived from `sin`/`sout` deltas (macOS can report `used=0` on a
+  swap-free machine).
+- `/v1/health` memory adds `swap_*` fields and per-model `loaded_at` /
+  `resident_seconds`; the pool records `EngineEntry.loaded_at` on attach
+  and clears it on unload. Unknown load times serialize as `null`.
+- `/metrics` adds `fusion_mlx_model_resident_seconds{model}` and p95
+  gauges (`fusion_mlx_ttft_p95_seconds{model}`, aggregate
+  `fusion_mlx_request_latency_p95_seconds`) computed by nearest-rank over
+  the existing `fusion_mlx_ttft_seconds` histogram buckets. No series is
+  emitted when the source has no samples.
+- Monitor UI: capacity gauge adds Available / Swap used / Swap rate
+  tiles and a residency column; usage retrospection adds a p95 TTFT tile
+  and a Requests/p95 chart toggle fed by the sampled p95 gauge.
+
 ### Fixed — embeddings/audio resolve "default" to their own modality (#1297)
 - `_resolve_request_alias_or_default` / `_aliases_match` (service/helpers.py)
   are real 2-arg helpers again — sentinel maps to the caller's locked id,

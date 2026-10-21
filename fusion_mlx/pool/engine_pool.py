@@ -153,6 +153,9 @@ class EngineEntry:
         | None
     ) = None  # Loaded engine instance
     last_access: float = 0.0  # Timestamp for LRU (0 if never loaded)
+    # #1296: wall-clock time the engine was attached, for the monitor
+    # residency column. 0 = unknown (loaded before this field existed).
+    loaded_at: float = 0.0
     is_loading: bool = False  # Prevent concurrent loads
     is_unloading: bool = (
         False  # P1-4: lockless unload in progress; block fast-path service
@@ -2110,6 +2113,7 @@ class EnginePool:
         if engine is not None:
             entry.engine = engine
             entry.last_access = time.time()
+            entry.loaded_at = entry.last_access
             self._current_model_memory += entry.estimated_size
         logger.info(
             f"Registered entry '{model_id}' in pool (engine_type={engine_type})"
@@ -2138,6 +2142,7 @@ class EnginePool:
                 logger.warning("engine.stop() failed for %s", model_id, exc_info=True)
             entry.engine = None
             entry.last_access = 0.0
+            entry.loaded_at = 0.0
             # Mirror register_engine (+) / unload_engine_async (-): keep the pool's
             # _current_model_memory tracker in sync. Without this the sync
             # unload path (server shutdown / external unregister) leaves the
@@ -2405,6 +2410,7 @@ class EnginePool:
                     exc_info=True,
                 )
         entry.last_access = 0.0
+        entry.loaded_at = 0.0
         entry.actual_size = None
         entry.abort_requested = False
         entry.pending_unload_reason = None
@@ -3531,6 +3537,7 @@ class EnginePool:
 
             entry.engine = engine
             entry.last_access = time.time()
+            entry.loaded_at = entry.last_access
             # P2-5: defer the memory-counter increment + enforcer update until
             # AFTER the post-load clear_cache below. The counter drives the
             # enforcer's eviction decisions; incrementing before clear_cache
@@ -3905,6 +3912,14 @@ class EnginePool:
                     "thinking_default": e.thinking_default,
                     "preserve_thinking_default": e.preserve_thinking_default,
                     "last_access": e.last_access if e.last_access > 0 else None,
+                    # #1296: monitor residency column. Both null when the
+                    # load time is unknown (engine loaded before this field).
+                    "loaded_at": e.loaded_at if e.loaded_at > 0 else None,
+                    "resident_seconds": (
+                        round(max(0.0, time.time() - e.loaded_at), 3)
+                        if e.engine is not None and e.loaded_at > 0
+                        else None
+                    ),
                     "memory_plan": self._model_memory_plan_dict(e),
                 }
                 for mid, e in sorted(self._entries.items())

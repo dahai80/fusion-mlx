@@ -12,6 +12,8 @@ export interface UsageSample {
     completion: number;
     tpsSum?: number;
     tpsCount?: number;
+    // #1296: aggregate TTFT p95 sampled from /metrics (seconds).
+    p95?: number;
 }
 
 const KEY = "fusion-mlx-usage-samples-v1";
@@ -75,7 +77,14 @@ export function windowSeries(
     now: number,
 ): {
     points: Array<{ t: number; v: number }>;
-    totals: { req: number; failed: number; tok: number; tps: number | null };
+    latencyPoints: Array<{ t: number; v: number }>;
+    totals: {
+        req: number;
+        failed: number;
+        tok: number;
+        tps: number | null;
+        p95: number | null;
+    };
 } {
     const cutoff = now - windowMs;
     const inWin = samples.filter((s) => s.t >= cutoff);
@@ -84,7 +93,8 @@ export function windowSeries(
     if (!first || !lastS || lastS === first) {
         return {
             points: [],
-            totals: { req: 0, failed: 0, tok: 0, tps: null },
+            latencyPoints: [],
+            totals: { req: 0, failed: 0, tok: 0, tps: null, p95: null },
         };
     }
     const dReq = Math.max(0, lastS.requests - first.requests);
@@ -98,9 +108,20 @@ export function windowSeries(
     if (dTpsCount > 0) {
         tps = dTpsSum / dTpsCount;
     }
+    // p95 is a gauge, not a counter: plot every sampled value and report the
+    // latest sample in the window. Missing samples (backend omitted the
+    // series) are skipped rather than plotted as zero.
+    const latencyPoints: Array<{ t: number; v: number }> = [];
+    let p95: number | null = null;
+    for (const s of inWin) {
+        if (typeof s.p95 !== "number" || !Number.isFinite(s.p95)) continue;
+        latencyPoints.push({ t: s.t, v: s.p95 });
+        p95 = s.p95;
+    }
     return {
         points: perMinutePoints(inWin),
-        totals: { req: dReq, failed: dFail, tok: dTok, tps },
+        latencyPoints,
+        totals: { req: dReq, failed: dFail, tok: dTok, tps, p95 },
     };
 }
 

@@ -183,6 +183,7 @@ async def _get_engine(model: str | None):
                     engine_type="simple",
                     estimated_size=eng.memory_mb * 1024 * 1024,
                     engine=eng,
+                    loaded_at=time.time(),
                     is_pinned=True,
                     priority_tier="P0_NEVER_EVICT",
                 )

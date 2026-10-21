@@ -65,6 +65,7 @@ export function MetricsPage() {
                     prompt: m.prompt_tokens_total ?? prev?.prompt ?? 0,
                     tpsSum: m.tps_sum ?? prev?.tpsSum,
                     tpsCount: m.tps_count ?? prev?.tpsCount,
+                    p95: m.ttft_p95_seconds ?? prev?.p95,
                 };
                 setSamples((prevSamples) => {
                     const out = [...prevSamples, next];
@@ -219,8 +220,11 @@ export function MetricsPage() {
                                 className="flex items-center justify-between font-mono text-xs tabular-nums text-text-secondary"
                             >
                                 <span className="truncate">{p.name}</span>
-                                <span className="ml-2 shrink-0">
-                                    {formatBytes(p.bytes)}
+                                <span className="ml-2 flex shrink-0 gap-4">
+                                    <span className="text-text-muted">
+                                        {formatDuration(p.resident_seconds)}
+                                    </span>
+                                    <span>{formatBytes(p.bytes)}</span>
                                 </span>
                             </li>
                         ))}
@@ -241,7 +245,11 @@ function CapacityGauge({
 }: {
     mem?: HealthReport["memory"];
     last: Partial<MetricSample> | null;
-    perModel: Array<{ name: string; bytes: number }>;
+    perModel: Array<{
+        name: string;
+        bytes: number;
+        resident_seconds?: number | null;
+    }>;
 }) {
     const usedB = mem?.used_bytes ?? 0;
     const totalB = mem?.total_bytes ?? 0;
@@ -297,6 +305,18 @@ function CapacityGauge({
                     label="Cache hit / spec accept"
                     value={`${pctGauge(last?.response_cache_hit_rate)} / ${pctGauge(last?.spec_decode_accept_rate)}`}
                 />
+                <MetricTile
+                    label="Available"
+                    value={formatBytes(mem?.free_bytes ?? Number.NaN)}
+                />
+                <MetricTile
+                    label="Swap used"
+                    value={`${formatBytes(last?.swap_used_bytes ?? Number.NaN)} / ${formatBytes(last?.swap_total_bytes ?? Number.NaN)}`}
+                />
+                <MetricTile
+                    label="Swap rate"
+                    value={formatRate(last?.swap_rate_bytes_per_second)}
+                />
             </div>
         </div>
     );
@@ -314,14 +334,17 @@ function UsageWindow({
     onWin: (k: string) => void;
     res: {
         points: Array<{ t: number; v: number }>;
+        latencyPoints: Array<{ t: number; v: number }>;
         totals: {
             req: number;
             failed: number;
             tok: number;
             tps: number | null;
+            p95: number | null;
         };
     };
 }) {
+    const [view, setView] = useState<"req" | "p95">("req");
     return (
         <div className="mt-4 rounded-card border border-border bg-bg-elevated p-4">
             <div className="flex items-center justify-between">
@@ -329,6 +352,29 @@ function UsageWindow({
                     Usage retrospection
                 </span>
                 <div className="flex gap-1">
+                    <button
+                        type="button"
+                        onClick={() => setView("req")}
+                        className={`rounded-md px-2 py-1 text-xs ${
+                            view === "req"
+                                ? "bg-brand text-white"
+                                : "border border-border text-text-secondary"
+                        }`}
+                    >
+                        Requests
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setView("p95")}
+                        className={`rounded-md px-2 py-1 text-xs ${
+                            view === "p95"
+                                ? "bg-brand text-white"
+                                : "border border-border text-text-secondary"
+                        }`}
+                    >
+                        p95 TTFT
+                    </button>
+                    <span className="mx-1 w-px bg-border" />
                     {WINDOWS.map((w) => (
                         <button
                             key={w.key}
@@ -345,7 +391,7 @@ function UsageWindow({
                     ))}
                 </div>
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-5">
                 <MetricTile label="Requests" value={String(res.totals.req)} />
                 <MetricTile
                     label="Failed"
@@ -363,11 +409,28 @@ function UsageWindow({
                             : res.totals.tps.toFixed(1)
                     }
                 />
+                <MetricTile
+                    label="p95 TTFT"
+                    value={
+                        res.totals.p95 === null
+                            ? "-"
+                            : `${res.totals.p95.toFixed(2)}s`
+                    }
+                />
             </div>
             <div className="mt-3">
                 <MetricChart
-                    series={[{ label: "requests/min", points: res.points }]}
-                    unit="req/min"
+                    series={
+                        view === "req"
+                            ? [{ label: "requests/min", points: res.points }]
+                            : [
+                                  {
+                                      label: "p95 TTFT",
+                                      points: res.latencyPoints,
+                                  },
+                              ]
+                    }
+                    unit={view === "req" ? "req/min" : "s"}
                 />
             </div>
         </div>
@@ -405,4 +468,24 @@ function derivePoints(
 
 function fmt(v: number | undefined): string {
     return Number.isFinite(v) ? String(v) : "-";
+}
+
+// #1296: residency duration from /v1/health per_model.resident_seconds;
+// null means the engine load time is unknown (loaded before tracking).
+function formatDuration(seconds?: number | null): string {
+    if (seconds === null || seconds === undefined || !Number.isFinite(seconds))
+        return "-";
+    const s = Math.max(0, Math.floor(seconds));
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s / 60)}m`;
+    if (s < 86400)
+        return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+    return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
+}
+
+// #1296: swap rate gauge is signed (negative = swap reclaimed); null when
+// the backend has no second sample yet or psutil is unavailable.
+function formatRate(v?: number | null): string {
+    if (v === null || v === undefined || !Number.isFinite(v)) return "-";
+    return `${v < 0 ? "-" : ""}${formatBytes(Math.abs(v))}/s`;
 }
