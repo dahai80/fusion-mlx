@@ -1219,6 +1219,15 @@ class TestPendingWriteBuffer:
                 self._save_block(mgr, b"qf_test_block_03")
 
             # Block 1 was written inline and no longer needs pending storage.
+            # Earlier blocks drain on the writer thread, so wait (bounded) for
+            # its pending copy to clear before asserting — under CI load the
+            # drain can still be in flight when the inline write returns.
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                with mgr._pending_write_hashes_lock:
+                    if b"qf_test_block_01" not in mgr._pending_writes:
+                        break
+                time.sleep(0.01)
             with mgr._pending_write_hashes_lock:
                 assert (
                     b"qf_test_block_01" not in mgr._pending_writes
