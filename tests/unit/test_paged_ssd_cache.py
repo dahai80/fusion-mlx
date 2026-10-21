@@ -802,6 +802,54 @@ class TestPagedSSDCacheManager:
         finally:
             mgr.close()
 
+    def test_orphan_sweep_disabled_when_second_manager_shares_cache_dir(
+        self, tmp_path: Path, monkeypatch
+    ):
+        from fusion_mlx.cache import paged_ssd_cache as ssd_cache_module
+
+        monkeypatch.setattr(ssd_cache_module, "_ORPHAN_SWEEP_MIN_AGE_S", 0.0)
+        cache_dir = tmp_path / "shared_sweep"
+        mgr1 = PagedSSDCacheManager(
+            cache_dir=cache_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=False,
+        )
+        mgr2 = PagedSSDCacheManager(
+            cache_dir=cache_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=False,
+        )
+        try:
+            assert mgr1._sweep_disabled is False
+            assert mgr2._sweep_disabled is True
+
+            other_owner_hash = bytes.fromhex("0a0b0c0d0e0f1011")
+            other_owner = cache_dir / "0" / f"{other_owner_hash.hex()}.safetensors"
+            other_owner.parent.mkdir(parents=True, exist_ok=True)
+            other_owner.write_bytes(b"stub")
+            os.utime(other_owner, (time.time() - 100.0, time.time() - 100.0))
+
+            # mgr2's index does not know this file, but the shared-dir guard
+            # must keep it — it may be live for mgr1.
+            assert mgr2._sweep_orphaned_files() == 0
+            assert other_owner.exists()
+        finally:
+            mgr1.close()
+            mgr2.close()
+
+        # A third manager on a different dir sweeps normally (registry keyed
+        # per cache_dir).
+        solo_dir = tmp_path / "solo_sweep"
+        mgr3 = PagedSSDCacheManager(
+            cache_dir=solo_dir,
+            max_size_bytes=1024**2,
+            hot_cache_only=False,
+        )
+        try:
+            assert mgr3._sweep_disabled is False
+        finally:
+            mgr3.close()
+
 
 class TestVerifyAndRepairIndex:
     """#1037: startup repair must only remove our own .tmp files."""

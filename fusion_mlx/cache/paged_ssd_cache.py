@@ -35,6 +35,17 @@ _MAX_ENFORCE_SIZE_LIMIT_ITERATIONS = 1000
 # re-saved (fresh mtime from the rename) is never mistaken for an orphan.
 _ORPHAN_SWEEP_INTERVAL_S = 60.0
 _ORPHAN_SWEEP_MIN_AGE_S = 30.0
+
+# #1299: live PagedSSDCacheManager count per resolved cache_dir. Multiple
+# engines (e.g. a 4B serve model and a pool-loaded 27B VLM) each build their
+# own manager over the same directory; each manager only knows its own
+# index, so any other manager's freshly stored blocks look orphaned to it
+# and the periodic sweep deleted them within a minute (observed: 19 and 23
+# blocks removed at 16:35/16:37). With more than one manager on a dir,
+# sweeping is disabled — orphan reclaim is a space optimization, deleting
+# a live manager's blocks is data loss.
+_ACTIVE_MANAGERS_BY_CACHE_DIR: dict[str, int] = {}
+_ACTIVE_MANAGERS_LOCK = threading.Lock()
 # #1037: single-hex-char shard subdirs created under the cache dir (see
 # __init__). The default cache dir is a shared global path, so the startup
 # repair must only touch .tmp files inside our own shard layout.
@@ -854,6 +865,24 @@ class PagedSSDCacheManager:
             else None
         )
         self._signature_sweep_completed = False
+        # #1299: see _ACTIVE_MANAGERS_BY_CACHE_DIR — sweep disabled when a
+        # second manager shares this cache_dir.
+        self._sweep_disabled = False
+        if self._cache_dir is not None and not hot_cache_only:
+            key = str(self._cache_dir.resolve())
+            with _ACTIVE_MANAGERS_LOCK:
+                _ACTIVE_MANAGERS_BY_CACHE_DIR[key] = (
+                    _ACTIVE_MANAGERS_BY_CACHE_DIR.get(key, 0) + 1
+                )
+                self._sweep_disabled = _ACTIVE_MANAGERS_BY_CACHE_DIR[key] > 1
+            if self._sweep_disabled:
+                logger.warning(
+                    "SSD orphan sweep disabled for %s: %d PagedSSDCacheManager "
+                    "instances share this cache_dir — sweeping would delete "
+                    "another manager's blocks",
+                    self._cache_dir,
+                    _ACTIVE_MANAGERS_BY_CACHE_DIR[key],
+                )
         self._hot_cache_only = hot_cache_only
         self._hot_cache_max_bytes = hot_cache_max_bytes
         self._hot_cache_budget = hot_cache_budget
@@ -2658,6 +2687,13 @@ class PagedSSDCacheManager:
         either _index or _incompatible_index.
         """
         if self._cache_dir is None:
+            return 0
+        if self._sweep_disabled:
+            # #1299: another manager shares this cache_dir; our index cannot
+            # distinguish its live blocks from orphans.
+            logger.debug(
+                "SSD orphan sweep skipped: shared cache_dir %s", self._cache_dir
+            )
             return 0
         # Snapshot the indexed hashes once (single lock hold) so the per-file
         # orphan check below does not churn _state_lock for every file.
