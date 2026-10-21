@@ -11,12 +11,21 @@
 - `/v1/embeddings` now calls the helper: `model: "default"` maps to the
   configured embed id or the pool's single embedding entry instead of the
   served chat model (previously 400 `no_embedding_model`), and a short alias
-  compares equal to the resolved HF path.
+  compares equal to the resolved HF path. With two or more embedding models
+  and no configured id the sentinel is rejected as
+  `400 embedding_model_ambiguous` naming the candidates — it no longer falls
+  through to the chat resolver (which cold-loaded the served LLM on an
+  embeddings call).
+- OpenAI TTS ids `tts-1` / `tts-1-hd` join the audio alias registry, mapping
+  to the Kokoro default, so `openai.audio.speech.create()` no longer 404s
+  (the STT side already aliased `whisper-1`).
 - `/v1/audio/transcriptions` / `/v1/audio/speech` map `"default"` to the STT
   (`whisper-large-v3`) / TTS (`Kokoro-82M`) default instead of the chat model;
   audio surfaces with no defined default answer 400 `model is required`.
 - `tests/unit/test_request_time_alias_resolution.py` rescued from quarantine
-  (26 pass) and rewritten against the current package + pool contract.
+  and rewritten against the current package + pool contract (29 pass),
+  including a route-level test that fails if `create_speech` stops passing
+  its TTS default and an ambiguity test for two-embedding pools.
 
 ### Fixed — embedded deep links recognized by the shell SDK (#1298)
 - `?embedded=1` opened at top level (no parent iframe) now selects the

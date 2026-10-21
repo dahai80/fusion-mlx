@@ -213,9 +213,15 @@ def _embeddings_client(monkeypatch, pool, cfg_overrides: dict | None = None):
         return 512
 
     try:
+
+        def _alias_resolver(mid):
+            # Prod-shaped for the dynamic alias registry: the chat resolver
+            # turns the embedding alias into its HF path.
+            return (EMBED_HF if mid == EMBED_ALIAS else mid, {})
+
         with _fake_server_module(
             "fusion_mlx.server",
-            resolve_model_with_profile=lambda mid: (mid, {}),
+            resolve_model_with_profile=_alias_resolver,
             get_max_context_window=_noop_context_window,
         ):
             yield TestClient(app)
@@ -302,9 +308,9 @@ class TestEmbeddingsRouteAliasResolution:
         assert set(pool.requested) == {cfg_embed}
 
     def test_ambiguous_pool_does_not_pick_a_random_embedding_model(self, monkeypatch):
-        """Two embedding entries + no configured id → no sentinel target, so
-        the request falls through to the chat-aligned resolver and 404s
-        instead of silently picking one."""
+        """Two embedding entries + no configured id → the sentinel must not
+        fall through to the chat-aligned resolver (that would land on the
+        served LLM and 400 via the type check); it names the ambiguity."""
         pool = _FakePool(
             entries={
                 EMBED_HF: "embedding",
@@ -316,13 +322,57 @@ class TestEmbeddingsRouteAliasResolution:
             resp = client.post(
                 "/v1/embeddings", json={"model": "default", "input": "hello"}
             )
-        assert resp.status_code == 404, resp.text
-        assert resp.json()["error"]["code"] == "model_not_found"
+        assert resp.status_code == 400, resp.text
+        err = resp.json()["error"]
+        assert err["code"] == "embedding_model_ambiguous"
+        assert err["param"] == "model"
+        assert EMBED_HF in err["message"]
+        assert pool.requested == []
+
+    def test_named_embedding_model_still_resolves_with_two_entries(self, monkeypatch):
+        pool = _FakePool(
+            entries={
+                EMBED_HF: "embedding",
+                "mlx-community/bge-m3-mlx-8bit": "embedding",
+            },
+            engines={EMBED_HF: _stub_embedding_engine(EMBED_HF)},
+        )
+        with _embeddings_client(monkeypatch, pool) as client:
+            resp = client.post(
+                "/v1/embeddings", json={"model": EMBED_ALIAS, "input": "hello"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert set(pool.requested) == {EMBED_HF}
 
 
 # ──────────────────────────────────────────────────────────────────
 # Integration — /v1/audio/* (R-03 default on STT + TTS)
 # ──────────────────────────────────────────────────────────────────
+
+
+class TestAudioRouteWiring:
+    async def test_speech_route_passes_the_tts_default(self, monkeypatch):
+        """Pins the call site, not just the resolver: reverting
+        create_speech's second argument would drop the sentinel back onto
+        the chat model."""
+        from fastapi import HTTPException
+
+        from fusion_mlx.api import audio_routes
+        from fusion_mlx.api.audio_models import AudioSpeechRequest
+
+        calls: list[tuple[str, str | None]] = []
+
+        def _spy(model_id, default_model=None):
+            calls.append((model_id, default_model))
+            raise HTTPException(status_code=418, detail="stop-after-resolve")
+
+        monkeypatch.setattr(audio_routes, "_resolve_model", _spy)
+        req = AudioSpeechRequest(model="default", input="hello", voice="af_heart")
+        try:
+            await audio_routes.create_speech(req)
+        except HTTPException as exc:
+            assert exc.status_code == 418
+        assert calls == [("default", audio_routes._DEFAULT_TTS_MODEL)]
 
 
 class TestAudioModelDefaultSentinel:
@@ -331,6 +381,14 @@ class TestAudioModelDefaultSentinel:
     registry-only ``_resolve_stt_model`` / ``_resolve_tts_model`` helpers
     pin below, but on the resolver the routes actually call.
     """
+
+    def test_openai_tts_ids_resolve(self):
+        """OpenAI SDKs send tts-1 / tts-1-hd explicitly; both must land on the
+        Kokoro default instead of 404ing in get_engine."""
+        from fusion_mlx.api.audio_routes import _DEFAULT_TTS_MODEL, _resolve_model
+
+        assert _resolve_model("tts-1", _DEFAULT_TTS_MODEL) == _DEFAULT_TTS_MODEL
+        assert _resolve_model("tts-1-hd", _DEFAULT_TTS_MODEL) == _DEFAULT_TTS_MODEL
 
     def test_default_maps_to_stt_default(self):
         from fusion_mlx.api.audio_routes import _DEFAULT_STT_MODEL, _resolve_model

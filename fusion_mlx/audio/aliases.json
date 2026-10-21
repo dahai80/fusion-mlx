@@ -56,6 +56,22 @@
     "notes": "Short-form 8-bit alias.",
     "languages": "en,zh"
   },
+  "tts-1": {
+    "type": "tts",
+    "hf_id": "mlx-community/Kokoro-82M-bf16",
+    "family": "kokoro",
+    "default_voice": "af_heart",
+    "notes": "OpenAI-spec TTS id; maps to the Kokoro default voice.",
+    "languages": "en,zh"
+  },
+  "tts-1-hd": {
+    "type": "tts",
+    "hf_id": "mlx-community/Kokoro-82M-bf16",
+    "family": "kokoro",
+    "default_voice": "af_heart",
+    "notes": "OpenAI-spec HD TTS id; maps to the Kokoro default (bf16).",
+    "languages": "en,zh"
+  },
   "chatterbox": {
     "type": "tts",
     "hf_id": "mlx-community/chatterbox-turbo-fp16",

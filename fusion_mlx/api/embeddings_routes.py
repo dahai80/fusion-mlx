@@ -39,29 +39,42 @@ def set_embeddings_context(pool: Any, server_state: Any) -> None:
     _server_state = server_state
 
 
-def _default_embedding_model_id() -> str | None:
-    # The id the "default" sentinel maps to on this surface. A configured
-    # embed id wins; otherwise the pool's single embedding entry (embedding
-    # models are lazily discovered, not pinned — embedding_model_locked is
-    # never set on the serve path). Ambiguous or absent → None, so the caller
-    # falls back to the chat-aligned resolver instead of guessing.
-    from ..config import get_config
+def _is_default_sentinel(model_id: str | None) -> bool:
+    return not model_id or model_id == "default"
 
-    cfg = get_config()
-    for cand in (cfg.embedding_model_locked, cfg.embedding_model):
-        if cand:
-            return cand
+
+def _pool_embedding_ids() -> list[str]:
     if _pool is None:
-        return None
+        return []
     try:
-        ids = [
+        return [
             mid
             for mid in _pool.list_models()
             if getattr(_pool.get_entry(mid), "engine_type", None) == "embedding"
         ]
     except Exception as exc:
         logger.debug("embedding default lookup failed: %s", exc)
-        return None
+        return []
+
+
+def _default_embedding_model_id() -> str | None:
+    # The id the "default" sentinel maps to on this surface. A configured
+    # embed id wins; otherwise the pool's single embedding entry (embedding
+    # models are lazily discovered, not pinned — embedding_model_locked is
+    # never set on the serve path). Ambiguous or absent → None; the caller
+    # rejects the sentinel instead of falling back to the chat model.
+    from ..config import get_config
+    from ..model_aliases import resolve_model
+
+    cfg = get_config()
+    for cand in (cfg.embedding_model_locked, cfg.embedding_model):
+        if cand:
+            try:
+                return resolve_model(cand)
+            except Exception as exc:
+                logger.debug("configured embedding model %r unresolved: %s", cand, exc)
+                return cand
+    ids = _pool_embedding_ids()
     if len(ids) == 1:
         return ids[0]
     return None
@@ -92,11 +105,37 @@ async def get_embedding_engine(model_id: str) -> Any:
     resolved_id = _resolve_request_alias_or_default(
         model_id, _default_embedding_model_id()
     )
+    if resolved_id is None and _is_default_sentinel(model_id):
+        # Never fall through to the chat-aligned resolver for the sentinel:
+        # on a box with 2+ embedding models (the normal install) it resolves
+        # the served LLM, which then fails the embedding type check — and
+        # get_engine would cold-load the LLM on an embeddings call.
+        candidates = _pool_embedding_ids()
+        logger.info(
+            "Embedding sentinel %r ambiguous: %d embedding model(s) available",
+            model_id,
+            len(candidates),
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "message": (
+                        "model 'default' is ambiguous: "
+                        f"{len(candidates)} embedding model(s) are available"
+                        + (f" ({', '.join(sorted(candidates))})" if candidates else "")
+                        + "; name one explicitly"
+                    ),
+                    "type": "invalid_request_error",
+                    "code": "embedding_model_ambiguous",
+                    "param": "model",
+                }
+            },
+        )
     if resolved_id is None:
         # Not the configured embedding model (or no embed model configured):
         # fall through to the same resolver the chat path uses so short
-        # aliases + HF paths still reach the pool, and "default" resolves the
-        # way it does on every other OpenAI-compatible surface.
+        # aliases + HF paths still reach the pool.
         from ..server import resolve_model_with_profile
 
         try:

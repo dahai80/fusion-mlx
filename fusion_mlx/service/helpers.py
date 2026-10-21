@@ -592,6 +592,12 @@ def _aliases_match(request_model: str, locked: str | None) -> bool:
     try:
         from ..model_aliases import resolve_model
 
+        # A relative HF id resolves against cwd, so a server started with cwd
+        # outside the allowed model dirs makes resolve_model raise for the
+        # locked id. Compare the request side against the already-normalized
+        # locked id first so that case still matches (#1297).
+        if resolve_model(request_model) == locked:
+            return True
         return resolve_model(request_model) == resolve_model(locked)
     except Exception as exc:
         logger.debug(
