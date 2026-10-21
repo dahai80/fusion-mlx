@@ -1326,7 +1326,11 @@ class EnginePool:
         # source_repo_id; resolve a repo-id request to that entry's short
         # model_id so downstream lookup hits. No-op when already a short
         # name or an exact entry key (fast path: no scan when exact match).
-        if not model_id or "/" not in model_id:
+        # #1312: registry keys use the flattened cache-dir form
+        # ("mlx-community--Qwen3.5-9B-4bit"), so a client sending the bare
+        # repo name ("Qwen3.5-9B-4bit") used to 404 even with the weights on
+        # disk. Repo-key matching covers both spellings.
+        if not model_id:
             return model_id
         if model_id in self._entries:
             return model_id
@@ -1345,7 +1349,39 @@ class EnginePool:
                     mid,
                 )
                 return mid
+        keyed = self._match_entry_by_repo_key_form(target)
+        if keyed is not None:
+            logger.info(
+                "resolve_hf_repo_id: %s -> %s (repo-key form match)",
+                model_id,
+                keyed,
+            )
+            return keyed
         return model_id
+
+    def _match_entry_by_repo_key_form(self, target: str) -> str | None:
+        # Slashed repo ids and flattened cache-dir keys are the same model
+        # under a different spelling. A bare repo name is matched against the
+        # key suffix only when exactly one entry matches - with several orgs
+        # carrying the same repo name, guessing would load the wrong weights.
+        want = target.strip().lower().replace("/", "--")
+        matches: list[str] = []
+        for mid in self._entries:
+            key = mid.strip().lower().replace("/", "--")
+            if key.startswith("models--"):
+                key = key[len("models--") :]
+            if key == want or ("--" not in want and key.endswith("--" + want)):
+                matches.append(mid)
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            logger.warning(
+                "resolve_hf_repo_id: ambiguous repo name %r matches %s; "
+                "pass the full repo id",
+                target,
+                sorted(matches),
+            )
+        return None
 
     def _swap_lock(self, base_model_id: str) -> asyncio.Lock:
         lock = self._adapter_swap_locks.get(base_model_id)
