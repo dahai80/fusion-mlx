@@ -603,6 +603,20 @@ async def _stream_anthropic_generator(
         )
         _message_id = f"msg_{uuid.uuid4().hex[:24]}"
 
+        # Prefill-phase keepalive (#1293): engine yields nothing before the
+        # first token, so long prefills left this SSE silent past client idle
+        # timeouts. Inject Anthropic ping events while awaiting the engine.
+        # Reuses _keepalive_interval / _is_cc computed above.
+        from .utils import KEEPALIVE_PING, stream_with_keepalive
+
+        async def _wrap_stream(agen):
+            if _keepalive_interval > 0:
+                async for item in stream_with_keepalive(agen, _keepalive_interval):
+                    yield item
+            else:
+                async for item in agen:
+                    yield item
+
         # Send message_start with the pre-computed input_tokens
         yield create_message_start_event(
             _message_id, model_name, input_tokens=_precomputed_input
@@ -617,16 +631,21 @@ async def _stream_anthropic_generator(
         resolve_enable_thinking_default(
             ct_kwargs_stream, model_type=_mt, client_thinking=_ct
         )
-        async for gen in engine.stream_chat(
-            messages=messages,
-            max_tokens=sampling.max_tokens,
-            temperature=sampling.temperature,
-            top_p=sampling.top_p,
-            tools=effective_tools,
-            stop=sampling.stop,
-            chat_template_kwargs=ct_kwargs_stream if ct_kwargs_stream else None,
-            prefix_cache_boundary=prefix_cache_boundary,
+        async for gen in _wrap_stream(
+            engine.stream_chat(
+                messages=messages,
+                max_tokens=sampling.max_tokens,
+                temperature=sampling.temperature,
+                top_p=sampling.top_p,
+                tools=effective_tools,
+                stop=sampling.stop,
+                chat_template_kwargs=ct_kwargs_stream if ct_kwargs_stream else None,
+                prefix_cache_boundary=prefix_cache_boundary,
+            )
         ):
+            if gen is KEEPALIVE_PING:
+                yield 'event: ping\ndata: {"type": "ping"}\n\n'
+                continue
             if gen.new_text:
                 if keepalive:
                     keepalive.reset()
