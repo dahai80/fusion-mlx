@@ -27,6 +27,20 @@ HEAD
   4096-token SSD reconstruct cap — with the batch-eval tiered store,
   reconstruct (~11k tok/s) beats re-prefill (~528 tok/s solo) by ~20x;
   `start.sh` maps the setting into the server environment.
+- Hook-seeded resumes no longer shadow a larger paged block table: the
+  kv_resume re-seed hook (disconnect checkpoints) often carries a tiny
+  early checkpoint (2048 tokens) that short-circuited the paged-SSD path
+  and forced a 100s+ re-prefill on every resumed turn. The scheduler now
+  runs prefix prep for hook-seeded requests and keeps whichever seed
+  covers more tokens (`Request.kv_resume_seeded`).
+- SSD blocks now survive across turns and restarts: two engines (the
+  boot-time serve model and any pool-loaded model, e.g. 4B + 27B) each
+  built a `PagedSSDCacheManager` over the same `ssd_cache` dir, and the
+  idle manager's 60s orphan sweep deleted the other manager's freshly
+  stored blocks as "unindexed orphans" (observed: 19+23+6 blocks removed,
+  restart scans always 0 compatible). Swapping is now disabled while more
+  than one manager shares a cache dir (live count read at sweep time,
+  deregistered on `close()`).
 
 ### Fixed — SSE keepalive now fires during prefill (Claude Code disconnects)
 - Streaming `/v1/chat/completions` responses were silent between request
