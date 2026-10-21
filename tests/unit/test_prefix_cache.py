@@ -85,6 +85,55 @@ class TestBlockAwarePrefixCache:
         assert prefix_cache.block_size == 4
         assert prefix_cache.expected_num_layers == 4
 
+    def test_fetch_prefers_longer_prefix_index_over_shared_prefix(
+        self, prefix_cache, paged_cache
+    ):
+        # #1299: the hash-map lookup stops at the first block whose table
+        # entry is missing. When the prefix index still holds a deeper
+        # chain, fetch_cache must return the longer match instead of
+        # silently truncating at the hash-map boundary.
+        tokens = list(range(24))
+        parent = None
+        blocks = []
+        for i in range(3):
+            block = paged_cache.allocate_block()
+            block.token_count = 4
+            paged_cache.register_block_hash(block, tokens[i * 4 : (i + 1) * 4], parent)
+            parent = block.block_hash
+            blocks.append(block.block_id)
+        for _ in range(3):
+            block = paged_cache.allocate_block()
+            block.token_count = 4
+            block.block_hash = None
+            blocks.append(block.block_id)
+        prefix_cache._update_prefix_index(tokens, blocks)
+
+        table, remaining = prefix_cache.fetch_cache("req-longer", tokens)
+
+        assert table is not None, "fetch must not fall through to a miss"
+        assert table.num_tokens == 24, f"expected 24 tokens, got {table.num_tokens}"
+        assert remaining == []
+
+    def test_fetch_falls_back_to_shared_prefix_when_index_blocks_evicted(
+        self, prefix_cache, paged_cache
+    ):
+        tokens = list(range(24))
+        parent = None
+        for i in range(4):
+            block = paged_cache.allocate_block()
+            block.token_count = 4
+            paged_cache.register_block_hash(block, tokens[i * 4 : (i + 1) * 4], parent)
+            parent = block.block_hash
+
+        # Index entry claims a longer prefix but points at dead block ids.
+        prefix_cache._update_prefix_index(tokens, [900, 901, 902, 903, 904, 905])
+
+        table, remaining = prefix_cache.fetch_cache("req-fallback", tokens)
+
+        assert table is not None, "dead index entry must fall back to hash-map hit"
+        assert table.num_tokens == 16
+        assert remaining == tokens[16:]
+
     def test_get_model_num_layers(self, paged_cache):
         """Test getting model num_layers from various sources."""
         # Model with layers attribute

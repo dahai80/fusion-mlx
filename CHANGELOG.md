@@ -27,6 +27,13 @@ HEAD
   4096-token SSD reconstruct cap — with the batch-eval tiered store,
   reconstruct (~11k tok/s) beats re-prefill (~528 tok/s solo) by ~20x;
   `start.sh` maps the setting into the server environment.
+- `fetch_cache` no longer truncates at the hash-map boundary: the
+  `find_shared_prefix` lookup stops at the first block whose table entry is
+  missing, and the early return shadowed a deeper `_prefix_index` match —
+  a store that partially de-duplicated (13 of 32 blocks reused) made every
+  later request hit only those 13 blocks and re-prefill ~39k tokens.
+  Both lookups now run, the longer one wins, and a fully-evicted index
+  entry falls back to the hash-map hit instead of reporting a miss.
 - Hook-seeded resumes no longer shadow a larger paged block table: the
   kv_resume re-seed hook (disconnect checkpoints) often carries a tiny
   early checkpoint (2048 tokens) that short-circuited the paged-SSD path
