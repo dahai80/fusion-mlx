@@ -4,6 +4,22 @@
 
 HEAD
 
+### Fixed — SSD prefix reuse no longer skipped on unrelated store activity (#1299)
+- `_prepare_prefix_cache_for_request` skipped SSD reconstruct whenever ANY
+  `store_cache` future was in flight — a global guard, so with parallel
+  Claude Code sessions some other session's store almost always blocked
+  reconstruct and every turn fell back to a full 37-110s re-prefill
+  despite a warm SSD block table (~24k tokens, ~2s reconstruct at
+  5.6ms/block post-#1286). The guard is now scoped: only a
+  *same-conversation* (common-prefix ≥8192 or ratio ≥0.30) in-flight store
+  keeps the skip, preserving freshness semantics; unrelated stores proceed
+  with bounded lock contention.
+- New optional setting `ssd_reconstruct_max_tokens` (`~/.fusion-mlx/settings.json`,
+  env `FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS` wins) overrides the stale
+  4096-token SSD reconstruct cap — with the batch-eval tiered store,
+  reconstruct (~11k tok/s) beats re-prefill (~528 tok/s solo) by ~20x;
+  `start.sh` maps the setting into the server environment.
+
 ### Fixed — SSE keepalive now fires during prefill (Claude Code disconnects)
 - Streaming `/v1/chat/completions` responses were silent between request
   admission and the first decoded token: the loop-level

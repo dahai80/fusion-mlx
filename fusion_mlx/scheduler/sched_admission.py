@@ -765,21 +765,34 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
         if block_table and block_table.num_tokens > 0:
-            # Guard: while any store_cache is in flight the tiered-cache
-            # lock can be held by the store worker; a reconstruct here would
-            # block step() on that lock (observed: 192-token reconstruct
-            # wedged 8+ min). Full prefill is fast and contention-free —
-            # skip the reconstruct. The fetch above is pure metadata and
-            # stays, so callers still see normal cache-lookup behaviour.
-            if self._has_unfinished_store_futures():
+            # #1299: scope the reconstruct skip to relevant (same-conversation)
+            # in-flight stores. The old global guard let ANY session's store
+            # block reconstruct every turn — full re-prefill (37-110s) despite
+            # a warm SSD block table. Unrelated stores don't corrupt SSD reads
+            # (reconstruct reads only blocks matching this prompt), and post-
+            # #1286 store/reconstruct share the tiered lock in short batch ops
+            # (5.6ms/block) — bounded contention (~2s) vs 37-110s re-prefill.
+            relevant = self._find_relevant_inflight_store(request)
+            # Same-conversation store still writing → SSD prefix would read a
+            # stale tail. The 4s freshness deferral covers the common case
+            # (store settles within the deadline); reaching here means the
+            # store is genuinely slow — full prefill is the safe fallback.
+            if relevant is not None:
                 logger.info(
-                    "PREFIX-PREP skip reconstruct %s: store_cache in flight",
+                    "PREFIX-PREP skip reconstruct %s: same-conversation store_cache in flight",
                     request.request_id[:8],
                 )
                 self.block_aware_cache.clear_request_entry_no_free(request.request_id)
                 request.remaining_tokens = request.prompt_token_ids
                 self._prefix_cache_prepared.add(request.request_id)
                 return
+            if self._has_unfinished_store_futures():
+                logger.debug(
+                    "PREFIX-PREP reconstruct under unrelated store_cache in "
+                    "flight (%d unfinished) for %s — bounded lock contention",
+                    len(self._inflight_store_futures),
+                    request.request_id[:8],
+                )
             if block_table.num_tokens > _SSD_RECONSTRUCT_MAX_TOKENS:
                 logger.info(
                     "Skipping SSD prefix reuse for %s: %d tokens > cap %d "
