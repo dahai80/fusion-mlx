@@ -19,6 +19,7 @@ _last_sout = 0
 _last_rate: float | None = None
 
 _monotonic = time.monotonic
+_warned_unavailable = False
 
 
 def _read_swap_counters() -> dict[str, int | float]:
@@ -38,10 +39,18 @@ def _read_swap_counters() -> dict[str, int | float]:
 def sample_swap() -> dict[str, float | None]:
     global _last_at, _last_sin, _last_sout, _last_rate
 
+    global _warned_unavailable
     try:
         raw = _read_swap_counters()
     except Exception:
-        logger.warning("swap stats unavailable; reporting nulls", exc_info=True)
+        # /metrics and /v1/health are polled every few seconds; warn once
+        # and drop to debug so a persistent psutil failure does not flood
+        # the log with tracebacks.
+        if not _warned_unavailable:
+            _warned_unavailable = True
+            logger.warning("swap stats unavailable; reporting nulls", exc_info=True)
+        else:
+            logger.debug("swap stats unavailable; reporting nulls")
         return {
             "swap_total_bytes": None,
             "swap_used_bytes": None,
@@ -63,8 +72,17 @@ def sample_swap() -> dict[str, float | None]:
             _last_rate = None
         elif now - _last_at >= _MIN_RATE_INTERVAL_S:
             elapsed = now - _last_at
-            delta = max(0, sin - _last_sin) + max(0, sout - _last_sout)
-            _last_rate = delta / elapsed
+            d_sin = sin - _last_sin
+            d_sout = sout - _last_sout
+            if d_sin < 0 or d_sout < 0:
+                # Counter reset/rollover: rebaseline instead of emitting a
+                # garbage rate.
+                _last_rate = None
+            else:
+                # Signed net rate: page-in minus page-out, so a machine
+                # actively paging out shows negative. Matches the monitor's
+                # signed swap-rate wording.
+                _last_rate = (d_sin - d_sout) / elapsed
             _last_at = now
             _last_sin = sin
             _last_sout = sout
@@ -83,7 +101,8 @@ def sample_swap() -> dict[str, float | None]:
 
 
 def _reset_for_tests() -> None:
-    global _last_at, _last_sin, _last_sout, _last_rate
+    global _last_at, _last_sin, _last_sout, _last_rate, _warned_unavailable
+    _warned_unavailable = False
     with _lock:
         _last_at = None
         _last_sin = 0

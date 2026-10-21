@@ -532,7 +532,13 @@ def _render_model_residency_metrics() -> list[str]:
         if pool is None:
             return lines
         now = time.time()
-        for mid, ent in sorted((getattr(pool, "_entries", {}) or {}).items()):
+        lock = getattr(pool, "_lock", None)
+        if lock is not None:
+            with lock:
+                entries = sorted((getattr(pool, "_entries", {}) or {}).items())
+        else:
+            entries = sorted((getattr(pool, "_entries", {}) or {}).items())
+        for mid, ent in entries:
             if getattr(ent, "engine", None) is None:
                 continue
             loaded_at = float(getattr(ent, "loaded_at", 0.0) or 0.0)
@@ -1645,7 +1651,7 @@ def _merged_histogram_quantile(hists: dict[str, Any], quantile: float) -> float 
     counts = [0] * len(buckets)
     max_value = 0.0
     for h in active:
-        if len(h.buckets) != len(buckets):
+        if list(h.buckets) != buckets:
             logger.debug("merged quantile skipped: histogram bucket mismatch")
             return None
         for i, count in enumerate(h.counts):
@@ -1688,14 +1694,16 @@ def _render_latency_histograms() -> list[str]:
                     )
                 )
         # #1296: one unlabeled series across all models so the UI can plot
-        # a single p95 latency line without summing per-model gauges.
+        # a single p95 latency line without summing per-model gauges. Named
+        # explicitly as a TTFT aggregate: the histograms are cumulative
+        # since process start, so this is not a windowed request latency.
         merged_p95 = _merged_histogram_quantile(ttft, 0.95)
         if merged_p95 is not None:
             lines.extend(
                 _fmt_metric(
-                    "fusion_mlx_request_latency_p95_seconds",
+                    "fusion_mlx_ttft_p95_seconds_all_models",
                     "gauge",
-                    "Aggregate time-to-first-token p95 across all models (seconds), bucketed from fusion_mlx_ttft_seconds.",
+                    "Time-to-first-token p95 across all models since server start (seconds), merged from fusion_mlx_ttft_seconds buckets.",
                     round(merged_p95, 4),
                 )
             )

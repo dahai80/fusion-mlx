@@ -56,6 +56,12 @@ export function MetricsPage() {
                 setError(null);
                 const now = Date.now();
                 const prev = samplesRef.current[samplesRef.current.length - 1];
+                // Counter went backwards: server restarted, so the cumulative
+                // TTFT histogram was reset. Carrying the previous p95 would
+                // plot a pre-restart value against fresh counters.
+                const reset =
+                    prev !== undefined &&
+                    (m.requests_total ?? 0) < prev.requests;
                 const next: UsageSample = {
                     t: now,
                     requests: m.requests_total ?? prev?.requests ?? 0,
@@ -65,7 +71,7 @@ export function MetricsPage() {
                     prompt: m.prompt_tokens_total ?? prev?.prompt ?? 0,
                     tpsSum: m.tps_sum ?? prev?.tpsSum,
                     tpsCount: m.tps_count ?? prev?.tpsCount,
-                    p95: m.ttft_p95_seconds ?? prev?.p95,
+                    p95: m.ttft_p95_seconds ?? (reset ? undefined : prev?.p95),
                 };
                 setSamples((prevSamples) => {
                     const out = [...prevSamples, next];
@@ -410,7 +416,7 @@ function UsageWindow({
                     }
                 />
                 <MetricTile
-                    label="p95 TTFT"
+                    label="p95 TTFT (since start)"
                     value={
                         res.totals.p95 === null
                             ? "-"
@@ -425,7 +431,7 @@ function UsageWindow({
                             ? [{ label: "requests/min", points: res.points }]
                             : [
                                   {
-                                      label: "p95 TTFT",
+                                      label: "p95 TTFT (cumulative)",
                                       points: res.latencyPoints,
                                   },
                               ]
@@ -483,8 +489,9 @@ function formatDuration(seconds?: number | null): string {
     return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 }
 
-// #1296: swap rate gauge is signed (negative = swap reclaimed); null when
-// the backend has no second sample yet or psutil is unavailable.
+// #1296: swap rate gauge is signed net page-in minus page-out (negative =
+// actively paging out under memory pressure); null when the backend has no
+// second sample yet or psutil is unavailable.
 function formatRate(v?: number | null): string {
     if (v === null || v === undefined || !Number.isFinite(v)) return "-";
     return `${v < 0 ? "-" : ""}${formatBytes(Math.abs(v))}/s`;

@@ -51,8 +51,99 @@ def test_sample_swap_rate_from_sin_sout_deltas(monkeypatch):
     first = swap_stats.sample_swap()
     assert first["swap_rate_bytes_per_second"] is None
     second = swap_stats.sample_swap()
-    assert second["swap_rate_bytes_per_second"] == pytest.approx(1500.0)
+    # Signed net rate: page-in delta 2000 minus page-out delta 1000 over 2s.
+    assert second["swap_rate_bytes_per_second"] == pytest.approx(500.0)
     logger.info("swap rate computed from sin/sout deltas: %s", second)
+
+
+def test_sample_swap_rate_goes_negative_when_paging_out(monkeypatch):
+    from fusion_mlx.utils import swap_stats
+
+    times = iter([200.0, 203.0])
+    counters = iter(
+        [
+            {
+                "swap_total_bytes": 0,
+                "swap_used_bytes": 0,
+                "swap_free_bytes": 0,
+                "swap_percent": 0.0,
+                "_sin": 5000,
+                "_sout": 1000,
+            },
+            {
+                "swap_total_bytes": 0,
+                "swap_used_bytes": 0,
+                "swap_free_bytes": 0,
+                "swap_percent": 0.0,
+                "_sin": 5000,
+                "_sout": 4000,
+            },
+        ]
+    )
+    monkeypatch.setattr(swap_stats, "_monotonic", lambda: next(times))
+    monkeypatch.setattr(swap_stats, "_read_swap_counters", lambda: next(counters))
+
+    assert swap_stats.sample_swap()["swap_rate_bytes_per_second"] is None
+    paging_out = swap_stats.sample_swap()
+    assert paging_out["swap_rate_bytes_per_second"] == pytest.approx(-1000.0)
+    logger.info("signed swap rate goes negative on page-out only: %s", paging_out)
+
+
+def test_sample_swap_rate_rebaselines_on_counter_reset(monkeypatch):
+    from fusion_mlx.utils import swap_stats
+
+    times = iter([300.0, 305.0])
+    counters = iter(
+        [
+            {
+                "swap_total_bytes": 0,
+                "swap_used_bytes": 0,
+                "swap_free_bytes": 0,
+                "swap_percent": 0.0,
+                "_sin": 9000,
+                "_sout": 9000,
+            },
+            {
+                "swap_total_bytes": 0,
+                "swap_used_bytes": 0,
+                "swap_free_bytes": 0,
+                "swap_percent": 0.0,
+                "_sin": 10,
+                "_sout": 10,
+            },
+        ]
+    )
+    monkeypatch.setattr(swap_stats, "_monotonic", lambda: next(times))
+    monkeypatch.setattr(swap_stats, "_read_swap_counters", lambda: next(counters))
+
+    assert swap_stats.sample_swap()["swap_rate_bytes_per_second"] is None
+    after_reset = swap_stats.sample_swap()
+    # Wrapped counters must not emit a garbage negative rate.
+    assert after_reset["swap_rate_bytes_per_second"] is None
+    logger.info("swap rate rebaselined after counter reset: %s", after_reset)
+
+
+def test_swap_failure_warns_once(caplog):
+    from fusion_mlx.utils import swap_stats
+
+    def boom():
+        raise OSError("psutil unavailable")
+
+    def sample():
+        swap_stats._last_at = 0.0
+        return swap_stats.sample_swap()
+
+    original = swap_stats._read_swap_counters
+    swap_stats._read_swap_counters = boom
+    try:
+        with caplog.at_level(logging.WARNING, logger="fusion_mlx.utils.swap_stats"):
+            sample()
+            sample()
+    finally:
+        swap_stats._read_swap_counters = original
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    logger.info("swap read failure warned %d time(s) across two samples", len(warnings))
 
 
 def test_sample_swap_rate_holds_baseline_inside_min_interval(monkeypatch):
@@ -214,7 +305,8 @@ def test_p95_gauges_render_from_ttft_histogram():
         sm._ttft_hist["m1"] = hist
         body = render_prometheus_metrics()
         assert 'fusion_mlx_ttft_p95_seconds{model="m1"} 0.25' in body
-        assert "fusion_mlx_request_latency_p95_seconds 0.25" in body
+        assert "fusion_mlx_ttft_p95_seconds_all_models 0.25" in body
+        assert "fusion_mlx_request_latency_p95_seconds" not in body
         logger.info("p95 gauges rendered from stubbed ttft histogram")
     finally:
         sm.clear_metrics()
