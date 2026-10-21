@@ -8,9 +8,6 @@ const DEV_API_KEY: string | undefined = import.meta.env.VITE_API_KEY;
 
 export { DEV_API_KEY };
 
-export const isEmbedded = (): boolean =>
-    typeof window !== "undefined" && window.parent !== window;
-
 // ?embedded=1 is added by the shell; standalone keeps the module's own nav.
 export const embeddedParam = (): boolean => {
     try {
@@ -22,4 +19,13 @@ export const embeddedParam = (): boolean => {
     }
 };
 
-export const sdk = createShellSdk();
+// #1298: a shell deep link opened at top level has no parent frame, so the
+// iframe check alone reports standalone. The ?embedded=1 flag is
+// authoritative for chrome and host APIs; auth stays keyed on the served
+// topology (see api.ts authHeaders) so a flagged link outside /shell/ still
+// authenticates.
+export const isEmbedded = (): boolean =>
+    typeof window !== "undefined" &&
+    (window.parent !== window || embeddedParam());
+
+export const sdk = createShellSdk({ embedded: isEmbedded() });

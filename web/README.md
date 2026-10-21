@@ -71,7 +71,10 @@ dist works at `/` and under `/shell/fusion-mlx/`.
   load/unload.
 - **Logs**: level floor / keyword / "from HH:MM" filters over the live tail.
 - **Embedded** (#1277): minimal top tab bar (Models/Metrics/Logs) when served
-  inside the shell; standalone keeps the bottom nav.
+  inside the shell; standalone keeps the bottom nav. Deep links opened
+  directly with `?embedded=1` count as embedded (#1298): no standalone
+  warning, and without a parent frame the host relay degrades explicitly —
+  `http` goes direct, toast logs locally, tab is a no-op.
 
 ## Layout
 
