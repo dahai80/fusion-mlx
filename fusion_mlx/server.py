@@ -926,6 +926,21 @@ def load_model(
     cfg.model_name = served_model_name or resolved
     if not cfg.model_alias:
         cfg.model_alias = model_name
+    # #1301: the SchedulerConfig built by serve_command (with the
+    # settings.json cache section already applied) is THE scheduler config.
+    # Publish it on the singleton so every reader — runtime/cache.py, the
+    # admin surface, the OpenAI request semaphore — sees the values the
+    # engine pool will actually run with, instead of a second default
+    # instance.
+    if scheduler_config is not None:
+        cfg.scheduler = scheduler_config
+        logger.info(
+            "scheduler config published to singleton: ssd_dir=%s "
+            "hot_cache_max=%s max_num_seqs=%s",
+            getattr(scheduler_config, "paged_ssd_cache_dir", None),
+            getattr(scheduler_config, "hot_cache_max_size", None),
+            getattr(scheduler_config, "max_num_seqs", None),
+        )
     # Wire CLI cloud args into the ServerConfig so Server._startup actually
     # constructs the CloudRouter. Previously these were staged in
     # _pending_single_model but never consumed — --cloud-model enabled
@@ -941,7 +956,6 @@ def load_model(
     _pending_single_model = {
         "model_path": resolved,
         "original_name": model_name,
-        "scheduler_config": scheduler_config,
         "stream_interval": stream_interval,
         "served_model_name": served_model_name,
         "mtp": mtp,
@@ -963,11 +977,17 @@ def load_model(
     # Ensure the singleton Server + app exist so _startup will pick up the
     # staged model when uvicorn starts the lifespan.
     get_app()
-    # Stamp cloud args on the LIVE Server instance's config too — Server()
-    # defaults to a fresh ServerConfig() (not the get_config() singleton), so
-    # singleton-only stamping never reached _startup's CloudRouter wiring
-    # (#0917 flag audit: --cloud-model was staged but never consumed).
+    # Stamp cloud args on the LIVE Server instance's config too. get_app()
+    # passes the singleton (#1299) so this is usually the same object, but a
+    # Server built with its own ServerConfig must still see them (#0917 flag
+    # audit: --cloud-model was staged but never consumed by _startup).
     inst = globals().get("_server_instance")
+    if inst is not None and scheduler_config is not None:
+        # #1301: _startup builds the EnginePool from inst.config, so stamp the
+        # serve-built object here too — a private ServerConfig would otherwise
+        # leave the pool on its own default scheduler config while the single
+        # model ran the settings.json one.
+        inst.config.scheduler = scheduler_config
     if inst is not None and (cloud_model or cloud_consent):
         icfg = inst.config
         if cloud_model:
@@ -1842,47 +1862,26 @@ class Server:
         return app
 
     def _convert_scheduler_config(self):
-        """Convert ServerConfig.scheduler to scheduler SchedulerConfig.
-
-        Carries every spec-decode field (dflash2/dspark/suffix) through to
-        the engine pool. Previously this dropped dflash2_drafter_path etc,
-        so --enable-dflash2 was silently ignored in --model-dir mode.
-        """
-        from .scheduler.config import SchedulerConfig as SchedConfig
-
+        # #1301: single source of truth. The serve path builds ONE
+        # SchedulerConfig (cli_serve.serve_command), applies the settings.json
+        # cache section to it, publishes it on the config singleton, and
+        # load_model stamps that same object onto this Server. Returning the
+        # object itself keeps every field wired with no field list to
+        # maintain — the old field-by-field copy silently dropped anything
+        # missing from its hand-maintained tuple (e.g. an on-demand pool load
+        # booting the 1GiB pure-memory prefix cache while the boot-time model
+        # got the SSD config from settings.json).
+        #
+        # Per-engine isolation is unchanged: BatchedEngine.start() takes
+        # copy.copy() before stamping its own model_name (engines/batched.py),
+        # so engines never mutate this shared base object.
         src = self.config.scheduler
-        kw = dict(
-            max_num_seqs=src.max_num_seqs,
-            max_num_batched_tokens=src.max_num_batched_tokens,
-            completion_batch_size=src.completion_batch_size,
-            prefill_step_size=src.prefill_step_size,
-            chunked_prefill=src.chunked_prefill_tokens > 0,
-            model_name="",
+        logger.debug(
+            "#1301: pool consumes ServerConfig.scheduler (%s, ssd_dir=%s)",
+            type(src).__name__,
+            getattr(src, "paged_ssd_cache_dir", None),
         )
-        for _f in (
-            "max_cache_blocks",
-            "paged_cache_block_size",
-            "paged_ssd_cache_dir",
-            "paged_ssd_cache_max_size",
-            "hot_cache_only",
-            "hot_cache_max_size",
-            "initial_cache_blocks",
-            "spec_decode",
-            "dflash_drafter_path",
-            "dflash2_drafter_path",
-            "dflash2_block_size",
-            "dflash2_draft_bits",
-            "dspark_drafter_path",
-            "dspark_draft_quant_bits",
-            "enable_suffix_decoding",
-            "suffix_max_draft",
-            "suffix_max_suffix_len",
-            "suffix_min_confidence",
-            "suffix_min_draft_len",
-        ):
-            if hasattr(src, _f):
-                kw[_f] = getattr(src, _f)
-        return SchedConfig(**kw)
+        return src
 
     def run(self):
         """Start the server using uvicorn."""
@@ -2824,7 +2823,9 @@ class Server:
         # exactly like a discovered model.
         model_path = pending["model_path"]
         served = pending.get("served_model_name") or model_path
-        scheduler_config = pending.get("scheduler_config")
+        # #1301: the engine and the pool read the same object — load_model()
+        # stamped the serve-built SchedulerConfig onto self.config.scheduler.
+        scheduler_config = self.config.scheduler
         stream_interval = pending.get("stream_interval", 1)
 
         # Issue #256: detect diffusion_gemma from config and route to

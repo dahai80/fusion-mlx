@@ -723,22 +723,25 @@ def serve_command(args):
         gpu_memory_utilization=args.gpu_memory_utilization,
     )
 
-    # #1288: apply the settings.json cache section (admin-panel surface) —
-    # previously only the --model-dir path did, so a single-model serve
-    # always booted the 1GiB in-memory LRU and agent-scale stores thrashed.
+    # #1288/#1299/#1301: apply the settings.json cache section (admin-panel
+    # surface) ONCE to the SchedulerConfig this path builds, then publish that
+    # object on the config singleton. Both consumers — the single-model engine
+    # (load_model → Server) and EnginePool's on-demand loads
+    # (Server._convert_scheduler_config) — consume this same object, so there
+    # is no second scheduler config that could miss the settings (the #1299
+    # prod failure: boot 4B ran the SSD config while the pool-loaded 27B
+    # thrashed the 1GiB pure-memory LRU).
     _apply_settings_cache_section(scheduler_config, None)
-    # #1288/#1299 follow-up: the local scheduler_config only feeds the
-    # single-model engine (load_model → pending → BatchedEngine). On-demand
-    # pool loads (a second model requested while another is served) build
-    # their scheduler from Server._convert_scheduler_config(), which reads
-    # the get_config().scheduler SINGLETON — a different object that never
-    # saw the settings. Prod hit exactly this: boot served the default 4B
-    # (settings applied, SSD on) but the CC-requested 27B loaded via the
-    # pool in pure-memory 1GiB mode (#158 branch), so every large-context
-    # turn thrashed the hot LRU and fell back to full re-prefill.
     from ..config import get_config
 
-    _apply_settings_cache_section(get_config().scheduler, None)
+    get_config().scheduler = scheduler_config
+    logger.info(
+        "scheduler config: single source published (max_num_seqs=%s, "
+        "ssd_dir=%s, hot_cache_max=%s)",
+        scheduler_config.max_num_seqs,
+        scheduler_config.paged_ssd_cache_dir,
+        scheduler_config.hot_cache_max_size,
+    )
 
     print("Mode: Continuous batching (for multiple concurrent users)")
     if args.chunked_prefill_tokens > 0:

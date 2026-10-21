@@ -522,8 +522,15 @@ class TestPrefixCacheNTupleSubState:
             def __init__(self, ratio=1):
                 self.state = None
 
-        _cache_mod.PoolingCache = _FakePoolingCache
-        monkeypatch.setattr(_cache_mod, "PoolingCache", _FakePoolingCache)
+        # raising=False: PoolingCache only exists after apply_deepseek_v4_patch.
+        # The earlier raw assignment + monkeypatch pair leaked the fake into
+        # the module for the rest of the session (monkeypatch captured the
+        # already-overwritten fake as the "original"), which broke
+        # test_v4_multi_session::test_pooling_cache_round_trip_through_paged_ssd
+        # under pytest-randomly orderings.
+        monkeypatch.setattr(
+            _cache_mod, "PoolingCache", _FakePoolingCache, raising=False
+        )
         h = PoolingCacheHandler()
 
         class _MockPoolingCache:
@@ -552,8 +559,11 @@ class TestPrefixCacheNTupleSubState:
             def __init__(self, ratio=1):
                 self.state = None
 
-        _cache_mod.PoolingCache = _FakePoolingCache
-        monkeypatch.setattr(_cache_mod, "PoolingCache", _FakePoolingCache)
+        # See test_pooling_cache_deserialize_3tuple_round_trip: raw assignment
+        # leaks the fake past monkeypatch teardown.
+        monkeypatch.setattr(
+            _cache_mod, "PoolingCache", _FakePoolingCache, raising=False
+        )
         h = PoolingCacheHandler()
         buf_kv = _MockArray((1, 4, 8))
         buf_gate = _MockArray((1, 4, 8))

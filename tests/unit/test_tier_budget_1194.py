@@ -177,6 +177,9 @@ class TestLoadEngineTierBudget:
         import fusion_mlx.server as server_mod
 
         srv = server_mod.Server.__new__(server_mod.Server)
+        # #1301: _load_single_model reads self.config.scheduler (single
+        # source of truth) — a bare __new__ stub needs the config.
+        srv.config = server_mod.ServerConfig()
         srv.pool = pool
         srv.engine_cores = {}
         sm = get_server_metrics()
