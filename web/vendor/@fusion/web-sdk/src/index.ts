@@ -22,6 +22,39 @@ const DEFAULT_RETRIES = 2;
 let requestSeq = 0;
 const nextId = () => `req-${Date.now().toString(36)}-${++requestSeq}`;
 
+// #1298: the shell marks embedded deep links with ?embedded=1. A top-level
+// open of such a link has no parent frame, so the iframe check alone reports
+// standalone and skips the host APIs.
+function embeddedFromLocation(): boolean {
+    if (typeof window === 'undefined') return false;
+    try {
+        return new URLSearchParams(window.location.search).get('embedded') === '1';
+    } catch {
+        return false;
+    }
+}
+
+async function directRequest<T>(path: string, init?: HttpRequestInit): Promise<HttpResult<T>> {
+    // #20: JSON bodies without an explicit content-type make FastAPI (and
+    // friends) reject the request with 422. Default to application/json;
+    // a caller-provided header always wins.
+    const hasContentType = Object.keys(init?.headers ?? {}).some(
+        (k) => k.toLowerCase() === 'content-type'
+    );
+    const headers =
+        init?.body !== undefined && !hasContentType
+            ? { 'content-type': 'application/json', ...init?.headers }
+            : init?.headers;
+    const res = await fetch(path, {
+        method: init?.method ?? 'GET',
+        headers,
+        body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+    });
+    const data = (await res.json().catch(() => null)) as T;
+    if (!res.ok) throw new HttpError(res.status, 'http_error', `request failed: ${res.status}`);
+    return { status: res.status, ok: true, data };
+}
+
 interface BridgeDeps {
     isEmbedded: boolean;
     send(msg: ModuleRequest): void;
@@ -105,26 +138,8 @@ function standaloneSdk(log: BridgeDeps['log']): FusionShellSdk {
     mql?.addEventListener('change', (e) =>
         themeListeners.forEach((fn) => fn(e.matches ? 'dark' : 'light'))
     );
-    const request = async <T>(path: string, init?: HttpRequestInit): Promise<HttpResult<T>> => {
-        // #20: JSON bodies without an explicit content-type make FastAPI (and
-        // friends) reject the request with 422. Default to application/json;
-        // a caller-provided header always wins.
-        const hasContentType = Object.keys(init?.headers ?? {}).some(
-            (k) => k.toLowerCase() === 'content-type'
-        );
-        const headers =
-            init?.body !== undefined && !hasContentType
-                ? { 'content-type': 'application/json', ...init?.headers }
-                : init?.headers;
-        const res = await fetch(path, {
-            method: init?.method ?? 'GET',
-            headers,
-            body: init?.body === undefined ? undefined : JSON.stringify(init.body),
-        });
-        const data = (await res.json().catch(() => null)) as T;
-        if (!res.ok) throw new HttpError(res.status, 'http_error', `request failed: ${res.status}`);
-        return { status: res.status, ok: true, data };
-    };
+    const request = async <T>(path: string, init?: HttpRequestInit): Promise<HttpResult<T>> =>
+        directRequest<T>(path, init);
     return {
         http: {
             request,
@@ -195,7 +210,7 @@ function standaloneSdk(log: BridgeDeps['log']): FusionShellSdk {
 }
 
 export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
-    const opts: Required<ShellSdkOptions> = {
+    const opts: Required<Omit<ShellSdkOptions, 'embedded'>> = {
         origin: options?.origin ?? (typeof window !== 'undefined' ? window.location.origin : ''),
         timeoutMs: options?.timeoutMs ?? DEFAULT_TIMEOUT,
         retries: options?.retries ?? DEFAULT_RETRIES,
@@ -204,8 +219,23 @@ export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
         // eslint-disable-next-line no-console
         (console[level] as typeof console.log)(...args);
     };
-    if (typeof window === 'undefined' || window.parent === window) {
+    // #1298: embedded when framed by the shell OR opened as a shell deep
+    // link (?embedded=1) at top level. The host APIs (postMessage bridge,
+    // heartbeat responder, theme/lang events) are wired in both cases so a
+    // framed deep link behaves identically; without a parent frame there is
+    // no host to answer, so http/toast/tab degrade explicitly instead of
+    // timing out through the bridge.
+    const hasHostFrame = typeof window !== 'undefined' && window.parent !== window;
+    const embedded = options?.embedded ?? (hasHostFrame || embeddedFromLocation());
+    if (typeof window === 'undefined' || !embedded) {
         return standaloneSdk(log);
+    }
+    if (!hasHostFrame) {
+        log(
+            'log',
+            '[fusion-sdk] embedded via ?embedded=1 without a parent frame: ' +
+                'host relay unavailable, http goes direct'
+        );
     }
 
     const themeListeners = new Set<(mode: ThemeMode) => void>();
@@ -269,6 +299,9 @@ export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
 
     const http = {
         async request<T = unknown>(path: string, init?: HttpRequestInit): Promise<HttpResult<T>> {
+            if (!hasHostFrame) {
+                return directRequest<T>(path, init);
+            }
             const res = await bridge.call<HttpResult<T>>(
                 'http',
                 {
@@ -292,11 +325,20 @@ export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
         http,
         toast: {
             show(input: ToastInput) {
+                if (!hasHostFrame) {
+                    log(
+                        input.level === 'error' ? 'error' : 'log',
+                        `[toast:${input.level}]`,
+                        input.message
+                    );
+                    return;
+                }
                 void bridge.call('toast', input, 5000).catch(() => undefined);
             },
         },
         tab: {
             setActiveTask(task: { name: string } | null) {
+                if (!hasHostFrame) return;
                 void bridge.call('tab', task, 5000).catch(() => undefined);
             },
         },

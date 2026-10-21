@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed — embedded deep links recognized by the shell SDK (#1298)
+- `?embedded=1` opened at top level (no parent iframe) now selects the
+  embedded SDK path: no `standalone mode` console warning, and the host
+  APIs (postMessage bridge, heartbeat responder, theme/lang events) are
+  wired exactly as in the iframe case.
+- Without a parent frame there is no host to answer, so host-relayed
+  `http`/`toast`/`tab` calls degrade explicitly: `http` uses a direct
+  same-origin request (logged once), toast logs locally, tab is a no-op.
+- `web/src/sdk.ts` `isEmbedded()` now honors the URL flag, so auth headers
+  and module chrome match the embedded posture on deep-link direct open.
+
 ### Fixed — SSD reconstruct cap no longer rejects warm >64k prefixes (#1306)
 - A configured `ssd_reconstruct_max_tokens: 65536` rejected a warm
   69632-token agent prefix and every Claude Code turn re-prefilled all
