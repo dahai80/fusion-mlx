@@ -211,6 +211,84 @@ class TestPersistLoadCleanup:
     def test_find_by_prompt_disabled(self, disabled, temp_root):
         assert kv_resume.find_resumable_kv_for_prompt(list(range(10))) is None
 
+    def test_find_by_prompt_prefers_largest_matching_offset(
+        self, enabled, temp_root, monkeypatch
+    ):
+        from fusion_mlx.runtime.disk_kv_checkpoint import LoadedCheckpoint
+
+        prompt = list(range(1000, 1300))
+
+        def _fake_write(cache, *, root, req_hash, token_offset, **kwargs):
+            import json
+
+            dst_dir = os.path.join(root, req_hash)
+            os.makedirs(dst_dir, exist_ok=True)
+            body = os.path.join(dst_dir, f"checkpoint-{token_offset}.safetensors")
+            meta = os.path.join(dst_dir, f"checkpoint-{token_offset}.json")
+            with open(body, "wb"):
+                pass
+            with open(meta, "w") as fh:
+                json.dump(
+                    {
+                        "token_offset": token_offset,
+                        "kv_dtype": "bf16",
+                        "model_name": kwargs.get("model_name"),
+                        **kwargs.get("extra_metadata", {}),
+                    },
+                    fh,
+                )
+            return body
+
+        monkeypatch.setattr(
+            "fusion_mlx.runtime.disk_kv_checkpoint.write_checkpoint",
+            _fake_write,
+        )
+        monkeypatch.setattr(
+            "fusion_mlx.runtime.disk_kv_checkpoint.model_requires_full_checkpoint",
+            lambda m: False,
+        )
+
+        # Larger checkpoint written first, smaller one written last — the
+        # newest mtime must not win over the larger reusable prefix.
+        assert (
+            kv_resume.persist_request_kv(
+                "req-big",
+                _fake_cache(2),
+                256,
+                model_name="llama",
+                prompt_token_ids=prompt,
+            )
+            is not None
+        )
+        assert (
+            kv_resume.persist_request_kv(
+                "req-small",
+                _fake_cache(2),
+                128,
+                model_name="llama",
+                prompt_token_ids=prompt,
+            )
+            is not None
+        )
+
+        def _fake_load(path):
+            offset = int(path.rsplit("checkpoint-", 1)[1].split(".")[0])
+            return LoadedCheckpoint(
+                cache=_fake_cache(2),
+                token_offset=offset,
+                kv_dtype="bf16",
+                requires_full_checkpoint=False,
+                metadata={"source": "disconnect_persist"},
+                path=path,
+            )
+
+        monkeypatch.setattr(
+            "fusion_mlx.runtime.disk_kv_checkpoint.load_checkpoint", _fake_load
+        )
+        loaded = kv_resume.find_resumable_kv_for_prompt(prompt, model_name="llama")
+        assert loaded is not None
+        assert loaded.token_offset == 256
+
     def test_load_returns_none_when_no_checkpoint(self, enabled, temp_root):
         loaded = kv_resume.load_resumable_kv("missing", model_name="m")
         assert loaded is None
