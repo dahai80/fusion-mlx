@@ -2,7 +2,18 @@
 
 ## [Unreleased]
 
-HEAD
+### Fixed — SSD reconstruct cap no longer rejects warm >64k prefixes (#1306)
+- A configured `ssd_reconstruct_max_tokens: 65536` rejected a warm
+  69632-token agent prefix and every Claude Code turn re-prefilled all
+  69k tokens (~236s) instead of reconstructing ~3s of KV from disk.
+  The cap now defaults to `0` = unlimited (a value `<= 0` disables the
+  gate on both admission paths); the knob stays for deployments that
+  measured a slower reconstruct path.
+- Reconstructs of 8192+ tokens log `PREFIX-PREP reconstruct done ...
+  tokens= elapsed= tok_per_s=` so a slow path is visible in the server
+  log instead of only being inferred from TTFT.
+- `docs/configuration.md` documents the setting, env override and the
+  0 = unlimited semantics.
 
 ### Fixed — SSD prefix reuse no longer skipped on unrelated store activity (#1299)
 - Second wiring hole found while verifying: `get_app()` built `Server()`
