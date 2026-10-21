@@ -5,6 +5,14 @@
 HEAD
 
 ### Fixed — SSD prefix reuse no longer skipped on unrelated store activity (#1299)
+- Second wiring hole found while verifying: `get_app()` built `Server()`
+  with a fresh default `ServerConfig()`, so pool-loaded engines (any model
+  requested after boot) never saw the settings.json cache section even
+  after the #1289 serve_command fix — the 27B booted the 1GiB pure-memory
+  prefix cache while the boot-time 4B got the SSD-backed config.
+  `get_app()` now builds `Server(get_config())`, and serve_command applies
+  the cache section to the `get_config().scheduler` singleton as well as
+  its local config.
 - `_prepare_prefix_cache_for_request` skipped SSD reconstruct whenever ANY
   `store_cache` future was in flight — a global guard, so with parallel
   Claude Code sessions some other session's store almost always blocked

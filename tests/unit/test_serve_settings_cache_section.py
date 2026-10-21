@@ -78,3 +78,29 @@ def test_partial_section_applies_only_present_fields(tmp_path):
     assert cfg.hot_cache_max_size == 2 * 1000**3
     assert cfg.paged_ssd_cache_dir is None
     assert cfg.hot_cache_only is False
+
+
+def test_singleton_scheduler_config_takes_cache_section(tmp_path):
+    from fusion_mlx.config import get_config
+
+    d = _write_settings(
+        tmp_path,
+        {
+            "enabled": True,
+            "hot_cache_only": False,
+            "hot_cache_max_size": "20GB",
+            "paged_ssd_cache_dir": "/tmp/ssd-pool-test",
+        },
+    )
+    from dataclasses import fields, replace
+
+    original = get_config().scheduler
+    snapshot = replace(original)
+    try:
+        assert _apply_settings_cache_section(original, d) is True
+        assert original.paged_ssd_cache_dir == "/tmp/ssd-pool-test"
+        assert original.hot_cache_max_size == 20 * 1000**3
+        assert original.hot_cache_only is False
+    finally:
+        for f in fields(original):
+            setattr(original, f.name, getattr(snapshot, f.name))

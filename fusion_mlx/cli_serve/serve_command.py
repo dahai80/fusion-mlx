@@ -727,6 +727,18 @@ def serve_command(args):
     # previously only the --model-dir path did, so a single-model serve
     # always booted the 1GiB in-memory LRU and agent-scale stores thrashed.
     _apply_settings_cache_section(scheduler_config, None)
+    # #1288/#1299 follow-up: the local scheduler_config only feeds the
+    # single-model engine (load_model → pending → BatchedEngine). On-demand
+    # pool loads (a second model requested while another is served) build
+    # their scheduler from Server._convert_scheduler_config(), which reads
+    # the get_config().scheduler SINGLETON — a different object that never
+    # saw the settings. Prod hit exactly this: boot served the default 4B
+    # (settings applied, SSD on) but the CC-requested 27B loaded via the
+    # pool in pure-memory 1GiB mode (#158 branch), so every large-context
+    # turn thrashed the hot LRU and fell back to full re-prefill.
+    from ..config import get_config
+
+    _apply_settings_cache_section(get_config().scheduler, None)
 
     print("Mode: Continuous batching (for multiple concurrent users)")
     if args.chunked_prefill_tokens > 0:
