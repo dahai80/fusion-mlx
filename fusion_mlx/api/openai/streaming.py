@@ -305,7 +305,7 @@ async def _stream_chat_generator(
             ct_kwargs_stream, client_thinking=client_thinking_from_request(request)
         )
         compiled_grammar = _compile_grammar_for_request(engine, request)
-        async for gen in engine.stream_chat(
+        _engine_agen = engine.stream_chat(
             messages=messages,
             max_tokens=sampling.max_tokens,
             temperature=sampling.temperature,
@@ -324,7 +324,19 @@ async def _stream_chat_generator(
             compiled_grammar=compiled_grammar,
             resume_prompt_cache=resume_prompt_cache,
             resume_cached_tokens=resume_cached_tokens,
-        ):
+        )
+        # Prefill-phase keepalive: engine yields nothing before first token,
+        # so long prefills left the stream silent past client idle timeouts.
+        from ..utils import KEEPALIVE_PING
+
+        if _keepalive_interval > 0:
+            from ..utils import stream_with_keepalive
+
+            _engine_agen = stream_with_keepalive(_engine_agen, _keepalive_interval)
+        async for gen in _engine_agen:
+            if gen is KEEPALIVE_PING:
+                yield ": keepalive\n\n"
+                continue
             if getattr(gen, "time_to_first_token", None) is not None:
                 _stream_ttft = gen.time_to_first_token
             if getattr(gen, "generation_tokens_per_second", None) is not None:
@@ -681,7 +693,12 @@ async def _stream_chat_generator(
                 type(exc).__name__,
                 exc,
             )
-            yield 'data: {"error": {"message": "Internal server error"}}\n\n'
+            import json as _json
+
+            err_payload = _json.dumps(
+                {"error": {"message": f"{type(exc).__name__}: {exc}", "status": 500}}
+            )
+            yield f"data: {err_payload}\n\n"
     finally:
         await _release()
 
