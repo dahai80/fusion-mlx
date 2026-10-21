@@ -337,6 +337,32 @@ def test_model_residency_metric_renders(monkeypatch):
     logger.info("model residency gauge rendered: %s", line)
 
 
+def test_model_residency_renders_with_real_pool_locks(monkeypatch):
+    import threading
+
+    import fusion_mlx.server as srv
+    from fusion_mlx.routes_internal.metrics import render_prometheus_metrics
+
+    class _AsyncLockShaped:
+        # Looks like pool._lock (TrackedAsyncLock): no sync context manager.
+        def __enter__(self):
+            raise TypeError(
+                "'TrackedAsyncLock' object does not support the context manager protocol"
+            )
+
+    entry = SimpleNamespace(engine=object(), loaded_at=time.time() - 30.0)
+    pool = SimpleNamespace(
+        _entries={"m1": entry},
+        _lock=_AsyncLockShaped(),
+        _discover_sync_lock=threading.Lock(),
+    )
+    monkeypatch.setitem(srv._server_state, "engine_pool", pool)
+
+    body = render_prometheus_metrics()
+    assert 'fusion_mlx_model_resident_seconds{model="m1"}' in body
+    logger.info("residency renders against the async pool lock shape")
+
+
 def test_engine_pool_status_exposes_residency():
     from fusion_mlx.pool.engine_pool import EngineEntry, EnginePool
 

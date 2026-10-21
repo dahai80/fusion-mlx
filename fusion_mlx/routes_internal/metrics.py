@@ -532,8 +532,11 @@ def _render_model_residency_metrics() -> list[str]:
         if pool is None:
             return lines
         now = time.time()
-        lock = getattr(pool, "_lock", None)
-        if lock is not None:
+        # pool._lock is a TrackedAsyncLock (asyncio) and cannot be entered
+        # from this sync renderer; pool._discover_sync_lock is the threading
+        # lock that guards sync entry access. Either may be absent on stubs.
+        lock = getattr(pool, "_discover_sync_lock", None)
+        if lock is not None and hasattr(lock, "__enter__"):
             with lock:
                 entries = sorted((getattr(pool, "_entries", {}) or {}).items())
         else:
