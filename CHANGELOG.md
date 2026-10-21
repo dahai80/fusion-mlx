@@ -26,6 +26,22 @@
 - `docs/configuration.md` documents the setting, env override and the
   0 = unlimited semantics.
 
+### Fixed — one SchedulerConfig source of truth in the serve path (#1301)
+- `serve_command` publishes the `SchedulerConfig` it builds (settings.json
+  cache section already applied) on the config singleton, and `load_model`
+  stamps that same object onto the live `Server`. The engine pool consumes
+  it directly, so on-demand pool loads inherit the serve cache/spec-decode
+  config instead of silently re-defaulting it (a 27B on-demand load could
+  boot the 1GiB pure-memory prefix cache while the boot-time model ran the
+  SSD config from settings.json).
+- `Server._convert_scheduler_config` no longer copies a hand-maintained
+  list of field names — the drift trap behind #1288/#1289. The field list
+  is gone; every `SchedulerConfig` field reaches the pool by construction.
+- New guard test `tests/unit/test_scheduler_config_single_source_1301.py`
+  reflects over every `SchedulerConfig` field, stamps sentinels, and fails
+  naming the dropped fields if any conversion point regresses to a partial
+  copy. It also asserts the serve path builds `SchedulerConfig` exactly once.
+
 ### Fixed — SSD prefix reuse no longer skipped on unrelated store activity (#1299)
 - Second wiring hole found while verifying: `get_app()` built `Server()`
   with a fresh default `ServerConfig()`, so pool-loaded engines (any model
