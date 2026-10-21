@@ -1,258 +1,88 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for _with_sse_keepalive SSE wrapper."""
+# #1294: this file used to import `_with_sse_keepalive` / `_resolve_keepalive`
+# / `_KEEPALIVE_*` from fusion_mlx.server. Those symbols never existed on
+# main — the module-level keepalive wrapper was replaced by the SSEKeepalive
+# class plus stream_with_keepalive in fusion_mlx/api/utils.py, so all 13 tests
+# here failed at import. The suite now pins the current API.
 
-import json
+import asyncio
 
-import pytest
-
-from fusion_mlx.server import _with_sse_keepalive
-
-
-async def _collect(gen):
-    """Collect all items from an async generator."""
-    items = []
-    async for item in gen:
-        items.append(item)
-    return items
+from fusion_mlx.api.utils import KEEPALIVE_PING, SSEKeepalive, stream_with_keepalive
 
 
-class TestSSEKeepaliveExceptionHandling:
-    """Tests for exception handling in _with_sse_keepalive."""
+class TestSSEKeepalive:
+    def test_no_ping_before_interval(self):
+        keepalive = SSEKeepalive(interval_seconds=60.0)
+        keepalive.reset()
+        assert keepalive.maybe_ping() is None
 
-    @pytest.mark.asyncio
-    async def test_normal_generator_passes_through(self):
-        """Normal generator items should pass through unchanged."""
+    def test_ping_after_interval(self, monkeypatch):
+        clock = {"now": 1000.0}
+        monkeypatch.setattr("fusion_mlx.api.utils.time.monotonic", lambda: clock["now"])
+        keepalive = SSEKeepalive(interval_seconds=5.0)
+        keepalive.reset()
+        clock["now"] += 5.5
+        assert keepalive.maybe_ping() == ": keepalive\n\n"
 
-        async def gen():
-            yield "data: chunk1\n\n"
-            yield "data: chunk2\n\n"
+    def test_ping_resets_timer(self, monkeypatch):
+        clock = {"now": 1000.0}
+        monkeypatch.setattr("fusion_mlx.api.utils.time.monotonic", lambda: clock["now"])
+        keepalive = SSEKeepalive(interval_seconds=5.0)
+        keepalive.reset()
+        clock["now"] += 6.0
+        assert keepalive.maybe_ping() is not None
+        assert keepalive.maybe_ping() is None
 
-        items = await _collect(_with_sse_keepalive(gen()))
-        # First item is always the initial keepalive
-        assert items[0] == ": keep-alive\n\n"
-        assert "data: chunk1\n\n" in items
-        assert "data: chunk2\n\n" in items
-
-    @pytest.mark.asyncio
-    async def test_generator_exception_yields_error_sse(self):
-        """When inner generator raises, keepalive wrapper should yield
-        error SSE data and [DONE] instead of propagating the exception."""
-
-        async def gen():
-            yield "data: first_chunk\n\n"
-            raise RuntimeError("Memory limit exceeded during prefill")
-
-        items = await _collect(_with_sse_keepalive(gen()))
-
-        # Should contain initial keepalive + first chunk + error + done
-        assert items[0] == ": keep-alive\n\n"
-        assert "data: first_chunk\n\n" in items
-
-        # Find the error SSE event
-        error_items = [i for i in items if i.startswith("data: {")]
-        assert len(error_items) == 1
-        error_data = json.loads(error_items[0].removeprefix("data: ").strip())
-        assert "error" in error_data
-        assert "Memory limit exceeded during prefill" in error_data["error"]["message"]
-        assert error_data["error"]["type"] == "server_error"
-
-        # Must end with [DONE]
-        assert "data: [DONE]\n\n" in items
-
-    @pytest.mark.asyncio
-    async def test_generator_exception_before_any_yield(self):
-        """Exception on first iteration should still produce error SSE."""
-
-        async def gen():
-            if True:
-                raise ValueError("Block allocation failed")
-            yield  # unreachable, but makes this an async generator
-
-        items = await _collect(_with_sse_keepalive(gen()))
-
-        assert items[0] == ": keep-alive\n\n"
-
-        error_items = [i for i in items if i.startswith("data: {")]
-        assert len(error_items) == 1
-        error_data = json.loads(error_items[0].removeprefix("data: ").strip())
-        assert "Block allocation failed" in error_data["error"]["message"]
-        assert "data: [DONE]\n\n" in items
-
-    @pytest.mark.asyncio
-    async def test_empty_generator_completes_cleanly(self):
-        """Empty generator should complete without errors."""
-
-        async def gen():
-            return
-            yield  # make it an async generator
-
-        items = await _collect(_with_sse_keepalive(gen()))
-        assert items[0] == ": keep-alive\n\n"
-        # No error items
-        error_items = [i for i in items if i.startswith("data: {")]
-        assert len(error_items) == 0
+    def test_disabled_interval_never_pings(self):
+        keepalive = SSEKeepalive(interval_seconds=0)
+        assert keepalive.maybe_ping() is None
 
 
-class TestKeepaliveChunkFormats:
-    """Tests for protocol-aware keepalive chunk emission."""
-
-    @pytest.mark.asyncio
-    async def test_chat_chunk_format_is_valid_chat_completion_chunk(self):
-        from fusion_mlx.server import _KEEPALIVE_CHAT_CHUNK
-
-        async def gen():
-            yield "data: real\n\n"
-
-        items = await _collect(
-            _with_sse_keepalive(gen(), keepalive_chunk=_KEEPALIVE_CHAT_CHUNK)
-        )
-        assert items[0] == _KEEPALIVE_CHAT_CHUNK
-        body = items[0].removeprefix("data: ").strip()
-        payload = json.loads(body)
-        assert payload["object"] == "chat.completion.chunk"
-        assert payload["choices"][0]["delta"]["content"] == ""
-        assert payload["choices"][0]["finish_reason"] is None
-
-    @pytest.mark.asyncio
-    async def test_completion_chunk_format_is_valid_text_completion(self):
-        from fusion_mlx.server import _KEEPALIVE_COMPLETION_CHUNK
-
-        async def gen():
-            yield "data: real\n\n"
-
-        items = await _collect(
-            _with_sse_keepalive(gen(), keepalive_chunk=_KEEPALIVE_COMPLETION_CHUNK)
-        )
-        body = items[0].removeprefix("data: ").strip()
-        payload = json.loads(body)
-        assert payload["object"] == "text_completion"
-        assert payload["choices"][0]["text"] == ""
-        assert payload["choices"][0]["finish_reason"] is None
-
-    @pytest.mark.asyncio
-    async def test_anthropic_ping_event_format(self):
-        from fusion_mlx.server import _KEEPALIVE_ANTHROPIC_PING
-
-        async def gen():
-            yield "event: message_start\ndata: {}\n\n"
-
-        items = await _collect(
-            _with_sse_keepalive(gen(), keepalive_chunk=_KEEPALIVE_ANTHROPIC_PING)
-        )
-        assert items[0].startswith("event: ping\n")
-        assert 'data: {"type":"ping"}' in items[0]
-
-    @pytest.mark.asyncio
-    async def test_keepalive_off_skips_emission(self):
-        async def gen():
-            yield "data: real\n\n"
-
-        items = await _collect(_with_sse_keepalive(gen(), keepalive_chunk=None))
-        # No keepalive frame, just the real chunk passed through
-        assert items == ["data: real\n\n"]
+async def _agen(items):
+    for item in items:
+        yield item
 
 
-class TestChatKeepaliveSharesStreamId:
-    """The chunk-form chat keepalive must reuse the stream's completion id.
+class TestStreamWithKeepalive:
+    async def test_passes_items_through(self):
+        out = []
+        async for item in stream_with_keepalive(
+            _agen(["a", "b"]), interval_seconds=5.0
+        ):
+            out.append(item)
+        assert out == ["a", "b"]
 
-    Strict OpenAI stream accumulators key on a single per-stream ``id`` and
-    drop chunks whose id differs from the first. A keepalive carrying the
-    sentinel ``chatcmpl-keepalive`` id therefore causes them to discard the
-    real tool_calls/usage chunks. _chat_keepalive_chunk reuses the stream id so
-    the frame is a true no-op for those clients.
-    """
+    async def test_empty_stream_yields_nothing(self):
+        out = []
+        async for item in stream_with_keepalive(_agen([]), interval_seconds=0.01):
+            out.append(item)
+        assert out == []
 
-    def test_frame_uses_given_response_id(self):
-        from fusion_mlx.server import _chat_keepalive_chunk
+    async def test_ping_injected_during_long_gap(self):
+        async def slow():
+            await asyncio.sleep(0.12)
+            yield "late"
 
-        frame = _chat_keepalive_chunk("chatcmpl-abc123")
-        assert frame.startswith("data: ")
-        assert frame.endswith("\n\n")
-        payload = json.loads(frame.removeprefix("data: ").strip())
-        assert payload["id"] == "chatcmpl-abc123"
-        assert payload["object"] == "chat.completion.chunk"
-        assert payload["choices"][0]["delta"]["content"] == ""
-        assert payload["choices"][0]["finish_reason"] is None
+        out = []
+        async for item in stream_with_keepalive(slow(), interval_seconds=0.02):
+            out.append(item)
+        assert out.count(KEEPALIVE_PING) >= 2
+        assert out[-1] == "late"
 
-    def test_frame_does_not_use_sentinel_id(self):
-        from fusion_mlx.server import _chat_keepalive_chunk
+    async def test_cancellation_cancels_inner_generator(self):
+        cancelled = {"value": False}
 
-        payload = json.loads(
-            _chat_keepalive_chunk("chatcmpl-real").removeprefix("data: ").strip()
-        )
-        assert payload["id"] != "chatcmpl-keepalive"
+        async def stalled():
+            try:
+                await asyncio.sleep(60)
+                yield "never"
+            except asyncio.CancelledError:
+                cancelled["value"] = True
+                raise
 
-
-class TestResolveKeepalive:
-    """Tests for _resolve_keepalive helper that maps settings to wire format."""
-
-    def _set_mode(self, mode: str):
-        from fusion_mlx.server import _server_state
-
-        if _server_state.global_settings is None:
-            pytest.skip("global_settings not initialized")
-        _server_state.global_settings.server.sse_keepalive_mode = mode
-
-    def test_chunk_mode_returns_protocol_specific_frames(self):
-        from fusion_mlx.server import (
-            _KEEPALIVE_ANTHROPIC_PING,
-            _KEEPALIVE_CHAT_CHUNK,
-            _KEEPALIVE_COMPLETION_CHUNK,
-            _resolve_keepalive,
-            _server_state,
-        )
-
-        if _server_state.global_settings is None:
-            pytest.skip("global_settings not initialized")
-        original = _server_state.global_settings.server.sse_keepalive_mode
-        try:
-            self._set_mode("chunk")
-            assert _resolve_keepalive("openai_chat") == _KEEPALIVE_CHAT_CHUNK
-            assert (
-                _resolve_keepalive("openai_completion") == _KEEPALIVE_COMPLETION_CHUNK
-            )
-            assert _resolve_keepalive("anthropic") == _KEEPALIVE_ANTHROPIC_PING
-            # Responses API has no official ping; chunk mode disables keepalive
-            assert _resolve_keepalive("openai_responses") is None
-        finally:
-            _server_state.global_settings.server.sse_keepalive_mode = original
-
-    def test_comment_mode_returns_legacy_comment(self):
-        from fusion_mlx.server import (
-            _KEEPALIVE_COMMENT,
-            _resolve_keepalive,
-            _server_state,
-        )
-
-        if _server_state.global_settings is None:
-            pytest.skip("global_settings not initialized")
-        original = _server_state.global_settings.server.sse_keepalive_mode
-        try:
-            self._set_mode("comment")
-            for protocol in (
-                "openai_chat",
-                "openai_completion",
-                "anthropic",
-                "openai_responses",
-            ):
-                assert _resolve_keepalive(protocol) == _KEEPALIVE_COMMENT
-        finally:
-            _server_state.global_settings.server.sse_keepalive_mode = original
-
-    def test_off_mode_returns_none(self):
-        from fusion_mlx.server import _resolve_keepalive, _server_state
-
-        if _server_state.global_settings is None:
-            pytest.skip("global_settings not initialized")
-        original = _server_state.global_settings.server.sse_keepalive_mode
-        try:
-            self._set_mode("off")
-            for protocol in (
-                "openai_chat",
-                "openai_completion",
-                "anthropic",
-                "openai_responses",
-            ):
-                assert _resolve_keepalive(protocol) is None
-        finally:
-            _server_state.global_settings.server.sse_keepalive_mode = original
+        gen = stream_with_keepalive(stalled(), interval_seconds=0.01)
+        first = await gen.__anext__()
+        assert first is KEEPALIVE_PING
+        await gen.aclose()
+        await asyncio.sleep(0.05)
+        assert cancelled["value"], "inner generator was not cancelled"
