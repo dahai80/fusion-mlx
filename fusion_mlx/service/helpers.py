@@ -580,23 +580,42 @@ def _resolve_model_name(request_model: str | None) -> str:
     return _get_cfg_attr("model_name") or "default"
 
 
-def _aliases_match(request_model: str) -> bool:
-    model_name = _get_cfg_attr("model_name")
-    model_alias = _get_cfg_attr("model_alias")
-    model_path = _get_cfg_attr("model_path")
-    if request_model == model_name:
+def _aliases_match(request_model: str, locked: str | None) -> bool:
+    # Alias-aware equality: normalize BOTH sides through resolve_model so the
+    # short alias a client sends compares equal to the HF path the server
+    # pinned (R-04). An exception inside resolve_model (corrupt aliases.json,
+    # partial install) must not 500 the route — fall back to a literal miss.
+    if not request_model or not locked:
+        return False
+    if request_model == locked:
         return True
-    if model_alias and request_model == model_alias:
-        return True
-    if model_path and request_model == model_path:
-        return True
-    return False
+    try:
+        from ..model_aliases import resolve_model
+
+        return resolve_model(request_model) == resolve_model(locked)
+    except Exception as exc:
+        logger.debug(
+            "aliases_match: resolve_model failed for %r/%r: %s",
+            request_model,
+            locked,
+            exc,
+        )
+        return False
 
 
-def _resolve_request_alias_or_default(request_model: str | None) -> str | None:
+def _resolve_request_alias_or_default(
+    request_model: str | None, locked: str | None
+) -> str | None:
+    # "default" (and an absent/empty model) is the OpenAI-spec placeholder for
+    # "the model this server was booted with" — map it to the caller's locked
+    # modality id instead of letting the generic resolver land on the chat
+    # model (R-03). Returns None on a miss so the caller owns the rejection
+    # envelope (embeddings 404, audio 404).
     if not request_model or request_model == "default":
-        return _get_cfg_attr("model_name")
-    return request_model
+        return locked
+    if locked is None:
+        return None
+    return locked if _aliases_match(request_model, locked) else None
 
 
 def _resolve_max_tokens(

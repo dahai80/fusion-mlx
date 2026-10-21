@@ -1798,18 +1798,12 @@ test_release_check_random.py
 # REMOVED 2026-09-13 (#0913 audit): test_request_cancellation.py — file no
 # longer on disk (was a stub: 3 empty classes, 0 collected). The underlying
 # request-cancellation routing coverage gap is tracked in the #0913 issue.
-# KEEP_QUARANTINED: 15 fail / 5 pass. Pins PRE-REDESIGN R-03/R-04 alias contract:
-# 2-arg helpers _resolve_request_alias_or_default(request, locked) + _aliases_match("a","b")
-# — prod redesigned to 1-arg (helpers.py:596 _resolve_request_alias_or_default(request_model)
-# None/""/"default"->cfg.model_name else verbatim; helpers.py:583 _aliases_match(request_model)).
-# 6 route tests inject stale vllm_mlx.server stub + patch vllm_mlx.middleware.auth +
-# vllm_mlx.model_aliases + import fusion_mlx.routes_internal.embeddings (route now at
-# api/embeddings_routes.py using get_embedding_engine + resolve_model model_aliases.py:335).
-# Feature PRESERVED via new design (not regression): /v1/embeddings get_embedding_engine
-# resolves short alias->HF path. Architecture drift, full route-test rewrite needed
-# (not surgical). ISSUE #515 FILED. No prod change.
-# KEEP_QUARANTINED 2026-08-22 (#598): _resolve_request_alias_or_default/_aliases_match signature changed (1 arg, was 2). Deep drift.
-test_request_time_alias_resolution.py
+# RESCUED 2026-10-21 (#1297): 26/26 pass. The helper is 2-arg again
+# (_resolve_request_alias_or_default(request_model, locked) + _aliases_match(request_model, locked))
+# and the embeddings route now calls it, mapping "default" to the pool's embed entry instead of the
+# chat model; the audio resolver maps "default" to its STT/TTS default. Test file rewritten against
+# the current package name + pool-based get_embedding_engine contract (stale vllm_mlx refs, the
+# dead 1-arg signature, and the retired H-09 503 route guard all dropped).
 # test_responses_591_followups.py
 # KEEP_QUARANTINED test_responses_budget_exhaust_streaming.py (re-eval 2026-09-02):
 # 9 fail / 5 pass. Pins streaming /v1/responses budget-exhaust (max_output_tokens)

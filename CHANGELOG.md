@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed — embeddings/audio resolve "default" to their own modality (#1297)
+- `_resolve_request_alias_or_default` / `_aliases_match` (service/helpers.py)
+  are real 2-arg helpers again — sentinel maps to the caller's locked id,
+  equality normalizes both sides through `resolve_model`, and a registry
+  exception degrades to a literal comparison. They had been 1-arg degenerate
+  stubs with zero production callers.
+- `/v1/embeddings` now calls the helper: `model: "default"` maps to the
+  configured embed id or the pool's single embedding entry instead of the
+  served chat model (previously 400 `no_embedding_model`), and a short alias
+  compares equal to the resolved HF path.
+- `/v1/audio/transcriptions` / `/v1/audio/speech` map `"default"` to the STT
+  (`whisper-large-v3`) / TTS (`Kokoro-82M`) default instead of the chat model;
+  audio surfaces with no defined default answer 400 `model is required`.
+- `tests/unit/test_request_time_alias_resolution.py` rescued from quarantine
+  (26 pass) and rewritten against the current package + pool contract.
+
 ### Fixed — embedded deep links recognized by the shell SDK (#1298)
 - `?embedded=1` opened at top level (no parent iframe) now selects the
   embedded SDK path: no `standalone mode` console warning, and the host

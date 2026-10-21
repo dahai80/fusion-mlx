@@ -39,6 +39,34 @@ def set_embeddings_context(pool: Any, server_state: Any) -> None:
     _server_state = server_state
 
 
+def _default_embedding_model_id() -> str | None:
+    # The id the "default" sentinel maps to on this surface. A configured
+    # embed id wins; otherwise the pool's single embedding entry (embedding
+    # models are lazily discovered, not pinned — embedding_model_locked is
+    # never set on the serve path). Ambiguous or absent → None, so the caller
+    # falls back to the chat-aligned resolver instead of guessing.
+    from ..config import get_config
+
+    cfg = get_config()
+    for cand in (cfg.embedding_model_locked, cfg.embedding_model):
+        if cand:
+            return cand
+    if _pool is None:
+        return None
+    try:
+        ids = [
+            mid
+            for mid in _pool.list_models()
+            if getattr(_pool.get_entry(mid), "engine_type", None) == "embedding"
+        ]
+    except Exception as exc:
+        logger.debug("embedding default lookup failed: %s", exc)
+        return None
+    if len(ids) == 1:
+        return ids[0]
+    return None
+
+
 async def get_embedding_engine(model_id: str) -> Any:
     """Resolve, load, and type-check an embedding engine.
 
@@ -59,9 +87,33 @@ async def get_embedding_engine(model_id: str) -> Any:
                 }
             },
         )
-    from ..model_aliases import resolve_model
+    from ..service.helpers import _resolve_request_alias_or_default
 
-    resolved_id = resolve_model(model_id)
+    resolved_id = _resolve_request_alias_or_default(
+        model_id, _default_embedding_model_id()
+    )
+    if resolved_id is None:
+        # Not the configured embedding model (or no embed model configured):
+        # fall through to the same resolver the chat path uses so short
+        # aliases + HF paths still reach the pool, and "default" resolves the
+        # way it does on every other OpenAI-compatible surface.
+        from ..server import resolve_model_with_profile
+
+        try:
+            resolved_id, _profile_overrides = resolve_model_with_profile(model_id)
+        except ValueError as exc:
+            logger.info("Embedding model %r did not resolve: %s", model_id, exc)
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "message": f"Model not found: {model_id} ({exc})",
+                        "type": "invalid_request_error",
+                        "code": "model_not_found",
+                        "param": "model",
+                    }
+                },
+            ) from exc
     if resolved_id != model_id:
         logger.info("Embedding alias: %s -> %s", model_id, resolved_id)
     engine = await _pool.get_engine(resolved_id)
