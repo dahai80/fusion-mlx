@@ -145,6 +145,14 @@ class Request:
     cache_corruption_retries: int = 0
     generation_overflow_retries: int = 0
 
+    # #1299: set by the add_request kv_resume re-seed hook when it seeded
+    # prompt_cache from a disconnect checkpoint. The checkpoint is often a
+    # tiny early-boundary artifact (e.g. 2048 tokens from a canceled
+    # prefill) and must not short-circuit the paged-SSD prefix path — the
+    # scheduler re-runs prefix prep for hook-seeded requests and keeps
+    # whichever seed covers more tokens.
+    kv_resume_seeded: bool = False
+
     # Prefill memory-pressure recovery
     prefill_oom_retries: int = 0
     prefill_eviction_retries: int = 0

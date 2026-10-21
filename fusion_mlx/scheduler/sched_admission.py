@@ -138,6 +138,10 @@ def add_request(self, request: Request) -> None:
         if loaded is not None:
             request.prompt_cache = list(loaded.cache)
             request.cached_tokens = int(loaded.token_offset)
+            # #1299: mark the hook seed so the scheduler still runs prefix
+            # prep; the paged block table upgrades the seed when it covers
+            # more tokens than this checkpoint.
+            request.kv_resume_seeded = True
             if request.remaining_tokens is None:
                 request.remaining_tokens = request.prompt_token_ids[
                     request.cached_tokens :
@@ -749,11 +753,15 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
 
     # CoW concurrent-donation fast path (mirror of add_request): if a live
     # donor shares this prefix, adopt GPU slabs and skip SSD fetch+reconstruct.
-    logger.debug("PREFIX-PREP cow-donate try %s", request.request_id[:8])
-    if self._try_cow_donate(request):
-        logger.debug("PREFIX-PREP cow-donate HIT %s", request.request_id[:8])
-        self._prefix_cache_prepared.add(request.request_id)
-        return
+    # #1299: skip CoW donation for hook-seeded requests — donation adopts
+    # unconditionally and a donor covering fewer tokens than the kv_resume
+    # checkpoint would downgrade the seed.
+    if not (getattr(request, "kv_resume_seeded", False) and request.cached_tokens > 0):
+        logger.debug("PREFIX-PREP cow-donate try %s", request.request_id[:8])
+        if self._try_cow_donate(request):
+            logger.debug("PREFIX-PREP cow-donate HIT %s", request.request_id[:8])
+            self._prefix_cache_prepared.add(request.request_id)
+            return
 
     logger.debug("PREFIX-PREP fetch begin %s", request.request_id[:8])
     if self.block_aware_cache is not None:
@@ -783,7 +791,12 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                     request.request_id[:8],
                 )
                 self.block_aware_cache.clear_request_entry_no_free(request.request_id)
-                request.remaining_tokens = request.prompt_token_ids
+                if not (
+                    getattr(request, "kv_resume_seeded", False)
+                    and request.prompt_cache is not None
+                    and request.cached_tokens > 0
+                ):
+                    request.remaining_tokens = request.prompt_token_ids
                 self._prefix_cache_prepared.add(request.request_id)
                 return
             if self._has_unfinished_store_futures():
@@ -802,7 +815,12 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                     _SSD_RECONSTRUCT_MAX_TOKENS,
                 )
                 self.block_aware_cache.clear_request_entry_no_free(request.request_id)
-                request.remaining_tokens = request.prompt_token_ids
+                if not (
+                    getattr(request, "kv_resume_seeded", False)
+                    and request.prompt_cache is not None
+                    and request.cached_tokens > 0
+                ):
+                    request.remaining_tokens = request.prompt_token_ids
                 self._prefix_cache_prepared.add(request.request_id)
                 return
             bypass_hot_cache = self._bypass_hot_cache_under_pressure()
@@ -836,6 +854,25 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                 )
             else:
                 reconstructed = self.block_aware_cache.reconstruct_cache(block_table)
+            # #1299: a kv_resume hook seed (disconnect checkpoint) competes
+            # with the paged block table — keep whichever covers more
+            # tokens. A losing reconstruct must release its block refs.
+            if (
+                reconstructed
+                and getattr(request, "kv_resume_seeded", False)
+                and request.cached_tokens > 0
+                and block_table.num_tokens <= request.cached_tokens
+            ):
+                logger.info(
+                    "PREFIX-PREP keep kv_resume seed for %s: checkpoint %d "
+                    "tokens >= block table %d tokens",
+                    request.request_id[:8],
+                    request.cached_tokens,
+                    block_table.num_tokens,
+                )
+                self.block_aware_cache.clear_request_entry_no_free(request.request_id)
+                self._prefix_cache_prepared.add(request.request_id)
+                return
             if reconstructed:
                 request.prompt_cache = reconstructed
                 request.block_table = block_table
@@ -899,7 +936,15 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
             else:
                 if self.paged_cache_manager is not None:
                     self.paged_cache_manager.delete_block_table(request.request_id)
-                request.remaining_tokens = request.prompt_token_ids
+                # #1299: a hook-seeded request keeps its kv_resume checkpoint
+                # when the paged reconstruct fails — resetting remaining to
+                # the full prompt would re-prefill already-seeded tokens.
+                if not (
+                    getattr(request, "kv_resume_seeded", False)
+                    and request.prompt_cache is not None
+                    and request.cached_tokens > 0
+                ):
+                    request.remaining_tokens = request.prompt_token_ids
                 logger.debug(
                     f"Request {request.request_id}: paged cache reconstruction failed, "
                     "released shared blocks"
@@ -907,10 +952,20 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
         else:
             # Cross-restart prefix persistence (#257): try to warm-start from
             # a persisted prefix snapshot before falling back to a full prefill.
-            if not self._try_prefix_snapshot_warm_start(request):
+            # #1299: a hook seed survives a fetch miss too.
+            if not self._try_prefix_snapshot_warm_start(request) and not (
+                getattr(request, "kv_resume_seeded", False)
+                and request.prompt_cache is not None
+                and request.cached_tokens > 0
+            ):
                 request.remaining_tokens = request.prompt_token_ids
     else:
-        request.remaining_tokens = request.prompt_token_ids
+        if not (
+            getattr(request, "kv_resume_seeded", False)
+            and request.prompt_cache is not None
+            and request.cached_tokens > 0
+        ):
+            request.remaining_tokens = request.prompt_token_ids
 
     self._try_specprefill_scoring(request)
     self._prefix_cache_prepared.add(request.request_id)
