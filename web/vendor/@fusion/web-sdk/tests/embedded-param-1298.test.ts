@@ -52,16 +52,39 @@ function makeWindow(search: string, framed: boolean): FakeWindow {
     return win;
 }
 
-function makeDocument() {
-    return {
+interface FakeDocument {
+    documentElement: {
+        lang: string;
+        classList: { contains(): boolean };
+    };
+    visibilityState: string;
+    listeners: Array<{ type: string; fn: () => void }>;
+    addEventListener(type: string, fn: () => void): void;
+    removeEventListener(): void;
+}
+
+function makeDocument(): FakeDocument {
+    const doc: FakeDocument = {
         documentElement: {
             lang: 'zh',
             classList: { contains: () => false },
         },
         visibilityState: 'visible',
-        addEventListener() {},
-        removeEventListener() {},
+        listeners: [],
+        addEventListener(type, fn) {
+            doc.listeners.push({ type, fn });
+        },
+        removeEventListener() {
+            // no-op
+        },
     };
+    return doc;
+}
+
+function installDocument(): FakeDocument {
+    const doc = makeDocument();
+    (globalThis as unknown as { document?: unknown }).document = doc;
+    return doc;
 }
 
 function installDom(search: string, framed: boolean): FakeWindow {
@@ -117,7 +140,7 @@ describe('embedded param detection (#1298)', () => {
         expect(messageListeners(win).length).toBeGreaterThan(0);
     });
 
-    it('wires the host API bridge so host events reach the module', () => {
+    it('drops host events when there is no parent frame', () => {
         const win = installDom('?embedded=1', false);
         const sdk = createShellSdk();
         const themes: string[] = [];
@@ -126,10 +149,23 @@ describe('embedded param detection (#1298)', () => {
         expect(handler).toBeDefined();
         handler({
             origin: ORIGIN,
-            source: win,
+            source: { postMessage() {} },
             data: { type: 'event', event: 'theme', payload: 'light' },
         } as unknown as MessageEvent);
-        expect(themes).toEqual(['light']);
+        expect(themes).toEqual([]);
+    });
+
+    it('derives visibility from the document without a parent frame', () => {
+        installDom('?embedded=1', false);
+        const doc = installDocument();
+        const sdk = createShellSdk();
+        const seen: boolean[] = [];
+        sdk.visibility.subscribe((visible) => seen.push(visible));
+        const listener = doc.listeners.find((l) => l.type === 'visibilitychange');
+        expect(listener).toBeDefined();
+        doc.visibilityState = 'hidden';
+        listener?.fn();
+        expect(seen).toEqual([false]);
     });
 
     it('degrades http to a direct request without a parent frame', async () => {

@@ -45,11 +45,30 @@ async function directRequest<T>(path: string, init?: HttpRequestInit): Promise<H
         init?.body !== undefined && !hasContentType
             ? { 'content-type': 'application/json', ...init?.headers }
             : init?.headers;
-    const res = await fetch(path, {
-        method: init?.method ?? 'GET',
-        headers,
-        body: init?.body === undefined ? undefined : JSON.stringify(init.body),
-    });
+    const controller = new AbortController();
+    const timer = init?.timeoutMs
+        ? setTimeout(() => controller.abort(), init.timeoutMs)
+        : undefined;
+    let res: Response;
+    try {
+        res = await fetch(path, {
+            method: init?.method ?? 'GET',
+            headers,
+            body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+            signal: init?.timeoutMs ? controller.signal : undefined,
+        });
+    } catch (err) {
+        if (init?.timeoutMs && controller.signal.aborted) {
+            throw new HttpError(
+                0,
+                'timeout',
+                `request timed out after ${init.timeoutMs}ms`
+            );
+        }
+        throw err;
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
+    }
     const data = (await res.json().catch(() => null)) as T;
     if (!res.ok) throw new HttpError(res.status, 'http_error', `request failed: ${res.status}`);
     return { status: res.status, ok: true, data };
@@ -62,7 +81,10 @@ interface BridgeDeps {
     log(level: 'log' | 'warn' | 'error', ...args: unknown[]): void;
 }
 
-function createBridge(deps: BridgeDeps, opts: Required<ShellSdkOptions>) {
+function createBridge(
+    deps: BridgeDeps,
+    opts: Required<Omit<ShellSdkOptions, 'embedded'>>
+) {
     const pending = new Map<
         string,
         {
@@ -280,6 +302,27 @@ export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
     // accurate. Modules that never answer are treated as not SDK-integrated.
     let lang: 'zh' | 'en' = document.documentElement.lang.startsWith('en') ? 'en' : 'zh';
     const langListeners = new Set<(l: 'zh' | 'en') => void>();
+
+    if (!hasHostFrame) {
+        // #1298: without a parent frame no host event can arrive, so derive
+        // visibility and language from the document instead. Subscribers used
+        // to register and never update (silent stale state).
+        const emitVisibility = () =>
+            visListeners.forEach((fn) => fn(document.visibilityState === 'visible'));
+        document.addEventListener('visibilitychange', emitVisibility);
+        if (typeof MutationObserver !== 'undefined') {
+            const langObs = new MutationObserver(() => {
+                const next = document.documentElement.lang.startsWith('en') ? 'en' : 'zh';
+                if (next === lang) return;
+                lang = next;
+                langListeners.forEach((fn) => fn(lang));
+            });
+            langObs.observe(document.documentElement, {
+                attributes: true,
+                attributeFilter: ['lang'],
+            });
+        }
+    }
     window.addEventListener('message', (ev: MessageEvent) => {
         if (ev.origin !== opts.origin || ev.source !== window.parent) return;
         const msg = ev.data as BridgeMessage;

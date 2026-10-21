@@ -1,4 +1,4 @@
-import { DEV_API_KEY, isEmbedded } from "./sdk";
+import { DEV_API_KEY } from "./sdk";
 
 // Typed client over the fusion-mlx engine surface (direct :11434 behind the
 // Vite dev proxy, gateway /shell/fusion-mlx/ proxy when embedded — both
@@ -64,7 +64,11 @@ export function apiBase(): string {
 }
 
 function authHeaders(): Record<string, string> {
-    if (!isEmbedded() && DEV_API_KEY)
+    // #1298: the dev key is only a standalone-dev convenience. Key on the
+    // served topology (no gateway /shell prefix) rather than on isEmbedded(),
+    // so a flagged deep link opened outside /shell/ does not silently send
+    // unauthenticated requests.
+    if (DEV_API_KEY && apiBase() === "")
         return { Authorization: `Bearer ${DEV_API_KEY}` };
     return {};
 }
