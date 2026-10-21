@@ -194,11 +194,12 @@ def add_request(self, request: Request) -> None:
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
         if block_table and block_table.num_tokens > 0:
-            if block_table.num_tokens > _SSD_RECONSTRUCT_MAX_TOKENS:
-                # SSD-tier reconstruct costs ~0.2s per block (measured: a
-                # 9472-token shared prefix needed 30+ min while a full 17k-token
-                # prefill takes ~30s). Above the cap, full prefill is strictly
-                # faster and does not block the engine step loop.
+            if _ssd_reconstruct_cap_exceeded(
+                block_table.num_tokens, _SSD_RECONSTRUCT_MAX_TOKENS
+            ):
+                # Operator-configured cap (default 0 = unlimited). Only a
+                # deployment that measured a slow reconstruct path sets this;
+                # post-#1286 reconstruct is ~65x faster than re-prefill.
                 logger.info(
                     "Skipping SSD prefix reuse for %s: %d tokens > cap %d",
                     request.request_id,
@@ -432,13 +433,17 @@ _CACHE_FRESHNESS_WAIT_MIN_PROMPT_TOKENS = 8192
 _CACHE_FRESHNESS_WAIT_MIN_COMMON_TOKENS = 8192
 _CACHE_FRESHNESS_WAIT_MIN_PROMPT_RATIO = 0.30
 _CACHE_FRESHNESS_WAIT_TIMEOUT_S = 4.0
-# Max cached prefix tokens to reconstruct from the SSD tier. Beyond this,
-# reconstruct is slower than a full re-prefill. #1271: the 4096 default made
-# a found 49216-token agent prefix unusable (full 69k re-prefill, 142s TTFT,
-# client abort loop), so the cap is env-overridable for measurement and
-# per-deployment tuning. Cost model (measured 2026-10-20, see issue):
-# reconstruct ≈ tokens/64 × s_per_block vs re-prefill ≈ tokens / prefill_tok_s.
-_SSD_RECONSTRUCT_MAX_TOKENS = 4096
+# Max cached prefix tokens to reconstruct from the SSD tier; <= 0 disables
+# the gate (reconstruct always allowed). The cap dates from the per-block
+# SSD read path (~0.2s/block, 2026-10-20), where a large reconstruct could
+# exceed a full re-prefill. The #1286 batch-eval tiered store reconstructs
+# an order of magnitude faster (measured E2E: 19 blocks / 38912 tokens in
+# ~1.5s, 34 blocks in ~3s) while chunked prefill of the same 69k prompt
+# takes ~236s — so the default is now unlimited and the knob exists only
+# for deployments that measured a slower reconstruct path (#1271).
+# 2026-10-21: a stale 65536 cap rejected a warm 69632-token agent prefix
+# and forced a 3m56s re-prefill on every turn of a Claude Code session.
+_SSD_RECONSTRUCT_MAX_TOKENS = 0
 _raw_reconstruct_cap = os.environ.get("FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS")
 if _raw_reconstruct_cap:
     try:
@@ -453,6 +458,12 @@ if _raw_reconstruct_cap:
 
 
 # ── Admission blocker helpers ────────────────────────────────────────────
+
+
+def _ssd_reconstruct_cap_exceeded(num_tokens: int, cap: int) -> bool:
+    if cap <= 0:
+        return False
+    return num_tokens > cap
 
 
 def _has_unfinished_store_futures(self) -> bool:
@@ -806,7 +817,9 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                     len(self._inflight_store_futures),
                     request.request_id[:8],
                 )
-            if block_table.num_tokens > _SSD_RECONSTRUCT_MAX_TOKENS:
+            if _ssd_reconstruct_cap_exceeded(
+                block_table.num_tokens, _SSD_RECONSTRUCT_MAX_TOKENS
+            ):
                 logger.info(
                     "Skipping SSD prefix reuse for %s: %d tokens > cap %d "
                     "(SSD reconstruct slower than full prefill)",
@@ -842,6 +855,7 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                         exc,
                     )
             original_tokens = block_table.num_tokens
+            _reconstruct_t0 = time.monotonic()
             logger.debug(
                 "PREFIX-PREP reconstruct begin %s blocks=%d",
                 request.request_id[:8],
@@ -854,6 +868,17 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                 )
             else:
                 reconstructed = self.block_aware_cache.reconstruct_cache(block_table)
+            _reconstruct_s = time.monotonic() - _reconstruct_t0
+            if original_tokens >= 8192:
+                logger.info(
+                    "PREFIX-PREP reconstruct done %s tokens=%d blocks=%d "
+                    "elapsed=%.2fs tok_per_s=%d",
+                    request.request_id[:8],
+                    original_tokens,
+                    block_table.num_tokens,
+                    _reconstruct_s,
+                    int(original_tokens / _reconstruct_s) if _reconstruct_s > 0 else 0,
+                )
             # #1299: a kv_resume hook seed (disconnect checkpoint) competes
             # with the paged block table — keep whichever covers more
             # tokens. A losing reconstruct must release its block refs.

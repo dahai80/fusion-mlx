@@ -255,10 +255,12 @@ preflight() {
         [[ -n "${gen_to}" ]] && export FUSION_MLX_GENERATE_TIMEOUT_S="${gen_to}"
     fi
 
-    # #1296: SSD reconstruct cap — with the #1286 batch-eval tiered store
-    # (5.6ms/block), reconstruct (~11k tok/s) beats re-prefill (~175 tok/s)
-    # by ~65x, so the 2026-10-20 default cap (4096) is stale. Optional
-    # settings.json block {"ssd_reconstruct_max_tokens": 65536} — env wins.
+    # SSD reconstruct cap — with the #1286 batch-eval tiered store,
+    # reconstruct (~11k tok/s) beats re-prefill (~175 tok/s) by ~65x, so the
+    # server default is unlimited (0). Optional settings.json key
+    # {"ssd_reconstruct_max_tokens": 0}; 0 or negative means no cap, and the
+    # env var wins. Only set a positive cap if this box measured a slower
+    # reconstruct path.
     if [[ -z "${FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS:-}" && -f "${SETTINGS:-}" ]]; then
         ssd_cap=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('ssd_reconstruct_max_tokens',''))" 2>/dev/null || echo "")
         [[ -n "${ssd_cap}" ]] && export FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS="${ssd_cap}"

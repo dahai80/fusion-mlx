@@ -223,6 +223,26 @@ Offload inactive KV cache blocks to SSD:
 fusion-mlx serve --enable-ssd-cache
 ```
 
+### SSD Prefix Reconstruct Cap
+
+Top-level `settings.json` key (env `FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS`
+wins), in tokens:
+
+| Value | Behavior |
+|-------|----------|
+| `0` (default) | No cap — any cached prefix is reconstructed from SSD |
+| `N > 0` | Prefixes longer than `N` tokens re-prefill instead |
+
+The default is unlimited because the batch-eval tiered store reconstructs
+roughly 65x faster than chunked re-prefill (measured: 38912 tokens in ~1.5s
+vs 69k tokens in ~236s). Set a positive cap only if your hardware measured
+a slower reconstruct path. Reconstructs of 8192+ tokens log
+`PREFIX-PREP reconstruct done <id> tokens=... elapsed=... tok_per_s=...`.
+
+```json
+{ "ssd_reconstruct_max_tokens": 0 }
+```
+
 ## OpenClaw Sessions
 
 Agent session storage configuration:
