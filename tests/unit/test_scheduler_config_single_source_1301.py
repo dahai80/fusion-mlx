@@ -1,28 +1,27 @@
 # SPDX-License-Identifier: Apache-2.0
-"""#1301 guard: ONE SchedulerConfig source of truth across the serve path.
-
-The serve path builds a single SchedulerConfig (cli_serve.serve_command),
-applies the settings.json cache section to it, publishes it on the config
-singleton, and load_model() stamps that same object onto the live Server.
-The EnginePool (on-demand loads) and the single-model engine consume it.
-
-Before the refactor Server._convert_scheduler_config() copied a
-hand-maintained list of field names into a fresh SchedulerConfig. Any field
-missing from that list was silently dropped, so an on-demand pool load could
-boot with defaults (1GiB pure-memory prefix cache) while the boot-time model
-ran the settings.json SSD config.
-
-These tests are the mechanical guard for that trap:
-
-* every field declared on SchedulerConfig (reflected via dataclasses.fields,
-  no manual list) is stamped with a sentinel and must survive
-  ServerConfig.scheduler -> Server conversion -> EnginePool -> engine;
-  failures are reported by field name;
-* the serve path constructs SchedulerConfig exactly once (AST count).
-
-Run the first test against a partial-copy implementation and it fails with
-the dropped field names — that is the sensitivity the issue asks for.
-"""
+# #1301 guard: ONE SchedulerConfig source of truth across the serve path.
+#
+# The serve path builds a single SchedulerConfig (cli_serve.serve_command),
+# applies the settings.json cache section to it, publishes it on the config
+# singleton, and load_model() stamps that same object onto the live Server.
+# The EnginePool (on-demand loads) and the single-model engine consume it.
+#
+# Before the refactor Server._convert_scheduler_config() copied a
+# hand-maintained list of field names into a fresh SchedulerConfig. Any field
+# missing from that list was silently dropped, so an on-demand pool load could
+# boot with defaults (1GiB pure-memory prefix cache) while the boot-time model
+# ran the settings.json SSD config.
+#
+# These tests are the mechanical guard for that trap:
+#
+# * every field declared on SchedulerConfig (reflected via dataclasses.fields,
+#   no manual list) is stamped with a sentinel and must survive
+#   ServerConfig.scheduler -> Server conversion -> EnginePool -> engine;
+#   failures are reported by field name;
+# * the serve path constructs SchedulerConfig exactly once (AST count).
+#
+# Run the first test against a partial-copy implementation and it fails with
+# the dropped field names — that is the sensitivity the issue asks for.
 
 from __future__ import annotations
 
