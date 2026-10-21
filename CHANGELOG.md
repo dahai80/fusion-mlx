@@ -4,6 +4,21 @@
 
 HEAD
 
+### Fixed — SSE keepalive now fires during prefill (Claude Code disconnects)
+- Streaming `/v1/chat/completions` responses were silent between request
+  admission and the first decoded token: the loop-level
+  `SSEKeepalive.maybe_ping()` else-branch only runs when the engine yields
+  an empty output, and the engine yields nothing during prefill. Long
+  prefills (60s+ TTFT on 27B with ~40k-token contexts) hit Claude Code's
+  idle timeout and the client disconnected with "Streaming response ended
+  before any complete data was received", falling back to non-streaming.
+- New `stream_with_keepalive` wrapper (`api/utils.py`) awaits the engine
+  iterator via `asyncio.wait` with the keepalive interval as timeout and
+  injects `: keepalive` comment lines while no token has arrived; the chat
+  streaming loop passes engine output through unchanged. Verified live:
+  188s prefill stream with pings every 20s (5s for Claude Code requests),
+  first token delivered, no client disconnect.
+
 ### Fixed — chat path resolves dynamic model aliases (#1290)
 - `resolve_model_id` (server.py) now falls back to the dynamic alias
   registry (`aliases.json`) after the static `DEFAULT_ALIASES` table, so

@@ -305,7 +305,7 @@ async def _stream_chat_generator(
             ct_kwargs_stream, client_thinking=client_thinking_from_request(request)
         )
         compiled_grammar = _compile_grammar_for_request(engine, request)
-        async for gen in engine.stream_chat(
+        _engine_agen = engine.stream_chat(
             messages=messages,
             max_tokens=sampling.max_tokens,
             temperature=sampling.temperature,
@@ -324,7 +324,27 @@ async def _stream_chat_generator(
             compiled_grammar=compiled_grammar,
             resume_prompt_cache=resume_prompt_cache,
             resume_cached_tokens=resume_cached_tokens,
-        ):
+        )
+        # Prefill-phase keepalive: engine yields nothing before first token,
+        # so long prefills left the stream silent past client idle timeouts.
+        from ..utils import KEEPALIVE_PING
+
+        if _keepalive_interval > 0:
+            from ..utils import stream_with_keepalive
+
+            _engine_agen = stream_with_keepalive(_engine_agen, _keepalive_interval)
+        async for gen in _engine_agen:
+            if gen is KEEPALIVE_PING:
+                # #1293/#1295: heartbeat as a legal empty-delta OpenAI chunk
+                # (a data line), NOT an SSE comment — comment lines are
+                # dropped by common proxies (fusion-gateway parseSSEStream),
+                # which kept pings from reaching proxied Claude Code clients.
+                yield _adapter.format_stream_chunk(
+                    StreamChunk(text="", is_first=False, is_last=False),
+                    request,
+                    encoder=encoder,
+                )
+                continue
             if getattr(gen, "time_to_first_token", None) is not None:
                 _stream_ttft = gen.time_to_first_token
             if getattr(gen, "generation_tokens_per_second", None) is not None:
@@ -495,11 +515,16 @@ async def _stream_chat_generator(
                         completion_tokens = gen.completion_tokens or completion_tokens
                         cached_tokens = gen.cached_tokens or cached_tokens
             else:
-                # No new text — maybe emit SSE keepalive ping
-                if keepalive:
-                    ping = keepalive.maybe_ping()
-                    if ping:
-                        yield ping
+                # No new text — maybe emit SSE keepalive ping. Heartbeat is a
+                # legal empty-delta chunk (data line), not an SSE comment:
+                # comment lines are dropped by common proxies
+                # (fusion-gateway parseSSEStream) before reaching the client.
+                if keepalive and keepalive.maybe_ping():
+                    yield _adapter.format_stream_chunk(
+                        StreamChunk(text="", is_first=False, is_last=False),
+                        request,
+                        encoder=encoder,
+                    )
 
             if gen.finished:
                 finish_reason = gen.finish_reason or "stop"
@@ -681,7 +706,12 @@ async def _stream_chat_generator(
                 type(exc).__name__,
                 exc,
             )
-            yield 'data: {"error": {"message": "Internal server error"}}\n\n'
+            import json as _json
+
+            err_payload = _json.dumps(
+                {"error": {"message": f"{type(exc).__name__}: {exc}", "status": 500}}
+            )
+            yield f"data: {err_payload}\n\n"
     finally:
         await _release()
 

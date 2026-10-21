@@ -1673,6 +1673,39 @@ class SSEKeepalive:
         return None
 
 
+# Prefill-phase keepalive: engine.stream_chat yields nothing between request
+# admission and first token (TTFT can exceed 60s on long prefills), so the
+# loop-level SSEKeepalive.maybe_ping() else-branch never runs and clients
+# (Claude Code) hit their idle timeout and disconnect. This wrapper injects
+# a sentinel ping item while awaiting the engine's next output.
+class KeepalivePing:
+    __slots__ = ()
+
+
+KEEPALIVE_PING = KeepalivePing()
+
+
+async def stream_with_keepalive(agen, interval_seconds: float = 5.0):
+    import asyncio
+
+    aiter = agen.__aiter__()
+    pending = asyncio.ensure_future(aiter.__anext__())
+    try:
+        while True:
+            done, _ = await asyncio.wait({pending}, timeout=interval_seconds)
+            if not done:
+                yield KEEPALIVE_PING
+                continue
+            try:
+                item = pending.result()
+            except StopAsyncIteration:
+                return
+            pending = asyncio.ensure_future(aiter.__anext__())
+            yield item
+    finally:
+        pending.cancel()
+
+
 def cap_max_tokens_to_context(
     requested_max_tokens: int,
     model_id: str,
