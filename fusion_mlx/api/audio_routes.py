@@ -78,7 +78,7 @@ def _get_engine_pool():
     return _pool
 
 
-def _resolve_model(model_id: str) -> str:
+def _resolve_model(model_id: str, default_model: str | None = None) -> str:
     """Resolve a model alias to its real model ID.
 
     Audio aliases (short names like ``kokoro`` -> ``mlx-community/Kokoro-82M-bf16``)
@@ -89,9 +89,30 @@ def _resolve_model(model_id: str) -> str:
     repo-id structural check 404s malformed slash-bearing ids
     (``foo/bar/baz``, ``////``, ``.git`` suffix, over-length) here instead of
     reaching the engine loader and surfacing as an opaque 500.
+
+    ``"default"`` / empty is the OpenAI-spec placeholder for the modality's
+    own default: it maps to ``default_model`` (STT/TTS pass their constant)
+    instead of the chat resolver, which would land on the served LLM
+    (#1297). Surfaces with no defined default fail visibly with a 400.
     """
     from fusion_mlx.audio.registry import resolve_audio_alias
     from fusion_mlx.routes_internal.audio import _validate_hf_repo_id_or_404
+
+    if not model_id or model_id == "default":
+        if not default_model:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "type": "invalid_request_error",
+                        "code": "invalid_request_error",
+                        "message": "model is required",
+                        "param": "model",
+                    }
+                },
+            )
+        logger.info("audio model %r -> default %s", model_id, default_model)
+        model_id = default_model
 
     audio_entry = resolve_audio_alias(model_id)
     if audio_entry is not None:
@@ -542,7 +563,7 @@ async def create_transcription(
     # a malformed model id 404s cleanly even when the server has not
     # initialized a pool yet (was 503 "Server not initialized").
     _ensure_audio_executor_healthy()
-    resolved_model = _resolve_model(model)
+    resolved_model = _resolve_model(model, _DEFAULT_STT_MODEL)
     pool = _get_engine_pool()
 
     # Load the engine via pool (handles model loading and LRU eviction)
@@ -727,7 +748,7 @@ async def create_speech(request: AudioSpeechRequest):
 
     # #508: validate/resolve model before pool init (404 on malformed id).
     _ensure_audio_executor_healthy()
-    resolved_model = _resolve_model(request.model)
+    resolved_model = _resolve_model(request.model, _DEFAULT_TTS_MODEL)
     pool = _get_engine_pool()
 
     # #1001: after memory_enforcer evicts the TTS model, a reload's settle
@@ -1029,7 +1050,7 @@ async def converse(
     pool = _get_engine_pool()
 
     # --- Stage 1: STT — transcribe user speech ---
-    stt_resolved = _resolve_model(stt_model or _DEFAULT_STT_MODEL)
+    stt_resolved = _resolve_model(stt_model or _DEFAULT_STT_MODEL, _DEFAULT_STT_MODEL)
     suffix = os.path.splitext(file.filename or "audio.wav")[1] or ".wav"
     if suffix.lower() in _VIDEO_CONTAINERS:
         suffix = ".m4a"
@@ -1152,7 +1173,7 @@ async def converse(
         )
 
     # --- Stage 3: TTS — synthesize reply speech ---
-    tts_resolved = _resolve_model(tts_model or _DEFAULT_TTS_MODEL)
+    tts_resolved = _resolve_model(tts_model or _DEFAULT_TTS_MODEL, _DEFAULT_TTS_MODEL)
     try:
         tts_engine = await pool.get_engine(tts_resolved)
     except ModelNotFoundError as exc:

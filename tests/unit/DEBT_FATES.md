@@ -72,13 +72,12 @@ for failure):
   would have been false coverage, so the file was removed instead. Perf feature
   gap (homogeneous-batch fast path) remains tracked as issue #674.
 
-### test_request_time_alias_resolution.py — KEEP_QUARANTINED (deep drift)
-- 5 real STT-resolver tests pass, but 15 tests xfail (embeddings/chat route
-  alias resolution: `_resolve_request_alias_or_default` /
-  `_aliases_match` signature changed to 1-arg degenerate stubs with zero
-  production callers — #598/#515 deep drift). File uses a heavy stub-server
-  harness. Audio-only un-quarantine would need test-file refactor (wide touch).
-  Stay quarantined until the alias-resolution route contract is redesigned.
+### test_request_time_alias_resolution.py — RESCUED (#1297, 2026-10-21)
+- The 2-arg `_resolve_request_alias_or_default` / `_aliases_match` helpers
+  are restored and wired into `/v1/embeddings` and `/v1/audio/*` (#1297), so
+  the file was rewritten against the current contract and left quarantine
+  (29 pass, 0 xfail). Route-level tests pin the sentinel wiring on the
+  embeddings and TTS paths.
 
 ## KEEP_QUARANTINED — 106 modules (real fail, migration debt)
 

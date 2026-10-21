@@ -5,78 +5,60 @@ Bugs caught in 0.8.5 dogfood (Priya F-1/F-2, Karim F-K-MODEL-DEFAULT-NO-RESOLVE
 / F-K-OPENAI-ALIAS-GAP):
 
 * **R-03** — ``model="default"`` (the OpenAI-spec placeholder LangChain /
-  LlamaIndex / openai-python emit when the caller hasn't picked a
-  specific id) was rejected on ``/v1/embeddings`` (400) and on
+  LlamaIndex / openai-python emit when the caller hasn't picked a specific
+  id) was rejected on ``/v1/embeddings`` (400) and on
   ``/v1/audio/transcriptions`` / ``/v1/audio/speech`` (404), breaking
   drop-in OpenAI-SDK compatibility on multiple routes.
-* **R-04** — the short embedding alias (e.g. ``embeddinggemma-300m-6bit``)
-  was rejected at request-time on ``/v1/embeddings`` even though that
-  exact short alias was the CLI flag value. PR #805 / D-EMBED-ALIAS only
-  fixed boot-time resolution; the route handler did a literal string
-  match against ``cfg.embedding_model_locked`` (set to the resolved HF
-  path).
+* **R-04** — a short alias (e.g. ``bge-m3-4bit``) was rejected at
+  request-time on ``/v1/embeddings`` even though that exact short alias was
+  the CLI flag value. PR #805 / D-EMBED-ALIAS only fixed boot-time
+  resolution; the route handler did a literal string match against the
+  resolved HF path.
 
-Fix shape: a single source-of-truth helper
-(:func:`_resolve_request_alias_or_default`) runs both sides through
-``resolve_model()`` so the alias and the HF path compare equal, and
-maps ``"default"`` to the configured server-side model id. Every
-request-handling route reuses the helper — no per-route regex
-band-aids.
+Fix shape (#1297): :func:`_resolve_request_alias_or_default` is the single
+source of truth — it runs both sides through ``resolve_model`` so the alias
+and the HF path compare equal, and maps the ``"default"`` sentinel to the
+caller's locked modality id. The embeddings route now calls it, and the
+audio resolver maps the sentinel to its own STT/TTS default instead of
+falling through to the served chat model.
 """
 
 from __future__ import annotations
 
-import sys
 import types
 from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 import pytest
 
-# All tests run cross-platform. The route-level integration tests below
-# import ``vllm_mlx.routes.embeddings`` + ``vllm_mlx.routes.audio``
-# directly (which do NOT pull in MLX at module load), and inject a fake
-# ``vllm_mlx.server`` module into ``sys.modules`` so the route's lazy
-# ``from ..server import load_embedding_model`` lookup never drags in
-# the MLX-importing real server module.
-#
-# Codex r0 BLOCKING on PR #816: pinning the route fix only on
-# Apple-Silicon CI silently leaked the regression past Linux CI on
-# every prior PR — fix is to make the route tests CI-safe by mocking
-# the server module, not by skipping.
+# A short alias that really ships in ``aliases.json`` (modality: embedding).
+EMBED_ALIAS = "bge-m3-4bit"
+EMBED_HF = "mlx-community/bge-m3-mlx-4bit"
 
 
 @contextmanager
-def _fake_server_module(
-    embedding_engine=None,
-    embedding_model_locked=None,
-    load_fn=None,
-):
-    """Inject a stub ``vllm_mlx.server`` into ``sys.modules``.
+def _fake_server_module(module_name: str, **attrs):
+    """Inject a stub ``fusion_mlx.server`` into ``sys.modules``.
 
-    The route handler does lazy imports
-    (``from ..server import load_embedding_model``,
-    ``from ..server import _embedding_engine``,
-    ``from ..server import _embedding_model_locked``) so the only
-    surface the test must cover is the ``vllm_mlx.server`` name in
-    ``sys.modules``. A real import of that module on Linux CI fails
-    with ``ModuleNotFoundError: mlx.core`` — the stub keeps the test
-    cross-platform.
+    Route handlers lazily import from ``..server`` (``resolve_model_with_profile``
+    / ``get_max_context_window``). A real import drags in the MLX text loader,
+    which is unnecessary for these contract tests — the stub keeps them fast
+    and CI-safe.
     """
-    name = "vllm_mlx.server"
-    prev = sys.modules.get(name)
-    fake = types.ModuleType(name)
-    fake._embedding_engine = embedding_engine
-    fake._embedding_model_locked = embedding_model_locked
-    fake.load_embedding_model = load_fn or (lambda *a, **kw: None)
-    sys.modules[name] = fake
+    import sys
+
+    prev = sys.modules.get(module_name)
+    fake = types.ModuleType(module_name)
+    for key, value in attrs.items():
+        setattr(fake, key, value)
+    sys.modules[module_name] = fake
     try:
         yield fake
     finally:
         if prev is not None:
-            sys.modules[name] = prev
+            sys.modules[module_name] = prev
         else:
-            sys.modules.pop(name, None)
+            sys.modules.pop(module_name, None)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -84,32 +66,7 @@ def _fake_server_module(
 # ──────────────────────────────────────────────────────────────────
 
 
-# R-03/R-04 embeddings alias-resolution was designed (this test file) but
-# never wired into fusion-mlx: ``_resolve_request_alias_or_default`` and
-# ``_aliases_match`` are 1-arg degenerate stubs with zero production callers,
-# the embeddings route never calls the helper (no "default" sentinel handling,
-# no resolved-id echo), and these tests reference the pre-rename ``vllm_mlx``
-# package. The audio side IS implemented (TestAudioRouteAliasResolution passes
-# via its own ``_resolve_stt_model``). Quarantine the unwired embeddings +
-# chat + helper-unit contract until the feature lands. See issue #662.
-_QUARANTINE_662 = pytest.mark.xfail(
-    reason="R-03/R-04 embeddings alias resolution unwired (dead helper, route "
-    "not wired, vllm_mlx pre-rename refs) — see issue #662",
-    strict=True,
-)
-
-
 class TestResolveRequestAliasOrDefault:
-    """Pin the single-source-of-truth helper behaviour.
-
-    The helper lives in :mod:`vllm_mlx.service.helpers` and is the only
-    place that owns the ``"default"`` sentinel + alias-aware equality
-    rule. Every route handler is expected to call it; verifying the
-    helper directly catches contract breaks without spinning up the
-    full route stack.
-    """
-
-    pytestmark = _QUARANTINE_662
 
     def test_returns_locked_when_request_is_none(self):
         from fusion_mlx.service.helpers import _resolve_request_alias_or_default
@@ -128,9 +85,6 @@ class TestResolveRequestAliasOrDefault:
         )
 
     def test_returns_locked_when_request_is_default_sentinel(self):
-        """``"default"`` is the OpenAI canonical placeholder. The
-        operator note explicitly forbids adversarial validation for
-        this sentinel — it MUST map to the configured model id."""
         from fusion_mlx.service.helpers import _resolve_request_alias_or_default
 
         assert (
@@ -139,75 +93,44 @@ class TestResolveRequestAliasOrDefault:
         )
 
     def test_short_alias_matches_full_hf_path_via_registry(self):
-        """R-04 root cause: the helper must normalize BOTH sides through
-        ``resolve_model`` so the short alias the user CLI-passed
-        compares equal to the resolved HF id stored in ``cfg``."""
         from fusion_mlx.service.helpers import _resolve_request_alias_or_default
 
-        # Pick an alias that ships in aliases.json — embeddinggemma-300m-6bit
-        # was added by PR #805 for the D-EMBED-ALIAS fix.
-        result = _resolve_request_alias_or_default(
-            "embeddinggemma-300m-6bit",
-            "mlx-community/embeddinggemma-300m-6bit",
-        )
-        assert result == "mlx-community/embeddinggemma-300m-6bit"
+        result = _resolve_request_alias_or_default(EMBED_ALIAS, EMBED_HF)
+        assert result == EMBED_HF
 
     def test_full_hf_path_matches_self(self):
         from fusion_mlx.service.helpers import _resolve_request_alias_or_default
 
-        result = _resolve_request_alias_or_default(
-            "mlx-community/embeddinggemma-300m-6bit",
-            "mlx-community/embeddinggemma-300m-6bit",
-        )
-        assert result == "mlx-community/embeddinggemma-300m-6bit"
+        assert _resolve_request_alias_or_default(EMBED_HF, EMBED_HF) == EMBED_HF
 
     def test_full_hf_path_matches_short_alias_locked(self):
-        """Symmetry: the helper must also accept the full HF path when
-        the locked side happens to be the short alias (defensive — the
-        CLI mutates ``args.embedding_model`` to the HF path before
-        locking, but a future caller might pre-lock the alias form)."""
         from fusion_mlx.service.helpers import _resolve_request_alias_or_default
 
-        result = _resolve_request_alias_or_default(
-            "mlx-community/embeddinggemma-300m-6bit",
-            "embeddinggemma-300m-6bit",
-        )
-        # Returns ``locked`` verbatim per the helper contract — caller
-        # echoes back the configured id, not the wire-supplied form.
-        assert result == "embeddinggemma-300m-6bit"
+        result = _resolve_request_alias_or_default(EMBED_HF, EMBED_ALIAS)
+        assert result == EMBED_ALIAS
 
     def test_unknown_alias_returns_none(self):
-        """Caller decides the rejection envelope — helper just signals
-        the miss with None so embeddings can 400/503 and audio can 404."""
         from fusion_mlx.service.helpers import _resolve_request_alias_or_default
 
         assert (
-            _resolve_request_alias_or_default(
-                "non-existent-alias-xyz", "mlx-community/foo"
-            )
+            _resolve_request_alias_or_default("non-existent-alias-xyz", EMBED_HF)
             is None
         )
 
     def test_returns_none_when_locked_is_none(self):
-        """Nothing configured → no match. Caller surfaces the
-        embeddings-not-configured 503 via the H-09 guard (R11-G)."""
         from fusion_mlx.service.helpers import _resolve_request_alias_or_default
 
         assert _resolve_request_alias_or_default("default", None) is None
         assert _resolve_request_alias_or_default("foo", None) is None
 
     def test_aliases_match_handles_resolve_model_exception_safely(self, monkeypatch):
-        """Belt-and-suspenders: an exception inside ``resolve_model``
-        (corrupt ``aliases.json``, partial install) must NOT 500 the
-        route. The helper should fall back to a literal-equality miss."""
         from fusion_mlx.service.helpers import _aliases_match
 
         def boom(_name: str) -> str:  # noqa: ARG001
             raise RuntimeError("registry corrupt")
 
-        monkeypatch.setattr("vllm_mlx.model_aliases.resolve_model", boom)
+        monkeypatch.setattr("fusion_mlx.model_aliases.resolve_model", boom)
         assert _aliases_match("a", "b") is False
-        # Literal equality still works without touching the registry.
         assert _aliases_match("same", "same") is True
 
 
@@ -216,207 +139,210 @@ class TestResolveRequestAliasOrDefault:
 # ──────────────────────────────────────────────────────────────────
 
 
+class _FakeEntry:
+    def __init__(self, engine_type: str):
+        self.engine_type = engine_type
+
+
+class _FakePool:
+    # Mirrors the EnginePool surface the embeddings route touches:
+    # list_models/get_entry for the "default" lookup, get_engine for loads.
+    def __init__(self, entries: dict[str, str], engines: dict[str, object]):
+        self._entries = entries
+        self._engines = engines
+        self.requested: list[str] = []
+
+    def list_models(self) -> list[str]:
+        return list(self._entries)
+
+    def get_entry(self, model_id: str):
+        engine_type = self._entries.get(model_id)
+        return _FakeEntry(engine_type) if engine_type else None
+
+    async def get_engine(self, model_id: str):
+        self.requested.append(model_id)
+        return self._engines.get(model_id)
+
+
+def _stub_embedding_engine(model_name: str):
+    from fusion_mlx.engines.embedding import EmbeddingEngine, EmbeddingOutput
+
+    class _Stub(EmbeddingEngine):
+        def __init__(self):
+            self._model_name = model_name
+
+        async def embed(self, texts, max_length=512, padding=True, truncation=True):
+            return EmbeddingOutput(
+                embeddings=[[0.1, 0.2, 0.3] for _ in texts],
+                total_tokens=len(texts),
+                dimensions=3,
+            )
+
+    return _Stub()
+
+
+@contextmanager
+def _embeddings_client(monkeypatch, pool, cfg_overrides: dict | None = None):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from fusion_mlx.api import embeddings_routes as emb
+    from fusion_mlx.config import get_config
+    from fusion_mlx.middleware.exception_handlers import install_exception_handlers
+
+    cfg = get_config()
+    saved = {
+        "embedding_model_locked": cfg.embedding_model_locked,
+        "embedding_model": cfg.embedding_model,
+        "api_key": cfg.api_key,
+    }
+    cfg.embedding_model_locked = None
+    cfg.embedding_model = None
+    cfg.api_key = None
+    for key, value in (cfg_overrides or {}).items():
+        setattr(cfg, key, value)
+
+    app = FastAPI()
+    app.include_router(emb.router)
+    install_exception_handlers(app)
+
+    prev_pool, prev_state = emb._pool, emb._server_state
+    emb.set_embeddings_context(pool, None)
+
+    def _noop_context_window(model_id, *_a, **_kw):
+        return 512
+
+    try:
+
+        def _alias_resolver(mid):
+            # Prod-shaped for the dynamic alias registry: the chat resolver
+            # turns the embedding alias into its HF path.
+            return (EMBED_HF if mid == EMBED_ALIAS else mid, {})
+
+        with _fake_server_module(
+            "fusion_mlx.server",
+            resolve_model_with_profile=_alias_resolver,
+            get_max_context_window=_noop_context_window,
+        ):
+            yield TestClient(app)
+    finally:
+        emb.set_embeddings_context(prev_pool, prev_state)
+        for key, value in saved.items():
+            setattr(cfg, key, value)
+
+
 class TestEmbeddingsRouteAliasResolution:
-    """Pin the route-level wiring: the helper must be called and the
-    mock engine must be reached for every accepted ``model`` form.
 
-    Cross-platform: builds a minimal FastAPI app from
-    ``vllm_mlx.routes.embeddings.router`` (which does NOT pull in MLX
-    at import time) and mocks ``vllm_mlx.server.load_embedding_model``
-    so the load path never instantiates a real engine. Codex r0
-    BLOCKING on PR #816 — the previous Apple-Silicon-only gate let
-    the regression slip past Linux CI.
-    """
+    CHAT_HF = "mlx-community/Qwen3.5-4B-MLX-4bit"
 
-    pytestmark = _QUARANTINE_662
+    def _pool(self):
+        return _FakePool(
+            entries={
+                EMBED_HF: "embedding",
+                self.CHAT_HF: "llm",
+            },
+            engines={
+                EMBED_HF: _stub_embedding_engine(EMBED_HF),
+                self.CHAT_HF: MagicMock(),
+            },
+        )
 
-    EMBED_ALIAS = "embeddinggemma-300m-6bit"
-    EMBED_HF = "mlx-community/embeddinggemma-300m-6bit"
-
-    @pytest.fixture()
-    def client_with_locked_embed(self):
-        """TestClient with the embedding engine mocked and the locked
-        id set to the resolved HF path (as the CLI dispatch produces)."""
-        from unittest.mock import patch
-
-        from fastapi import FastAPI
-        from fastapi.testclient import TestClient
-
-        from fusion_mlx.config import get_config
-        from fusion_mlx.routes_internal.embeddings import router
-
-        mock_engine = MagicMock()
-        mock_engine.model_name = self.EMBED_HF
-        mock_engine.embed.return_value = [[0.1, 0.2, 0.3]]
-        mock_engine.count_tokens.return_value = 1
-
-        cfg = get_config()
-        prev_engine = cfg.embedding_engine
-        prev_locked = cfg.embedding_model_locked
-        prev_api_key = cfg.api_key
-        cfg.embedding_engine = mock_engine
-        cfg.embedding_model_locked = self.EMBED_HF
-        cfg.api_key = None
-
-        # Stub ``check_rate_limit`` with a clean no-arg async callable
-        # — ``patch(..., return_value=None)`` replaces with a MagicMock
-        # whose ``(*args, **kwargs)`` signature trips FastAPI's
-        # introspection (we hit this on test_routes.py too — see the
-        # same fix to test_embeddings_locked_model_reject).
-        async def _noop_rate_limit():
-            return None
-
-        app = FastAPI()
-        app.include_router(router)
-
-        try:
-            with (
-                _fake_server_module(
-                    embedding_engine=mock_engine,
-                    embedding_model_locked=self.EMBED_HF,
-                ),
-                patch(
-                    "vllm_mlx.middleware.auth.check_rate_limit",
-                    new=_noop_rate_limit,
-                ),
-            ):
-                yield TestClient(app), mock_engine
-        finally:
-            cfg.embedding_engine = prev_engine
-            cfg.embedding_model_locked = prev_locked
-            cfg.api_key = prev_api_key
-
-    def _assert_embedding_200(self, resp, expected_echo: str) -> None:
+    def test_default_sentinel_reaches_embedding_engine(self, monkeypatch):
+        """R-03: ``model="default"`` must hit the pool's embedding entry, not
+        the served chat model (pre-#1297 it resolved to the LLM and 400'd)."""
+        pool = self._pool()
+        with _embeddings_client(monkeypatch, pool) as client:
+            resp = client.post(
+                "/v1/embeddings", json={"model": "default", "input": "hello"}
+            )
         assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert body["model"] == expected_echo
-        assert body["data"][0]["embedding"] == [0.1, 0.2, 0.3]
+        assert resp.json()["data"][0]["embedding"] == [0.1, 0.2, 0.3]
+        assert set(pool.requested) == {EMBED_HF}
 
-    def test_default_sentinel_accepts(self, client_with_locked_embed):
-        """R-03: ``model="default"`` must hit the embedding engine, not
-        the H-09 ``no_embedding_model`` guard (503 after R11-G)."""
-        client, engine = client_with_locked_embed
-        resp = client.post(
-            "/v1/embeddings", json={"model": "default", "input": "hello"}
-        )
-        self._assert_embedding_200(resp, self.EMBED_HF)
-        engine.embed.assert_called_once()
+    def test_short_alias_accepts(self, monkeypatch):
+        """R-04: the short alias must reach the same engine as its HF path."""
+        pool = self._pool()
+        with _embeddings_client(monkeypatch, pool) as client:
+            resp = client.post(
+                "/v1/embeddings", json={"model": EMBED_ALIAS, "input": "hello"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert set(pool.requested) == {EMBED_HF}
 
-    def test_short_alias_accepts(self, client_with_locked_embed):
-        """R-04: the short alias (``embeddinggemma-300m-6bit``) must
-        compare equal to the resolved HF path stored in ``cfg``."""
-        client, engine = client_with_locked_embed
-        resp = client.post(
-            "/v1/embeddings",
-            json={"model": self.EMBED_ALIAS, "input": "hello"},
-        )
-        self._assert_embedding_200(resp, self.EMBED_HF)
-        engine.embed.assert_called_once()
+    def test_full_hf_path_accepts(self, monkeypatch):
+        pool = self._pool()
+        with _embeddings_client(monkeypatch, pool) as client:
+            resp = client.post(
+                "/v1/embeddings", json={"model": EMBED_HF, "input": "hello"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert set(pool.requested) == {EMBED_HF}
 
-    def test_full_hf_path_accepts(self, client_with_locked_embed):
-        """Existing path stays working — no regression from the alias
-        normalization."""
-        client, engine = client_with_locked_embed
-        resp = client.post(
-            "/v1/embeddings",
-            json={"model": self.EMBED_HF, "input": "hello"},
-        )
-        self._assert_embedding_200(resp, self.EMBED_HF)
-        engine.embed.assert_called_once()
-
-    def test_unknown_alias_400_with_param_field(self, client_with_locked_embed):
-        """Bogus aliases still 400 — and the envelope MUST carry
-        ``error.param == "model"`` so OpenAI-SDK error branches fire
-        cleanly. Pre-fix the route returned ``param: None``."""
-        client, _ = client_with_locked_embed
-        resp = client.post(
-            "/v1/embeddings",
-            json={"model": "non-existent-alias", "input": "hello"},
-        )
-        assert resp.status_code == 400
-        body = resp.json()
-        # FastAPI surfaces a dict ``detail`` verbatim when no exception
-        # handler is wired (bare ``include_router`` app). The production
-        # server installs ``install_exception_handlers`` which unwraps
-        # to ``body["error"]`` directly.
-        err = body.get("error") or body.get("detail", {}).get("error")
-        assert err is not None, body
+    def test_unknown_alias_404_with_param_field(self, monkeypatch):
+        pool = self._pool()
+        with _embeddings_client(monkeypatch, pool) as client:
+            resp = client.post(
+                "/v1/embeddings",
+                json={"model": "non-existent-alias", "input": "hello"},
+            )
+        assert resp.status_code == 404, resp.text
+        err = resp.json()["error"]
         assert err["param"] == "model"
         assert err["code"] == "model_not_found"
-        # The error message should still surface the locked id so the
-        # operator sees what the server was actually booted with.
-        assert self.EMBED_HF in err["message"]
 
-    def test_no_embedding_model_configured_503(self):
-        """H-09 invariant preserved: no ``--embedding-model`` →
-        every request 503s with the install-hint envelope, regardless
-        of whether the client sent ``"default"`` (the bridge MUST NOT
-        route ``"default"`` to a chat-only server's hidden states).
+    def test_configured_embedding_model_wins_over_pool_scan(self, monkeypatch):
+        """An explicit configured embed id is the "default" target even when
+        the pool holds several embedding entries."""
+        cfg_embed = "mlx-community/bge-m3-mlx-8bit"
+        pool = _FakePool(
+            entries={EMBED_HF: "embedding", cfg_embed: "embedding"},
+            engines={cfg_embed: _stub_embedding_engine(cfg_embed)},
+        )
+        with _embeddings_client(
+            monkeypatch, pool, {"embedding_model_locked": cfg_embed}
+        ) as client:
+            resp = client.post(
+                "/v1/embeddings", json={"model": "default", "input": "hello"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert set(pool.requested) == {cfg_embed}
 
-        R11-G: status flipped 400 → 503 — a missing ``--embedding-model``
-        is a server-configuration gap, not a bad-client-payload, and
-        503 lines up with LangChain / LlamaIndex retry semantics.
+    def test_ambiguous_pool_does_not_pick_a_random_embedding_model(self, monkeypatch):
+        """Two embedding entries + no configured id → the sentinel must not
+        fall through to the chat-aligned resolver (that would land on the
+        served LLM and 400 via the type check); it names the ambiguity."""
+        pool = _FakePool(
+            entries={
+                EMBED_HF: "embedding",
+                "mlx-community/bge-m3-mlx-8bit": "embedding",
+            },
+            engines={},
+        )
+        with _embeddings_client(monkeypatch, pool) as client:
+            resp = client.post(
+                "/v1/embeddings", json={"model": "default", "input": "hello"}
+            )
+        assert resp.status_code == 400, resp.text
+        err = resp.json()["error"]
+        assert err["code"] == "embedding_model_ambiguous"
+        assert err["param"] == "model"
+        assert EMBED_HF in err["message"]
+        assert pool.requested == []
 
-        Cross-platform path: inject a stub ``vllm_mlx.server`` module
-        with ``_embedding_model_locked = None`` so the H-09 bridge
-        sees the unconfigured state without dragging in the
-        MLX-importing real server module on Linux CI.
-        """
-        from unittest.mock import patch
-
-        from fastapi import FastAPI
-        from fastapi.testclient import TestClient
-
-        from fusion_mlx.config import get_config
-        from fusion_mlx.routes_internal.embeddings import router
-
-        cfg = get_config()
-        prev_engine = cfg.embedding_engine
-        prev_locked = cfg.embedding_model_locked
-        prev_api_key = cfg.api_key
-        cfg.embedding_engine = None
-        cfg.embedding_model_locked = None
-        cfg.api_key = None
-
-        async def _noop_rate_limit():
-            return None
-
-        app = FastAPI()
-        app.include_router(router)
-
-        try:
-            with (
-                _fake_server_module(embedding_engine=None, embedding_model_locked=None),
-                patch(
-                    "vllm_mlx.middleware.auth.check_rate_limit",
-                    new=_noop_rate_limit,
-                ),
-            ):
-                client = TestClient(app)
-                resp = client.post(
-                    "/v1/embeddings", json={"model": "default", "input": "hi"}
-                )
-        finally:
-            cfg.embedding_engine = prev_engine
-            cfg.embedding_model_locked = prev_locked
-            cfg.api_key = prev_api_key
-
-        assert resp.status_code == 503
-        body = resp.json()
-        # H-09 envelope — install hint must still appear, and the
-        # machine-readable code lets SDKs branch without substring-
-        # matching the message.
-        err = body.get("error") or (
-            body.get("detail", {}) if isinstance(body.get("detail"), dict) else {}
-        ).get("error", {})
-        msg = err.get("message") if isinstance(err, dict) else None
-        if not msg and isinstance(body.get("detail"), str):
-            msg = body["detail"]
-        assert "embedding" in (msg or "").lower()
-        # The R11-G code field must survive both envelope-handler
-        # mounted and bare-router-include code paths.
-        if isinstance(err, dict):
-            assert err.get("code") == "no_embedding_model"
+    def test_named_embedding_model_still_resolves_with_two_entries(self, monkeypatch):
+        pool = _FakePool(
+            entries={
+                EMBED_HF: "embedding",
+                "mlx-community/bge-m3-mlx-8bit": "embedding",
+            },
+            engines={EMBED_HF: _stub_embedding_engine(EMBED_HF)},
+        )
+        with _embeddings_client(monkeypatch, pool) as client:
+            resp = client.post(
+                "/v1/embeddings", json={"model": EMBED_ALIAS, "input": "hello"}
+            )
+        assert resp.status_code == 200, resp.text
+        assert set(pool.requested) == {EMBED_HF}
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -424,34 +350,98 @@ class TestEmbeddingsRouteAliasResolution:
 # ──────────────────────────────────────────────────────────────────
 
 
+class TestAudioRouteWiring:
+    async def test_speech_route_passes_the_tts_default(self, monkeypatch):
+        """Pins the call site, not just the resolver: reverting
+        create_speech's second argument would drop the sentinel back onto
+        the chat model."""
+        from fastapi import HTTPException
+
+        from fusion_mlx.api import audio_routes
+        from fusion_mlx.api.audio_models import AudioSpeechRequest
+
+        calls: list[tuple[str, str | None]] = []
+
+        def _spy(model_id, default_model=None):
+            calls.append((model_id, default_model))
+            raise HTTPException(status_code=418, detail="stop-after-resolve")
+
+        monkeypatch.setattr(audio_routes, "_resolve_model", _spy)
+        req = AudioSpeechRequest(model="default", input="hello", voice="af_heart")
+        try:
+            await audio_routes.create_speech(req)
+        except HTTPException as exc:
+            assert exc.status_code == 418
+        assert calls == [("default", audio_routes._DEFAULT_TTS_MODEL)]
+
+
+class TestAudioModelDefaultSentinel:
+    """The live audio resolver must map ``"default"`` to the modality's own
+    default instead of the chat default (#1297). Same contract the
+    registry-only ``_resolve_stt_model`` / ``_resolve_tts_model`` helpers
+    pin below, but on the resolver the routes actually call.
+    """
+
+    def test_openai_tts_ids_resolve(self):
+        """OpenAI SDKs send tts-1 / tts-1-hd explicitly; both must land on the
+        Kokoro default instead of 404ing in get_engine."""
+        from fusion_mlx.api.audio_routes import _DEFAULT_TTS_MODEL, _resolve_model
+
+        assert _resolve_model("tts-1", _DEFAULT_TTS_MODEL) == _DEFAULT_TTS_MODEL
+        assert _resolve_model("tts-1-hd", _DEFAULT_TTS_MODEL) == _DEFAULT_TTS_MODEL
+
+    def test_default_maps_to_stt_default(self):
+        from fusion_mlx.api.audio_routes import _DEFAULT_STT_MODEL, _resolve_model
+
+        assert _resolve_model("default", _DEFAULT_STT_MODEL) == _DEFAULT_STT_MODEL
+        assert _resolve_model("", _DEFAULT_STT_MODEL) == _DEFAULT_STT_MODEL
+
+    def test_default_maps_to_tts_default(self):
+        from fusion_mlx.api.audio_routes import _DEFAULT_TTS_MODEL, _resolve_model
+
+        assert _resolve_model("default", _DEFAULT_TTS_MODEL) == _DEFAULT_TTS_MODEL
+
+    def test_default_without_modality_default_400(self):
+        from fastapi import HTTPException
+
+        from fusion_mlx.api.audio_routes import _resolve_model
+
+        with pytest.raises(HTTPException) as exc:
+            _resolve_model("default")
+        assert exc.value.status_code == 400
+        assert exc.value.detail["error"]["param"] == "model"
+
+    def test_explicit_hf_id_unchanged(self):
+        from fusion_mlx.api.audio_routes import _resolve_model
+
+        assert (
+            _resolve_model("mlx-community/whisper-medium-mlx")
+            == "mlx-community/whisper-medium-mlx"
+        )
+
+    def test_alias_still_resolves_through_audio_registry(self):
+        from fusion_mlx.api.audio_routes import _resolve_model
+
+        assert _resolve_model("kokoro") == "mlx-community/Kokoro-82M-bf16"
+
+
 class TestAudioRouteAliasResolution:
     """The audio routes have their own alias registry
     (``STT_MODEL_ALIASES`` / TTS ``model_map``) because the engines
-    don't share the chat ``aliases.json``. The single source of truth
-    here is the ``"default"`` sentinel mapping — R-03 closure on both
-    audio surfaces.
+    don't share the chat ``aliases.json``.
     """
 
     def test_stt_resolver_maps_default_to_whisper(self):
-        """R-03 on ``/v1/audio/transcriptions``: ``"default"`` must
-        resolve to the same HF path as ``"whisper-large-v3"`` so
-        drop-in OpenAI-SDK code works without a manual model override.
-        """
         from fusion_mlx.routes_internal.audio import (
             DEFAULT_STT_ALIAS,
             STT_MODEL_ALIASES,
             _resolve_stt_model,
         )
 
-        # The sentinel and the explicit alias resolve identically.
         assert _resolve_stt_model("default") == STT_MODEL_ALIASES[DEFAULT_STT_ALIAS]
         assert _resolve_stt_model("default") == _resolve_stt_model(DEFAULT_STT_ALIAS)
 
     def test_stt_resolver_still_rejects_bogus_alias(self):
-        """``"default"`` is whitelisted but every OTHER unknown bare
-        name still 404s with ``model_not_found_error`` — preserves the
-        F-167 / F-210 contract pinned by ``test_audio_path_shaped_model``.
-        """
         from fastapi import HTTPException
 
         from fusion_mlx.routes_internal.audio import _resolve_stt_model
@@ -465,7 +455,6 @@ class TestAudioRouteAliasResolution:
         assert detail["error"]["param"] == "model"
 
     def test_stt_resolver_passes_through_known_alias(self):
-        """No regression on the known-alias path."""
         from fusion_mlx.routes_internal.audio import (
             STT_MODEL_ALIASES,
             _resolve_stt_model,
@@ -475,7 +464,6 @@ class TestAudioRouteAliasResolution:
             assert _resolve_stt_model(alias) == hf
 
     def test_stt_resolver_passes_through_hf_id(self):
-        """No regression on the HF-org/name pass-through path."""
         from fusion_mlx.routes_internal.audio import _resolve_stt_model
 
         assert (
@@ -484,8 +472,6 @@ class TestAudioRouteAliasResolution:
         )
 
     def test_stt_resolver_empty_string_400(self):
-        """Empty string still 400 — ``"default"`` is the only sentinel
-        recognized; bare ``""`` is a client bug."""
         from fastapi import HTTPException
 
         from fusion_mlx.routes_internal.audio import _resolve_stt_model
@@ -496,31 +482,18 @@ class TestAudioRouteAliasResolution:
 
 
 # ──────────────────────────────────────────────────────────────────
-# Cross-check — /v1/chat/completions (already works pre-fix)
+# Cross-check — /v1/chat/completions
 # ──────────────────────────────────────────────────────────────────
 
 
 class TestChatRouteDefaultNotRegressed:
-    """Cross-check: ``model="default"`` on the chat route already
-    works because ``_validate_model_name`` falls through when the
-    request model matches ``cfg.model_name`` / ``cfg.model_alias`` /
-    ``cfg.model_path``, AND the response-time ``_resolve_model_name``
-    maps ``"default"`` to ``cfg.model_name``. Pin the behaviour so a
-    future refactor of the shared helper doesn't break chat.
+    """Cross-check: chat already resolves through ``resolve_model_with_profile``
+    — the shape embeddings/audio now align with. Pin that a plain HF id passes
+    through untouched so a future refactor of the shared helper can't change
+    the chat surface.
     """
 
-    pytestmark = _QUARANTINE_662
+    def test_chat_resolver_passes_plain_id_and_strips_known_profile(self):
+        from fusion_mlx.server import resolve_model_with_profile
 
-    def test_chat_resolve_model_name_maps_default_to_cfg(self):
-        from fusion_mlx.config import get_config
-        from fusion_mlx.service.helpers import _resolve_model_name
-
-        cfg = get_config()
-        prev = cfg.model_name
-        cfg.model_name = "mlx-community/Qwen3-0.6B-8bit"
-        try:
-            assert _resolve_model_name("default") == "mlx-community/Qwen3-0.6B-8bit"
-            assert _resolve_model_name(None) == "mlx-community/Qwen3-0.6B-8bit"
-            assert _resolve_model_name("foo") == "foo"
-        finally:
-            cfg.model_name = prev
+        assert resolve_model_with_profile(EMBED_HF) == (EMBED_HF, {})
