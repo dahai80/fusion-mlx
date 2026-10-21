@@ -820,25 +820,29 @@ class TestPagedSSDCacheManager:
             hot_cache_only=False,
         )
         try:
-            assert mgr1._sweep_disabled is False
-            assert mgr2._sweep_disabled is True
-
             other_owner_hash = bytes.fromhex("0a0b0c0d0e0f1011")
             other_owner = cache_dir / "0" / f"{other_owner_hash.hex()}.safetensors"
             other_owner.parent.mkdir(parents=True, exist_ok=True)
             other_owner.write_bytes(b"stub")
             os.utime(other_owner, (time.time() - 100.0, time.time() - 100.0))
 
-            # mgr2's index does not know this file, but the shared-dir guard
-            # must keep it — it may be live for mgr1.
+            # Neither manager's index knows this file, but the shared-dir
+            # guard keeps it for both — it may be live for the other manager.
+            assert mgr1._sweep_orphaned_files() == 0
             assert mgr2._sweep_orphaned_files() == 0
             assert other_owner.exists()
+
+            # Deregistering the second manager re-enables the sweep for the
+            # first, which then reclaims the orphan.
+            mgr2.close()
+            assert mgr1._sweep_orphaned_files() == 1
+            assert not other_owner.exists()
         finally:
             mgr1.close()
             mgr2.close()
 
-        # A third manager on a different dir sweeps normally (registry keyed
-        # per cache_dir).
+        # A solo manager on a different dir is not gated (registry keyed per
+        # cache_dir).
         solo_dir = tmp_path / "solo_sweep"
         mgr3 = PagedSSDCacheManager(
             cache_dir=solo_dir,
@@ -846,7 +850,13 @@ class TestPagedSSDCacheManager:
             hot_cache_only=False,
         )
         try:
-            assert mgr3._sweep_disabled is False
+            solo_hash = bytes.fromhex("2a2b2c2d2e2f3031")
+            solo = solo_dir / "2" / f"{solo_hash.hex()}.safetensors"
+            solo.parent.mkdir(parents=True, exist_ok=True)
+            solo.write_bytes(b"stub")
+            os.utime(solo, (time.time() - 100.0, time.time() - 100.0))
+            assert mgr3._sweep_orphaned_files() == 1
+            assert not solo.exists()
         finally:
             mgr3.close()
 

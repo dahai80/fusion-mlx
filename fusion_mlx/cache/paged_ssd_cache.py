@@ -865,23 +865,26 @@ class PagedSSDCacheManager:
             else None
         )
         self._signature_sweep_completed = False
-        # #1299: see _ACTIVE_MANAGERS_BY_CACHE_DIR — sweep disabled when a
-        # second manager shares this cache_dir.
-        self._sweep_disabled = False
+        # #1299: see _ACTIVE_MANAGERS_BY_CACHE_DIR — sweeps are disabled
+        # while another manager shares this cache_dir. The live count is
+        # checked at sweep time (not here): the first manager constructed
+        # would otherwise stay enabled and delete the second manager's
+        # blocks.
+        self._cache_dir_key = None
         if self._cache_dir is not None and not hot_cache_only:
-            key = str(self._cache_dir.resolve())
+            self._cache_dir_key = str(self._cache_dir.resolve())
             with _ACTIVE_MANAGERS_LOCK:
-                _ACTIVE_MANAGERS_BY_CACHE_DIR[key] = (
-                    _ACTIVE_MANAGERS_BY_CACHE_DIR.get(key, 0) + 1
+                _ACTIVE_MANAGERS_BY_CACHE_DIR[self._cache_dir_key] = (
+                    _ACTIVE_MANAGERS_BY_CACHE_DIR.get(self._cache_dir_key, 0) + 1
                 )
-                self._sweep_disabled = _ACTIVE_MANAGERS_BY_CACHE_DIR[key] > 1
-            if self._sweep_disabled:
+                active = _ACTIVE_MANAGERS_BY_CACHE_DIR[self._cache_dir_key]
+            if active > 1:
                 logger.warning(
                     "SSD orphan sweep disabled for %s: %d PagedSSDCacheManager "
                     "instances share this cache_dir — sweeping would delete "
                     "another manager's blocks",
                     self._cache_dir,
-                    _ACTIVE_MANAGERS_BY_CACHE_DIR[key],
+                    active,
                 )
         self._hot_cache_only = hot_cache_only
         self._hot_cache_max_bytes = hot_cache_max_bytes
@@ -1838,6 +1841,20 @@ class PagedSSDCacheManager:
 
     def close(self):
         self._shutting_down = True
+        if self._cache_dir_key is not None:
+            with _ACTIVE_MANAGERS_LOCK:
+                remaining = (
+                    _ACTIVE_MANAGERS_BY_CACHE_DIR.get(self._cache_dir_key, 1) - 1
+                )
+                if remaining > 0:
+                    _ACTIVE_MANAGERS_BY_CACHE_DIR[self._cache_dir_key] = remaining
+                else:
+                    _ACTIVE_MANAGERS_BY_CACHE_DIR.pop(self._cache_dir_key, None)
+            logger.debug(
+                "SSD manager deregistered for %s (%d active)",
+                self._cache_dir,
+                max(remaining, 0),
+            )
         if self._hot_cache_budget is not None:
             self._hot_cache_budget.forget_owner(self)
         if self._writer_thread is not None:
@@ -2688,13 +2705,16 @@ class PagedSSDCacheManager:
         """
         if self._cache_dir is None:
             return 0
-        if self._sweep_disabled:
+        if self._cache_dir_key is not None:
             # #1299: another manager shares this cache_dir; our index cannot
             # distinguish its live blocks from orphans.
-            logger.debug(
-                "SSD orphan sweep skipped: shared cache_dir %s", self._cache_dir
-            )
-            return 0
+            with _ACTIVE_MANAGERS_LOCK:
+                active = _ACTIVE_MANAGERS_BY_CACHE_DIR.get(self._cache_dir_key, 1)
+            if active > 1:
+                logger.debug(
+                    "SSD orphan sweep skipped: shared cache_dir %s", self._cache_dir
+                )
+                return 0
         # Snapshot the indexed hashes once (single lock hold) so the per-file
         # orphan check below does not churn _state_lock for every file.
         with self._state_lock:
