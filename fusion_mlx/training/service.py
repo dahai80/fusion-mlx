@@ -1148,21 +1148,35 @@ class FineTuneService:
     def list_adapters(self, model_id: str | None = None) -> list[dict]:
         if not ADAPTER_BASE_DIR.exists():
             return []
+        # #1317: HF-style model ids contain a slash, so adapter dirs nest one
+        # level deeper (org/name/<adapter>); walk until a directory carries an
+        # adapter marker or is a leaf instead of assuming exactly two levels.
+        # Top-level dirs are always model-id components, never adapters.
+        marker_names = ("adapter_config.json", "adapters.safetensors")
         adapters = []
-        for model_dir in sorted(ADAPTER_BASE_DIR.iterdir()):
-            if not model_dir.is_dir():
-                continue
-            if model_id and model_dir.name != model_id:
-                continue
-            for adapter_dir in sorted(model_dir.iterdir()):
-                if not adapter_dir.is_dir():
+        stack: list[tuple[Path, int]] = [(ADAPTER_BASE_DIR, 0)]
+        while stack:
+            base, depth = stack.pop()
+            for entry in sorted(base.iterdir()):
+                if not entry.is_dir():
                     continue
-                config_path = adapter_dir / "adapter_config.json"
-                weights_path = adapter_dir / "adapters.safetensors"
+                is_adapter = depth >= 1 and (
+                    any((entry / name).exists() for name in marker_names)
+                    or not any(child.is_dir() for child in entry.iterdir())
+                )
+                if not is_adapter:
+                    if depth < 3:
+                        stack.append((entry, depth + 1))
+                    continue
+                mid = entry.parent.relative_to(ADAPTER_BASE_DIR).as_posix()
+                if model_id and mid != model_id:
+                    continue
+                config_path = entry / "adapter_config.json"
+                weights_path = entry / "adapters.safetensors"
                 info = {
-                    "model_id": model_dir.name,
-                    "adapter_name": adapter_dir.name,
-                    "adapter_path": str(adapter_dir),
+                    "model_id": mid,
+                    "adapter_name": entry.name,
+                    "adapter_path": str(entry),
                     "has_weights": weights_path.exists(),
                     "has_config": config_path.exists(),
                 }
@@ -1178,6 +1192,7 @@ class FineTuneService:
                     except Exception:
                         pass
                 adapters.append(info)
+        adapters.sort(key=lambda a: (a["model_id"], a["adapter_name"]))
         return adapters
 
     def delete_adapter(self, model_id: str, adapter_name: str) -> bool:
