@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed — models written after startup are servable by id and path (#1316)
+- Fine-tune → merge-adapter → chat with the fused model returned
+  `404 not_found_error`: the pool only discovers models at startup or on an
+  admin reload, so the freshly written directory was unknown, and a request
+  naming its absolute path had no path→entry mapping either.
+- `get_engine()` now registers an on-disk model directory that appeared after
+  discovery (parent scan, merged without the stale-entry sweep so unloaded
+  models from other roots survive) and resolves directory paths to the
+  registry id of the entry that owns them.
+
 ### Fixed — high-frequency warnings throttled on scrape paths (#1314)
 - `/metrics` renderer logged `High memory fragmentation` on every scrape that
   saw over 30% fragmentation; a 2-second scraper produced a warning per

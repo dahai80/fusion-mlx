@@ -681,6 +681,8 @@ class EnginePool:
         self,
         discovered: dict[str, DiscoveredModel],
         pinned_models: list[str] | None = None,
+        *,
+        remove_stale: bool = True,
     ) -> None:
         # Mutates self._entries from a scan result. AS-12 (#0907 audit):
         # hold the sync discover lock so a threadpool/admin sync discover
@@ -726,12 +728,19 @@ class EnginePool:
             # before iterating — the async path can insert new entries
             # under a different lock, causing "dict changed size during
             # iteration" RuntimeError.
+            # #1316: a one-root registration scan passes remove_stale=False —
+            # its discovered set covers a single root, so the sweep would drop
+            # every unloaded model that lives anywhere else.
             discovered_ids = set(discovered.keys())
-            stale = [
-                mid
-                for mid in list(self._entries)
-                if mid not in discovered_ids and self._entries[mid].engine is None
-            ]
+            stale = (
+                [
+                    mid
+                    for mid in list(self._entries)
+                    if mid not in discovered_ids and self._entries[mid].engine is None
+                ]
+                if remove_stale
+                else []
+            )
             for mid in stale:
                 del self._entries[mid]
                 # #1027: clean per-base swap-lock + enforcer eviction state.
@@ -1357,7 +1366,71 @@ class EnginePool:
                 keyed,
             )
             return keyed
+        # #1316: a directory path is the same model as its registry entry.
+        # Clients that merge an adapter and then chat the output path send an
+        # absolute path; without this the request 404s until a restart.
+        if os.sep in target:
+            by_path = self._match_entry_by_model_path(target)
+            if by_path is not None:
+                logger.info(
+                    "resolve_hf_repo_id: %s -> %s (model_path match)",
+                    model_id,
+                    by_path,
+                )
+                return by_path
         return model_id
+
+    def _match_entry_by_model_path(self, path: str) -> str | None:
+        target = os.path.realpath(os.path.expanduser(path))
+        for mid, entry in self._entries.items():
+            entry_path = getattr(entry, "model_path", None)
+            if entry_path and os.path.realpath(entry_path) == target:
+                return mid
+        return None
+
+    async def _ensure_local_path_registered(self, model_id: str) -> str:
+        # #1316: a model written after startup (a merged adapter under the
+        # models root, for example) is absent from the registry until the next
+        # full rediscovery, so a request naming it 404s. Scan its parent once
+        # and merge WITHOUT the stale-entry sweep, since that scan covers one
+        # root only and would drop unloaded models discovered from other roots.
+        if not model_id or os.sep not in model_id:
+            return model_id
+        target = os.path.realpath(os.path.expanduser(model_id))
+        existing = self._match_entry_by_model_path(target)
+        if existing is not None:
+            return self._resolve_hf_repo_id(target)
+        if not os.path.isdir(target):
+            return model_id
+        parent = os.path.dirname(target)
+        try:
+            loop = asyncio.get_running_loop()
+            discovered = await loop.run_in_executor(None, self._scan_models, parent)
+        except Exception:
+            logger.warning(
+                "ensure_local_path_registered: scan of %s failed", parent, exc_info=True
+            )
+            return model_id
+        if not discovered:
+            return model_id
+        pinned = [
+            mid
+            for mid, entry in self._entries.items()
+            if getattr(entry, "is_pinned", False)
+        ]
+        async with self._lock:
+            self._merge_discovered(discovered, pinned, remove_stale=False)
+        resolved = self._match_entry_by_model_path(target)
+        if resolved is None:
+            logger.warning(
+                "ensure_local_path_registered: %s is not a servable model dir",
+                target,
+            )
+            return model_id
+        logger.info(
+            "ensure_local_path_registered: registered %s -> %s", target, resolved
+        )
+        return self._resolve_hf_repo_id(target)
 
     def _match_entry_by_repo_key_form(self, target: str) -> str | None:
         # Slashed repo ids and flattened cache-dir keys are the same model
@@ -1686,6 +1759,9 @@ class EnginePool:
             adapter_path = self._validate_adapter_path(adapter_path)
         # Issue #372: normalize HF repo ids (e.g. "mlx-community/X") to the
         # registry short name before lookup so all routes accept either form.
+        # #1316: a local directory that appeared after startup (e.g. a merged
+        # adapter) is registered here so its id and path both resolve.
+        model_id = await self._ensure_local_path_registered(model_id)
         model_id = self._resolve_hf_repo_id(model_id)
         # Issue #389: in-place LoRA swap path. Reuse the resident base engine
         # and swap the adapter in place instead of building a derived engine
