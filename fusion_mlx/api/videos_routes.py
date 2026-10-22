@@ -429,7 +429,17 @@ async def _resolve_image_to_path(image: str) -> tuple[str, bool]:
 
     if not is_safe_local_path(image):
         raise HTTPException(400, restricted_path_detail("Image path"))
+    _ensure_local_file_exists(image, "Image path")
     return image, False
+
+
+def _ensure_local_file_exists(value: str, label: str) -> None:
+    # #1325: the allow-list check only validates location — a missing file
+    # otherwise surfaces as a raw FileNotFoundError after admission, engine
+    # load and media reservation. Fail fast with an actionable 400.
+    if not os.path.isfile(value):
+        logger.warning("%s file not found: %s", label, value)
+        raise HTTPException(400, f"{label} file not found: {value}")
 
 
 def _validate_path_param(value: str, label: str) -> str:
@@ -449,6 +459,7 @@ def _validate_path_param(value: str, label: str) -> str:
 
     if not is_safe_local_path(value):
         raise HTTPException(400, restricted_path_detail(f"{label} path"))
+    _ensure_local_file_exists(value, f"{label} path")
     return value
 
 
@@ -474,6 +485,7 @@ async def _resolve_media_to_path(value: str, label: str) -> tuple[str, bool]:
 
     if not is_safe_local_path(value):
         raise HTTPException(400, restricted_path_detail(f"{label} path"))
+    _ensure_local_file_exists(value, f"{label} path")
     return value, False
 
 

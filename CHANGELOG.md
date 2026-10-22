@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed — video jobs validate local media path existence before admission (#1325)
+- A `POST /v1/videos/generate` naming a not-yet-written local image/video
+  path passed the allow-list guard (which validates location only), got
+  admitted, loaded the Wan2 engine and registered a 26.8 GB media
+  reservation, and only failed inside PIL with a generic
+  `Video generation failed` (`FileNotFoundError`).
+- The three local-path validation sites in `videos_routes.py` now check
+  `os.path.isfile` and reject with `400 {label} file not found: {path}`
+  before any admission or engine work.
+
 ### Fixed — shell-registry heartbeat no longer floods the log (#1323)
 - With fusion-gateway down, the 15s heartbeat logged a full-traceback
   `shell registry: round-trip failed` warning every tick (36 lines in ~9 min
