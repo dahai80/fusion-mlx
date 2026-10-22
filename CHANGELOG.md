@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed — high-frequency warnings throttled on scrape paths (#1314)
+- `/metrics` renderer logged `High memory fragmentation` on every scrape that
+  saw over 30% fragmentation; a 2-second scraper produced a warning per
+  scrape and buried real errors. The gauge is still emitted every render, the
+  warning now fires at most once per 300 s.
+- Route guard warn-only mode logged `missing X-Fusion-Route` per request, so
+  a scraper polling `/metrics` flooded the log the same way. Warnings are now
+  throttled per `(host, path)` with a bounded map, so a rotating path set
+  cannot grow it without limit.
+
 ### Fixed — bare repo names resolve to flattened cache keys (#1312)
 - Registry keys use the flattened HF cache-dir form
   (`mlx-community--Qwen3.5-9B-4bit`), so a client sending the bare repo
