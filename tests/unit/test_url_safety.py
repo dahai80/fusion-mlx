@@ -117,3 +117,24 @@ class TestAllowedReadDirsEnv:
         dirs = _us.get_allowed_read_dirs()
         assert dirs.count(str(tmp_path)) == 1
         assert "/other" in dirs
+
+
+class TestRestrictedPathDetail:
+    # #1321: the 400 detail must tell the operator how to allow a path.
+
+    def test_detail_lists_dirs_and_env_knob(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(_us, "_ALLOWED_READ_DIRS", [str(tmp_path)])
+        monkeypatch.delenv("FUSION_MLX_ALLOWED_READ_DIRS", raising=False)
+        detail = _us.restricted_path_detail("Image path")
+        assert detail.startswith("Image path targets a restricted directory")
+        assert str(tmp_path) in detail
+        assert "FUSION_MLX_ALLOWED_READ_DIRS" in detail
+
+    def test_detail_includes_env_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(_us, "_ALLOWED_READ_DIRS", [])
+        extra = tmp_path / "client-out"
+        extra.mkdir()
+        monkeypatch.setenv("FUSION_MLX_ALLOWED_READ_DIRS", str(extra))
+        detail = _us.restricted_path_detail("Mask path")
+        assert str(extra) in detail
+        assert detail.startswith("Mask path targets a restricted directory")

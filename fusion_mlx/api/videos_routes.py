@@ -425,10 +425,10 @@ async def _resolve_image_to_path(image: str) -> tuple[str, bool]:
     if image.startswith(("http://", "https://")):
         ext = os.path.splitext(urlparse(image).path)[1] or ".png"
         return await _safe_fetch_to_file(image, "fusion_i2v_", ext)
-    from ._url_safety import is_safe_local_path
+    from ._url_safety import is_safe_local_path, restricted_path_detail
 
     if not is_safe_local_path(image):
-        raise HTTPException(400, "Image path targets a restricted directory")
+        raise HTTPException(400, restricted_path_detail("Image path"))
     return image, False
 
 
@@ -445,10 +445,10 @@ def _validate_path_param(value: str, label: str) -> str:
         if not is_safe_url_with_dns(value):
             raise HTTPException(400, f"{label} URL targets a private/internal address")
         return value
-    from ._url_safety import is_safe_local_path
+    from ._url_safety import is_safe_local_path, restricted_path_detail
 
     if not is_safe_local_path(value):
-        raise HTTPException(400, f"{label} path targets a restricted directory")
+        raise HTTPException(400, restricted_path_detail(f"{label} path"))
     return value
 
 
@@ -470,10 +470,10 @@ async def _resolve_media_to_path(value: str, label: str) -> tuple[str, bool]:
     if value.startswith(("http://", "https://")):
         ext = os.path.splitext(urlparse(value).path)[1] or ".mp4"
         return await _safe_fetch_to_file(value, f"fusion_{label}_", ext)
-    from ._url_safety import is_safe_local_path
+    from ._url_safety import is_safe_local_path, restricted_path_detail
 
     if not is_safe_local_path(value):
-        raise HTTPException(400, f"{label} path targets a restricted directory")
+        raise HTTPException(400, restricted_path_detail(f"{label} path"))
     return value, False
 
 
