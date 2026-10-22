@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed — adapter serve/unload routes accept repo-style model ids (#1319)
+- `POST /admin/api/fine-tune/adapters/{model_id}/{adapter_name}/serve|unload`
+  returned 404 whenever the model id contained a slash
+  (e.g. `mlx-community/Qwen3.5-4B-MLX-4bit`): the two-segment route pattern
+  never matched, so the request died in routing before any handler ran.
+- Both routes now capture `{adapter_ref:path}` and split at the last `/`
+  (adapter names never contain slashes); the plain two-segment form is
+  unchanged.
+
 ### Improved — restricted-path 400s now explain how to allow a directory (#1321)
 - `POST /v1/videos/generate` rejected legitimate client image paths with a bare
   `400 Image path targets a restricted directory` that named neither the
