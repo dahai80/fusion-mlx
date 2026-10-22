@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Improved — restricted-path 400s now explain how to allow a directory (#1321)
+- `POST /v1/videos/generate` rejected legitimate client image paths with a bare
+  `400 Image path targets a restricted directory` that named neither the
+  allow-listed directories nor the `FUSION_MLX_ALLOWED_READ_DIRS` extension.
+- The detail message now lists the allowed base dirs and the env knob; guard
+  behavior is unchanged.
+
 ### Fixed — models written after startup are servable by id and path (#1316)
 - Fine-tune → merge-adapter → chat with the fused model returned
   `404 not_found_error`: the pool only discovers models at startup or on an

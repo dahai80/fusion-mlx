@@ -397,6 +397,16 @@ def _resolve_and_check(path_str: str) -> Path:
     )
 
 
+def restricted_path_detail(label: str) -> str:
+    # #1321: a bare "restricted directory" 400 leaves the operator with no
+    # path to a fix — name the extension knobs instead.
+    return (
+        f"{label} targets a restricted directory; pass an absolute path under "
+        "one of: " + ", ".join(get_allowed_read_dirs()) + " — or extend the "
+        "allow-list with FUSION_MLX_ALLOWED_READ_DIRS (colon-separated)"
+    )
+
+
 def is_safe_local_path(path_str: str) -> bool:
     if not path_str or not isinstance(path_str, str):
         return False
