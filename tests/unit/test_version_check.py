@@ -528,3 +528,17 @@ def test_prompt_returns_false_on_keyboard_interrupt(monkeypatch, interactive):
     ):
         assert vc.prompt_upgrade_if_available() is False
         run.assert_not_called()
+
+
+# --- GitHub tags URL points at the real repo (#1328) -------------------
+
+
+def test_github_tags_url_targets_real_repo():
+    # The upgrade check 404'd silently for every release because the repo
+    # slug was "fusion-mlx/fusion-mlx" (nonexistent) instead of
+    # "dahai80/fusion-mlx"; pin the slug so it cannot drift back.
+    assert vc._GITHUB_REPO == "dahai80/fusion-mlx"
+    assert (
+        vc._GITHUB_TAGS_URL
+        == "https://api.github.com/repos/dahai80/fusion-mlx/git/refs/tags"
+    )

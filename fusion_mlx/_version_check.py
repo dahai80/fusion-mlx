@@ -31,7 +31,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _BINARY_NAME = "fusion-mlx"
-_GITHUB_REPO = "fusion-mlx/fusion-mlx"
+_GITHUB_REPO = "dahai80/fusion-mlx"
 _GITHUB_TAGS_URL = f"https://api.github.com/repos/{_GITHUB_REPO}/git/refs/tags"
 _BREW_TAP_FORMULA = "dahai80/homebrew-fusion-mlx/fusion-mlx"
 
