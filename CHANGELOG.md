@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v0.10.14] — 2026-10-22
+
 ### Fixed — adapter registry lists adapters of slash model ids (#1317)
 - `GET /admin/api/fine-tune/adapters` scanned the adapters dir at exactly two
   levels, so an adapter trained on an HF-style model id
@@ -338,8 +340,6 @@
   `num_output_tokens == 1`, so a spec-decode/MTP first step emitting >1
   token never got a timestamp; guard is now `>= 1`.
 - Log line field names/format unchanged (parser-compatible).
-
-## [Unreleased]
 
 ### Fixed — paged-cache block cap scaled to model context (#1264)
 - `max_cache_blocks` (default 1000 → 64k tokens at block_size=64) was
