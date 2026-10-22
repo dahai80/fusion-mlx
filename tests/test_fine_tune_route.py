@@ -219,6 +219,44 @@ class TestAdapterServeEndpoints:
         resp = client.post("/api/fine-tune/adapters/qwen3/my-lora/unload")
         assert resp.status_code == 404
 
+    def test_serve_adapter_slashed_model_id(
+        self, client, mock_service, mock_pool, tmp_adapter_dir
+    ):
+        # #1319: repo-style model ids add a segment; route must still match
+        adapter_dir = (
+            tmp_adapter_dir / "mlx-community" / "Qwen3.5-4B-MLX-4bit" / "sft-1"
+        )
+        adapter_dir.mkdir(parents=True)
+        (adapter_dir / "adapters.safetensors").write_bytes(b"\x00")
+        resp = client.post(
+            "/api/fine-tune/adapters/mlx-community/Qwen3.5-4B-MLX-4bit/sft-1/serve"
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["base_model_id"] == "mlx-community/Qwen3.5-4B-MLX-4bit"
+        assert data["adapter_name"] == "sft-1"
+
+    def test_unload_adapter_slashed_model_id(
+        self, client, mock_service, mock_pool, tmp_adapter_dir
+    ):
+        adapter_dir = (
+            tmp_adapter_dir / "mlx-community" / "Qwen3.5-4B-MLX-4bit" / "sft-1"
+        )
+        adapter_dir.mkdir(parents=True)
+        (adapter_dir / "adapters.safetensors").write_bytes(b"\x00")
+        mock_entry = MagicMock()
+        mock_entry.engine = MagicMock()
+        mock_pool.get_entry.return_value = mock_entry
+        resp = client.post(
+            "/api/fine-tune/adapters/mlx-community/Qwen3.5-4B-MLX-4bit/sft-1/unload"
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "unloaded"
+
+    def test_serve_adapter_ref_without_slash_rejected(self, client):
+        resp = client.post("/api/fine-tune/adapters/just-a-name/serve")
+        assert resp.status_code == 400
+
 
 class TestModelEndpoint:
     def test_list_models_no_pool(self, client, mock_pool):

@@ -352,12 +352,25 @@ async def delete_adapter(
 # =============================================================================
 
 
-@_router.post("/api/fine-tune/adapters/{model_id}/{adapter_name}/serve")
+# #1319: model_id may itself contain slashes (repo-style ids like
+# "mlx-community/Qwen3.5-4B-MLX-4bit"), so the adapter ref is captured as a
+# single path param and split at the last "/" — adapter names never do.
+def _split_adapter_ref(adapter_ref: str) -> tuple[str, str]:
+    model_id, _, adapter_name = adapter_ref.rpartition("/")
+    if not model_id or not adapter_name:
+        raise HTTPException(
+            status_code=400,
+            detail="adapter ref must be <model_id>/<adapter_name>",
+        )
+    return model_id, adapter_name
+
+
+@_router.post("/api/fine-tune/adapters/{adapter_ref:path}/serve")
 async def serve_adapter(
-    model_id: str,
-    adapter_name: str,
+    adapter_ref: str,
     is_admin: bool = Depends(require_admin),
 ):
+    model_id, adapter_name = _split_adapter_ref(adapter_ref)
     svc = _get_service()
     try:
         result = await svc.serve_adapter(model_id, adapter_name)
@@ -368,12 +381,12 @@ async def serve_adapter(
         raise HTTPException(status_code=503, detail=str(e))
 
 
-@_router.post("/api/fine-tune/adapters/{model_id}/{adapter_name}/unload")
+@_router.post("/api/fine-tune/adapters/{adapter_ref:path}/unload")
 async def unload_adapter(
-    model_id: str,
-    adapter_name: str,
+    adapter_ref: str,
     is_admin: bool = Depends(require_admin),
 ):
+    model_id, adapter_name = _split_adapter_ref(adapter_ref)
     svc = _get_service()
     ok = await svc.unload_adapter_engine(model_id, adapter_name)
     if not ok:
