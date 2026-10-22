@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed — adapter registry lists adapters of slash model ids (#1317)
+- `GET /admin/api/fine-tune/adapters` scanned the adapters dir at exactly two
+  levels, so an adapter trained on an HF-style model id
+  (`mlx-community/Qwen3.5-4B-MLX-4bit`, nesting three levels) was invisible
+  and its parent org dir showed up as a bogus adapter entry.
+- `list_adapters` now walks until a directory carries an adapter marker
+  (`adapter_config.json`/`adapters.safetensors`) or is a leaf, derives the
+  model id from the relative parent path, and never treats top-level dirs as
+  adapters.
+
 ### Fixed — video jobs validate local media path existence before admission (#1325)
 - A `POST /v1/videos/generate` naming a not-yet-written local image/video
   path passed the allow-list guard (which validates location only), got

@@ -183,6 +183,49 @@ class TestAdapterEndpoints:
         )
         assert resp.status_code == 400
 
+    def test_list_adapters_slashed_model_id(
+        self, client, mock_service, tmp_adapter_dir
+    ):
+        # #1317: HF-style ids nest one level deeper (org/name/<adapter>)
+        adapter_dir = (
+            tmp_adapter_dir / "mlx-community" / "Qwen3.5-4B-MLX-4bit" / "sft-1"
+        )
+        adapter_dir.mkdir(parents=True)
+        (adapter_dir / "adapters.safetensors").write_bytes(b"\x00")
+        resp = client.get("/api/fine-tune/adapters")
+        assert resp.status_code == 200
+        entries = resp.json()
+        assert len(entries) == 1
+        assert entries[0]["model_id"] == "mlx-community/Qwen3.5-4B-MLX-4bit"
+        assert entries[0]["adapter_name"] == "sft-1"
+        assert entries[0]["has_weights"] is True
+
+    def test_list_adapters_filter_slashed_model_id(
+        self, client, mock_service, tmp_adapter_dir
+    ):
+        adapter_dir = (
+            tmp_adapter_dir / "mlx-community" / "Qwen3.5-4B-MLX-4bit" / "sft-1"
+        )
+        adapter_dir.mkdir(parents=True)
+        flat = tmp_adapter_dir / "qwen3" / "my-lora"
+        flat.mkdir(parents=True)
+        resp = client.get(
+            "/api/fine-tune/adapters?model_id=mlx-community/Qwen3.5-4B-MLX-4bit"
+        )
+        assert resp.status_code == 200
+        entries = resp.json()
+        assert len(entries) == 1
+        assert entries[0]["adapter_name"] == "sft-1"
+
+    def test_list_adapters_top_level_dirs_not_adapters(
+        self, client, mock_service, tmp_adapter_dir
+    ):
+        # An empty top-level dir is a model-id component, never an adapter
+        (tmp_adapter_dir / "orphan-model").mkdir(parents=True)
+        resp = client.get("/api/fine-tune/adapters")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
 
 class TestAdapterServeEndpoints:
     def test_serve_adapter(self, client, mock_service, mock_pool, tmp_adapter_dir):
