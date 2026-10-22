@@ -2747,3 +2747,73 @@ class TestHfRepoIdResolution:
         with pytest.raises(ModelNotFoundError) as exc_info:
             await pool.get_engine("mlx-community/definitely-not-here")
         assert exc_info.value.model_id == "mlx-community/definitely-not-here"
+
+
+class TestFlattenedRepoKeyResolution:
+    # #1312: registry keys use the flattened cache-dir form, so the bare repo
+    # name a client sends ("Qwen3.5-9B-4bit") must resolve to
+    # "mlx-community--Qwen3.5-9B-4bit" instead of 404ing.
+
+    @staticmethod
+    def _pool(*model_ids):
+        pool = _make_pool(ceiling=10 * 1024**3)
+        for mid in model_ids:
+            pool._entries[mid] = EngineEntry(
+                model_id=mid,
+                model_path=f"/fake/{mid}",
+                model_type="llm",
+                engine_type="batched",
+                estimated_size=1024,
+            )
+        return pool
+
+    def test_bare_repo_name_resolves_to_flattened_key(self):
+        pool = self._pool("mlx-community--Qwen3.5-9B-4bit")
+        assert (
+            pool._resolve_hf_repo_id("Qwen3.5-9B-4bit")
+            == "mlx-community--Qwen3.5-9B-4bit"
+        )
+
+    def test_bare_repo_name_case_insensitive(self):
+        pool = self._pool("mlx-community--Qwen3.5-9B-4bit")
+        assert (
+            pool._resolve_hf_repo_id("qwen3.5-9b-4bit")
+            == "mlx-community--Qwen3.5-9B-4bit"
+        )
+
+    def test_slashed_repo_id_resolves_to_flattened_key(self):
+        pool = self._pool("mlx-community--Qwen3.5-9B-4bit")
+        assert (
+            pool._resolve_hf_repo_id("mlx-community/Qwen3.5-9B-4bit")
+            == "mlx-community--Qwen3.5-9B-4bit"
+        )
+
+    def test_flattened_key_resolves_from_slashed_entry(self):
+        pool = self._pool("mlx-community/Qwen3.5-4B-MLX-4bit")
+        assert (
+            pool._resolve_hf_repo_id("mlx-community--Qwen3.5-4B-MLX-4bit")
+            == "mlx-community/Qwen3.5-4B-MLX-4bit"
+        )
+
+    def test_models_prefixed_key_resolves(self):
+        pool = self._pool("models--ddalcu--MiniMax-H3-FL2VA-MLX-Serve-4bit")
+        assert (
+            pool._resolve_hf_repo_id("ddalcu--MiniMax-H3-FL2VA-MLX-Serve-4bit")
+            == "models--ddalcu--MiniMax-H3-FL2VA-MLX-Serve-4bit"
+        )
+
+    def test_ambiguous_bare_name_passes_through(self):
+        pool = self._pool("org-a--dup-model", "org-b--dup-model")
+        assert pool._resolve_hf_repo_id("dup-model") == "dup-model"
+
+    def test_unknown_bare_name_still_passes_through(self):
+        pool = self._pool("mlx-community--Qwen3.5-9B-4bit")
+        assert pool._resolve_hf_repo_id("plain-name") == "plain-name"
+
+    @pytest.mark.asyncio
+    async def test_get_engine_accepts_bare_repo_name(self):
+        pool = self._pool("mlx-community--Qwen3.5-9B-4bit")
+        engine = MagicMock()
+        engine.is_dead = lambda: False
+        pool._entries["mlx-community--Qwen3.5-9B-4bit"].engine = engine
+        assert await pool.get_engine("Qwen3.5-9B-4bit") is engine

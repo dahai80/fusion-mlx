@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed — bare repo names resolve to flattened cache keys (#1312)
+- Registry keys use the flattened HF cache-dir form
+  (`mlx-community--Qwen3.5-9B-4bit`), so a client sending the bare repo
+  name `Qwen3.5-9B-4bit` got `404 not_found_error` even with the weights on
+  disk. `EnginePool._resolve_hf_repo_id()` now matches repo-key spellings in
+  both directions (slashed id ↔ flattened key, `models--` prefix stripped)
+  and accepts a bare repo name when exactly one entry matches; ambiguous
+  names still pass through instead of loading the wrong weights.
+
 ### Fixed — KV checkpoint disk cap enforced, resume prefers largest prefix (#1308)
 - `enforce_disk_cap()` (20 GiB default, `FUSION_MLX_KV_CHECKPOINT_MAX_BYTES`)
   had no production caller — checkpoints reached 220 GB on disk. A
