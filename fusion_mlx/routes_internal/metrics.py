@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import threading
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,6 +30,12 @@ router = APIRouter()
 _CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 # #1179: hard cap for /metrics render in the worker thread.
 _METRICS_RENDER_TIMEOUT_S = 10.0
+# #1314: the fragmentation warning fires from the renderer, which a scraper
+# polls every couple of seconds; an unthrottled warning flooded the log and
+# buried real errors. Warn at most once per interval, keep the gauge current.
+_FRAG_WARN_INTERVAL_S = 300.0
+_last_frag_warning_at = 0.0
+_frag_warn_lock = threading.Lock()
 
 
 class _StickyCounterAccumulator:
@@ -643,14 +650,21 @@ def _render_uptime_metal() -> list[str]:
                 )
             )
             if frag_ratio > 0.30:
-                logger.warning(
-                    "High memory fragmentation: %.1f%% (phys=%d active=%d cache=%d overhead=%d)",
-                    frag_ratio * 100,
-                    phys,
-                    mlx_active,
-                    mlx_cache,
-                    overhead,
-                )
+                global _last_frag_warning_at
+                now = time.monotonic()
+                with _frag_warn_lock:
+                    due = now - _last_frag_warning_at >= _FRAG_WARN_INTERVAL_S
+                    if due:
+                        _last_frag_warning_at = now
+                if due:
+                    logger.warning(
+                        "High memory fragmentation: %.1f%% (phys=%d active=%d cache=%d overhead=%d)",
+                        frag_ratio * 100,
+                        phys,
+                        mlx_active,
+                        mlx_cache,
+                        overhead,
+                    )
     except Exception:
         logger.debug("phys_footprint/fragmentation metrics unavailable", exc_info=True)
     return lines

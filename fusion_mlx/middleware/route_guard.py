@@ -27,6 +27,8 @@ import hmac
 import json
 import logging
 import os
+import threading
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,34 @@ _EXEMPT_PATHS: frozenset[bytes] = frozenset(
 )
 
 _TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+# #1314: a scraper polling /metrics every couple of seconds in warn-only mode
+# produced a warning per request and buried real errors. Keep the signal,
+# log each (host, path) at most once per interval, and bound the map so a
+# rotating path set cannot grow it without limit.
+_WARN_THROTTLE_S = 300.0
+_WARN_THROTTLE_MAX_KEYS = 4096
+_warn_last_at: dict[tuple[str, str], float] = {}
+_warn_throttle_lock = threading.Lock()
+
+
+def _warn_due(host: str, path: str) -> bool:
+    now = time.monotonic()
+    key = (host, path)
+    with _warn_throttle_lock:
+        last = _warn_last_at.get(key)
+        if last is not None and now - last < _WARN_THROTTLE_S:
+            return False
+        if last is None and len(_warn_last_at) >= _WARN_THROTTLE_MAX_KEYS:
+            stale = [
+                k for k, at in _warn_last_at.items() if now - at >= _WARN_THROTTLE_S
+            ]
+            for k in stale:
+                del _warn_last_at[k]
+            if len(_warn_last_at) >= _WARN_THROTTLE_MAX_KEYS:
+                _warn_last_at.clear()
+        _warn_last_at[key] = now
+        return True
 
 
 def _warn_only_enabled() -> bool:
@@ -351,11 +381,14 @@ class RouteGuardMiddleware:
             )
             return
 
-        logger.warning(
-            "[route_guard] missing X-Fusion-Route (warn-only) host=%s path=%s",
-            _client_host(scope),
-            path.decode("ascii", "replace"),
-        )
+        host = _client_host(scope)
+        decoded_path = path.decode("ascii", "replace")
+        if _warn_due(host, decoded_path):
+            logger.warning(
+                "[route_guard] missing X-Fusion-Route (warn-only) host=%s path=%s",
+                host,
+                decoded_path,
+            )
         return await self.app(scope, receive, send)
 
 
