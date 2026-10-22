@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed — shell-registry heartbeat no longer floods the log (#1323)
+- With fusion-gateway down, the 15s heartbeat logged a full-traceback
+  `shell registry: round-trip failed` warning every tick (36 lines in ~9 min
+  of server.log); the healthy path also emitted a per-tick INFO.
+- Failure warnings are now rate-limited to one per 300s (traceback only when
+  an exception was raised), the per-tick success INFO is gone, and recovery
+  logs a single `recovered after N failed round-trip(s)` line.
+
 ### Fixed — adapter serve/unload routes accept repo-style model ids (#1319)
 - `POST /admin/api/fine-tune/adapters/{model_id}/{adapter_name}/serve|unload`
   returned 404 whenever the model id contained a slash

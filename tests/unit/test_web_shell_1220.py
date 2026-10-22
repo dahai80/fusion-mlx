@@ -139,8 +139,9 @@ async def test_register_once_payload(monkeypatch):
     monkeypatch.setenv(shell_registry.GATEWAY_URL_ENV, "http://127.0.0.1:11432/")
     monkeypatch.setenv(shell_registry.ADMIN_KEY_ENV, "fg-admin-key")
     monkeypatch.setattr("httpx.AsyncClient", _FakeClient)
-    ok = await shell_registry.register_once()
+    ok, reason = await shell_registry.register_once()
     assert ok is True
+    assert reason == ""
     sent = _FakeClient.last_request
     assert sent["url"] == "http://127.0.0.1:11432/api/v1/shell/manifests"
     assert sent["headers"]["Authorization"] == "Bearer fg-admin-key"
@@ -155,7 +156,75 @@ async def test_register_once_failure_returns_false(monkeypatch):
     monkeypatch.setattr(
         "httpx.AsyncClient", lambda *a, **kw: _FakeClient(status_code=500, text="boom")
     )
-    assert await shell_registry.register_once() is False
+    ok, reason = await shell_registry.register_once()
+    assert ok is False
+    assert "500" in reason and "boom" in reason
+
+
+class _FakeLoopClock:
+    def __init__(self):
+        self.now = 1000.0
+
+
+async def _drive_heartbeat(monkeypatch, clock, register, sleeps=7):
+    """Run the heartbeat task for N ticks with a fake clock; return log msgs."""
+    import logging
+
+    real_sleep = shell_registry.asyncio.sleep
+    records: list[str] = []
+    handler = logging.Handler()
+    handler.emit = lambda record: records.append(record.getMessage())
+    logger = logging.getLogger("fusion_mlx.shell_registry")
+    logger.addHandler(handler)
+    saved_level = logger.level
+    logger.setLevel(logging.INFO)
+    try:
+
+        async def fake_sleep(_seconds):
+            clock.now += shell_registry.REGISTER_INTERVAL_SECONDS
+            await real_sleep(0)
+
+        monkeypatch.setattr(shell_registry.time, "monotonic", lambda: clock.now)
+        monkeypatch.setattr(shell_registry.asyncio, "sleep", fake_sleep)
+        monkeypatch.setattr(shell_registry, "register_once", register)
+        task = asyncio.create_task(shell_registry.run_shell_registry())
+        for _ in range(sleeps):
+            await fake_sleep(shell_registry.REGISTER_INTERVAL_SECONDS)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(saved_level)
+    return records
+
+
+@pytest.mark.asyncio
+async def test_failure_warning_throttled(monkeypatch):
+    # #1323: a dead gateway must warn once per interval, not once per tick.
+    clock = _FakeLoopClock()
+
+    async def dead_register():
+        return (False, "round-trip failed: ConnectError: down")
+
+    records = await _drive_heartbeat(monkeypatch, clock, dead_register)
+    warnings = [r for r in records if "round-trip failed" in r]
+    assert len(warnings) == 1
+
+
+@pytest.mark.asyncio
+async def test_recovery_logged_after_failures(monkeypatch):
+    clock = _FakeLoopClock()
+    state = {"calls": 0}
+
+    async def flaky_register():
+        state["calls"] += 1
+        return (state["calls"] > 3, "round-trip failed: ConnectError: down")
+
+    records = await _drive_heartbeat(monkeypatch, clock, flaky_register)
+    assert any("recovered after 3 failed" in r for r in records)
 
 
 @pytest.mark.asyncio

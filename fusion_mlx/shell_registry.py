@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,9 @@ ADMIN_KEY_ENV = "FUSION_GATEWAY_ADMIN_KEY"
 MANIFEST_PATH_ENV = "FUSION_SHELL_MANIFEST"
 REGISTER_INTERVAL_SECONDS = 15.0
 HTTP_TIMEOUT_SECONDS = 5.0
+# #1323: the heartbeat fires every 15s — a dead/rejecting gateway must not
+# produce a per-tick warning flood (same class as the #1314 scrape flood).
+FAILURE_LOG_INTERVAL_SECONDS = 300.0
 
 
 def _default_manifest_path() -> Path:
@@ -61,8 +65,9 @@ def _load_manifest() -> dict[str, Any]:
     return manifest
 
 
-async def register_once() -> bool:
-    """One registration/heartbeat round-trip. True when the gateway accepted."""
+async def register_once() -> tuple[bool, str]:
+    """One registration/heartbeat round-trip. (True, "") when the gateway
+    accepted; otherwise (False, reason)."""
     gateway = os.environ.get(GATEWAY_URL_ENV, "").strip().rstrip("/")
     admin_key = os.environ.get(ADMIN_KEY_ENV, "").strip()
     manifest = _load_manifest()
@@ -71,19 +76,8 @@ async def register_once() -> bool:
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
         resp = await client.post(url, json=manifest, headers=headers)
     if resp.status_code in (200, 201, 204):
-        logger.info(
-            "shell registry: module %s registered/heartbeated at %s",
-            manifest.get("id"),
-            gateway,
-        )
-        return True
-    logger.warning(
-        "shell registry: registration failed %s -> %d %s",
-        url,
-        resp.status_code,
-        resp.text[:200],
-    )
-    return False
+        return True, ""
+    return False, f"registration failed {url} -> {resp.status_code} {resp.text[:200]}"
 
 
 async def run_shell_registry() -> None:
@@ -97,11 +91,29 @@ async def run_shell_registry() -> None:
         os.environ.get(GATEWAY_URL_ENV, ""),
         os.environ.get(MANIFEST_PATH_ENV, "") or _default_manifest_path(),
     )
+    last_failure_log = 0.0
+    consecutive_failures = 0
     while True:
+        exc: Exception | None = None
         try:
-            await register_once()
+            ok, reason = await register_once()
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logger.warning("shell registry: round-trip failed", exc_info=True)
+        except Exception as e:
+            ok = False
+            exc = e
+            reason = f"round-trip failed: {type(e).__name__}: {e}"
+        if ok:
+            if consecutive_failures:
+                logger.info(
+                    "shell registry: recovered after %d failed round-trip(s)",
+                    consecutive_failures,
+                )
+            consecutive_failures = 0
+        else:
+            consecutive_failures += 1
+            now = time.monotonic()
+            if now - last_failure_log >= FAILURE_LOG_INTERVAL_SECONDS:
+                last_failure_log = now
+                logger.warning("shell registry: %s", reason, exc_info=exc is not None)
         await asyncio.sleep(REGISTER_INTERVAL_SECONDS)
