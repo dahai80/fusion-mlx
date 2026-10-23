@@ -668,6 +668,17 @@ def set_oq_manager(manager):
     _oq_manager = manager
 
 
+def _get_oq_manager():
+    """Live read of the OQManager singleton.
+
+    #1337: route modules must NOT import ``_oq_manager`` by value — the
+    admin routers are imported before the server initializes the manager,
+    so a by-value import binds None forever and every oq route silently
+    degrades to the "not initialized" empty path.
+    """
+    return _oq_manager
+
+
 def set_hf_uploader(uploader):
     """Set the HFUploader instance for admin routes.
 

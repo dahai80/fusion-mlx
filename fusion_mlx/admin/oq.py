@@ -24,7 +24,7 @@ PRESET_REMOTE_URL = "https://bench.dpdns.org/assets/fusionmlx_preset.json"
 
 
 from .helpers import (
-    _oq_manager,
+    _get_oq_manager,
     _paroquant_compat_for_model,
 )
 from .models import (
@@ -41,9 +41,9 @@ def _validate_model_path(model_path: str) -> str:
     # default install, so every start/estimate call 403'd.
     resolved = Path(model_path).resolve()
     model_roots: list[Path] = []
-    if _oq_manager is not None:
+    if _get_oq_manager() is not None:
         model_roots = [
-            Path(d).resolve() for d in getattr(_oq_manager, "_model_dirs", [])
+            Path(d).resolve() for d in getattr(_get_oq_manager(), "_model_dirs", [])
         ]
     if not model_roots:
         model_roots = [(Path.home() / ".fusion-mlx" / "models").resolve()]
@@ -68,9 +68,9 @@ def _validate_model_path(model_path: str) -> str:
 @_router.get("/api/oq/models")
 async def list_oq_models(is_admin: bool = Depends(require_admin)):
     """List non-quantized models available for oQ quantization."""
-    if _oq_manager is None:
+    if _get_oq_manager() is None:
         return {"models": [], "all_models": []}
-    source_models, all_models = await _oq_manager.list_quantizable_models()
+    source_models, all_models = await _get_oq_manager().list_quantizable_models()
     return {"models": source_models, "all_models": all_models}
 
 
@@ -200,7 +200,7 @@ async def start_oq_quantization(
     is_admin: bool = Depends(require_admin),
 ):
     """Start an oQ quantization task (or MLX recipe-based conversion)."""
-    if _oq_manager is None:
+    if _get_oq_manager() is None:
         raise HTTPException(status_code=503, detail="oQ quantizer not initialized")
     is_recipe = bool(request.recipe)
     if not is_recipe and request.oq_level not in (2, 3, 3.5, 4, 5, 6, 8):
@@ -224,7 +224,7 @@ async def start_oq_quantization(
             ),
         )
     try:
-        task = await _oq_manager.start_quantization(
+        task = await _get_oq_manager().start_quantization(
             model_path=request.model_path,
             oq_level=request.oq_level,
             group_size=request.group_size,
@@ -243,17 +243,17 @@ async def start_oq_quantization(
 @_router.get("/api/oq/tasks")
 async def list_oq_tasks(is_admin: bool = Depends(require_admin)):
     """List all quantization tasks."""
-    if _oq_manager is None:
+    if _get_oq_manager() is None:
         return {"tasks": []}
-    return {"tasks": _oq_manager.get_tasks()}
+    return {"tasks": _get_oq_manager().get_tasks()}
 
 
 @_router.post("/api/oq/cancel/{task_id}")
 async def cancel_oq_task(task_id: str, is_admin: bool = Depends(require_admin)):
     """Cancel an active quantization task."""
-    if _oq_manager is None:
+    if _get_oq_manager() is None:
         raise HTTPException(status_code=503, detail="oQ quantizer not initialized")
-    success = await _oq_manager.cancel_quantization(task_id)
+    success = await _get_oq_manager().cancel_quantization(task_id)
     if not success:
         raise HTTPException(status_code=404, detail="Task not found or not cancellable")
     return {"success": True}
@@ -262,9 +262,9 @@ async def cancel_oq_task(task_id: str, is_admin: bool = Depends(require_admin)):
 @_router.delete("/api/oq/task/{task_id}")
 async def remove_oq_task(task_id: str, is_admin: bool = Depends(require_admin)):
     """Remove a completed/failed/cancelled task."""
-    if _oq_manager is None:
+    if _get_oq_manager() is None:
         raise HTTPException(status_code=503, detail="oQ quantizer not initialized")
-    success = _oq_manager.remove_task(task_id)
+    success = _get_oq_manager().remove_task(task_id)
     if not success:
         raise HTTPException(status_code=404, detail="Task not found or still active")
     return {"success": True}

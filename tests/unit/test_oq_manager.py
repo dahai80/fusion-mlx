@@ -233,25 +233,46 @@ class TestOQValidateModelPath:
         return OQManager(model_dirs=[str(d)]), d
 
     def test_accepts_path_inside_configured_model_dir(self, tmp_path, monkeypatch):
+        from fusion_mlx.admin import helpers as helpers_module
         from fusion_mlx.admin import oq as oq_module
 
         manager, d = self._manager(tmp_path)
-        monkeypatch.setattr(oq_module, "_oq_manager", manager)
+        monkeypatch.setattr(helpers_module, "_oq_manager", manager)
         model = d / "Qwen-27B"
         model.mkdir()
         resolved = oq_module._validate_model_path(str(model))
         assert resolved == str(model.resolve())
 
     def test_rejects_path_outside_model_dirs(self, tmp_path, monkeypatch):
+        from fusion_mlx.admin import helpers as helpers_module
         from fusion_mlx.admin import oq as oq_module
 
         manager, _ = self._manager(tmp_path)
-        monkeypatch.setattr(oq_module, "_oq_manager", manager)
+        monkeypatch.setattr(helpers_module, "_oq_manager", manager)
         outside = tmp_path / "elsewhere" / "model"
         outside.mkdir(parents=True)
         with pytest.raises(Exception) as exc_info:
             oq_module._validate_model_path(str(outside))
         assert "403" in str(exc_info.value) or "model_path" in str(exc_info.value)
+
+
+class TestOQManagerLiveBinding:
+    """#1337: oq routes must see a manager set AFTER the route module import.
+
+    The admin routers are imported before the server initializes the
+    manager, so a by-value ``from .helpers import _oq_manager`` binds None
+    forever and every oq route silently degrades to the empty path.
+    """
+
+    def test_set_after_import_is_visible_to_routes(self, tmp_path, monkeypatch):
+        from fusion_mlx.admin import helpers as helpers_module
+        from fusion_mlx.admin import oq as oq_module
+
+        monkeypatch.setattr(helpers_module, "_oq_manager", None)
+        assert oq_module._get_oq_manager() is None
+        manager, _ = TestOQValidateModelPath()._manager(tmp_path)
+        monkeypatch.setattr(helpers_module, "_oq_manager", manager)
+        assert oq_module._get_oq_manager() is manager
 
 
 class TestOQRecipeValidation:
