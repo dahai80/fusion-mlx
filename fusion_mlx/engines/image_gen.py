@@ -241,6 +241,42 @@ _IMAGE_GEN_TIMEOUT_DEFAULT_S = 600.0
 # mid-generation; waiting indefinitely wedged the pool (#901). Bounded wait
 # then poison so the state is explicit and recoverable. Env-overridable.
 _CANCEL_GRACE_S = float(os.environ.get("FUSION_IMAGE_CANCEL_GRACE_S", "30"))
+# #1333: max seconds a media job waits for active LLM requests to drain
+# before spawning the worker. A running image job saturates the shared GPU
+# command queue and starves concurrent LLM decode (observed 20 tok/s -> 1
+# tok/s on 27B during FLUX). 0 disables the gate.
+_MEDIA_LLM_IDLE_WAIT_S = float(os.environ.get("FUSION_MEDIA_LLM_IDLE_WAIT_S", "60"))
+
+
+async def wait_for_llm_idle(defer_s: float, poll_s: float = 0.5) -> float:
+    """#1333: wait until no LLM engine has active requests, or defer_s elapsed.
+
+    Returns seconds actually waited. poll_s is a parameter (not an env) so
+    tests can run the loop fast.
+    """
+    if defer_s <= 0:
+        return 0.0
+    from ..engine_core import llm_engines_busy
+
+    waited = 0.0
+    busy = True
+    while waited < defer_s:
+        busy = llm_engines_busy()
+        if not busy:
+            break
+        if waited == 0.0:
+            logger.info(
+                "media job waiting for active LLM requests to drain (max %.0fs)",
+                defer_s,
+            )
+        await asyncio.sleep(poll_s)
+        waited += poll_s
+    if waited > 0.0 and busy:
+        logger.info(
+            "media job starting after %.0fs defer; LLM still busy (cap reached)",
+            waited,
+        )
+    return waited
 
 
 def get_image_gen_timeout(n_images: int = 1) -> float:
@@ -1500,6 +1536,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
     ) -> list[bytes]:
         # S3: subprocess image generation via MediaJobManager.
         from ..media.job_manager import MediaJobManager
+
+        # #1333: defer the worker spawn until active LLM requests drain
+        # (bounded). Runs before run_image_job so the defer does not eat
+        # into the per-call hang deadline.
+        await wait_for_llm_idle(_MEDIA_LLM_IDLE_WAIT_S)
 
         mgr = getattr(ImageGenEngine, "_media_mgr", None)
         if mgr is None:
