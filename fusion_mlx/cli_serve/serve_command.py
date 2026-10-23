@@ -822,6 +822,18 @@ def serve_command(args):
         )
         # auto is authoritative — clear operator-set spec flags so the
         # resolved method doesn't collide with a stale enable_*.
+        # #gdn-verify: clearing an explicitly-passed --enable-mtp silently
+        # made operators believe MTP was running when auto actually
+        # resolved to ddtree/suffix. Warn loudly so the resolved method
+        # is unambiguous in the log.
+        if getattr(args, "enable_mtp", False):
+            logger.warning(
+                "spec-auto: clearing operator-passed --enable-mtp; "
+                "resolved method is %s. To force native MTP use "
+                "--spec-decode mtp (--mtp-sidecar if the checkpoint lacks "
+                "mtp.* tensors).",
+                getattr(_resolution, "cli_target", "?"),
+            )
         args.suffix_decoding = False
         args.enable_mtp = False
         args.enable_dflash = False

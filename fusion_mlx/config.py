@@ -439,6 +439,10 @@ class ServerConfig:
     # R-7 profile gate: lite / standard / full
     profile: str | None = None
     disabled_modules: list[str] = field(default_factory=list)
+    # --text-only/--no-mllm escape hatch (#393): pool mode maps it to
+    # force_lm (VLM models load as BatchedEngine; vision requests fail
+    # loudly instead of silently loading a broken vision tower).
+    force_text: bool = False
 
     # KV cache dtype (pre-load fallback for metrics)
     kv_cache_dtype: str | None = None

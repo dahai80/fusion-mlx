@@ -312,6 +312,16 @@ def _serve_from_model_dir(args):
     _get_config().memory.tier = config.memory.tier
     _get_config().memory.custom_limit_mb = config.memory.custom_limit_mb
 
+    # --text-only/--no-mllm (#393 escape hatch): map to ServerConfig.force_text
+    # so the engine pool loads VLM-family models as BatchedEngine (vision
+    # requests fail loudly instead of loading a broken vision tower).
+    if getattr(args, "no_mllm", False):
+        config.force_text = True
+        logger.info(
+            "text-only: --text-only/--no-mllm set — pool will load VLM-family "
+            "models as text-only BatchedEngine (vision requests will fail)"
+        )
+
     # Profile-driven spec-decode default (#efficiency, PR#1143 follow-up).
     # The single-model serve_command path resolves profile default-on ->
     # auto at line ~702. But start.sh runs in --model-dir discovery mode
