@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Changed — --text-only wired pool-wide; mtp_enabled dead-knob fails visibly
+- `serve --model-dir --text-only` (dest `no_mllm`) was a documented escape
+  hatch with no wiring: the flag parsed, then nothing read it. It now maps
+  to `ServerConfig.force_text`, and the engine pool loads VLM-family
+  models as text-only BatchedEngine (distinct log line: "Loading model as
+  LM (pool force_text=True)"); vision requests fail loudly instead of
+  loading a broken vision tower. The single-model path logs the staged
+  flag at load time.
+- `mtp_enabled=True` in model_settings.json was inert on the serve load
+  path — `set_mtp_active` only runs inside the OQ convert pipeline, which
+  does not pass model_settings. `BatchedEngine.start` now warns loudly
+  when the toggle is set, pointing at `--spec-decode mtp` / spec-auto
+  resolution as the real activation path.
+- spec-decode `auto` silently cleared an operator-passed `--enable-mtp`;
+  it now logs a warning naming the resolved method so operators are not
+  left believing native MTP is running when auto resolved to
+  ddtree/n-gram suffix.
+
 ### Added — image gen defers to active LLM requests (bounded LLM-idle gate) (#1333)
 - A running image job saturates the shared GPU command queue and starves
   concurrent LLM decode (observed 20 tok/s → 1 tok/s on Qwen3.8-27B while

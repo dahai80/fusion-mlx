@@ -192,6 +192,7 @@ class EnginePool:
         self,
         scheduler_config: SchedulerConfig | None = None,
         profile: object | None = None,
+        force_text: bool = False,
     ):
         """
         Initialize the engine pool.
@@ -199,6 +200,8 @@ class EnginePool:
         Args:
             scheduler_config: Configuration for BatchedEngine schedulers
             profile: ServerProfile (R-7) gating modalities at load time
+            force_text: --text-only/--no-mllm (#393) — load VLM-family
+                models as text-only BatchedEngine; vision requests fail
 
         Note:
             Pre-load admission consults `enforcer.get_final_ceiling()` via
@@ -263,6 +266,8 @@ class EnginePool:
         # R-7: profile gate — disabled modalities raise EngineDisabledError
         # at load time (loud 503, not silent skip).
         self._profile = profile
+        # --text-only (#393): pool-wide force_lm flip for VLM-family models.
+        self._force_text = force_text
         self.configure_hot_cache_budget()
 
     @property
@@ -3231,9 +3236,14 @@ class EnginePool:
             VideoGenEngine = _g.get("VideoGenEngine") or __getattr__("VideoGenEngine")
 
             effective_type = entry.engine_type
-            if force_lm and effective_type == "vlm":
+            if (force_lm or self._force_text) and effective_type == "vlm":
                 effective_type = "batched"
-                logger.info(f"Loading model as LM (force_lm=True): {model_id}")
+                if force_lm:
+                    logger.info(f"Loading model as LM (force_lm=True): {model_id}")
+                else:
+                    logger.info(
+                        f"Loading model as LM (pool force_text=True): {model_id}"
+                    )
             else:
                 logger.info(f"Loading model: {model_id}")
 

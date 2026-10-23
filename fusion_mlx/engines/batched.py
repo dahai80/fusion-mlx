@@ -256,6 +256,22 @@ class BatchedEngine(BaseEngine):
         if self._loaded:
             return
 
+        # #mtp-knob-visibility: mtp_enabled is a dead knob on the serve
+        # load path — set_mtp_active(True) only runs inside the OQ convert
+        # pipeline (oq/streaming.py), and even there model_settings is not
+        # passed. Native MTP at serve time comes from --spec-decode mtp /
+        # spec-auto resolution, never from this toggle. Fail visibly.
+        if self._model_settings is not None and getattr(
+            self._model_settings, "mtp_enabled", False
+        ):
+            logger.warning(
+                "mtp_enabled=True in model settings is not wired into the "
+                "serve load path (pre-load MTP patch pipeline only runs in "
+                "the OQ convert pipeline); this toggle is inert here. Native "
+                "MTP at serve time comes from --spec-decode mtp or spec-auto "
+                "resolution, not this knob."
+            )
+
         from mlx_lm import load
 
         from ..scheduler import SchedulerConfig

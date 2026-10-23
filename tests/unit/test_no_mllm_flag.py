@@ -10,10 +10,11 @@ silent bypasses when a new routing flag is added without wiring it
 through every required call site.
 
 NOTE: the legacy ``--mllm`` force-on side (rapid-mlx ``MLLMScheduler``
-dead path) has been deleted. ``--no-mllm`` / ``--text-only`` survives
-as a standalone no-op escape-hatch hook (``force_text``, retained for
-#393 text-only forks of multimodal architectures) and is declared in
-NON_ROUTING_FLAGS_ALLOWLIST rather than the paired registry.
+dead path) has been deleted. ``--no-mllm`` / ``--text-only`` now maps
+to ``ServerConfig.force_text`` and is wired pool-wide: the engine pool
+loads VLM-family models as text-only BatchedEngine (vision requests
+fail loudly). Declared in NON_ROUTING_FLAGS_ALLOWLIST rather than the
+paired registry.
 """
 
 from __future__ import annotations
@@ -81,10 +82,10 @@ class RoutingFlagPair:
 
 AUTO_ROUTING_FLAG_PAIRS: tuple[RoutingFlagPair, ...] = (
     # NOTE: --mllm / --no-mllm is intentionally NOT a registered pair here.
-    # The force-on side (--mllm -> force_mllm -> BatchedEngine._is_mllm) was
+    # The force-on side (--mllm -> force_mllm -> EnginePool._load_engine) was
     # rapid-mlx legacy dead code and has been deleted; --no-mllm / --text-only
-    # survives as a standalone escape-hatch hook (force_text, currently a
-    # no-op retained for #393) and is listed in NON_ROUTING_FLAGS_ALLOWLIST.
+    # now maps to ServerConfig.force_text (pool-wide force_lm flip) and is
+    # listed in NON_ROUTING_FLAGS_ALLOWLIST.
     RoutingFlagPair(
         force_on="--tool-call-parser",
         force_off="--no-tool-call-parser",
@@ -198,9 +199,9 @@ NON_ROUTING_FLAGS_ALLOWLIST: frozenset[str] = frozenset(
         "--no-wait",
         # --no-mllm / --text-only: standalone escape hatch (#393). The
         # paired force-on side (--mllm) was rapid-mlx legacy dead code and
-        # has been deleted; this survives as a no-op force_text hook for
-        # loading text-only forks of multimodal architectures. Not a binary
-        # auto-routing pair anymore, so it lives here, not in the registry.
+        # has been deleted; force_text is now wired pool-wide (EnginePool
+        # loads VLM-family models as text-only BatchedEngine). Not a binary
+        # auto-routing pair, so it lives here, not in the registry.
         "--no-mllm",
         "--text-only",
     }

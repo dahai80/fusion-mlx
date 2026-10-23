@@ -2043,6 +2043,7 @@ class Server:
         self.pool = EnginePool(
             scheduler_config=self._convert_scheduler_config(),
             profile=self._profile,
+            force_text=self.config.force_text,
         )
 
         # Create and wire memory enforcer
@@ -2862,6 +2863,12 @@ class Server:
         logger.info(
             "Loading single model: %s (diffusion=%s)", model_path, _is_diffusion
         )
+        if pending.get("force_text"):
+            logger.info(
+                "text-only: force_text=True on single-model load — engine is "
+                "BatchedEngine; vision requests will fail (set via "
+                "--text-only/--no-mllm)"
+            )
         if _is_diffusion:
             from .runtime.diffusion_lane import DiffusionEngine
 
