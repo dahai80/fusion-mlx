@@ -252,3 +252,25 @@ class TestOQValidateModelPath:
         with pytest.raises(Exception) as exc_info:
             oq_module._validate_model_path(str(outside))
         assert "403" in str(exc_info.value) or "model_path" in str(exc_info.value)
+
+
+class TestOQRecipeValidation:
+    """#1337: unsupported recipes must fail fast; supported ones pass through."""
+
+    async def test_unimplemented_recipe_rejected(self, fp_model_dir):
+        manager = OQManager(model_dirs=[str(fp_model_dir)])
+        source = fp_model_dir / "Llama-3B"
+        with pytest.raises(ValueError, match="not implemented"):
+            await manager.start_quantization(
+                model_path=str(source), recipe="quant2_all"
+            )
+
+    async def test_supported_recipe_accepted(self, fp_model_dir, monkeypatch):
+        manager = OQManager(model_dirs=[str(fp_model_dir)])
+        monkeypatch.setattr(manager, "_run_mlx_convert", lambda *a, **k: None)
+        source = fp_model_dir / "Llama-3B"
+        task = await manager.start_quantization(
+            model_path=str(source), recipe="mixed_2_6"
+        )
+        assert task.recipe == "mixed_2_6"
+        assert task.status.value in ("pending", "queued", "loading", "running")

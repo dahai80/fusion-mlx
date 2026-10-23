@@ -254,6 +254,18 @@ class OQManager:
             "mxfp8",
         }
     )
+    # #1337: recipes mlx_lm.convert actually accepts as --quant-predicate
+    # (mlx-lm 0.31.x). The rest of MLX_RECIPES are advertised by the admin
+    # recipes list but not implemented by the convert path — reject them at
+    # start instead of failing deep inside the subprocess.
+    MLX_RECIPE_PREDICATES = frozenset(
+        {
+            "mixed_2_6",
+            "mixed_3_4",
+            "mixed_3_6",
+            "mixed_4_6",
+        }
+    )
 
     async def start_quantization(
         self,
@@ -286,6 +298,11 @@ class OQManager:
         if is_recipe and recipe not in self.MLX_RECIPES:
             raise ValueError(
                 f"Unknown recipe {recipe!r}. Must be one of {sorted(self.MLX_RECIPES)}"
+            )
+        if is_recipe and recipe not in self.MLX_RECIPE_PREDICATES:
+            raise ValueError(
+                f"Recipe {recipe!r} is not implemented by the installed "
+                f"mlx_lm.convert. Supported: {sorted(self.MLX_RECIPE_PREDICATES)}"
             )
 
         from ..oq import (
@@ -497,15 +514,20 @@ class OQManager:
         import subprocess
         import sys
 
+        # #1337: mlx-lm 0.31.x convert CLI takes --hf-path/--mlx-path and
+        # --quant-predicate. The old --model/--output/--quant-recipe flags
+        # were rejected, so every recipe task died immediately.
         cmd = [
             sys.executable,
             "-m",
-            "mlx_lm.convert",
-            "--model",
+            "mlx_lm",
+            "convert",
+            "--hf-path",
             model_path,
-            "--output",
+            "--mlx-path",
             output_path,
-            "--quant-recipe",
+            "--quantize",
+            "--quant-predicate",
             recipe,
         ]
         if dtype == "float16":
