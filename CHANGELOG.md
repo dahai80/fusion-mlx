@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added — image gen defers to active LLM requests (bounded LLM-idle gate) (#1333)
+- A running image job saturates the shared GPU command queue and starves
+  concurrent LLM decode (observed 20 tok/s → 1 tok/s on Qwen3.8-27B while
+  FLUX.1-dev ran). The memory admission gate (#1187) does not see compute
+  contention.
+- Before spawning the image worker, the engine now waits (0.5s poll) until
+  no LLM engine has active requests, up to `FUSION_MEDIA_LLM_IDLE_WAIT_S`
+  (default 60s, 0 disables). After the cap the job starts anyway, so image
+  latency stays bounded and a continuously busy LLM never starves image gen.
+- New lock-free `engine_core.llm_engines_busy()` reads each registered
+  engine's `get_stats_snapshot()` — never blocks behind a decode step.
+
 ### Fixed — image gen: successful job no longer discarded on slow worker teardown (#1330)
 - `MediaJobManager.run_image_job` raised `RuntimeError: worker exited -15`
   when the worker delivered its terminal `result` event but took more than

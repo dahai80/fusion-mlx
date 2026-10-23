@@ -390,6 +390,26 @@ def is_media_job_active() -> bool:
         return _media_job_active
 
 
+def llm_engines_busy() -> bool:
+    """True while any registered LLM engine has active requests (#1333).
+
+    Reads each engine's lock-free get_stats_snapshot() so this never blocks
+    behind a long prefill/decode step. Engines that vanished (weakref dead)
+    or fail to report are skipped, never treated as busy.
+    """
+    for ref in list(_llm_watchdog_engine_refs.values()):
+        eng = ref()
+        if eng is None:
+            continue
+        try:
+            snap = eng.get_stats_snapshot()
+        except Exception:  # noqa: BLE001
+            continue
+        if snap.get("active_requests", 0) > 0:
+            return True
+    return False
+
+
 def register_llm_engine_for_watchdog(engine: Any) -> None:
     # Called from EngineCore.start() after the watchdog starts. Holds a
     # weakref so engine teardown (pool evict) is not blocked by the watchdog.
