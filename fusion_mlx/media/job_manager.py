@@ -154,6 +154,18 @@ class MediaJobManager:
 
         if proc.returncode not in (0, None):
             rc = proc.returncode
+            if result.outputs:
+                # #1330: the worker delivered a terminal result event, so the
+                # outputs are complete on disk. A non-zero exit code here is
+                # teardown noise — most commonly our own 3s grace SIGTERM
+                # while the interpreter releases Metal buffers. Do not
+                # discard a successful job over it.
+                logger.warning(
+                    "worker exited %d after delivering outputs (teardown kill); treating as success",
+                    rc,
+                )
+                result.exit_code = rc
+                return result
             stderr_data = await proc.stderr.read() if proc.stderr else b""
             stderr_text = stderr_data.decode(errors="replace")[-2000:]
             if rc in (137, -9):
