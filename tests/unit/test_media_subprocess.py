@@ -172,3 +172,78 @@ class TestSubprocessEnabled:
         from fusion_mlx.engines.image_gen import _subprocess_enabled
 
         assert _subprocess_enabled() is True
+
+
+class TestTeardownKillAfterResult:
+    # #1330: worker saves outputs, emits the terminal result event, then
+    # lingers in interpreter teardown. The 3s grace SIGTERM rewrites the
+    # exit code to -15; the delivered outputs must survive that.
+
+    def _make_fake_worker(self, tmp_path, body):
+        import sys
+
+        worker = tmp_path / "fake_worker_1330.py"
+        worker.write_text(
+            "import json, sys, time\n" "json.load(open(sys.argv[1]))\n" + body
+        )
+        return sys.executable, "fake_worker_1330"
+
+    async def test_result_survives_grace_sigterm(self, tmp_path, monkeypatch):
+
+        exe, module = self._make_fake_worker(
+            tmp_path,
+            "print(json.dumps({'type': 'result', 'outputs': ['/tmp/fake_out.png']}), flush=True)\n"
+            "time.sleep(60)\n",
+        )
+        monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+        mgr = MediaJobManager()
+        mgr._python_exe = exe
+        mgr._worker_module = module
+        result = await mgr.run_image_job(
+            variant="txt2img",
+            model_path="fake/model",
+            quantize=4,
+            config_label=None,
+            output_format="PNG",
+            n_images=1,
+            gen_params={
+                "seed": 0,
+                "prompt": "x",
+                "steps": 1,
+                "height": 64,
+                "width": 64,
+                "guidance": 1.0,
+            },
+            timeout=30.0,
+        )
+        assert result.outputs == ["/tmp/fake_out.png"]
+        assert result.exit_code == -15
+
+    async def test_error_exit_without_result_still_raises(self, tmp_path, monkeypatch):
+
+        exe, module = self._make_fake_worker(
+            tmp_path,
+            "sys.exit(1)\n",
+        )
+        monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+        mgr = MediaJobManager()
+        mgr._python_exe = exe
+        mgr._worker_module = module
+        with pytest.raises(RuntimeError, match="worker exited"):
+            await mgr.run_image_job(
+                variant="txt2img",
+                model_path="fake/model",
+                quantize=4,
+                config_label=None,
+                output_format="PNG",
+                n_images=1,
+                gen_params={
+                    "seed": 0,
+                    "prompt": "x",
+                    "steps": 1,
+                    "height": 64,
+                    "width": 64,
+                    "guidance": 1.0,
+                },
+                timeout=30.0,
+            )

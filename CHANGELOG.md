@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed — image gen: successful job no longer discarded on slow worker teardown (#1330)
+- `MediaJobManager.run_image_job` raised `RuntimeError: worker exited -15`
+  when the worker delivered its terminal `result` event but took more than
+  the 3s grace window to exit — common after FLUX jobs, where interpreter
+  teardown releases tens of GB of Metal buffers. A fully saved image was
+  reported as `Image generation failed` after paying the full GPU cost.
+- When the terminal result has been received, a non-zero worker exit code is
+  now logged as a warning and the outputs are returned; the raise only fires
+  when no result was delivered.
+
 ## [v0.10.14] — 2026-10-22
 
 ### Fixed — adapter registry lists adapters of slash model ids (#1317)
