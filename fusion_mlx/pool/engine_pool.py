@@ -178,6 +178,23 @@ class EngineEntry:
     base_model_id: str | None = None  # Base model_id for derived adapter entries
 
 
+def _mark_pool_shared_if_multi(entries) -> None:
+    # #contention-pool: once two engines are resident this process shares the
+    # GPU among them for the rest of its life, so decode jitter can no longer
+    # be attributed to an external process — silence the per-scheduler
+    # contention warning for good.
+    if pool_shared():
+        return
+    resident = sum(1 for e in entries.values() if e.engine is not None)
+    if resident >= 2:
+        set_pool_shared(True)
+        logger.info(
+            "pool: %d resident engines share this GPU — external GPU "
+            "contention warnings disabled",
+            resident,
+        )
+
+
 class EnginePool:
     """
     Manages multiple model engines with LRU-based memory management.
@@ -2233,26 +2250,10 @@ class EnginePool:
             entry.last_access = time.time()
             entry.loaded_at = entry.last_access
             self._current_model_memory += entry.estimated_size
-            self._mark_pool_shared_if_multi()
+            _mark_pool_shared_if_multi(self._entries)
         logger.info(
             f"Registered entry '{model_id}' in pool (engine_type={engine_type})"
         )
-
-    def _mark_pool_shared_if_multi(self) -> None:
-        # #contention-pool: once two engines are resident this process shares
-        # the GPU among them for the rest of its life, so decode jitter can no
-        # longer be attributed to an external process — silence the
-        # per-scheduler contention warning for good.
-        if pool_shared():
-            return
-        resident = sum(1 for e in self._entries.values() if e.engine is not None)
-        if resident >= 2:
-            set_pool_shared(True)
-            logger.info(
-                "pool: %d resident engines share this GPU — external GPU "
-                "contention warnings disabled",
-                resident,
-            )
 
     def unload_engine(self, model_id: str) -> None:
         """Synchronously remove an engine from pool entries (non-blocking)."""
@@ -3678,7 +3679,7 @@ class EnginePool:
             entry.engine = engine
             entry.last_access = time.time()
             entry.loaded_at = entry.last_access
-            self._mark_pool_shared_if_multi()
+            _mark_pool_shared_if_multi(self._entries)
             # P2-5: defer the memory-counter increment + enforcer update until
             # AFTER the post-load clear_cache below. The counter drives the
             # enforcer's eviction decisions; incrementing before clear_cache

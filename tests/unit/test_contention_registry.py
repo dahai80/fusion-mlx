@@ -72,7 +72,7 @@ class TestSchedStepGates(unittest.TestCase):
         src = self._load_sched_step_src()
         self.assertIn("not pool_shared()", src)
         pool_src = open("fusion_mlx/pool/engine_pool.py").read()
-        self.assertIn("_mark_pool_shared_if_multi()", pool_src)
+        self.assertIn("_mark_pool_shared_if_multi(self._entries)", pool_src)
         self.assertIn("set_pool_shared(True)", pool_src)
 
     def test_decode_steps_mark_registry(self):
