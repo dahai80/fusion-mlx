@@ -166,18 +166,25 @@ class OQManager:
                 for subdir in sorted(model_dir.iterdir()):
                     if not subdir.is_dir():
                         continue
-                    candidates = []
+                    candidates: list[tuple[Path, str]] = []
                     if (subdir / "config.json").exists():
-                        candidates.append(subdir)
+                        candidates.append((subdir, subdir.name))
                     else:
                         for child in sorted(subdir.iterdir()):
                             if child.is_dir() and (child / "config.json").exists():
-                                candidates.append(child)
+                                candidates.append((child, child.name))
+                    # #1337: HF cache layout — models--org--name/snapshots/<rev>/
+                    # is one level deeper than the child scan above. Display
+                    # the repo dir name (models--org--name), not the commit hash.
+                    if not candidates:
+                        for snap in sorted(subdir.glob("snapshots/*")):
+                            if snap.is_dir() and (snap / "config.json").exists():
+                                candidates.append((snap, subdir.name))
 
-                    for path in candidates:
+                    for path, display_name in candidates:
                         if path.name in seen:
                             continue
-                        seen.add(path.name)
+                        seen.add(display_name)
                         try:
                             with open(path / "config.json") as f:
                                 config = json.load(f)
@@ -202,7 +209,7 @@ class OQManager:
                                 and _checkpoint_has_mtp_weights(path)
                             )
                             info = {
-                                "name": path.name,
+                                "name": display_name,
                                 "path": str(path),
                                 "size": size,
                                 "size_formatted": _format_size(size),
