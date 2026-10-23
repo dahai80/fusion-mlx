@@ -131,6 +131,52 @@ class TestComputePromptTokensForMessages:
         )
         assert result > 0
 
+    def test_prefers_count_chat_tokens_over_raw_template(self):
+        # #context-budget-system-first: inline role="system" messages
+        # (CC 2.1.154+ via the gateway OpenAI route) make the raw
+        # template raise; count_chat_tokens normalizes like the real
+        # build, so the estimate must come from there.
+        engine = _StubEngine(
+            tokenizer=_StubTokenizer(chars_per_token=4),
+        )
+        seen = {}
+
+        def _count_chat(messages, tools=None, chat_template_kwargs=None):
+            seen["messages"] = messages
+            seen["kwargs"] = chat_template_kwargs
+            return 1234
+
+        def _raw_raise(messages, tools=None, chat_template_kwargs=None):
+            raise RuntimeError("System message must be at the beginning.")
+
+        engine.count_chat_tokens = _count_chat
+        engine._apply_chat_template = _raw_raise
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hi"},
+            {"role": "system", "content": "inline sys"},
+        ]
+        result = compute_prompt_tokens_for_messages(
+            engine, messages, enable_thinking=True
+        )
+        assert result == 1234
+        assert seen["messages"] == messages
+        assert seen["kwargs"] == {"enable_thinking": True}
+
+    def test_count_chat_tokens_failure_returns_zero(self):
+        engine = _StubEngine(
+            tokenizer=_StubTokenizer(chars_per_token=4),
+        )
+
+        def _fail(messages, tools=None, chat_template_kwargs=None):
+            raise RuntimeError("boom")
+
+        engine.count_chat_tokens = _fail
+        result = compute_prompt_tokens_for_messages(
+            engine, [{"role": "user", "content": "test"}]
+        )
+        assert result == 0
+
     def test_mllm_engine_returns_zero(self):
         engine = _StubEngine(tokenizer=_StubTokenizer())
         engine.is_mllm = True

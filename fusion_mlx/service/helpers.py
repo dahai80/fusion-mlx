@@ -1548,6 +1548,28 @@ def compute_prompt_tokens_for_messages(
         return 0
     build_prompt = getattr(engine, "build_prompt", None)
     if build_prompt is None:
+        # #context-budget-system-first: count via count_chat_tokens so the
+        # estimate sees the SAME normalization the real prompt build uses
+        # (_sort_system_first merges inline role="system" entries — Claude
+        # Code 2.1.154+ sends them through the gateway OpenAI route). The
+        # raw _apply_chat_template fallback below raises
+        # "System message must be at the beginning." on that shape and the
+        # budget silently degrades to used=0.
+        count_chat = getattr(engine, "count_chat_tokens", None)
+        if count_chat is not None:
+            try:
+                ct_kwargs = {}
+                if enable_thinking is not None:
+                    ct_kwargs["enable_thinking"] = enable_thinking
+                return count_chat(
+                    messages, tools=tools, chat_template_kwargs=ct_kwargs or None
+                )
+            except Exception:
+                logger.debug(
+                    "compute_prompt_tokens_for_messages: count_chat_tokens failed",
+                    exc_info=True,
+                )
+                return 0
         apply_tpl = getattr(engine, "_apply_chat_template", None)
         if apply_tpl is not None:
             try:
