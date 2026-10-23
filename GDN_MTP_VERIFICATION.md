@@ -1,81 +1,77 @@
-# GDN hybrid + vendored MTP: verification result (2026-10-23)
+# GDN hybrid spec-decode verification — CORRECTED (2026-10-23)
 
-Branch `research/gdn-spec-verify`. Question: is the conservative
-"recurrent (ArraysCache) layers" gate in `engine_core` correct to block
-speculative decode for the Qwen3.8-27B GDN hybrid (48 linear_attention +
-16 full_attention layers), or does the vendored MTP path handle recurrent
-state correctly?
+Branch `research/gdn-spec-verify`. **This file supersedes the first version
+of this doc, which mis-attributed the measured speedup to vendored MTP.**
 
-## Experiment
+## What actually happened
 
-A/B on port 11433, `mlx-community/Qwen3.8-27B-4bit`, `--text-only`,
-greedy (temperature=0), same 4 prompts (code / math / story / Fibonacci),
-max_tokens 300-600:
+The original A/B served the 27B with `--text-only --enable-mtp
+--mtp-num-draft-tokens 2`. Follow-up reproduction (2026-10-23 17:11) shows
+that serve actually resolved **n-gram suffix**, not MTP: profile "full" is
+spec-default-on, `--enable-mtp` (a boolean, not a method choice) is cleared
+by the spec-auto resolver, auto routes family=qwen3_8 to dflash2, and with
+no dflash2 drafter path installed it falls back to n-gram suffix. The
+"zero `no spec method loaded` lines = MTP engaged" inference in the first
+version was wrong.
 
-- **Run A (baseline)**: plain serve, no spec decode.
-- **Run B**: `--enable-mtp --mtp-num-draft-tokens 2`.
+## Corrected measurements (same day, port 11433, prod CC load in background)
 
-## Results
+- `--spec-decode none` (true baseline): 22.7 / 23.7 tok/s
+- default auto → suffix: 20.3 / 32.2 tok/s
 
-Speed (server-side `completion_tps`, steady state after first-request
-compile warmup):
+n-gram suffix helps repetitive content (math steps: +36%) and is roughly
+neutral on code. The first version's "+65-90%" gap (16-19.6 baseline vs
+27.9-33) is not reproducible; the baseline numbers were most likely
+contaminated by concurrent prod load (image gen drops CC decode to ~1
+tok/s; see #1333). The greedy byte-identity result (4/4 prompts identical
+between the two serves) remains valid — n-gram verify is also greedy-exact
+— but it is no longer evidence about recurrent-state handling in an MTP
+verify path, because no MTP path ran.
 
-| Mode | tok/s |
-|---|---|
-| baseline | 16.2 - 19.6 |
-| MTP K=2 | 27.9 - 33.0 |
+## Native MTP on this checkpoint: blocked, needs a sidecar
 
-**+65-90% decode throughput.** One outlier (Fibonacci listing, 6.2 tok/s):
-spec decode can thrash on highly repetitive formatting — draft proposes,
-target rejects, per-cycle cost exceeds single-token decode. Known spec
-characteristic, not GDN-specific.
-
-Correctness — the decisive test: greedy spec decode is mathematically
-equivalent to standard greedy decode when the verify path is correct. Any
-recurrent-state corruption would diverge the outputs.
-
-| Request | identical |
-|---|---|
-| merge-sorted-lists (2339 chars) | byte-for-byte |
-| train average speed (1897 chars) | byte-for-byte |
-| lighthouse story (1886 chars) | byte-for-byte |
-| Fibonacci structure (1483 chars) | byte-for-byte |
-
-**4/4 outputs byte-identical between MTP and baseline.** The vendored MTP
-verify path handles the GDN `ArraysCache` state exactly.
-
-## Interpretation
-
-The `engine_core` gate comment is accurate as written: it blocks the
-**draft-model** method (`SPEC_DRAFT_MODEL_ENABLED` path) because that
-generic verify (`model([D1..DK], cache)`) was never audited for recurrent
-layers. The **vendored MTP** path (`--enable-mtp`) is a separate mechanism
-with its own verify and is NOT gated — and per this experiment it is exact
-on the GDN hybrid.
-
-Production gap: the default profile's spec-auto resolves `ddtree`/
-`draft_model` (blocked by the recurrent gate) or n-gram (disabled by
-per-model override on this VLM-served model), so a default VLM serve of the
-27B runs with **no spec decode at all**. The +65-90% requires
-`--text-only --enable-mtp` (MTP is additionally blocked on the VLM engine).
-
-## Operational recommendation
-
-For CC-style text workloads, serve the 27B with:
+The checkpoint `mlx-community/Qwen3.8-27B-4bit` (both snapshot revisions)
+declares `text_config.mtp_num_hidden_layers=1` but contains **zero
+`mtp.*` tensors** (mlx-lm converters strip them). The vendored MTP
+injector therefore refuses:
 
 ```
-fusion-mlx serve mlx-community/Qwen3.8-27B-4bit --text-only --enable-mtp --mtp-num-draft-tokens 2
+[mtp.inject] inject_mtp_support called without mtp_sidecar and
+allow_random_init=False; refusing to ship a random-init MTP head. Pass
+mtp_sidecar='mlx-community/Qwen3.5-9B-MTP-4bit' (or equivalent)
 ```
 
-This trades VLM (vision) capability on that instance for +65-90% decode.
-Vision requests would need a separate VLM instance or a serve-mode switch.
+The `model_settings.mtp_enabled=True` route fails the same way, loudly:
+"converted weights are missing the mtp.* tensors". (Note: with
+mtp_enabled=True the single-model serve additionally stalls for the full
+300s load timeout instead of failing fast — the sanitize ValueError does
+not propagate through the load executor; separate issue.)
 
-## Caveats
+The VLM-vs-text question is also resolved: `--text-only`/`--no-mllm` is
+staged in `_pending_single_model["force_text"]` but **never read** — dead
+flag on the single-model path. The model loads via the same
+`mlx_lm.load()` either way, and the MTP injector rejects the
+`Qwen3_5ForConditionalGeneration` wrapper class regardless.
 
-- Greedy equivalence tested; sampling (temperature>0) paths use the same
-  verify with rejection sampling — expected to hold, not re-verified here.
-- Single machine (Apple Silicon, ~72GB), single checkpoint
-  (10c35caf snapshot). The recurrent gate for the generic draft-model
-  method stays as-is — this result does not audit that path.
-- K=2 chosen per the earlier ceiling result (K=4 accept-rate collapse,
-  see AWSD phase-B notes in memory).
+## What a real MTP rollout needs
+
+1. Download an MTP sidecar head (e.g. `mlx-community/Qwen3.5-9B-MTP-4bit`)
+   and serve with `--spec-decode mtp --mtp-sidecar <dir>` — then re-run
+   the greedy-equivalence A/B to validate the recurrent-state verify path
+   for real.
+2. Pool mode (`--model-dir`, what prod runs) additionally needs wiring:
+   `_serve_from_model_dir`'s SchedulerConfig never carries
+   `mtp_model_type`/`mtp_sidecar`, so no pool engine can engage MTP today.
+
+Until (1) is done, the only spec decode actually available on the 27B is
+n-gram suffix, which the default profile already enables pool-wide.
+
+## Retained valid observations
+
+- Roofline: 27B-4bit ≈ 15GB / ~400GB/s ≈ 26 tok/s theoretical; measured
+  20-24 idle — no headroom without spec decode.
+- 4B (Qwen3.5-4B-MLX-4bit) also declares `text_config.mtp_num_hidden_layers=1`
+  — same sidecar story would apply.
+- MTP eligibility probe and reconciliation machinery
+  (`_detect_mtp_eligibility_verbose`, config_resolve reconciliation) work;
+  the gap is checkpoint weights + pool wiring.
