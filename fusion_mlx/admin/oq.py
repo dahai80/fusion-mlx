@@ -35,10 +35,24 @@ _router = APIRouter()
 
 
 def _validate_model_path(model_path: str) -> str:
+    # #1337: resolve the model root from the oq manager's configured model
+    # dirs (matches ServerConfig.model_dir, e.g. ~/.fusion-mlx/models).
+    # The previously hardcoded ~/.cache/fusion-mlx/models never matched a
+    # default install, so every start/estimate call 403'd.
     resolved = Path(model_path).resolve()
-    model_root = Path.home() / ".cache" / "fusion-mlx" / "models"
-    model_root = model_root.resolve()
-    if not resolved.is_relative_to(model_root):
+    model_roots: list[Path] = []
+    if _oq_manager is not None:
+        model_roots = [
+            Path(d).resolve() for d in getattr(_oq_manager, "_model_dirs", [])
+        ]
+    if not model_roots:
+        model_roots = [(Path.home() / ".fusion-mlx" / "models").resolve()]
+    if not any(resolved.is_relative_to(root) for root in model_roots):
+        logger.warning(
+            "oq model_path rejected (outside model dirs): %s (roots=%s)",
+            resolved,
+            [str(r) for r in model_roots],
+        )
         raise HTTPException(
             status_code=403,
             detail="model_path must reside under the configured model directory",

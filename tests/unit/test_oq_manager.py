@@ -179,3 +179,98 @@ class TestOQManagerDtypeSupport:
 
         assert manager._tasks == {}
         assert not (root / "DeepSeek-V4-Flash-oQ4-fp16").exists()
+
+
+class TestOQManagerHfCacheScan:
+    """#1337: HF cache layout (models--org--name/snapshots/<rev>) must be scanned."""
+
+    @pytest.fixture
+    def hf_cache_model_dir(self, tmp_path):
+        d = tmp_path / "models"
+        d.mkdir()
+        repo = d / "models--mlx-community--Qwen3.8-27B-8bit"
+        snap = repo / "snapshots" / "815b83c0df8ffd1d1b5244cf75fd6ef14fca9ef9"
+        snap.mkdir(parents=True)
+        (snap / "config.json").write_text(
+            json.dumps(
+                {
+                    "model_type": "qwen3_5",
+                    "num_hidden_layers": 48,
+                }
+            )
+        )
+        (snap / "model.safetensors").write_bytes(b"\x00" * 4096)
+        return d
+
+    async def test_hf_cache_model_listed_with_repo_display_name(
+        self, hf_cache_model_dir
+    ):
+        manager = OQManager(model_dirs=[str(hf_cache_model_dir)])
+        source_models, all_models = await manager.list_quantizable_models()
+        names = [m["name"] for m in all_models]
+        assert "models--mlx-community--Qwen3.8-27B-8bit" in names
+        paths = [m["path"] for m in all_models]
+        assert any("snapshots" in p for p in paths)
+
+    async def test_hf_cache_model_in_source_models_if_quantizable(
+        self, hf_cache_model_dir
+    ):
+        manager = OQManager(model_dirs=[str(hf_cache_model_dir)])
+        source_models, _ = await manager.list_quantizable_models()
+        assert any(
+            m["name"] == "models--mlx-community--Qwen3.8-27B-8bit"
+            for m in source_models
+        )
+
+
+class TestOQValidateModelPath:
+    """#1337: _validate_model_path must accept configured model dirs, not a
+    hardcoded ~/.cache/fusion-mlx/models root."""
+
+    def _manager(self, tmp_path):
+        d = tmp_path / "models"
+        d.mkdir()
+        return OQManager(model_dirs=[str(d)]), d
+
+    def test_accepts_path_inside_configured_model_dir(self, tmp_path, monkeypatch):
+        from fusion_mlx.admin import oq as oq_module
+
+        manager, d = self._manager(tmp_path)
+        monkeypatch.setattr(oq_module, "_oq_manager", manager)
+        model = d / "Qwen-27B"
+        model.mkdir()
+        resolved = oq_module._validate_model_path(str(model))
+        assert resolved == str(model.resolve())
+
+    def test_rejects_path_outside_model_dirs(self, tmp_path, monkeypatch):
+        from fusion_mlx.admin import oq as oq_module
+
+        manager, _ = self._manager(tmp_path)
+        monkeypatch.setattr(oq_module, "_oq_manager", manager)
+        outside = tmp_path / "elsewhere" / "model"
+        outside.mkdir(parents=True)
+        with pytest.raises(Exception) as exc_info:
+            oq_module._validate_model_path(str(outside))
+        assert "403" in str(exc_info.value) or "model_path" in str(exc_info.value)
+
+
+class TestOQRecipeValidation:
+    """#1337: unsupported recipes must fail fast; supported ones pass through."""
+
+    async def test_unimplemented_recipe_rejected(self, fp_model_dir):
+        manager = OQManager(model_dirs=[str(fp_model_dir)])
+        source = fp_model_dir / "Llama-3B"
+        with pytest.raises(ValueError, match="not implemented"):
+            await manager.start_quantization(
+                model_path=str(source), recipe="quant2_all"
+            )
+
+    async def test_supported_recipe_accepted(self, fp_model_dir, monkeypatch):
+        manager = OQManager(model_dirs=[str(fp_model_dir)])
+        monkeypatch.setattr(manager, "_run_mlx_convert", lambda *a, **k: None)
+        source = fp_model_dir / "Llama-3B"
+        task = await manager.start_quantization(
+            model_path=str(source), recipe="mixed_2_6"
+        )
+        assert task.recipe == "mixed_2_6"
+        assert task.status.value in ("pending", "queued", "loading", "running")

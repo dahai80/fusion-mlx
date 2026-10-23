@@ -166,18 +166,25 @@ class OQManager:
                 for subdir in sorted(model_dir.iterdir()):
                     if not subdir.is_dir():
                         continue
-                    candidates = []
+                    candidates: list[tuple[Path, str]] = []
                     if (subdir / "config.json").exists():
-                        candidates.append(subdir)
+                        candidates.append((subdir, subdir.name))
                     else:
                         for child in sorted(subdir.iterdir()):
                             if child.is_dir() and (child / "config.json").exists():
-                                candidates.append(child)
+                                candidates.append((child, child.name))
+                    # #1337: HF cache layout — models--org--name/snapshots/<rev>/
+                    # is one level deeper than the child scan above. Display
+                    # the repo dir name (models--org--name), not the commit hash.
+                    if not candidates:
+                        for snap in sorted(subdir.glob("snapshots/*")):
+                            if snap.is_dir() and (snap / "config.json").exists():
+                                candidates.append((snap, subdir.name))
 
-                    for path in candidates:
-                        if path.name in seen:
+                    for path, display_name in candidates:
+                        if display_name in seen:
                             continue
-                        seen.add(path.name)
+                        seen.add(display_name)
                         try:
                             with open(path / "config.json") as f:
                                 config = json.load(f)
@@ -202,7 +209,7 @@ class OQManager:
                                 and _checkpoint_has_mtp_weights(path)
                             )
                             info = {
-                                "name": path.name,
+                                "name": display_name,
                                 "path": str(path),
                                 "size": size,
                                 "size_formatted": _format_size(size),
@@ -247,6 +254,18 @@ class OQManager:
             "mxfp8",
         }
     )
+    # #1337: recipes mlx_lm.convert actually accepts as --quant-predicate
+    # (mlx-lm 0.31.x). The rest of MLX_RECIPES are advertised by the admin
+    # recipes list but not implemented by the convert path — reject them at
+    # start instead of failing deep inside the subprocess.
+    MLX_RECIPE_PREDICATES = frozenset(
+        {
+            "mixed_2_6",
+            "mixed_3_4",
+            "mixed_3_6",
+            "mixed_4_6",
+        }
+    )
 
     async def start_quantization(
         self,
@@ -279,6 +298,11 @@ class OQManager:
         if is_recipe and recipe not in self.MLX_RECIPES:
             raise ValueError(
                 f"Unknown recipe {recipe!r}. Must be one of {sorted(self.MLX_RECIPES)}"
+            )
+        if is_recipe and recipe not in self.MLX_RECIPE_PREDICATES:
+            raise ValueError(
+                f"Recipe {recipe!r} is not implemented by the installed "
+                f"mlx_lm.convert. Supported: {sorted(self.MLX_RECIPE_PREDICATES)}"
             )
 
         from ..oq import (
@@ -490,15 +514,20 @@ class OQManager:
         import subprocess
         import sys
 
+        # #1337: mlx-lm 0.31.x convert CLI takes --hf-path/--mlx-path and
+        # --quant-predicate. The old --model/--output/--quant-recipe flags
+        # were rejected, so every recipe task died immediately.
         cmd = [
             sys.executable,
             "-m",
-            "mlx_lm.convert",
-            "--model",
+            "mlx_lm",
+            "convert",
+            "--hf-path",
             model_path,
-            "--output",
+            "--mlx-path",
             output_path,
-            "--quant-recipe",
+            "--quantize",
+            "--quant-predicate",
             recipe,
         ]
         if dtype == "float16":
