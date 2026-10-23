@@ -52,6 +52,7 @@ from ..exceptions import (
     ModelTooLargeError,
 )
 from ..scheduler import SchedulerConfig
+from ..scheduler._contention import pool_shared, set_pool_shared
 from ..utils.proc_memory import get_phys_footprint
 from .lock_order import TrackedAsyncLock, TrackedThreadLock
 from .model_discovery import DiscoveredModel, discover_models, format_size
@@ -175,6 +176,23 @@ class EngineEntry:
     runtime_settings_signature: tuple[tuple[str, str], ...] | None = None
     adapter_path: str | None = None  # LoRA adapter path for derived adapter entries
     base_model_id: str | None = None  # Base model_id for derived adapter entries
+
+
+def _mark_pool_shared_if_multi(entries) -> None:
+    # #contention-pool: once two engines are resident this process shares the
+    # GPU among them for the rest of its life, so decode jitter can no longer
+    # be attributed to an external process — silence the per-scheduler
+    # contention warning for good.
+    if pool_shared():
+        return
+    resident = sum(1 for e in entries.values() if e.engine is not None)
+    if resident >= 2:
+        set_pool_shared(True)
+        logger.info(
+            "pool: %d resident engines share this GPU — external GPU "
+            "contention warnings disabled",
+            resident,
+        )
 
 
 class EnginePool:
@@ -2232,6 +2250,7 @@ class EnginePool:
             entry.last_access = time.time()
             entry.loaded_at = entry.last_access
             self._current_model_memory += entry.estimated_size
+            _mark_pool_shared_if_multi(self._entries)
         logger.info(
             f"Registered entry '{model_id}' in pool (engine_type={engine_type})"
         )
@@ -3660,6 +3679,7 @@ class EnginePool:
             entry.engine = engine
             entry.last_access = time.time()
             entry.loaded_at = entry.last_access
+            _mark_pool_shared_if_multi(self._entries)
             # P2-5: defer the memory-counter increment + enforcer update until
             # AFTER the post-load clear_cache below. The counter drives the
             # enforcer's eviction decisions; incrementing before clear_cache

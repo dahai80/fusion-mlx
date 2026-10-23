@@ -26,6 +26,7 @@ from ..request import Request, RequestOutput, RequestStatus
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
+from ._contention import mark_decode, others_decoding, pool_shared
 from .config import SchedulerOutput
 from .helpers import (
     _should_clear_on_fragmentation,
@@ -205,6 +206,10 @@ def step(self) -> SchedulerOutput:
             else:
                 responses = []
             _decode_dt = time.perf_counter() - _decode_t0
+            # #contention-pool: register this engine as decoding so sibling
+            # pool engines' detectors treat our interleave as in-process,
+            # not external GPU contention.
+            mark_decode(id(self))
             # GPU contention detection: track decode step time in rolling
             # window and compute CV. Bimodal latency (fast ~80ms vs slow
             # ~400ms) indicates competing GPU processes.
@@ -223,7 +228,43 @@ def step(self) -> SchedulerOutput:
                 if _mean > 0:
                     _var = sum((t - _mean) ** 2 for t in _times) / len(_times)
                     _cv = math.sqrt(_var) / _mean
-                    self._contention_detected = _cv > self._contention_cv_threshold
+                    # #contention-pool: a sibling engine decoding during the
+                    # sampled span explains the CV spike (pool interleave), so
+                    # this is not external contention — keep flag/gauge/warning
+                    # silent to avoid blaming a non-existent GPU hog. The span
+                    # covers the whole window (sum of sample times) plus a
+                    # cooldown: after co-decode the GPU stays slow for seconds
+                    # (power/thermal tail), so sibling-free samples right after
+                    # a sibling stops are still its doing.
+                    _span = sum(_times)
+                    _siblings = others_decoding(id(self), window_s=_span + 15.0)
+                    # CV alone trips on ordinary sub-30ms jitter (23ms mean,
+                    # 5ms std = 25% CV at full speed). Real contention shows
+                    # up as a multiple of the best mean this engine has hit.
+                    if _mean > 0 and (
+                        self._decode_baseline_dt == 0.0
+                        or _mean < self._decode_baseline_dt
+                    ):
+                        self._decode_baseline_dt = _mean
+                    _slowdown = _mean >= 3.0 * self._decode_baseline_dt
+                    # Pool mode shares this process's GPU across engines for
+                    # its whole lifetime, so decode jitter can never be pinned
+                    # on an external process — pool marks the flag once a
+                    # second engine is resident.
+                    _signal = (
+                        _cv > self._contention_cv_threshold
+                        and _siblings == 0
+                        and _slowdown
+                    )
+                    if _signal and pool_shared():
+                        logger.debug(
+                            "step(%d): contention signal suppressed (pool "
+                            "shares GPU) — CV=%.1f%% mean=%.1fms",
+                            self._step_counter,
+                            _cv * 100,
+                            _mean * 1000,
+                        )
+                    self._contention_detected = _signal and not pool_shared()
                     if self._contention_detected:
                         _log_step_delta = (
                             self._step_counter - self._last_contention_log_step
@@ -656,6 +697,10 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     finally:
         self.model._fusion_mlx_mtp_suppressed = False
     self._last_decode_dt = time.perf_counter() - _decode_t0
+    # #contention-pool: steady-state decode also runs through this fast path,
+    # so mark it too — otherwise a sibling engine decoding here is invisible
+    # to the registry and the contention gate fires on pool interleave.
+    mark_decode(id(self))
 
     if not responses:
         return output
@@ -855,7 +900,11 @@ def _try_spec_decode(
         METHOD_NGRAM,
     )
 
-    if not request._active_spec_method:
+    # #spec-route-flood: sentinel check must be `is None`, not truthiness.
+    # When no method is loaded _decide_spec_method returns "" (falsy), so a
+    # truthiness guard re-decided — and re-logged "no spec method loaded" —
+    # on EVERY decode step instead of once per request.
+    if request._active_spec_method is None:
         request._active_spec_method = self._decide_spec_method(request)
 
     # Output-parser sessions conflict with n-gram spec decode (token-level
@@ -958,6 +1007,7 @@ def reset(self) -> None:
 
     # Reset GPU contention detection state
     self._step_time_window.clear()
+    self._decode_baseline_dt = 0.0
     self._contention_detected = False
     self._last_contention_log_step = 0
 

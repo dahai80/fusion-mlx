@@ -508,6 +508,10 @@ def __init__(
     # _step_pure_decode; None until the first decode step.
     self._last_decode_dt: float | None = None
     self._contention_cv_threshold: float = 0.15
+    # Best (lowest) rolling window mean seen so far. Contention is only
+    # credible as a multiple of this baseline — CV alone trips on ordinary
+    # sub-30ms jitter and on pool-sibling interleave. 0.0 = unset.
+    self._decode_baseline_dt: float = 0.0
     self._contention_detected: bool = False
     self._contention_log_interval: int = 50  # log every N steps when contended
     self._last_contention_log_step: int = 0

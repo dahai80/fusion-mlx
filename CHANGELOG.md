@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed — pool mode stops blaming external GPU processes; spec-route log flood
+- The per-scheduler "GPU contention detected" warning fired in pool mode
+  whenever co-resident engines decoded on the same GPU: their interleave
+  (and the seconds-long power/thermal tail after a sibling stops) spikes
+  the step-time CV, and the warning blamed a competing external process
+  that does not exist. A process that has had two engines resident now
+  suppresses the warning for good; single-engine serves keep the
+  detector. The gate additionally requires a 3x slowdown against the
+  engine's best rolling-window mean and no sibling decode over the
+  sampled span plus 15s, so plain sub-30ms jitter no longer trips it.
+  Suppressed signals log at DEBUG. Decode steps on both the regular and
+  the pure-decode fast path register in the cross-scheduler registry
+  (`scheduler/_contention.py`).
+- `_try_spec_decode` guarded `_active_spec_method` by truthiness, but the
+  "decided: no method" sentinel is `""` — falsy — so the request
+  re-decided and re-logged `spec-route: no spec method loaded` on every
+  decode step. The guard is now `is None`, so the route is decided once
+  per request.
+
 ### Changed — --text-only wired pool-wide; mtp_enabled dead-knob fails visibly
 - `serve --model-dir --text-only` (dest `no_mllm`) was a documented escape
   hatch with no wiring: the flag parsed, then nothing read it. It now maps
