@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed — context budget no longer degrades to used=0 when a system message is inline
+- Claude Code 2.1.154+ sends `role: "system"` entries inside the messages
+  array. The Anthropic route consolidates them, but on the gateway's
+  OpenAI path they reach the engine laid out mid-list, and
+  `compute_prompt_tokens_for_messages` rendered the raw message list —
+  the Qwen template raises `System message must be at the beginning.`,
+  the estimate silently returned 0, and `X-Context-Budget` reported
+  `used=0` (context warning disabled) while two ERROR lines per request
+  claimed a template failure. The helper now counts through
+  `engine.count_chat_tokens` when available, which applies the same
+  `_sort_system_first` / core-prompt normalization as the real prompt
+  build, so the estimate matches what is actually rendered.
+
 ### Fixed — pool mode stops blaming external GPU processes; spec-route log flood
 - The per-scheduler "GPU contention detected" warning fired in pool mode
   whenever co-resident engines decoded on the same GPU: their interleave
