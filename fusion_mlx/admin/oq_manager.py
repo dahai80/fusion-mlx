@@ -182,7 +182,7 @@ class OQManager:
                                 candidates.append((snap, subdir.name))
 
                     for path, display_name in candidates:
-                        if path.name in seen:
+                        if display_name in seen:
                             continue
                         seen.add(display_name)
                         try:
