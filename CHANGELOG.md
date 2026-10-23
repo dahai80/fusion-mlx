@@ -15,6 +15,21 @@
   `_sort_system_first` / core-prompt normalization as the real prompt
   build, so the estimate matches what is actually rendered.
 
+### Fixed — single-model serve no longer loads a duplicate engine for the same weights
+- `settings.model.default_model` is a HF repo id (`mlx-community/X`) but the
+  pool registry keys the same checkpoint by its flattened cache-dir name
+  (`mlx-community--X`). The boot single-model path registered the engine
+  under the raw settings string, leaving the registry entry engine-less, so
+  the first request naming the repo-key form loaded a second copy of the
+  weights (observed: 2.2GB `BatchedEngine` + 2.8GB `VLMBatchedEngine` for
+  Qwen3.5-4B) with separate prefix caches and an extra
+  `PagedSSDCacheManager` sharing `~/.fusion-mlx/ssd_cache`. The boot path
+  now resolves the serve target through the registry, adopts the entry's
+  key and real `model_path`, and registers the settings string (plus an
+  explicit `--served-model-name`) as aliases of that single engine. Also
+  stops path-based lookups from resolving the relative settings string
+  against the server CWD.
+
 ### Fixed — pool mode stops blaming external GPU processes; spec-route log flood
 - The per-scheduler "GPU contention detected" warning fired in pool mode
   whenever co-resident engines decoded on the same GPU: their interleave

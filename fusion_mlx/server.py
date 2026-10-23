@@ -2815,6 +2815,52 @@ class Server:
         self.engine_cores.pop(model_id, None)
         logger.debug("RC-3: engine_cores dropped detached model %s", model_id)
 
+    def _canonical_single_model_target(self, served: str, model_path: str):
+        # #1347: settings default_model is a HF repo id ("org/name") while the
+        # pool registry keys the same weights by their flattened cache-dir name
+        # ("org--name"). Registering the boot engine under the raw settings
+        # string left the registry entry engine-less, so the first request
+        # naming the repo-key form loaded a SECOND engine for weights already
+        # resident (2.2GB LM + 2.8GB VLM here; split prefix caches; an extra
+        # PagedSSDCacheManager). Adopt the registry entry instead: its key
+        # becomes the served name, its model_path the load target (also fixes
+        # path-based lookups, which resolved the relative settings string
+        # against the server CWD before).
+        pool = getattr(self, "pool", None)
+        if pool is None:
+            return served, model_path
+        try:
+            canonical = pool._resolve_hf_repo_id(model_path)
+        except Exception:
+            logger.debug(
+                "canonical single-model resolve failed for %s",
+                model_path,
+                exc_info=True,
+            )
+            return served, model_path
+        if canonical == model_path:
+            return served, model_path
+        entry = pool._entries.get(canonical)
+        if entry is None:
+            return served, model_path
+        if getattr(entry, "engine", None) is not None:
+            logger.warning(
+                "Single-model target %r maps to registry entry %r which is "
+                "already loaded — registering the alias only",
+                served,
+                canonical,
+            )
+            return served, model_path
+        entry_path = getattr(entry, "model_path", "") or ""
+        logger.info(
+            "Single-model target %r is the registry entry %r — reusing it "
+            "(no duplicate engine), load path %s",
+            served,
+            canonical,
+            entry_path or model_path,
+        )
+        return canonical, (entry_path or model_path)
+
     async def _load_single_model(self, pending: dict) -> None:
         # Load the staged single model (``serve --model <X>``) into the pool.
         # Runs in _startup after the pool exists. Dispatches to the correct
@@ -2824,6 +2870,7 @@ class Server:
         # exactly like a discovered model.
         model_path = pending["model_path"]
         served = pending.get("served_model_name") or model_path
+        served, model_path = self._canonical_single_model_target(served, model_path)
         # #1301: the engine and the pool read the same object — load_model()
         # stamped the serve-built SchedulerConfig onto self.config.scheduler.
         scheduler_config = self.config.scheduler
@@ -2922,11 +2969,20 @@ class Server:
             served, engine, model_path=model_path, estimated_size=_single_size
         )
         orig = pending.get("original_name")
+        aliases = []
         if orig and orig != served:
+            aliases.append(orig)
+        # #1347: canonicalization may have replaced an explicit
+        # --served-model-name with the registry key; keep the operator's name
+        # as an alias so requests using it still resolve.
+        explicit = pending.get("served_model_name")
+        if explicit and explicit != served and explicit not in aliases:
+            aliases.append(explicit)
+        for alias in aliases:
             # Alias entry: omit estimated_size — the served-name entry already
             # carries the size, and a second entry with the same size would
             # double-count _current_model_memory / tier_resident_bytes.
-            self.pool.register_engine(orig, engine, model_path=model_path)
+            self.pool.register_engine(alias, engine, model_path=model_path)
         # Track for unload/shutdown (unload_model calls core.stop()).
         self.engine_cores[served] = engine
         logger.info(
