@@ -1601,6 +1601,29 @@ class ImageGenEngine(BaseNonStreamingEngine):
         if self._variant == "txt2img":
             config_label = _infer_flux2_config(self._model_path)
 
+        # #1375: the worker process only understands FILE PATHS, while the API
+        # layer hands this method base64 blobs. The in-process branch resolves
+        # them inside generate(); the subprocess branch has to do it here or
+        # mflux tries open(<b64>) and the worker dies with OSError "File name
+        # too long" (#898 symptom, previously unreachable because only the
+        # in-process path was tested). Temp files live until the worker exits.
+        _img_temp_paths: list[str] = []
+        edit_image = _resolve_image_to_path(edit_image, _img_temp_paths)
+        mask_image = _resolve_image_to_path(mask_image, _img_temp_paths)
+        control_image = _resolve_image_to_path(control_image, _img_temp_paths)
+        depth_image = _resolve_image_to_path(depth_image, _img_temp_paths)
+        if reference_images:
+            reference_images = [
+                _resolve_image_to_path(ref, _img_temp_paths) for ref in reference_images
+            ]
+        if _img_temp_paths:
+            logger.info(
+                "image subprocess: resolved %d base64 image input(s) to temp "
+                "files for variant=%s",
+                len(_img_temp_paths),
+                self._variant,
+            )
+
         gen_params: dict[str, Any] = dict(
             seed=seed,
             prompt=prompt,
@@ -1698,6 +1721,12 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 set_media_job_active(False)
             except Exception:  # noqa: BLE001
                 pass
+            # #1375: drop the decoded input images now that the worker is gone.
+            for _tmp in _img_temp_paths:
+                try:
+                    os.unlink(_tmp)
+                except OSError:
+                    logger.debug("image subprocess: temp input %s already gone", _tmp)
             await self._finish_activity(activity_id)
 
         # Read output files into bytes, then clean up temp dir
