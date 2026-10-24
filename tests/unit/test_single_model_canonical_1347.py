@@ -94,5 +94,86 @@ class TestCanonicalSingleModelTarget(unittest.TestCase):
         self.assertEqual(model_path, "/models/models--org--m")
 
 
+class _FakeEngine:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    async def start(self):
+        return None
+
+
+class _LoadPool(_Pool):
+    def __init__(self, entries, resolve, settings_manager=None):
+        super().__init__(entries, resolve)
+        self._settings_manager = settings_manager
+        self.registered = []
+
+    def check_tier_budget(self, tier, size):
+        return True, ""
+
+    def register_engine(self, model_id, engine, model_path="", estimated_size=0):
+        self.registered.append((model_id, engine, model_path, estimated_size))
+
+
+class TestSingleModelEngineKind(unittest.TestCase):
+    # #1349: a vlm-typed registry entry must load as VLMBatchedEngine, not a
+    # text-only BatchedEngine, unless force_text is set.
+    def _run(self, engine_type, force_text):
+        import asyncio
+        from unittest.mock import patch
+
+        captured = {}
+
+        class _B(_FakeEngine):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                captured["kind"] = "batched"
+
+        class _V(_FakeEngine):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                captured["kind"] = "vlm"
+
+        entry = _Entry("org/m")
+        entry.engine_type = engine_type
+        pool = _LoadPool(
+            {"org--m": entry}, lambda mid: "org--m" if mid == "org/m" else mid
+        )
+
+        class _Srv:
+            _canonical_single_model_target = Server._canonical_single_model_target
+
+        srv = _Srv()
+        srv.pool = pool
+        srv.engine_cores = {}
+        srv.config = types.SimpleNamespace(scheduler=None)
+        pending = {
+            "model_path": "org/m",
+            "original_name": "org/m",
+            "served_model_name": None,
+            "stream_interval": 1,
+            "force_text": force_text,
+        }
+        with (
+            patch("fusion_mlx.engines.batched.BatchedEngine", _B),
+            patch("fusion_mlx.engines.vlm.VLMBatchedEngine", _V),
+        ):
+            asyncio.run(Server._load_single_model(srv, pending))
+        return captured, pool
+
+    def test_vlm_entry_loads_vlm_engine(self):
+        captured, pool = self._run("vlm", force_text=False)
+        self.assertEqual(captured.get("kind"), "vlm")
+        self.assertEqual(pool.registered[0][0], "org--m")
+
+    def test_force_text_keeps_batched_engine(self):
+        captured, _ = self._run("vlm", force_text=True)
+        self.assertEqual(captured.get("kind"), "batched")
+
+    def test_batched_entry_loads_batched_engine(self):
+        captured, _ = self._run("batched", force_text=False)
+        self.assertEqual(captured.get("kind"), "batched")
+
+
 if __name__ == "__main__":
     unittest.main()
