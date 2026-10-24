@@ -36,6 +36,10 @@ from .type_registry import CacheTypeRegistry
 
 logger = logging.getLogger(__name__)
 
+# Audit M13: how often the lookup path re-checks pin TTLs when no new
+# pin_prefix() call arrives to trigger the sweep.
+_PIN_EXPIRY_CHECK_INTERVAL_S = 5.0
+
 
 @dataclass
 class BlockCacheEntry:
@@ -169,6 +173,7 @@ class BlockAwarePrefixCache(CacheManager):
         # block_id -> expiry epoch (0.0 = permanent). Pin increments
         # PagedCacheManager ref_count so LRU eviction skips the block.
         self._pinned_blocks: dict[int, float] = {}
+        self._last_pin_expiry_check = 0.0
         # O5.4 (optimization-0914 item 17/23): async SSD preload executor.
         # Single-thread pool — preload I/O is serialized to avoid contention
         # with the engine thread. The future is awaited before reconstruct.
@@ -399,6 +404,8 @@ class BlockAwarePrefixCache(CacheManager):
         """
         if not tokens:
             return None, tokens
+
+        self._maybe_expire_pinned_blocks()
 
         # #1080: record total lookup latency for p50/p99 percentile stats.
         _t0 = time.perf_counter()
@@ -3003,6 +3010,9 @@ class BlockAwarePrefixCache(CacheManager):
         Returns:
             Dictionary with cache statistics.
         """
+        # Metrics scrapes also drive the TTL sweep, so an idle server with
+        # stale pins still releases them (audit M13).
+        self._maybe_expire_pinned_blocks()
         paged_stats = self.paged_cache.get_memory_usage()
         bucket_stats = {}
         for name, (h, m) in self._hit_buckets.items():
@@ -3114,18 +3124,34 @@ class BlockAwarePrefixCache(CacheManager):
         return count
 
     def _expire_pinned_blocks(self) -> int:
+        # Audit M13: expiry used to run only inside pin_prefix(), so a pin
+        # taken with a TTL held its ref_count (block unevictable) until the
+        # next pin — possibly never. Also read the dict under the lock: the
+        # old scan iterated it unlocked and could raise "dictionary changed
+        # size during iteration" against a concurrent pin/unpin.
         now = time.time()
-        expired = [
-            bid for bid, exp in self._pinned_blocks.items() if exp and now >= exp
-        ]
-        if not expired:
-            return 0
         with self._cache_lock:
+            expired = [
+                bid for bid, exp in self._pinned_blocks.items() if exp and now >= exp
+            ]
             for bid in expired:
                 self._pinned_blocks.pop(bid, None)
                 self.paged_cache.free_block(bid)
-        logger.info("pin TTL expired: released %d blocks", len(expired))
+        if expired:
+            logger.info("pin TTL expired: released %d blocks", len(expired))
         return len(expired)
+
+    def _maybe_expire_pinned_blocks(self) -> None:
+        # Cheap periodic sweep for paths that never call pin_prefix again
+        # (audit M13). Throttled so the hot lookup path pays one float
+        # comparison per call, not a dict scan.
+        if not self._pinned_blocks:
+            return
+        now = time.monotonic()
+        if now - self._last_pin_expiry_check < _PIN_EXPIRY_CHECK_INTERVAL_S:
+            return
+        self._last_pin_expiry_check = now
+        self._expire_pinned_blocks()
 
     def reset_stats(self) -> None:
         """Reset statistics."""

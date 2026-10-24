@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 
 _TTL = 3600.0
 
+# Audit M1: the buffer used to be unbounded, so one long-lived stream could
+# accumulate tens of MB of formatted SSE per session for the full TTL.
+# Overflow fails the session LOUDLY (mark_error + producer cancel) rather
+# than silently dropping the oldest chunks, which would hand a reconnecting
+# client a truncated answer it cannot detect.
+_MAX_EVENTS = 200_000
+_MAX_BUFFER_BYTES = 64 * 1024 * 1024
+
 
 class StreamSession:
     def __init__(self, session_id: str, principal: str | None = None) -> None:
@@ -35,15 +43,48 @@ class StreamSession:
         self.created_at = time.monotonic()
         self._new_data = asyncio.Event()
         self._seq = 0
+        # Approximate size of the buffered SSE body in bytes (len() of a str
+        # is a close-enough proxy; the cap only needs to be in the right
+        # order of magnitude).
+        self._buffered_bytes = 0
         # Strong ref to the background producer task so it is not GC'd, and
         # so a consumer can detect a dead producer (avoids an eternal hang
         # if the producer ends without setting complete).
         self.producer_task: asyncio.Task | None = None
 
     def append(self, chunk: str) -> None:
+        if self.complete:
+            # Terminal already (normal finish, error, or overflow): further
+            # chunks cannot be replayed meaningfully and must not grow the
+            # buffer past its cap.
+            return
         self.events.append(chunk)
+        self._buffered_bytes += len(chunk)
         self._seq += 1
         self._new_data.set()
+        if not self.complete and (
+            len(self.events) > _MAX_EVENTS or self._buffered_bytes > _MAX_BUFFER_BYTES
+        ):
+            logger.error(
+                "stream_session %s buffer overflow: events=%d bytes=%d "
+                "(caps %d / %d) — failing session and cancelling producer",
+                self.session_id,
+                len(self.events),
+                self._buffered_bytes,
+                _MAX_EVENTS,
+                _MAX_BUFFER_BYTES,
+            )
+            self.mark_error(
+                f"stream buffer exceeded caps "
+                f"(events={len(self.events)} bytes={self._buffered_bytes})"
+            )
+            self.cancel_producer()
+
+    def cancel_producer(self) -> None:
+        task = self.producer_task
+        if task is not None and not task.done():
+            task.cancel()
+            logger.info("stream_session %s: producer task cancelled", self.session_id)
 
     def mark_complete(self, finish_reason: str | None = None) -> None:
         self.complete = True
@@ -77,18 +118,38 @@ class StreamSessionStore:
             return None
         if sess.expired():
             self._sessions.pop(session_id, None)
+            # Audit M1: an expired session used to be dropped while its
+            # producer kept generating and appending forever.
+            sess.cancel_producer()
             logger.info("stream_session expired: %s", session_id)
             return None
         return sess
 
+    def _reap_expired(self) -> None:
+        # Audit M1: expiry was only evaluated on access, so a session no one
+        # ever looked up again was never reclaimed. Sweep on every create so
+        # abandoned sessions release their buffer + producer without traffic.
+        if not self._sessions:
+            return
+        expired = [sid for sid, s in self._sessions.items() if s.expired()]
+        for sid in expired:
+            sess = self._sessions.pop(sid, None)
+            if sess is not None:
+                sess.cancel_producer()
+        if expired:
+            logger.info("stream_session reap: removed %d expired", len(expired))
+
     def create(self, session_id: str, principal: str | None = None) -> StreamSession:
+        self._reap_expired()
         sess = StreamSession(session_id, principal=principal)
         self._sessions[session_id] = sess
         logger.info("stream_session created: %s principal=%s", session_id, principal)
         return sess
 
     def drop(self, session_id: str) -> None:
-        self._sessions.pop(session_id, None)
+        sess = self._sessions.pop(session_id, None)
+        if sess is not None:
+            sess.cancel_producer()
 
     def active(self) -> list[str]:
         return [sid for sid, s in self._sessions.items() if not s.expired()]

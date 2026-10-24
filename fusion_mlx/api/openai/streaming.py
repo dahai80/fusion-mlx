@@ -128,30 +128,19 @@ def _resolve_streaming_reasoning_parser(model_name: str) -> Any:
         return None
 
 
-async def _stream_chat_generator(
+async def _context_preflight(
     request: ChatCompletionRequest,
     engine: Any,
     model_name: str,
-    adapter_path: str | None,
     *,
-    principal: str | None = None,
-    profile_overrides: dict | None = None,
-    headers: dict | None = None,
-    resume_prompt_cache: list | None = None,
-    resume_cached_tokens: int = 0,
-    request_id: str | None = None,
-) -> AsyncIterator[str]:
-    """Generate SSE events for a streaming chat completion.
-
-    Engine must be resolved BEFORE calling this generator (by _stream_chat)
-    so that ModelNotFoundError / ModelLoadingError become proper HTTP
-    status codes instead of unhandled ASGI 500s.
-    """
-    _start = time.perf_counter()
-
-    async def _release() -> None:
-        await _release_engine(model_name, adapter_path=adapter_path)
-
+    max_tokens: int | None = None,
+) -> tuple[list, int]:
+    # Builds the engine-facing messages (web-search injection + ui-tars lane
+    # sysprompt) and enforces the two context limits:
+    #   * MLX-2 85% heuristic (only when max_context_window is configured)
+    #   * #998 hard max_position_embeddings preflight
+    # Raising here must happen BEFORE StreamingResponse is constructed, or
+    # the client sees HTTP 200 + an SSE error frame (audit M21).
     await _inject_web_search(request)
 
     messages = _messages_for_engine(request.messages, getattr(engine, "is_mllm", False))
@@ -163,11 +152,7 @@ async def _stream_chat_generator(
         tool_choice=getattr(request, "tool_choice", None),
         tools=getattr(request, "tools", None),
     )
-    sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
-    # Context scaling: cap max_tokens to model context window
-    from ..utils import cap_max_tokens_to_context
 
-    # MLX-2: prompt token pre-check — reject if prompt exceeds 85% of context window
     prompt_token_estimate = 0
     from ...service.helpers import compute_prompt_tokens_for_messages
 
@@ -184,9 +169,26 @@ async def _stream_chat_generator(
                 prompt_token_estimate,
                 _ctx_win,
             )
-            raise ModelTooLargeError(
-                f"Prompt ({prompt_token_estimate} tokens) exceeds 85% of context window ({_ctx_win} tokens). "
-                f"Reduce conversation length or use /compact."
+            # Audit M21: this used to raise ModelTooLargeError(message),
+            # whose signature requires (model_id, model_size, ceiling) —
+            # the call raised TypeError instead, which the generator's
+            # generic handler turned into an opaque SSE 500. Oversized
+            # prompts are invalid requests, so raise the same 400 as
+            # enforce_context_length below.
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "message": (
+                            f"Prompt ({prompt_token_estimate} tokens) exceeds "
+                            f"85% of context window ({_ctx_win} tokens). "
+                            "Reduce conversation length or use /compact."
+                        ),
+                        "type": "invalid_request_error",
+                        "code": "context_length_exceeded",
+                        "param": "messages",
+                    }
+                },
             )
 
     # #998: hard context-length preflight against the model's real
@@ -195,15 +197,57 @@ async def _stream_chat_generator(
     # Raises 400 context_length_exceeded BEFORE prefill, instead of the
     # ~168s hang + empty 500 that over-context prompts produced.
     if prompt_token_estimate > 0:
-        try:
-            from ...service.helpers import enforce_context_length
+        from ...service.helpers import enforce_context_length
 
-            enforce_context_length(
-                engine, prompt_token_estimate, max_tokens=sampling.max_tokens
+        enforce_context_length(engine, prompt_token_estimate, max_tokens=max_tokens)
+
+    return messages, prompt_token_estimate
+
+
+async def _stream_chat_generator(
+    request: ChatCompletionRequest,
+    engine: Any,
+    model_name: str,
+    adapter_path: str | None,
+    *,
+    principal: str | None = None,
+    profile_overrides: dict | None = None,
+    headers: dict | None = None,
+    resume_prompt_cache: list | None = None,
+    resume_cached_tokens: int = 0,
+    request_id: str | None = None,
+    preflight: tuple[list, int] | None = None,
+) -> AsyncIterator[str]:
+    """Generate SSE events for a streaming chat completion.
+
+    Engine must be resolved BEFORE calling this generator (by _stream_chat)
+    so that ModelNotFoundError / ModelLoadingError become proper HTTP
+    status codes instead of unhandled ASGI 500s.
+    """
+    _start = time.perf_counter()
+
+    async def _release() -> None:
+        await _release_engine(model_name, adapter_path=adapter_path)
+
+    sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
+    # Context scaling: cap max_tokens to model context window
+    from ..utils import cap_max_tokens_to_context
+
+    # Audit M21: the context preflight normally runs in _stream_chat BEFORE
+    # the StreamingResponse is built, so a too-long prompt becomes a real
+    # 4xx instead of a 200 whose body carries an SSE error frame. Only the
+    # resume-producer path (which calls this generator directly) still
+    # computes it here — and any failure there must release the engine ref.
+    if preflight is None:
+        try:
+            messages, prompt_token_estimate = await _context_preflight(
+                request, engine, model_name, max_tokens=sampling.max_tokens
             )
-        except HTTPException:
+        except Exception:
             await _release()
             raise
+    else:
+        messages, prompt_token_estimate = preflight
 
     sampling.max_tokens = cap_max_tokens_to_context(
         sampling.max_tokens, model_name, prompt_token_estimate=prompt_token_estimate
@@ -796,6 +840,22 @@ async def _stream_chat(
             await _release_engine(model_name, adapter_path=adapter_path)
             raise
 
+    # Audit M21: context preflight BEFORE StreamingResponse. Once the
+    # generator runs, the 200 + SSE headers are already on the wire, so a
+    # prompt rejected inside it cannot become a 4xx — it degrades into an
+    # SSE error frame the caller may never parse. Any failure here releases
+    # the engine ref (the generator's finally never runs).
+    try:
+        preflight = await _context_preflight(
+            request,
+            engine,
+            model_name,
+            max_tokens=getattr(request, "max_tokens", None),
+        )
+    except Exception:
+        await _release_engine(model_name, adapter_path=adapter_path)
+        raise
+
     # X-Context-Budget response header (#327)
     _stream_headers: dict[str, str] = {
         "Cache-Control": "no-cache",
@@ -835,6 +895,7 @@ async def _stream_chat(
                 headers=headers,
                 resume_prompt_cache=resume_prompt_cache,
                 resume_cached_tokens=resume_cached_tokens,
+                preflight=preflight,
             )
         ),
         media_type="text/event-stream",

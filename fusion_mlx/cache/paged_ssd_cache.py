@@ -2159,6 +2159,10 @@ class PagedSSDCacheManager:
             if item is None:
                 break
             block_hash, tensors_raw, file_metadata, block_metadata = item
+            # Audit M10: bound before the try so the except arms can clean
+            # up unconditionally. A raise from _get_file_path/mkdir used to
+            # surface as NameError on temp_path, masking the real error.
+            temp_path = None
             try:
                 file_path = self._get_file_path(block_hash)
                 file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2187,8 +2191,9 @@ class PagedSSDCacheManager:
                         e,
                     )
                 # P1-09 (#0910 audit): clean up residual .tmp file
-                with suppress(FileNotFoundError, OSError):
-                    temp_path.unlink(missing_ok=True)
+                if temp_path is not None:
+                    with suppress(FileNotFoundError, OSError):
+                        temp_path.unlink(missing_ok=True)
                 with self._state_lock:
                     self._index.remove(block_hash)
                 self._stats["errors"] += 1
@@ -2197,8 +2202,9 @@ class PagedSSDCacheManager:
                     "Background write error for block %s: %s", block_hash.hex()[:16], e
                 )
                 # P1-09: clean up residual .tmp file
-                with suppress(FileNotFoundError, OSError):
-                    temp_path.unlink(missing_ok=True)
+                if temp_path is not None:
+                    with suppress(FileNotFoundError, OSError):
+                        temp_path.unlink(missing_ok=True)
                 with self._state_lock:
                     self._index.remove(block_hash)
                 self._stats["errors"] += 1

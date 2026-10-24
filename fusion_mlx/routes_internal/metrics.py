@@ -1888,6 +1888,29 @@ def _render_fd_metrics() -> list[str]:
     return lines
 
 
+def _render_immortal_registry_metrics() -> list[str]:
+    # Audit M6: the append-only immortal executor/stream registries leak one
+    # live worker thread + Metal stream per engine reload when the MLX
+    # compile-cache clear symbol is unavailable. Export the counts so the
+    # growth is visible in Prometheus instead of only at process exit.
+    try:
+        from ..engine_core import immortal_registry_stats
+
+        stats = immortal_registry_stats()
+    except Exception:
+        return []
+    return [
+        "# HELP fusion_mlx_immortal_executors Pinned MLX executors kept alive "
+        "for process lifetime (append-only; grows per reload).",
+        "# TYPE fusion_mlx_immortal_executors gauge",
+        f"fusion_mlx_immortal_executors {stats['immortal_executors']}",
+        "# HELP fusion_mlx_immortal_streams Pinned MLX streams kept alive "
+        "for process lifetime (append-only; grows per reload).",
+        "# TYPE fusion_mlx_immortal_streams gauge",
+        f"fusion_mlx_immortal_streams {stats['immortal_streams']}",
+    ]
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
@@ -1904,6 +1927,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_watchdog_metrics())
     lines.extend(_render_degradation_metrics())
     lines.extend(_render_queue_metrics())
+    lines.extend(_render_immortal_registry_metrics())
     lines.extend(_render_swap_metrics())
     lines.extend(_render_model_residency_metrics())
     lines.extend(_render_uptime_metal())

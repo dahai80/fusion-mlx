@@ -64,6 +64,11 @@ logger = logging.getLogger(__name__)
 # still be able to reclaim the only evictable model rather than fail with 507.
 _EVICTION_COOLDOWN_S = 5.0
 
+# Audit M16: per-model KV admission headroom scales with the incoming
+# checkpoint footprint (see _kv_admission_headroom).
+_KV_HEADROOM_MODEL_FRACTION = 0.25
+_KV_HEADROOM_FLOOR_BYTES = 512 * 1024**2
+
 
 _LAZY_ENGINE_CLASSES: dict[str, tuple[str, str]] = {
     "BatchedEngine": ("fusion_mlx.engines.batched", "BatchedEngine"),
@@ -371,14 +376,19 @@ class EnginePool:
                 logger.debug("degradation metric record failed", exc_info=True)
             return 0
 
-    def _kv_admission_headroom(self) -> int:
+    def _kv_admission_headroom(self, model_bytes: int | None = None) -> int:
         # #355: soft KV-cache headroom reserved for the incoming model at
         # admission. estimated_size/last_observed_size capture weights + load
         # overhead but NOT runtime KV-cache + activation growth, which caused
         # admission under-projection. FUSION_MLX_ADMISSION_KV_HEADROOM_GB
-        # overrides (float GiB; 0 disables = pre-#355 behavior). Default:
-        # min(scheduler max_kv_cache_memory, 2 GiB) - covers measured ~0.75
-        # GiB short-context KV overhead with margin without the full 4 GiB cap.
+        # overrides (float GiB; 0 disables = pre-#355 behavior).
+        #
+        # Audit M16: the default used to be a model-independent
+        # min(max_kv_cache_memory, 2 GiB) — it reserved the same 2 GiB for a
+        # 2 GiB 4-bit 4B model as for a 15 GiB 27B model, rejecting loads
+        # that fit (small models) while under-reserving large ones. Scale the
+        # reservation to the incoming footprint instead: KV + activation
+        # growth tracks depth/width, hence weights, roughly linearly.
         env = os.environ.get("FUSION_MLX_ADMISSION_KV_HEADROOM_GB")
         if env is not None:
             try:
@@ -395,7 +405,15 @@ class EnginePool:
         max_kv = getattr(self._scheduler_config, "max_kv_cache_memory", None) or (
             4 * 1024**3
         )
-        return min(int(max_kv), 2 * 1024**3)
+        cap = min(int(max_kv), 2 * 1024**3)
+        if model_bytes is None or model_bytes <= 0:
+            return cap
+        # Measured ~0.75 GiB short-context KV overhead on a ~3 GiB 4-bit
+        # checkpoint => ~25% of weights. Floor keeps a small model's
+        # reservation from collapsing to noise; cap keeps a large model from
+        # reserving more than the scheduler KV budget.
+        scaled = int(model_bytes * _KV_HEADROOM_MODEL_FRACTION)
+        return max(min(_KV_HEADROOM_FLOOR_BYTES, cap), min(scaled, cap))
 
     def _admission_current_usage(self, *, exclude_entry_key: str | None = None) -> int:
         # #779: reconcile the tracked _current_model_memory accumulator with
@@ -2015,7 +2033,7 @@ class EnginePool:
             # unload) over the weights-only estimate, and reserve KV-cache
             # headroom the estimate doesn't capture.
             effective_size = entry.last_observed_size or entry.estimated_size
-            kv_headroom = self._kv_admission_headroom()
+            kv_headroom = self._kv_admission_headroom(effective_size)
             for _ in range(20):
                 current = self._admission_current_usage(exclude_entry_key=entry_key)
                 projected = current + effective_size + kv_headroom
@@ -4344,7 +4362,12 @@ class EnginePool:
 
         # Decision pass under the lock — cheap, no I/O.
         async with self._lock:
-            for model_id, last_access in candidates:
+            # Audit M17: re-read the clock and each entry's last_access here
+            # instead of trusting the pre-settings-I/O snapshot. A request
+            # served during the disk read bumped last_access, and expiring on
+            # the stale value unloaded a model that had just been used.
+            now = time.time()
+            for model_id, _stale_last_access in candidates:
                 effective_ttl = ttl_by_model.get(model_id)
                 if effective_ttl is None:
                     continue
@@ -4357,6 +4380,7 @@ class EnginePool:
                 ):
                     continue
 
+                last_access = entry.last_access
                 idle_time = now - last_access
                 if idle_time < effective_ttl:
                     continue

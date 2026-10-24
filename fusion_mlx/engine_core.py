@@ -67,6 +67,35 @@ def _raise_request_output_error(output: RequestOutput) -> None:
 _immortal_mlx_executors: list = []
 _immortal_mlx_streams: list = []
 
+# Audit M6: these registries are append-only by design (the worker threads
+# cannot be torn down safely), so a reload loop leaks one live thread +
+# Metal stream per reload with nothing visible to the operator. Warn once
+# per growth step past this many entries.
+_IMMORTAL_REGISTRY_WARN_AT = 4
+
+
+def _pin_immortal(executor: Any | None, stream: Any | None) -> None:
+    if executor is not None and executor not in _immortal_mlx_executors:
+        _immortal_mlx_executors.append(executor)
+        if len(_immortal_mlx_executors) > _IMMORTAL_REGISTRY_WARN_AT:
+            logger.warning(
+                "immortal MLX executor registry grew to %d entries — each "
+                "engine reload without compile-cache support leaks one live "
+                "worker thread + Metal stream",
+                len(_immortal_mlx_executors),
+            )
+    if stream is not None and stream not in _immortal_mlx_streams:
+        _immortal_mlx_streams.append(stream)
+
+
+def immortal_registry_stats() -> dict[str, int]:
+    # Audit M6: surface the append-only registries so a leak is observable
+    # instead of silent.
+    return {
+        "immortal_executors": len(_immortal_mlx_executors),
+        "immortal_streams": len(_immortal_mlx_streams),
+    }
+
 
 def _resolve_video_max_workers() -> int:
     # E-2 (#811): video max_workers=1 was the ONLY thing preventing
@@ -2723,6 +2752,7 @@ class EngineCore:
             "steps_executed": self._steps_executed,
             "active_requests": len(self._active_contexts),
             "stream_interval": self.config.stream_interval,
+            **immortal_registry_stats(),
             **scheduler_stats,
         }
 
@@ -2742,6 +2772,7 @@ class EngineCore:
         snapshot["running"] = self._running
         snapshot["steps_executed"] = self._steps_executed
         snapshot["active_requests"] = len(self._active_contexts)
+        snapshot.update(immortal_registry_stats())
         return snapshot
 
     def get_cache_stats(self) -> dict[str, Any] | None:
@@ -2895,9 +2926,7 @@ class EngineCore:
                 # worker thread; the executor is pinned in
                 # _immortal_mlx_executors and never re-submitted to after
                 # close (self._mlx_executor is nulled below).
-                _immortal_mlx_executors.append(self._mlx_executor)
-                if self._mlx_stream is not None:
-                    _immortal_mlx_streams.append(self._mlx_stream)
+                _pin_immortal(self._mlx_executor, self._mlx_stream)
                 self._mlx_executor = None
                 self._mlx_stream = None
                 self.model = None
@@ -2912,7 +2941,7 @@ class EngineCore:
             # it stays alive (can't be torn down without a GIL-free crash)
             # but is tracked instead of orphaned.
             if self._mlx_stream is not None:
-                _immortal_mlx_streams.append(self._mlx_stream)
+                _pin_immortal(None, self._mlx_stream)
                 self._mlx_stream = None
         self.model = None
         self.tokenizer = None
