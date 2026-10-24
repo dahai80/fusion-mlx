@@ -2154,9 +2154,42 @@ class EngineCore:
         usage = get_phys_footprint()
         usage_gb = usage / (1024**3)
         ceiling_gb = ceiling / (1024**3) if ceiling > 0 else 0.0
+        # H4 (#1354 audit): scheduler.abort_request mutates the waiting/running
+        # deques that step() pops/appends on the MLX executor thread — deque
+        # operations are not atomic across threads. Submit the whole batch to
+        # the same single-worker executor that runs step() (the P0-3
+        # discipline used by add_request's partial-insert rollback) so only
+        # that thread touches the queues. Terminals are still pushed here on
+        # the event loop.
+        executor = getattr(self, "_mlx_executor", None)
+        if request_ids and sched is not None:
+            if executor is not None:
+
+                def _abort_queued() -> int:
+                    aborted = 0
+                    for rid in request_ids:
+                        if self.scheduler is not None and self.scheduler.abort_request(
+                            rid
+                        ):
+                            aborted += 1
+                    return aborted
+
+                loop = asyncio.get_running_loop()
+                aborted_count = await loop.run_in_executor(executor, _abort_queued)
+                logger.debug(
+                    "abort_all_requests: scheduler aborted %d/%d queued requests",
+                    aborted_count,
+                    len(request_ids),
+                )
+            else:
+                # Engine close() nulls the executor and the scheduler together;
+                # a live scheduler with no executor has no step() thread to
+                # race, so the inline path is safe.
+                logger.debug("abort_all_requests: no MLX executor; aborting inline")
+                for rid in request_ids:
+                    if self.scheduler is not None:
+                        self.scheduler.abort_request(rid)
         for rid in request_ids:
-            if self.scheduler:
-                self.scheduler.abort_request(rid)
             ctx = self._active_contexts.get(rid)
             if ctx is not None:
                 error_msg = (
