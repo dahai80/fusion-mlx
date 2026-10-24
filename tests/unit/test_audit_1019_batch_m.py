@@ -213,8 +213,6 @@ class TestTtlFreshLastAccess:
     # M17: a request served during the settings disk read must reset the TTL.
 
     def test_touch_during_settings_io_prevents_expiry(self, monkeypatch):
-        import fusion_mlx.pool.engine_pool as ep
-
         pool = EnginePool()
         ent = _entry(last_access=time.time() - 3600)
         ent.engine = Mock()
@@ -236,8 +234,6 @@ class TestTtlFreshLastAccess:
         pool.unload_engine_async.assert_not_awaited()
 
     def test_stale_entry_still_expires(self, monkeypatch):
-        import fusion_mlx.pool.engine_pool as ep
-
         pool = EnginePool()
         ent = _entry(last_access=time.time() - 3600)
         ent.engine = Mock()
@@ -292,10 +288,10 @@ def _chat_request(text="hi"):
 
 
 def _patch_stream_chat_deps(monkeypatch, engine, released):
-    import fusion_mlx.api.openai.streaming as S
     import fusion_mlx.fd_watchdog as fd_mod
     import fusion_mlx.server as server_mod
     import fusion_mlx.service.helpers as helpers_mod
+    from fusion_mlx.api.openai import streaming as streaming_mod
 
     async def _noop_web_search(_request):
         return None
@@ -311,21 +307,19 @@ def _patch_stream_chat_deps(monkeypatch, engine, released):
             return None
 
     monkeypatch.setattr(fd_mod, "ensure_stream_fd_capacity", _NoOp())
-    monkeypatch.setattr(
-        server_mod, "resolve_model_with_profile", lambda m: (m, {})
-    )
-    monkeypatch.setattr(S, "_resolve_engine", _resolve)
-    monkeypatch.setattr(S, "_release_engine", _release)
-    monkeypatch.setattr(S, "_inject_web_search", _noop_web_search)
-    monkeypatch.setattr(S, "check_chat_capability", _NoOp())
-    monkeypatch.setattr(S, "check_multimodal_content", _NoOp())
-    monkeypatch.setattr(S, "check_tool_choice_support", _NoOp())
+    monkeypatch.setattr(server_mod, "resolve_model_with_profile", lambda m: (m, {}))
+    monkeypatch.setattr(streaming_mod, "_resolve_engine", _resolve)
+    monkeypatch.setattr(streaming_mod, "_release_engine", _release)
+    monkeypatch.setattr(streaming_mod, "_inject_web_search", _noop_web_search)
+    monkeypatch.setattr(streaming_mod, "check_chat_capability", _NoOp())
+    monkeypatch.setattr(streaming_mod, "check_multimodal_content", _NoOp())
+    monkeypatch.setattr(streaming_mod, "check_tool_choice_support", _NoOp())
     monkeypatch.setattr(
         helpers_mod,
         "compute_prompt_tokens_for_messages",
         lambda *a, **k: 5000,
     )
-    return S
+    return streaming_mod
 
 
 class TestContextPreflightBeforeStream:
@@ -351,7 +345,7 @@ class TestContextPreflightBeforeStream:
     def test_preflight_result_passed_to_generator(self, monkeypatch):
         engine = _StubEngine(max_position_embeddings=100000)
         released = []
-        S = _patch_stream_chat_deps(monkeypatch, engine, released)
+        streaming_mod = _patch_stream_chat_deps(monkeypatch, engine, released)
         import fusion_mlx.server as server_mod
 
         monkeypatch.setattr(server_mod, "get_max_context_window", lambda _m: 100000)
@@ -362,7 +356,7 @@ class TestContextPreflightBeforeStream:
             captured.update(kwargs)
             yield "data: {}\n\n"
 
-        monkeypatch.setattr(S, "_stream_chat_generator", _fake_gen)
+        monkeypatch.setattr(streaming_mod, "_stream_chat_generator", _fake_gen)
 
         resp = asyncio.run(_chat_stream(monkeypatch))
         assert isinstance(resp, StreamingResponse)
@@ -378,9 +372,9 @@ class TestContextPreflightBeforeStream:
 
 
 async def _chat_stream(monkeypatch):
-    import fusion_mlx.api.openai.streaming as S
+    from fusion_mlx.api.openai import streaming as streaming_mod
 
-    return await S._stream_chat(_chat_request(), _skip_cap_check=True)
+    return await streaming_mod._stream_chat(_chat_request(), _skip_cap_check=True)
 
 
 if __name__ == "__main__":  # pragma: no cover — convenience only
