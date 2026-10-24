@@ -2601,44 +2601,11 @@ class EngineCore:
             _raise_request_output_error(final_output)
         return final_output
 
-    def generate_batch_sync(
-        self,
-        prompts: list[str | list[int]],
-        sampling_params: SamplingParams | None = None,
-    ) -> list[RequestOutput]:
-        # P3 (#811): this sync path drives scheduler.step() directly,
-        # bypassing the AsyncEngineCore continuous-batching loop, the MLX
-        # executor, streaming, abort-on-disconnect, and the error handlers.
-        # It has no production callers (not in public_api) — it is a
-        # bench/test convenience. Prefer generate_batch_async / generate.
-        logger.warning(
-            "generate_batch_sync bypasses the executor + streaming + "
-            "abort/error handling; prefer generate_batch_async for "
-            "production paths"
-        )
-        if sampling_params is None:
-            sampling_params = SamplingParams()
-        request_ids = []
-        for prompt in prompts:
-            rid = str(uuid.uuid4())
-            req = Request(
-                request_id=rid, prompt=prompt, sampling_params=sampling_params
-            )
-            if self.scheduler:
-                self.scheduler.add_request(req)
-            request_ids.append(rid)
-        results: dict[str, RequestOutput] = {}
-        if self.scheduler:
-            while self.scheduler.has_requests():
-                output = self.scheduler.step()
-                for ro in output.outputs:
-                    if ro.finished:
-                        results[ro.request_id] = ro
-        for rid in request_ids:
-            if self.scheduler and rid in results:
-                self.scheduler.remove_finished_request(rid)
-        return [results[rid] for rid in request_ids if rid in results]
-
+    # Audit 1019 L3: generate_batch_sync lived here with zero callers (not in
+    # public_api, not in bench). It drove scheduler.step() directly, bypassing
+    # the executor, streaming, abort-on-disconnect and the error handlers, so
+    # the only safe outcome was deletion. Batches go through
+    # generate_batch_async below, which uses the normal request path.
     async def generate_batch_async(
         self,
         prompts: list[str | list[int]],
