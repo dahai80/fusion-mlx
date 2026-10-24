@@ -30,6 +30,16 @@
   stops path-based lookups from resolving the relative settings string
   against the server CWD.
 
+### Fixed — single-model serve keeps the registry entry's vlm engine type
+- Adopting the registry entry in the boot single-model path also adopted
+  its discovery type, but the loader still hard-coded `BatchedEngine` for
+  everything that is not diffusion. A `vlm`-typed entry (Qwen3.5-4B is
+  discovered as `vlm`) therefore lost vision at boot although a lazy pool
+  load of the same checkpoint builds `VLMBatchedEngine`: images were
+  rejected or ignored on a model that supports them. The loader now picks
+  `VLMBatchedEngine` when the adopted entry is `vlm`-typed, and keeps
+  `BatchedEngine` for `--text-only` / `force_text` as before.
+
 ### Fixed — pool mode stops blaming external GPU processes; spec-route log flood
 - The per-scheduler "GPU contention detected" warning fired in pool mode
   whenever co-resident engines decoded on the same GPU: their interleave

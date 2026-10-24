@@ -2924,8 +2924,6 @@ class Server:
                 scheduler_config=scheduler_config,
             )
         else:
-            from .engines.batched import BatchedEngine
-
             # Resolve per-model settings (dflash2_disabled, ttl, etc.) so
             # the single-model serve path gets the same settings as the pool
             # load_model path. Without this, model_settings is None and gates
@@ -2934,13 +2932,33 @@ class Server:
             _sm = getattr(self.pool, "_settings_manager", None)
             if _sm is not None:
                 _ms = _sm.get_settings(model_path)
-            engine = BatchedEngine(
-                model_name=model_path,
-                scheduler_config=scheduler_config,
-                stream_interval=stream_interval,
-                model_settings=_ms,
-                lora_path=pending.get("lora_path"),
-            )
+            # #1349: the adopted registry entry is typed by discovery. Loading
+            # a BatchedEngine for a vlm-typed entry silently downgraded vision
+            # (same weights, but images rejected/ignored) relative to what a
+            # lazy pool load produces. Mirror the pool: VLM unless the
+            # operator asked for text-only.
+            _entry = self.pool._entries.get(served)
+            _entry_type = getattr(_entry, "engine_type", "") if _entry else ""
+            if _entry_type == "vlm" and not pending.get("force_text"):
+                from .engines.vlm import VLMBatchedEngine
+
+                logger.info("Loading model as VLM (registry type=vlm): %s", served)
+                engine = VLMBatchedEngine(
+                    model_name=model_path,
+                    scheduler_config=scheduler_config,
+                    stream_interval=stream_interval,
+                    model_settings=_ms,
+                )
+            else:
+                from .engines.batched import BatchedEngine
+
+                engine = BatchedEngine(
+                    model_name=model_path,
+                    scheduler_config=scheduler_config,
+                    stream_interval=stream_interval,
+                    model_settings=_ms,
+                    lora_path=pending.get("lora_path"),
+                )
         # #1194: close the tier-budget bypass — this path creates engines
         # directly and never went through EnginePool._load_engine. Estimate
         # on-disk weights and enforce the P0 tier budget BEFORE the load;
