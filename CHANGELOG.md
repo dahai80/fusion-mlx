@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed — SDXL prompts are actually encoded; Ollama model identity and /api/version
+- SDXL's tokenizer loader returned the snapshot root instead of the
+  `tokenizer/` subfolder, so `CLIPTokenizer.from_pretrained` fell back to a
+  degenerate tokenizer that emitted only BOS + padding: every prompt encoded
+  identically and SDXL ignored the prompt text. SD1.5/SD2/SDXL now share one
+  pipeline core (`fusion_mlx/image/pipeline_base.py`), which also removes the
+  three-way copy of the denoise loop (#1354 audit L11/L15/L17).
+- `/api/version` now requires the API key like every other route, and model
+  digests are a stable `sha256:` of the model id instead of a fresh UUID per
+  request, so Ollama clients keep seeing the same model identity (#1354 audit
+  L9).
+- A chat completion without `max_tokens` still defaults to 2048 tokens but now
+  logs that the output may be truncated and how to change the cap (#1354 audit
+  L7).
+
 ### Fixed — admission and engine teardown no longer block the event loop
 - `add_request`'s post-timeout and post-cancel scheduler aborts called
   `fut.result(timeout=5.0)` on the single MLX executor from a coroutine:
