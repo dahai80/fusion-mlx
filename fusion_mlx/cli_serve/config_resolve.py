@@ -751,7 +751,6 @@ def _stage_server_config(args, server, logger):
 
     # API key
     server._api_key = server._resolve_api_key(args.api_key)
-    _get_config().default_timeout = args.timeout
 
     # Body-size cap
     _max_body_arg = getattr(args, "max_request_bytes", None)

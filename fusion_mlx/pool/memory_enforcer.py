@@ -47,7 +47,7 @@ from .lock_order import TrackedThreadLock
 if TYPE_CHECKING:
     from .engine_pool import EnginePool
     from .model_settings import ModelSettingsManager
-    from .settings import GlobalSettings
+    from .settings import PoolTtlSettings
 
 logger = logging.getLogger(__name__)
 
@@ -365,7 +365,7 @@ class ProcessMemoryEnforcer:
         poll_interval: float = 1.0,
         settings_manager: ModelSettingsManager | None = None,
         prefill_memory_guard: bool = True,
-        global_settings: GlobalSettings | None = None,
+        global_settings: PoolTtlSettings | None = None,
         soft_threshold: float = 0.90,
         hard_threshold: float = 0.95,
         prefill_safe_zone_ratio: float = 0.89,

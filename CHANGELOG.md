@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed — dead and deprecated config knobs removed (#1354, audit D1–D6)
+- Removed `ServerConfig.default_timeout` and the serve `--timeout` flag. The
+  field had no production reader — per-modality timeouts are the contract
+  (#1191) — and the flag only mirrored its value, so operators who set it
+  believed a global timeout applied when nothing consumed it.
+- Removed the hidden deprecated serve flags `--simple-engine`, `--kv-bits`,
+  `--kv-group-size`, `--draft-model`, `--num-draft-tokens`, `--specprefill`,
+  `--specprefill-threshold`, `--specprefill-keep-pct` and
+  `--specprefill-draft-model`. All were `argparse.SUPPRESS` no-ops kept for a
+  one-release deprecation window that has now elapsed.
+- Removed the duplicate `ServerConfig.kv_cache_dtype`; `SchedulerConfig.
+  kv_cache_dtype` is the single source the `/metrics` resolver reads.
+- Renamed the `pool/settings.py` stub `GlobalSettings` to `PoolTtlSettings`,
+  ending the name collision with the admin settings surface.
+- Dropped the phantom `FUSION_GPU_MEMORY_UTILIZATION` reference from the
+  `gpu_memory_utilization` clamp comment — no code ever read that env var.
+
 ### Fixed — context budget no longer degrades to used=0 when a system message is inline
 - Claude Code 2.1.154+ sends `role: "system"` entries inside the messages
   array. The Anthropic route consolidates them, but on the gateway's

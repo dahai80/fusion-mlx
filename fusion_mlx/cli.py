@@ -501,32 +501,6 @@ Examples:
         default=True,
         help="Enable continuous batching (default: on).",
     )
-    # Deprecated flags — accepted silently to avoid breaking user scripts
-    serve_parser.add_argument(
-        "--simple-engine",
-        action="store_true",
-        default=False,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--kv-bits",
-        type=int,
-        default=None,
-        choices=[4, 8],
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--kv-group-size",
-        type=int,
-        default=64,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--draft-model",
-        type=str,
-        default=None,
-        help=argparse.SUPPRESS,
-    )
     # DFlash — block-diffusion drafter speculative decoding (z-lab / mlx-vlm).
     # Currently single-user serial mode; runs a dedicated DFlash server that
     # bypasses BatchedEngine. Eligible aliases declare ``supports_dflash=true``
@@ -541,36 +515,6 @@ Examples:
         "(see ``fusion-mlx info <alias>``). Loads the drafter from the "
         "alias's ``dflash_draft_model`` field. Install with "
         "``pip install 'fusion-mlx[dflash]'``.",
-    )
-    serve_parser.add_argument(
-        "--num-draft-tokens",
-        type=int,
-        default=4,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--specprefill",
-        action="store_true",
-        default=False,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--specprefill-threshold",
-        type=int,
-        default=8192,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--specprefill-keep-pct",
-        type=float,
-        default=0.3,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--specprefill-draft-model",
-        type=str,
-        default=None,
-        help=argparse.SUPPRESS,
     )
     serve_parser.add_argument(
         "--gpu-memory-utilization",
@@ -938,12 +882,6 @@ Examples:
             "before JSON parsing or tokenization runs. 0 disables the cap. "
             "Falls back to the FUSION_MLX_MAX_REQUEST_BYTES env var if unset."
         ),
-    )
-    serve_parser.add_argument(
-        "--timeout",
-        type=float,
-        default=1800.0,
-        help="Default request timeout in seconds (default: 1800 = 30 min)",
     )
     # Tool calling options
     serve_parser.add_argument(
