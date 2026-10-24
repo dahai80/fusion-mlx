@@ -1161,8 +1161,17 @@ class PagedCacheManager(CacheManager):
                 # Look up in cache
                 cached_block = self.cached_block_hash_to_block.get_block(block_hash)
 
-                # Lazy restore: if not in memory but exists on SSD, register it
-                if cached_block is None and self._paged_ssd_cache_manager is not None:
+                # Lazy restore: if not in memory but exists on SSD, register it.
+                # Audit M11: only on the claiming path. A non-claiming lookup
+                # (find_shared_prefix) would allocate the block with the lazy
+                # pin (ref_count=1) and nothing would ever claim or release it,
+                # so the block became permanently unevictable while the prefix
+                # kept matching a block whose data was never loaded.
+                if (
+                    cached_block is None
+                    and claim
+                    and self._paged_ssd_cache_manager is not None
+                ):
                     if self._paged_ssd_cache_manager.has_block(block_hash):
                         # Use standard allocation path so we handle an empty
                         # free queue gracefully (grow/evict) and keep stats in sync.

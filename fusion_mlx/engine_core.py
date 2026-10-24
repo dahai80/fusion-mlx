@@ -1120,6 +1120,10 @@ class EngineCore:
         self._engine_id = engine_id or str(uuid.uuid4())
         self._owns_model = False
         self._closed = False
+        # Audit M4: set before cancelling _task in close() so a loop coroutine
+        # that resumes after teardown exits instead of touching a nulled
+        # scheduler.
+        self._closing = False
 
         registry = get_registry()
         registry.acquire(
@@ -1643,6 +1647,11 @@ class EngineCore:
         use_simple_streaming = stream_interval == 1
 
         while self._running:
+            # Audit M4: close() cancels this task without awaiting it, then
+            # nulls scheduler/model. Stop here before the body touches them.
+            if self._closing:
+                logger.debug("Engine loop exiting: engine is closing")
+                break
             try:
                 # G2: if llm executor is poisoned, fast-fail all active
                 # requests and stop the loop so the pool can evict + reload
@@ -2816,6 +2825,34 @@ class EngineCore:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.close)
 
+    @staticmethod
+    def _settle_engine_task(task: asyncio.Task, timeout: float) -> bool:
+        # Audit M4: cancel() is fire-and-forget. Wait for the loop coroutine
+        # to unwind so it cannot resume against a nulled scheduler. Only
+        # possible from another thread — a caller running ON the engine's own
+        # loop cannot block it, and there the _closing flag covers the gap.
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        loop = task.get_loop()
+        if current is loop or not loop.is_running():
+            return task.done()
+
+        async def _join() -> None:
+            task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await task
+
+        try:
+            fut = asyncio.run_coroutine_threadsafe(_join(), loop)
+            fut.result(timeout)
+        except Exception as exc:
+            logger.warning(
+                "engine loop task did not settle within %.1fs: %s", timeout, exc
+            )
+        return task.done()
+
     def close(self) -> None:
         if self._closed:
             return
@@ -2826,6 +2863,7 @@ class EngineCore:
         # EnginePool eviction, __del__, sync contexts) so we can't await
         # stop() — but setting _running=False + cancelling _task breaks the
         # loop on its next scheduler step.
+        self._closing = True
         self._running = False
         if self._wake_event is not None:
             try:
@@ -2833,8 +2871,10 @@ class EngineCore:
             except Exception:
                 pass
         if self._task is not None:
-            self._task.cancel()
+            task = self._task
             self._task = None
+            task.cancel()
+            self._settle_engine_task(task, _ENGINE_TASK_EXIT_TIMEOUT_S)
         if self._owns_model:
             get_registry().release(self.model, self._engine_id)
             self._owns_model = False
