@@ -185,6 +185,88 @@ def _tool_calls_to_ollama(tool_calls: list) -> list[dict]:
     return out
 
 
+def _ollama_ts() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime())
+
+
+def _ollama_chunk_line(model: str, body: dict[str, Any]) -> str:
+    # Audit 1019 L13: generate and chat built the same ndjson envelope.
+    payload: dict[str, Any] = {"model": model, "created_at": _ollama_ts()}
+    payload.update(body)
+    return json.dumps(payload) + "\n"
+
+
+def _ollama_done_body(
+    finish_reason: str | None, prompt_eval_count: int, eval_count: int
+) -> dict[str, Any]:
+    return {
+        "done": True,
+        "done_reason": "length" if finish_reason == "length" else "stop",
+        "total_duration": 0,
+        "load_duration": 0,
+        "prompt_eval_count": prompt_eval_count,
+        "prompt_eval_duration": 0,
+        "eval_count": eval_count,
+        "eval_duration": 0,
+    }
+
+
+async def _ollama_stream_lines(
+    gen,
+    *,
+    model: str,
+    render_delta,
+    render_finish,
+    log_label: str,
+    request_id: str,
+    engine: Any,
+):
+    # Audit 1019 L13: /api/generate and /api/chat carried a ~90-line copy of
+    # this frame walk, so every fix (M20 error frames, usage accounting,
+    # keepalives) had to land twice. The walk lives here; each endpoint
+    # supplies its own chunk shape through the two callbacks.
+    eval_count = 0
+    prompt_eval_count = 0
+    finish_reason = None
+    try:
+        async for chunk in gen:
+            if isinstance(chunk, str) and chunk.startswith("data: "):
+                payload = chunk[6:].strip()
+                if payload == "[DONE]":
+                    break
+                try:
+                    data = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                # #1354 audit M20: an upstream error frame has no choices;
+                # skipping it and then reporting done_reason "stop" told the
+                # client the empty generation worked.
+                if data.get("error"):
+                    yield _ollama_error_frame(data["error"]) + "\n"
+                    return
+                for c in data.get("choices", []):
+                    delta = c.get("delta", {})
+                    if c.get("finish_reason"):
+                        finish_reason = c["finish_reason"]
+                    for line in render_delta(delta):
+                        yield line
+                    usage_chunk = data.get("usage")
+                    if usage_chunk:
+                        eval_count = usage_chunk.get("completion_tokens", eval_count)
+                        prompt_eval_count = usage_chunk.get(
+                            "prompt_tokens", prompt_eval_count
+                        )
+            elif isinstance(chunk, str) and chunk.startswith(": "):
+                yield chunk
+                continue
+        for line in render_finish(finish_reason, prompt_eval_count, eval_count):
+            yield line
+    except asyncio.CancelledError:
+        logger.info("ollama %s client disconnected: %s", log_label, request_id)
+        handle_disconnect(request_id, engine)
+        raise
+
+
 def _build_openai_messages_generate(
     prompt: str,
     system: str | None = None,
@@ -362,85 +444,30 @@ async def api_generate(
         gen, request_id, engine = await _call_openai_chat(
             request.model, messages, True, params
         )
-        accumulated = ""
-        eval_count = 0
-        prompt_eval_count = 0
-        finish_reason = None
-        try:
-            async for chunk in gen:
-                if isinstance(chunk, str) and chunk.startswith("data: "):
-                    payload = chunk[6:].strip()
-                    if payload == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(payload)
-                        # #1354 audit M20: an upstream error frame has no
-                        # choices; skipping it and then reporting done_reason
-                        # "stop" told the client the empty generation worked.
-                        if data.get("error"):
-                            yield _ollama_error_frame(data["error"]) + "\n"
-                            return
-                        for c in data.get("choices", []):
-                            delta = c.get("delta", {})
-                            if c.get("finish_reason"):
-                                finish_reason = c["finish_reason"]
-                            text = delta.get("content", "")
-                            if text:
-                                accumulated += text
-                                yield (
-                                    json.dumps(
-                                        {
-                                            "model": request.model,
-                                            "created_at": time.strftime(
-                                                "%Y-%m-%dT%H:%M:%S.000000Z",
-                                                time.gmtime(),
-                                            ),
-                                            "response": text,
-                                            "done": False,
-                                        }
-                                    )
-                                    + "\n"
-                                )
-                            usage_chunk = data.get("usage")
-                            if usage_chunk:
-                                eval_count = usage_chunk.get(
-                                    "completion_tokens", eval_count
-                                )
-                                prompt_eval_count = usage_chunk.get(
-                                    "prompt_tokens", prompt_eval_count
-                                )
-                    except json.JSONDecodeError:
-                        continue
-                elif isinstance(chunk, str) and chunk.startswith(": "):
-                    yield chunk
-                    continue
-            yield (
-                json.dumps(
-                    {
-                        "model": request.model,
-                        "created_at": time.strftime(
-                            "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
-                        ),
-                        "response": "",
-                        "done": True,
-                        "done_reason": (
-                            "length" if finish_reason == "length" else "stop"
-                        ),
-                        "context": [],
-                        "total_duration": 0,
-                        "load_duration": 0,
-                        "prompt_eval_count": prompt_eval_count,
-                        "prompt_eval_duration": 0,
-                        "eval_count": eval_count,
-                        "eval_duration": 0,
-                    }
-                )
-                + "\n"
+
+        def render_delta(delta):
+            text = delta.get("content", "")
+            if not text:
+                return ()
+            return (
+                _ollama_chunk_line(request.model, {"response": text, "done": False}),
             )
-        except asyncio.CancelledError:
-            logger.info("ollama /api/generate client disconnected: %s", request_id)
-            handle_disconnect(request_id, engine)
-            raise
+
+        def render_finish(finish_reason, prompt_eval_count, eval_count):
+            body: dict[str, Any] = {"response": "", "context": []}
+            body.update(_ollama_done_body(finish_reason, prompt_eval_count, eval_count))
+            return (_ollama_chunk_line(request.model, body),)
+
+        async for line in _ollama_stream_lines(
+            gen,
+            model=request.model,
+            render_delta=render_delta,
+            render_finish=render_finish,
+            log_label="/api/generate",
+            request_id=request_id,
+            engine=engine,
+        ):
+            yield line
 
     return StreamingResponse(
         _stream_generate(),
@@ -508,73 +535,36 @@ async def api_chat(
         gen, request_id, engine = await _call_openai_chat(
             request.model, messages, True, params
         )
-        eval_count = 0
-        prompt_eval_count = 0
-        finish_reason = None
         tool_acc: dict[int, dict[str, str]] = {}
-        try:
-            async for chunk in gen:
-                if isinstance(chunk, str) and chunk.startswith("data: "):
-                    payload = chunk[6:].strip()
-                    if payload == "[DONE]":
-                        break
-                    try:
-                        data = json.loads(payload)
-                        # #1354 audit M20: forward the upstream error frame
-                        # instead of ending the stream as done_reason "stop".
-                        if data.get("error"):
-                            yield _ollama_error_frame(data["error"]) + "\n"
-                            return
-                        for c in data.get("choices", []):
-                            delta = c.get("delta", {})
-                            if c.get("finish_reason"):
-                                finish_reason = c["finish_reason"]
-                            text = delta.get("content") or ""
-                            thinking = delta.get("reasoning_content") or ""
-                            if text or thinking:
-                                message = {"role": "assistant", "content": text}
-                                if thinking:
-                                    message["thinking"] = thinking
-                                yield (
-                                    json.dumps(
-                                        {
-                                            "model": request.model,
-                                            "created_at": time.strftime(
-                                                "%Y-%m-%dT%H:%M:%S.000000Z",
-                                                time.gmtime(),
-                                            ),
-                                            "message": message,
-                                            "done": False,
-                                        }
-                                    )
-                                    + "\n"
-                                )
-                            # #1354 audit M20: accumulate tool-call deltas by
-                            # index; Ollama carries them as whole calls in one
-                            # message with object-form arguments.
-                            for tc in delta.get("tool_calls") or []:
-                                idx = tc.get("index", 0)
-                                slot = tool_acc.setdefault(
-                                    idx, {"name": "", "arguments": ""}
-                                )
-                                fn = tc.get("function") or {}
-                                if fn.get("name"):
-                                    slot["name"] = fn["name"]
-                                if fn.get("arguments"):
-                                    slot["arguments"] += fn["arguments"]
-                            usage_chunk = data.get("usage")
-                            if usage_chunk:
-                                eval_count = usage_chunk.get(
-                                    "completion_tokens", eval_count
-                                )
-                                prompt_eval_count = usage_chunk.get(
-                                    "prompt_tokens", prompt_eval_count
-                                )
-                    except json.JSONDecodeError:
-                        continue
-                elif isinstance(chunk, str) and chunk.startswith(": "):
-                    yield chunk
-                    continue
+
+        def render_delta(delta):
+            lines = []
+            text = delta.get("content") or ""
+            thinking = delta.get("reasoning_content") or ""
+            if text or thinking:
+                message = {"role": "assistant", "content": text}
+                if thinking:
+                    message["thinking"] = thinking
+                lines.append(
+                    _ollama_chunk_line(
+                        request.model, {"message": message, "done": False}
+                    )
+                )
+            # #1354 audit M20: accumulate tool-call deltas by index; Ollama
+            # carries them as whole calls in one message with object-form
+            # arguments.
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                slot = tool_acc.setdefault(idx, {"name": "", "arguments": ""})
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    slot["name"] = fn["name"]
+                if fn.get("arguments"):
+                    slot["arguments"] += fn["arguments"]
+            return lines
+
+        def render_finish(finish_reason, prompt_eval_count, eval_count):
+            lines = []
             if tool_acc:
                 ollama_calls = _tool_calls_to_ollama(
                     [
@@ -588,49 +578,34 @@ async def api_chat(
                     ]
                 )
                 if ollama_calls:
-                    yield (
-                        json.dumps(
+                    lines.append(
+                        _ollama_chunk_line(
+                            request.model,
                             {
-                                "model": request.model,
-                                "created_at": time.strftime(
-                                    "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
-                                ),
                                 "message": {
                                     "role": "assistant",
                                     "content": "",
                                     "tool_calls": ollama_calls,
                                 },
                                 "done": False,
-                            }
+                            },
                         )
-                        + "\n"
                     )
-            yield (
-                json.dumps(
-                    {
-                        "model": request.model,
-                        "created_at": time.strftime(
-                            "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
-                        ),
-                        "message": {"role": "assistant", "content": ""},
-                        "done": True,
-                        "done_reason": (
-                            "length" if finish_reason == "length" else "stop"
-                        ),
-                        "total_duration": 0,
-                        "load_duration": 0,
-                        "prompt_eval_count": prompt_eval_count,
-                        "prompt_eval_duration": 0,
-                        "eval_count": eval_count,
-                        "eval_duration": 0,
-                    }
-                )
-                + "\n"
-            )
-        except asyncio.CancelledError:
-            logger.info("ollama /api/chat client disconnected: %s", request_id)
-            handle_disconnect(request_id, engine)
-            raise
+            body: dict[str, Any] = {"message": {"role": "assistant", "content": ""}}
+            body.update(_ollama_done_body(finish_reason, prompt_eval_count, eval_count))
+            lines.append(_ollama_chunk_line(request.model, body))
+            return lines
+
+        async for line in _ollama_stream_lines(
+            gen,
+            model=request.model,
+            render_delta=render_delta,
+            render_finish=render_finish,
+            log_label="/api/chat",
+            request_id=request_id,
+            engine=engine,
+        ):
+            yield line
 
     return StreamingResponse(
         _stream_chat(),
