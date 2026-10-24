@@ -1,10 +1,20 @@
 import logging
-import os
 
 import mlx.core as mx
 import numpy as np
-from PIL import Image
 
+from fusion_mlx.image.pipeline_base import (
+    GenResult,
+    denoise_loop,
+    init_latent_from_image,
+    init_noise_latent,
+    load_safetensors,
+    prepare_schedule,
+    resolve_dir,
+    resolve_path,
+    slice_timesteps,
+    to_pil,
+)
 from fusion_mlx.image.sdxl.config import (
     SDXLConfig,
     SDXLModelPaths,
@@ -17,69 +27,16 @@ from fusion_mlx.image.sdxl.weights import load_clip, load_unet, load_vae
 
 logger = logging.getLogger(__name__)
 
-
-class GenResult:
-    def __init__(self, image: Image.Image):
-        self.image = image
-
-
-def _pil_to_nchw(image: Image.Image, height: int, width: int) -> mx.array:
-    # Resize to target then normalize to [-1, 1] NCHW for VAE encode (img2img).
-    if image.size != (width, height):
-        image = image.resize((width, height), Image.LANCZOS)
-    arr = np.array(image.convert("RGB")).astype(np.float32) / 255.0
-    arr = (arr * 2.0) - 1.0
-    arr = np.transpose(arr, (2, 0, 1))
-    return mx.array(arr)[None]
-
-
-def _local_path(subfolder: str, filename: str) -> str | None:
-    base = os.environ.get("SDXL_LOCAL_DIR")
-    if not base:
-        return None
-    cand = (
-        os.path.join(base, subfolder, filename)
-        if subfolder
-        else os.path.join(base, filename)
-    )
-    if os.path.exists(cand):
-        logger.info("SDXL local resolve %s", cand)
-        return cand
-    return None
+_LOCAL_ENV = "SDXL_LOCAL_DIR"
+_LABEL = "SDXL"
 
 
 def _resolve(repo: str, subfolder: str, filename: str) -> str:
-    local = _local_path(subfolder, filename)
-    if local:
-        return local
-    from huggingface_hub import hf_hub_download
-
-    path_in_repo = f"{subfolder}/{filename}" if subfolder else filename
-    return hf_hub_download(repo, path_in_repo)
+    return resolve_path(_LOCAL_ENV, repo, subfolder, filename, _LABEL)
 
 
 def _resolve_dir(repo: str, subfolder: str) -> str:
-    base = os.environ.get("SDXL_LOCAL_DIR")
-    if base and os.path.isdir(os.path.join(base, subfolder)):
-        logger.info("SDXL local resolve_dir %s/%s", base, subfolder)
-        return os.path.join(base, subfolder)
-    from huggingface_hub import snapshot_download
-
-    return snapshot_download(
-        repo, allow_patterns=[f"{subfolder}/*"], endpoint=os.environ.get("HF_ENDPOINT")
-    )
-
-
-def _load_safetensors(path: str) -> dict:
-    from safetensors import safe_open
-
-    raw = {}
-    with safe_open(path, "pt") as f:
-        # safe_open objects expose .keys() but are NOT iterable in
-        # safetensors >= 0.8 (ruff SIM118 is a false positive here).
-        for k in f.keys():  # noqa: SIM118
-            raw[k] = mx.array(f.get_tensor(k).numpy())
-    return raw
+    return resolve_dir(_LOCAL_ENV, repo, subfolder, _LABEL)
 
 
 class SDXLPipeline:
@@ -121,7 +78,7 @@ class SDXLPipeline:
         clip_l_path = _resolve(
             self.paths.repo, self.paths.clip_l_subfolder, self.paths.clip_l_file
         )
-        load_clip(self.clip_l, _load_safetensors(clip_l_path))
+        load_clip(self.clip_l, load_safetensors(clip_l_path))
         self.clip_g = SDXLCLIPTextModel(
             dims=tc.clip_g_dims,
             num_layers=tc.clip_g_layers,
@@ -135,7 +92,7 @@ class SDXLPipeline:
         clip_g_path = _resolve(
             self.paths.repo, self.paths.clip_g_subfolder, self.paths.clip_g_file
         )
-        load_clip(self.clip_g, _load_safetensors(clip_g_path))
+        load_clip(self.clip_g, load_safetensors(clip_g_path))
         self.tokenizer_l = CLIPTokenizer.from_pretrained(
             _resolve_dir(self.paths.repo, self.paths.tokenizer_subfolder)
         )
@@ -149,12 +106,12 @@ class SDXLPipeline:
             self.paths.repo, self.paths.unet_subfolder, self.paths.unet_file
         )
         self.unet = SDXLUNet(self.config)
-        load_unet(self.unet, _load_safetensors(unet_path))
+        load_unet(self.unet, load_safetensors(unet_path))
         vae_path = _resolve(
             self.paths.repo, self.paths.vae_subfolder, self.paths.vae_file
         )
         self.vae = SDXLVAE()
-        load_vae(self.vae, _load_safetensors(vae_path))
+        load_vae(self.vae, load_safetensors(vae_path))
         if self.quantize:
             try:
                 import mlx.nn as nn
@@ -194,6 +151,19 @@ class SDXLPipeline:
         # SDXL original_size, crop_top_left, target_size
         return mx.array([[height, width, 0, 0, height, width]], dtype=mx.float32)
 
+    def _make_scheduler(self, num_inference_steps: int) -> SDXLEulerDiscreteScheduler:
+        scheduler = SDXLEulerDiscreteScheduler(
+            num_train_timesteps=1000,
+            beta_start=0.00085,
+            beta_end=0.012,
+            beta_schedule="scaled_linear",
+            prediction_type="epsilon",
+            timestep_spacing="leading",
+            steps_offset=1,
+        )
+        scheduler.set_timesteps(num_inference_steps)
+        return scheduler
+
     def generate_image(
         self,
         seed: int = 0,
@@ -213,120 +183,58 @@ class SDXLPipeline:
             raise ValueError("SDXL height/width must be multiples of 8")
         h_lat = height // 8
         w_lat = width // 8
-        # img2img: image_strength (a.k.a. denoise fraction) controls how many
-        # steps run. strength=1.0 -> full txt2img from noise; strength=0.5 ->
-        # run half the steps from a noised init image (#480). When image_path
-        # is None, fall back to pure txt2img.
-        is_img2img = image_path is not None
-        strength = float(image_strength) if image_strength is not None else 1.0
-        if is_img2img:
-            if strength <= 0.0 or strength > 1.0:
-                logger.warning(
-                    "SDXL image_strength=%.3f out of (0,1], clamping", strength
-                )
-                strength = max(min(strength, 1.0), 1e-3)
-            eff_steps = max(1, int(round(num_inference_steps * strength)))
-            logger.info(
-                "SDXL img2img prompt=%r steps=%d eff_steps=%d strength=%.3f %dx%d",
-                prompt[:60],
-                num_inference_steps,
-                eff_steps,
-                strength,
-                width,
-                height,
-            )
-        else:
-            eff_steps = num_inference_steps
-            logger.info(
-                "SDXL generate prompt=%r steps=%d %dx%d guidance=%.2f seed=%d",
-                prompt[:60],
-                num_inference_steps,
-                width,
-                height,
-                guidance,
-                seed,
-            )
+
+        is_img2img, eff_steps, _strength = prepare_schedule(
+            _LABEL,
+            prompt,
+            num_inference_steps,
+            image_path,
+            image_strength,
+            width,
+            height,
+            guidance,
+            seed,
+        )
+
         mx.random.seed(seed)
         context, pooled = self._encode_prompt(prompt)
         time_ids = self._default_time_ids(height, width)
         if guidance > 1:
             context_un, pooled_un = self._encode_prompt(negative_prompt or "")
-            time_ids_un = self._default_time_ids(height, width)
         else:
             context_un = None
             pooled_un = None
-            time_ids_un = None
 
-        scheduler = SDXLEulerDiscreteScheduler(
-            num_train_timesteps=1000,
-            beta_start=0.00085,
-            beta_end=0.012,
-            beta_schedule="scaled_linear",
-            prediction_type="epsilon",
-            timestep_spacing="leading",
-            steps_offset=1,
-        )
-        scheduler.set_timesteps(num_inference_steps)
+        scheduler = self._make_scheduler(num_inference_steps)
         timesteps = scheduler.timesteps
-        # Slice the last eff_steps timesteps (strongest denoise near the end),
-        # matching diffusers img2img init_noise + skip.
-        if is_img2img and eff_steps < len(timesteps):
-            timesteps = timesteps[len(timesteps) - eff_steps :]
-            scheduler.sigmas = scheduler.sigmas[len(scheduler.sigmas) - 1 - eff_steps :]
-            scheduler._step_index = 0
         if is_img2img:
-            init_img = Image.open(image_path).convert("RGB")
-            init_lat = self.vae.encode(_pil_to_nchw(init_img, height, width))
-            init_lat = init_lat.astype(mx.float32)
-            # epsilon noise convention: latent = init_lat + sigma_start * noise.
-            sigma_start = float(scheduler.sigmas[0])
-            noise = mx.random.normal(init_lat.shape, dtype=mx.float32)
-            latent = init_lat + sigma_start * noise
-            mx.eval(latent)
-            logger.info(
-                "SDXL img2img init latent encoded, sigma_start=%.4f", sigma_start
+            timesteps = slice_timesteps(scheduler, timesteps, eff_steps)
+
+        if is_img2img:
+            latent = init_latent_from_image(
+                _LABEL, self.vae, scheduler, image_path, height, width
             )
         else:
-            latent = mx.random.normal(
-                (1, cfg.in_channels, h_lat, w_lat), dtype=mx.float32
-            )
-            latent = latent * scheduler.init_noise_sigma
-        for i, t in enumerate(timesteps):
-            t_arr = mx.array([float(t)])
-            if guidance > 1:
-                latent_in = mx.concatenate([latent, latent], axis=0)
-                context_in = mx.concatenate([context, context_un], axis=0)
-                pooled_in = mx.concatenate([pooled, pooled_un], axis=0)
-                tids_in = mx.concatenate([time_ids, time_ids_un], axis=0)
-                t_in = mx.concatenate([t_arr, t_arr], axis=0)
-                noise = self.unet(
-                    scheduler.scale_model_input(latent_in),
-                    t_in,
-                    context_in,
-                    pooled_in,
-                    tids_in,
-                )
-                noise_cond, noise_un = mx.split(noise, 2, axis=0)
-                noise = noise_un + guidance * (noise_cond - noise_un)
-            else:
-                noise = self.unet(
-                    scheduler.scale_model_input(latent),
-                    t_arr,
-                    context,
-                    pooled,
-                    time_ids,
-                )
-            latent = scheduler.step(noise, latent)
-            mx.eval(latent)
-            logger.info("SDXL step %d/%d done", i + 1, len(timesteps))
+            latent = init_noise_latent(cfg, h_lat, w_lat, scheduler)
+
+        cond = {"context": context, "pooled": pooled, "time_ids": time_ids}
+        uncond = (
+            {"context": context_un, "pooled": pooled_un, "time_ids": time_ids}
+            if context_un is not None
+            else None
+        )
+        latent = denoise_loop(
+            _LABEL,
+            scheduler,
+            timesteps,
+            latent,
+            guidance,
+            cond,
+            uncond,
+            lambda lat, t, args: self.unet(
+                lat, t, args["context"], args["pooled"], args["time_ids"]
+            ),
+        )
         image = self.vae.decode(latent)
         mx.eval(image)
-        return GenResult(image=_to_pil(image))
-
-
-def _to_pil(image: mx.array) -> Image.Image:
-    arr = np.array(image[0].astype(mx.float32))
-    arr = np.transpose(arr, (1, 2, 0))
-    arr = (arr / 2 + 0.5).clip(0, 1)
-    arr = (arr * 255).astype(np.uint8)
-    return Image.fromarray(arr)
+        return GenResult(image=to_pil(image))
