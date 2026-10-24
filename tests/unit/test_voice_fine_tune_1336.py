@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -31,10 +32,17 @@ from fusion_mlx.training.voice import (
 
 
 def _write_wav(path: Path, seconds: float = 1.5, freq: float = 220.0, sr: int = 24000):
-    import soundfile as sf
+    # stdlib only: the audio extra (soundfile) is optional, and CI installs a
+    # bare [dev] environment.
+    import wave
 
     t = np.arange(int(seconds * sr), dtype=np.float32) / sr
-    sf.write(str(path), 0.2 * np.sin(2 * np.pi * freq * t), sr)
+    pcm = (0.2 * np.sin(2 * np.pi * freq * t) * 32767.0).astype("<i2")
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sr)
+        handle.writeframes(pcm.tobytes())
 
 
 @pytest.fixture()
@@ -87,6 +95,17 @@ def test_load_dataset_wav_txt(dataset_dir):
 
 def test_load_dataset_max_samples(dataset_dir):
     assert len(load_dataset(dataset_dir, max_samples=2)) == 2
+
+
+def test_load_dataset_without_soundfile(dataset_dir, monkeypatch, caplog):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "soundfile", None)
+    with caplog.at_level(logging.WARNING, logger="fusion_mlx.training.voice"):
+        samples = load_dataset(dataset_dir)
+    assert len(samples) == 4
+    assert all(1.0 <= sample.duration <= 1.6 for sample in samples)
+    assert "soundfile is not installed" in caplog.text
 
 
 def test_load_dataset_metadata_csv(dataset_dir):

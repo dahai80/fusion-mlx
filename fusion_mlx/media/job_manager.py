@@ -326,15 +326,25 @@ class MediaJobManager:
                     ) from None
                 raise
             if not line:
-                if proc.returncode is not None:
-                    break
-                if (
-                    load_window
-                    and not saw_event
-                    and time.monotonic() - spawned_at >= load_window
-                ):
-                    raise MediaJobLoadHangError(self._load_hang_message(load_window))
-                continue
+                # EOF: the worker closed stdout. It may not be reaped yet, so
+                # proc.returncode can still be None here. Wait for the exit
+                # instead of re-reading EOF in a hot loop, which burned the
+                # full timeout and then reported a bogus TimeoutError instead
+                # of the worker's real exit code plus stderr.
+                if proc.returncode is None:
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=wait_s)
+                    except TimeoutError:
+                        if (
+                            load_window
+                            and not saw_event
+                            and time.monotonic() - spawned_at >= load_window
+                        ):
+                            raise MediaJobLoadHangError(
+                                self._load_hang_message(load_window)
+                            ) from None
+                        raise
+                break
             line_str = line.decode(errors="replace").strip()
             if not line_str:
                 continue

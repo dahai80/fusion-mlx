@@ -48,6 +48,14 @@
   died before generating. Verified end to end with a 3-image
   Qwen-Image-Edit-2509 request (#1375).
 
+### Fixed — image worker exit is reported instead of a bogus timeout
+- When an image worker exited without emitting any event, the stdout reader
+  re-read EOF in a hot loop because the child was not reaped yet
+  (`proc.returncode is None`). It burned the whole generation timeout and then
+  raised `TimeoutError: worker exceeded Ns timeout` instead of the worker's
+  real exit code and stderr tail. The reader now waits for the process exit on
+  EOF (#1375).
+
 ### Fixed — SDXL prompts are actually encoded; Ollama model identity and /api/version
 - SDXL's tokenizer loader returned the snapshot root instead of the
   `tokenizer/` subfolder, so `CLIPTokenizer.from_pretrained` fell back to a

@@ -87,11 +87,45 @@ class VoiceDatasetError(ValueError):
     pass
 
 
-def _read_audio(path: Path) -> tuple[np.ndarray, int]:
-    import soundfile as sf
+def _read_wav_stdlib(path: Path) -> tuple[np.ndarray, int]:
+    import wave
 
-    data, sr = sf.read(str(path), dtype="float32", always_2d=True)
-    mono = data.mean(axis=1)
+    with wave.open(str(path), "rb") as handle:
+        channels = handle.getnchannels()
+        width = handle.getsampwidth()
+        sr = handle.getframerate()
+        frames = handle.readframes(handle.getnframes())
+    if width == 2:
+        data = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+    elif width == 1:
+        data = (
+            np.frombuffer(frames, dtype=np.uint8).astype(np.float32) - 128.0
+        ) / 128.0
+    else:
+        raise VoiceDatasetError(
+            f"{path}: {width * 8}-bit PCM is not readable without soundfile; "
+            "install the audio extra (pip install 'fusion-mlx[audio]')"
+        )
+    if channels > 1:
+        data = data.reshape(-1, channels).mean(axis=1)
+    return data.astype(np.float32), sr
+
+
+def _read_audio(path: Path) -> tuple[np.ndarray, int]:
+    try:
+        import soundfile as sf
+    except ImportError:
+        # The audio extra is optional; a PCM WAV dataset must still train on a
+        # base install. Non-WAV formats and exotic widths need soundfile.
+        logger.warning(
+            "soundfile is not installed; reading %s with the stdlib wave "
+            "reader (PCM WAV only)",
+            Path(path).name,
+        )
+        mono, sr = _read_wav_stdlib(Path(path))
+    else:
+        data, sr = sf.read(str(path), dtype="float32", always_2d=True)
+        mono = data.mean(axis=1)
     if sr != VOICE_TRAIN_SAMPLE_RATE:
         import librosa
 

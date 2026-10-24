@@ -247,3 +247,51 @@ class TestTeardownKillAfterResult:
                 },
                 timeout=30.0,
             )
+
+
+class _FakeStdout:
+    # EOF immediately, like a worker that exited without emitting events.
+    def __init__(self):
+        self._done = False
+
+    async def readline(self):
+        return b""
+
+
+class _FakeProc:
+    # stdout reaches EOF before the process is reaped: returncode stays None
+    # until wait() is awaited.
+    def __init__(self, rc=1):
+        self.stdout = _FakeStdout()
+        self.returncode = None
+        self._rc = rc
+        self.waited = False
+
+    async def wait(self):
+        self.waited = True
+        self.returncode = self._rc
+        return self._rc
+
+
+class TestEofBeforeReap:
+    @pytest.mark.asyncio
+    async def test_eof_without_reap_does_not_burn_timeout(self):
+        import time
+
+        from fusion_mlx.media.job_manager import MediaJobResult
+
+        proc = _FakeProc(rc=1)
+        mgr = MediaJobManager()
+        result = MediaJobResult()
+        started = time.monotonic()
+        await mgr._read_stdout(
+            proc,
+            timeout=30.0,
+            on_step=None,
+            result=result,
+            load_timeout=0.0,
+            spawned_at=time.monotonic(),
+        )
+        elapsed = time.monotonic() - started
+        assert proc.waited is True
+        assert elapsed < 5.0

@@ -8,7 +8,7 @@ import base64
 import logging
 import os
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -24,9 +24,9 @@ PNG_1PX = base64.b64encode(
 
 
 class _FakeManager:
-    def __init__(self):
+    def __init__(self, output_dir):
         self.calls = []
-        self.output_dir = None
+        self.output_dir = output_dir
 
     async def run_image_job(self, **kwargs):
         self.calls.append(kwargs)
@@ -44,11 +44,13 @@ class _FakeManager:
         return SimpleNamespace(outputs=[out])
 
 
-@pytest.fixture(autouse=True)
-def _reset_media_manager():
-    ImageGenEngine._media_mgr = None
-    yield
-    ImageGenEngine._media_mgr = None
+def _fake_manager(manager, monkeypatch):
+    # Install the double on the engine class itself: _generate_subprocess
+    # reads ImageGenEngine._media_mgr before falling back to constructing a
+    # MediaJobManager, and a real manager cached by an earlier test in the
+    # same session would otherwise spawn a live worker.
+    monkeypatch.setattr(ImageGenEngine, "_media_mgr", manager, raising=False)
+    monkeypatch.setattr("fusion_mlx.engines.image_gen.wait_for_llm_idle", AsyncMock())
 
 
 def _engine(variant: str = "qwen_image_edit") -> ImageGenEngine:
@@ -59,42 +61,54 @@ def _engine(variant: str = "qwen_image_edit") -> ImageGenEngine:
     return engine
 
 
+async def _run(
+    engine,
+    tmp_path,
+    *,
+    activity_id,
+    edit_image,
+    reference_images=None,
+):
+    return await engine._generate_subprocess(
+        prompt="compose",
+        width=512,
+        height=512,
+        steps=2,
+        seed=1,
+        guidance=1.0,
+        n_images=1,
+        output_format="PNG",
+        scheduler=None,
+        negative_prompt=None,
+        denoising_end=None,
+        on_step=None,
+        control_image=None,
+        controlnet_strength=None,
+        reference_images=reference_images,
+        reference_strengths=None,
+        edit_image=edit_image,
+        mask_image=None,
+        depth_image=None,
+        image_strength=None,
+        kwargs={},
+        t0=0.0,
+        activity_id=activity_id,
+    )
+
+
 @pytest.mark.asyncio
-async def test_b64_inputs_become_files_for_worker(tmp_path):
-    engine = _engine()
-    manager = _FakeManager()
-    manager.output_dir = str(tmp_path / "out")
+async def test_b64_inputs_become_files_for_worker(tmp_path, monkeypatch):
+    manager = _FakeManager(str(tmp_path / "out"))
+    _fake_manager(manager, monkeypatch)
     payload = f"data:image/png;base64,{PNG_1PX}"
 
-    with (
-        patch("fusion_mlx.engines.image_gen.wait_for_llm_idle", new=AsyncMock()),
-        patch("fusion_mlx.media.job_manager.MediaJobManager", return_value=manager),
-    ):
-        images = await engine._generate_subprocess(
-            prompt="put the refs in the scene",
-            width=512,
-            height=512,
-            steps=2,
-            seed=1,
-            guidance=1.0,
-            n_images=1,
-            output_format="PNG",
-            scheduler=None,
-            negative_prompt=None,
-            denoising_end=None,
-            on_step=None,
-            control_image=None,
-            controlnet_strength=None,
-            reference_images=[payload, payload],
-            reference_strengths=None,
-            edit_image=payload,
-            mask_image=None,
-            depth_image=None,
-            image_strength=None,
-            kwargs={},
-            t0=0.0,
-            activity_id="test-1375",
-        )
+    images = await _run(
+        _engine(),
+        tmp_path,
+        activity_id="test-1375",
+        edit_image=payload,
+        reference_images=[payload, payload],
+    )
 
     assert images == [b"fake-png"]
     params = manager.calls[0]["gen_params"]
@@ -108,42 +122,18 @@ async def test_b64_inputs_become_files_for_worker(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_existing_paths_pass_through(tmp_path):
-    engine = _engine("kontext")
-    manager = _FakeManager()
-    manager.output_dir = str(tmp_path / "out")
+async def test_existing_paths_pass_through(tmp_path, monkeypatch):
+    manager = _FakeManager(str(tmp_path / "out"))
+    _fake_manager(manager, monkeypatch)
     base = tmp_path / "base.png"
     base.write_bytes(b"png")
 
-    with (
-        patch("fusion_mlx.engines.image_gen.wait_for_llm_idle", new=AsyncMock()),
-        patch("fusion_mlx.media.job_manager.MediaJobManager", return_value=manager),
-    ):
-        await engine._generate_subprocess(
-            prompt="edit",
-            width=512,
-            height=512,
-            steps=2,
-            seed=1,
-            guidance=2.5,
-            n_images=1,
-            output_format="PNG",
-            scheduler=None,
-            negative_prompt=None,
-            denoising_end=None,
-            on_step=None,
-            control_image=None,
-            controlnet_strength=None,
-            reference_images=None,
-            reference_strengths=None,
-            edit_image=str(base),
-            mask_image=None,
-            depth_image=None,
-            image_strength=None,
-            kwargs={},
-            t0=0.0,
-            activity_id="test-1375-paths",
-        )
+    await _run(
+        _engine("kontext"),
+        tmp_path,
+        activity_id="test-1375-paths",
+        edit_image=str(base),
+    )
 
     params = manager.calls[0]["gen_params"]
     assert params["edit_image"] == str(base)
@@ -151,41 +141,18 @@ async def test_existing_paths_pass_through(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_qwen_edit_keeps_multi_image_order(tmp_path, caplog):
-    engine = _engine()
-    manager = _FakeManager()
-    manager.output_dir = str(tmp_path / "out")
+async def test_qwen_edit_keeps_multi_image_order(tmp_path, monkeypatch, caplog):
+    manager = _FakeManager(str(tmp_path / "out"))
+    _fake_manager(manager, monkeypatch)
     payload = f"data:image/png;base64,{PNG_1PX}"
 
-    with (
-        patch("fusion_mlx.engines.image_gen.wait_for_llm_idle", new=AsyncMock()),
-        patch("fusion_mlx.media.job_manager.MediaJobManager", return_value=manager),
-        caplog.at_level(logging.INFO, logger="fusion_mlx.engines.image_gen"),
-    ):
-        await engine._generate_subprocess(
-            prompt="compose",
-            width=512,
-            height=512,
-            steps=2,
-            seed=1,
-            guidance=1.0,
-            n_images=1,
-            output_format="PNG",
-            scheduler=None,
-            negative_prompt=None,
-            denoising_end=None,
-            on_step=None,
-            control_image=None,
-            controlnet_strength=None,
-            reference_images=[payload, payload],
-            reference_strengths=None,
-            edit_image=payload,
-            mask_image=None,
-            depth_image=None,
-            image_strength=None,
-            kwargs={},
-            t0=0.0,
+    with caplog.at_level(logging.INFO, logger="fusion_mlx.engines.image_gen"):
+        await _run(
+            _engine(),
+            tmp_path,
             activity_id="test-1375-order",
+            edit_image=payload,
+            reference_images=[payload, payload],
         )
 
     params = manager.calls[0]["gen_params"]
