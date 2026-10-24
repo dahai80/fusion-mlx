@@ -312,16 +312,29 @@ Examples:
             "so both entry points accept the same core options (#901)."
         ),
     )
+    # Audit L23: --enable-prefix-cache was a store_true/default=True no-op
+    # (it could never turn the cache off). One explicit on/off pair now, with
+    # the old spellings still accepted on the same destination.
+    serve_parser.add_argument(
+        "--prefix-cache",
+        dest="prefix_cache",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Prefix caching for repeated prompts (default: enabled)",
+    )
     serve_parser.add_argument(
         "--enable-prefix-cache",
+        dest="prefix_cache",
         action="store_true",
-        default=True,
-        help="Enable prefix caching for repeated prompts (default: enabled)",
+        default=argparse.SUPPRESS,
+        help="Deprecated alias for --prefix-cache",
     )
     serve_parser.add_argument(
         "--disable-prefix-cache",
-        action="store_true",
-        help="Disable prefix caching",
+        dest="prefix_cache",
+        action="store_false",
+        default=argparse.SUPPRESS,
+        help="Deprecated alias for --no-prefix-cache",
     )
     serve_parser.add_argument(
         "--prefix-cache-size",
@@ -467,11 +480,18 @@ Examples:
         default=None,
         help="Default max tokens for generation (default: 32768)",
     )
+    # Audit L23: store_true/default=True meant the flag could never turn
+    # batching off, and nothing reads the value. Accepted-and-warned instead
+    # of silently lying about a knob that does not exist.
     serve_parser.add_argument(
         "--continuous-batching",
-        action="store_true",
+        dest="continuous_batching",
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="Enable continuous batching (default: on).",
+        help=(
+            "Continuous batching is always enabled; --no-continuous-batching "
+            "is accepted for compatibility and ignored."
+        ),
     )
     # DFlash — block-diffusion drafter speculative decoding (z-lab / mlx-vlm).
     # Currently single-user serial mode; runs a dedicated DFlash server that
@@ -1033,17 +1053,15 @@ Examples:
             "--force-openai-harmony-streaming."
         ),
     )
-    # GC control (Tier 0 optimization)
+    # GC control (Tier 0 optimization). Audit L23: --gc-control was a
+    # store_true/default=True no-op paired with a separate --no-gc-control;
+    # one BooleanOptionalAction now generates both spellings.
     serve_parser.add_argument(
         "--gc-control",
-        action="store_true",
+        dest="gc_control",
+        action=argparse.BooleanOptionalAction,
         default=True,
         help="Enable Python GC pausing during generation to avoid latency spikes (default: enabled)",
-    )
-    serve_parser.add_argument(
-        "--no-gc-control",
-        action="store_true",
-        help="Disable GC control (allow normal Python GC during generation)",
     )
     # Pinned prefix cache (Tier 0 optimization)
     serve_parser.add_argument(
@@ -1218,16 +1236,28 @@ Examples:
     bench_parser.add_argument(
         "--completion-batch-size", type=int, default=16, help="Completion batch size"
     )
+    # Audit L23: same no-op pair as serve; one on/off switch plus the legacy
+    # spellings on the same destination.
+    bench_parser.add_argument(
+        "--prefix-cache",
+        dest="prefix_cache",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Prefix caching (default: enabled)",
+    )
     bench_parser.add_argument(
         "--enable-prefix-cache",
+        dest="prefix_cache",
         action="store_true",
-        default=True,
-        help="Enable prefix caching (default: enabled)",
+        default=argparse.SUPPRESS,
+        help="Deprecated alias for --prefix-cache",
     )
     bench_parser.add_argument(
         "--disable-prefix-cache",
-        action="store_true",
-        help="Disable prefix caching",
+        dest="prefix_cache",
+        action="store_false",
+        default=argparse.SUPPRESS,
+        help="Deprecated alias for --no-prefix-cache",
     )
     bench_parser.add_argument(
         "--prefix-cache-size",
