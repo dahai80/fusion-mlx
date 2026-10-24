@@ -50,12 +50,13 @@ async def test_unload_pool_fallback_unloads_loaded_engine(monkeypatch):
     import fusion_mlx.gui_compat.server as gcs
 
     result = await gcs._unload_pool_model("Qwen3-0.6B-4bit")
-    assert result is True
+    # #1351: structured result, "unloaded" only for a real pool teardown.
+    assert result.status == "unloaded"
     assert ("unload", "Qwen3-0.6B-4bit") in calls
 
 
 @pytest.mark.asyncio
-async def test_unload_pool_fallback_not_loaded_returns_false(monkeypatch):
+async def test_unload_pool_fallback_not_loaded_returns_status(monkeypatch):
     class _Pool:
         def get_entry(self, mid):
             return _make_entry(engine=None)
@@ -67,7 +68,7 @@ async def test_unload_pool_fallback_not_loaded_returns_false(monkeypatch):
     import fusion_mlx.gui_compat.server as gcs
 
     result = await gcs._unload_pool_model("Qwen3-0.6B-4bit")
-    assert result is False
+    assert result.status == "not_loaded"
 
 
 @pytest.mark.asyncio
@@ -121,7 +122,7 @@ async def test_unload_pool_fallback_slash_id_resolves_double_hyphen(monkeypatch)
     import fusion_mlx.gui_compat.server as gcs
 
     result = await gcs._unload_pool_model("mlx-community/Qwen3-0.6B-4bit")
-    assert result is True
+    assert result.status == "unloaded"
     # Must have probed the double-hyphen key (not single-hyphen).
     probed = [mid for tag, mid in calls if tag == "get_entry"]
     assert "mlx-community--Qwen3-0.6B-4bit" in probed

@@ -46,8 +46,9 @@ async def test_unload_pool_model_slash_id_falls_back_to_hyphen(monkeypatch):
     monkeypatch.setattr("fusion_mlx.server.get_server", lambda: srv)
     monkeypatch.setattr("fusion_mlx.server.resolve_model_id", lambda mid: mid)
     result = await gui._unload_pool_model(slash_id)
-    assert result is True
-    assert pool.get_entry.call_count == 2
+    assert result.status == "unloaded"
+    # #1351: resolve probe (slash id, then hyphen form) + the unload lookup.
+    assert pool.get_entry.call_count == 3
     assert pool.get_entry.call_args_list[1].args[0] == slash_id.replace("/", "--")
     pool.unload_engine_async.assert_awaited_once_with(slash_id.replace("/", "--"))
 

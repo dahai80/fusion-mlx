@@ -178,6 +178,23 @@ class EngineEntry:
     base_model_id: str | None = None  # Base model_id for derived adapter entries
 
 
+@dataclass
+class UnloadResult:
+    # #1351: unload_engine_async used to return None on every path, so a
+    # deferred (leased engine) or missing-entry unload was indistinguishable
+    # from a real teardown and every caller reported success. status is one of
+    # "unloaded" (engine detached), "deferred" (leased, pending unload armed),
+    # "not_loaded" (no entry or no engine attached).
+    status: str
+    model_id: str
+    reason: str | None = None
+    freed_bytes: int | None = None
+
+    @property
+    def unloaded(self) -> bool:
+        return self.status == "unloaded"
+
+
 def _mark_pool_shared_if_multi(entries) -> None:
     # #contention-pool: once two engines are resident this process shares the
     # GPU among them for the rest of its life, so decode jitter can no longer
@@ -1351,7 +1368,16 @@ class EnginePool:
             return model_id
         return f"{model_id}::lora::{adapter_path}"
 
-    def _resolve_hf_repo_id(self, model_id: str) -> str:
+    def resolve_registry_key(self, model_id: str) -> str:
+        # #1351: the unload path must land on the same registry key the load
+        # path used (get_engine resolves through _resolve_hf_repo_id). The
+        # ad-hoc slash->hyphen substitution in the routes missed bare repo
+        # names ("Qwen3.5-9B-4bit" -> "mlx-community--Qwen3.5-9B-4bit") and
+        # the case/path spellings, so unload reported on an entry that never
+        # held the engine.
+        return self._resolve_hf_repo_id(model_id, log_level=logging.DEBUG)
+
+    def _resolve_hf_repo_id(self, model_id: str, log_level: int = logging.INFO) -> str:
         # Issue #372: accept HuggingFace repo ids (e.g.
         # "mlx-community/Qwen3-0.6B-4bit") in addition to registry short
         # names. HF-cache-backed entries carry the canonical repo id in
@@ -1375,7 +1401,8 @@ class EnginePool:
             if not repo:
                 continue
             if repo == target or repo.lower() == target.lower():
-                logger.info(
+                logger.log(
+                    log_level,
                     "resolve_hf_repo_id: %s -> %s (source_repo_id match)",
                     model_id,
                     mid,
@@ -1383,7 +1410,8 @@ class EnginePool:
                 return mid
         keyed = self._match_entry_by_repo_key_form(target)
         if keyed is not None:
-            logger.info(
+            logger.log(
+                log_level,
                 "resolve_hf_repo_id: %s -> %s (repo-key form match)",
                 model_id,
                 keyed,
@@ -1395,7 +1423,8 @@ class EnginePool:
         if os.sep in target:
             by_path = self._match_entry_by_model_path(target)
             if by_path is not None:
-                logger.info(
+                logger.log(
+                    log_level,
                     "resolve_hf_repo_id: %s -> %s (model_path match)",
                     model_id,
                     by_path,
@@ -2059,6 +2088,20 @@ class EnginePool:
         self, model_id: str, adapter_path: str | None = None
     ) -> None:
         """Release one in-use lease previously taken via get_engine(_lease=True)."""
+        # #1351: get_engine resolves the request id to a registry key (repo-id
+        # / bare-name / path forms) BEFORE taking the lease, but release used
+        # the raw request id. A "/chat" for "Qwen3.5-9B-4bit" leased
+        # "mlx-community--Qwen3.5-9B-4bit" and released "Qwen3.5-9B-4bit",
+        # leaking one in_use per request — unload_engine_async then deferred
+        # forever and the model could never be evicted or unloaded.
+        resolved_model_id = self._resolve_hf_repo_id(model_id, log_level=logging.DEBUG)
+        if resolved_model_id != model_id:
+            logger.debug(
+                "release_engine: resolved %s -> %s for lease release",
+                model_id,
+                resolved_model_id,
+            )
+        model_id = resolved_model_id
         # Issue #389: in-place swap lease path. When the flag is on and this
         # was an adapter request served from the resident base engine, restore
         # the base weights and release the per-base swap lock.
@@ -2579,7 +2622,12 @@ class EnginePool:
         with_settle: bool = True,
         caller_holds_lock: bool = False,
         _marker_already_set: bool = False,
-    ) -> None:
+    ) -> UnloadResult:
+        # #1351: returns a structured UnloadResult instead of None so callers
+        # can tell a real teardown ("unloaded") from a deferred leased engine
+        # ("deferred") and from an unknown/unloaded entry ("not_loaded").
+        # Every path logs, including the no-op ones.
+        #
         # Full unload (detach + settle). Used by get_engine's reload/evict
         # path (called outside the lock, guarded by entry.is_loading) and by
         # _unload_pending_if_idle_locked (memory_enforcer path). Callers that
@@ -2604,6 +2652,20 @@ class EnginePool:
         # releases it before calling here with _marker_already_set=True, so the
         # slow settle does not block all get_engine. We clear the marker in the
         # finally under the lock in that case.
+        #
+        # #1351: resolve the request id to the registry key that actually holds
+        # the engine (same resolution get_engine applies). Routes already pass
+        # an entry key, but admin/programmatic callers may send an alias or a
+        # slash-form repo id; without this the unload matched no entry and
+        # reported nothing. Reads _entries only — safe under caller_holds_lock.
+        resolved_id = self._resolve_hf_repo_id(model_id, log_level=logging.DEBUG)
+        if resolved_id != model_id:
+            logger.info(
+                "unload_engine_async: resolved %s -> %s (registry key)",
+                model_id,
+                resolved_id,
+            )
+        model_id = resolved_id
         marker_set = False
         if _marker_already_set:
             marker_set = True
@@ -2643,14 +2705,21 @@ class EnginePool:
                             model_id,
                             "unload_engine_async: deferred (busy)",
                         )
-                        logger.info(
-                            "unload_engine_async('%s') deferred: in_use=%d busy=%s "
-                            "(#811 R-6 use-after-stop guard)",
-                            model_id,
-                            entry.in_use,
-                            self._entry_has_active_requests(entry),
+                        reason = (
+                            f"in_use={entry.in_use} "
+                            f"busy={self._entry_has_active_requests(entry)}"
                         )
-                        return
+                        logger.info(
+                            "unload_engine_async('%s') deferred: %s "
+                            "(#811 R-6 use-after-stop guard, #1351)",
+                            model_id,
+                            reason,
+                        )
+                        return UnloadResult(
+                            status="deferred",
+                            model_id=model_id,
+                            reason=reason,
+                        )
                 entry.is_unloading = True
                 marker_set = True
         else:
@@ -2682,20 +2751,38 @@ class EnginePool:
                                 model_id,
                                 "unload_engine_async: deferred (busy)",
                             )
-                            logger.info(
-                                "unload_engine_async('%s') deferred: in_use=%d "
-                                "busy=%s (#811 R-6 use-after-stop guard)",
-                                model_id,
-                                entry.in_use,
-                                self._entry_has_active_requests(entry),
+                            reason = (
+                                f"in_use={entry.in_use} "
+                                f"busy={self._entry_has_active_requests(entry)}"
                             )
-                            return
+                            logger.info(
+                                "unload_engine_async('%s') deferred: %s "
+                                "(#811 R-6 use-after-stop guard, #1351)",
+                                model_id,
+                                reason,
+                            )
+                            return UnloadResult(
+                                status="deferred",
+                                model_id=model_id,
+                                reason=reason,
+                            )
                     entry.is_unloading = True
                     marker_set = True
         try:
             pre_unload_active = await self._detach_engine(model_id)
             if pre_unload_active is None:
-                return
+                # #1351: no entry, or an entry with no engine attached. This
+                # used to return silently (indistinguishable from a teardown).
+                logger.info(
+                    "unload_engine_async('%s'): not loaded — nothing to unload "
+                    "(#1351)",
+                    model_id,
+                )
+                return UnloadResult(
+                    status="not_loaded",
+                    model_id=model_id,
+                    reason="no loaded engine for this model",
+                )
             # CS-1 (#811 audit 0906): invalidate cached completions for this
             # model on unload. The response-cache fingerprint keys on the
             # alias string, not weight revision/quant, so a re-pull or quant
@@ -2769,6 +2856,28 @@ class EnginePool:
                     f"active_memory={format_size(pre_unload_active)}"
                 )
                 self._wake_process_memory_enforcer()
+            # #1351: freed_bytes is best-effort — mx.get_active_memory() is a
+            # process-global gauge, so concurrent loads can mask (or invert)
+            # the delta. Never report a negative figure as freed.
+            freed_bytes = None
+            try:
+                freed_bytes = max(0, int(pre_unload_active - mx.get_active_memory()))
+            except Exception:
+                logger.debug(
+                    "unload_engine_async('%s'): freed_bytes unavailable",
+                    model_id,
+                    exc_info=True,
+                )
+            logger.info(
+                "unload_engine_async('%s'): unloaded (freed=%s, #1351)",
+                model_id,
+                format_size(freed_bytes) if freed_bytes is not None else "n/a",
+            )
+            return UnloadResult(
+                status="unloaded",
+                model_id=model_id,
+                freed_bytes=freed_bytes,
+            )
         finally:
             if marker_set:
                 if caller_holds_lock:
