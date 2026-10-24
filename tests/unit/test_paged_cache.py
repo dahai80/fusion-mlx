@@ -21,6 +21,7 @@ from fusion_mlx.cache.paged_cache import (
     compute_block_hash,
     resolve_block_extra_keys,
 )
+from fusion_mlx.exceptions import CacheEvictionError
 
 
 class TestComputeBlockHash:
@@ -1020,3 +1021,116 @@ class TestPagedCacheManager:
         # The orphan child's stale hash entry is cascade-cleared.
         assert manager.cached_block_hash_to_block.get_block(child_hash) is None
         assert child.block_hash is None
+
+
+class TestCowSafety1352:
+    # #1352 H1/H2: COW must never write into a still-shared block and the
+    # copy must not inherit the source hash before its KV is written.
+
+    def _manager(self, initial_blocks=4, max_blocks=4):
+        return PagedCacheManager(
+            block_size=4,
+            max_blocks=max_blocks,
+            model_name="test-model",
+            initial_blocks=initial_blocks,
+        )
+
+    def test_cow_fails_visibly_when_no_block_can_be_reclaimed(self):
+        manager = self._manager()
+        blocks = manager.get_new_blocks(3)
+        shared = blocks[0]
+        manager.increment_ref(shared.block_id)
+        table = manager.create_block_table("req-cow-full")
+        table.block_ids.append(shared.block_id)
+        table.num_tokens = 4
+        assert manager.free_blocks == 0
+
+        with pytest.raises(CacheEvictionError):
+            manager.get_blocks_for_generation(table)
+
+        # The shared block must stay untouched: no write happened into it and
+        # the table was not silently pointed back at it.
+        assert shared.ref_count == 2
+        assert table.block_ids == [shared.block_id]
+
+    def test_cow_grows_pool_before_failing(self):
+        manager = self._manager(initial_blocks=4, max_blocks=16)
+        blocks = manager.get_new_blocks(3)
+        shared = blocks[0]
+        manager.increment_ref(shared.block_id)
+        table = manager.create_block_table("req-cow-grow")
+        table.block_ids.append(shared.block_id)
+        table.num_tokens = 4
+        assert manager.free_blocks == 0
+
+        cow_blocks, was_copied = manager.get_blocks_for_generation(table)
+
+        assert was_copied is True
+        assert len(cow_blocks) == 1
+        assert cow_blocks[0].block_id != shared.block_id
+        assert table.block_ids == [cow_blocks[0].block_id]
+        assert shared.ref_count == 1
+
+    def test_cow_evicts_ref0_cached_block_when_pool_full(self):
+        manager = self._manager()
+        shared, cached, _pinned = manager.get_new_blocks(3)
+        shared.token_count = 4
+        manager.increment_ref(shared.block_id)
+        cached.token_count = 4
+        cached_hash = compute_block_hash(None, [1, 2, 3, 4])
+        cached.block_hash = cached_hash
+        manager.cached_block_hash_to_block.insert(cached_hash, cached)
+        cached.ref_count = 0
+        table = manager.create_block_table("req-cow-evict")
+        table.block_ids.append(shared.block_id)
+        table.num_tokens = 4
+        assert manager.free_blocks == 0
+
+        cow_blocks, was_copied = manager.get_blocks_for_generation(table)
+
+        assert was_copied is True
+        assert cow_blocks[0].block_id == cached.block_id
+        assert cached.token_count == 4
+        assert cached.block_hash is None
+        assert manager.cached_block_hash_to_block.get_block(cached_hash) is None
+        assert shared.ref_count == 1
+
+    def test_cow_copy_does_not_inherit_source_hash(self):
+        manager = self._manager(initial_blocks=8, max_blocks=8)
+        source = manager.allocate_block()
+        source.token_count = 4
+        source_tokens = [1, 2, 3, 4]
+        manager.register_block_hash(source, source_tokens, None)
+        source_hash = source.block_hash
+        assert source_hash is not None
+        manager.increment_ref(source.block_id)
+        table = manager.create_block_table("req-cow-hash")
+        table.block_ids.append(source.block_id)
+        table.num_tokens = 4
+
+        cow_blocks, was_copied = manager.get_blocks_for_generation(table)
+
+        assert was_copied is True
+        copy_block = cow_blocks[0]
+        assert copy_block.block_id != source.block_id
+        assert copy_block.block_hash is None
+        assert copy_block.parent_hash is None
+        # The source keeps the hash registration; the empty copy is not
+        # reachable through a hash lookup.
+        assert manager.cached_block_hash_to_block.get_block(source_hash) is source
+
+    def test_cow_copy_block_helper_does_not_inherit_hash(self):
+        manager = self._manager(initial_blocks=8, max_blocks=8)
+        source = manager.allocate_block()
+        source.token_count = 4
+        source_hash = compute_block_hash(None, [1, 2, 3, 4])
+        source.block_hash = source_hash
+        manager.cached_block_hash_to_block.insert(source_hash, source)
+        manager.increment_ref(source.block_id)
+
+        copy_block = manager._cow_copy_block(source)
+
+        assert copy_block is not None
+        assert copy_block.block_hash is None
+        assert copy_block.parent_hash is None
+        assert source.ref_count == 1

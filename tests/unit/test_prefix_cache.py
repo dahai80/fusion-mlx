@@ -134,6 +134,91 @@ class TestBlockAwarePrefixCache:
         assert table.num_tokens == 16
         assert remaining == tokens[16:]
 
+    def _seed_two_cached_blocks(self, paged_cache, tokens):
+        parent = None
+        block_ids = []
+        for i in range(2):
+            block = paged_cache.allocate_block()
+            block.token_count = 4
+            paged_cache.register_block_hash(block, tokens[i * 4 : (i + 1) * 4], parent)
+            parent = block.block_hash
+            block_ids.append(block.block_id)
+        return block_ids
+
+    def test_fetch_cache_fast_path_stops_at_evicted_block(
+        self, prefix_cache, paged_cache, monkeypatch
+    ):
+        # #1352 H3: a shared-prefix block can be evicted between the hash-map
+        # lookup and ref acquisition. The fast path must recompute the prefix
+        # length instead of reporting tokens that no block covers.
+        tokens = list(range(8))
+        block_ids = self._seed_two_cached_blocks(paged_cache, tokens)
+        real_find = paged_cache.find_shared_prefix
+
+        def racy_find(tokens_arg, **kwargs):
+            ids, remaining = real_find(tokens_arg, **kwargs)
+            assert ids == block_ids
+            del paged_cache.allocated_blocks[block_ids[1]]
+            return ids, remaining
+
+        monkeypatch.setattr(paged_cache, "find_shared_prefix", racy_find)
+
+        table, remaining = prefix_cache.fetch_cache("req-h3-evicted", tokens)
+
+        assert table is not None
+        assert table.block_ids == [block_ids[0]]
+        assert table.num_tokens == 4
+        assert remaining == tokens[4:]
+        assert prefix_cache._tokens_saved == 4
+
+    def test_fetch_cache_fast_path_stops_when_increment_ref_fails(
+        self, prefix_cache, paged_cache, monkeypatch
+    ):
+        # #1352 H3: increment_ref returning False means the block is gone —
+        # the fast path must stop there, not skip the check and attach it.
+        tokens = list(range(8))
+        block_ids = self._seed_two_cached_blocks(paged_cache, tokens)
+        real_increment = paged_cache.increment_ref
+
+        def flaky_increment(block_id):
+            if block_id == block_ids[1]:
+                return False
+            return real_increment(block_id)
+
+        monkeypatch.setattr(paged_cache, "increment_ref", flaky_increment)
+
+        table, remaining = prefix_cache.fetch_cache("req-h3-ref", tokens)
+
+        assert table is not None
+        assert table.block_ids == [block_ids[0]]
+        assert table.num_tokens == 4
+        assert remaining == tokens[4:]
+        assert prefix_cache._tokens_saved == 4
+
+    def test_fetch_cache_fast_path_all_blocks_evicted_is_miss(
+        self, prefix_cache, paged_cache, monkeypatch
+    ):
+        # #1352 H3: when every matched block is dead the fast path must report
+        # a miss with the full token list, not an empty table claiming a hit.
+        tokens = list(range(8))
+        block_ids = self._seed_two_cached_blocks(paged_cache, tokens)
+        real_find = paged_cache.find_shared_prefix
+
+        def racy_find(tokens_arg, **kwargs):
+            ids, remaining = real_find(tokens_arg, **kwargs)
+            for block_id in ids:
+                del paged_cache.allocated_blocks[block_id]
+            return ids, remaining
+
+        monkeypatch.setattr(paged_cache, "find_shared_prefix", racy_find)
+
+        table, remaining = prefix_cache.fetch_cache("req-h3-all-dead", tokens)
+
+        assert table is None
+        assert remaining == tokens
+        assert prefix_cache._misses == 1
+        assert "req-h3-all-dead" not in paged_cache.request_tables
+
     def test_get_model_num_layers(self, paged_cache):
         """Test getting model num_layers from various sources."""
         # Model with layers attribute

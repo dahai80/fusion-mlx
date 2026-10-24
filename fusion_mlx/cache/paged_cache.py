@@ -32,6 +32,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, NewType
 
+from ..exceptions import CacheEvictionError
 from .interface import CacheManager
 from .model_fingerprint import model_path_signature
 from .stats import PagedCacheStats
@@ -1391,8 +1392,33 @@ class PagedCacheManager(CacheManager):
                 if block.is_shared():
                     # Inline _cow_copy_block + allocate_block (locks already held)
                     if self.free_block_queue.num_free_blocks == 0:
-                        blocks.append(block)
-                        continue
+                        # #1352 H1: COW needs a private block. Grow the pool,
+                        # then reclaim ref-0 cached blocks; if both fail, fail
+                        # the allocation visibly. Reusing the still-shared
+                        # block would let this request write KV that another
+                        # request still references.
+                        self._grow_blocks(
+                            min(256, self.max_blocks - self._current_allocated_count)
+                        )
+                        if self.free_block_queue.num_free_blocks == 0:
+                            self._evict_cached_blocks_locked(1)
+                        if self.free_block_queue.num_free_blocks == 0:
+                            from ..server_metrics import get_server_metrics
+
+                            get_server_metrics().record_kv_block_oob("cow")
+                            logger.error(
+                                "COW allocation failed for block %d (request=%s): "
+                                "no free blocks (max_blocks=%d allocated=%d)",
+                                block.block_id,
+                                table.request_id,
+                                self.max_blocks,
+                                self._current_allocated_count,
+                            )
+                            raise CacheEvictionError(
+                                f"COW allocation failed for block {block.block_id} "
+                                f"(request={table.request_id}): no free blocks "
+                                f"(max_blocks={self.max_blocks})"
+                            )
                     new_block = self.free_block_queue.popleft()
                     if self.enable_caching:
                         # Inline _maybe_evict_cached_block
@@ -1404,7 +1430,11 @@ class PagedCacheManager(CacheManager):
                     new_block.touch()
                     self.allocated_blocks[new_block.block_id] = new_block
                     new_block.token_count = block.token_count
-                    new_block.block_hash = block.block_hash
+                    # #1352 H2: a COW copy holds no KV until it is written, so
+                    # it must not inherit the source hash — a hash lookup could
+                    # then serve an empty block. The normal write path
+                    # (cache_full_blocks / store_cache) registers it once full.
+                    new_block.reset_hash()
                     block.ref_count -= 1
                     if block.ref_count == 1:
                         self.stats.shared_blocks -= 1
@@ -1418,7 +1448,10 @@ class PagedCacheManager(CacheManager):
                 # Inline touch (lock already held)
                 block.last_access = time.time()
 
-            return blocks, was_copied
+        # #1352: COW may have evicted ref-0 cached blocks above; flush their
+        # queued invalidation callbacks with no paged lock held (#1269).
+        self._flush_content_invalidated()
+        return blocks, was_copied
 
     def _cow_copy_block(self, source_block: CacheBlock) -> CacheBlock | None:
         """
@@ -1433,7 +1466,9 @@ class PagedCacheManager(CacheManager):
             return None
 
         new_block.token_count = source_block.token_count
-        new_block.block_hash = source_block.block_hash
+        # #1352 H2: the copy is empty until written; never inherit the source
+        # hash (a lookup could hit it and serve empty KV).
+        new_block.reset_hash()
 
         source_block.ref_count -= 1
         if source_block.ref_count == 1:
