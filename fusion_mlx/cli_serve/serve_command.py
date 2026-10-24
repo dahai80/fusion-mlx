@@ -229,6 +229,7 @@ def serve_command(args):
             print("Error: --model and a positional <model> are mutually exclusive.")
             sys.exit(1)
         args.model = args.model_flag
+        print(f"  Using model from --model flag: {args.model}")
 
     # D3.2/N2: --beginner one-click preset. Maps to lite profile + a small
     # recommended 4-bit model when none is given. No yaml double-track —

@@ -2033,6 +2033,10 @@ Examples:
     if (
         getattr(args, "command", None) in ("serve", "chat", "run")
         and not getattr(args, "model", None)
+        # #1353 (H8): --model lands in model_flag, not model. Without this
+        # guard a configured settings.json default_model overwrote the
+        # explicit flag and serve_command then died on "mutually exclusive".
+        and not getattr(args, "model_flag", None)
         and not getattr(args, "model_dir", None)
         and not getattr(args, "base_path", None)
     ):
