@@ -9,7 +9,7 @@ import mlx.core as mx
 
 from fusion_mlx.migrate.architectures import KNOWN_TEMPLATES
 from fusion_mlx.migrate.codegen import generate_model_code
-from fusion_mlx.migrate.converter import _quantize_weights, convert_model
+from fusion_mlx.migrate.converter import _quantize_tensor, convert_model
 
 _LLAMA = KNOWN_TEMPLATES["llama"]
 
@@ -36,11 +36,7 @@ def test_convert_model_zero_layers_hard_fails(tmp_path):
 
     template = _LLAMA
 
-    with patch(
-        "fusion_mlx.migrate.converter._load_hf_weights",
-        return_value={},
-    ):
-        result = convert_model(str(hf_dir), out_dir, config, template)
+    result = convert_model(str(hf_dir), out_dir, config, template)
 
     assert result.error is not None
     assert "num_hidden_layers" in result.error
@@ -48,20 +44,14 @@ def test_convert_model_zero_layers_hard_fails(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# #1059 part 2: quantize failure → all_ok=False, weights un-quantized
+# #1059 part 2: per-tensor quantize failure signals the caller (H10 keeps
+# the all-or-nothing fallback in _write_weights_streamed)
 # ---------------------------------------------------------------------------
 
 
-def test_quantize_weights_failure_drops_quantization():
-    """If mx.quantize fails for ANY weight, _quantize_weights must return
-    all_ok=False and the original un-quantized weights. Before #1059 it
-    silently kept failed weights as fp16 while others had .scales/.biases,
-    producing a half-quantized model that mis-loads."""
-    weights = {
-        "layers.0.linear.weight": mx.zeros((128, 128)),
-        "layers.1.linear.weight": mx.zeros((128, 128)),
-    }
-
+def test_quantize_tensor_failure_returns_none():
+    """A tensor that fails to quantize returns None so the streaming
+    converter can drop quantization for the whole model (#1059)."""
     call_count = {"n": 0}
     orig_quantize = mx.quantize
 
@@ -72,27 +62,26 @@ def test_quantize_weights_failure_drops_quantization():
         return orig_quantize(tensor, **kwargs)
 
     with patch.object(mx, "quantize", side_effect=_flaky_quantize):
-        result_weights, all_ok = _quantize_weights(weights, quant_bits=4)
+        result = _quantize_tensor("layers.0.linear.weight", mx.zeros((128, 128)), 4, 64)
 
-    assert all_ok is False
-    # No .scales / .biases keys — all weights are plain .weight (fp16)
-    assert all(not k.endswith(".scales") for k in result_weights)
-    assert all(not k.endswith(".biases") for k in result_weights)
-    assert "layers.0.linear.weight" in result_weights
-    assert "layers.1.linear.weight" in result_weights
+    assert result is None
 
 
-def test_quantize_weights_success_returns_all_ok():
-    """When all weights quantize successfully, all_ok=True and the
-    quantized keys (.scales/.biases) are present."""
-    weights = {
-        "layers.0.linear.weight": mx.zeros((128, 128)),
-    }
-    result_weights, all_ok = _quantize_weights(weights, quant_bits=4)
-    assert all_ok is True
-    assert "layers.0.linear.weight" in result_weights
-    assert "layers.0.linear.scales" in result_weights
-    assert "layers.0.linear.biases" in result_weights
+def test_quantize_tensor_success_returns_quantized_keys():
+    """When a weight quantizes, the .scales/.biases keys are produced."""
+    result = _quantize_tensor("layers.0.linear.weight", mx.zeros((128, 128)), 4, 64)
+    assert result is not None
+    assert "layers.0.linear.weight" in result
+    assert "layers.0.linear.scales" in result
+    assert "layers.0.linear.biases" in result
+
+
+def test_quantize_tensor_skips_norm_and_embedding():
+    for name in ("model.norm.weight", "embed_tokens.weight", "lm_head.weight"):
+        tensor = mx.zeros((128, 128))
+        result = _quantize_tensor(name, tensor, 4, 64)
+        assert result is not None
+        assert list(result) == [name]
 
 
 # ---------------------------------------------------------------------------
@@ -138,11 +127,8 @@ def test_convert_model_rename_failure_preserves_old_output(tmp_path):
 
     with (
         patch(
-            "fusion_mlx.migrate.converter._load_hf_weights",
-            return_value={},
-        ),
-        patch(
-            "fusion_mlx.migrate.converter._save_weights_safetensors",
+            "fusion_mlx.migrate.converter._scan_source",
+            return_value=([], 0),
         ),
         patch("os.rename", side_effect=_failing_rename),
     ):

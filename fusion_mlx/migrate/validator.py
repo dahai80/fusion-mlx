@@ -27,14 +27,29 @@ def validate_model(
     model_dir: str,
     prompt: str = "Hello, how are you?",
     max_tokens: int = 32,
+    trust_remote_code: bool = False,
 ) -> ValidationResult:
     result = ValidationResult()
 
     try:
         from mlx_lm import generate, load
 
-        logger.info("Loading model from %s", model_dir)
-        model, tokenizer = load(model_dir, tokenizer_config={"trust_remote_code": True})
+        if trust_remote_code:
+            logger.warning(
+                "trust_remote_code=True for %s — this executes arbitrary "
+                "Python from the model repository. Only enable it for a "
+                "repo you have audited.",
+                model_dir,
+            )
+        logger.info(
+            "Loading model from %s (trust_remote_code=%s)",
+            model_dir,
+            trust_remote_code,
+        )
+        # Never force remote code: transformers defaults to False, and an
+        # explicit dict keeps mlx_lm from substituting its own default.
+        tokenizer_config = {"trust_remote_code": bool(trust_remote_code)}
+        model, tokenizer = load(model_dir, tokenizer_config=tokenizer_config)
 
         logger.info("Generating with prompt: %s (max_tokens=%d)", prompt, max_tokens)
         t0 = time.time()
