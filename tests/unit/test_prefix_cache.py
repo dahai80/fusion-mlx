@@ -148,46 +148,26 @@ class TestBlockAwarePrefixCache:
     def test_fetch_cache_fast_path_stops_at_evicted_block(
         self, prefix_cache, paged_cache, monkeypatch
     ):
-        # #1352 H3: a shared-prefix block can be evicted between the hash-map
-        # lookup and ref acquisition. The fast path must recompute the prefix
-        # length instead of reporting tokens that no block covers.
+        # #1352 H3 (contract updated by #1354 H3): a shared-prefix block can
+        # go missing between the hash lookup and the caller's use. The claim
+        # now happens inside get_computed_blocks, which stops the match at the
+        # first missing block — the caller must never be told tokens are
+        # cached that no live block covers.
         tokens = list(range(8))
         block_ids = self._seed_two_cached_blocks(paged_cache, tokens)
-        real_find = paged_cache.find_shared_prefix
+        dead = paged_cache.allocated_blocks[block_ids[1]]
+        real_get = paged_cache.cached_block_hash_to_block.get_block
 
-        def racy_find(tokens_arg, **kwargs):
-            ids, remaining = real_find(tokens_arg, **kwargs)
-            assert ids == block_ids
-            del paged_cache.allocated_blocks[block_ids[1]]
-            return ids, remaining
+        def missing_second(block_hash):
+            if block_hash == dead.block_hash:
+                return None
+            return real_get(block_hash)
 
-        monkeypatch.setattr(paged_cache, "find_shared_prefix", racy_find)
+        monkeypatch.setattr(
+            paged_cache.cached_block_hash_to_block, "get_block", missing_second
+        )
 
         table, remaining = prefix_cache.fetch_cache("req-h3-evicted", tokens)
-
-        assert table is not None
-        assert table.block_ids == [block_ids[0]]
-        assert table.num_tokens == 4
-        assert remaining == tokens[4:]
-        assert prefix_cache._tokens_saved == 4
-
-    def test_fetch_cache_fast_path_stops_when_increment_ref_fails(
-        self, prefix_cache, paged_cache, monkeypatch
-    ):
-        # #1352 H3: increment_ref returning False means the block is gone —
-        # the fast path must stop there, not skip the check and attach it.
-        tokens = list(range(8))
-        block_ids = self._seed_two_cached_blocks(paged_cache, tokens)
-        real_increment = paged_cache.increment_ref
-
-        def flaky_increment(block_id):
-            if block_id == block_ids[1]:
-                return False
-            return real_increment(block_id)
-
-        monkeypatch.setattr(paged_cache, "increment_ref", flaky_increment)
-
-        table, remaining = prefix_cache.fetch_cache("req-h3-ref", tokens)
 
         assert table is not None
         assert table.block_ids == [block_ids[0]]
@@ -198,19 +178,15 @@ class TestBlockAwarePrefixCache:
     def test_fetch_cache_fast_path_all_blocks_evicted_is_miss(
         self, prefix_cache, paged_cache, monkeypatch
     ):
-        # #1352 H3: when every matched block is dead the fast path must report
-        # a miss with the full token list, not an empty table claiming a hit.
+        # #1352 H3 (contract updated by #1354 H3): when no matched block is
+        # live any more the fast path must report a miss with the full token
+        # list, not an empty table claiming a hit.
         tokens = list(range(8))
         block_ids = self._seed_two_cached_blocks(paged_cache, tokens)
-        real_find = paged_cache.find_shared_prefix
-
-        def racy_find(tokens_arg, **kwargs):
-            ids, remaining = real_find(tokens_arg, **kwargs)
-            for block_id in ids:
-                del paged_cache.allocated_blocks[block_id]
-            return ids, remaining
-
-        monkeypatch.setattr(paged_cache, "find_shared_prefix", racy_find)
+        for block_id in block_ids:
+            block = paged_cache.allocated_blocks[block_id]
+            paged_cache.cached_block_hash_to_block.pop(block.block_hash, block_id)
+            del paged_cache.allocated_blocks[block_id]
 
         table, remaining = prefix_cache.fetch_cache("req-h3-all-dead", tokens)
 
