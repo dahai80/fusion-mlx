@@ -22,6 +22,36 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# #1332: first-worker-event window. The worker emits nothing on stdout until
+# its first denoise progress event, so "no event" covers model load plus the
+# first Metal op. A silent worker past this window is a load hang (cold
+# cache / missing shard / stuck Metal init), not a generation hang — fail
+# fast instead of burning the full hang deadline. Env override:
+# FUSION_IMAGE_LOAD_TIMEOUT (seconds); <= 0 disables the window.
+_IMAGE_LOAD_TIMEOUT_DEFAULT_S = 120.0
+
+
+def get_image_load_timeout() -> float:
+    raw = os.environ.get("FUSION_IMAGE_LOAD_TIMEOUT")
+    if raw is None or raw == "":
+        return _IMAGE_LOAD_TIMEOUT_DEFAULT_S
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "FUSION_IMAGE_LOAD_TIMEOUT=%r is not a number, using default %.0fs",
+            raw,
+            _IMAGE_LOAD_TIMEOUT_DEFAULT_S,
+        )
+        return _IMAGE_LOAD_TIMEOUT_DEFAULT_S
+    return val
+
+
+class MediaJobLoadHangError(RuntimeError):
+    # #1332: distinct from the overall TimeoutError so the caller can tell a
+    # load hang (no first event) from a generation hang (deadline exceeded).
+    pass
+
 
 @dataclass
 class MediaJobResult:
@@ -93,10 +123,14 @@ class MediaJobManager:
         gen_params: dict[str, Any],
         timeout: float,
         on_step: Callable[[int, int, int], None] | None = None,
+        load_timeout: float | None = None,
     ) -> MediaJobResult:
         # Returns MediaJobResult with output file paths. Raises TimeoutError
         # if the worker exceeds timeout (subprocess killed). Raises
-        # RuntimeError on worker crash/error.
+        # MediaJobLoadHangError when no event arrives within load_timeout
+        # (#1332). Raises RuntimeError on worker crash/error.
+        if load_timeout is None:
+            load_timeout = get_image_load_timeout()
         output_dir, spec = self._build_spec(
             variant,
             model_path,
@@ -129,10 +163,25 @@ class MediaJobManager:
         )
 
         result = MediaJobResult()
-        try:
-            await self._read_stdout(proc, timeout, on_step, result)
-        except TimeoutError:
+        # #1332: track our own kills so an external-signal death (rc < 0) is
+        # logged as external instead of being blamed on the timeout/teardown
+        # kill paths (issue #1332's undiagnosed SIGTERM at ~485s).
+        killed_by_us = False
+
+        def _kill_worker() -> None:
+            nonlocal killed_by_us
+            killed_by_us = True
             self._kill(proc)
+
+        try:
+            await self._read_stdout(proc, timeout, on_step, result, load_timeout, t0)
+        except MediaJobLoadHangError as exc:
+            _kill_worker()
+            result.error = str(exc)
+            result.exit_code = -1
+            raise
+        except TimeoutError:
+            _kill_worker()
             result.error = f"worker exceeded {timeout:.0f}s timeout (killed)"
             result.exit_code = -1
             raise TimeoutError(result.error)
@@ -146,9 +195,9 @@ class MediaJobManager:
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=3.0)
                     except TimeoutError:
-                        self._kill(proc)
+                        _kill_worker()
                 else:
-                    self._kill(proc)
+                    _kill_worker()
             await proc.wait()
             result.elapsed = time.monotonic() - t0
 
@@ -168,7 +217,45 @@ class MediaJobManager:
                 return result
             stderr_data = await proc.stderr.read() if proc.stderr else b""
             stderr_text = stderr_data.decode(errors="replace")[-2000:]
-            if rc in (137, -9):
+            elapsed = result.elapsed
+            if rc < 0 and not killed_by_us:
+                sig = -rc
+                try:
+                    sig_name = signal.Signals(sig).name
+                except ValueError:
+                    sig_name = f"signal {sig}"
+                # #1332: an external kill (observed: SIGTERM at ~485s with no
+                # enforcer cancel and no timeout kill logged) is undiagnosable
+                # from "worker exited -15" alone. Log pid + signal + elapsed
+                # so the sender can be traced (jetsam / watchdog / operator /
+                # a peer process). No sender pid is available on macOS.
+                logger.error(
+                    "#1332 image worker pid=%d died from EXTERNAL signal %d "
+                    "(%s) after %.1fs — no MediaJobManager kill path fired "
+                    "(not timeout, not load-hang, not teardown). Investigate "
+                    "the sender. stderr tail: %s",
+                    proc.pid,
+                    sig,
+                    sig_name,
+                    elapsed,
+                    stderr_text[-500:] or "(empty)",
+                )
+                result.error = (
+                    f"worker exited {rc} ({sig_name}) after {elapsed:.1f}s: "
+                    "killed by an external signal, not by fusion-mlx. This is "
+                    "not a persistent fault; the next request will spawn a "
+                    f"fresh worker: {stderr_text}"
+                )
+            elif rc < 0:
+                try:
+                    sig_name = signal.Signals(-rc).name
+                except ValueError:
+                    sig_name = f"signal {-rc}"
+                result.error = (
+                    f"worker exited {rc} ({sig_name}) after {elapsed:.1f}s: "
+                    f"stopped by MediaJobManager's own kill path: {stderr_text}"
+                )
+            elif rc == 137:
                 result.error = f"worker killed by OOM/jetsam (exit {rc})"
             elif rc == 139:
                 result.error = f"worker segfaulted/Metal crash (exit {rc})"
@@ -183,32 +270,75 @@ class MediaJobManager:
 
         return result
 
+    @staticmethod
+    def _load_hang_message(load_timeout: float) -> str:
+        # #1332: actionable text — says WHAT hung (load, not generate) and
+        # that the subsystem is not poisoned, so the next request is safe.
+        return (
+            f"image worker produced no events within {load_timeout:g}s of "
+            "spawn: model load produced no events (load hang, not a "
+            "generation hang). The worker was killed; the image subsystem "
+            "is not poisoned and the next request will spawn a fresh worker. "
+            "Raise FUSION_IMAGE_LOAD_TIMEOUT if cold model loads legitimately "
+            "need longer."
+        )
+
     async def _read_stdout(
         self,
         proc: asyncio.subprocess.Process,
         timeout: float,
         on_step: Callable[[int, int, int], None] | None,
         result: MediaJobResult,
+        load_timeout: float = 0.0,
+        spawned_at: float | None = None,
     ) -> None:
         # Read JSONL progress/result events from worker stdout. Raises
-        # TimeoutError if no event arrives within timeout.
+        # TimeoutError if no event arrives within timeout. #1332: when
+        # load_timeout > 0, a first event that is still missing at that
+        # window raises MediaJobLoadHangError instead (fast-fail load hang).
         assert proc.stdout is not None
-        deadline = time.monotonic() + timeout
+        if spawned_at is None:
+            spawned_at = time.monotonic()
+        deadline = spawned_at + timeout
+        load_window = load_timeout if load_timeout and load_timeout > 0 else 0.0
+        saw_event = False
         while True:
-            remaining = deadline - time.monotonic()
+            now = time.monotonic()
+            remaining = deadline - now
             if remaining <= 0:
                 raise TimeoutError()
+            wait_s = remaining
+            if load_window and not saw_event:
+                load_remaining = load_window - (now - spawned_at)
+                if load_remaining <= 0:
+                    raise MediaJobLoadHangError(self._load_hang_message(load_window))
+                wait_s = min(wait_s, load_remaining)
             try:
-                line = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
+                line = await asyncio.wait_for(proc.stdout.readline(), timeout=wait_s)
             except TimeoutError:
+                if (
+                    load_window
+                    and not saw_event
+                    and time.monotonic() - spawned_at >= load_window
+                ):
+                    raise MediaJobLoadHangError(
+                        self._load_hang_message(load_window)
+                    ) from None
                 raise
             if not line:
                 if proc.returncode is not None:
                     break
+                if (
+                    load_window
+                    and not saw_event
+                    and time.monotonic() - spawned_at >= load_window
+                ):
+                    raise MediaJobLoadHangError(self._load_hang_message(load_window))
                 continue
             line_str = line.decode(errors="replace").strip()
             if not line_str:
                 continue
+            saw_event = True
             try:
                 event = json.loads(line_str)
             except json.JSONDecodeError:
