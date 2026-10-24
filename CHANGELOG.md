@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Security (breaking) — tenant isolation now refuses to boot without FUSION_ROUTE_TOKEN
+- `FUSION_TENANT_ISOLATION=true` previously accepted the public
+  `X-Fusion-Route: gateway-decision` constant as proof of gateway origin.
+  The constant is documented and client-settable, so a direct-port caller
+  could forge both headers and reach another tenant's sessions/quota. The
+  route guard now raises at install time when isolation is enabled without
+  `FUSION_ROUTE_TOKEN` (#1354 audit H7). Multi-tenant deployments must set
+  the shared secret on both the gateway and the backend; single-tenant
+  deployments (isolation off) are unaffected.
+
 ### Changed — dead and deprecated config knobs removed (#1354, audit D1–D6)
 - Removed `ServerConfig.default_timeout` and the serve `--timeout` flag. The
   field had no production reader — per-modality timeouts are the contract
@@ -115,6 +125,7 @@
 - When the terminal result has been received, a non-zero worker exit code is
   now logged as a warning and the outputs are returned; the raise only fires
   when no result was delivered.
+
 
 ## [v0.10.14] — 2026-10-22
 
