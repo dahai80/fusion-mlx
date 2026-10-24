@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed — concurrent admissions can no longer evict the same model twice
+- LRU admission picked its victim locklessly and only then called
+  `unload_engine_async`, so two concurrent loads under memory pressure
+  could select the same idle model and run two teardowns against one
+  engine (two `stop()` calls). Victims are now claimed under the pool lock
+  (`is_unloading` + a teardown count), a claimed entry is excluded from
+  victim selection, and `unload_engine_async` skips an entry another
+  teardown already owns; a stranded `is_unloading` flag with no live
+  teardown is still recovered (#1354 audit H12). Recently evicted models
+  also sort last for 5s so a reload that lost the race is not immediately
+  evicted again.
+
 ### Fixed — context budget no longer degrades to used=0 when a system message is inline
 - Claude Code 2.1.154+ sends `role: "system"` entries inside the messages
   array. The Anthropic route consolidates them, but on the gateway's

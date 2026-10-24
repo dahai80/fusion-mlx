@@ -59,6 +59,11 @@ from .model_discovery import DiscoveredModel, discover_models, format_size
 
 logger = logging.getLogger(__name__)
 
+# #1354 H12: a model evicted within this window is only picked again when no
+# other idle candidate exists. Preference, not a hard gate — admission must
+# still be able to reclaim the only evictable model rather than fail with 507.
+_EVICTION_COOLDOWN_S = 5.0
+
 
 _LAZY_ENGINE_CLASSES: dict[str, tuple[str, str]] = {
     "BatchedEngine": ("fusion_mlx.engines.batched", "BatchedEngine"),
@@ -161,6 +166,14 @@ class EngineEntry:
     is_unloading: bool = (
         False  # P1-4: lockless unload in progress; block fast-path service
     )
+    # #1354 H12: number of teardowns that have claimed this entry (mutated
+    # only under EnginePool._lock). Unlike is_unloading, this cannot be left
+    # stranded by a cancelled teardown, so a stranded flag stays recoverable.
+    unloading_count: int = 0
+    # #1354 H12: monotonic timestamp of the last eviction. Used only as an
+    # LRU tiebreak so an evicted-then-reloaded model is not immediately
+    # picked again while another idle candidate exists.
+    last_evicted_at: float = 0.0
     loading_started_at: float | None = None  # Timestamp when current load started
     loading_event: asyncio.Event | None = None  # Signaled when loading completes
     is_pinned: bool = False  # Never evict if True
@@ -949,7 +962,9 @@ class EnginePool:
                     evicted,
                 )
                 return True
-            victim = self._find_lru_victim()
+            # #1354 H12: claim under the lock so a concurrent admission loop
+            # cannot select the same victim for a second teardown.
+            victim = await self._claim_lru_victim()
             if victim is None:
                 # #1250: KV/prefix-cache bytes outlive the model that owned
                 # them, so the projection can stay above the ceiling with no
@@ -992,7 +1007,7 @@ class EnginePool:
                 format_size(required_bytes),
             )
             self._record_eviction("media_admission")
-            await self.unload_engine_async(victim)
+            await self.unload_engine_async(victim, _marker_already_set=True)
             evicted += 1
         return False
 
@@ -1987,7 +2002,9 @@ class EnginePool:
                         format_size(kv_headroom),
                     )
                     break
-                victim = self._find_lru_victim()
+                # #1354 H12: claim under the lock — two concurrent get_engine
+                # admission loops must not evict the same victim twice.
+                victim = await self._claim_lru_victim()
                 if victim is not None:
                     logger.info(
                         f"Evicting '{victim}' to fit '{entry_key}' "
@@ -1996,7 +2013,7 @@ class EnginePool:
                         f"{format_size(ceiling)})"
                     )
                     self._record_eviction("lru")
-                    await self.unload_engine_async(victim)
+                    await self.unload_engine_async(victim, _marker_already_set=True)
                     continue
                 # Nothing to evict — clean up loading flag and raise
                 async with self._lock:
@@ -2112,7 +2129,7 @@ class EnginePool:
                 )
                 # AS-4 (#0907 audit): marker under the lock, slow stop() +
                 # settle outside it (see header comment above).
-                e.is_unloading = True
+                self._claim_entry_locked(e)
                 unload_needed = True
         if unload_needed:
             settle_pre = await self._detach_engine(entry_key)
@@ -2120,7 +2137,7 @@ class EnginePool:
             async with self._lock:
                 e2 = self._entries.get(entry_key)
                 if e2 is not None:
-                    e2.is_unloading = False
+                    self._release_claim_locked(e2)
                     # Re-read the (possibly get_engine-created) wait event
                     # AFTER detach, then wake it — same as unload_engine_async.
                     wake_event = e2.loading_event
@@ -2149,6 +2166,7 @@ class EnginePool:
                 or entry.is_loading
                 or entry.is_pinned
                 or entry.in_use > 0
+                or entry.unloading_count > 0
             ):
                 return False
 
@@ -2156,13 +2174,13 @@ class EnginePool:
                 entry.last_access = time.time()
                 return False
 
-            entry.is_unloading = True
+            self._claim_entry_locked(entry)
         settle_pre = await self._detach_engine(model_id)
         wake_event = None
         async with self._lock:
             entry = self._entries.get(model_id)
             if entry is not None:
-                entry.is_unloading = False
+                self._release_claim_locked(entry)
                 wake_event = entry.loading_event
                 entry.loading_event = None
                 # P3 (#811): adapter cleanup under the lock we hold.
@@ -2384,10 +2402,17 @@ class EnginePool:
         snapshot = list(self._entries.items())
         p1_candidates = []
         p0_candidates = []
+        now = time.monotonic()
         for mid, e in snapshot:
             if e.engine is None or e.is_pinned:
                 continue
             if e.in_use > 0:
+                continue
+            # #1354 H12: a concurrent eviction already claimed this entry.
+            # Selecting it again would hand the same engine to a second
+            # teardown (two stop() calls on one engine).
+            if e.is_unloading:
+                logger.debug(f"Skipping victim '{mid}': unload already in progress")
                 continue
             if e.ane_pinned:
                 logger.debug(f"Skipping victim '{mid}': ANE-pinned (权重常驻)")
@@ -2395,20 +2420,71 @@ class EnginePool:
             if self._entry_has_active_requests(e):
                 logger.debug(f"Skipping victim '{mid}': has active requests")
                 continue
+            # H12: recently evicted models sort after everything else, so a
+            # reload that immediately loses the race is not thrashed again.
+            cooling = 0 < now - (e.last_evicted_at or 0.0) < _EVICTION_COOLDOWN_S
+            key = (1 if cooling else 0, e.last_access, mid)
             tier = getattr(e, "priority_tier", "P0_DYNAMIC") or "P0_DYNAMIC"
             if tier == "P1_TDM":
-                p1_candidates.append((e.last_access, mid))
+                p1_candidates.append(key)
             else:
-                p0_candidates.append((e.last_access, mid))
+                p0_candidates.append(key)
         if p1_candidates:
             p1_candidates.sort()
-            victim = p1_candidates[0][1]
+            victim = p1_candidates[0][2]
             logger.info("TDM eviction: P1 model '%s' yields memory to P0", victim)
             return victim
         if p0_candidates:
             p0_candidates.sort()
-            return p0_candidates[0][1]
+            return p0_candidates[0][2]
         return None
+
+    def _claim_entry_locked(self, entry: EngineEntry) -> None:
+        # #1354 H12: mark an entry as claimed by a teardown. Caller holds
+        # self._lock. unloading_count is the authoritative "a teardown is
+        # running" signal; is_unloading is the service gate get_engine reads.
+        entry.is_unloading = True
+        entry.unloading_count += 1
+        if entry.loading_event is None:
+            entry.loading_event = asyncio.Event()
+
+    def _release_claim_locked(self, entry: EngineEntry) -> None:
+        # #1354 H12: drop one teardown claim. The service gate clears only
+        # when the last claim is gone; a stranded flag with count 0 is
+        # force-cleared so the #1001 recovery path keeps working.
+        entry.unloading_count = max(0, entry.unloading_count - 1)
+        if entry.unloading_count == 0:
+            entry.is_unloading = False
+
+    async def _claim_lru_victim(self) -> str | None:
+        # #1354 H12: selection and claim under one lock acquisition. The old
+        # admission loop picked a victim locklessly and only then called
+        # unload_engine_async, so two concurrent admission loops could select
+        # the same idle model and run two teardowns against one engine (two
+        # stop() calls), and a victim that gained a lease in the gap merely
+        # deferred the unload and sent the loop back around.
+        # Claiming = setting is_unloading while holding the lock: get_engine's
+        # fast path gates on it and waits for loading_event, so no new lease
+        # can be taken. unload_engine_async(_marker_already_set=True) clears
+        # the marker in its finally block.
+        async with self._lock:
+            victim = self._find_lru_victim()
+            if victim is None:
+                return None
+            entry = self._entries.get(victim)
+            if entry is None or entry.engine is None:
+                return None
+            if entry.in_use > 0 or entry.is_loading or entry.unloading_count > 0:
+                logger.debug(
+                    "LRU claim skipped for '%s': in_use=%d loading=%s unloading=%d",
+                    victim,
+                    entry.in_use,
+                    entry.is_loading,
+                    entry.unloading_count,
+                )
+                return None
+            self._claim_entry_locked(entry)
+            return victim
 
     async def _detach_engine(self, model_id: str) -> int | None:
         # Stop and detach an engine (set entry.engine = None). Fast teardown:
@@ -2547,6 +2623,7 @@ class EnginePool:
                 )
         entry.last_access = 0.0
         entry.loaded_at = 0.0
+        entry.last_evicted_at = time.monotonic()
         entry.actual_size = None
         entry.abort_requested = False
         entry.pending_unload_reason = None
@@ -2609,6 +2686,18 @@ class EnginePool:
             marker_set = True
         elif caller_holds_lock:
             entry = self._entries.get(model_id)
+            # #1354 H12: another teardown already claimed this entry. Running
+            # _detach_engine again would call stop() on the engine a second
+            # time (use-after-stop / garbled teardown). The in-flight unload
+            # finishes the job and clears the marker. A stranded is_unloading
+            # flag (unloading_count == 0, #1001) still proceeds as recovery.
+            if entry is not None and entry.unloading_count > 0:
+                logger.info(
+                    "unload_engine_async('%s') skipped: unload already in "
+                    "progress (#1354 H12)",
+                    model_id,
+                )
+                return
             if entry is not None and entry.engine is not None and not entry.is_loading:
                 # R-6 (#811): never stop() an engine a concurrent get_engine
                 # leased (in_use > 0) — doing so causes use-after-stop (garbage
@@ -2651,11 +2740,18 @@ class EnginePool:
                             self._entry_has_active_requests(entry),
                         )
                         return
-                entry.is_unloading = True
+                self._claim_entry_locked(entry)
                 marker_set = True
         else:
             async with self._lock:
                 entry = self._entries.get(model_id)
+                if entry is not None and entry.unloading_count > 0:
+                    logger.info(
+                        "unload_engine_async('%s') skipped: unload already in "
+                        "progress (#1354 H12)",
+                        model_id,
+                    )
+                    return
                 if (
                     entry is not None
                     and entry.engine is not None
@@ -2690,7 +2786,7 @@ class EnginePool:
                                 self._entry_has_active_requests(entry),
                             )
                             return
-                    entry.is_unloading = True
+                    self._claim_entry_locked(entry)
                     marker_set = True
         try:
             pre_unload_active = await self._detach_engine(model_id)
@@ -2774,7 +2870,7 @@ class EnginePool:
                 if caller_holds_lock:
                     entry = self._entries.get(model_id)
                     if entry is not None:
-                        entry.is_unloading = False
+                        self._release_claim_locked(entry)
                         event = entry.loading_event
                         entry.loading_event = None
                     else:
@@ -2787,7 +2883,7 @@ class EnginePool:
                     async with self._lock:
                         entry = self._entries.get(model_id)
                         if entry is not None:
-                            entry.is_unloading = False
+                            self._release_claim_locked(entry)
                             event = entry.loading_event
                             entry.loading_event = None
                         else:
@@ -3128,9 +3224,7 @@ class EnginePool:
                 # blocked every concurrent get_engine for the whole teardown.
                 victim_entry = self._entries.get(victim)
                 if victim_entry is not None:
-                    victim_entry.is_unloading = True
-                    if victim_entry.loading_event is None:
-                        victim_entry.loading_event = asyncio.Event()
+                    self._claim_entry_locked(victim_entry)
 
                 logger.info(
                     "Evicting idle model '%s' for prefill headroom on '%s' "
