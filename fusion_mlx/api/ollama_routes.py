@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..middleware.auth import verify_api_key
+from ..middleware.auth import verify_api_key, verify_management_access
 from ._concurrency import (
     acquire_request_slot,
     concurrency_guarded,
@@ -698,7 +698,7 @@ class OllamaPullRequest(BaseModel):
 @router.post("/api/pull")
 async def api_pull(
     request: OllamaPullRequest,
-    _auth: bool = Depends(verify_api_key),
+    _auth: bool = Depends(verify_management_access),
 ) -> Any:
     name = request.name or request.model or ""
     logger.info("Ollama /api/pull name=%s stream=%s", name, request.stream)
@@ -737,6 +737,11 @@ async def api_pull(
 # DELETE /api/delete — remove model files from disk (guarded)
 # =============================================================================
 
+# #1353 (H6): /api/delete, /api/pull and /api/copy are management surfaces —
+# they mutate model state on disk. Guard them with the management-access
+# dependency (same boundary as /metrics, /v1/status and the cluster routes),
+# not the inference dependency used by chat/generate.
+
 
 def _models_root() -> Path:
     return Path(os.path.expanduser("~/.fusion-mlx/models"))
@@ -760,7 +765,7 @@ def _safe_model_dir(model_path: str) -> Path:
 @router.delete("/api/delete")
 async def api_delete(
     name: str = Query(..., description="model name to delete"),
-    _auth: bool = Depends(verify_api_key),
+    _auth: bool = Depends(verify_management_access),
 ) -> JSONResponse:
     logger.warning("Ollama /api/delete name=%s", name)
     if _pool is None:
@@ -799,7 +804,7 @@ class OllamaCopyRequest(BaseModel):
 @router.post("/api/copy")
 async def api_copy(
     request: OllamaCopyRequest,
-    _auth: bool = Depends(verify_api_key),
+    _auth: bool = Depends(verify_management_access),
 ) -> JSONResponse:
     logger.info(
         "Ollama /api/copy source=%s destination=%s",

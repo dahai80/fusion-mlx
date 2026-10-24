@@ -154,6 +154,27 @@ def test_summary_not_printed_on_404(
     assert "Downloaded" not in out, out
 
 
+@pytest.mark.parametrize("repo_id", ["../escape", "/absolute/path", "foo/../bar"])
+def test_invalid_repo_id_exits_nonzero(
+    repo_id: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1353 (H11): an invalid identifier must fail the process, not return.
+
+    Scripts and CI rely on the exit code; every other pull error branch
+    already calls ``sys.exit(1)``, so this one must too.
+    """
+    args = argparse.Namespace(model=repo_id)
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.pull_command(args)
+
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert "invalid model identifier" in out
+    assert "Downloaded" not in out
+
+
 def test_format_pull_duration_units() -> None:
     """Sub-minute keeps decimals; ``>=60s`` switches to ``m`` + ``s``."""
     assert cli_commands._format_pull_duration(0.0) == "0.0s"
