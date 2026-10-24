@@ -15,11 +15,11 @@ This module gives fusion-mlx the matching backend half:
 - ``tenant_isolation_enabled``: env ``FUSION_TENANT_ISOLATION=true`` gate
   (default OFF — single-tenant dev deployments are unaffected).
 - ``GATEWAY_DECISION_ROUTE``: the contract value the gateway stamps on
-  every outbound request. When isolation is on and no
-  ``FUSION_ROUTE_TOKEN`` shared secret is configured, the route_guard
-  middleware additionally requires the header VALUE to equal this
-  constant (a bare presence check is not enough — a direct-port caller
-  could inject any value).
+  every outbound request. It is only a routing marker, not a credential:
+  the constant is public, so isolation refuses to boot without
+  ``FUSION_ROUTE_TOKEN`` (1019 audit H7 — a forgeable header cannot
+  authenticate a tenant boundary). With a shared secret configured,
+  route_guard compares ``X-Fusion-Route`` against the secret instead.
 - ``scoped_principal``: compose the per-tenant session principal so
   sessions, stats, and context caps stay isolated per tenant even when
   two tenants share the same bearer api_key shape (rate-limit bucket).

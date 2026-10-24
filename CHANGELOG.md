@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Security (breaking) — tenant isolation now refuses to boot without FUSION_ROUTE_TOKEN
+- `FUSION_TENANT_ISOLATION=true` previously accepted the public
+  `X-Fusion-Route: gateway-decision` constant as proof of gateway origin.
+  The constant is documented and client-settable, so a direct-port caller
+  could forge both headers and reach another tenant's sessions/quota. The
+  route guard now raises at install time when isolation is enabled without
+  `FUSION_ROUTE_TOKEN` (#1354 audit H7). Multi-tenant deployments must set
+  the shared secret on both the gateway and the backend; single-tenant
+  deployments (isolation off) are unaffected.
+
 ### Fixed — context budget no longer degrades to used=0 when a system message is inline
 - Claude Code 2.1.154+ sends `role: "system"` entries inside the messages
   array. The Anthropic route consolidates them, but on the gateway's

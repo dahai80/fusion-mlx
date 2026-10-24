@@ -79,16 +79,17 @@ class TestGatewaySignalsEnforce:
         assert r.json()["error"]["code"] == "invalid_route_token"
 
     def test_tenant_isolation_enforces_missing_header_403(self, monkeypatch):
-        # Isolation on + no header: enforce fires (missing_route) — proves
-        # the tenant-isolation gateway signal activates enforce mode. The
-        # missing_tenant path (header present, tenant absent) is covered in
-        # test_tenant_isolation.py.
+        # Isolation on + no header: enforce fires (invalid_route_token).
+        # #1354 audit H7: isolation now requires FUSION_ROUTE_TOKEN at
+        # install time, so the token check is the enforced provenance.
+        # The missing_tenant path is covered in test_tenant_isolation.py.
         _clear_route_env(monkeypatch)
         monkeypatch.setenv("FUSION_TENANT_ISOLATION", "true")
+        monkeypatch.setenv("FUSION_ROUTE_TOKEN", "s3cr3t")
         client = TestClient(_guard_app())
         r = client.get("/v1/chat/completions")
         assert r.status_code == 403
-        assert r.json()["error"]["code"] == "missing_route"
+        assert r.json()["error"]["code"] == "invalid_route_token"
 
     def test_explicit_enforce_rejects_missing_header(self, monkeypatch):
         _clear_route_env(monkeypatch)
