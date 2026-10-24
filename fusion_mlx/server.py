@@ -2405,6 +2405,17 @@ class Server:
         set_reward_context(self.pool, _reward_svc)
         self._training_services.append(_reward_svc)
 
+        # Wire voice fine-tune service (#1336). No engine pool: Kokoro voice
+        # training loads its own model and touches no served engine, so the
+        # service is only registered for _process_queue rechecks + shutdown.
+        from .admin.fine_tune_route import set_voice_context
+        from .training.voice_service import VoiceService
+
+        _voice_svc = VoiceService()
+        _voice_svc.set_loop(asyncio.get_running_loop())
+        set_voice_context(self.pool, _voice_svc)
+        self._training_services.append(_voice_svc)
+
         # #1187: register every training service as a recheck target so
         # /v1/admission/resume wakes deferred jobs (WeakSet — dead services
         # drop out automatically; configure() already ran at enforcer init).

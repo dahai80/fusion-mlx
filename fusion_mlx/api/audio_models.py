@@ -38,6 +38,11 @@ class AudioSpeechRequest(BaseModel):
     response_format: str | None = "wav"
     ref_audio: str | None = None
     ref_text: str | None = None
+    # #1336: voice package produced by the voice fine-tune job
+    # (POST /admin/api/fine-tune/voice/jobs). Resolved under
+    # ~/.fusion-mlx/voices/<voice_ref>/voice.safetensors and passed to the
+    # engine as the `voice` argument; `voice` still wins when both are set.
+    voice_ref: str | None = None
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     top_k: int | None = Field(None, ge=0)
     top_p: float | None = Field(None, ge=0.0, le=1.0)
