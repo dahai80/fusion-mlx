@@ -1970,7 +1970,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
         logger.info("stage:vae decode out_shape=%s", tuple(result.shape))
         return result
 
-    async def decode_tiled(self, latent: mx.array, tile_size: int = 256) -> mx.array:
+    async def decode_tiled(self, latent: mx.array) -> mx.array:
+        # Audit 1019 L32: the old ``tile_size`` parameter was only logged —
+        # tiling is owned by ``flux.tiling_config``, so accepting the flag
+        # silently ignored the caller's request. Dropped rather than left
+        # lying: callers that want tiling configure the model's tiling_config.
         flux = self._require_flux()
         if flux.vae is None:
             raise RuntimeError("vae is unloaded; call load_vae().")
@@ -1990,8 +1994,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(get_executor("image"), _decode)
         logger.info(
-            "stage:vae decode_tiled tile_size=%s out_shape=%s",
-            tile_size,
+            "stage:vae decode_tiled tiling=%s out_shape=%s",
+            tiling_config is not None,
             tuple(result.shape),
         )
         return result

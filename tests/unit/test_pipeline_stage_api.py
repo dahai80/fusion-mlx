@@ -84,9 +84,24 @@ def test_image_decode_tiled_passes_tiling_config():
 
     flux.vae.decode_packed_latents = fake_decode
     flux.tiling_config = "TILING_SENTINEL"
-    out = asyncio.run(eng.decode_tiled(mx.zeros((1, 8, 4, 4)), tile_size=128))
+    out = asyncio.run(eng.decode_tiled(mx.zeros((1, 8, 4, 4))))
     assert out.shape == (1, 3, 4, 4)
     assert received["tc"] == "TILING_SENTINEL"
+
+
+def test_image_decode_tiled_has_no_dead_tile_size():
+    """Audit 1019 L32: the engine no longer accepts a tile_size it ignores.
+
+    Tiling is owned by ``flux.tiling_config``; a caller-supplied tile_size
+    used to be logged and discarded, so a request for a different tile went
+    silently unhonoured.
+    """
+    import inspect
+
+    from fusion_mlx.engines.image_gen import ImageGenEngine
+
+    params = inspect.signature(ImageGenEngine.decode_tiled).parameters
+    assert "tile_size" not in params, params
 
 
 def test_image_denoise_validates_ndim_and_unloaded():

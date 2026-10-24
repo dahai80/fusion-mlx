@@ -997,6 +997,11 @@ class BlockAwarePrefixCache(CacheManager):
         # RotatingKVCache: sliding window, seq_len limited to max_size
         # ArraysCache: no traditional sequence dimension
         non_sliceable_types = {"RotatingKVCache", "ArraysCache", "CacheList"}
+        # Audit 1019 L19: both probe passes swallowed every exception, so a
+        # cache layout the probes could not read silently fell through to the
+        # shape guess below. Collect the failures and surface them at the one
+        # place that matters — the fallback return.
+        probe_errors: list[str] = []
 
         # Step 1: Search for a sliceable KVCache layer (full attention)
         for layer_idx, layer_state in enumerate(cache_data):
@@ -1040,7 +1045,8 @@ class BlockAwarePrefixCache(CacheManager):
                     )
                     return seq_len
 
-            except Exception:
+            except Exception as exc:
+                probe_errors.append(f"layer {layer_idx}: {exc!r}")
                 continue
 
         # Step 2: Fallback - find max seq_len among all 4D tensors
@@ -1069,7 +1075,8 @@ class BlockAwarePrefixCache(CacheManager):
                 keys = state_tuple[0]
                 if hasattr(keys, "shape") and len(keys.shape) == 4:
                     max_seq_len = max(max_seq_len, keys.shape[2])
-            except Exception:
+            except Exception as exc:
+                probe_errors.append(f"layer {layer_idx}: {exc!r}")
                 continue
 
         if max_seq_len > 0:
@@ -1101,6 +1108,16 @@ class BlockAwarePrefixCache(CacheManager):
                             logger.debug(f"Using CacheList sub-cache seq_len={seq_len}")
                             return seq_len
 
+        if probe_errors:
+            # Audit 1019 L19: this is the one path that returns a guessed
+            # value (0) after the probes failed — surface it instead of
+            # letting callers treat an unreadable cache as empty in silence.
+            logger.warning(
+                "prefix_cache: seq_len probe failed on %d layer(s) (%s) and no "
+                "layer yielded a seq_len; returning 0",
+                len(probe_errors),
+                "; ".join(probe_errors[:3]),
+            )
         return 0
 
     def _extract_block_tensor_slice(
@@ -2623,7 +2640,20 @@ class BlockAwarePrefixCache(CacheManager):
                     concat_keys = mx.concatenate(layer_keys, axis=1)
                     concat_values = mx.concatenate(layer_values, axis=1)
                 except Exception:
-                    # Last resort: use single state
+                    # Last resort: use the newest block state only.
+                    # Audit 1019 L20: this silently discarded every earlier
+                    # block, so a shape mismatch produced a truncated cache
+                    # with no signal. Warn with the offending shapes.
+                    shapes = [tuple(k.shape) for k in layer_keys]
+                    logger.warning(
+                        "prefix_cache: fallback reconstruct could not concat "
+                        "%d block states for %s (shapes=%s, mismatched=%s); "
+                        "using the last block only — cached prefix truncated",
+                        len(layer_keys),
+                        cache_type_name,
+                        shapes[:4],
+                        len(set(shapes)) > 1,
+                    )
                     concat_keys = layer_keys[-1]
                     concat_values = layer_values[-1]
 

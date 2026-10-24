@@ -157,11 +157,11 @@ class StreamSessionStore:
     def count_for_principal(self, principal: str | None) -> int:
         # #801 DoS guard: cap concurrent live sessions per caller so one
         # principal cannot spawn unbounded background producers.
-        return sum(
-            1
-            for s in self._sessions.values()
-            if not s.expired() and s.principal == principal
-        )
+        # Audit 1019 L35: expired sessions used to be skipped by the filter
+        # but left in the dict, so the cap only worked until the store grew
+        # — and every call scanned the whole expired backlog. Reap first.
+        self._reap_expired()
+        return sum(1 for s in self._sessions.values() if s.principal == principal)
 
 
 _store: StreamSessionStore | None = None

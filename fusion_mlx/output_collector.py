@@ -21,7 +21,6 @@ class RequestOutputCollector:
       low-latency per-token delivery
     """
 
-    _waiting_consumers: int = 0
     # E-4 (#811): backpressure cap on the streaming deque. A slow client plus
     # logprobs (full-vocab vector per token, ~50-500KB each) could accumulate
     # unbounded memory — a 4k-token logprobs request can reach ~2GB. A bounded
@@ -40,7 +39,6 @@ class RequestOutputCollector:
     def __init__(self, aggregate: bool = True):
         self.aggregate = aggregate
         self.ready = asyncio.Event()
-        self._is_waiting = False
         self._dropped_outputs = 0
         self._dropped_tokens = 0
         # E-5 (#811): closed flag. The orphan reaper calls clear() after a
@@ -191,28 +189,20 @@ class RequestOutputCollector:
             return None
 
     async def get(self) -> RequestOutput:
-        if not self._is_waiting:
-            self._is_waiting = True
-            RequestOutputCollector._waiting_consumers += 1
-        try:
-            while True:
-                # E-5 (#811): a cleared/closed collector must not hang a
-                # waiting consumer — wake and return rather than block.
+        while True:
+            # E-5 (#811): a cleared/closed collector must not hang a
+            # waiting consumer — wake and return rather than block.
+            if self._closed:
+                return None
+            while not (self._merged if self.aggregate else self._queue):
                 if self._closed:
                     return None
-                while not (self._merged if self.aggregate else self._queue):
-                    if self._closed:
-                        return None
-                    await self.ready.wait()
-                    if self._closed:
-                        return None
-                output = self.get_nowait()
-                if output is not None:
-                    return output
-        finally:
-            if self._is_waiting:
-                self._is_waiting = False
-                RequestOutputCollector._waiting_consumers -= 1
+                await self.ready.wait()
+                if self._closed:
+                    return None
+            output = self.get_nowait()
+            if output is not None:
+                return output
 
     def _merge_outputs(
         self,
@@ -289,13 +279,6 @@ class RequestOutputCollector:
         # inside get() wakes up, sees _closed, and returns None instead of
         # hanging forever. A fresh collector starts with _closed=False.
         self.ready.set()
-        if self._is_waiting:
-            self._is_waiting = False
-            RequestOutputCollector._waiting_consumers -= 1
-
-    @classmethod
-    def has_waiting_consumers(cls) -> bool:
-        return cls._waiting_consumers > 0
 
     def __bool__(self) -> bool:
         if self.aggregate:
