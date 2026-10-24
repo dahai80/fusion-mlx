@@ -180,11 +180,14 @@ class TestRequestOutputCollectorPut:
         collector.put(output1)
         collector.put(output2)
 
-        # Should be merged
-        assert collector._merged is not None
-        assert collector._merged.new_token_ids == [100, 101]
-        assert collector._merged.new_text == "Hello world"
-        assert collector._merged.completion_tokens == 2
+        # Should be merged. The aggregate is folded into one output on get()
+        # (M23: accumulating in lists instead of rebuilding per put).
+        merged = collector.get_nowait()
+        assert merged is not None
+        assert merged.new_token_ids == [100, 101]
+        assert merged.new_text == "Hello world"
+        assert merged.completion_tokens == 2
+        assert collector._merged is None
 
     def test_put_multiple_without_aggregation(self):
         """Test putting multiple outputs queues FIFO without aggregation."""

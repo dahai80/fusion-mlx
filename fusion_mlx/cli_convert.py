@@ -61,10 +61,8 @@ def _convert_pytorch_to_safetensors(model_path: Path) -> Path:
         write_safetensors_stream,
     )
 
-    pytorch_files = sorted(
-        list(model_path.glob("pytorch_model.bin"))
-        + list(model_path.glob("pytorch_model*.bin"))
-    )
+    # Audit M26: pytorch_model.bin matched both globs and was loaded twice.
+    pytorch_files = sorted({*model_path.glob("pytorch_model*.bin")})
     if not pytorch_files:
         raise FileNotFoundError(f"No pytorch_model.bin found in {model_path}")
 
@@ -75,6 +73,13 @@ def _convert_pytorch_to_safetensors(model_path: Path) -> Path:
 
     def _iter_tensors():
         for pf in pytorch_files:
+            # .bin has no streaming reader: one shard is fully resident at a
+            # time and released before the next one loads.
+            logger.info(
+                "Loading %s (%.2f GiB) — one shard resident at a time",
+                pf.name,
+                pf.stat().st_size / 2**30,
+            )
             state_dict = torch.load(str(pf), map_location="cpu", weights_only=True)
             logger.info("Streaming %d tensors from %s", len(state_dict), pf.name)
             try:
@@ -87,8 +92,17 @@ def _convert_pytorch_to_safetensors(model_path: Path) -> Path:
     written = write_safetensors_stream(str(tmp_dir), _iter_tensors())
     logger.info("Safetensors cache written to %s (%d shard(s))", tmp_dir, len(written))
 
+    skipped: list[str] = []
     for f in model_path.iterdir():
-        if f.suffix in (".bin",) or f.name == "model.safetensors":
+        # Audit M26: the source shard index points at pytorch_model*.bin
+        # shards that do not exist in the converted dir; copying it made
+        # mlx-lm resolve a weight map with missing files.
+        if (
+            f.suffix == ".bin"
+            or f.name == "model.safetensors"
+            or f.name.endswith(".safetensors.index.json")
+        ):
+            skipped.append(f.name)
             continue
         target = tmp_dir / f.name
         if not target.exists():
@@ -96,6 +110,8 @@ def _convert_pytorch_to_safetensors(model_path: Path) -> Path:
                 shutil.copy2(str(f), str(target))
             elif f.is_dir():
                 shutil.copytree(str(f), str(target))
+    if skipped:
+        logger.info("Not copied into the safetensors cache: %s", ", ".join(skipped))
     return tmp_dir
 
 
@@ -147,8 +163,24 @@ def convert_command(args) -> int:
         logger.info("convert: alias %s -> %s", model, resolved)
         model = resolved
 
+    kwargs = _build_convert_kwargs(args, model)
+
+    # Audit M26: converting into an existing directory silently overwrote
+    # files in place and left stale shards from a previous run behind.
+    out_dir = Path(kwargs["mlx_path"])
+    if out_dir.is_dir() and any(out_dir.iterdir()):
+        if not getattr(args, "force", False):
+            logger.error("convert: output dir %s exists and is not empty", out_dir)
+            print(
+                f"Error: output directory {out_dir} already exists and is not "
+                f"empty; pass --force to overwrite",
+                file=sys.stderr,
+            )
+            return 1
+        logger.warning("convert: --force set — overwriting %s", out_dir)
+
     try:
-        out = _run_convert(model, **_build_convert_kwargs(args, model))
+        out = _run_convert(model, **kwargs)
     except Exception as exc:
         logger.exception("convert failed for %s", model)
         print(f"Error: convert failed: {exc}", file=sys.stderr)

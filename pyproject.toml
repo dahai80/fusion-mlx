@@ -289,6 +289,10 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
+# The suite is order-independent; a stray pytest-randomly in a shared venv
+# reseeds by importing real torch, which fails on some interpreters
+# ("function 'conv1d' already has a docstring").
+addopts = "-p no:randomly"
 markers = [
     "real_model: tests that load a real MLX model (gated by FUSION_MLX_REAL_MODEL_TESTS env var)",
     "realmodel: tests that load a real checkpoint and self-skip when it is not downloaded (e.g. LTX-2.5 22B)",

@@ -258,6 +258,10 @@ class RequestOutput:
     error_metadata: dict | None = None
     logprobs: Any = None
     matched_stop: str | None = None
+    # Audit M22: number of earlier outputs this request's collector dropped
+    # under backpressure (oldest first). Non-zero means the delivered stream
+    # has holes.
+    dropped_outputs: int = 0
 
     @property
     def usage(self) -> dict[str, int]:

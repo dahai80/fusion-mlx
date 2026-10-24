@@ -172,14 +172,16 @@ class TestListProfiles(unittest.TestCase):
                 p = ma.list_profiles()["x"]
                 self.assertEqual(p.hf_path, "org/x")
 
-    def test_dict_entry_missing_hf_path_raises(self):
+    def test_dict_entry_missing_hf_path_is_skipped(self):
+        # M25: a malformed entry is dropped on its own; it must not take the
+        # rest of the registry down with it.
         with tempfile.TemporaryDirectory() as td:
             af = Path(td) / "aliases.json"
             with open(af, "w") as f:
-                json.dump({"x": {"description": "no path"}}, f)
+                json.dump({"x": {"description": "no path"}, "ok": "org/ok"}, f)
             with patch.object(ma, "_ALIASES_FILE", af):
-                with self.assertRaises(ValueError):
-                    ma.list_profiles()
+                profiles = ma.list_profiles()
+                self.assertEqual(list(profiles), ["ok"])
 
 
 class TestResolveModel(unittest.TestCase):

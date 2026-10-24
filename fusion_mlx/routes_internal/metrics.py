@@ -1911,6 +1911,32 @@ def _render_immortal_registry_metrics() -> list[str]:
     ]
 
 
+def _render_output_collector_metrics() -> list[str]:
+    # Audit M22: the bounded streaming deque drops the oldest buffered output
+    # under backpressure. Those drops used to be invisible; export them so a
+    # truncated client stream is traceable instead of a silent data loss.
+    try:
+        from ..output_collector import RequestOutputCollector
+
+        stats = RequestOutputCollector.dropped_stats()
+    except Exception:
+        logger.debug("output collector metrics render error", exc_info=True)
+        return []
+    return _fmt_metric(
+        "fusion_mlx_stream_deque_dropped_outputs_total",
+        "counter",
+        "Streaming outputs dropped from a full per-request deque (oldest first)",
+        stats["dropped_outputs_total"],
+        None,
+    ) + _fmt_metric(
+        "fusion_mlx_stream_deque_dropped_tokens_total",
+        "counter",
+        "Tokens lost to streaming deque overflow",
+        stats["dropped_tokens_total"],
+        None,
+    )
+
+
 def render_prometheus_metrics() -> str:
     lines: list[str] = []
     lines.extend(_render_build_info())
@@ -1927,6 +1953,7 @@ def render_prometheus_metrics() -> str:
     lines.extend(_render_watchdog_metrics())
     lines.extend(_render_degradation_metrics())
     lines.extend(_render_queue_metrics())
+    lines.extend(_render_output_collector_metrics())
     lines.extend(_render_immortal_registry_metrics())
     lines.extend(_render_swap_metrics())
     lines.extend(_render_model_residency_metrics())

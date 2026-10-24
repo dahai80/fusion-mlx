@@ -1413,6 +1413,12 @@ Examples:
         default=False,
         help="Allow custom modeling code from the source repo",
     )
+    convert_parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Overwrite the output directory if it already exists and is not empty",
+    )
 
     # Models command. ``ls`` is registered as a top-level alias that
     # defaults to ``models --cached`` (the locally-cached view) — two
