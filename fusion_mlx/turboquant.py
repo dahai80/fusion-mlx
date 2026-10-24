@@ -46,7 +46,10 @@ def resolve_turboquant_mode_default(args: Any, *, model_name: str) -> str | None
         return None
     if raw is not None:
         return raw
-    if getattr(args, "kv_cache_quantization", False):
+    # Standard KV quantization is now expressed only through
+    # --kv-cache-dtype (default int4); an explicit non-default dtype is an
+    # operator choice that wins over the alias-driven TurboQuant default.
+    if getattr(args, "kv_cache_dtype", "int4") != "int4":
         return None
     try:
         from .model_auto_config import detect_model_config

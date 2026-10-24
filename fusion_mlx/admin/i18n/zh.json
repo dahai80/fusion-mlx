@@ -383,8 +383,6 @@
   "settings.advanced.prefill_step_size_hint": "每个预填充块的 token 数。",
   "settings.advanced.max_waiting": "最大等待请求数",
   "settings.advanced.max_waiting_hint": "0 = 不限。超出则以 429 拒绝。",
-  "settings.advanced.use_paged_cache": "分页 KV 缓存",
-  "settings.advanced.use_paged_cache_hint": "分块分页 KV 缓存（实验性，慢于前缀缓存）。",
   "settings.advanced.paged_cache_block_size": "分页缓存块大小",
   "settings.advanced.paged_cache_block_size_hint": "每个分页缓存块的 token 数。",
   "settings.advanced.max_cache_blocks": "最大缓存块数",

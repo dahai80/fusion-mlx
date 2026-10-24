@@ -71,8 +71,7 @@ class TestApply:
         cfg = fw.apply(reco, config=fresh_config)
         assert cfg.scheduler.completion_batch_size == 64
         assert cfg.scheduler.cache_memory_mb == 16384
-        assert cfg.scheduler.kv_cache_quantization is True
-        assert cfg.scheduler.kv_cache_quantization_bits == 4
+        assert cfg.scheduler.kv_cache_dtype == "int4"
 
     def test_fp16_disables_kv_quant(self, fresh_config):
         reco = Recommendation(
@@ -83,7 +82,7 @@ class TestApply:
             memory_budget_gb=0.0,
         )
         cfg = fw.apply(reco, config=fresh_config)
-        assert cfg.scheduler.kv_cache_quantization is False
+        assert cfg.scheduler.kv_cache_dtype == "bf16"
 
 
 class TestFlywheel:

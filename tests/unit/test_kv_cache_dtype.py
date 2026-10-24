@@ -14,7 +14,6 @@ from fusion_mlx.kv_cache_dtype import (
     KV_CACHE_DTYPES,
     REASONING_KV_CACHE_DTYPE,
     KVCacheDtypeDecision,
-    dtype_to_quantization_bits,
     log_kv_cache_decision,
     resolve_kv_cache_dtype,
 )
@@ -197,33 +196,6 @@ def test_mla_rank_pair_with_name_hit_downgrades():
     )
     assert d.dtype == "bf16"
     assert d.downgraded is True
-
-
-# ---------------------------------------------------------------------------
-# dtype_to_quantization_bits
-# ---------------------------------------------------------------------------
-
-
-def test_bits_mapping_bf16_disables_quantization():
-    quant, bits = dtype_to_quantization_bits("bf16")
-    assert quant is False
-
-
-def test_bits_mapping_int8():
-    quant, bits = dtype_to_quantization_bits("int8")
-    assert quant is True
-    assert bits == 8
-
-
-def test_bits_mapping_int4():
-    quant, bits = dtype_to_quantization_bits("int4")
-    assert quant is True
-    assert bits == 4
-
-
-def test_bits_mapping_invalid_raises():
-    with pytest.raises(ValueError):
-        dtype_to_quantization_bits("fp8")
 
 
 # ---------------------------------------------------------------------------

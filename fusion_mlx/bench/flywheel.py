@@ -150,15 +150,19 @@ def apply(reco: Recommendation, config: ServerConfig | None = None) -> ServerCon
     )
     if reco.max_kv_tokens > 0:
         sched.cache_memory_mb = int(reco.max_kv_tokens * 2)
-    sched.kv_cache_quantization = _quant_rank(reco.quant_level) <= 8
-    if sched.kv_cache_quantization:
-        sched.kv_cache_quantization_bits = _quant_rank(reco.quant_level) or 8
+    _kv_rank = _quant_rank(reco.quant_level)
+    if _kv_rank > 8:
+        sched.kv_cache_dtype = "bf16"
+    elif _kv_rank <= 4:
+        sched.kv_cache_dtype = "int4"
+    else:
+        sched.kv_cache_dtype = "int8"
     logger.info(
-        "flywheel: applied batch=%d kv=%d quant=%s kv_quant=%s",
+        "flywheel: applied batch=%d kv=%d quant=%s kv_dtype=%s",
         sched.completion_batch_size,
         reco.max_kv_tokens,
         reco.quant_level,
-        sched.kv_cache_quantization,
+        sched.kv_cache_dtype,
     )
     return cfg
 

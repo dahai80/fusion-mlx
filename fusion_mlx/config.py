@@ -106,19 +106,12 @@ class SchedulerConfig:
     cache_memory_mb: int | None = None  # None = auto (20% available RAM)
     cache_memory_percent: float = 0.20
 
-    # KV cache quantization
-    kv_cache_quantization: bool = False
-    kv_cache_quantization_bits: int = 8
-    kv_cache_quantization_group_size: int = 64
-    kv_cache_min_quantize_tokens: int = 256
-
     # TurboQuant V-only compression
     kv_cache_turboquant: bool = False
     kv_cache_turboquant_bits: int | None = None
     kv_cache_turboquant_group_size: int = 32
 
     # Paged cache
-    use_paged_cache: bool = False
     paged_cache_block_size: int = 64
     max_cache_blocks: int = 1000
 
@@ -193,11 +186,8 @@ class SchedulerConfig:
     decode_clear_interval: int = 256
 
     def __post_init__(self):
-        # NOTE: chunked_prefill_tokens and use_paged_cache historically conflicted,
-        # but the scheduler only reads enable_prefix_cache / paged_ssd_cache_dir —
-        # not use_paged_cache.  Chunked prefill coexists with prefix cache (default
-        # ON) and boundary_prefix_persist (#257).  The old guard was a no-op since
-        # use_paged_cache had no runtime effect.  Removed the false conflict guard.
+        # Chunked prefill coexists with prefix cache (default ON) and
+        # boundary_prefix_persist (#257).
         # Validate ranges
         if self.max_num_seqs < 1:
             logger.warning("max_num_seqs=%s below 1 — clamped to 1", self.max_num_seqs)
@@ -224,8 +214,6 @@ class SchedulerConfig:
             self.cache_memory_percent = 0.20
         if self.suffix_min_confidence < 0 or self.suffix_min_confidence > 1:
             self.suffix_min_confidence = 0.3
-        if self.kv_cache_quantization_bits not in (4, 8, 16):
-            self.kv_cache_quantization_bits = 8
         # Sync the runtime bool from the released int knob. The Scheduler
         # runtime reads ``config.chunked_prefill`` (bool); the released CLI
         # sets ``chunked_prefill_tokens`` (int). Respect an explicit True

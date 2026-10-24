@@ -402,9 +402,8 @@ fusion-mlx bench qwen3.5-9b-4bit --submit
 | `--base-url <URL>` | Attach to already-running server (for --tier) |
 | `--num-prompts <N>` | Number of prompts (default: 10) |
 | `--max-tokens <N>` | Max tokens per prompt (default: 100) |
-| `--kv-cache-quantization` | Quantize KV cache to reduce memory (8-bit default) |
-| `--kv-cache-quantization-bits` | 4 or 8 (default: 8) |
-| `--use-paged-cache` | Use paged KV cache (experimental) |
+| `--paged-cache-block-size <N>` | Tokens per paged cache block (default: 64) |
+| `--max-cache-blocks <N>` | Maximum number of cache blocks (default: 1000) |
 | `--enable-prefix-cache` | Enable prefix caching (default: on) |
 | `--disable-prefix-cache` | Disable prefix caching |
 

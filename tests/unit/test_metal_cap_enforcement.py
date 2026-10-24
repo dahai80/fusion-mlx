@@ -60,7 +60,6 @@ def _make_scheduler(
         max_concurrent_requests=64,
         enable_prefix_cache=enable_prefix_cache,
         use_memory_aware_cache=False,
-        use_paged_cache=False,
         gpu_memory_utilization=gpu_memory_utilization,
     )
     tokenizer = MagicMock()
@@ -243,7 +242,6 @@ class TestProjectedKVAdmissionGate:
             max_concurrent_requests=64,
             enable_prefix_cache=False,
             use_memory_aware_cache=False,
-            use_paged_cache=False,
             gpu_memory_utilization=gpu_memory_utilization,
             metal_cap_kv_bytes_per_token=kv_bytes_per_token,
         )
@@ -352,7 +350,6 @@ class TestProjectedKVAdmissionGate:
             max_concurrent_requests=64,
             enable_prefix_cache=False,
             use_memory_aware_cache=False,
-            use_paged_cache=False,
             gpu_memory_utilization=0.5,
             # Operator did NOT set this — auto-derivation kicks in.
             metal_cap_kv_bytes_per_token=0,
@@ -383,7 +380,6 @@ class TestProjectedKVAdmissionGate:
             max_concurrent_requests=64,
             enable_prefix_cache=False,
             use_memory_aware_cache=False,
-            use_paged_cache=False,
             gpu_memory_utilization=0.5,
             metal_cap_kv_bytes_per_token=42,  # explicit override
         )
@@ -410,7 +406,6 @@ class TestProjectedKVAdmissionGate:
             max_concurrent_requests=64,
             enable_prefix_cache=False,
             use_memory_aware_cache=False,
-            use_paged_cache=False,
             gpu_memory_utilization=0.5,
             metal_cap_kv_bytes_per_token=0,
         )
@@ -468,7 +463,6 @@ class TestInFlightKVReservation:
             max_concurrent_requests=128,
             enable_prefix_cache=False,
             use_memory_aware_cache=False,
-            use_paged_cache=False,
             gpu_memory_utilization=0.5,
             metal_cap_kv_bytes_per_token=kv_bytes_per_token,
         )
@@ -579,7 +573,6 @@ class TestDtypeInference:
             max_concurrent_requests=64,
             enable_prefix_cache=False,
             use_memory_aware_cache=False,
-            use_paged_cache=False,
             gpu_memory_utilization=0.5,
             metal_cap_kv_bytes_per_token=0,  # exercise auto-derivation
         )

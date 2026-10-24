@@ -25,7 +25,6 @@ _ADV_FIELDS = (
     "scheduler_completion_batch_size",
     "scheduler_prefill_step_size",
     "scheduler_max_waiting",
-    "scheduler_use_paged_cache",
     "scheduler_paged_cache_block_size",
     "scheduler_max_cache_blocks",
     "scheduler_enable_mtp",
@@ -84,7 +83,6 @@ class TestReadLiveAdvancedConfig:
         cfg.scheduler.completion_batch_size = 32
         cfg.scheduler.prefill_step_size = 2048
         cfg.scheduler.max_waiting = 0
-        cfg.scheduler.use_paged_cache = False
         cfg.scheduler.paged_cache_block_size = 64
         cfg.scheduler.max_cache_blocks = 1000
         cfg.scheduler.enable_mtp = False

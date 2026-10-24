@@ -402,34 +402,6 @@ Examples:
             "Qwen3 thinking variants)."
         ),
     )
-    serve_parser.add_argument(
-        "--kv-cache-quantization",
-        action="store_true",
-        help=(
-            "[deprecated alias of --kv-cache-dtype int8] Quantize stored "
-            "KV caches to reduce memory (8-bit by default). When both "
-            "flags are passed, this one wins for backwards compatibility."
-        ),
-    )
-    serve_parser.add_argument(
-        "--kv-cache-quantization-bits",
-        type=int,
-        default=8,
-        choices=[4, 8],
-        help="Bit width for KV cache quantization (default: 8)",
-    )
-    serve_parser.add_argument(
-        "--kv-cache-quantization-group-size",
-        type=int,
-        default=64,
-        help="Group size for KV cache quantization (default: 64)",
-    )
-    serve_parser.add_argument(
-        "--kv-cache-min-quantize-tokens",
-        type=int,
-        default=256,
-        help="Minimum tokens for quantization to apply (default: 256)",
-    )
     # TurboQuant KV cache compression (experimental, R15 Phase 4).
     #
     # Accepts an optional mode value:
@@ -437,8 +409,7 @@ Examples:
     #   --kv-cache-turboquant v4           → V-only explicit
     #   --kv-cache-turboquant k8v4         → K-8bit + V-4bit mix (R15 Phase 4)
     #
-    # The bare-flag form preserves PR #157 backward compatibility. Mode
-    # is mutually exclusive with --kv-cache-quantization.
+    # The bare-flag form preserves PR #157 backward compatibility.
     serve_parser.add_argument(
         "--kv-cache-turboquant",
         nargs="?",
@@ -449,7 +420,8 @@ Examples:
         "the flag is bare) is V-only 3-4 bit Lloyd-Max with K in FP16; "
         "``k8v4`` is the R15 Phase 4 mix — K at 8-bit Walsh-Hadamard + V at "
         "4-bit Lloyd-Max (~4.6x KV compression on dense models). "
-        "Experimental — mutually exclusive with --kv-cache-quantization.",
+        "Experimental — takes over the V cache, so pair it with "
+        "--kv-cache-dtype bf16 rather than a quantized dtype.",
     )
     serve_parser.add_argument(
         "--kv-cache-turboquant-bits",
@@ -581,11 +553,6 @@ Examples:
         "large models (200GB+) that need more memory headroom.",
     )
     # Paged cache options (experimental)
-    serve_parser.add_argument(
-        "--use-paged-cache",
-        action="store_true",
-        help="Use paged KV cache for memory efficiency (experimental)",
-    )
     serve_parser.add_argument(
         "--paged-cache-block-size",
         type=int,
@@ -1348,37 +1315,7 @@ Examples:
         action="store_true",
         help="Disable memory-aware cache, use legacy entry-count based cache",
     )
-    # KV cache quantization options
-    bench_parser.add_argument(
-        "--kv-cache-quantization",
-        action="store_true",
-        help="Quantize stored KV caches to reduce memory (8-bit by default)",
-    )
-    bench_parser.add_argument(
-        "--kv-cache-quantization-bits",
-        type=int,
-        default=8,
-        choices=[4, 8],
-        help="Bit width for KV cache quantization (default: 8)",
-    )
-    bench_parser.add_argument(
-        "--kv-cache-quantization-group-size",
-        type=int,
-        default=64,
-        help="Group size for KV cache quantization (default: 64)",
-    )
-    bench_parser.add_argument(
-        "--kv-cache-min-quantize-tokens",
-        type=int,
-        default=256,
-        help="Minimum tokens for quantization to apply (default: 256)",
-    )
     # Paged cache options (experimental)
-    bench_parser.add_argument(
-        "--use-paged-cache",
-        action="store_true",
-        help="Use paged KV cache for memory efficiency (experimental)",
-    )
     bench_parser.add_argument(
         "--paged-cache-block-size",
         type=int,

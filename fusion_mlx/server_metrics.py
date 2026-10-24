@@ -89,12 +89,9 @@ def _save_alltime_to_disk(data: dict) -> None:
 def _resolve_kv_cache_dtype() -> str:
     # Effective KV cache dtype for /metrics observability. Priority:
     #   1. ServerConfig.kv_cache_dtype stash — set by cli_serve after the
-    #      safelist resolves --kv-cache-dtype, or after the legacy
-    #      --kv-cache-quantization synthesis. Primary source.
-    #   2. Legacy fallback — if the stash is unset / at the bf16 default
-    #      but ServerConfig.scheduler carries kv_cache_quantization=True,
-    #      derive from kv_cache_quantization_bits (programmatic callers
-    #      that bypass the serve CLI).
+    #      safelist resolves --kv-cache-dtype. Primary source.
+    #   2. SchedulerConfig.kv_cache_dtype — programmatic callers that set
+    #      the scheduler config directly.
     #   3. Default "bf16" — the only no-op value, so observability never
     #      lies about quantization status.
     # Adapted from rapid-mlx's _render_kv_cache_dtype_gauge: fusion uses an
@@ -110,14 +107,9 @@ def _resolve_kv_cache_dtype() -> str:
         dtype = getattr(cfg, "kv_cache_dtype", None)
         if dtype in (None, "bf16"):
             scheduler = getattr(cfg, "scheduler", None)
-            if scheduler is not None and getattr(
-                scheduler, "kv_cache_quantization", False
-            ):
-                bits = getattr(scheduler, "kv_cache_quantization_bits", None)
-                if bits == 4:
-                    dtype = "int4"
-                elif bits == 8:
-                    dtype = "int8"
+            scheduler_dtype = getattr(scheduler, "kv_cache_dtype", None)
+            if scheduler_dtype not in (None, "bf16"):
+                dtype = scheduler_dtype
     except Exception as exc:
         logger.warning("kv_cache_dtype resolution failed: %s", exc)
         dtype = None
