@@ -1,12 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Issues #1375 / #1376: Qwen-Image-Edit multi-image wiring + image LoRA.
-
-#1375: mflux's QwenImageEdit.generate_image takes `image_paths` (a list). The
-old wiring passed `image_path`, which that method does not accept, so the
-variant could not consume the edit target or any reference image.
-#1376: per-request LoRA adapters must reach the mflux model constructor, and
-the path must be contained by FUSION_LORA_ALLOWED_DIRS.
-"""
+# Issues #1375 / #1376: Qwen-Image-Edit multi-image wiring + image LoRA.
+# #1375: mflux's QwenImageEdit.generate_image takes `image_paths` (a list). The
+# old wiring passed `image_path`, which that method does not accept, so the
+# variant could not consume the edit target or any reference image.
+# #1376: per-request LoRA adapters must reach the mflux model constructor, and
+# the path must be contained by FUSION_LORA_ALLOWED_DIRS.
 
 import logging
 import os
@@ -157,7 +155,8 @@ class TestLoraLoadPath:
                 )
 
     def test_mflux_ctor_receives_adapters(self, monkeypatch):
-        import mflux.models.common.config.model_config as mc_mod
+        # mflux ships only with the [image] extra; CI installs [dev].
+        mc_mod = pytest.importorskip("mflux.models.common.config.model_config")
 
         seen = {}
 

@@ -205,12 +205,16 @@ class TestGuardDefersToMtpSanitize:
 
         Model.sanitize = mtp_sanitize
 
-        import mlx_vlm.models.minicpmv4_6 as parent
-
-        fake = types.ModuleType("mlx_vlm.models.minicpmv4_6.minicpmv4_6")
+        # Older mlx_vlm releases carry no minicpmv4_6 package at all, so build
+        # the parent package instead of importing it (CI pins an older mlx_vlm).
+        parent_name = "mlx_vlm.models.minicpmv4_6"
+        parent = types.ModuleType(parent_name)
+        parent.__path__ = []
+        fake = types.ModuleType(f"{parent_name}.minicpmv4_6")
         fake.Model = Model
-        monkeypatch.setitem(sys.modules, "mlx_vlm.models.minicpmv4_6.minicpmv4_6", fake)
-        monkeypatch.setattr(parent, "minicpmv4_6", fake, raising=False)
+        parent.minicpmv4_6 = fake
+        monkeypatch.setitem(sys.modules, parent_name, parent)
+        monkeypatch.setitem(sys.modules, f"{parent_name}.minicpmv4_6", fake)
 
         _reset_patch_state()
         try:
