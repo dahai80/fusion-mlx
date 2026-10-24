@@ -2,11 +2,14 @@
 """Output collector for streaming with low-latency optimizations."""
 
 import asyncio
+import logging
 from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
 from .request import RequestOutput
+
+logger = logging.getLogger(__name__)
 
 
 class RequestOutputCollector:
@@ -18,7 +21,6 @@ class RequestOutputCollector:
       low-latency per-token delivery
     """
 
-    _waiting_consumers: int = 0
     # E-4 (#811): backpressure cap on the streaming deque. A slow client plus
     # logprobs (full-vocab vector per token, ~50-500KB each) could accumulate
     # unbounded memory — a 4k-token logprobs request can reach ~2GB. A bounded
@@ -28,11 +30,17 @@ class RequestOutputCollector:
     # the process. Aggregated (non-streaming) mode is unaffected — it merges
     # into a single RequestOutput, never a growing queue.
     _STREAM_DEQUE_MAXLEN = 8192
+    # Audit M22: a deque(maxlen=...) drops the OLDEST buffered output without
+    # a word. The client then sees a stream with silently missing tokens.
+    # Count every drop (per collector + process total) and log it loudly.
+    _dropped_outputs_total = 0
+    _dropped_tokens_total = 0
 
     def __init__(self, aggregate: bool = True):
         self.aggregate = aggregate
         self.ready = asyncio.Event()
-        self._is_waiting = False
+        self._dropped_outputs = 0
+        self._dropped_tokens = 0
         # E-5 (#811): closed flag. The orphan reaper calls clear() after a
         # request finishes and its consumer has gone away, but a slow
         # streaming consumer can still be blocked in get() → ready.wait().
@@ -41,7 +49,14 @@ class RequestOutputCollector:
         # returns None instead of hanging.
         self._closed = False
         if aggregate:
+            # Audit M23: accumulate in lists and fold them into one
+            # RequestOutput on get(). Rebuilding the merged output on every
+            # put copied the whole token/text list each time — O(n^2) over a
+            # long generation.
             self._merged: RequestOutput | None = None
+            self._acc_token_ids: list[int] = []
+            self._acc_text_parts: list[str] = []
+            self._acc_logprobs: Any = None
         else:
             self._queue: deque[RequestOutput] = deque(maxlen=self._STREAM_DEQUE_MAXLEN)
 
@@ -49,24 +64,124 @@ class RequestOutputCollector:
         if self._closed:
             return
         if self.aggregate:
-            if self._merged is None:
-                self._merged = output
-            else:
-                self._merged = self._merge_outputs(self._merged, output)
+            self._accumulate(output)
         else:
+            if len(self._queue) >= self._STREAM_DEQUE_MAXLEN:
+                self._note_stream_drop(output)
             self._queue.append(output)
         self.ready.set()
+
+    def _note_stream_drop(self, output: RequestOutput) -> None:
+        tokens = len(output.new_token_ids) or 1
+        self._dropped_outputs += 1
+        self._dropped_tokens += tokens
+        RequestOutputCollector._dropped_outputs_total += 1
+        RequestOutputCollector._dropped_tokens_total += tokens
+        n = self._dropped_outputs
+        # Log on the first drop and then on powers of two — a consumer stuck
+        # under backpressure for every token must not turn this into its own
+        # log flood.
+        if n & (n - 1) == 0:
+            logger.error(
+                "Streaming output deque full (maxlen=%d) for request %s — "
+                "dropped %d output(s) / %d token(s) so far, oldest first",
+                self._STREAM_DEQUE_MAXLEN,
+                output.request_id,
+                self._dropped_outputs,
+                self._dropped_tokens,
+            )
+
+    @classmethod
+    def dropped_stats(cls) -> dict[str, int]:
+        return {
+            "dropped_outputs_total": cls._dropped_outputs_total,
+            "dropped_tokens_total": cls._dropped_tokens_total,
+        }
+
+    def _accumulate(self, output: RequestOutput) -> None:
+        prev = self._merged
+        if prev is None:
+            self._merged = output
+            self._acc_token_ids = list(output.new_token_ids)
+            self._acc_text_parts = [output.new_text] if output.new_text else []
+            self._acc_logprobs = self._copy_logprobs(output.logprobs)
+        else:
+            self._merged = output
+            self._acc_token_ids.extend(output.new_token_ids)
+            if output.new_text:
+                self._acc_text_parts.append(output.new_text)
+            self._acc_logprobs = self._extend_logprobs(
+                self._acc_logprobs, output.logprobs
+            )
+            # Sticky fields: keep the first observation when the newer output
+            # omits them (same precedence as the old _merge_outputs).
+            output.error = output.error or prev.error
+            output.error_code = output.error_code or prev.error_code
+            output.error_metadata = output.error_metadata or prev.error_metadata
+            if output.generated_at is None:
+                output.generated_at = prev.generated_at
+            if output.generated_until is None:
+                output.generated_until = prev.generated_until
+            if output.time_to_first_token is None:
+                output.time_to_first_token = prev.time_to_first_token
+
+    @staticmethod
+    def _copy_logprobs(value: Any) -> Any:
+        if isinstance(value, list):
+            return list(value)
+        if isinstance(value, dict):
+            copied = dict(value)
+            content = copied.get("content")
+            if isinstance(content, list):
+                copied["content"] = list(content)
+            return copied
+        return value
+
+    @staticmethod
+    def _extend_logprobs(existing: Any, new: Any) -> Any:
+        if new is None:
+            return existing
+        if existing is None:
+            return RequestOutputCollector._copy_logprobs(new)
+        if isinstance(existing, list):
+            if isinstance(new, list):
+                existing.extend(new)
+            else:
+                existing.append(new)
+            return existing
+        if isinstance(existing, dict) and isinstance(new, dict):
+            ec = existing.get("content")
+            nc = new.get("content")
+            if isinstance(ec, list) and isinstance(nc, list):
+                ec.extend(nc)
+            return existing
+
+        def _as_list(x: Any) -> list:
+            return x if isinstance(x, list) else [x]
+
+        return _as_list(existing) + _as_list(new)
 
     def get_nowait(self) -> RequestOutput | None:
         if self.aggregate:
             output = self._merged
             if output is not None:
+                output.new_token_ids = self._acc_token_ids
+                output.new_text = "".join(self._acc_text_parts)
+                if self._acc_logprobs is not None:
+                    output.logprobs = self._acc_logprobs
                 self._merged = None
+                self._acc_token_ids = []
+                self._acc_text_parts = []
+                self._acc_logprobs = None
                 self.ready.clear()
             return output
         else:
             if self._queue:
                 output = self._queue.popleft()
+                # Audit M22: surface the loss on the delivered output itself,
+                # not just in the log/gauges.
+                if self._dropped_outputs:
+                    output.dropped_outputs = self._dropped_outputs
                 if not self._queue:
                     self.ready.clear()
                 return output
@@ -74,28 +189,20 @@ class RequestOutputCollector:
             return None
 
     async def get(self) -> RequestOutput:
-        if not self._is_waiting:
-            self._is_waiting = True
-            RequestOutputCollector._waiting_consumers += 1
-        try:
-            while True:
-                # E-5 (#811): a cleared/closed collector must not hang a
-                # waiting consumer — wake and return rather than block.
+        while True:
+            # E-5 (#811): a cleared/closed collector must not hang a
+            # waiting consumer — wake and return rather than block.
+            if self._closed:
+                return None
+            while not (self._merged if self.aggregate else self._queue):
                 if self._closed:
                     return None
-                while not (self._merged if self.aggregate else self._queue):
-                    if self._closed:
-                        return None
-                    await self.ready.wait()
-                    if self._closed:
-                        return None
-                output = self.get_nowait()
-                if output is not None:
-                    return output
-        finally:
-            if self._is_waiting:
-                self._is_waiting = False
-                RequestOutputCollector._waiting_consumers -= 1
+                await self.ready.wait()
+                if self._closed:
+                    return None
+            output = self.get_nowait()
+            if output is not None:
+                return output
 
     def _merge_outputs(
         self,
@@ -163,19 +270,15 @@ class RequestOutputCollector:
         self._closed = True
         if self.aggregate:
             self._merged = None
+            self._acc_token_ids = []
+            self._acc_text_parts = []
+            self._acc_logprobs = None
         else:
             self._queue.clear()
         # E-5 (#811): set (not clear) so a consumer blocked in ready.wait()
         # inside get() wakes up, sees _closed, and returns None instead of
         # hanging forever. A fresh collector starts with _closed=False.
         self.ready.set()
-        if self._is_waiting:
-            self._is_waiting = False
-            RequestOutputCollector._waiting_consumers -= 1
-
-    @classmethod
-    def has_waiting_consumers(cls) -> bool:
-        return cls._waiting_consumers > 0
 
     def __bool__(self) -> bool:
         if self.aggregate:

@@ -12,13 +12,14 @@ The scheduler follows vLLM's design with:
 """
 
 import logging
+import os
 import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def _log_completion_summary(request, output):
+def _log_completion_summary(request, output, model_name=""):
     """Log Ollama-style request completion summary."""
     prompt_tokens = output.prompt_tokens
     completion_tokens = output.completion_tokens
@@ -50,9 +51,11 @@ def _log_completion_summary(request, output):
     )
 
     logger.info(
-        "| completed | prompt_tokens=%d | completion_tokens=%d | cached_tokens=%d | "
-        "ttft=%.2fs | prompt_eval=%.1fms/token | completion_eval=%.1fms/token | "
-        "prompt_tps=%.1f | completion_tps=%.1f | total=%.1fs | finish=%s",
+        "| completed | model=%s | prompt_tokens=%d | completion_tokens=%d | "
+        "cached_tokens=%d | ttft=%.2fs | prompt_eval=%.1fms/token | "
+        "completion_eval=%.1fms/token | prompt_tps=%.1f | completion_tps=%.1f | "
+        "total=%.1fs | finish=%s",
+        model_name,
         prompt_tokens,
         completion_tokens,
         cached_tokens,
@@ -249,8 +252,16 @@ def _process_batch_responses(
             output.finish_reason = response.finish_reason
             finished_ids.add(request_id)
 
-            # Ollama-style completion summary
-            _log_completion_summary(request, output)
+            # Ollama-style completion summary. The model id makes a mixed
+            # pool log readable: without it, per-model throughput triage
+            # means cross-referencing the request id against the entry log.
+            _log_completion_summary(
+                request,
+                output,
+                os.path.basename(
+                    getattr(getattr(self, "config", None), "model_name", "") or ""
+                ),
+            )
 
             if parser_session is not None:
                 final_result = parser_session.finalize()

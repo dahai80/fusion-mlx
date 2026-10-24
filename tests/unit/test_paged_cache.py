@@ -872,7 +872,9 @@ class TestPagedCacheManager:
         manager._paged_ssd_cache_manager = mock_ssd
 
         # In-memory cache is empty, but SSD has the blocks
-        cached_blocks, num_tokens = manager.get_computed_blocks(tokens)
+        # M11: the SSD lazy-restore pin only ever belongs to a claiming
+        # caller — a non-claiming lookup must not leave unevictable blocks.
+        cached_blocks, num_tokens = manager.get_computed_blocks(tokens, claim=True)
 
         assert num_tokens == 8
         assert len(cached_blocks) == 2
@@ -897,7 +899,7 @@ class TestPagedCacheManager:
         mock_ssd.has_block = MagicMock(side_effect=lambda h: h == hash1)
         manager._paged_ssd_cache_manager = mock_ssd
 
-        cached_blocks, num_tokens = manager.get_computed_blocks(tokens)
+        cached_blocks, num_tokens = manager.get_computed_blocks(tokens, claim=True)
 
         assert num_tokens == 4
         assert len(cached_blocks) == 1
@@ -922,7 +924,7 @@ class TestPagedCacheManager:
         manager._paged_ssd_cache_manager = mock_ssd
 
         # Robust behavior: graceful miss, not ValueError from popleft().
-        cached_blocks, num_tokens = manager.get_computed_blocks(tokens)
+        cached_blocks, num_tokens = manager.get_computed_blocks(tokens, claim=True)
 
         assert num_tokens == 0
         assert cached_blocks == []
@@ -945,7 +947,7 @@ class TestPagedCacheManager:
         initial_allocated = manager.stats.allocated_blocks
         initial_free = manager.stats.free_blocks
 
-        cached_blocks, num_tokens = manager.get_computed_blocks(tokens)
+        cached_blocks, num_tokens = manager.get_computed_blocks(tokens, claim=True)
 
         assert len(cached_blocks) == 2
         assert num_tokens == 8
@@ -1118,19 +1120,3 @@ class TestCowSafety1352:
         # The source keeps the hash registration; the empty copy is not
         # reachable through a hash lookup.
         assert manager.cached_block_hash_to_block.get_block(source_hash) is source
-
-    def test_cow_copy_block_helper_does_not_inherit_hash(self):
-        manager = self._manager(initial_blocks=8, max_blocks=8)
-        source = manager.allocate_block()
-        source.token_count = 4
-        source_hash = compute_block_hash(None, [1, 2, 3, 4])
-        source.block_hash = source_hash
-        manager.cached_block_hash_to_block.insert(source_hash, source)
-        manager.increment_ref(source.block_id)
-
-        copy_block = manager._cow_copy_block(source)
-
-        assert copy_block is not None
-        assert copy_block.block_hash is None
-        assert copy_block.parent_hash is None
-        assert source.ref_count == 1

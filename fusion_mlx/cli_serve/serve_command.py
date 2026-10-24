@@ -520,7 +520,15 @@ def serve_command(args):
         )
 
     # Build scheduler config
-    enable_prefix_cache = args.enable_prefix_cache and not args.disable_prefix_cache
+    # Audit L23: one BooleanOptionalAction (--prefix-cache/--no-prefix-cache);
+    # the legacy --enable/--disable spellings share the same destination.
+    enable_prefix_cache = args.prefix_cache
+
+    if not getattr(args, "continuous_batching", True):
+        logger.warning(
+            "--no-continuous-batching is ignored: the scheduler always "
+            "continuous-batches; there is no serial mode to fall back to"
+        )
 
     scheduler_config = SchedulerConfig(
         max_num_seqs=args.max_num_seqs,

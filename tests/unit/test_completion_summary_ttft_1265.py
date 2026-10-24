@@ -8,7 +8,7 @@ import fusion_mlx.scheduler.sched_response as sr
 from fusion_mlx.scheduler.sched_response import _log_completion_summary
 
 
-def _run(caplog, monkeypatch, req, out, now):
+def _run(caplog, monkeypatch, req, out, now, model_name=""):
     # Patch sr's time REFERENCE, not sr.time.monotonic: sr.time IS the
     # stdlib time module — mutating it freezes time.monotonic() for the
     # whole pytest process, and every later test's asyncio.sleep() timer
@@ -17,7 +17,7 @@ def _run(caplog, monkeypatch, req, out, now):
     # pytest-timeout, 3 consecutive CI runs).
     monkeypatch.setattr(sr, "time", SimpleNamespace(monotonic=lambda: now))
     with caplog.at_level(logging.INFO, logger="fusion_mlx.scheduler.sched_response"):
-        _log_completion_summary(req, out)
+        _log_completion_summary(req, out, model_name)
     return caplog.records[-1].getMessage()
 
 
@@ -86,3 +86,16 @@ def test_gen_start_falls_back_to_arrival(caplog, monkeypatch):
     # gen_start=arrival=100, first_token=189 -> ttft=89s over 100 tokens
     assert "ttft=89.00s" in line
     assert "prompt_eval=890.0ms/token" in line
+
+
+def test_summary_carries_model_id(caplog, monkeypatch):
+    # A pool serves several models; without the id on the summary line,
+    # per-model throughput triage needs a join against the request log.
+    line = _run(caplog, monkeypatch, _req(), _out(), now=189.28, model_name="qwen")
+    assert line.startswith("| completed | model=qwen |")
+    assert "completion_tps=" in line
+
+
+def test_summary_defaults_to_empty_model(caplog, monkeypatch):
+    line = _run(caplog, monkeypatch, _req(), _out(), now=189.28)
+    assert "| completed | model= |" in line

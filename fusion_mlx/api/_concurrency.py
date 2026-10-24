@@ -49,7 +49,10 @@ def init_request_semaphore(max_num_seqs: int = 8) -> None:
     if _request_sem is not None:
         return
     _max_concurrent = _resolve_default_max(max_num_seqs)
-    _request_sem = asyncio.Semaphore(_max_concurrent)
+    # Audit 1019 L10: a plain Semaphore never complains about an extra
+    # release, so one stray release_request_slot() permanently widened the
+    # admission budget. BoundedSemaphore raises (caught below) instead.
+    _request_sem = asyncio.BoundedSemaphore(_max_concurrent)
     logger.info(
         "request concurrency semaphore initialized: max=%d (env=%s)",
         _max_concurrent,
@@ -71,7 +74,10 @@ def release_request_slot() -> None:
         try:
             _request_sem.release()
         except ValueError:
-            logger.warning("release_request_slot called with no held slot")
+            logger.warning(
+                "release_request_slot called with no held slot (over-release "
+                "ignored; check acquire/release pairing)"
+            )
 
 
 async def concurrency_guarded(gen):

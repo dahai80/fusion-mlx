@@ -564,7 +564,7 @@ async def chat_completions(
         request.stream,
         getattr(request, "max_tokens", None),
         getattr(request, "temperature", 0.7) or 0.7,
-        getattr(request, "temperature", None),
+        prompt_preview,
     )
 
     # Response cache — check before engine dispatch (non-streaming only)

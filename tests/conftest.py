@@ -321,6 +321,35 @@ def mock_mlx():
         pass
 
 
+@pytest.fixture(autouse=True)
+def reset_rate_limiter_state():
+    # The rate limiter is a process-global singleton
+    # (fusion_mlx/middleware/auth.py). Tests that arm it (rpm=1) to assert
+    # 429 errors used to leak that state into every later test in the same
+    # process, so unrelated route tests intermittently saw 429 instead of
+    # 200/400 and looked order-dependent. Reset to the module default before
+    # and after each test. Written directly rather than through
+    # configure_rate_limiter() to avoid two INFO log lines per test.
+    try:
+        from fusion_mlx.middleware.auth import rate_limiter
+
+        def _reset():
+            with rate_limiter._lock:
+                rate_limiter.enabled = True
+                rate_limiter.requests_per_minute = 60
+                rate_limiter._requests.clear()
+                rate_limiter._last_seen.clear()
+                rate_limiter._last_cleanup_mono = float("-inf")
+
+    except Exception:
+        yield
+        return
+
+    _reset()
+    yield
+    _reset()
+
+
 @pytest.fixture
 def mock_tokenizer():
     tok = MagicMock()

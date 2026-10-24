@@ -95,12 +95,20 @@ def lifecycle_command(args) -> int:
             if command == "stop":
                 try:
                     response = _send_app_control(command)
-                except (OSError, ValueError):
-                    # OSError: socket gone (app already stopped).
-                    # ValueError: app exited before flushing a JSON response
-                    # (it still stopped). Either way, the server is stopped.
+                except (FileNotFoundError, ConnectionRefusedError):
+                    # Socket path gone or refused: nothing is listening, so
+                    # the server really is stopped.
                     print("fusion-mlx stopped")
                     return 0
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    # The app closed the socket before flushing a JSON reply
+                    # (it exited as part of the stop) — treat as stopped.
+                    print("fusion-mlx stopped")
+                    return 0
+                # Audit L28: any OTHER OSError (timeout, reset, EPERM) used
+                # to be reported as "stopped" too, hiding a live/zombie app.
+                # Fall through to the generic handler below so the operator
+                # sees the failure.
             else:
                 response = _send_app_control_with_launch(command, timeout=timeout)
             if not response.get("ok"):

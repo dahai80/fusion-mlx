@@ -6,7 +6,9 @@ Provides FastAPI routes for:
 """
 
 import base64
+import json
 import logging
+import os
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, model_validator
@@ -27,6 +29,13 @@ def set_images_context(pool: EnginePool) -> None:
     """Inject engine pool into this module."""
     global _pool
     _pool = pool
+
+
+class LoRAAdapter(BaseModel):
+    # #1376: one adapter for the image path. scale is the mflux lora scale
+    # (1.0 = fully applied, 0.0 = no effect).
+    path: str
+    scale: float = Field(default=1.0, ge=0.0, le=2.0)
 
 
 class ImageGenerateRequest(BaseModel):
@@ -77,6 +86,11 @@ class ImageGenerateRequest(BaseModel):
     depth_image: str | None = None
     # Img2img strength (used by depth/kontext/redux/txt2img i2i)
     image_strength: float | None = Field(default=None, ge=0.0, le=1.0)
+    # #1376: per-request LoRA adapters for the FLUX/FLUX.2 mflux variants.
+    # Paths must live under FUSION_LORA_ALLOWED_DIRS (same rule as chat LoRA
+    # adapters); applied when the worker loads weights, so they need the
+    # default subprocess mode.
+    lora: list[LoRAAdapter] | None = None
     # Transparent RGBA PNG output (mlx-serve parity). Only Qwen-Image-2.1
     # has a 4-channel VAE; other backends return HTTP 400 when true. The
     # VAE's native 4th channel is preserved in the returned PNG — this does
@@ -125,6 +139,34 @@ class ImageGenerateResponse(BaseModel):
     # requested id when quality="fast" routed to the distilled sibling.
     model: str | None = None
     requested_model: str | None = None
+
+
+def _validate_image_loras(items: list[LoRAAdapter]) -> list[dict]:
+    # #1376: same containment rule as chat LoRA adapters — a request must not
+    # be able to make the worker read an arbitrary safetensors path.
+    from ..pool.engine_pool import EnginePool
+
+    allowed = EnginePool._resolve_allowed_adapter_dirs()
+    if not allowed:
+        raise HTTPException(
+            400,
+            "per-request image lora adapters are disabled; set "
+            "FUSION_LORA_ALLOWED_DIRS to the directory holding the adapters",
+        )
+    resolved = []
+    for item in items:
+        real = os.path.realpath(os.path.expanduser(item.path))
+        if not any(EnginePool._is_within(real, base) for base in allowed):
+            raise HTTPException(
+                400, f"lora path is outside FUSION_LORA_ALLOWED_DIRS: {item.path}"
+            )
+        if not real.endswith(".safetensors") or not os.path.isfile(real):
+            raise HTTPException(
+                400, f"lora file not found or not safetensors: {item.path}"
+            )
+        resolved.append({"path": real, "scale": item.scale})
+    logger.info("image lora adapters: %s", [(r["path"], r["scale"]) for r in resolved])
+    return resolved
 
 
 @router.post(
@@ -284,6 +326,8 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
             gen_kwargs["depth_image"] = request.depth_image
         if request.image_strength is not None:
             gen_kwargs["image_strength"] = request.image_strength
+        if request.lora:
+            gen_kwargs["lora"] = _validate_image_loras(request.lora)
         if request.transparent:
             # mlx-serve parity: transparent RGBA PNG only on Qwen-Image-2.1
             # (4-channel VAE). Other backends have no alpha channel → 400.
@@ -418,13 +462,17 @@ async def edit_image(
     response_format: str = Form("b64_json"),
     guidance: float | None = Form(None),
     negative_prompt: str | None = Form(None),
+    lora: str | None = Form(None),
 ) -> ImageGenerateResponse:
     """OpenAI SDK multipart shape for image edits (client.images.edit).
 
     Accepts one or more ``image[]`` file uploads plus an optional ``mask``
     and a text ``prompt``. Files are base64-encoded and routed through the
-    existing edit_image flow (Flux Fill / Kontext). The first image is the
-    edit target; extra images become multi-reference inputs.
+    existing edit_image flow. The first image is the edit target / img2img
+    base. Extra images become reference inputs only on the ``redux`` variant;
+    other variants (flux1_dev/flux2_dev/qwen_image_21/fill/kontext) cannot
+    consume them, and the engine logs a warning naming how many were dropped
+    (#1374).
     """
     if _pool is None:
         raise HTTPException(450, "Engine pool not initialized")
@@ -466,6 +514,17 @@ async def edit_image(
         request.reference_images = images_b64[1:]
     if mask_b64:
         request.mask_image = mask_b64
+    if lora:
+        # #1376: multipart cannot carry a JSON body, so the adapter list
+        # arrives as a JSON string field: [{"path": "...", "scale": 0.9}].
+        try:
+            request.lora = [LoRAAdapter(**item) for item in json.loads(lora)]
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                422,
+                "invalid lora field, expect JSON like "
+                '[{"path": "...", "scale": 0.9}]: ' + str(exc),
+            )
     logger.info(
         "images/edit multipart prompt_len=%d images=%d mask=%s model=%s",
         len(prompt),

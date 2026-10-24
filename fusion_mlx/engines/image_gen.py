@@ -236,6 +236,8 @@ VARIANT_DEFAULT_STEPS: dict[str, int] = {
 # pass). Override via FUSION_IMAGE_TIMEOUT (seconds). Invalid/non-positive
 # values fall back to the default with a warning.
 _IMAGE_GEN_TIMEOUT_DEFAULT_S = 600.0
+# Variants that condition on reference_images (extra images beyond image[0]).
+_REFERENCE_VARIANTS = frozenset({"redux", "qwen_image_edit"})
 # OP-901 (defect 2/3): grace window for an in-process image worker to finish
 # after a memory-pressure cancel. The worker thread cannot be interrupted
 # mid-generation; waiting indefinitely wedged the pool (#901). Bounded wait
@@ -964,6 +966,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         depth_image: str | None = None,
         image_strength: float | None = None,
         transparent: bool = False,
+        lora: list[dict] | None = None,
         **kwargs,
     ) -> list[bytes]:
         # Subprocess mode loads weights in the worker — the main process does
@@ -1105,6 +1108,35 @@ class ImageGenEngine(BaseNonStreamingEngine):
         if transparent:
             output_format = "PNG"
 
+        # #1374: only the redux variant consumes reference_images; every other
+        # variant takes image[0] as the img2img base and ignores the rest.
+        # fusion-drama attaches character/scene refs to /v1/images/edits, so a
+        # silent drop looks like unexplained character drift.
+        if reference_images and self.variant not in _REFERENCE_VARIANTS:
+            logger.warning(
+                "image variant '%s' ignores %d reference image(s); only %s "
+                "condition on extra images — the first image is used as the "
+                "img2img/edit base",
+                self.variant,
+                len(reference_images),
+                "/".join(sorted(_REFERENCE_VARIANTS)),
+            )
+
+        if lora and not subprocess_mode:
+            # #1376: the in-process path loads weights once at start(), so a
+            # per-request adapter cannot be applied (and un-applied) safely.
+            raise ValueError(
+                "image lora adapters require the subprocess worker "
+                "(FUSION_IMAGE_SUBPROCESS=1, the default); remove the lora "
+                "field or re-enable subprocess mode"
+            )
+        if lora:
+            logger.info(
+                "image lora adapters: variant=%s %s",
+                self.variant,
+                [(item.get("path"), item.get("scale", 1.0)) for item in lora],
+            )
+
         if subprocess_mode:
             if transparent:
                 kwargs["transparent"] = True
@@ -1129,6 +1161,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 mask_image=mask_image,
                 depth_image=depth_image,
                 image_strength=image_strength,
+                lora=lora,
                 kwargs=kwargs,
                 t0=t0,
                 activity_id=activity_id,
@@ -1548,6 +1581,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         kwargs: dict[str, Any],
         t0: float,
         activity_id: str,
+        lora: list[dict] | None = None,
     ) -> list[bytes]:
         # S3: subprocess image generation via MediaJobManager.
         from ..media.job_manager import MediaJobLoadHangError, MediaJobManager
@@ -1567,6 +1601,29 @@ class ImageGenEngine(BaseNonStreamingEngine):
         if self._variant == "txt2img":
             config_label = _infer_flux2_config(self._model_path)
 
+        # #1375: the worker process only understands FILE PATHS, while the API
+        # layer hands this method base64 blobs. The in-process branch resolves
+        # them inside generate(); the subprocess branch has to do it here or
+        # mflux tries open(<b64>) and the worker dies with OSError "File name
+        # too long" (#898 symptom, previously unreachable because only the
+        # in-process path was tested). Temp files live until the worker exits.
+        _img_temp_paths: list[str] = []
+        edit_image = _resolve_image_to_path(edit_image, _img_temp_paths)
+        mask_image = _resolve_image_to_path(mask_image, _img_temp_paths)
+        control_image = _resolve_image_to_path(control_image, _img_temp_paths)
+        depth_image = _resolve_image_to_path(depth_image, _img_temp_paths)
+        if reference_images:
+            reference_images = [
+                _resolve_image_to_path(ref, _img_temp_paths) for ref in reference_images
+            ]
+        if _img_temp_paths:
+            logger.info(
+                "image subprocess: resolved %d base64 image input(s) to temp "
+                "files for variant=%s",
+                len(_img_temp_paths),
+                self._variant,
+            )
+
         gen_params: dict[str, Any] = dict(
             seed=seed,
             prompt=prompt,
@@ -1585,6 +1642,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
             mask_image=mask_image,
             reference_images=reference_images,
             reference_strengths=reference_strengths,
+            lora=lora,
             extra_kwargs=kwargs,
         )
 
@@ -1663,6 +1721,12 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 set_media_job_active(False)
             except Exception:  # noqa: BLE001
                 pass
+            # #1375: drop the decoded input images now that the worker is gone.
+            for _tmp in _img_temp_paths:
+                try:
+                    os.unlink(_tmp)
+                except OSError:
+                    logger.debug("image subprocess: temp input %s already gone", _tmp)
             await self._finish_activity(activity_id)
 
         # Read output files into bytes, then clean up temp dir
@@ -1970,7 +2034,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
         logger.info("stage:vae decode out_shape=%s", tuple(result.shape))
         return result
 
-    async def decode_tiled(self, latent: mx.array, tile_size: int = 256) -> mx.array:
+    async def decode_tiled(self, latent: mx.array) -> mx.array:
+        # Audit 1019 L32: the old ``tile_size`` parameter was only logged —
+        # tiling is owned by ``flux.tiling_config``, so accepting the flag
+        # silently ignored the caller's request. Dropped rather than left
+        # lying: callers that want tiling configure the model's tiling_config.
         flux = self._require_flux()
         if flux.vae is None:
             raise RuntimeError("vae is unloaded; call load_vae().")
@@ -1990,8 +2058,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(get_executor("image"), _decode)
         logger.info(
-            "stage:vae decode_tiled tile_size=%s out_shape=%s",
-            tile_size,
+            "stage:vae decode_tiled tiling=%s out_shape=%s",
+            tiling_config is not None,
             tuple(result.shape),
         )
         return result

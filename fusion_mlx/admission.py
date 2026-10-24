@@ -159,7 +159,11 @@ class HeavyAdmissionGate:
             )
         physical = self.physical_bytes()
         usage = self.current_usage_bytes()
-        line = int(physical * self._resolve_safety_line())
+        # Audit L2: resolve the fraction once — the message used to re-read
+        # the env var and re-parse it, so a concurrent env change could make
+        # the reported line disagree with the one actually enforced.
+        line_fraction = self._resolve_safety_line()
+        line = int(physical * line_fraction)
         projected = usage + max(0, int(budget_bytes))
         detail = {
             "kind": kind,
@@ -177,7 +181,7 @@ class HeavyAdmissionGate:
                 f"{line / 2**30:.1f}GB "
                 f"(resident {usage / 2**30:.1f}GB + budget "
                 f"{max(0, int(budget_bytes)) / 2**30:.1f}GB, line = "
-                f"{physical / 2**30:.1f}GB x {self._resolve_safety_line():.2f})"
+                f"{physical / 2**30:.1f}GB x {line_fraction:.2f})"
             )
             logger.warning(
                 "admission rejected %s in %.1fms: %s",
@@ -252,12 +256,13 @@ class HeavyAdmissionGate:
             paused = self._paused
             paused_at = self._paused_at
         physical = self.physical_bytes()
-        line = int(physical * self._resolve_safety_line())
+        line_fraction = self._resolve_safety_line()
+        line = int(physical * line_fraction)
         return {
             "enabled": self._resolve_enabled(),
             "paused": paused,
             "paused_at": paused_at,
-            "safety_line_fraction": self._resolve_safety_line(),
+            "safety_line_fraction": line_fraction,
             "physical_bytes": physical,
             "safety_line_bytes": line,
             "usage_bytes": self.current_usage_bytes(),

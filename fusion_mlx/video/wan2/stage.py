@@ -301,8 +301,8 @@ def run_denoise(
 
     if seed < 0:
         seed = random.randint(0, 2**32 - 1)
-    mx.random.seed(seed)
-    np.random.seed(seed)
+    # Audit M8: local key instead of a process-global seed.
+    _noise_key = mx.random.key(seed)
 
     if is_dual:
         low_noise_model, high_noise_model = models
@@ -378,7 +378,7 @@ def run_denoise(
     sched_cls = _SCHEDULERS.get(scheduler, FlowUniPCScheduler)
     sched = sched_cls(num_train_timesteps=config.num_train_timesteps)
     sched.set_timesteps(steps, shift=shift)
-    noise = mx.random.normal(target_shape)
+    noise = mx.random.normal(target_shape, key=_noise_key)
     if (
         control.is_i2v_mask_blend
         and control.i2v_mask is not None

@@ -1583,22 +1583,35 @@ def generate_video(
         logger.info(
             "Tiling (%s): spatial=%s, temporal=%s", tiling, spatial_info, temporal_info
         )
-        video = vae_decoder.decode_tiled(
-            latents,
-            tiling_config=tiling_config,
-            tiling_mode=tiling,
-            debug=verbose,
-            on_frames_ready=on_frames_ready,
-        )
     else:
         logger.info("Tiling: disabled")
-        video = vae_decoder(latents)
-    mx.eval(video)
-    mx.clear_cache()
+
+    # Audit M7: a decode failure must still release the streaming
+    # VideoWriter — an unreleased writer keeps the mp4 open and leaves a
+    # truncated file behind for the next run to trip over.
+    try:
+        if tiling_config is not None:
+            video = vae_decoder.decode_tiled(
+                latents,
+                tiling_config=tiling_config,
+                tiling_mode=tiling,
+                debug=verbose,
+                on_frames_ready=on_frames_ready,
+            )
+        else:
+            video = vae_decoder(latents)
+        mx.eval(video)
+        mx.clear_cache()
+    finally:
+        if video_writer is not None:
+            video_writer.release()
+            logger.info(
+                "Streamed video to %s (%d frames written)",
+                output_path,
+                stream_frame_count,
+            )
 
     if video_writer is not None:
-        video_writer.release()
-        logger.info("Streamed video to %s", output_path)
         video = mx.squeeze(video, axis=0)
         video = mx.transpose(video, (1, 2, 3, 0))
         video = mx.clip((video + 1.0) / 2.0, 0.0, 1.0)
@@ -1617,6 +1630,7 @@ def generate_video(
         else:
             save_path = output_path
 
+        out = None
         try:
             import cv2
 
@@ -1625,11 +1639,15 @@ def generate_video(
             out = cv2.VideoWriter(str(save_path), fourcc, fps, (w, h))
             for frame in video_np:
                 out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-            out.release()
             if not audio:
                 logger.info("Saved video to %s", output_path)
         except Exception as e:
             logger.error("Could not save video: %s", e)
+        finally:
+            # Audit M7: release in finally — a write failure used to leave
+            # the writer (and the half-written mp4) open.
+            if out is not None:
+                out.release()
 
     audio_np = None
     vocoder_sample_rate = AUDIO_SAMPLE_RATE
@@ -1680,10 +1698,15 @@ def generate_video(
 
         logger.info("Combining video and audio...")
         temp_video_path = output_path.with_suffix(".temp.mp4")
-        success = mux_video_audio(temp_video_path, audio_path, output_path)
+        # Audit M7: a mux exception used to leave .temp.mp4 on disk forever.
+        try:
+            success = mux_video_audio(temp_video_path, audio_path, output_path)
+        except Exception:
+            temp_video_path.unlink(missing_ok=True)
+            raise
         if success:
             logger.info("Saved video with audio to %s", output_path)
-            temp_video_path.unlink()
+            temp_video_path.unlink(missing_ok=True)
         else:
             temp_video_path.rename(output_path)
             logger.warning("Saved video without audio to %s", output_path)

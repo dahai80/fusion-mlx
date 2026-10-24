@@ -709,7 +709,29 @@ async def list_voices():
 
             voice_info["mandarin_voices"] = kokoro_voice_capabilities()
         voices.append(voice_info)
-    return {"voices": voices}
+
+    # #1336: trained voice packages are addressable as `voice_ref` on
+    # /v1/audio/speech, so list them next to the stock model entries.
+    from fusion_mlx.training.voice_service import list_trained_voices
+
+    trained: list[dict] = []
+    for manifest in list_trained_voices():
+        if not manifest.get("ready"):
+            continue
+        trained.append(
+            {
+                "voice_ref": manifest.get("voice_id"),
+                "model": manifest.get("base_model"),
+                "base_voice": manifest.get("base_voice"),
+                "family": manifest.get("family"),
+                "tenant_id": manifest.get("tenant_id"),
+                "sample_count": manifest.get("sample_count"),
+                "audio_seconds": manifest.get("audio_seconds"),
+                "quality": manifest.get("quality"),
+                "created_at": manifest.get("created_at"),
+            }
+        )
+    return {"voices": voices, "trained_voices": trained}
 
 
 @router.post(
@@ -743,6 +765,31 @@ async def create_speech(request: AudioSpeechRequest):
                 detail="Streaming TTS currently only supports response_format='wav'",
             )
         streaming_interval = _resolve_tts_streaming_interval(request)
+
+    # #1336: a trained voice package resolves to its .safetensors pack, which
+    # the kokoro pipeline loads exactly like a stock voice name. Explicit
+    # `voice` still wins; an unknown ref is a loud 404 rather than a silent
+    # fall back to the default voice. Resolved before any engine work so a
+    # bad ref never triggers a model load (or its retryable-503 path).
+    if request.voice_ref and not request.voice:
+        from fusion_mlx.training.voice_service import resolve_voice_ref
+
+        resolved_ref = resolve_voice_ref(request.voice_ref)
+        if resolved_ref is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"voice_ref {request.voice_ref!r} not found; train it with "
+                    "POST /admin/api/fine-tune/voice/jobs or list "
+                    "GET /admin/api/fine-tune/voice/backends"
+                ),
+            )
+        request.voice = resolved_ref
+        logger.info(
+            "audio/speech: voice_ref %s resolved to %s",
+            request.voice_ref,
+            resolved_ref,
+        )
 
     audio_bytes = _decode_ref_audio_base64(request)
 

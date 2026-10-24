@@ -16,6 +16,7 @@ effect on next boot; the reload path logs them as ``not_applied``.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -95,6 +96,11 @@ class MemorySection(BaseModel):
             ) from exc
         if f < 0:
             raise ValueError("memory_guard_custom_ceiling_gb must be >= 0")
+        # The removed --memory-guard-gb flag rejected NaN/inf ("finite
+        # number"); settings.json must not become the loophole — NaN compares
+        # False against every bound and would disable the ceiling silently.
+        if not math.isfinite(f):
+            raise ValueError("memory_guard_custom_ceiling_gb must be a finite number")
         return f
 
 

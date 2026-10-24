@@ -1113,9 +1113,13 @@ def _write_mp4(video_np: np.ndarray, fps: int, output_path: str | None) -> bytes
         out_path.parent.mkdir(parents=True, exist_ok=True)
         fourcc = cv2.VideoWriter_fourcc(*"avc1")
         out = cv2.VideoWriter(str(out_path), fourcc, fps, (w, h))
-        for frame in video_np:
-            out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        out.release()
+        # Audit M7: release in finally so a failed write cannot leave the
+        # mp4 handle open and the file truncated.
+        try:
+            for frame in video_np:
+                out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        finally:
+            out.release()
         logger.info("Saved video to %s", out_path)
         return out_path.read_bytes()
 
@@ -1125,8 +1129,14 @@ def _write_mp4(video_np: np.ndarray, fps: int, output_path: str | None) -> bytes
     tmp = Path(tempfile.mkstemp(suffix=".mp4")[1])
     fourcc = cv2.VideoWriter_fourcc(*"avc1")
     out = cv2.VideoWriter(str(tmp), fourcc, fps, (w, h))
-    for frame in video_np:
-        out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    try:
+        for frame in video_np:
+            out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+    except Exception:
+        # Audit M7: release + unlink the scratch file on the failure path.
+        out.release()
+        tmp.unlink(missing_ok=True)
+        raise
     out.release()
     data = tmp.read_bytes()
     tmp.unlink(missing_ok=True)

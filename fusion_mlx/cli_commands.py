@@ -18,6 +18,82 @@ from fusion_mlx.cli_serve import (
 
 logger = logging.getLogger(__name__)
 
+# Every ``fusion-mlx serve`` option that consumes the following argv token
+# (action not in store_true/store_false/count/help/version, no ``nargs=0``).
+# ``ps`` walks a live server's argv to find the model positional; a flag
+# missing here has its value printed as the model name (audit L26).
+# tests/unit/test_cli_ps_value_flags.py derives the same set from the
+# serve parser in cli.py and fails if this constant drifts.
+_SERVE_VALUE_FLAGS = frozenset(
+    {
+        "--api-key",
+        "--base-path",
+        "--cache-memory-mb",
+        "--cache-memory-percent",
+        "--chunked-prefill-tokens",
+        "--cloud-api-base",
+        "--cloud-api-key",
+        "--cloud-model",
+        "--cloud-threshold",
+        "--completion-batch-size",
+        "--cors-origins",
+        "--dflash-drafter-path",
+        "--dflash2-block-size",
+        "--dflash2-draft-bits",
+        "--dflash2-drafter-path",
+        "--dspark-draft-quant-bits",
+        "--dspark-drafter-path",
+        "--default-frequency-penalty",
+        "--default-min-p",
+        "--default-presence-penalty",
+        "--default-repetition-penalty",
+        "--default-temperature",
+        "--default-top-k",
+        "--default-top-p",
+        "--embedding-model",
+        "--gpu-memory-utilization",
+        "--host",
+        "--kv-cache-dtype",
+        "--kv-cache-turboquant",
+        "--kv-cache-turboquant-bits",
+        "--kv-cache-turboquant-group-size",
+        "--kv-disk-checkpoint-interval",
+        "--listen-fd",
+        "--log-level",
+        "--lora-path",
+        "--max-cache-blocks",
+        "--max-concurrent-requests",
+        "--max-num-seqs",
+        "--max-request-bytes",
+        "--max-tokens",
+        "--mcp-config",
+        "--memory-tier",
+        "--model",
+        "--model-dir",
+        "--mtp-chain-k",
+        "--mtp-num-draft-tokens",
+        "--mtp-sidecar",
+        "--paged-cache-block-size",
+        "--port",
+        "--prefix-cache-index",
+        "--prefix-cache-size",
+        "--prefill-batch-size",
+        "--prefill-step-size",
+        "--profile",
+        "--rate-limit",
+        "--reasoning-parser",
+        "--served-model-name",
+        "--spec-decode",
+        "--stream-interval",
+        "--suffix-max-draft",
+        "--suffix-max-suffix-len",
+        "--suffix-min-confidence",
+        "--suffix-min-draft-len",
+        "--tool-call-parser",
+        "--watchdog-ppid",
+    }
+)
+
 
 def _format_bytes(n: int) -> str:
     """Render a byte count as a 1-decimal IEC-suffixed string (GiB/MiB/KiB).
@@ -584,24 +660,12 @@ def ps_command(_args):
         # Extract model arg and --port flag. argparse accepts options
         # before positionals, so the model is the first non-flag token
         # after `serve` whose prior token isn't a value-taking flag.
-        # The small list of flags here is conservative; unknown flags
-        # are assumed to NOT take a value.
-        VALUE_FLAGS = {
-            "--host",
-            "--port",
-            "--api-key",
-            "--tool-call-parser",
-            "--reasoning-parser",
-            "--log-level",
-            "--mcp-config",
-            "--cors-origins",
-            "--cloud-model",
-            "--cloud-api-base",
-            "--cloud-api-key",
-            "--served-model-name",
-            "--max-tokens",
-            "--gpu-memory-utilization",
-        }
+        # Audit L26: the old whitelist was a partial hand copy and missed
+        # flags like --kv-cache-dtype / --listen-fd, so their values were
+        # printed as the model name. _SERVE_VALUE_FLAGS is now the full
+        # set; tests/unit/test_cli_ps_value_flags.py re-derives it from
+        # cli.py's serve parser and fails if the two drift.
+        VALUE_FLAGS = _SERVE_VALUE_FLAGS
         model = "(unknown)"
         port = "11434"  # serve's default
         host = ""  # --host value; unix:/path means UDS listen mode (#351)
@@ -638,6 +702,15 @@ def ps_command(_args):
                             port = cmd[i + 1]
                         elif tok == "--host" and i + 1 < len(cmd):
                             host = cmd[i + 1]
+                        elif (
+                            tok in ("--model", "--model-dir", "--base-path")
+                            and i + 1 < len(cmd)
+                            and not model_seen
+                        ):
+                            # The flag value is the model, not a flag value
+                            # to skip past.
+                            model = cmd[i + 1]
+                            model_seen = True
                         i += 2
                     else:
                         i += 1
@@ -715,9 +788,33 @@ def _spawn_chat_server(
     import socket
     import subprocess
 
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    # Audit 1019 L27: binding an ephemeral port and immediately closing the
+    # socket before spawning the child is a TOCTOU — anything else on the box
+    # could claim the port in that window and the child would then fail to
+    # bind while the REPL waited out its ready timeout. Keep the socket and
+    # hand it to the child through ``--listen-fd``, the same socket-activation
+    # path fusion-supervisor uses; uvicorn takes it in
+    # ``create_server(sock=...)`` and calls ``listen()`` itself.
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", 0))
+    except OSError:
+        sock.close()
+        raise
+    port = sock.getsockname()[1]
+    listen_fd = sock.fileno()
+    # ``_listen_fd_arg`` accepts 3..1023 only. A REPL holding 1000+ fds is
+    # pathological, but falling back to the child rebinding (with a loud
+    # warning) beats refusing to start chat.
+    use_inherited_fd = 3 <= listen_fd <= 1023
+    if not use_inherited_fd:
+        logger.warning(
+            "chat server socket fd %d is outside the --listen-fd range; "
+            "falling back to bind-close-then-rebind on port %d",
+            listen_fd,
+            port,
+        )
+        sock.close()
     base_url = f"http://127.0.0.1:{port}"
     cmd = [
         sys.executable,
@@ -732,6 +829,8 @@ def _spawn_chat_server(
         "--log-level",
         "WARNING",
     ]
+    if use_inherited_fd:
+        cmd.extend(["--listen-fd", str(listen_fd)])
     if served_name and served_name != model:
         cmd.extend(["--served-model-name", served_name])
     log = open(log_path, "w")  # noqa: SIM115 — kept open for proc lifetime
@@ -824,6 +923,10 @@ def _spawn_chat_server(
                 # post-fork / pre-exec setup; the child cannot reach
                 # ``exec`` until this runs.
                 preexec_fn=_child_unblock_signals if has_pthread_sigmask else None,
+                # Audit 1019 L27: hand the already-bound socket to the child
+                # so no other process can win the port between our bind and
+                # the child's.
+                pass_fds=(listen_fd,) if use_inherited_fd else (),
             )
         except (OSError, ValueError):
             # Popen raised before constructing the child — the log handle
@@ -846,6 +949,12 @@ def _spawn_chat_server(
         if log_handle is not None:
             log_handle.release()
     finally:
+        # The child holds its own descriptor now; the parent copy is done
+        # (idempotent, and already closed on the fallback path).
+        try:
+            sock.close()
+        except OSError:
+            pass
         # Best-effort restore so post-spawn signals route normally. Any
         # SIGTERM/SIGINT that landed while blocked is delivered HERE
         # (kernel-queued, exactly the desired behaviour: the chat's

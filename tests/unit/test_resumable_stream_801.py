@@ -234,5 +234,100 @@ def test_consumer_breaks_when_producer_finished_without_complete():
     assert out == ["data: only\n\n"]
 
 
+async def _hang():
+    await asyncio.sleep(3600)
+
+
+async def _capture(fn):
+    # Run an async test body that may create tasks, then give the loop one
+    # turn so a cancelled task actually reaches the done state.
+    result = await fn()
+    await asyncio.sleep(0)
+    return result
+
+
+def test_drop_cancels_producer_task():
+    # Audit M1: dropping a session used to leave its producer generating and
+    # appending into a buffer nobody could ever read again.
+    async def main():
+        store = reset_store_for_tests()
+        sess = store.create("d1")
+        task = asyncio.create_task(_hang())
+        sess.producer_task = task
+        store.drop("d1")
+        return task
+
+    task = asyncio.run(_capture(main))
+    assert task.cancelled()
+
+
+def test_expired_get_cancels_producer_task(monkeypatch):
+    import fusion_mlx.stream_session as ss
+
+    async def main():
+        store = reset_store_for_tests()
+        sess = store.create("e1")
+        task = asyncio.create_task(_hang())
+        sess.producer_task = task
+        monkeypatch.setattr(ss, "_TTL", -1.0)
+        assert store.get("e1") is None
+        return task
+
+    task = asyncio.run(_capture(main))
+    assert task.cancelled()
+
+
+def test_create_reaps_untouched_expired_sessions(monkeypatch):
+    # Audit M1: expiry was only evaluated on access, so a session nobody
+    # looked up again was never reclaimed.
+    import fusion_mlx.stream_session as ss
+
+    async def main():
+        store = reset_store_for_tests()
+        old = store.create("old")
+        task = asyncio.create_task(_hang())
+        old.producer_task = task
+        monkeypatch.setattr(ss, "_TTL", -1.0)
+        store.create("new")
+        return task
+
+    task = asyncio.run(_capture(main))
+    assert task.cancelled()
+
+
+def test_buffer_overflow_fails_loudly_and_cancels_producer(monkeypatch):
+    import fusion_mlx.stream_session as ss
+
+    async def main():
+        monkeypatch.setattr(ss, "_MAX_EVENTS", 2)
+        sess = StreamSession("ovf")
+        task = asyncio.create_task(_hang())
+        sess.producer_task = task
+        sess.append("data: 1\n\n")
+        sess.append("data: 2\n\n")
+        assert not sess.complete
+        sess.append("data: 3\n\n")
+        return sess, task
+
+    sess, task = asyncio.run(_capture(main))
+    assert sess.complete
+    assert "buffer exceeded" in (sess.error or "")
+    assert task.cancelled()
+    # Bounded: post-overflow appends are ignored.
+    before = len(sess.events)
+    sess.append("data: 4\n\n")
+    assert len(sess.events) == before
+
+
+def test_normal_complete_session_still_replays_all_events():
+    # Overflow guard must not disturb the happy path.
+    sess = StreamSession("ok")
+    sess.append("data: a\n\n")
+    sess.mark_complete(finish_reason="stop")
+    sess.append("data: late\n\n")
+    assert sess.events == ["data: a\n\n"]
+    assert sess.complete and sess.finish_reason == "stop"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
