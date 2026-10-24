@@ -159,3 +159,51 @@ def test_oq_streaming_forwards_model_settings_to_measurement(tmp_path, monkeypat
         )
 
     assert captured["model_settings"] is settings
+
+
+def _write_vlm_config(model_dir, mtp_layers=1):
+    config = {
+        "architectures": ["Qwen3_5ForConditionalGeneration"],
+        "model_type": "qwen3_5",
+        "text_config": {"mtp_num_hidden_layers": mtp_layers},
+    }
+    (model_dir / "config.json").write_text(json.dumps(config))
+
+
+def test_vlm_load_disables_mtp_attach_when_checkpoint_has_no_mtp_weights(
+    tmp_path, monkeypatch
+):
+    # Issue #1426 / prod regression: a checkpoint that declares MTP heads in
+    # config but ships no mtp.* tensors must not get an MTPModule attached —
+    # strict load_weights would fail with "Missing N parameters".
+    from fusion_mlx.patches import mlx_vlm_mtp
+    from fusion_mlx.utils.model_loading import maybe_apply_pre_load_patches
+
+    monkeypatch.setattr(mlx_vlm_mtp, "_MTP_ATTACH_ENABLED", True)
+    _write_vlm_config(tmp_path)
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {"weight_map": {"language_model.model.norm.weight": "a.safetensors"}}
+        )
+    )
+
+    maybe_apply_pre_load_patches(str(tmp_path), for_vlm=True)
+
+    assert mlx_vlm_mtp.is_mtp_attach_enabled() is False
+
+
+def test_vlm_load_keeps_mtp_attach_when_checkpoint_has_mtp_weights(
+    tmp_path, monkeypatch
+):
+    from fusion_mlx.patches import mlx_vlm_mtp
+    from fusion_mlx.utils.model_loading import maybe_apply_pre_load_patches
+
+    monkeypatch.setattr(mlx_vlm_mtp, "_MTP_ATTACH_ENABLED", False)
+    _write_vlm_config(tmp_path)
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {"language_model.mtp.fc.weight": "a.safetensors"}})
+    )
+
+    maybe_apply_pre_load_patches(str(tmp_path), for_vlm=True)
+
+    assert mlx_vlm_mtp.is_mtp_attach_enabled() is True

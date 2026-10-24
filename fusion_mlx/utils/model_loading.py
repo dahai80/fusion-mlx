@@ -322,7 +322,23 @@ def maybe_apply_pre_load_patches(
                 from ..patches.mlx_vlm_mtp import (
                     apply_mlx_vlm_mtp_patch,
                     apply_mlx_vlm_mtp_runtime_patch,
+                    set_mtp_attach_enabled,
                 )
+
+                # The runtime patch attaches an MTPModule whenever the config
+                # declares mtp_num_hidden_layers > 0. Checkpoints that declare
+                # it but ship no mtp.* tensors (issue #1426, and the MLX
+                # Qwen3.5-4B build used on the serve path) then fail strict
+                # load_weights with "Missing N parameters". Gate the attach on
+                # the checkpoint actually carrying the weights.
+                has_mtp_weights = _checkpoint_has_mtp_weights(model_name)
+                set_mtp_attach_enabled(has_mtp_weights)
+                if not has_mtp_weights:
+                    logger.warning(
+                        "VLM checkpoint %s declares MTP heads but ships no "
+                        "mtp.* weights; MTP head attach disabled for this load",
+                        model_name,
+                    )
 
                 apply_mlx_vlm_mtp_patch()
                 apply_mlx_vlm_mtp_runtime_patch()
