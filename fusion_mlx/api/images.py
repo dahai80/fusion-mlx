@@ -423,8 +423,11 @@ async def edit_image(
 
     Accepts one or more ``image[]`` file uploads plus an optional ``mask``
     and a text ``prompt``. Files are base64-encoded and routed through the
-    existing edit_image flow (Flux Fill / Kontext). The first image is the
-    edit target; extra images become multi-reference inputs.
+    existing edit_image flow. The first image is the edit target / img2img
+    base. Extra images become reference inputs only on the ``redux`` variant;
+    other variants (flux1_dev/flux2_dev/qwen_image_21/fill/kontext) cannot
+    consume them, and the engine logs a warning naming how many were dropped
+    (#1374).
     """
     if _pool is None:
         raise HTTPException(450, "Engine pool not initialized")

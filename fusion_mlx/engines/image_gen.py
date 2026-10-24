@@ -1105,6 +1105,19 @@ class ImageGenEngine(BaseNonStreamingEngine):
         if transparent:
             output_format = "PNG"
 
+        # #1374: only the redux variant consumes reference_images; every other
+        # variant takes image[0] as the img2img base and ignores the rest.
+        # fusion-drama attaches character/scene refs to /v1/images/edits, so a
+        # silent drop looks like unexplained character drift.
+        if reference_images and self.variant != "redux":
+            logger.warning(
+                "image variant '%s' ignores %d reference image(s); only "
+                "'redux' conditions on extra images — the first image is used "
+                "as the img2img/edit base",
+                self.variant,
+                len(reference_images),
+            )
+
         if subprocess_mode:
             if transparent:
                 kwargs["transparent"] = True
