@@ -517,30 +517,65 @@ class BlockAwarePrefixCache(CacheManager):
                     return block_table, remaining
 
         if shared_block_ids:
-            # Create block table for this request with shared blocks
-            block_table = self.paged_cache.create_block_table(request_id)
-
-            for block_id in shared_block_ids:
-                # Increment ref count for sharing
-                self.paged_cache.increment_ref(block_id)
-                block = self.paged_cache.allocated_blocks.get(block_id)
-                if block:
+            # #1352 H3: the hash-map lookup above released the paged locks, so
+            # a matched block can be evicted/reallocated before we take our
+            # refs. Validate liveness + hash under _cache_lock — the same
+            # treatment the P1-07 fixed branch above applies — and recompute
+            # the prefix length from surviving blocks. Otherwise the engine is
+            # told tokens are cached while the block table covers fewer,
+            # producing a silent KV hole (garbage decode).
+            block_table = None
+            with self._cache_lock:
+                block_table = self.paged_cache.create_block_table(request_id)
+                live_prefix_len = 0
+                live_count = 0
+                for block_id in shared_block_ids:
+                    block = self.paged_cache.allocated_blocks.get(block_id)
+                    if block is None or block.block_hash is None:
+                        logger.warning(
+                            "fetch_cache: shared block %d is dead or hashless, "
+                            "stopping prefix match at %d tokens",
+                            block_id,
+                            live_prefix_len,
+                        )
+                        break
+                    # Increment ref count for sharing. A False result means the
+                    # block vanished between lookup and ref acquisition.
+                    if not self.paged_cache.increment_ref(block_id):
+                        logger.warning(
+                            "fetch_cache: increment_ref failed for shared block "
+                            "%d, stopping prefix match at %d tokens",
+                            block_id,
+                            live_prefix_len,
+                        )
+                        break
                     block_table.block_ids.append(block_id)
                     block_table.num_tokens += block.token_count
+                    live_prefix_len += block.token_count
+                    live_count += 1
 
-            num_prefix_tokens = len(tokens) - len(remaining)
-            self._hits += 1
-            self._tokens_saved += num_prefix_tokens
-            self._tokens_matched_total += num_prefix_tokens
-            self._tokens_requested_total += len(tokens)
-            self._record_bucket_hit(num_prefix_tokens)
+                if live_count > 0:
+                    num_prefix_tokens = live_prefix_len
+                    self._hits += 1
+                    self._tokens_saved += num_prefix_tokens
+                    self._tokens_matched_total += num_prefix_tokens
+                    self._tokens_requested_total += len(tokens)
+                    self._record_bucket_hit(num_prefix_tokens)
 
+                    logger.debug(
+                        f"Cache hit for {request_id}: "
+                        f"{live_count} blocks, {num_prefix_tokens} tokens "
+                        f"({len(shared_block_ids) - live_count} dead)"
+                    )
+
+                    return block_table, tokens[live_prefix_len:]
+
+            # Every matched block was evicted — no usable prefix.
+            self.paged_cache.delete_block_table(request_id)
             logger.debug(
-                f"Cache hit for {request_id}: "
-                f"{len(shared_block_ids)} blocks, {num_prefix_tokens} tokens"
+                "Shared-prefix match for %s fully evicted, treating as miss",
+                request_id,
             )
-
-            return block_table, remaining
 
         # No cache hit
         self._misses += 1
