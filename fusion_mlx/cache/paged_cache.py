@@ -1506,6 +1506,7 @@ class PagedCacheManager(CacheManager):
     def _evict_lru_blocks_locked(self, num_blocks: int) -> int:
         """Evict LRU blocks — caller must hold _block_table_lock, _hash_map_lock, _free_queue_lock."""
         evicted = 0
+        purged_orphans = 0
         curr = self.free_block_queue.fake_head.next_free_block
         while curr is not None and curr is not self.free_block_queue.fake_tail:
             if evicted >= num_blocks:
@@ -1531,9 +1532,19 @@ class PagedCacheManager(CacheManager):
             evicted += 1
             curr = curr.next_free_block
             if evicted_parent_hash is not None:
-                evicted += self._cascade_evict_orphans_locked(evicted_parent_hash)
-        if evicted > 0:
-            logger.info(f"Evicted {evicted} LRU blocks from cache")
+                # Audit M18: keep the two counts apart. The cascade only
+                # purges stale hash entries for orphaned descendants — it
+                # does NOT free a block — so folding it into `evicted` made
+                # callers believe they had reclaimed N blocks and exit the
+                # eviction loop early with the pool still full.
+                cascaded = self._cascade_evict_orphans_locked(evicted_parent_hash)
+                purged_orphans += cascaded
+        if evicted > 0 or purged_orphans > 0:
+            logger.info(
+                "Evicted %d LRU blocks from cache (%d orphaned hash entries " "purged)",
+                evicted,
+                purged_orphans,
+            )
         return evicted
 
     def _cascade_evict_orphans_locked(self, parent_hash: BlockHash) -> int:

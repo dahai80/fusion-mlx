@@ -586,8 +586,10 @@ def generate_video(
     # Seed
     if seed < 0:
         seed = random.randint(0, 2**32 - 1)
-    mx.random.seed(seed)
-    np.random.seed(seed)
+    # Audit M8: local key instead of a process-global seed (see
+    # cogvideox/generate.py) — a global seed changes the RNG stream every
+    # other executor in this process draws from.
+    _noise_key = mx.random.key(seed)
     print(f"{Colors.DIM}  Seed: {seed}{Colors.RESET}")
 
     # Align dimensions to patch_size * vae_stride (required for patchify)
@@ -1100,7 +1102,7 @@ def generate_video(
     sched.set_timesteps(steps, shift=shift)
 
     # Generate initial noise
-    noise = mx.random.normal(target_shape)
+    noise = mx.random.normal(target_shape, key=_noise_key)
 
     # I2V initialization: TI2V-5B blends image with noise, I2V-14B uses pure noise
     if is_i2v_mask_blend:
