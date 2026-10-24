@@ -465,7 +465,6 @@ def serve_command(args):
     if args.embedding_model:
         _load_embedding_model_or_exit(args, server.load_embedding_model)
 
-
     # Resolve per-alias TurboQuant default before the mutual-exclusion
     # check below — operator-explicit values still win.
     from ..turboquant import resolve_turboquant_mode_default
