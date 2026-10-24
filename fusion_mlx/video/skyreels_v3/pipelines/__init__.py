@@ -767,8 +767,12 @@ class SkyReelsBasePipeline:
         if cn_adapter is not None:
             try:
                 cn_adapter.unload()
-            except Exception:
-                pass
+            except Exception as exc:
+                # Audit 1019 L31: a bare ``pass`` hid a failed unload, which
+                # leaks the adapter's weights into the next generation.
+                logger.warning(
+                    "ControlNet adapter unload failed: %r", exc, exc_info=True
+                )
             cn_adapter = None
 
         # AnimateDiff: cleanup (remove motion modules from DiT blocks)
@@ -776,8 +780,10 @@ class SkyReelsBasePipeline:
             try:
                 ad_adapter.remove(self.dit)
                 ad_adapter.unload()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "AnimateDiff adapter cleanup failed: %r", exc, exc_info=True
+                )
             ad_adapter = None
 
         return latents

@@ -73,14 +73,20 @@ def register(
         logger.debug("Registered patch: %s (target=%s)", patch_id, target)
 
 
-def apply_all_for_model(model_type: str, config: Any = None) -> None:
+def apply_all_for_model(model_type: str, config: Any = None) -> list[str]:
     """Apply all registered patches matching model_type.
 
     Global patches (is_global=True) apply to every model.
     Targeted patches apply only when model_type matches entry.target.
     Idempotent: already-applied patches are skipped.
+
+    Returns the patch ids that failed. Audit 1019 L30: failures used to be
+    logged and then forgotten, so a model could silently run with the
+    upstream bug the patch exists to work around. The ids come back to the
+    caller and the run is logged at ERROR with a summary.
     """
     applied = 0
+    failed: list[str] = []
     with _LOCK:
         entries = list(_REGISTRY)
     for entry in entries:
@@ -95,9 +101,19 @@ def apply_all_for_model(model_type: str, config: Any = None) -> None:
                     "Applied patch: %s (target=%s)", entry.patch_id, entry.target
                 )
             except Exception as e:
+                failed.append(entry.patch_id)
                 logger.error("Patch %s failed: %s", entry.patch_id, e, exc_info=True)
     if applied:
         logger.info("apply_all_for_model(%s): %d patches applied", model_type, applied)
+    if failed:
+        logger.error(
+            "apply_all_for_model(%s): %d patch(es) FAILED and are NOT active: %s "
+            "— the model is running unsupported upstream behaviour",
+            model_type,
+            len(failed),
+            ", ".join(failed),
+        )
+    return failed
 
 
 def list_patches() -> list[dict[str, Any]]:

@@ -71,11 +71,11 @@ class SamplingParams:
     compiled_grammar: Any = None
     seed: int | None = None
 
-    # SpecPrefill (set per-request by engine)
-    _specprefill_enabled: bool = False
-    _specprefill_keep_pct: float = 0.8
-    _specprefill_threshold: int = 0
-    specprefill_system_end: int = 0
+    # Audit 1019 L5: SpecPrefill state lives on ``Request`` only. The dead
+    # copies that used to sit here duplicated ``Request.specprefill_system_end``
+    # and the per-request ``_specprefill_*`` attributes set by
+    # ``EngineCore.add_request``, and nothing ever read them off a
+    # SamplingParams instance.
 
     def __post_init__(self):
         if self.stop is None:

@@ -349,8 +349,16 @@ class LTX2_5VideoVAE(VideoVAEBase):
         cfg = TilingConfig.default()
         try:
             cfg.spatial_config.tile_size_in_pixels = tile_size
-        except Exception:
-            pass
+        except Exception as exc:
+            # Audit 1019 L31: a bare ``pass`` dropped the caller's tile size
+            # and decoded with the default config, which changes peak memory.
+            logger.warning(
+                "ltx2_5 tiled decode: could not set tile_size=%s on the "
+                "decoder TilingConfig (%r); using its default",
+                tile_size,
+                exc,
+                exc_info=True,
+            )
         return self.decoder.decode_tiled(latent, tiling_config=cfg)
 
     def stats(self) -> dict:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -126,6 +127,20 @@ def _resolve_streaming_reasoning_parser(model_name: str) -> Any:
     except Exception as e:
         logger.debug("streaming reasoning parser resolve failed: %s", e)
         return None
+
+
+def _sse_error_frame(message: str, status: int, err_type: str | None = None) -> str:
+    # Audit 1019 L8: the error arms used to hand-format JSON with f-strings
+    # and ``str(exc)!r``. A message containing a quote, backslash or newline
+    # produced an unparseable SSE frame, and the "per-batch cap" arm actually
+    # raised NameError because ``json`` was only imported in a sibling arm.
+    detail: dict[str, Any] = {"message": message, "status": status}
+    if err_type:
+        detail["type"] = err_type
+    return f"data: {json.dumps({'error': detail})}\n\n"
+
+
+_SSE_DONE = "data: [DONE]\n\n"
 
 
 async def _context_preflight(
@@ -717,32 +732,34 @@ async def _stream_chat_generator(
             handle_disconnect(request_id, engine)
         raise
     except AdapterPathError as exc:
-        yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 400}}}}\n\n'
+        yield _sse_error_frame(str(exc), 400)
+        yield _SSE_DONE
     except ModelNotFoundError as exc:
-        yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 404}}}}\n\n'
+        yield _sse_error_frame(str(exc), 404)
+        yield _SSE_DONE
     except (ModelLoadingError, ModelBusyError) as exc:
         logger.warning("Stream: model temporarily unavailable: %s", exc)
-        yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 503, "type": "server_busy"}}}}\n\n'
+        yield _sse_error_frame(str(exc), 503, "server_busy")
+        yield _SSE_DONE
     except InsufficientMemoryError as exc:
         logger.warning("Stream: insufficient memory: %s", exc)
-        import json as _json
-
         err_detail = _build_insufficient_memory_detail(exc)
-        yield f"data: {_json.dumps({'error': err_detail})}\n\n"
+        yield f"data: {json.dumps({'error': err_detail})}\n\n"
+        yield _SSE_DONE
     except ModelTooLargeError as exc:
-        yield f'data: {{"error": {{"message": {str(exc)!r}, "status": 413, "type": "model_too_large"}}}}\n\n'
+        yield _sse_error_frame(str(exc), 413, "model_too_large")
+        yield _SSE_DONE
     except Exception as exc:
         err_msg = str(exc)
         if "Failed to process image" in err_msg or "Failed to process video" in err_msg:
-            yield 'data: {"error": {"message": "Invalid media input", "status": 400}}\n\n'
+            yield _sse_error_frame("Invalid media input", 400)
         elif "exceeds the per-batch cap" in err_msg:
             logger.warning(
                 "Streaming chat hit per-batch prefill cap for %s: %s",
                 request_id,
                 err_msg,
             )
-            payload = _json.dumps({"error": {"message": err_msg, "status": 400}})
-            yield f"data: {payload}\n\n"
+            yield _sse_error_frame(err_msg, 400)
         else:
             logger.exception(
                 "Streaming chat failed for %s: %s(%s)",
@@ -750,12 +767,8 @@ async def _stream_chat_generator(
                 type(exc).__name__,
                 exc,
             )
-            import json as _json
-
-            err_payload = _json.dumps(
-                {"error": {"message": f"{type(exc).__name__}: {exc}", "status": 500}}
-            )
-            yield f"data: {err_payload}\n\n"
+            yield _sse_error_frame(f"{type(exc).__name__}: {exc}", 500)
+        yield _SSE_DONE
     finally:
         await _release()
 

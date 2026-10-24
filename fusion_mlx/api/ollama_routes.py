@@ -14,12 +14,12 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import shutil
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -643,6 +643,15 @@ async def api_chat(
 # =============================================================================
 
 
+def _model_digest(model_id: str) -> str:
+    # Audit 1019 L9: the digest used to be ``uuid.uuid4()`` per call, so the
+    # same model reported a different identity on every request and Ollama
+    # clients keyed on the digest (Open WebUI caches, chat model binding)
+    # saw a new model each refresh. Derive it from the model id instead —
+    # stable across calls and restarts.
+    return "sha256:" + hashlib.sha256(model_id.encode("utf-8")).hexdigest()
+
+
 @router.get("/api/tags")
 async def api_tags(
     _auth: bool = Depends(verify_api_key),
@@ -685,7 +694,7 @@ async def api_tags(
                     "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
                 ),
                 "size": size,
-                "digest": "sha256:" + uuid.uuid4().hex[:64],
+                "digest": _model_digest(mid),
                 "details": details,
             }
         )
@@ -699,7 +708,9 @@ async def api_tags(
 
 
 @router.get("/api/version")
-async def api_version() -> JSONResponse:
+async def api_version(
+    _auth: bool = Depends(verify_api_key),
+) -> JSONResponse:
     """Ollama-compatible version endpoint."""
     try:
         from .. import __version__
@@ -762,7 +773,7 @@ async def api_show(
             "name": resolved,
             "modified_at": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
             "size": size,
-            "digest": "sha256:" + uuid.uuid4().hex[:64],
+            "digest": _model_digest(resolved),
             "details": details,
             "model_info": model_info,
             "modelfile": f"# Modelfile for {resolved}\nFROM {resolved}\n",
@@ -799,7 +810,7 @@ async def api_ps(
                     "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
                 ),
                 "size": size or 0,
-                "digest": "sha256:" + uuid.uuid4().hex[:64],
+                "digest": _model_digest(mid),
                 "expires_at": None,
                 "size_vram": size or 0,
                 "details": {

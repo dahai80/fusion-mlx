@@ -788,9 +788,33 @@ def _spawn_chat_server(
     import socket
     import subprocess
 
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    # Audit 1019 L27: binding an ephemeral port and immediately closing the
+    # socket before spawning the child is a TOCTOU — anything else on the box
+    # could claim the port in that window and the child would then fail to
+    # bind while the REPL waited out its ready timeout. Keep the socket and
+    # hand it to the child through ``--listen-fd``, the same socket-activation
+    # path fusion-supervisor uses; uvicorn takes it in
+    # ``create_server(sock=...)`` and calls ``listen()`` itself.
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", 0))
+    except OSError:
+        sock.close()
+        raise
+    port = sock.getsockname()[1]
+    listen_fd = sock.fileno()
+    # ``_listen_fd_arg`` accepts 3..1023 only. A REPL holding 1000+ fds is
+    # pathological, but falling back to the child rebinding (with a loud
+    # warning) beats refusing to start chat.
+    use_inherited_fd = 3 <= listen_fd <= 1023
+    if not use_inherited_fd:
+        logger.warning(
+            "chat server socket fd %d is outside the --listen-fd range; "
+            "falling back to bind-close-then-rebind on port %d",
+            listen_fd,
+            port,
+        )
+        sock.close()
     base_url = f"http://127.0.0.1:{port}"
     cmd = [
         sys.executable,
@@ -805,6 +829,8 @@ def _spawn_chat_server(
         "--log-level",
         "WARNING",
     ]
+    if use_inherited_fd:
+        cmd.extend(["--listen-fd", str(listen_fd)])
     if served_name and served_name != model:
         cmd.extend(["--served-model-name", served_name])
     log = open(log_path, "w")  # noqa: SIM115 — kept open for proc lifetime
@@ -897,6 +923,10 @@ def _spawn_chat_server(
                 # post-fork / pre-exec setup; the child cannot reach
                 # ``exec`` until this runs.
                 preexec_fn=_child_unblock_signals if has_pthread_sigmask else None,
+                # Audit 1019 L27: hand the already-bound socket to the child
+                # so no other process can win the port between our bind and
+                # the child's.
+                pass_fds=(listen_fd,) if use_inherited_fd else (),
             )
         except (OSError, ValueError):
             # Popen raised before constructing the child — the log handle
@@ -919,6 +949,12 @@ def _spawn_chat_server(
         if log_handle is not None:
             log_handle.release()
     finally:
+        # The child holds its own descriptor now; the parent copy is done
+        # (idempotent, and already closed on the fallback path).
+        try:
+            sock.close()
+        except OSError:
+            pass
         # Best-effort restore so post-spawn signals route normally. Any
         # SIGTERM/SIGINT that landed while blocked is delivered HERE
         # (kernel-queued, exactly the desired behaviour: the chat's
