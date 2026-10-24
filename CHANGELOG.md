@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Fixed — Ollama route stops dropping tool calls, reasoning and upstream errors
+- `/api/chat` streaming discarded every `delta.tool_calls` and
+  `delta.reasoning_content`, so an Ollama client driving a tool-using model
+  saw an empty assistant message and reported success. Tool-call fragments
+  are now accumulated per index and emitted as one Ollama message with
+  object-form `arguments`; reasoning is forwarded as `message.thinking`;
+  the non-streaming path forwards `message.tool_calls` and
+  `message.thinking` too (#1354 audit M20).
+- An upstream SSE error frame (`data: {"error": {...}}`) was skipped as an
+  empty delta, and the stream then ended with `done_reason: "stop"` — the
+  client could not tell a failed generation from a real one. Both
+  `/api/chat` and `/api/generate` now emit the Ollama ndjson
+  `{"error": "..."}` object and stop (#1354 audit M20).
+- `done_reason` now maps a `length` finish reason to `"length"` instead of
+  always reporting `"stop"`.
+- `options.num_ctx` is no longer mapped to `max_tokens`: it is the context
+  window, and mapping it overwrote `num_predict` (the real output cap) with
+  the default 2048 (or the client's window size), silently truncating
+  long answers (#1354 audit M19).
+
 ### Fixed — prefix-cache hits now claim their blocks atomically
 - `fetch_cache`'s hash-map branch looked prefix blocks up with
   `find_shared_prefix` (no reference taken) and incremented `ref_count`
