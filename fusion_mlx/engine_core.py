@@ -303,6 +303,10 @@ _ADD_REQUEST_SUBMIT_TIMEOUT_S = float(
     os.environ.get("FUSION_LLM_ADD_REQUEST_TIMEOUT", "120")
 )
 
+# #1354 audit M4: how long aclose() waits for the engine loop task to unwind
+# after cancel before nulling scheduler/model under it anyway.
+_ENGINE_TASK_EXIT_TIMEOUT_S = 10.0
+
 
 def _llm_watchdog_window_for_pending(scheduler: Any) -> float:
     # #1179: one scheduler.step() processes up to max_num_batched_tokens of
@@ -2073,7 +2077,11 @@ class EngineCore:
                     fut = self._mlx_executor.submit(
                         self.scheduler.abort_request, request_id
                     )
-                    fut.result(timeout=5.0)
+                    # #1354 audit M2: fut.result() blocked the event loop for
+                    # up to 5s on a wedged executor (the #1174 silent-hang
+                    # signature — every HTTP connection stalls). Wait for the
+                    # abort without blocking the loop.
+                    await asyncio.wait_for(asyncio.wrap_future(fut), timeout=5.0)
                 except Exception as abort_exc:
                     logger.warning(
                         "post-timeout abort for %s failed: %s", request_id, abort_exc
@@ -2091,13 +2099,15 @@ class EngineCore:
                 # P0-3: route the abort through the SAME executor step() runs
                 # on, so abort_request cannot mutate scheduler.waiting/running
                 # concurrently with a step() mid-iteration on the executor
-                # thread (deque popleft/append are not atomic). Blocking here
-                # is acceptable: we are about to re-raise anyway.
+                # thread (deque popleft/append are not atomic).
+                # #1354 audit M2: await instead of fut.result() — a caller
+                # cancellation on a wedged executor froze the whole event
+                # loop for 5s here.
                 try:
                     fut = self._mlx_executor.submit(
                         self.scheduler.abort_request, request_id
                     )
-                    fut.result(timeout=5.0)
+                    await asyncio.wait_for(asyncio.wrap_future(fut), timeout=5.0)
                 except Exception as abort_exc:
                     logger.debug(
                         "Abort of partial insert for %s failed: %s",
@@ -2714,6 +2724,31 @@ class EngineCore:
         # loop responsive for in-flight HTTP connections during shutdown.
         if self._closed:
             return
+        # #1354 audit M4: close() only cancels the engine loop task and
+        # drops _task — cancellation is delivered at the coroutine's next
+        # await, but close() then nulls scheduler/model under it, so a
+        # still-live loop iteration touches freed state. Await the task's
+        # exit here (we are on the event loop) before tearing down.
+        task = self._task
+        if task is not None and not task.done():
+            task.cancel()
+            # asyncio.wait (not wait_for/shield) so the task's own
+            # CancelledError is not confused with a cancellation of aclose.
+            done, pending = await asyncio.wait(
+                {task}, timeout=_ENGINE_TASK_EXIT_TIMEOUT_S
+            )
+            if pending:
+                logger.warning(
+                    "engine loop task for %s did not exit within %.0fs of "
+                    "cancel; tearing down anyway",
+                    self._engine_id[:8],
+                    _ENGINE_TASK_EXIT_TIMEOUT_S,
+                )
+            elif not task.cancelled() and task.exception() is not None:
+                logger.debug(
+                    "engine loop task exited with error during aclose: %s",
+                    task.exception(),
+                )
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self.close)
 
