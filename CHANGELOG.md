@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added — image LoRA adapters and multi-image edits
+- `/v1/images/generations` accepts `lora: [{"path": ..., "scale": ...}]` for
+  the FLUX/FLUX.2 mflux variants. Paths must live under
+  `FUSION_LORA_ALLOWED_DIRS` and the file must be a `.safetensors`; the
+  adapter is applied by the subprocess worker at weight load. In-process
+  serves reject the field instead of ignoring it (#1376).
+- `qwen_image_edit` now forwards the edit target plus every reference image
+  as mflux's `image_paths` list. The previous wiring passed `image_path`,
+  which `QwenImageEdit.generate_image` does not accept, so the variant
+  could not consume any input image (#1375).
+- Reference images are consumed by `redux` and `qwen_image_edit`; any other
+  variant logs a WARNING naming how many images it dropped instead of
+  silently discarding them (#1374).
+
 ### Fixed — SDXL prompts are actually encoded; Ollama model identity and /api/version
 - SDXL's tokenizer loader returned the snapshot root instead of the
   `tokenizer/` subfolder, so `CLIPTokenizer.from_pretrained` fell back to a

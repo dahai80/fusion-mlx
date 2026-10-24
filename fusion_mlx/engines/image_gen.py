@@ -236,6 +236,8 @@ VARIANT_DEFAULT_STEPS: dict[str, int] = {
 # pass). Override via FUSION_IMAGE_TIMEOUT (seconds). Invalid/non-positive
 # values fall back to the default with a warning.
 _IMAGE_GEN_TIMEOUT_DEFAULT_S = 600.0
+# Variants that condition on reference_images (extra images beyond image[0]).
+_REFERENCE_VARIANTS = frozenset({"redux", "qwen_image_edit"})
 # OP-901 (defect 2/3): grace window for an in-process image worker to finish
 # after a memory-pressure cancel. The worker thread cannot be interrupted
 # mid-generation; waiting indefinitely wedged the pool (#901). Bounded wait
@@ -964,6 +966,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         depth_image: str | None = None,
         image_strength: float | None = None,
         transparent: bool = False,
+        lora: list[dict] | None = None,
         **kwargs,
     ) -> list[bytes]:
         # Subprocess mode loads weights in the worker — the main process does
@@ -1109,13 +1112,29 @@ class ImageGenEngine(BaseNonStreamingEngine):
         # variant takes image[0] as the img2img base and ignores the rest.
         # fusion-drama attaches character/scene refs to /v1/images/edits, so a
         # silent drop looks like unexplained character drift.
-        if reference_images and self.variant != "redux":
+        if reference_images and self.variant not in _REFERENCE_VARIANTS:
             logger.warning(
-                "image variant '%s' ignores %d reference image(s); only "
-                "'redux' conditions on extra images — the first image is used "
-                "as the img2img/edit base",
+                "image variant '%s' ignores %d reference image(s); only %s "
+                "condition on extra images — the first image is used as the "
+                "img2img/edit base",
                 self.variant,
                 len(reference_images),
+                "/".join(sorted(_REFERENCE_VARIANTS)),
+            )
+
+        if lora and not subprocess_mode:
+            # #1376: the in-process path loads weights once at start(), so a
+            # per-request adapter cannot be applied (and un-applied) safely.
+            raise ValueError(
+                "image lora adapters require the subprocess worker "
+                "(FUSION_IMAGE_SUBPROCESS=1, the default); remove the lora "
+                "field or re-enable subprocess mode"
+            )
+        if lora:
+            logger.info(
+                "image lora adapters: variant=%s %s",
+                self.variant,
+                [(item.get("path"), item.get("scale", 1.0)) for item in lora],
             )
 
         if subprocess_mode:
@@ -1142,6 +1161,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 mask_image=mask_image,
                 depth_image=depth_image,
                 image_strength=image_strength,
+                lora=lora,
                 kwargs=kwargs,
                 t0=t0,
                 activity_id=activity_id,
@@ -1561,6 +1581,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         kwargs: dict[str, Any],
         t0: float,
         activity_id: str,
+        lora: list[dict] | None = None,
     ) -> list[bytes]:
         # S3: subprocess image generation via MediaJobManager.
         from ..media.job_manager import MediaJobLoadHangError, MediaJobManager
@@ -1598,6 +1619,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
             mask_image=mask_image,
             reference_images=reference_images,
             reference_strengths=reference_strengths,
+            lora=lora,
             extra_kwargs=kwargs,
         )
 

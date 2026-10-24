@@ -107,10 +107,27 @@ def build_gen_kwargs(
             if image_strength is not None:
                 gen_kwargs["image_strength"] = image_strength
     elif variant == "qwen_image_edit":
+        # #1375: mflux's QwenImageEdit.generate_image takes image_paths (a
+        # LIST) — the previous wiring passed image_path, which is not a
+        # parameter of that method. image[0] is the edit target and the
+        # reference images follow it, so one request can condition on a
+        # character sheet + scene (Qwen-Image-Edit-2509 multi-image input).
+        paths: list[str] = []
         if edit_image is not None:
-            gen_kwargs["image_path"] = edit_image
+            paths.append(edit_image)
+        if reference_images:
+            paths.extend(reference_images)
+        if not paths:
+            raise ValueError(
+                "variant 'qwen_image_edit' requires edit_image or reference_images"
+            )
+        gen_kwargs["image_paths"] = paths
         if image_strength is not None:
-            gen_kwargs["image_strength"] = image_strength
+            logger.warning(
+                "image_strength=%.2f ignored: qwen_image_edit has no img2img "
+                "strength (the edit images fully define the result)",
+                image_strength,
+            )
     elif variant == "qwen_image_21":
         # Qwen-Image-2.1 generate_image accepts negative_prompt (true CFG when
         # guidance>1 + negative present) and optional img2img image_path.

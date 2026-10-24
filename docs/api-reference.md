@@ -397,6 +397,43 @@ reaching comparable quality in fewer steps (e.g. 12-20 instead of 28).
 Scheduler overrides are logged (`image gen scheduler override=dpmpp_2m
 steps=12`).
 
+### Per-request LoRA adapters (`/v1/images/generations`, #1376)
+
+FLUX/FLUX.2 mflux variants accept a `lora` list:
+
+```json
+{
+    "model": "black-forest-labs/FLUX.1-dev",
+    "prompt": "watercolor portrait of a lighthouse",
+    "lora": [{"path": "/Users/me/.fusion-mlx/adapters/style.safetensors", "scale": 0.8}]
+}
+```
+
+- `scale` is the mflux adapter weight (`0.0` no effect, `1.0` fully
+  applied, max `2.0`).
+- The adapter is applied when the subprocess worker loads weights, so it
+  needs the default subprocess mode; an in-process serve rejects the field
+  with HTTP 400 instead of silently ignoring it.
+- Paths must resolve (after symlinks) inside `FUSION_LORA_ALLOWED_DIRS`
+  (`:` or `,` separated) — the same containment rule as chat LoRA
+  adapters. `~/.fusion-mlx/adapters` is added automatically. Without that
+  variable the field is rejected.
+- Only mflux-backed variants (FLUX/FLUX.2/Qwen-Image) support adapters;
+  the native MLX pipelines (SD1.5/SD2/SDXL) return an error naming the
+  variant.
+
+For multipart `/v1/images/edits` the list travels as a JSON string field:
+`lora=[{"path": "...", "scale": 0.9}]`.
+
+### Multi-image edit (`qwen_image_edit`, #1375)
+
+`Qwen/Qwen-Image-Edit-2509` conditions on several images per request.
+`/v1/images/edits` forwards the first image as the edit target and every
+`image[]` after it as a reference, all in one `image_paths` list, so one
+call can combine a character sheet and a scene. Reference images are only
+consumed by `redux` and `qwen_image_edit`; other variants log a WARNING
+naming how many images were dropped.
+
 ---
 
 ## Videos
