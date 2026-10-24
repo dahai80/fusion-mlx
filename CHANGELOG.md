@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Fixed — admission and engine teardown no longer block the event loop
+- `add_request`'s post-timeout and post-cancel scheduler aborts called
+  `fut.result(timeout=5.0)` on the single MLX executor from a coroutine:
+  on a wedged worker that froze the whole event loop for 5s (the #1174
+  silent-hang signature — every HTTP connection stalls). The abort is now
+  awaited with `asyncio.wait_for(asyncio.wrap_future(...))` (#1354 audit M2).
+- Admission waited on the SSD→hot-cache preload with
+  `_preload_fut.result(timeout=10)` on the MLX worker itself, so a slow or
+  pressured SSD stalled every other inference request for up to 10s. On
+  timeout the request now skips prefix reuse (full prefill) while the
+  background preload keeps running, so a retry can still hit a warm cache.
+  Tunable via `FUSION_MLX_SSD_PRELOAD_TIMEOUT_S` (#1354 audit M3).
+- `aclose()` cancelled the engine-loop task and immediately offloaded
+  `close()` to a thread; cancellation is only delivered at the coroutine's
+  next await, so a still-live loop iteration could touch the scheduler and
+  model that `close()` had already nulled. `aclose()` now awaits the task's
+  exit (bounded, with a warning if it overruns) before teardown (#1354
+  audit M4).
+
 ### Fixed — Ollama route stops dropping tool calls, reasoning and upstream errors
 - `/api/chat` streaming discarded every `delta.tool_calls` and
   `delta.reasoning_content`, so an Ollama client driving a tool-using model
