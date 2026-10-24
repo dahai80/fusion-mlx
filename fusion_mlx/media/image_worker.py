@@ -58,7 +58,11 @@ def _preflight_components(model_path: str) -> list[str]:
         for f in names:
             if f.endswith(".safetensors"):
                 st_paths.append((os.path.join(rel, f)).lower())
-    has_transformer = any("transformer" in p for p in st_paths)
+    # SD1.5/SD2/SDXL checkpoints ship the denoiser as unet/ (diffusers + the
+    # mlx-community conversion), while FLUX/Qwen-Image use transformer/. Both
+    # are the backbone; requiring one spelling rejected every SD model that
+    # reached the subprocess worker.
+    has_backbone = any("transformer" in p or "unet" in p for p in st_paths)
     has_vae = any("vae" in p for p in st_paths)
     has_text_encoder = any(
         "text_encoder" in p or "t5" in p or "clip" in p or "encoder" in p
@@ -69,8 +73,8 @@ def _preflight_components(model_path: str) -> list[str]:
     if not has_any_safetensors:
         missing.append("safetensors (none found)")
     else:
-        if not has_transformer:
-            missing.append("transformer shard")
+        if not has_backbone:
+            missing.append("unet/transformer shard")
         if not has_vae:
             missing.append("vae shard")
         if not has_text_encoder:
