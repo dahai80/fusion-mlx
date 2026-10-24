@@ -11,11 +11,9 @@ import socket
 import subprocess
 import sys
 from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
-from fusion_mlx._version import __version__
 
 
 def _auto_detect_from_dir(model_dir):
@@ -78,7 +76,12 @@ class TestCLIHelp:
             timeout=10,
         )
         assert result.returncode == 0
-        assert result.stdout.strip() == __version__
+        # The CLI prints the installed distribution metadata; fusion_mlx's
+        # _version.py can be ahead of a stale editable install, so compare
+        # against the same source instead of the constant.
+        from importlib.metadata import version as _dist_version
+
+        assert result.stdout.strip() == f"fusion-mlx {_dist_version('fusion-mlx')}"
         assert result.stderr == ""
 
     def test_serve_help(self):
@@ -217,25 +220,38 @@ class TestLifecycleCommand:
 
     def test_app_bundle_stop_without_running_app_is_success(self, monkeypatch, capsys):
         """`fusion_mlx stop` must not launch the macOS app just to stop it."""
-        import fusion_mlx.utils.install as install
-        from fusion_mlx import cli
+        from fusion_mlx import cli_lifecycle as cli
 
-        monkeypatch.setattr(install, "is_app_bundle", lambda: True)
-        monkeypatch.setattr(install, "is_homebrew", lambda: False)
-        monkeypatch.setattr(cli, "_send_app_control", MagicMock(side_effect=OSError))
+        monkeypatch.setattr(cli, "is_app_bundle", lambda: True)
+        monkeypatch.setattr(cli, "is_homebrew", lambda: False)
+        monkeypatch.setattr(
+            cli, "_send_app_control", MagicMock(side_effect=ConnectionRefusedError)
+        )
         monkeypatch.setattr(cli, "_open_macos_app", MagicMock())
 
         assert cli.lifecycle_command(self._args("stop")) == 0
         assert capsys.readouterr().out.strip() == "fusion-mlx stopped"
         cli._open_macos_app.assert_not_called()
 
+    def test_app_bundle_stop_with_dead_socket_is_failure(self, monkeypatch, capsys):
+        """Audit L28: a generic OSError must not be reported as "stopped"."""
+        from fusion_mlx import cli_lifecycle as cli
+
+        monkeypatch.setattr(cli, "is_app_bundle", lambda: True)
+        monkeypatch.setattr(cli, "is_homebrew", lambda: False)
+        monkeypatch.setattr(
+            cli, "_send_app_control", MagicMock(side_effect=PermissionError("denied"))
+        )
+
+        assert cli.lifecycle_command(self._args("stop")) == 1
+        assert "Failed to control" in capsys.readouterr().out
+
     def test_app_bundle_start_sends_command_and_waits(self, monkeypatch):
         """`fusion_mlx start` asks the app to start and waits for a running state."""
-        import fusion_mlx.utils.install as install
-        from fusion_mlx import cli
+        from fusion_mlx import cli_lifecycle as cli
 
-        monkeypatch.setattr(install, "is_app_bundle", lambda: True)
-        monkeypatch.setattr(install, "is_homebrew", lambda: False)
+        monkeypatch.setattr(cli, "is_app_bundle", lambda: True)
+        monkeypatch.setattr(cli, "is_homebrew", lambda: False)
         send = MagicMock(return_value={"ok": True, "state": "starting", "port": 8000})
         wait = MagicMock(return_value={"ok": True, "state": "running", "port": 8000})
         monkeypatch.setattr(cli, "_send_app_control_with_launch", send)
@@ -247,11 +263,10 @@ class TestLifecycleCommand:
 
     def test_homebrew_start_delegates_to_brew_services(self, monkeypatch):
         """Homebrew installs use the Homebrew service supervisor."""
-        import fusion_mlx.utils.install as install
-        from fusion_mlx import cli
+        from fusion_mlx import cli_lifecycle as cli
 
-        monkeypatch.setattr(install, "is_app_bundle", lambda: False)
-        monkeypatch.setattr(install, "is_homebrew", lambda: True)
+        monkeypatch.setattr(cli, "is_app_bundle", lambda: False)
+        monkeypatch.setattr(cli, "is_homebrew", lambda: True)
         run_brew = MagicMock(return_value=0)
         monkeypatch.setattr(cli, "_run_brew_services", run_brew)
 
@@ -328,11 +343,11 @@ class TestServeCommandOptions:
             text=True,
             timeout=10,
         )
-        assert "--memory-guard" in result.stdout
-        assert "--memory-guard-gb" in result.stdout
+        assert "--memory-tier" in result.stdout
         assert "safe" in result.stdout
         assert "balanced" in result.stdout
         assert "aggressive" in result.stdout
+        assert "custom" in result.stdout
 
     def test_serve_no_model_specific_options(self):
         """Test that serve command does not have model-specific options (managed via admin page)."""
@@ -342,14 +357,15 @@ class TestServeCommandOptions:
             text=True,
             timeout=10,
         )
-        # These options are now managed via admin page, not CLI
-        assert "--pin" not in result.stdout
-        assert "--default-model" not in result.stdout
-        assert "--max-tokens" not in result.stdout
+        # Per-request sampling is a client concern; the CLI only exposes
+        # server-side defaults (--default-*), never per-request knobs.
         assert "--temperature" not in result.stdout
         assert "--top-p" not in result.stdout
         assert "--top-k" not in result.stdout
         assert "--force-sampling" not in result.stdout
+        assert "--default-temperature" in result.stdout
+        assert "--default-top-p" in result.stdout
+        assert "--default-top-k" in result.stdout
 
     def test_serve_has_host_port_options(self):
         """Test that serve command has --host and --port options."""
@@ -371,7 +387,8 @@ class TestServeCommandOptions:
             timeout=10,
         )
         assert "--max-concurrent-requests" in result.stdout
-        assert "--embedding-batch-size" in result.stdout
+        assert "--max-num-seqs" in result.stdout
+        assert "--prefill-batch-size" in result.stdout
 
     def test_serve_has_cache_options(self):
         """Test that serve command has cache options."""
@@ -381,9 +398,10 @@ class TestServeCommandOptions:
             text=True,
             timeout=10,
         )
-        assert "--paged-ssd-cache-dir" in result.stdout
-        assert "--paged-ssd-cache-max-size" in result.stdout
-        assert "--no-cache" in result.stdout
+        assert "--prefix-cache-size" in result.stdout
+        assert "--cache-memory-mb" in result.stdout
+        assert "--paged-cache-block-size" in result.stdout
+        assert "--no-memory-aware-cache" in result.stdout
 
     def test_serve_has_mcp_option(self):
         """Test that serve command has --mcp-config option."""
@@ -417,10 +435,10 @@ class TestServeCommandOptions:
 
 
 class TestLaunchCommandOptions:
-    """Tests for launch command options via help output."""
+    """`launch` now configures IDE clients, it does not boot a server."""
 
-    def test_launch_has_host_port_options(self):
-        """Test that launch command has --host and --port options."""
+    @staticmethod
+    def _help() -> str:
         result = subprocess.run(
             [sys.executable, "-m", "fusion_mlx.cli", "launch", "--help"],
             capture_output=True,
@@ -428,329 +446,100 @@ class TestLaunchCommandOptions:
             timeout=10,
         )
         assert result.returncode == 0
-        assert "--host" in result.stdout
-        assert "--port" in result.stdout
+        return result.stdout
 
-    def test_launch_has_model_option(self):
-        """Test that launch command has --model option."""
-        result = subprocess.run(
-            [sys.executable, "-m", "fusion_mlx.cli", "launch", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert "--model" in result.stdout
+    def test_launch_has_model_and_endpoint_options(self):
+        out = self._help()
+        assert "--model" in out
+        assert "--server-url" in out
+        assert "--port" in out
+        assert "--dry-run" in out
 
-    def test_launch_has_claude_tier_options(self):
-        """Claude tier options should remain accepted for copied app commands."""
-        result = subprocess.run(
-            [sys.executable, "-m", "fusion_mlx.cli", "launch", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert "--opus" in result.stdout
-        assert "--sonnet" in result.stdout
-        assert "--haiku" in result.stdout
-
-    def test_launch_lists_hermes(self):
-        """Test that launch help lists Hermes as an available integration."""
-        result = subprocess.run(
-            [sys.executable, "-m", "fusion_mlx.cli", "launch", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert result.returncode == 0
-        assert "hermes" in result.stdout
-        assert "Hermes Agent" in result.stdout
-
-    def test_launch_lists_codex_app(self):
-        """Test that launch help lists the Codex Desktop App target."""
-        result = subprocess.run(
-            [sys.executable, "-m", "fusion_mlx.cli", "launch", "--help"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert result.returncode == 0
-        assert "codex_app" in result.stdout
-        assert "Codex App" in " ".join(result.stdout.split())
+    def test_launch_lists_supported_clients(self):
+        out = self._help()
+        for name in ("claude-code", "codex", "cursor", "hermes", "cline"):
+            assert name in out, name
 
 
 class TestLaunchCommandFunction:
-    """Tests for launch command runtime behavior."""
+    """Runtime behaviour of the client-config launcher."""
 
-    def test_launch_command_passes_model_type_to_integration(self):
-        """VLM model metadata should be forwarded to integrations."""
-        from fusion_mlx.cli import launch_command
+    def test_print_list_lists_every_adapter(self, capsys):
+        from fusion_mlx.launch.cli import ADAPTERS, _print_list
 
-        integration = MagicMock()
-        integration.display_name = "OpenCode"
-        integration.is_installed.return_value = True
+        assert _print_list() == 0
+        out = capsys.readouterr().out
+        assert "Supported clients:" in out
+        for name in ADAPTERS:
+            assert name in out
 
-        health_response = MagicMock()
-        health_response.raise_for_status.return_value = None
-
-        status_response = MagicMock()
-        status_response.ok = True
-        status_response.json.return_value = {
-            "models": [
-                {
-                    "id": "qwen2.5-vl",
-                    "model_type": "vlm",
-                    "max_context_window": 32768,
-                    "max_tokens": 8192,
-                }
-            ]
+    @staticmethod
+    def _args(**overrides):
+        values = {
+            "client": "fake",
+            "all": False,
+            "model": "qwen3.5-4b-4bit",
+            "server_url": "http://127.0.0.1:11434",
+            "port": 11434,
+            "start_server": False,
+            "dry_run": True,
+            "_original_alias": None,
         }
+        values.update(overrides)
+        return SimpleNamespace(**values)
 
-        settings = MagicMock()
-        settings.server.host = "127.0.0.1"
-        settings.server.port = 8000
+    @staticmethod
+    def _fake_adapter(tmp_path, applied):
+        class _Fake:
+            def detect(self):
+                return True
 
-        args = argparse.Namespace(
-            tool="opencode",
-            host=None,
-            port=None,
-            api_key="test-key",
-            model="qwen2.5-vl",
-            tools_profile="coding",
+            def current_config_path(self):
+                return tmp_path / "client.json"
+
+            def apply(self, *a, **k):
+                applied.append((a, k))
+
+        return _Fake()
+
+    def test_dry_run_does_not_apply(self, monkeypatch, capsys, tmp_path):
+        from fusion_mlx.launch import cli as launch_cli
+
+        applied = []
+        monkeypatch.setitem(
+            launch_cli.ADAPTERS, "fake", self._fake_adapter(tmp_path, applied)
         )
 
-        with (
-            patch("requests.get", side_effect=[health_response, status_response]),
-            patch("fusion_mlx.integrations.get_integration", return_value=integration),
-            patch("fusion_mlx.settings.GlobalSettings.load", return_value=settings),
-        ):
-            launch_command(args)
+        launch_cli.launch_command(self._args())
 
-        integration.launch.assert_called_once()
-        ctx = integration.launch.call_args.args[0]
-        assert ctx.host == "127.0.0.1"
-        assert ctx.port == 8000
-        assert ctx.api_key == "test-key"
-        assert ctx.model == "qwen2.5-vl"
-        assert ctx.tools_profile == "coding"
-        assert ctx.context_window == 32768
-        assert ctx.max_tokens == 8192
-        assert ctx.model_type == "vlm"
-        assert ctx.extra_args == ()
+        out = capsys.readouterr().out
+        assert "[dry-run]" in out
+        assert "[dry-run] model=qwen3.5-4b-4bit" in out
+        assert applied == []
 
-    def test_launch_command_resolves_alias_status_metadata(self):
-        """Alias model IDs should keep status metadata from the real model."""
-        from fusion_mlx.cli import launch_command
+    def test_missing_client_exits_2(self, capsys):
+        from fusion_mlx.launch import cli as launch_cli
 
-        integration = MagicMock()
-        integration.display_name = "OpenCode"
-        integration.is_installed.return_value = True
+        with pytest.raises(SystemExit) as exc:
+            launch_cli.launch_command(self._args(client=None, all=False))
+        assert exc.value.code == 2
+        assert "missing client name" in capsys.readouterr().err
 
-        health_response = MagicMock()
-        health_response.raise_for_status.return_value = None
+    def test_unknown_client_exits_2(self, capsys):
+        from fusion_mlx.launch import cli as launch_cli
 
-        status_response = MagicMock()
-        status_response.ok = True
-        status_response.json.return_value = {
-            "models": [
-                {
-                    "id": "qwen2.5-vl-raw",
-                    "model_alias": "gpt-4o",
-                    "model_type": "vlm",
-                    "max_context_window": 32768,
-                    "max_tokens": 8192,
-                    "enable_thinking": False,
-                }
-            ]
-        }
+        with pytest.raises(SystemExit) as exc:
+            launch_cli.launch_command(self._args(client="does-not-exist"))
+        assert exc.value.code == 2
+        assert "unknown client" in capsys.readouterr().err
 
-        settings = MagicMock()
-        settings.server.host = "127.0.0.1"
-        settings.server.port = 8000
+    def test_all_with_client_name_exits_2(self, capsys):
+        from fusion_mlx.launch import cli as launch_cli
 
-        args = argparse.Namespace(
-            tool="opencode",
-            host=None,
-            port=None,
-            api_key="test-key",
-            model="gpt-4o",
-            tools_profile="coding",
-        )
-
-        with (
-            patch("requests.get", side_effect=[health_response, status_response]),
-            patch("fusion_mlx.integrations.get_integration", return_value=integration),
-            patch("fusion_mlx.settings.GlobalSettings.load", return_value=settings),
-        ):
-            launch_command(args)
-
-        ctx = integration.launch.call_args.args[0]
-        assert ctx.model == "gpt-4o"
-        assert ctx.context_window == 32768
-        assert ctx.max_tokens == 8192
-        assert ctx.model_type == "vlm"
-        assert ctx.reasoning is False
-
-    def test_launch_command_forwards_extra_args(self):
-        """Unknown CLI tokens (e.g. --resume <id>) should reach integration.launch."""
-        from fusion_mlx.cli import launch_command
-
-        integration = MagicMock()
-        integration.display_name = "Claude Code"
-        integration.is_installed.return_value = True
-
-        health_response = MagicMock()
-        health_response.raise_for_status.return_value = None
-
-        status_response = MagicMock()
-        status_response.ok = True
-        status_response.json.return_value = {
-            "models": [
-                {
-                    "id": "qwen2.5-vl",
-                    "model_type": "llm",
-                    "max_context_window": 32768,
-                    "max_tokens": 8192,
-                }
-            ]
-        }
-
-        settings = MagicMock()
-        settings.server.host = "127.0.0.1"
-        settings.server.port = 8000
-
-        args = argparse.Namespace(
-            tool="claude",
-            host=None,
-            port=None,
-            api_key="test-key",
-            model="qwen2.5-vl",
-            tools_profile="coding",
-        )
-
-        with (
-            patch("requests.get", side_effect=[health_response, status_response]),
-            patch("fusion_mlx.integrations.get_integration", return_value=integration),
-            patch("fusion_mlx.settings.GlobalSettings.load", return_value=settings),
-        ):
-            launch_command(args, extra_args=["--resume", "abc123"])
-
-        ctx = integration.launch.call_args.args[0]
-        assert ctx.extra_args == ("--resume", "abc123")
-
-    def test_launch_command_shows_picker_and_clears_saved_tiers(self):
-        """Bare `fusion_mlx launch claude` shows the picker and ignores saved tier models."""
-        from fusion_mlx.cli import launch_command
-
-        integration = MagicMock()
-        integration.display_name = "Claude Code"
-        integration.is_installed.return_value = True
-        integration.select_model.return_value = "sonnet-local"
-
-        health_response = MagicMock()
-        health_response.raise_for_status.return_value = None
-
-        status_map_response = MagicMock()
-        status_map_response.ok = True
-        status_map_response.json.return_value = {"models": []}
-
-        models_response = MagicMock()
-        models_response.raise_for_status.return_value = None
-        models_response.json.return_value = {
-            "data": [
-                {"id": "sonnet-local", "model_type": "llm"},
-                {"id": "opus-local", "model_type": "llm"},
-            ]
-        }
-
-        settings = SimpleNamespace(
-            server=SimpleNamespace(host="127.0.0.1", port=8000),
-            auth=SimpleNamespace(api_key="saved-key"),
-            claude_code=SimpleNamespace(
-                opus_model="opus-local",
-                sonnet_model="sonnet-local",
-                haiku_model="haiku-local",
-            ),
-        )
-
-        args = argparse.Namespace(
-            tool="claude",
-            host=None,
-            port=None,
-            api_key=None,
-            model=None,
-            tools_profile="coding",
-            opus_model=None,
-            sonnet_model=None,
-            haiku_model=None,
-        )
-
-        with (
-            patch(
-                "requests.get",
-                side_effect=[health_response, status_map_response, models_response],
-            ),
-            patch("fusion_mlx.integrations.get_integration", return_value=integration),
-            patch("fusion_mlx.settings.GlobalSettings.load", return_value=settings),
-        ):
-            launch_command(args)
-
-        integration.select_model.assert_called_once()
-        ctx = integration.launch.call_args.args[0]
-        assert ctx.model == "sonnet-local"
-        assert ctx.opus_model is None
-        assert ctx.sonnet_model is None
-        assert ctx.haiku_model is None
-        assert ctx.api_key == "saved-key"
-
-    def test_launch_command_claude_cli_tiers_override_saved_settings(self):
-        """Explicit --opus/--sonnet/--haiku should win over saved settings."""
-        from fusion_mlx.cli import launch_command
-
-        integration = MagicMock()
-        integration.display_name = "Claude Code"
-        integration.is_installed.return_value = True
-
-        health_response = MagicMock()
-        health_response.raise_for_status.return_value = None
-
-        status_response = MagicMock()
-        status_response.ok = True
-        status_response.json.return_value = {"models": []}
-
-        settings = SimpleNamespace(
-            server=SimpleNamespace(host="127.0.0.1", port=8000),
-            auth=SimpleNamespace(api_key="saved-key"),
-            claude_code=SimpleNamespace(
-                opus_model="saved-opus",
-                sonnet_model="saved-sonnet",
-                haiku_model="saved-haiku",
-            ),
-        )
-
-        args = argparse.Namespace(
-            tool="claude",
-            host=None,
-            port=None,
-            api_key=None,
-            model=None,
-            tools_profile="coding",
-            opus_model="cli-opus",
-            sonnet_model="cli-sonnet",
-            haiku_model="cli-haiku",
-        )
-
-        with (
-            patch("requests.get", side_effect=[health_response, status_response]),
-            patch("fusion_mlx.integrations.get_integration", return_value=integration),
-            patch("fusion_mlx.settings.GlobalSettings.load", return_value=settings),
-        ):
-            launch_command(args)
-
-        ctx = integration.launch.call_args.args[0]
-        assert ctx.model == "cli-sonnet"
-        assert ctx.opus_model == "cli-opus"
-        assert ctx.sonnet_model == "cli-sonnet"
-        assert ctx.haiku_model == "cli-haiku"
+        with pytest.raises(SystemExit) as exc:
+            launch_cli.launch_command(self._args(all=True))
+        assert exc.value.code == 2
+        assert "mutually exclusive" in capsys.readouterr().err
 
 
 class TestLaunchArgvParsing:
@@ -800,6 +589,7 @@ class TestServeCommandFunctions:
             "ca_bundle": None,
             "base_path": str(tmp_path),
             "api_key": None,
+            "rate_limit": 0,
         }
         defaults.update(overrides)
         return argparse.Namespace(**defaults)
@@ -874,8 +664,8 @@ class TestServeCommandFunctions:
         # Help text should mention ~/.fusion_mlx/models or similar
         assert ".fusion_mlx" in result.stdout or "model" in result.stdout.lower()
 
-    def test_invalid_embedding_batch_size_is_not_persisted(self, tmp_path):
-        """Invalid CLI scheduler values should fail before saving settings.json."""
+    def test_invalid_scheduler_value_fails_before_writing_settings(self, tmp_path):
+        """Invalid CLI values must be rejected before settings.json is written."""
         result = subprocess.run(
             [
                 sys.executable,
@@ -884,8 +674,8 @@ class TestServeCommandFunctions:
                 "serve",
                 "--base-path",
                 str(tmp_path),
-                "--embedding-batch-size",
-                "0",
+                "--memory-tier",
+                "not-a-tier",
             ],
             capture_output=True,
             text=True,
@@ -893,241 +683,96 @@ class TestServeCommandFunctions:
         )
 
         assert result.returncode != 0
-        assert "embedding_batch_size" in result.stdout
+        assert "not-a-tier" in result.stderr
         assert not (tmp_path / "settings.json").exists()
 
-    def test_invalid_memory_guard_gb_is_not_persisted(self, tmp_path):
-        """Invalid custom memory guard values should fail before saving settings.json."""
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "fusion_mlx.cli",
-                "serve",
-                "--base-path",
-                str(tmp_path),
-                "--memory-guard-gb",
-                "0",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+    def test_memory_ceiling_schema_rejects_non_finite(self):
+        """A NaN/inf ceiling must not be accepted as a memory limit.
 
-        assert result.returncode != 0
-        assert "--memory-guard-gb" in result.stderr
-        assert not (tmp_path / "settings.json").exists()
+        The value moved from the (removed) --memory-guard-gb flag to
+        settings.json memory.memory_guard_custom_ceiling_gb, so the check
+        belongs to the schema validator.
+        """
+        from fusion_mlx.config_schema import MemorySection
 
-    def test_non_finite_memory_guard_gb_is_rejected(self, tmp_path):
-        """NaN and infinity must not be accepted as custom memory ceilings."""
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "fusion_mlx.cli",
-                "serve",
-                "--base-path",
-                str(tmp_path),
-                "--memory-guard-gb",
-                "nan",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+        for bad in ("nan", "inf", -1):
+            with pytest.raises(ValueError):
+                MemorySection(memory_guard_custom_ceiling_gb=bad)
 
-        assert result.returncode != 0
-        assert "finite number" in result.stderr
-        assert not (tmp_path / "settings.json").exists()
+        ok = MemorySection(memory_guard_custom_ceiling_gb=8)
+        assert ok.memory_guard_custom_ceiling_gb == 8.0
 
     def test_serve_exits_on_port_conflict_before_importing_server(
         self, tmp_path, monkeypatch
     ):
         """Port conflicts should fail before server import can preload pinned models."""
-        import uvicorn
-
         from fusion_mlx.cli import serve_command
 
         listener = self._reserve_port()
         host, port = listener.getsockname()
-        settings = self._make_settings(tmp_path, host=host, port=port)
         args = self._make_serve_args(tmp_path, host=host, port=port)
         previous_server = sys.modules.pop("fusion_mlx.server", None)
-        events = []
-
-        original_bind_socket = uvicorn.Config.bind_socket
-
-        def tracking_bind_socket(config):
-            events.append("bind")
-            return original_bind_socket(config)
-
-        monkeypatch.setattr(
-            "fusion_mlx.settings.init_settings", lambda **kwargs: settings
-        )
         monkeypatch.setattr(
             "fusion_mlx.logging_config.configure_file_logging",
             lambda **kwargs: None,
         )
-        monkeypatch.setattr("faulthandler.enable", lambda *args, **kwargs: None)
-        monkeypatch.setattr("faulthandler.register", lambda *args, **kwargs: None)
-        monkeypatch.setattr("uvicorn.Config.bind_socket", tracking_bind_socket)
         try:
             with pytest.raises(SystemExit) as exc:
                 serve_command(args)
 
             assert exc.value.code != 0
-            assert events == ["bind"]
+            # The preflight must fire before `from .. import server`; uvicorn
+            # 0.51 binds via loop.create_server, so a bind-time assertion can
+            # no longer observe the collision.
             assert "fusion_mlx.server" not in sys.modules
         finally:
             listener.close()
             if previous_server is not None:
                 sys.modules["fusion_mlx.server"] = previous_server
 
-    def test_serve_hands_prebound_socket_to_uvicorn(self, tmp_path, monkeypatch):
-        """Successful serve startup should pass the pre-bound socket into uvicorn."""
-        import uvicorn
+    def test_serve_model_dir_dispatches_app_to_uvicorn(self, tmp_path, monkeypatch):
+        """--base-path serve must build the pool app and hand it to uvicorn."""
+        from pathlib import Path
 
         import fusion_mlx
         from fusion_mlx.cli import serve_command
+        from fusion_mlx.cli_serve import config_resolve
 
         host, port = "127.0.0.1", 0
-        settings = self._make_settings(tmp_path, host=host, port=port)
         args = self._make_serve_args(tmp_path, host=host, port=port)
-        events = []
+        app = object()
+        captured = {}
 
         fake_server = ModuleType("fusion_mlx.server")
-
-        async def app(scope, receive, send):
-            return None
-
-        def fake_init_server(**kwargs):
-            events.append("init")
-
-        fake_server.app = app
-        fake_server.init_server = MagicMock(side_effect=fake_init_server)
+        fake_server.create_app = MagicMock(return_value=app)
+        fake_server.configure_logging = MagicMock()
+        # config_resolve stages the CLI --api-key through the server module
+        # before building the app (#636); the stub must expose it.
+        fake_server._resolve_api_key = lambda *a, **k: None
         monkeypatch.setitem(sys.modules, "fusion_mlx.server", fake_server)
         monkeypatch.setattr(fusion_mlx, "server", fake_server, raising=False)
 
-        fake_mlx = ModuleType("mlx")
-        fake_mlx_core = ModuleType("mlx.core")
-        fake_mlx_core.device_info = lambda: {"memory_size": 0}
-        fake_mlx_core.set_cache_limit = MagicMock()
-        fake_mlx.core = fake_mlx_core
-        monkeypatch.setitem(sys.modules, "mlx", fake_mlx)
-        monkeypatch.setitem(sys.modules, "mlx.core", fake_mlx_core)
-
-        monkeypatch.setattr(
-            "fusion_mlx.settings.init_settings", lambda **kwargs: settings
-        )
         monkeypatch.setattr(
             "fusion_mlx.logging_config.configure_file_logging",
             lambda **kwargs: None,
         )
-        monkeypatch.setattr("faulthandler.enable", lambda *args, **kwargs: None)
-        monkeypatch.setattr("faulthandler.register", lambda *args, **kwargs: None)
-        captured = {}
-        original_bind_socket = uvicorn.Config.bind_socket
-
-        def tracking_bind_socket(config):
-            sock = original_bind_socket(config)
-            events.append("bind")
-            return sock
-
-        def fake_run(self, sockets=None):
-            self.config.load()
-            events.append("run")
-            captured["socket_name"] = sockets[0].getsockname()
-            captured["socket_count"] = len(sockets)
-
-        monkeypatch.setattr("uvicorn.Config.bind_socket", tracking_bind_socket)
-        monkeypatch.setattr("uvicorn.Server.run", fake_run)
+        monkeypatch.setattr(
+            config_resolve,
+            "_run_uvicorn",
+            lambda app_arg, args_arg, log_level: captured.update(
+                app=app_arg, args=args_arg, log_level=log_level
+            ),
+        )
 
         serve_command(args)
 
-        fake_server.init_server.assert_called_once()
-        assert events == ["bind", "init", "run"]
-        assert captured["socket_count"] == 1
-        assert captured["socket_name"][0] == host
-        assert captured["socket_name"][1] > 0
-
-
-class TestHasCliOverrides:
-    """Tests for _has_cli_overrides() — detects explicitly passed CLI args."""
-
-    @staticmethod
-    def _make_args(**kwargs):
-        """Namespace with all serve defaults (None), then apply overrides."""
-        defaults = {
-            "model_dir": None,
-            "port": None,
-            "host": None,
-            "log_level": None,
-            "embedding_batch_size": None,
-            "memory_guard": None,
-            "memory_guard_gb": None,
-        }
-        defaults.update(kwargs)
-        return argparse.Namespace(**defaults)
-
-    def test_no_overrides_returns_false(self):
-        from fusion_mlx.cli import _has_cli_overrides
-
-        assert _has_cli_overrides(self._make_args()) is False
-
-    def test_host_explicit(self):
-        from fusion_mlx.cli import _has_cli_overrides
-
-        assert _has_cli_overrides(self._make_args(host="0.0.0.0")) is True
-        # Even the default value, when explicitly passed, counts as override
-        assert _has_cli_overrides(self._make_args(host="127.0.0.1")) is True
-
-    def test_port_explicit(self):
-        from fusion_mlx.cli import _has_cli_overrides
-
-        assert _has_cli_overrides(self._make_args(port=9000)) is True
-        assert _has_cli_overrides(self._make_args(port=8000)) is True
-
-    def test_model_dir_explicit(self):
-        from fusion_mlx.cli import _has_cli_overrides
-
-        assert _has_cli_overrides(self._make_args(model_dir="/tmp/models")) is True
-
-    def test_log_level_explicit(self):
-        from fusion_mlx.cli import _has_cli_overrides
-
-        assert _has_cli_overrides(self._make_args(log_level="info")) is True
-        assert _has_cli_overrides(self._make_args(log_level="debug")) is True
-
-    def test_embedding_batch_size_explicit(self):
-        from fusion_mlx.cli import _has_cli_overrides
-
-        assert _has_cli_overrides(self._make_args(embedding_batch_size=4)) is True
-
-    def test_memory_guard_explicit(self):
-        from fusion_mlx.cli import _has_cli_overrides
-
-        assert _has_cli_overrides(self._make_args(memory_guard="safe")) is True
-
-    def test_memory_guard_gb_explicit(self):
-        from fusion_mlx.cli import _has_cli_overrides
-
-        assert _has_cli_overrides(self._make_args(memory_guard_gb=48.0)) is True
-
-    def test_hf_cache_explicit(self):
-        from fusion_mlx.cli import _has_cli_overrides
-
-        assert _has_cli_overrides(self._make_args(hf_cache_enabled=False)) is True
-        assert _has_cli_overrides(self._make_args(hf_cache_enabled=True)) is True
-
-    def test_multiple_overrides(self):
-        from fusion_mlx.cli import _has_cli_overrides
-
-        assert _has_cli_overrides(self._make_args(host="0.0.0.0", port=9000)) is True
-
-    def test_empty_namespace(self):
-        from fusion_mlx.cli import _has_cli_overrides
-
-        assert _has_cli_overrides(argparse.Namespace()) is False
+        fake_server.create_app.assert_called_once()
+        server_config = fake_server.create_app.call_args.args[0]
+        assert server_config.model_dir == str(Path(tmp_path) / "models")
+        assert (server_config.host, server_config.port) == (host, port)
+        assert captured["app"] is app
+        assert captured["args"] is args
+        assert fake_server._api_key is None
 
 
 class TestCLIDocstrings:
@@ -1142,7 +787,8 @@ class TestCLIDocstrings:
             timeout=10,
         )
         # Should have some description
-        assert "fusion_mlx" in result.stdout.lower() or "llm" in result.stdout.lower()
+        lowered = result.stdout.lower()
+        assert "fusion-mlx" in lowered or "fusion_mlx" in lowered or "llm" in lowered
 
     def test_serve_has_description(self):
         """Test that serve command has description."""
