@@ -465,28 +465,6 @@ def serve_command(args):
     if args.embedding_model:
         _load_embedding_model_or_exit(args, server.load_embedding_model)
 
-    # Warn about deprecated flags
-    if getattr(args, "simple_engine", False):
-        print(
-            "\n  ⚠ --simple-engine is deprecated and has no effect."
-            "\n    BatchedEngine is now the sole engine — it handles both"
-            "\n    single-user and multi-user workloads with equal performance.\n"
-        )
-    if getattr(args, "kv_bits", None) is not None:
-        print(
-            "\n  ⚠ --kv-bits is deprecated and has no effect."
-            "\n    For prefix cache quantization, use --kv-cache-quantization instead.\n"
-        )
-    if getattr(args, "draft_model", None):
-        print(
-            "\n  ⚠ --draft-model is deprecated and has no effect."
-            "\n    For DFlash speculative decoding, use --enable-dflash "
-            "(requires a DFlash-eligible alias). "
-            "For MTP, use --enable-mtp (requires a model with MTP head).\n"
-        )
-    if getattr(args, "specprefill", False):
-        print("\n  ⚠ --specprefill is deprecated and has no effect.\n")
-
     # Resolve per-alias TurboQuant default before the mutual-exclusion
     # check below — operator-explicit values still win.
     from ..turboquant import resolve_turboquant_mode_default
@@ -535,16 +513,16 @@ def serve_command(args):
         # the resolved values without a second code path.
         args.kv_cache_quantization = quant
         args.kv_cache_quantization_bits = bits
-        # Stash on the shared ServerConfig so /metrics surfaces the
+        # Stash on the shared SchedulerConfig so /metrics surfaces the
         # effective dtype during the pre-engine load window — operator
-        # uptime dashboards scrape within ms of process start.
+        # uptime dashboards scrape within ms of process start. (#1354 D6:
+        # the ServerConfig copy was a duplicate of this field.)
         try:
             from fusion_mlx.config import get_config as _get_config
 
-            _get_config().kv_cache_dtype = kv_cache_decision.dtype
+            _get_config().scheduler.kv_cache_dtype = kv_cache_decision.dtype
         except Exception:
-            # ServerConfig is best-effort observability; never block
-            # serve start on a metrics-only side effect.
+            # Observability-only side effect; never block serve start.
             pass
     elif args.kv_cache_quantization:
         # Legacy flag took precedence — synthesize a decision so
@@ -617,7 +595,7 @@ def serve_command(args):
         try:
             from fusion_mlx.config import get_config as _get_config
 
-            _get_config().kv_cache_dtype = legacy_dtype
+            _get_config().scheduler.kv_cache_dtype = legacy_dtype
         except Exception:
             pass
 

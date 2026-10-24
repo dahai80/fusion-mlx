@@ -81,19 +81,13 @@ the surface-appropriate failure: route layer → 503 (retryable), engine layer
 by these timeouts — poisoning belongs exclusively to the executor watchdog
 (#1189), which is the layer that can actually observe a wedged `mx.eval`.
 
-## ServerConfig.default_timeout
+## ServerConfig.default_timeout (removed)
 
-`ServerConfig.default_timeout` (`fusion_mlx/config.py`) is **deprecated, not
-removed**. An audit confirmed it has zero production readers (only two write
-sites in `cli_serve/config_resolve.py` and `cli_serve/audio_mode.py` that
-mirror the CLI `--timeout` value into it, plus test pins). Removal would break
-the existing test pins and any downstream readers, so the field is kept and
-marked:
-
-```python
-# deprecated: never read; per-modality timeouts are the contract (#1191)
-default_timeout: float = 1800.0
-```
+`ServerConfig.default_timeout` and the serve `--timeout` flag that mirrored
+it were **removed** in #1354 (config audit D1). The field never had a
+production reader — only write sites in `cli_serve/config_resolve.py` and
+`cli_serve/audio_mode.py` — so leaving it in place was a pure decoy for
+operators who expected a global timeout to apply.
 
 **Per-modality knobs are the contract** — each modality owns its bounded
 wait and its env override (table above). There is no global request timeout.

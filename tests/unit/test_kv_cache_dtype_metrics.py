@@ -3,10 +3,11 @@
 
 fusion surfaces the effective KV cache dtype via
 ``ServerMetrics.to_dict()["kv_cache_dtype"]`` (fusion-native JSON — NOT
-rapid-mlx's Prometheus-text gauge). The resolver reads the
-ServerConfig.kv_cache_dtype stash (set by cli_serve after the safelist
-resolves --kv-cache-dtype / legacy --kv-cache-quantization), with a
-legacy-bits fallback for programmatic callers, defaulting to bf16.
+rapid-mlx's Prometheus-text gauge). The resolver reads
+``SchedulerConfig.kv_cache_dtype`` (set by cli_serve after the safelist
+resolves --kv-cache-dtype / legacy --kv-cache-quantization; #1354 D6
+removed the duplicate ServerConfig copy), with a legacy-bits fallback for
+programmatic callers, defaulting to bf16.
 """
 
 from __future__ import annotations
@@ -18,10 +19,11 @@ from fusion_mlx.server_metrics import ServerMetrics, _resolve_kv_cache_dtype
 
 def _cfg(*, kv_cache_dtype=None, quant=False, bits=8):
     scheduler = SimpleNamespace(
+        kv_cache_dtype=kv_cache_dtype,
         kv_cache_quantization=quant,
         kv_cache_quantization_bits=bits,
     )
-    return SimpleNamespace(kv_cache_dtype=kv_cache_dtype, scheduler=scheduler)
+    return SimpleNamespace(scheduler=scheduler)
 
 
 class TestResolveStash:

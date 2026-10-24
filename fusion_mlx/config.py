@@ -202,9 +202,10 @@ class SchedulerConfig:
         if self.max_num_seqs < 1:
             logger.warning("max_num_seqs=%s below 1 — clamped to 1", self.max_num_seqs)
             self.max_num_seqs = 1
-        # A-P3-1 (#0908 audit): clamp gpu_memory_utilization — env override
-        # (FUSION_GPU_MEMORY_UTILIZATION) had no bounds; 0/1.5 silently
-        # distorted the memory projection. Clamp to (0, 0.98].
+        # A-P3-1 (#0908 audit): clamp gpu_memory_utilization — an out-of-range
+        # value (0 / 1.5) silently distorted the memory projection. The field
+        # has no env override; --gpu-memory-utilization is the only knob.
+        # Clamp to (0, 0.98].
         if self.gpu_memory_utilization <= 0 or self.gpu_memory_utilization > 0.98:
             logger.warning(
                 "gpu_memory_utilization=%s out of (0, 0.98] — clamped to 0.90",
@@ -356,8 +357,6 @@ class ServerConfig:
     default_max_tokens: int = 4096
     default_max_tokens_is_explicit: bool = False
     thinking_token_budget: int = 2048
-    # deprecated: never read; per-modality timeouts are the contract (#1191)
-    default_timeout: float = 1800.0
     default_temperature: float | None = None
     default_top_p: float | None = None
     default_top_k: int | None = None
@@ -443,9 +442,6 @@ class ServerConfig:
     # force_lm (VLM models load as BatchedEngine; vision requests fail
     # loudly instead of silently loading a broken vision tower).
     force_text: bool = False
-
-    # KV cache dtype (pre-load fallback for metrics)
-    kv_cache_dtype: str | None = None
 
     def __post_init__(self) -> None:
         if self.model_dir is None:

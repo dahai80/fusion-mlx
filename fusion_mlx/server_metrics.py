@@ -88,28 +88,23 @@ def _save_alltime_to_disk(data: dict) -> None:
 
 def _resolve_kv_cache_dtype() -> str:
     # Effective KV cache dtype for /metrics observability. Priority:
-    #   1. ServerConfig.kv_cache_dtype stash — set by cli_serve after the
+    #   1. SchedulerConfig.kv_cache_dtype — set by cli_serve after the
     #      safelist resolves --kv-cache-dtype, or after the legacy
-    #      --kv-cache-quantization synthesis. Primary source.
-    #   2. Legacy fallback — if the stash is unset / at the bf16 default
-    #      but ServerConfig.scheduler carries kv_cache_quantization=True,
-    #      derive from kv_cache_quantization_bits (programmatic callers
-    #      that bypass the serve CLI).
+    #      --kv-cache-quantization synthesis. Single source of truth
+    #      (#1354 D6; the duplicated ServerConfig field is gone).
+    #   2. Legacy fallback — if dtype is unset / at the bf16 default but
+    #      kv_cache_quantization=True, derive from kv_cache_quantization_bits
+    #      (programmatic callers that bypass the serve CLI).
     #   3. Default "bf16" — the only no-op value, so observability never
     #      lies about quantization status.
-    # Adapted from rapid-mlx's _render_kv_cache_dtype_gauge: fusion uses an
-    # engine POOL (no single engine on cfg), so rapid-mlx's "engine
-    # scheduler_config wins over stale stash" step is dropped — fusion's
-    # stash is set post-resolution pre-load, so stash == engine value with
-    # no stale-stash race.
     dtype: str | None = None
     try:
         from .config import get_config
 
         cfg = get_config()
-        dtype = getattr(cfg, "kv_cache_dtype", None)
+        scheduler = getattr(cfg, "scheduler", None)
+        dtype = getattr(scheduler, "kv_cache_dtype", None)
         if dtype in (None, "bf16"):
-            scheduler = getattr(cfg, "scheduler", None)
             if scheduler is not None and getattr(
                 scheduler, "kv_cache_quantization", False
             ):
