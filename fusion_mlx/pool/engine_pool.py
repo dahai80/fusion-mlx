@@ -2921,6 +2921,28 @@ class EnginePool:
         # asyncio.Lock is not reentrant — acquiring it here would deadlock.
         self._current_model_memory -= entry.estimated_size
 
+        if settle_indeterminate:
+            # #1335: re-read the live gauge once and log the residual so a
+            # skipped settle is not reported as a clean release. The counter
+            # is decremented above regardless, and admission re-reads this
+            # same gauge (#1623 max()) — so only genuinely unreleased memory
+            # can keep resident inflated, never a cached counter figure.
+            try:
+                live_after_skip = max(
+                    int(mx.get_active_memory()), int(get_phys_footprint())
+                )
+            except Exception:  # noqa: BLE001
+                live_after_skip = 0
+            if live_after_skip > 0:
+                logger.warning(
+                    "Settle skipped for '%s': live memory %s still resident "
+                    "(tracked model memory now %s) — admission re-reads the "
+                    "live gauge (#1335)",
+                    model_id,
+                    format_size(live_after_skip),
+                    format_size(self._current_model_memory),
+                )
+
         if settled:
             logger.info(
                 f"Unloaded model: {model_id}, "
