@@ -101,6 +101,11 @@ audio = [
     "phonemizer-fork>=3.3.2",
     "misaki[en]>=0.9.4",
     "espeakng-loader>=0.2.0",
+    # #1377: #1336 voice fine-tuning reads datasets with soundfile and
+    # resamples with librosa. A base install still trains plain PCM WAV via
+    # the stdlib wave reader; 24-bit/float and non-WAV datasets need these.
+    "soundfile>=0.12",
+    "librosa>=0.10.0",
 ]
 image = [
     # Vendored wheel in packaging/_wheels/; install with --find-links packaging/_wheels
