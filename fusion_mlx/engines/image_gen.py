@@ -977,23 +977,38 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 )
             raise RuntimeError("ImageGen engine not started.")
 
-        # S5 (audit 0910 §6.3-5): if a prior generation hung and poisoned the
-        # image executor, swap in a fresh worker and reload the model so this
-        # request can proceed. The stuck thread is abandoned; the replacement
-        # worker reloads model weights on its own thread-local stream (#999).
+        # S5 (audit 0910 §6.3-5): if a prior in-process generation hung and
+        # poisoned the image executor, swap in a fresh worker and reload the
+        # model so this request can proceed. The stuck thread is abandoned;
+        # the replacement worker reloads model weights on its own thread-local
+        # stream (#999). #1332: in subprocess mode only the flag is cleared —
+        # each job is already a fresh worker process.
         from ..engine_core import (
             is_image_executor_poisoned,
             reset_image_executor_poison,
         )
 
         if is_image_executor_poisoned():
-            logger.warning(
-                "Image executor was poisoned by a prior hung generation; "
-                "replacing worker thread and reloading model (S5 recovery)"
-            )
             reset_image_executor_poison()
-            self._flux = None
-            await self.start()
+            if _subproc:
+                # #1332: subprocess jobs are fresh worker processes and the
+                # manager kills + reaps them, so there is no stuck executor
+                # thread to replace. Reloading the model in-process here
+                # would defeat subprocess isolation and can itself hang;
+                # clearing the flag is enough — the next job spawns a fresh
+                # worker.
+                logger.warning(
+                    "Image executor poison flag cleared (S5 recovery, #1332); "
+                    "subprocess mode spawns a fresh worker per job — no "
+                    "in-process model reload"
+                )
+            else:
+                logger.warning(
+                    "Image executor was poisoned by a prior hung generation; "
+                    "replacing worker thread and reloading model (S5 recovery)"
+                )
+                self._flux = None
+                await self.start()
 
         flux = self._flux
         base_seed = seed if seed is not None else 0
@@ -1535,7 +1550,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         activity_id: str,
     ) -> list[bytes]:
         # S3: subprocess image generation via MediaJobManager.
-        from ..media.job_manager import MediaJobManager
+        from ..media.job_manager import MediaJobLoadHangError, MediaJobManager
 
         # #1333: defer the worker spawn until active LLM requests drain
         # (bounded). Runs before run_image_job so the defer does not eat
@@ -1592,20 +1607,38 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 timeout=get_image_gen_timeout(n_images),
                 on_step=_on_step if on_step is not None else None,
             )
-        except TimeoutError:
-            from ..engine_core import poison_executor
+        except MediaJobLoadHangError as exc:
+            from ..engine_core import reset_image_executor_poison
 
-            poison_executor("image")
+            # #1332: fail fast (default 120s, FUSION_IMAGE_LOAD_TIMEOUT) when
+            # the worker produced no event at all — a load hang, not a
+            # generate hang. The worker was killed + reaped; do not poison.
+            reset_image_executor_poison()
+            logger.error("ImageGen load-hang fast-fail: %s", exc)
+            raise
+        except TimeoutError:
+            from ..engine_core import reset_image_executor_poison
+
+            # #1332: the subprocess worker is a fresh process per job and
+            # MediaJobManager killed + reaped it — there is no stuck executor
+            # thread to replace and no state carried into the next job. The
+            # pre-#1332 code poisoned the whole image subsystem here, so
+            # every later request burned the full deadline (or forced an
+            # in-process reload) until a server restart. Clear any stale
+            # flag instead: the next request must be able to spawn a fresh
+            # worker.
+            reset_image_executor_poison()
             logger.error(
-                "ImageGen subprocess timed out after %.0fs, worker killed, "
-                "image executor poisoned (S5)",
+                "ImageGen subprocess timed out after %.0fs; worker killed and "
+                "reaped, image executor NOT poisoned (#1332). The next image "
+                "request will spawn a fresh worker.",
                 get_image_gen_timeout(n_images),
             )
             raise RuntimeError(
                 "image generation exceeded the hang deadline "
                 f"({get_image_gen_timeout(n_images):.0f}s) and the subprocess worker "
-                "was killed (S3). The image subsystem is now poisoned; "
-                "restart fusion-mlx to recover."
+                "was killed (S3). The worker was reaped and the image subsystem "
+                "is healthy; the next request will spawn a fresh worker (#1332)."
             )
         finally:
             # #1004: release the media reservation registered in
