@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed — prefix-cache hits now claim their blocks atomically
+- `fetch_cache`'s hash-map branch looked prefix blocks up with
+  `find_shared_prefix` (no reference taken) and incremented `ref_count`
+  afterwards, so a block freed and reallocated between the two steps was
+  pinned under a stale id holding different content — a silent KV hole
+  that decodes as garbage. `get_computed_blocks(claim=True)` now takes the
+  caller's reference inside the same paged-lock hold as the lookup, and
+  the index branch releases its unused hash-map claims when it wins
+  (#1354 audit H3). Blocks restored from SSD for a claiming caller now
+  transfer the lazy-restore pin instead of stacking a second reference on
+  it, which left every restored block permanently un-evictable
+  (#1354 audit M11).
+
 ### Fixed — context budget no longer degrades to used=0 when a system message is inline
 - Claude Code 2.1.154+ sends `role: "system"` entries inside the messages
   array. The Anthropic route consolidates them, but on the gateway's

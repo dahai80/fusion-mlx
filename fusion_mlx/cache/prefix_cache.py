@@ -425,15 +425,21 @@ class BlockAwarePrefixCache(CacheManager):
         # #1080: split from fetch_cache so the try/finally latency wrapper
         # in fetch_cache captures every return path without duplicating the
         # timing instrumentation at each exit point.
-        # Try to find shared prefix blocks
-        shared_block_ids, remaining = self.paged_cache.find_shared_prefix(
+        # #1354 audit H3: claim the hash-map prefix atomically — the find and
+        # the ref_count increment happen under one paged-lock hold. The old
+        # flow called find_shared_prefix (unclaimed) and then increment_ref'd
+        # each id afterwards, so a block freed + reallocated in that gap was
+        # pinned under a stale id with different content: a silent KV hole.
+        # The index branch below already did this for its own path (P1-07);
+        # this is the same fix for the first branch.
+        shared_blocks, shared_prefix_tokens = self.paged_cache.get_computed_blocks(
             tokens,
             extra_keys=extra_keys,
             extra_key_token_start=extra_key_token_start,
             extra_key_ranges=extra_key_ranges,
+            claim=True,
         )
-
-        shared_prefix_tokens = len(tokens) - len(remaining)
+        remaining = tokens[shared_prefix_tokens:]
 
         # The hash-map lookup above stops at the first block whose table entry
         # is missing (evicted, or registered under a chain that the live
@@ -503,6 +509,12 @@ class BlockAwarePrefixCache(CacheManager):
                     )
                 else:
                     remaining = tokens[live_prefix_len:]
+                    # #1354 H3: the index match wins, so hand back the
+                    # hash-map claims taken above — otherwise those blocks
+                    # stay pinned for a request that never uses them.
+                    for block in shared_blocks:
+                        self.paged_cache.decrement_ref(block.block_id)
+                    shared_blocks = []
                     self._hits += 1
                     self._tokens_saved += live_prefix_len
                     self._tokens_matched_total += live_prefix_len
@@ -516,19 +528,20 @@ class BlockAwarePrefixCache(CacheManager):
 
                     return block_table, remaining
 
-        if shared_block_ids:
-            # Create block table for this request with shared blocks
+        if shared_blocks:
+            # #1354 H3: blocks are already ref-counted for this request — the
+            # claim happened inside get_computed_blocks under the paged locks,
+            # so their ids cannot have been freed/reused since the lookup.
             block_table = self.paged_cache.create_block_table(request_id)
 
-            for block_id in shared_block_ids:
-                # Increment ref count for sharing
-                self.paged_cache.increment_ref(block_id)
-                block = self.paged_cache.allocated_blocks.get(block_id)
-                if block:
-                    block_table.block_ids.append(block_id)
-                    block_table.num_tokens += block.token_count
+            live_prefix_len = 0
+            for block in shared_blocks:
+                block_table.block_ids.append(block.block_id)
+                block_table.num_tokens += block.token_count
+                live_prefix_len += block.token_count
 
-            num_prefix_tokens = len(tokens) - len(remaining)
+            remaining = tokens[live_prefix_len:]
+            num_prefix_tokens = live_prefix_len
             self._hits += 1
             self._tokens_saved += num_prefix_tokens
             self._tokens_matched_total += num_prefix_tokens
@@ -537,7 +550,7 @@ class BlockAwarePrefixCache(CacheManager):
 
             logger.debug(
                 f"Cache hit for {request_id}: "
-                f"{len(shared_block_ids)} blocks, {num_prefix_tokens} tokens"
+                f"{len(shared_blocks)} blocks, {num_prefix_tokens} tokens"
             )
 
             return block_table, remaining
