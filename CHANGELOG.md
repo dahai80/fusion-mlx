@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Fixed — abort_all_requests runs on the MLX executor; cogvideox backend honours the async video contract (#1354 audit H4/H5)
+- `abort_all_requests` (the memory-pressure batch abort) called
+  `scheduler.abort_request` directly on the event-loop thread while the MLX
+  executor thread's `step()` was concurrently popping/appending the same
+  scheduler `waiting`/`running` deques (non-atomic deque operations). The batch
+  abort is now submitted to the same single-worker MLX executor that runs
+  `step()`, so only that thread mutates the queues. Terminal outputs and
+  finished-event bookkeeping stay on the event loop, and the existing
+  abort-count/logging contract is unchanged.
+- Selecting the `cogvideox` video backend (`backend="cogvideox"` or any
+  `_ALIASES` spelling such as `cog_video`) failed with
+  `TypeError: object NoneType can't be used in 'await' expression`: the
+  backend overrode the async `start`/`stop`/`generate` contract with sync
+  methods, and `generate` still took the retired `prompt=` signature instead
+  of `VideoGenParams`. The backend now honours the async contract, runs the
+  blocking MLX generate on the video executor and the stop-path
+  `mx.synchronize()`/`mx.clear_cache()` on the io executor (never the event
+  loop thread), returns MP4 bytes like the other backends, and releases its
+  staged VAE encoder on stop so memory is not retained between requests.
+
 ### Security (breaking) — tenant isolation now refuses to boot without FUSION_ROUTE_TOKEN
 - `FUSION_TENANT_ISOLATION=true` previously accepted the public
   `X-Fusion-Route: gateway-decision` constant as proof of gateway origin.
