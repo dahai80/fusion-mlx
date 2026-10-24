@@ -20,6 +20,13 @@ from fusion_mlx.migrate.converter import _SourceTensor, convert_model
 from fusion_mlx.migrate.validator import validate_model
 from fusion_mlx.migrate.weight_mapper import build_weight_map
 
+# The converter loads source weights via safetensors' "pt" framework and
+# converts through torch.Tensor (tensor_to_mx), so every test in this file
+# requires a real torch install. CI shards run without torch — skip the
+# whole module there instead of failing (same treatment as the M26
+# pytorch-fallback test below).
+pytest.importorskip("torch")
+
 _LLAMA = KNOWN_TEMPLATES["llama"]
 
 
