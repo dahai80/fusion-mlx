@@ -317,6 +317,27 @@ Filesystem paths and URLs are deliberately **not** accepted (`ref_audio`
 is not a local-file or SSRF entry point); remote clients base64-encode the
 clip instead.
 
+**Trained voices** (`#1336`): a voice package produced by the voice
+fine-tune job is addressed by `voice_ref`, its directory name under
+`~/.fusion-mlx/voices/`. The server resolves it to
+`<voice_ref>/voice.safetensors` and hands that path to the kokoro pipeline,
+which loads it exactly like a stock voice name.
+
+```json
+{
+    "model": "mlx-community/Kokoro-82M-bf16",
+    "input": "Read this in the trained voice.",
+    "voice_ref": "my-voice"
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `voice_ref` | no | Directory name only. Rejected with 404 when the pack is missing; the check runs before any engine load. `/`, `\`, and a leading `.` are rejected, so a ref cannot escape `~/.fusion-mlx/voices/`. An explicit `voice` wins when both are set. |
+
+`GET /v1/audio/voices` lists trained packs under `trained_voices`
+alongside the stock voices.
+
 ### `POST /v1/audio/process`
 
 Process audio files — enhancement, source separation, etc.
