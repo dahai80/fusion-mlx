@@ -1114,17 +1114,18 @@ class PagedCacheManager(CacheManager):
         extra_keys: tuple[Any, ...] | None = None,
         extra_key_token_start: int | None = None,
         extra_key_ranges: list[tuple[int, tuple[Any, ...]]] | None = None,
+        claim: bool = False,
     ) -> tuple[list[CacheBlock], int]:
-        """
-        Find cached blocks for a token prefix (vLLM style).
-
-        Args:
-            token_ids: Token IDs to look up
-            extra_keys: Additional keys for hash (e.g., VLM image hash)
-
-        Returns:
-            Tuple of (cached_blocks, num_cached_tokens)
-        """
+        # #1354 audit H3: with claim=True the caller's reference is taken
+        # inside the paged locks, in the same hold as the hash lookup. The
+        # old contract returned blocks unclaimed and the caller incremented
+        # ref_count afterwards, so a block evicted in that gap could be
+        # reclaimed under a stale id and then pinned with different content
+        # (silent KV hole, garbage decode). A block restored from SSD in this
+        # call already holds the lazy-restore pin (ref_count=1) — for the
+        # claiming caller that pin transfers, so it is not incremented again
+        # (M11: the old flow left the pin + the caller's ref and the block
+        # could never be evicted).
         if not self.enable_caching or self.block_size <= 0:
             return [], 0
 
@@ -1132,6 +1133,9 @@ class PagedCacheManager(CacheManager):
             cached_blocks = []
             parent_hash = None
             num_cached_tokens = 0
+            # #1354 H3: blocks restored from SSD during this call already hold
+            # the lazy-restore pin, which transfers to the claiming caller.
+            restored_ids: set[int] = set()
 
             num_full_blocks = len(token_ids) // self.block_size
 
@@ -1176,10 +1180,18 @@ class PagedCacheManager(CacheManager):
                             # the block, turning a cache hit into a miss.
                             self.cached_block_hash_to_block.insert(block_hash, block)
                             cached_block = block
+                            restored_ids.add(block.block_id)
 
                 if cached_block is None:
                     self.stats.misses += 1
                     break  # Cache miss, stop here
+
+                if claim and cached_block.block_id not in restored_ids:
+                    # Inline increment_ref — all paged locks are already held.
+                    cached_block.ref_count += 1
+                    cached_block.touch()
+                    if cached_block.ref_count == 2:
+                        self.stats.shared_blocks += 1
 
                 cached_blocks.append(cached_block)
                 parent_hash = block_hash
