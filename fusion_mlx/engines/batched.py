@@ -256,21 +256,20 @@ class BatchedEngine(BaseEngine):
         if self._loaded:
             return
 
-        # #mtp-knob-visibility: mtp_enabled is a dead knob on the serve
-        # load path — set_mtp_active(True) only runs inside the OQ convert
-        # pipeline (oq/streaming.py), and even there model_settings is not
-        # passed. Native MTP at serve time comes from --spec-decode mtp /
-        # spec-auto resolution, never from this toggle. Fail visibly.
-        if self._model_settings is not None and getattr(
-            self._model_settings, "mtp_enabled", False
-        ):
-            logger.warning(
-                "mtp_enabled=True in model settings is not wired into the "
-                "serve load path (pre-load MTP patch pipeline only runs in "
-                "the OQ convert pipeline); this toggle is inert here. Native "
-                "MTP at serve time comes from --spec-decode mtp or spec-auto "
-                "resolution, not this knob."
-            )
+        # #1342: pre-load patches (deepseek_v4 / glm_moe_dsa / step3p7 /
+        # MTP sanitize + mtp_enabled) must run before mlx_lm imports the
+        # model classes and weights. The _mlx_compat shim is installed at
+        # fusion_mlx package import (scheduler/__init__.py), so this runs
+        # after it. for_vlm=False: this engine loads text-only, including
+        # the pool force_text path over a VLM-family checkpoint — VLM-only
+        # patches must never run here.
+        from ..utils.model_loading import maybe_apply_pre_load_patches
+
+        maybe_apply_pre_load_patches(
+            self._model_name,
+            model_settings=self._model_settings,
+            for_vlm=False,
+        )
 
         from mlx_lm import load
 
