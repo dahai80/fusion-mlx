@@ -159,8 +159,7 @@ async def apply_endpoint(
         "completion_batch_size": sched.completion_batch_size,
         "max_num_batched_tokens": sched.max_num_batched_tokens,
         "cache_memory_mb": sched.cache_memory_mb,
-        "kv_cache_quantization": sched.kv_cache_quantization,
-        "kv_cache_quantization_bits": sched.kv_cache_quantization_bits,
+        "kv_cache_dtype": sched.kv_cache_dtype,
     }
 
 

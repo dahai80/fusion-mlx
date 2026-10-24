@@ -383,8 +383,6 @@
   "settings.advanced.prefill_step_size_hint": "Tokens per prefill chunk.",
   "settings.advanced.max_waiting": "Max Waiting Requests",
   "settings.advanced.max_waiting_hint": "0 = unlimited. Requests beyond this are rejected with 429.",
-  "settings.advanced.use_paged_cache": "Paged KV Cache",
-  "settings.advanced.use_paged_cache_hint": "Block-paged KV cache (experimental; slower than prefix cache).",
   "settings.advanced.paged_cache_block_size": "Paged Cache Block Size",
   "settings.advanced.paged_cache_block_size_hint": "Tokens per paged-cache block.",
   "settings.advanced.max_cache_blocks": "Max Cache Blocks",

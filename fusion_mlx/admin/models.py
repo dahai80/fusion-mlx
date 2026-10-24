@@ -262,7 +262,6 @@ class GlobalSettingsRequest(BaseModel):
     scheduler_completion_batch_size: int | None = Field(default=None, ge=1)
     scheduler_prefill_step_size: int | None = Field(default=None, ge=1)
     scheduler_max_waiting: int | None = Field(default=None, ge=0)
-    scheduler_use_paged_cache: bool | None = None
     scheduler_paged_cache_block_size: int | None = Field(default=None, ge=1)
     scheduler_max_cache_blocks: int | None = Field(default=None, ge=1)
     scheduler_enable_mtp: bool | None = None

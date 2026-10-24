@@ -326,12 +326,12 @@ class TestMemoryCacheIntegration:
 
 class TestResolveTurboquantModeDefault:
     @staticmethod
-    def _args(turboquant=None, quantization=False):
+    def _args(turboquant=None, kv_cache_dtype="int4"):
         from types import SimpleNamespace
 
         return SimpleNamespace(
             kv_cache_turboquant=turboquant,
-            kv_cache_quantization=quantization,
+            kv_cache_dtype=kv_cache_dtype,
         )
 
     def test_explicit_v4_overrides_default(self):
@@ -358,10 +358,10 @@ class TestResolveTurboquantModeDefault:
             is None
         )
 
-    def test_legacy_quantization_suppresses_autoflip(self):
+    def test_explicit_nondefault_dtype_suppresses_autoflip(self):
         assert (
             resolve_turboquant_mode_default(
-                self._args(quantization=True),
+                self._args(kv_cache_dtype="int8"),
                 model_name="qwen3.5-35b-8bit",
             )
             is None

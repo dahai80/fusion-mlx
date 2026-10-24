@@ -116,6 +116,25 @@
   `VLMBatchedEngine` when the adopted entry is `vlm`-typed, and keeps
   `BatchedEngine` for `--text-only` / `force_text` as before.
 
+### Changed — paged-cache false switches and legacy KV-quantization aliases removed (#1354, audit D2/D7)
+- `SchedulerConfig.use_paged_cache` / `serve --use-paged-cache` /
+  `bench --use-paged-cache` and their admin settings, i18n strings and
+  reload wiring are gone. The scheduler never read that flag: paged
+  memory + SSD cache activate from `enable_prefix_cache` and
+  `paged_ssd_cache_dir`. `paged_cache_block_size` / `max_cache_blocks`
+  remain because they are live (`sched_init.py:327-357` feeds both into
+  `PagedCacheManager`; `_effective_max_blocks` at `sched_init.py:642`
+  honors the operator cap) — the 1019 audit's D2 claim was half wrong.
+- The legacy KV-quantization alias group is removed:
+  `SchedulerConfig.kv_cache_quantization` / `_bits` / `_group_size` /
+  `kv_cache_min_quantize_tokens`, the matching `serve` / `bench` flags,
+  the mutual-exclusion and reasoning-compat checks, the `/metrics`
+  legacy-bits fallback and `dtype_to_quantization_bits`. `--kv-cache-dtype`
+  (or TurboQuant) is the single KV quantization surface; flywheel apply
+  and the parity/flywheel routes now report `kv_cache_dtype`. Scripts
+  passing the removed flags now fail at argparse — migrate them to
+  `--kv-cache-dtype {bf16,int8,int4}`.
+
 ### Fixed — pool mode stops blaming external GPU processes; spec-route log flood
 - The per-scheduler "GPU contention detected" warning fired in pool mode
   whenever co-resident engines decoded on the same GPU: their interleave

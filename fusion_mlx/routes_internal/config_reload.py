@@ -58,7 +58,6 @@ REQUIRES_RESTART_FIELDS: frozenset[str] = frozenset(
         "scheduler_completion_batch_size",
         "scheduler_prefill_step_size",
         "scheduler_max_waiting",
-        "scheduler_use_paged_cache",
         "scheduler_paged_cache_block_size",
         "scheduler_max_cache_blocks",
         "scheduler_enable_mtp",

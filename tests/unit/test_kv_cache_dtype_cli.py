@@ -72,26 +72,18 @@ def test_serve_help_lists_all_three_choices():
     assert "int4" in text
 
 
-def test_serve_rejects_reasoning_plus_legacy_kv_cache_quantization_bits_4():
-    """codex r1 BLOCKING #1: --reasoning + legacy --kv-cache-quantization
-    --kv-cache-quantization-bits 4 used to silently resolve to int4,
-    ignoring the reasoning profile's int8 pin. The fix rejects the
-    combo with an actionable error message. Tested via subprocess so
-    the inline SystemExit codepath runs end-to-end.
+def test_serve_help_omits_removed_legacy_kv_quant_flags():
+    text = _serve_help()
+    for flag in (
+        "--kv-cache-quantization",
+        "--kv-cache-quantization-bits",
+        "--kv-cache-quantization-group-size",
+        "--kv-cache-min-quantize-tokens",
+    ):
+        assert flag not in text
 
-    We pass ``--help`` after the conflicting flags so the parser exits
-    cleanly if the rejection didn't fire — that flips the failure into
-    a "should have rejected but instead printed help" assertion.
-    Without ``--help``, the test would also need a real model load
-    which is out of scope for the CLI surface test.
-    """
-    # Use an ``org/name`` HF-style path (must contain ``/``) so fusion's
-    # early alias fail-fast at cli.py:1788 is skipped and execution
-    # reaches serve_command → the conflict check at cli_serve.py:1800.
-    # The rejection fires BEFORE any model load / network fetch, so this
-    # is fast and offline. The auto-pull gate (cli.py:1873) is skipped
-    # too because the subprocess has no TTY (``sys.stdin.isatty()`` is
-    # False under ``capture_output=True``).
+
+def test_serve_rejects_removed_legacy_kv_quant_flag():
     proc = subprocess.run(
         [
             sys.executable,
@@ -99,26 +91,13 @@ def test_serve_rejects_reasoning_plus_legacy_kv_cache_quantization_bits_4():
             "fusion_mlx.cli",
             "serve",
             "mlx-community/Qwen3.5-9B-4bit",
-            "--reasoning",
             "--kv-cache-quantization",
-            "--kv-cache-quantization-bits",
-            "4",
         ],
         capture_output=True,
         text=True,
         timeout=120,
-        # CI mac runners cannot reach hf-mirror; without offline env the CLI
-        # boot path stalls in HF retry loops and blows the 120s budget
-        # (observed 3 consecutive runs). The rejection itself is offline-safe.
         env=dict(os.environ, HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1"),
     )
-    # Either stderr or stdout will carry the error string depending on
-    # python buffering; check both.
     combined = (proc.stdout or "") + (proc.stderr or "")
-    assert proc.returncode != 0, (
-        f"expected non-zero exit, got rc={proc.returncode}; "
-        f"stdout={proc.stdout!r}, stderr={proc.stderr!r}"
-    )
-    assert (
-        "--reasoning" in combined and "--kv-cache-quantization-bits 4" in combined
-    ), f"expected actionable error mentioning the conflict; got: {combined!r}"
+    assert proc.returncode != 0, combined
+    assert "unrecognized arguments" in combined, combined

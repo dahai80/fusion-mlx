@@ -465,6 +465,7 @@ def serve_command(args):
     if args.embedding_model:
         _load_embedding_model_or_exit(args, server.load_embedding_model)
 
+
     # Resolve per-alias TurboQuant default before the mutual-exclusion
     # check below — operator-explicit values still win.
     from ..turboquant import resolve_turboquant_mode_default
@@ -473,27 +474,12 @@ def serve_command(args):
         args, model_name=args.model
     )
 
-    # Mutual exclusion: turboquant (any mode) vs standard quantization.
-    # The argparse layer normalizes the flag to either ``None`` (off),
-    # ``"v4"``, or ``"k8v4"``. Anything truthy means TurboQuant is on.
-    if args.kv_cache_turboquant and args.kv_cache_quantization:
-        print(
-            "\n  Error: --kv-cache-turboquant and --kv-cache-quantization are "
-            "mutually exclusive. Choose one.\n"
-        )
-        sys.exit(1)
-
-    # R15 #300: resolve --kv-cache-dtype + --reasoning + safelist BEFORE
-    # the legacy --kv-cache-quantization flag wins. When --kv-cache-
-    # turboquant is on, leave the kv-cache-dtype path alone — TurboQuant
-    # owns the V cache and would conflict with QuantizedKVCache. When
-    # the legacy --kv-cache-quantization flag is passed, honor it
-    # verbatim for backwards compatibility; the new dtype flag only
-    # takes effect on operators who haven't pinned the legacy bool.
+    # R15 #300: resolve --kv-cache-dtype + --reasoning + safelist. When
+    # --kv-cache-turboquant is on, leave the kv-cache-dtype path alone —
+    # TurboQuant owns the V cache and would conflict with QuantizedKVCache.
     kv_cache_decision = None
-    if not args.kv_cache_turboquant and not args.kv_cache_quantization:
+    if not args.kv_cache_turboquant:
         from ..kv_cache_dtype import (
-            dtype_to_quantization_bits,
             log_kv_cache_decision,
             resolve_kv_cache_dtype,
         )
@@ -508,12 +494,7 @@ def serve_command(args):
             alias_metadata=alias_meta,
         )
         log_kv_cache_decision(kv_cache_decision, model_name=args.model)
-        quant, bits = dtype_to_quantization_bits(kv_cache_decision.dtype)
-        # Mutate args so the existing SchedulerConfig wiring picks up
-        # the resolved values without a second code path.
-        args.kv_cache_quantization = quant
-        args.kv_cache_quantization_bits = bits
-        # Stash on the shared SchedulerConfig so /metrics surfaces the
+        # Stash on the shared ServerConfig so /metrics surfaces the
         # effective dtype during the pre-engine load window — operator
         # uptime dashboards scrape within ms of process start. (#1354 D6:
         # the ServerConfig copy was a duplicate of this field.)
@@ -523,80 +504,6 @@ def serve_command(args):
             _get_config().scheduler.kv_cache_dtype = kv_cache_decision.dtype
         except Exception:
             # Observability-only side effect; never block serve start.
-            pass
-    elif args.kv_cache_quantization:
-        # Legacy flag took precedence — synthesize a decision so
-        # observability still has a single source of truth.
-        from ..kv_cache_dtype import (
-            REASONING_KV_CACHE_DTYPE,
-            KVCacheDtypeDecision,
-        )
-
-        # codex r1 BLOCKING #1: ``--reasoning`` must override the
-        # legacy ``--kv-cache-quantization`` flag too — otherwise
-        # ``fusion-mlx serve --reasoning --kv-cache-quantization
-        # --kv-cache-quantization-bits 4`` silently resolves to int4
-        # and the operator who deliberately asked for the reasoning
-        # profile gets the AIME-class quality cliff. Reject the
-        # conflicting combo with an explicit error: silently flipping
-        # the legacy bits to 8 would hide the misconfiguration.
-        # bits=8 is equivalent to --reasoning's int8 pin and is
-        # harmless; only bits=4 conflicts.
-        if args.reasoning and args.kv_cache_quantization_bits == 4:
-            print(
-                "\n  Error: --reasoning is incompatible with "
-                "--kv-cache-quantization --kv-cache-quantization-bits 4. "
-                "The reasoning profile pins KV cache to int8 because "
-                "sub-4-bit drops -20pt on AIME-class math. Either drop "
-                "--reasoning or drop --kv-cache-quantization-bits 4 "
-                "(or both; use --kv-cache-dtype int8 instead).\n"
-            )
-            sys.exit(1)
-
-        # codex r2 BLOCKING #1: argparse pins ``--kv-cache-quantization-bits``
-        # to ``choices={4,8}``, but programmatic callers (tests, library
-        # users that bypass argparse) can land an out-of-range bits value
-        # here. The old ``"int4" if bits == 4 else "int8"`` silently
-        # labeled every non-4 value as ``int8`` even when KV would actually
-        # be quantized at the requested bit width. Fail fast instead so
-        # the gauge / banner / SchedulerConfig never lie about the
-        # active dtype.
-        if args.kv_cache_quantization_bits not in (4, 8):
-            print(
-                f"\n  Error: --kv-cache-quantization-bits must be 4 or 8 "
-                f"(got {args.kv_cache_quantization_bits}). Use "
-                f"--kv-cache-dtype for the canonical knob.\n"
-            )
-            sys.exit(1)
-        legacy_dtype = "int4" if args.kv_cache_quantization_bits == 4 else "int8"
-        # When --reasoning is set alongside the (compatible) bits=8
-        # legacy flag, the operator-facing reason should still
-        # advertise the reasoning profile so the startup banner is
-        # consistent across the two CLI shapes.
-        if args.reasoning:
-            assert legacy_dtype == REASONING_KV_CACHE_DTYPE  # by the guard above
-            reason = (
-                f"legacy --kv-cache-quantization flag + --reasoning — "
-                f"resolved to {REASONING_KV_CACHE_DTYPE} (reasoning profile "
-                f"pin matches legacy bits=8)"
-            )
-        else:
-            reason = (
-                f"legacy --kv-cache-quantization flag (bits="
-                f"{args.kv_cache_quantization_bits}) — equivalent to "
-                f"--kv-cache-dtype {legacy_dtype}"
-            )
-        kv_cache_decision = KVCacheDtypeDecision(
-            dtype=legacy_dtype,
-            reason=reason,
-            downgraded=False,
-            requested=legacy_dtype,
-        )
-        try:
-            from fusion_mlx.config import get_config as _get_config
-
-            _get_config().scheduler.kv_cache_dtype = legacy_dtype
-        except Exception:
             pass
 
     # --suffix-decoding + --enable-mtp may coexist: mtp takes priority for
@@ -630,7 +537,6 @@ def serve_command(args):
         cache_memory_mb=args.cache_memory_mb,
         cache_memory_percent=args.cache_memory_percent,
         # Paged cache options
-        use_paged_cache=args.use_paged_cache,
         paged_cache_block_size=args.paged_cache_block_size,
         max_cache_blocks=args.max_cache_blocks,
         # Chunked prefill
@@ -663,16 +569,11 @@ def serve_command(args):
         suffix_max_suffix_len=args.suffix_max_suffix_len,
         suffix_min_confidence=args.suffix_min_confidence,
         suffix_min_draft_len=args.suffix_min_draft_len,
-        # KV cache quantization (R15 #300: dtype string is the canonical
-        # observability surface; ``_quantization`` / ``_bits`` are the
-        # wire-level toggles that drive ``mlx_lm.QuantizedKVCache``).
+        # KV cache dtype (R15 #300: the dtype string is both the
+        # observable surface and the runtime knob).
         kv_cache_dtype=(
             kv_cache_decision.dtype if kv_cache_decision is not None else "bf16"
         ),
-        kv_cache_quantization=args.kv_cache_quantization,
-        kv_cache_quantization_bits=args.kv_cache_quantization_bits,
-        kv_cache_quantization_group_size=args.kv_cache_quantization_group_size,
-        kv_cache_min_quantize_tokens=args.kv_cache_min_quantize_tokens,
         # TurboQuant compression (R15 Phase 4: mode-aware)
         # ``--kv-cache-turboquant`` now carries a mode value: ``None``
         # when off, ``"v4"`` for the legacy V-only path, ``"k8v4"`` for
@@ -902,11 +803,7 @@ def serve_command(args):
             f"min_conf={args.suffix_min_confidence}"
         )
     print(f"Stream interval: {args.stream_interval} tokens")
-    if args.use_paged_cache:
-        print(
-            f"Paged cache: block_size={args.paged_cache_block_size}, max_blocks={args.max_cache_blocks}"
-        )
-    elif enable_prefix_cache and not args.no_memory_aware_cache:
+    if enable_prefix_cache and not args.no_memory_aware_cache:
         cache_info = (
             f"{args.cache_memory_mb}MB"
             if args.cache_memory_mb
@@ -931,11 +828,6 @@ def serve_command(args):
                     f"TurboQuant V-cache ({mode}): {bits_str}-bit, "
                     f"group_size={args.kv_cache_turboquant_group_size} (K stays FP16)"
                 )
-        elif args.kv_cache_quantization:
-            print(
-                f"KV cache quantization: {args.kv_cache_quantization_bits}-bit, "
-                f"group_size={args.kv_cache_quantization_group_size}"
-            )
     elif enable_prefix_cache:
         print(f"Prefix cache: max_entries={args.prefix_cache_size}")
 

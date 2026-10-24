@@ -324,28 +324,6 @@ def resolve_kv_cache_dtype(
     )
 
 
-def dtype_to_quantization_bits(dtype: str) -> tuple[bool, int]:
-    """Return ``(kv_cache_quantization, kv_cache_quantization_bits)``.
-
-    Maps the user-facing dtype string onto the existing
-    ``SchedulerConfig`` knobs that wire into
-    ``mlx_lm.QuantizedKVCache``. ``bf16`` disables quantization; ``int8``
-    / ``int4`` enable it with the matching bit width.
-
-    Raises:
-        ValueError: If ``dtype`` is not in :data:`KV_CACHE_DTYPES`.
-    """
-    if dtype == "bf16":
-        return False, 8  # bits ignored when quantization=False
-    if dtype == "int8":
-        return True, 8
-    if dtype == "int4":
-        return True, 4
-    raise ValueError(
-        f"unknown kv_cache_dtype {dtype!r}; expected one of {KV_CACHE_DTYPES}"
-    )
-
-
 def log_kv_cache_decision(
     decision: KVCacheDtypeDecision, *, model_name: str | None = None
 ) -> None:

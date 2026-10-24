@@ -459,7 +459,6 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
         ("scheduler_completion_batch_size", "scheduler", "completion_batch_size"),
         ("scheduler_prefill_step_size", "scheduler", "prefill_step_size"),
         ("scheduler_max_waiting", "scheduler", "max_waiting"),
-        ("scheduler_use_paged_cache", "scheduler", "use_paged_cache"),
         ("scheduler_paged_cache_block_size", "scheduler", "paged_cache_block_size"),
         ("scheduler_max_cache_blocks", "scheduler", "max_cache_blocks"),
         ("scheduler_enable_mtp", "scheduler", "enable_mtp"),
@@ -922,7 +921,6 @@ def _read_live_advanced_config() -> dict[str, Any]:
                 "completion_batch_size": sched.completion_batch_size,
                 "prefill_step_size": sched.prefill_step_size,
                 "max_waiting": sched.max_waiting,
-                "use_paged_cache": sched.use_paged_cache,
                 "paged_cache_block_size": sched.paged_cache_block_size,
                 "max_cache_blocks": sched.max_cache_blocks,
                 "enable_mtp": sched.enable_mtp,
@@ -969,7 +967,6 @@ def _read_live_advanced_config() -> dict[str, Any]:
                     "completion_batch_size": sched_sj.get("completion_batch_size", 32),
                     "prefill_step_size": sched_sj.get("prefill_step_size", 2048),
                     "max_waiting": sched_sj.get("max_waiting", 0),
-                    "use_paged_cache": sched_sj.get("use_paged_cache", False),
                     "paged_cache_block_size": sched_sj.get(
                         "paged_cache_block_size", 64
                     ),
@@ -1495,7 +1492,6 @@ async def update_global_settings(
         ("scheduler_completion_batch_size", "scheduler", "completion_batch_size"),
         ("scheduler_prefill_step_size", "scheduler", "prefill_step_size"),
         ("scheduler_max_waiting", "scheduler", "max_waiting"),
-        ("scheduler_use_paged_cache", "scheduler", "use_paged_cache"),
         ("scheduler_paged_cache_block_size", "scheduler", "paged_cache_block_size"),
         ("scheduler_max_cache_blocks", "scheduler", "max_cache_blocks"),
         ("scheduler_enable_mtp", "scheduler", "enable_mtp"),
