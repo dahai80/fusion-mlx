@@ -3716,7 +3716,9 @@ class TestMeasureSensitivityQuantizedVlm:
         )
 
         assert result == {}
-        maybe_apply.assert_called_once_with("/fake/minimax-proxy", for_vlm=True)
+        maybe_apply.assert_called_once_with(
+            "/fake/minimax-proxy", model_settings=None, for_vlm=True
+        )
         vlm_load.assert_called_once()
         assert vlm_load.call_args.args[0] == Path("/fake/minimax-proxy")
         assert vlm_load.call_args.kwargs["lazy"] is True

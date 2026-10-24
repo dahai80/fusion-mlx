@@ -2429,6 +2429,7 @@ class Server:
                     OQManager(
                         model_dirs=model_dirs,
                         on_complete=_refresh_models_after_task,
+                        settings_manager=settings_manager,
                     )
                 )
                 logger.info("oQ Quantizer initialized")

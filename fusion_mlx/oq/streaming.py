@@ -17,6 +17,7 @@ import tempfile
 import time as _time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 try:
     import mlx.core as mx
@@ -235,6 +236,7 @@ def quantize_oq_streaming(
     preserve_mtp: bool = False,
     auto_proxy_sensitivity: bool = True,
     trust_remote_code: bool = False,
+    model_settings: Any | None = None,
 ) -> None:
     """Tensor-by-tensor quantization. Memory: ~3-4GB regardless of model size.
 
@@ -268,6 +270,9 @@ def quantize_oq_streaming(
             output. Ignored if sensitivity_model_path is set explicitly.
         trust_remote_code: Forwarded to mlx-lm/mlx-vlm model loads when a
             checkpoint requires custom model code.
+        model_settings: Per-model settings forwarded to the pre-load patch
+            dispatcher (#1342) so mtp_enabled can attach the MTP head during
+            sensitivity measurement. None leaves MTP inactive.
     """
     # Route patchable sibling calls through the package namespace so tests that
     # monkeypatch fusion_mlx.oq.<fn> intercept them (bound imports would bypass).
@@ -352,6 +357,7 @@ def quantize_oq_streaming(
                 num_samples=128,
                 seq_length=256,
                 trust_remote_code=trust_remote_code,
+                model_settings=model_settings,
             )
         elif (
             not _model_exceeds_ram
@@ -375,6 +381,7 @@ def quantize_oq_streaming(
                 num_samples=128,
                 seq_length=256,
                 trust_remote_code=trust_remote_code,
+                model_settings=model_settings,
             )
         elif _model_exceeds_ram and auto_proxy_sensitivity:
             logger.warning(
@@ -403,6 +410,7 @@ def quantize_oq_streaming(
                     num_samples=128,
                     seq_length=256,
                     trust_remote_code=trust_remote_code,
+                    model_settings=model_settings,
                 )
             except Exception as e:
                 raise RuntimeError(
@@ -434,6 +442,7 @@ def quantize_oq_streaming(
                 num_samples=128,
                 seq_length=256,
                 trust_remote_code=trust_remote_code,
+                model_settings=model_settings,
             )
 
     # Single enforcement point. Inner measurement helpers may return {} on
@@ -1344,6 +1353,7 @@ def _measure_sensitivity(
     num_samples=32,
     seq_length=256,
     trust_remote_code: bool = False,
+    model_settings: Any | None = None,
 ):
     """Measure sensitivity by loading model temporarily. Used by streaming path."""
     from fusion_mlx import oq as _oq
@@ -1362,7 +1372,11 @@ def _measure_sensitivity(
     # Reuse the centralised pre-load dispatch so every current and future
     # patch (MTP sanitize, DeepSeek V4, nested-visual, load_config, …) is
     # applied exactly as in the production load path.
-    maybe_apply_pre_load_patches(model_path, for_vlm=is_vlm)
+    maybe_apply_pre_load_patches(
+        model_path,
+        model_settings=model_settings,
+        for_vlm=is_vlm,
+    )
 
     # maybe_apply_pre_load_patches leaves mtp_active False, which is correct
     # for the text path: the patched qwen35_model.sanitize self-consistently
@@ -1715,6 +1729,7 @@ def _measure_sensitivity_from_quantized_model(
     num_samples=32,
     seq_length=256,
     trust_remote_code: bool = False,
+    model_settings: Any | None = None,
 ):
     """Measure sensitivity via re-quantization on a quantized model.
 
@@ -1736,7 +1751,11 @@ def _measure_sensitivity_from_quantized_model(
     # Idempotent; harmless for plain mlx-lm proxies.
     is_vlm = _has_vision_subconfig(config)
     has_mtp_weights = _checkpoint_has_mtp_weights(model_path)
-    maybe_apply_pre_load_patches(model_path, for_vlm=is_vlm)
+    maybe_apply_pre_load_patches(
+        model_path,
+        model_settings=model_settings,
+        for_vlm=is_vlm,
+    )
 
     restore_mtp_active = None
     try:

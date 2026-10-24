@@ -343,6 +343,19 @@ class VLMBatchedEngine(BaseEngine):
         if self._loaded:
             return
 
+        # #1342: pre-load patches must run before mlx_vlm imports the model
+        # classes and weights; the _mlx_compat shim is already installed at
+        # fusion_mlx package import (scheduler/__init__.py). This run order
+        # also puts the MTP-aware Model.sanitize patch underneath the
+        # RMSNorm +1.0 guard installed by _patch_vlm_sanitize below.
+        from ..utils.model_loading import maybe_apply_pre_load_patches
+
+        maybe_apply_pre_load_patches(
+            self._model_name,
+            model_settings=self._model_settings,
+            for_vlm=True,
+        )
+
         _patch_vlm_sanitize()
 
         from mlx_vlm.utils import load as vlm_load

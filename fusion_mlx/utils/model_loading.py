@@ -311,6 +311,11 @@ def maybe_apply_pre_load_patches(
 
         if apply_mlx_lm_mtp_patch():
             set_mtp_active(mtp_enabled)
+            logger.info(
+                "mlx-lm MTP pre-load patch applied for %s (mtp_enabled=%s)",
+                model_name,
+                mtp_enabled,
+            )
 
         if for_vlm:
             try:
