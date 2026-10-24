@@ -6,7 +6,7 @@ Plus UnifiedMemoryPool for cross-engine memory coordination and
 PriorityScheduler for Metal multi-queue scheduling.
 """
 
-from .engine_pool import EnginePool
+from .engine_pool import EnginePool, UnloadResult
 from .memory_enforcer import MemoryProfile, ProcessMemoryEnforcer
 from .model_discovery import ModelDiscovery
 from .priority_scheduler import (
@@ -27,6 +27,7 @@ from .unified_memory_pool import (
 
 __all__ = [
     "EnginePool",
+    "UnloadResult",
     "ProcessMemoryEnforcer",
     "MemoryProfile",
     "ModelDiscovery",

@@ -149,6 +149,19 @@ class ModelManager:
     # ── EnginePool backend ──
 
     def _get_engine_pool(self):
+        # #1351: the server's EnginePool is the only pool that holds the
+        # resident engines. Building a private EnginePool() here meant every
+        # gui-managed load/unload silently targeted an empty pool.
+        try:
+            from fusion_mlx.server import get_server
+
+            srv = get_server()
+        except Exception as e:
+            logger.debug("model_manager: server pool unavailable: %s", e)
+            srv = None
+        server_pool = getattr(srv, "pool", None) if srv is not None else None
+        if server_pool is not None:
+            return server_pool
         if self._engine_pool is None:
             with self._engine_pool_lock:
                 if self._engine_pool is None:
@@ -557,27 +570,59 @@ class ModelManager:
                 ):
                     return False
 
-    def unload_model(self, model_name: str) -> bool:
+    async def unload_model_async(self, model_name: str):
+        # #1351: drive EnginePool.unload_engine_async and return its
+        # UnloadResult (status unloaded / deferred / not_loaded) so callers can
+        # report what actually happened. None = the pool call raised.
+        self._set_loading_status(model_name, LoadingStatus.UNLOADING)
         try:
-            with self._lock:
-                if model_name not in self._loaded_models:
-                    logger.warning(f"Model {model_name} not loaded")
-                    return False
-                self._set_loading_status(model_name, LoadingStatus.UNLOADING)
-
             pool = self._get_engine_pool()
-            self._run_async(pool._unload_engine(model_name))
-
-            with self._lock:
-                self._loaded_models.pop(model_name, None)
-                self._loading_status.pop(model_name, None)
-
-            self._set_loading_status(model_name, LoadingStatus.IDLE)
-            logger.info(f"Unloaded model {model_name}")
-            return True
+            result = await pool.unload_engine_async(model_name)
         except Exception as e:
             logger.error(f"Error unloading model {model_name}: {e}")
-            return False
+            self._set_loading_status(model_name, LoadingStatus.IDLE)
+            return None
+        if result is None:
+            # Duck-typed/legacy pool without the structured contract.
+            from fusion_mlx.pool.engine_pool import UnloadResult
+
+            result = UnloadResult(status="unloaded", model_id=model_name)
+        if getattr(result, "status", None) != "unloaded":
+            logger.warning(
+                "Model %s unload -> %s (%s); entry left resident",
+                model_name,
+                getattr(result, "status", None),
+                getattr(result, "reason", None),
+            )
+            self._set_loading_status(model_name, LoadingStatus.IDLE)
+            return result
+        with self._lock:
+            self._loaded_models.pop(model_name, None)
+            self._loading_status.pop(model_name, None)
+        self._set_loading_status(model_name, LoadingStatus.IDLE)
+        logger.info(
+            "Unloaded model %s (freed=%s)",
+            model_name,
+            getattr(result, "freed_bytes", None),
+        )
+        return result
+
+    def unload_model(self, model_name: str) -> bool:
+        # Truthful bool for the sync callers (cleanup worker / LRU pressure
+        # paths). A running event loop in this thread cannot be blocked on the
+        # coroutine — fail visibly and let the async caller use
+        # unload_model_async.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            result = self._run_async(self.unload_model_async(model_name))
+            return getattr(result, "status", None) == "unloaded"
+        logger.error(
+            "unload_model(%s) called from a running event loop; "
+            "use unload_model_async (model left resident)",
+            model_name,
+        )
+        return False
 
     # ── Queries ──
 
