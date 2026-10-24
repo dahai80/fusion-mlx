@@ -1211,12 +1211,9 @@ class PagedSSDCacheManager:
             self._pending_write_hashes.add(block_hash)
             self._pending_writes[block_hash] = hot_entry
 
-        try:
-            self._write_queue.put(
-                (block_hash, tensors_raw, file_metadata, block_metadata),
-                timeout=1.0,
-            )
-        except queue.Full:
+        if not self._try_queue_write(
+            block_hash, tensors_raw, file_metadata, block_metadata
+        ):
             logger.debug(
                 "SSD write queue full, writing block inline: %s", block_hash.hex()[:16]
             )
@@ -1228,23 +1225,40 @@ class PagedSSDCacheManager:
         self._enforce_size_limit_for_new_block()
         return True
 
-    def _write_block_inline(
+    def _persist_block_file(
         self, block_hash, tensors_raw, file_metadata, block_metadata
     ):
+        # Audit 1019 L17: the write-temp-then-rename sequence plus the index
+        # size bookkeeping existed in the inline and background paths with
+        # slightly different cleanup. One implementation, and the caller
+        # keeps its own error policy. Raises on failure.
         file_path = self._get_file_path(block_hash)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = file_path.with_suffix(".tmp")
         try:
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = file_path.with_suffix(".tmp")
             actual_size = _write_safetensors_no_mx(
                 str(temp_path), tensors_raw, file_metadata
             )
             temp_path.replace(file_path)
-            with self._state_lock:
-                old_meta = self._index.get(block_hash)
-                if old_meta is not None:
-                    self._index.update_file_size(block_hash, actual_size)
-                else:
-                    block_metadata.file_size = actual_size
+        except BaseException:
+            # P1-09 (#0910 audit): never leave a residual .tmp behind.
+            with suppress(FileNotFoundError, OSError):
+                temp_path.unlink(missing_ok=True)
+            raise
+        with self._state_lock:
+            old_meta = self._index.get(block_hash)
+            if old_meta is not None:
+                self._index.update_file_size(block_hash, actual_size)
+            else:
+                block_metadata.file_size = actual_size
+
+    def _write_block_inline(
+        self, block_hash, tensors_raw, file_metadata, block_metadata
+    ):
+        try:
+            self._persist_block_file(
+                block_hash, tensors_raw, file_metadata, block_metadata
+            )
             self._stats["saves_persisted"] += 1
         except Exception as e:
             logger.error(
@@ -2123,15 +2137,26 @@ class PagedSSDCacheManager:
             self._stats["hot_cache_evictions"],
         )
 
-    def _enqueue_ssd_write(
+    def _try_queue_write(
         self, block_hash, tensors_raw, file_metadata, block_metadata
-    ):
+    ) -> bool:
+        # Audit 1019 L17: three copies of the queue.put(timeout=1.0) call with
+        # three different Full policies. One put, callers own the policy.
         try:
             self._write_queue.put(
                 (block_hash, tensors_raw, file_metadata, block_metadata),
                 timeout=1.0,
             )
+            return True
         except queue.Full:
+            return False
+
+    def _enqueue_ssd_write(
+        self, block_hash, tensors_raw, file_metadata, block_metadata
+    ):
+        if not self._try_queue_write(
+            block_hash, tensors_raw, file_metadata, block_metadata
+        ):
             logger.debug(
                 "SSD write queue full on enqueue, dropping: %s", block_hash.hex()[:16]
             )
@@ -2159,27 +2184,17 @@ class PagedSSDCacheManager:
             if item is None:
                 break
             block_hash, tensors_raw, file_metadata, block_metadata = item
-            # Audit M10: bound before the try so the except arms can clean
-            # up unconditionally. A raise from _get_file_path/mkdir used to
-            # surface as NameError on temp_path, masking the real error.
-            temp_path = None
             try:
-                file_path = self._get_file_path(block_hash)
-                file_path.parent.mkdir(parents=True, exist_ok=True)
-                temp_path = file_path.with_suffix(".tmp")
-                actual_size = _write_safetensors_no_mx(
-                    str(temp_path), tensors_raw, file_metadata
+                self._persist_block_file(
+                    block_hash, tensors_raw, file_metadata, block_metadata
                 )
-                temp_path.replace(file_path)
-                with self._state_lock:
-                    old_meta = self._index.get(block_hash)
-                    if old_meta is not None:
-                        self._index.update_file_size(block_hash, actual_size)
-                    else:
-                        block_metadata.file_size = actual_size
                 self._stats["saves_persisted"] += 1
-            except OSError as e:
-                if e.errno == errno.ENOSPC:
+            except Exception as e:
+                # Audit 1019 L17: one failure policy for the writer thread.
+                # ENOSPC is an operational condition (warn + drop), anything
+                # else is a bug (error). _persist_block_file already removed
+                # the residual .tmp before re-raising.
+                if isinstance(e, OSError) and e.errno == errno.ENOSPC:
                     logger.warning(
                         "SSD cache disk full, dropping block write: %s",
                         block_hash.hex()[:16],
@@ -2190,21 +2205,6 @@ class PagedSSDCacheManager:
                         block_hash.hex()[:16],
                         e,
                     )
-                # P1-09 (#0910 audit): clean up residual .tmp file
-                if temp_path is not None:
-                    with suppress(FileNotFoundError, OSError):
-                        temp_path.unlink(missing_ok=True)
-                with self._state_lock:
-                    self._index.remove(block_hash)
-                self._stats["errors"] += 1
-            except Exception as e:
-                logger.error(
-                    "Background write error for block %s: %s", block_hash.hex()[:16], e
-                )
-                # P1-09: clean up residual .tmp file
-                if temp_path is not None:
-                    with suppress(FileNotFoundError, OSError):
-                        temp_path.unlink(missing_ok=True)
                 with self._state_lock:
                     self._index.remove(block_hash)
                 self._stats["errors"] += 1

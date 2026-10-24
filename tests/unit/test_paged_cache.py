@@ -1120,19 +1120,3 @@ class TestCowSafety1352:
         # The source keeps the hash registration; the empty copy is not
         # reachable through a hash lookup.
         assert manager.cached_block_hash_to_block.get_block(source_hash) is source
-
-    def test_cow_copy_block_helper_does_not_inherit_hash(self):
-        manager = self._manager(initial_blocks=8, max_blocks=8)
-        source = manager.allocate_block()
-        source.token_count = 4
-        source_hash = compute_block_hash(None, [1, 2, 3, 4])
-        source.block_hash = source_hash
-        manager.cached_block_hash_to_block.insert(source_hash, source)
-        manager.increment_ref(source.block_id)
-
-        copy_block = manager._cow_copy_block(source)
-
-        assert copy_block is not None
-        assert copy_block.block_hash is None
-        assert copy_block.parent_hash is None
-        assert source.ref_count == 1

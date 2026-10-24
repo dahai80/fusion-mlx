@@ -185,31 +185,21 @@ class RouteGuardMiddleware:
     def __init__(self, app: Any) -> None:
         self.app = app
 
-    async def _enforce_tenant(self, scope, send, path) -> bool:
-        # #756/#1048: under tenant isolation, require a non-empty X-Fusion-Tenant.
-        # Returns True if the request was rejected (caller must return), else False.
-        if not _tenant_isolation_enabled():
-            return False
-        tenant = _header_value(scope, "x-fusion-tenant")
-        if tenant and tenant.strip():
-            return False
-        logger.warning(
-            "[route_guard] rejected: missing X-Fusion-Tenant "
-            "under tenant isolation host=%s path=%s",
-            _client_host(scope),
-            path.decode("ascii", "replace"),
-        )
-        _record_reject("missing_tenant")
-        body = json.dumps(
-            {
-                "error": {
-                    "message": "Missing X-Fusion-Tenant header "
-                    "under tenant isolation",
-                    "code": "missing_tenant",
-                }
-            },
-            separators=(",", ":"),
-        ).encode("utf-8")
+    async def _send_reject(
+        self,
+        send,
+        *,
+        code: str,
+        message: str,
+        hint: str | None = None,
+    ) -> None:
+        # Audit 1019 L14: four byte-identical copies of this JSON+ASGI send
+        # sequence meant any change to the reject shape (headers, error
+        # envelope) had to be made four times.
+        error: dict[str, Any] = {"message": message, "code": code}
+        if hint is not None:
+            error["hint"] = hint
+        body = json.dumps({"error": error}, separators=(",", ":")).encode("utf-8")
         await send(
             {
                 "type": "http.response.start",
@@ -226,6 +216,27 @@ class RouteGuardMiddleware:
                 "body": body,
                 "more_body": False,
             }
+        )
+
+    async def _enforce_tenant(self, scope, send, path) -> bool:
+        # #756/#1048: under tenant isolation, require a non-empty X-Fusion-Tenant.
+        # Returns True if the request was rejected (caller must return), else False.
+        if not _tenant_isolation_enabled():
+            return False
+        tenant = _header_value(scope, "x-fusion-tenant")
+        if tenant and tenant.strip():
+            return False
+        logger.warning(
+            "[route_guard] rejected: missing X-Fusion-Tenant "
+            "under tenant isolation host=%s path=%s",
+            _client_host(scope),
+            path.decode("ascii", "replace"),
+        )
+        _record_reject("missing_tenant")
+        await self._send_reject(
+            send,
+            code="missing_tenant",
+            message="Missing X-Fusion-Tenant header under tenant isolation",
         )
         return True
 
@@ -254,31 +265,10 @@ class RouteGuardMiddleware:
                     path.decode("ascii", "replace"),
                 )
                 _record_reject("invalid_route_token")
-                body = json.dumps(
-                    {
-                        "error": {
-                            "message": "Invalid X-Fusion-Route token",
-                            "code": "invalid_route_token",
-                        }
-                    },
-                    separators=(",", ":"),
-                ).encode("utf-8")
-                await send(
-                    {
-                        "type": "http.response.start",
-                        "status": 403,
-                        "headers": [
-                            (b"content-type", b"application/json"),
-                            (b"content-length", str(len(body)).encode("ascii")),
-                        ],
-                    }
-                )
-                await send(
-                    {
-                        "type": "http.response.body",
-                        "body": body,
-                        "more_body": False,
-                    }
+                await self._send_reject(
+                    send,
+                    code="invalid_route_token",
+                    message="Invalid X-Fusion-Route token",
                 )
                 return
             # #1048: a valid shared secret is not a tenant grant — under
@@ -304,32 +294,11 @@ class RouteGuardMiddleware:
                     route,
                 )
                 _record_reject("invalid_route_origin")
-                body = json.dumps(
-                    {
-                        "error": {
-                            "message": "X-Fusion-Route must be gateway-decision "
-                            "under tenant isolation",
-                            "code": "invalid_route_origin",
-                        }
-                    },
-                    separators=(",", ":"),
-                ).encode("utf-8")
-                await send(
-                    {
-                        "type": "http.response.start",
-                        "status": 403,
-                        "headers": [
-                            (b"content-type", b"application/json"),
-                            (b"content-length", str(len(body)).encode("ascii")),
-                        ],
-                    }
-                )
-                await send(
-                    {
-                        "type": "http.response.body",
-                        "body": body,
-                        "more_body": False,
-                    }
+                await self._send_reject(
+                    send,
+                    code="invalid_route_origin",
+                    message="X-Fusion-Route must be gateway-decision under "
+                    "tenant isolation",
                 )
                 return
             # #756: gateway stamps X-Fusion-Tenant on every upstream
@@ -349,35 +318,13 @@ class RouteGuardMiddleware:
                 path.decode("ascii", "replace"),
             )
             _record_reject("missing_route")
-            body = json.dumps(
-                {
-                    "error": {
-                        "message": "Missing X-Fusion-Route header "
-                        "(route-guard enforce is active). Route requests "
-                        "through the gateway, or disable enforce by setting "
-                        "FUSION_ROUTE_WARN_ONLY=true.",
-                        "code": "missing_route",
-                        "hint": "FUSION_ROUTE_WARN_ONLY=true",
-                    }
-                },
-                separators=(",", ":"),
-            ).encode("utf-8")
-            await send(
-                {
-                    "type": "http.response.start",
-                    "status": 403,
-                    "headers": [
-                        (b"content-type", b"application/json"),
-                        (b"content-length", str(len(body)).encode("ascii")),
-                    ],
-                }
-            )
-            await send(
-                {
-                    "type": "http.response.body",
-                    "body": body,
-                    "more_body": False,
-                }
+            await self._send_reject(
+                send,
+                code="missing_route",
+                message="Missing X-Fusion-Route header (route-guard enforce "
+                "is active). Route requests through the gateway, or disable "
+                "enforce by setting FUSION_ROUTE_WARN_ONLY=true.",
+                hint="FUSION_ROUTE_WARN_ONLY=true",
             )
             return
 
