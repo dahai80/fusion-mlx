@@ -22,6 +22,14 @@ def _reset_patch_state():
     vlm_mod._VLM_SANITIZE_PATCHED = False
 
 
+def _mtp_patch_owns(model_cls) -> bool:
+    # Another test earlier in the session may have applied the fusion_mlx MTP
+    # sanitize patch (patches/mlx_vlm_mtp), which replaces Model.sanitize for
+    # qwen3_5/qwen3_5_moe and deliberately skips the +1.0 shift. The guard
+    # now defers to it, so the upstream-bug premises no longer hold here.
+    return getattr(model_cls.sanitize, "_fusion_mlx_mtp_vlm_sanitize", False) is True
+
+
 class TestPatchVlmSanitize:
     def setup_method(self):
         _reset_patch_state()
@@ -57,6 +65,11 @@ class TestPatchVlmSanitize:
             from mlx_vlm.models.qwen3_5.qwen3_5 import Model
         except ImportError:
             pytest.skip("mlx_vlm qwen3_5 not installed")
+
+        if _mtp_patch_owns(Model):
+            pytest.skip(
+                "MTP sanitize patch installed by an earlier test owns this class"
+            )
 
         model = Model.__new__(Model)
         model["config"] = MagicMock()
@@ -107,6 +120,11 @@ class TestPatchVlmSanitize:
         except ImportError:
             pytest.skip("mlx_vlm qwen3_5 not installed")
 
+        if _mtp_patch_owns(Model):
+            pytest.skip(
+                "MTP sanitize patch installed by an earlier test owns this class"
+            )
+
         model = Model.__new__(Model)
         model["config"] = MagicMock()
         model["config"].text_config = MagicMock()
@@ -120,11 +138,13 @@ class TestPatchVlmSanitize:
 
         result = model.sanitize(weights)
         assert "mtp.0.input_layernorm.weight" not in result
-        assert mx.allclose(
-            result["language_model.model.layers.0.input_layernorm.weight"],
-            mx.ones(8) * 1.5,
-            atol=1e-5,
-        ).item()
+        got = result["language_model.model.layers.0.input_layernorm.weight"]
+        assert mx.allclose(got, mx.ones(8) * 1.5, atol=1e-5).item(), (
+            f"expected +1.0 shift (1.5), got {got[0].item()}; "
+            f"sanitize={Model.sanitize!r} qualname="
+            f"{getattr(Model.sanitize, '__qualname__', '?')} "
+            f"wrapped={getattr(Model.sanitize, '__wrapped__', None)!r}"
+        )
 
     def test_sanitize_keeps_plus1_when_unsanitized_conv1d(self):
         import mlx.core as mx
@@ -137,6 +157,11 @@ class TestPatchVlmSanitize:
             from mlx_vlm.models.qwen3_5.qwen3_5 import Model
         except ImportError:
             pytest.skip("mlx_vlm qwen3_5 not installed")
+
+        if _mtp_patch_owns(Model):
+            pytest.skip(
+                "MTP sanitize patch installed by an earlier test owns this class"
+            )
 
         model = Model.__new__(Model)
         model["config"] = MagicMock()
@@ -157,3 +182,41 @@ class TestPatchVlmSanitize:
             mx.ones(8) * 1.5,
             atol=1e-5,
         ).item()
+
+
+class TestGuardDefersToMtpSanitize:
+    # A no-MTP qwen3_5 checkpoint loaded after the MTP sanitize patch was
+    # applied in the same process used to have the guard's undo pass subtract
+    # 1.0 from norms the MTP patch deliberately left unshifted.
+
+    def test_guard_skips_mtp_marked_sanitize(self, monkeypatch):
+        import sys
+        import types
+
+        import fusion_mlx.engines.vlm as vlm_mod
+
+        def mtp_sanitize(self, weights):
+            return dict(weights)
+
+        mtp_sanitize._fusion_mlx_mtp_vlm_sanitize = True
+
+        class Model:
+            pass
+
+        Model.sanitize = mtp_sanitize
+
+        import mlx_vlm.models.minicpmv4_6 as parent
+
+        fake = types.ModuleType("mlx_vlm.models.minicpmv4_6.minicpmv4_6")
+        fake.Model = Model
+        monkeypatch.setitem(sys.modules, "mlx_vlm.models.minicpmv4_6.minicpmv4_6", fake)
+        monkeypatch.setattr(parent, "minicpmv4_6", fake, raising=False)
+
+        _reset_patch_state()
+        try:
+            vlm_mod._patch_vlm_sanitize()
+
+            assert Model.sanitize is mtp_sanitize
+            assert Model not in vlm_mod._VLM_ORIGINAL_SANITIZES
+        finally:
+            _reset_patch_state()

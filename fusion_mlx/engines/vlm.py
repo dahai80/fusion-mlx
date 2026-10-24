@@ -79,6 +79,19 @@ def _patch_vlm_sanitize():
             if cls is None or not hasattr(cls, "sanitize"):
                 continue
 
+            # The fusion_mlx MTP sanitize patch (patches/mlx_vlm_mtp) already
+            # decides the norm shift per checkpoint. Wrapping it here would
+            # subtract 1.0 from norms that patch deliberately left unshifted
+            # (a no-MTP checkpoint loaded after the MTP patch was applied in
+            # the same process) and corrupt every RMSNorm weight.
+            if getattr(cls.sanitize, "_fusion_mlx_mtp_vlm_sanitize", False):
+                logger.debug(
+                    "VLM sanitize guard skipped for %s: MTP-aware sanitize "
+                    "already installed",
+                    model_name,
+                )
+                continue
+
             if cls in _VLM_ORIGINAL_SANITIZES:
                 original = _VLM_ORIGINAL_SANITIZES[cls]
             else:

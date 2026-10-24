@@ -423,6 +423,27 @@ def is_media_job_active() -> bool:
         return _media_job_active
 
 
+def _media_defer_elapsed_locked(now: float) -> float:
+    # Audit L22: the watchdog thread used to read and initialise
+    # _media_defer_start without _media_job_active_lock, racing the job
+    # completion reset (set_media_job_active(False)). Arm/read atomically.
+    global _media_defer_start
+    with _media_job_active_lock:
+        if _media_defer_start == 0.0:
+            _media_defer_start = now
+        return now - _media_defer_start
+
+
+def _media_defer_claim_log_slot() -> bool:
+    # Audit L22: same lock discipline for the once-per-defer log flag.
+    global _media_defer_logged
+    with _media_job_active_lock:
+        if _media_defer_logged:
+            return False
+        _media_defer_logged = True
+        return True
+
+
 def llm_engines_busy() -> bool:
     """True while any registered LLM engine has active requests (#1333).
 
@@ -639,7 +660,7 @@ def _llm_watchdog_check() -> None:
     # Engines without per-engine inputs (test fakes) and an empty registry
     # fall through to the legacy process-global evaluation below, which
     # keeps the pre-#1261 single-engine contract (poison_executor etc.).
-    global _llm_executor_poisoned, _media_defer_start, _media_defer_logged, _llm_poison_count
+    global _llm_executor_poisoned, _llm_poison_count
     global _llm_watchdog_last_steps, _llm_progress_defer_logged
     now = time.monotonic()
     per_engine: list = []
@@ -678,11 +699,9 @@ def _llm_watchdog_check() -> None:
             # G2-SR: a media job starves every LLM worker on the shared
             # Metal command queue (not a hang) — defer, bounded.
             if is_media_job_active():
-                if _media_defer_start == 0.0:
-                    _media_defer_start = now
-                if now - _media_defer_start < _LLM_WATCHDOG_MEDIA_DEFER_S:
-                    if not _media_defer_logged:
-                        _media_defer_logged = True
+                defer_elapsed = _media_defer_elapsed_locked(now)
+                if defer_elapsed < _LLM_WATCHDOG_MEDIA_DEFER_S:
+                    if _media_defer_claim_log_slot():
                         logger.warning(
                             "G2 per-engine watchdog: engine %s heartbeat "
                             "stale %.0fs but media job active — deferring "
@@ -696,7 +715,7 @@ def _llm_watchdog_check() -> None:
                     "with engine %s heartbeat stale %.0fs — exceeded "
                     "media defer budget (%ds). Recovering; the media job "
                     "may be stuck.",
-                    now - _media_defer_start,
+                    defer_elapsed,
                     getattr(engine, "_engine_id", "?"),
                     now - hb,
                     int(_LLM_WATCHDOG_MEDIA_DEFER_S),
@@ -773,11 +792,9 @@ def _llm_watchdog_check() -> None:
         # the media job releases the GPU. Bounded by the media defer
         # budget so a truly stuck media job still triggers recovery.
         if is_media_job_active():
-            if _media_defer_start == 0.0:
-                _media_defer_start = now
-            if now - _media_defer_start < _LLM_WATCHDOG_MEDIA_DEFER_S:
-                if not _media_defer_logged:
-                    _media_defer_logged = True
+            defer_elapsed = _media_defer_elapsed_locked(now)
+            if defer_elapsed < _LLM_WATCHDOG_MEDIA_DEFER_S:
+                if _media_defer_claim_log_slot():
                     logger.warning(
                         "G2 llm watchdog: heartbeat stale %.0fs but "
                         "media job active — deferring poison (GPU "
@@ -791,7 +808,7 @@ def _llm_watchdog_check() -> None:
                     "G2 llm watchdog: media job active for %.0fs, "
                     "heartbeat stale %.0fs — exceeded media defer budget "
                     "(%ds). Poisoning; the media job may be stuck.",
-                    now - _media_defer_start,
+                    defer_elapsed,
                     now - hb,
                     _LLM_WATCHDOG_MEDIA_DEFER_S,
                 )
@@ -940,38 +957,38 @@ def poison_executor(pool_type: str = "video") -> None:
     global _llm_executor_poisoned
     global _audio_executor_poisoned
     global _laya_executor_poisoned
-    with _video_executor_poison_lock:
-        if pool_type == "video" and _video_executor_poisoned:
-            return
-        if pool_type == "image" and _image_executor_poisoned:
-            return
-    # #1189: audio/laya poison — check + set atomically under their own
-    # locks (unlike the legacy video/image check/set split above, which is
-    # kept as-is; surgical change).
-    with _audio_executor_poison_lock:
-        if pool_type == "audio":
+    # Set poisoned flag BEFORE the exec_ None check — the flag marks the
+    # subsystem poisoned regardless of whether the executor was ever
+    # initialized (a backend TimeoutError can fire before get_executor
+    # is called, leaving _global_executors without the pool entry).
+    # Audit L1: check and set under the SAME per-pool lock. The legacy
+    # video/image split let two racing callers both pass the check, then
+    # each swapped in a fresh executor — the first replacement was
+    # abandoned (leaked thread) and the poison was logged twice.
+    if pool_type == "video":
+        with _video_executor_poison_lock:
+            if _video_executor_poisoned:
+                return
+            _video_executor_poisoned = True
+    elif pool_type == "image":
+        with _image_executor_poison_lock:
+            if _image_executor_poisoned:
+                return
+            _image_executor_poisoned = True
+    elif pool_type == "audio":
+        with _audio_executor_poison_lock:
             if _audio_executor_poisoned:
                 return
             _audio_executor_poisoned = True
-    with _laya_executor_poison_lock:
-        if pool_type == "laya":
+    elif pool_type == "laya":
+        with _laya_executor_poison_lock:
             if _laya_executor_poisoned:
                 return
             _laya_executor_poisoned = True
     with _llm_executor_poison_lock:
-        if pool_type == "llm" and _llm_executor_poisoned:
-            return
-        # Set poisoned flag BEFORE the exec_ None check — the flag marks the
-        # subsystem poisoned regardless of whether the executor was ever
-        # initialized (a backend TimeoutError can fire before get_executor
-        # is called, leaving _global_executors without the pool entry).
-        if pool_type == "video":
-            with _video_executor_poison_lock:
-                _video_executor_poisoned = True
-        elif pool_type == "image":
-            with _image_executor_poison_lock:
-                _image_executor_poisoned = True
-        elif pool_type == "llm":
+        if pool_type == "llm":
+            if _llm_executor_poisoned:
+                return
             _llm_executor_poisoned = True
         exec_ = _global_executors.get(pool_type)
         if exec_ is None:
@@ -1761,7 +1778,19 @@ class EngineCore:
                         if self.scheduler is not None:
                             self._stats_snapshot = self.scheduler.get_stats()
                     except Exception:
-                        pass
+                        # Audit L21: a permanently failing snapshot made
+                        # /metrics serve stale numbers with no trace. Warn
+                        # once per engine, then keep debug-level noise.
+                        if not getattr(self, "_stats_snapshot_warned", False):
+                            self._stats_snapshot_warned = True
+                            logger.warning(
+                                "stats snapshot refresh failed for engine %s; "
+                                "/metrics will report the last good snapshot",
+                                getattr(self, "_engine_id", "?"),
+                                exc_info=True,
+                            )
+                        else:
+                            logger.debug("stats snapshot refresh failed", exc_info=True)
                     # P2-7: a successful step resets the circuit breaker.
                     if self._consecutive_loop_errors:
                         self._consecutive_loop_errors = 0
@@ -2322,6 +2351,7 @@ class EngineCore:
         # Pop-only-reap-safe: a live consumer holds its own collector ref, so
         # a put() here is harmless even if the dict entry was already reaped.
         n = 0
+        failures = 0
         for rid, ctx in list(self._active_contexts.items()):
             if ctx.finished_event.is_set():
                 continue
@@ -2334,10 +2364,25 @@ class EngineCore:
                         error=error_msg,
                     )
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                # Audit L21: swallowing this left the consumer waiting on
+                # finished_event with no terminal output and no trace.
+                logger.error(
+                    "fail_unfinished: could not push terminal output to %s: %s",
+                    rid,
+                    exc,
+                    exc_info=True,
+                )
+                failures += 1
             self._mark_request_finished(rid)
             n += 1
+        if failures:
+            logger.error(
+                "fail_unfinished: %d/%d request(s) got no terminal output "
+                "(consumers were signalled anyway)",
+                failures,
+                n,
+            )
         return n
 
     def _mark_request_finished(self, request_id: str) -> None:
@@ -2405,7 +2450,18 @@ class EngineCore:
     ) -> AsyncIterator[RequestOutput]:
         ctx = self._active_contexts.get(request_id)
         if ctx is None:
-            return
+            # Audit L4: returning here handed the caller an empty async
+            # generator — the route emitted a 200 with zero frames and no
+            # error. Fail visibly instead.
+            logger.error(
+                "stream_outputs: no context for request %s (aborted, reaped "
+                "or engine restarted) — failing the stream",
+                request_id,
+            )
+            raise RuntimeError(
+                f"No context for request {request_id} "
+                "(request aborted, reaped or engine restarted)"
+            )
         collector = ctx.collector
         try:
             logger.info("stream_outputs start: %s", request_id)

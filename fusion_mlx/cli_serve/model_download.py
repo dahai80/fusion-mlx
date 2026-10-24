@@ -68,7 +68,14 @@ def _ensure_model_downloaded(model_name: str) -> None:
         if os.path.exists(resolved):
             return
     except Exception:
-        pass
+        # Audit L29: a broken resolver used to vanish without a trace and
+        # the caller silently re-downloaded a model that was on disk.
+        logger.warning(
+            "local model path resolution failed for %r; falling back to "
+            "cache/download checks",
+            model_name,
+            exc_info=True,
+        )
     # Reuse the same weight-file-presence probe as ``is_repo_cached``:
     # the older ``try_to_load_from_cache('config.json')`` check
     # short-circuits on a partial cache (metadata downloaded, weight
@@ -84,7 +91,11 @@ def _ensure_model_downloaded(model_name: str) -> None:
         # fall through to the heavy snapshot_download path; HF will
         # short-circuit on its own cache check if the repo really is
         # fully present.
-        pass
+        logger.warning(
+            "cache probe failed for %r; falling through to snapshot_download",
+            model_name,
+            exc_info=True,
+        )
 
     # Disk-space gate: a 20 GB partial download that fails on the last
     # shard wastes the user's time. ``_check_disk_space`` queries HF for
@@ -112,7 +123,10 @@ def _ensure_model_downloaded(model_name: str) -> None:
             )
             size_gb = size_bytes / (1024**3)
         except Exception:
-            pass
+            # Size is cosmetic; still leave a trace for support.
+            logger.debug(
+                "model_info size probe failed for %r", model_name, exc_info=True
+            )
 
         is_tty = sys.stdout.isatty() and "NO_COLOR" not in os.environ
         BOLD = "\x1b[1m" if is_tty else ""
@@ -139,10 +153,24 @@ def _ensure_model_downloaded(model_name: str) -> None:
         # Definitive 404s are surfaced so callers (e.g. ``/model bogus``)
         # can refuse fast instead of spawning a doomed serve subprocess
         # that fails after ``--ready-timeout``. Other transient errors
-        # (network, auth) fall through silently — the spawned server's
-        # own loader will retry and surface a real error if needed.
-        from huggingface_hub.utils import RepositoryNotFoundError
-
-        if isinstance(e, RepositoryNotFoundError) or "404" in str(e):
+        # (network, auth) fall through with a visible reason — the spawned
+        # server's own loader will retry and surface a real error if needed.
+        # Classified by exception name, not isinstance: huggingface_hub is
+        # imported lazily here and test harnesses stub it with non-type
+        # attributes. Audit L29: GatedRepoError subclasses
+        # RepositoryNotFoundError, so an isinstance-ordered check reported a
+        # 401/403 gated repo as "not found" — the operator never learned a
+        # token/access grant was needed. Check the gated case first.
+        name = type(e).__name__
+        if name == "GatedRepoError" or "gated" in str(e).lower():
+            raise RuntimeError(
+                f"Model {model_name!r} is gated on HuggingFace — request "
+                "access on the model page and set HF_TOKEN (or run "
+                "`huggingface-cli login`) before retrying"
+            ) from e
+        if name in ("RepositoryNotFoundError", "RevisionNotFoundError") or "404" in str(
+            e
+        ):
             raise RuntimeError(f"Model {model_name!r} not found on HuggingFace") from e
-        print(f"\n  Pre-download skipped ({type(e).__name__}); server will retry.")
+        print(f"\n  Pre-download skipped ({type(e).__name__}: {e}); server will retry.")
+        logger.warning("pre-download of %r failed: %s", model_name, e, exc_info=True)

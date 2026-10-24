@@ -2894,7 +2894,6 @@ class BlockAwarePrefixCache(CacheManager):
     ) -> tuple[int, tuple[int, ...], int] | None:
         """Find best matching prefix in the index."""
         best_match = None
-        best_len = 0
 
         if self.block_size <= 0 or not tokens:
             return None
@@ -2919,10 +2918,13 @@ class BlockAwarePrefixCache(CacheManager):
                 prefix_len += len(block_tokens)
                 num_blocks += 1
 
+                # Audit L18: the old ``prefix_len > best_len`` was always
+                # true (best_len was assigned prefix_len at the end of every
+                # iteration). Walk order is strictly increasing, so the last
+                # match is the longest prefix — just overwrite.
                 entry = self._prefix_index.get(parent_hash)
-                if entry and entry[0] == prefix_len and prefix_len > best_len:
+                if entry and entry[0] == prefix_len:
                     best_match = entry
-                best_len = prefix_len
 
         return best_match
 

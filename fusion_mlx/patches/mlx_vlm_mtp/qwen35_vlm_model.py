@@ -137,6 +137,11 @@ def apply() -> bool:
 
         return sanitized_weights
 
+    # Marker for fusion_mlx.engines.vlm._patch_vlm_sanitize: this sanitize
+    # already decides the norm shift per checkpoint, so the RMSNorm +1.0
+    # guard must not wrap it (a second undo would strip 1.0 from norms that
+    # were never shifted, e.g. a no-MTP checkpoint loaded after this patch).
+    sanitize._fusion_mlx_mtp_vlm_sanitize = True
     cls.sanitize = sanitize
     cls._fusion_mlx_mtp_vlm_patched = True
     _APPLIED = True

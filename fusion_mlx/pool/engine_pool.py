@@ -1110,7 +1110,12 @@ class EnginePool:
     def get_memory_tiers(self) -> dict[str, list[dict]]:
         rows: dict[str, list[dict]] = {"P0": [], "P1": []}
         now = time.time()
-        for mid, ent in self._entries.items():
+        # Audit L34: snapshot under the discover lock — discover_models
+        # inserts entries from another thread and a concurrent resize can
+        # raise RuntimeError mid-iteration.
+        with self._discover_sync_lock:
+            entries = list(self._entries.items())
+        for mid, ent in entries:
             tier = ent.priority_tier or "P0_DYNAMIC"
             bucket = "P0" if tier.startswith("P0") else "P1"
             est_mb = max((ent.actual_size or ent.estimated_size or 0), 0) // (
@@ -1158,7 +1163,10 @@ class EnginePool:
     async def swap_idle_tdm_models(self) -> int:
         now = time.time()
         swapped = 0
-        snapshot = list(self._entries.items())
+        # Audit L34: snapshot under the lock, then release before the awaits
+        # below (unload_engine_async takes the async pool lock).
+        with self._discover_sync_lock:
+            snapshot = list(self._entries.items())
         for mid, ent in snapshot:
             if ent.engine is None or ent.is_pinned:
                 continue

@@ -261,18 +261,25 @@ def _prepare_vace_control_latents(
 
 
 def _best_output_size(w, h, dw, dh, max_area):
+    # Audit L33: flooring to a 16-pixel step can land on 0 when the
+    # requested side is shorter than one alignment step, and the following
+    # ``max_area / 0`` raised ZeroDivisionError. Never go below one step.
+    dw = max(1, int(dw))
+    dh = max(1, int(dh))
+    if w <= 0 or h <= 0 or max_area <= 0:
+        return max(dw, int(w)), max(dh, int(h))
     ratio = w / h
     ow = (max_area * ratio) ** 0.5
     oh = max_area / ow
 
     # Option 1: process width first
-    ow1 = int(ow // dw * dw)
-    oh1 = int(max_area / ow1 // dh * dh)
+    ow1 = max(dw, int(ow // dw * dw))
+    oh1 = max(dh, int(max_area / ow1 // dh * dh))
     ratio1 = ow1 / oh1
 
     # Option 2: process height first
-    oh2 = int(oh // dh * dh)
-    ow2 = int(max_area / oh2 // dw * dw)
+    oh2 = max(dh, int(oh // dh * dh))
+    ow2 = max(dw, int(max_area / oh2 // dw * dw))
     ratio2 = ow2 / oh2
 
     if max(ratio / ratio1, ratio1 / ratio) < max(ratio / ratio2, ratio2 / ratio):
