@@ -80,6 +80,10 @@ async def test_ane_over_budget_rejected_via_admit(monkeypatch):
         def _find_lru_victim(self):
             return None
 
+        async def _claim_lru_victim(self):
+            # #1354 H12: admission claims the victim under the pool lock.
+            return None
+
         def _record_eviction(self, reason):
             pass
 

@@ -44,6 +44,11 @@ class _FakePool:
             return None
         return self._victim
 
+    async def _claim_lru_victim(self):
+        # #1354 H12: admission now claims the victim under the pool lock.
+        # The fake has no lock; selecting from the same stub is equivalent.
+        return self._find_lru_victim()
+
     def _record_eviction(self, reason):
         self.evictions.append(reason)
 
@@ -139,6 +144,8 @@ async def test_find_lru_victim_skips_ane_pinned():
             self.last_access = last
             self.in_use = in_use
             self.engine = engine
+            self.is_unloading = False
+            self.last_evicted_at = 0.0
 
     pool._entries["llm-a"] = _E(pinned=False, ane=False, last=1.0)
     pool._entries["ane-b"] = _E(pinned=False, ane=True, last=0.5)
