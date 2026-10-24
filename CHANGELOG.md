@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Fixed — weight conversion streams tensors instead of fp32-for-all; migrate no longer forces trust_remote_code (#1354 audit H10/M24)
+- `convert_model` now scans the source shard headers, then reads one tensor at
+  a time, remaps and (optionally) quantizes it, and appends it to the output
+  safetensors shards (`model.safetensors` or `model-*-of-*.safetensors` plus an
+  index), capping the in-memory batch at 2 GiB. Before this, every shard tensor
+  was cast to fp32 and held in one dict — a 70B model peaked near 280 GB.
+- Source dtypes (bf16/fp16/fp32) are preserved; weights are only cast when the
+  operator passes an explicit `dtype`. The quantize-failure path still drops
+  quantization for the whole model (#1059), re-streaming unquantized.
+- The durability fsync after writing weights/config now opens the file `O_RDWR`
+  instead of fsyncing a read-only descriptor, so the #811 guard is effective.
+- Migration validation no longer forces `trust_remote_code=True`:
+  `validate_model(..., trust_remote_code=False)` is the default, the admin route
+  exposes the opt-in, and enabling it logs a warning naming the repo. The CLI
+  pytorch `.bin` fallback reuses the streaming writer and keeps source dtypes
+  instead of upcasting everything to fp32.
+
 ### Fixed — abort_all_requests runs on the MLX executor; cogvideox backend honours the async video contract (#1354 audit H4/H5)
 - `abort_all_requests` (the memory-pressure batch abort) called
   `scheduler.abort_request` directly on the event-loop thread while the MLX

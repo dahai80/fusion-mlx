@@ -43,6 +43,7 @@ class MigrateConvertRequest(BaseModel):
     migration_id: str
     quant_bits: int = 0
     quant_group_size: int = 64
+    dtype: str | None = None
 
 
 class MigrateCodegenRequest(BaseModel):
@@ -53,6 +54,7 @@ class MigrateValidateRequest(BaseModel):
     migration_id: str
     prompt: str = "Hello, how are you?"
     max_tokens: int = 32
+    trust_remote_code: bool = False
 
 
 class MigrateRegisterRequest(BaseModel):
@@ -201,6 +203,7 @@ async def convert_weights(
             template,
             quant_bits=request.quant_bits,
             quant_group_size=request.quant_group_size,
+            dtype=request.dtype,
         )
 
         meta["mlx_dir"] = output_dir
@@ -312,6 +315,7 @@ async def validate(
             mlx_dir,
             request.prompt,
             request.max_tokens,
+            request.trust_remote_code,
         )
         meta["validated"] = result.success
         with open(meta_path, "w") as f:
