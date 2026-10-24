@@ -24,10 +24,48 @@ from .video_backends import VideoGenParams, resolve_backend
 logger = logging.getLogger(__name__)
 
 
+# #1335: video activation memory scales linearly with latent frames and
+# resolution (see video_unified_scheduler's per-step attention note), not with
+# a constant fraction of the weights. 64 B per pixel-frame is a conservative
+# envelope for latents + DiT intermediates at the common 768x512 / 121-frame
+# workload (~3GB); the cap keeps the total projection at or below the old
+# weights * 1.4 constant for oversized workloads so safety never regresses.
+_VIDEO_ACTIVATION_BYTES_PER_PIXEL_FRAME = 64
+_VIDEO_ACTIVATION_FLOOR_BYTES = 512 * 1024 * 1024
+_VIDEO_ACTIVATION_WEIGHT_FRACTION_CAP = 0.40
+
+
+def _entry_estimated_bytes(entry) -> int:
+    # On-disk/discovery estimate already held by the pool entry: knowable
+    # without a load, a disk scan or a repo resolution/download.
+    if entry is None:
+        return 0
+    for attr in ("last_observed_size", "estimated_size"):
+        value = getattr(entry, attr, 0)
+        if isinstance(value, int) and value > 0:
+            return int(value)
+    return 0
+
+
+def _pool_entry_estimated_bytes(model_name: str) -> int:
+    try:
+        from ..server import _server_state
+
+        pool = getattr(_server_state, "engine_pool", None)
+        entry = pool.get_entry(model_name) if pool is not None else None
+    except Exception:  # noqa: BLE001
+        return 0
+    return _entry_estimated_bytes(entry)
+
+
 def _resolve_video_weight_bytes(model_name: str) -> int:
-    """Sum on-disk weight file sizes for the video model repo (mirrors
-    image_gen._resolve_weight_bytes). Returns 0 when unresolvable so the
-    reservation degrades to a no-op instead of blocking."""
+    # Prefer the pool's discovery-time estimate (#1335) — the pre-load
+    # admission path runs before get_engine and must not resolve/download the
+    # repo. Fall back to the on-disk scan for engine-layer callers without a
+    # pool entry. Returns 0 when unresolvable so the gate degrades to a no-op.
+    pooled = _pool_entry_estimated_bytes(model_name)
+    if pooled > 0:
+        return pooled
     from pathlib import Path
 
     try:
@@ -40,6 +78,47 @@ def _resolve_video_weight_bytes(model_name: str) -> int:
         return int(estimate_model_size(Path(get_model_path(model_name))))
     except Exception:  # noqa: BLE001
         return 0
+
+
+def video_activation_budget_bytes(
+    num_frames: int,
+    width: int,
+    height: int,
+    n: int = 1,
+    weight_bytes: int = 0,
+) -> int:
+    # Per-request transient footprint: latent frames x pixels. n generates n
+    # videos in the same call, so it scales the same way (the cap bounds it).
+    px = max(1, int(width)) * max(1, int(height))
+    frames = max(1, int(num_frames)) * max(1, int(n))
+    activation = px * frames * _VIDEO_ACTIVATION_BYTES_PER_PIXEL_FRAME
+    weight_bytes = max(0, int(weight_bytes))
+    if weight_bytes > 0:
+        activation = min(
+            activation, int(weight_bytes * _VIDEO_ACTIVATION_WEIGHT_FRACTION_CAP)
+        )
+    return max(_VIDEO_ACTIVATION_FLOOR_BYTES, int(activation))
+
+
+def video_admission_budget_bytes(
+    weight_bytes: int,
+    num_frames: int,
+    width: int,
+    height: int,
+    n: int = 1,
+    include_weights: bool = True,
+) -> int:
+    # include_weights=True (pre-load projection): resident does not hold the
+    # weights yet, so the budget is weights + activation. include_weights=False
+    # (post-load / engine gate): the weights are already counted in resident,
+    # so adding them again double-counts the model (#1335).
+    weight_bytes = max(0, int(weight_bytes))
+    if include_weights and weight_bytes <= 0:
+        return 0
+    activation = video_activation_budget_bytes(
+        num_frames, width, height, n, weight_bytes
+    )
+    return weight_bytes + activation if include_weights else activation
 
 
 def _fps_signal(state: dict) -> None:
@@ -184,23 +263,33 @@ class VideoGenEngine(BaseNonStreamingEngine):
             audio_vae_weights=kwargs.get("audio_vae_weights"),
         )
 
-        # #1187: unified heavy-admission gate BEFORE begin_task acquires the
-        # video mutex — a reject must not hold the mutex. Budget = on-disk
-        # weight estimate + 40% headroom, the same estimate the media
-        # reservation below registers. Unknown weights (0) skip the gate
-        # (model-load admission still applies).
+        # #1187/#1335: unified heavy-admission gate BEFORE begin_task acquires
+        # the video mutex — a reject must not hold the mutex. generate() only
+        # runs on a started engine, so the weights are already counted in
+        # resident; charging them again double-counted the model and made the
+        # projection duration-independent (weights * 1.4). The pre-load
+        # projection (weights + activation) is done by the HTTP route before
+        # get_engine. Unknown weights (0) skip the gate.
         from ..admission import get_heavy_admission_gate
 
         _weights_1187 = _resolve_video_weight_bytes(self._model_name)
         if _weights_1187 > 0:
+            _budget_1187 = video_admission_budget_bytes(
+                _weights_1187,
+                num_frames,
+                width,
+                height,
+                n,
+                include_weights=False,
+            )
             _gate = get_heavy_admission_gate()
-            _decision = _gate.admit_media("video", int(_weights_1187 * 1.4))
+            _decision = _gate.admit_media("video", _budget_1187)
             if not _decision.admitted:
                 from ..scheduler.video_unified_scheduler import (
-                    VideoMemoryPressureError,
+                    VideoAdmissionRejected,
                 )
 
-                raise VideoMemoryPressureError(_decision.reason)
+                raise VideoAdmissionRejected(_decision.reason)
         else:
             logger.debug(
                 "video admission: weight estimate unavailable; unified gate skipped"
