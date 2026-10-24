@@ -489,6 +489,61 @@ async def _resolve_media_to_path(value: str, label: str) -> tuple[str, bool]:
     return value, False
 
 
+def _entry_estimated_bytes(entry) -> int:
+    # #1335: the pool holds the on-disk/discovery estimate per model, so the
+    # pre-load projection needs no model load and no repo resolution.
+    if entry is None:
+        return 0
+    for attr in ("last_observed_size", "estimated_size"):
+        value = getattr(entry, attr, 0)
+        if isinstance(value, int) and value > 0:
+            return int(value)
+    return 0
+
+
+async def _unload_rejected_load(model_name: str, reason: str) -> None:
+    # #1335: a request whose admission was rejected AFTER it triggered a model
+    # load must not leave tens of GB resident. Only call this when the model
+    # was NOT resident before the request; a busy engine (another request
+    # generating) is never yanked — the pool's own in_use/active guards are
+    # checked here as well.
+    if _pool is None:
+        return
+    entry = _pool.get_entry(model_name)
+    if entry is None or getattr(entry, "engine", None) is None:
+        return
+    if getattr(entry, "in_use", 0) > 0:
+        logger.warning(
+            "video admission rejected after loading %s (%s) — not unloading: "
+            "%s lease(s) still active (#1335)",
+            model_name,
+            reason,
+            getattr(entry, "in_use", 0),
+        )
+        return
+    checker = getattr(entry.engine, "has_active_requests", None)
+    if callable(checker):
+        try:
+            busy = bool(checker())
+        except Exception:  # noqa: BLE001
+            busy = True
+        if busy:
+            logger.warning(
+                "video admission rejected after loading %s (%s) — not "
+                "unloading: engine has active requests (#1335)",
+                model_name,
+                reason,
+            )
+            return
+    logger.warning(
+        "video admission rejected after loading %s (%s) — unloading the "
+        "model this request loaded (#1335)",
+        model_name,
+        reason,
+    )
+    await _pool.unload_engine_async(model_name)
+
+
 async def _execute_video_generation(
     request: VideoGenerateRequest,
 ) -> VideoGenerateResponse:
@@ -560,6 +615,63 @@ async def _execute_video_generation(
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc))
+
+    # #1335: run the heavy admission projection BEFORE get_engine — a request
+    # that will be rejected must not trigger a tens-of-GB model load. Both
+    # inputs are knowable without the load: live resident usage (sampled by
+    # the gate) and the pool's discovery-time on-disk weight estimate. When
+    # the model is already resident its weights are part of resident, so only
+    # the per-request activation footprint is charged (no double count).
+    from ..engines.video import video_admission_budget_bytes
+    from ..scheduler.video_unified_scheduler import VideoAdmissionRejected
+
+    entry_key = model_name
+    entry_before = _pool.get_entry(model_name)
+    if entry_before is None:
+        try:
+            resolved = _pool._resolve_hf_repo_id(model_name)
+        except Exception:  # noqa: BLE001
+            resolved = model_name
+        if resolved and resolved != model_name:
+            resolved_entry = _pool.get_entry(resolved)
+            if resolved_entry is not None:
+                entry_key = resolved
+                entry_before = resolved_entry
+    was_resident = (
+        entry_before is not None and getattr(entry_before, "engine", None) is not None
+    )
+    _pre_budget = video_admission_budget_bytes(
+        _entry_estimated_bytes(entry_before),
+        effective_num_frames,
+        effective_width,
+        effective_height,
+        request.n,
+        include_weights=not was_resident,
+    )
+    if _pre_budget > 0:
+        from ..admission import get_heavy_admission_gate
+
+        _pre_decision = get_heavy_admission_gate().admit_media("video", _pre_budget)
+        if not _pre_decision.admitted:
+            logger.warning(
+                "video admission rejected before load: model=%s frames=%d "
+                "%dx%d n=%d resident=%s — %s",
+                model_name,
+                effective_num_frames,
+                effective_width,
+                effective_height,
+                request.n,
+                was_resident,
+                _pre_decision.reason,
+            )
+            raise VideoAdmissionRejected(_pre_decision.reason)
+        logger.info(
+            "video admission projection passed before load: model=%s "
+            "budget=%.1fGB resident=%s",
+            model_name,
+            _pre_budget / 2**30,
+            was_resident,
+        )
 
     # Resolve I2V image to a local path (400 on resolve failure).
     image_path: str | None = None
@@ -714,7 +826,17 @@ async def _execute_video_generation(
             gen_kwargs["audio_vae_weights"] = request.audio_vae_weights
 
         _gen_start = time.perf_counter()
-        video_bytes_list = await engine.generate(**gen_kwargs)
+        try:
+            video_bytes_list = await engine.generate(**gen_kwargs)
+        except VideoAdmissionRejected as exc:
+            # #1335: the gate can still reject after the pre-load projection
+            # (a race with concurrent traffic between the projection and the
+            # engine's own post-load check). Unload the engine THIS request
+            # loaded so a 507 does not leave tens of GB resident; a model that
+            # was resident before the request is left alone.
+            if not was_resident:
+                await _unload_rejected_load(entry_key, str(exc))
+            raise
         _gen_elapsed = time.perf_counter() - _gen_start
         outputs = []
         for vb in video_bytes_list:

@@ -133,6 +133,7 @@ class OQManager:
         self,
         model_dirs: list[str],
         on_complete: Callable | None = None,
+        settings_manager: object | None = None,
     ):
         self._model_dirs = [Path(d) for d in model_dirs]
         self._output_dir = self._model_dirs[0] if self._model_dirs else Path(".")
@@ -140,6 +141,7 @@ class OQManager:
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._progress_tasks: dict[str, asyncio.Task] = {}
         self._on_complete = on_complete
+        self._settings_manager = settings_manager
         self._cancelled: set[str] = set()
         self._quant_sem = asyncio.Semaphore(1)
 
@@ -601,6 +603,21 @@ class OQManager:
 
                     from ..oq import quantize_oq_streaming
 
+                    # #1342: forward per-model settings so mtp_enabled can
+                    # attach the MTP head during sensitivity measurement.
+                    model_settings = None
+                    if self._settings_manager is not None:
+                        try:
+                            model_settings = self._settings_manager.get_settings(
+                                task.model_name
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                "oQ settings lookup failed for %s: %s",
+                                task.model_name,
+                                e,
+                            )
+
                     await asyncio.to_thread(
                         quantize_oq_streaming,
                         task.model_path,
@@ -615,6 +632,7 @@ class OQManager:
                         task.dtype,
                         task.preserve_mtp,
                         task.auto_proxy_sensitivity,
+                        model_settings=model_settings,
                     )
 
                 if task_id in self._cancelled:

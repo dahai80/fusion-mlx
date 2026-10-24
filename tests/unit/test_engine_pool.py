@@ -2062,7 +2062,7 @@ class TestMemorySettleBarrier:
             mock_mx.synchronize = MagicMock()
             mock_mx.clear_cache = MagicMock()
 
-            await pool.unload_engine_async("model-a", with_settle=False)
+            result = await pool.unload_engine_async("model-a", with_settle=False)
 
         # Engine detached, counter decremented from the estimate
         assert pool._entries["model-a"].engine is None
@@ -2071,9 +2071,13 @@ class TestMemorySettleBarrier:
         settle_mock.assert_not_called()
         mock_mx.clear_cache.assert_not_called()
         mock_mx.synchronize.assert_not_called()
-        assert mock_mx.get_active_memory.call_count == 1
+        # Two gauge reads at most: the detach baseline + the #1351 freed_bytes
+        # sample. A barrier would poll 5+ times with sleeps in between.
+        assert mock_mx.get_active_memory.call_count <= 2
         # Enforcer still woken so admission re-polls the live gauge
         wake_mock.assert_called_once()
+        assert result.status == "unloaded"
+        assert result.unloaded is True
 
     @pytest.mark.asyncio
     async def test_settle_takes_multiple_rounds(self, pool_with_loaded_model):

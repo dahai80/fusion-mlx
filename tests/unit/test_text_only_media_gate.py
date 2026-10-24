@@ -45,6 +45,16 @@ class _TextOnlyEngine:
 
 
 def _client() -> TestClient:
+    # The chat route shares one module-global rate limiter bucketed by
+    # client subnet; every TestClient request lands in the same "testclient"
+    # bucket, so earlier tests in the shard can exhaust the 60/min budget
+    # and this file sees spurious 429s (observed on CI rest2). Reset the
+    # window here — this file tests media rejection, not rate limiting.
+    from fusion_mlx.middleware.auth import rate_limiter
+
+    with rate_limiter._lock:
+        rate_limiter._requests.clear()
+        rate_limiter._last_seen.clear()
     cfg = reset_config()
     cfg.engine = _TextOnlyEngine()
     cfg.model_name = "text-only-model"

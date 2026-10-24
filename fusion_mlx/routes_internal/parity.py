@@ -126,7 +126,6 @@ async def props(_auth: bool = Depends(verify_api_key)):
         "mtp_chain_k": mtp_chain_k,
         "mtp_sidecar": getattr(sched, "mtp_sidecar", None),
         "kv_cache_dtype": getattr(sched, "kv_cache_dtype", None),
-        "kv_cache_quantization": getattr(sched, "kv_cache_quantization", None),
         "prefix_cache_enabled": getattr(sched, "enable_prefix_cache", None),
         "gpu_memory_utilization": getattr(sched, "gpu_memory_utilization", None),
         "model_dir": getattr(cfg, "model_dir", None),

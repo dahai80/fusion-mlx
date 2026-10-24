@@ -402,34 +402,6 @@ Examples:
             "Qwen3 thinking variants)."
         ),
     )
-    serve_parser.add_argument(
-        "--kv-cache-quantization",
-        action="store_true",
-        help=(
-            "[deprecated alias of --kv-cache-dtype int8] Quantize stored "
-            "KV caches to reduce memory (8-bit by default). When both "
-            "flags are passed, this one wins for backwards compatibility."
-        ),
-    )
-    serve_parser.add_argument(
-        "--kv-cache-quantization-bits",
-        type=int,
-        default=8,
-        choices=[4, 8],
-        help="Bit width for KV cache quantization (default: 8)",
-    )
-    serve_parser.add_argument(
-        "--kv-cache-quantization-group-size",
-        type=int,
-        default=64,
-        help="Group size for KV cache quantization (default: 64)",
-    )
-    serve_parser.add_argument(
-        "--kv-cache-min-quantize-tokens",
-        type=int,
-        default=256,
-        help="Minimum tokens for quantization to apply (default: 256)",
-    )
     # TurboQuant KV cache compression (experimental, R15 Phase 4).
     #
     # Accepts an optional mode value:
@@ -437,8 +409,7 @@ Examples:
     #   --kv-cache-turboquant v4           → V-only explicit
     #   --kv-cache-turboquant k8v4         → K-8bit + V-4bit mix (R15 Phase 4)
     #
-    # The bare-flag form preserves PR #157 backward compatibility. Mode
-    # is mutually exclusive with --kv-cache-quantization.
+    # The bare-flag form preserves PR #157 backward compatibility.
     serve_parser.add_argument(
         "--kv-cache-turboquant",
         nargs="?",
@@ -449,7 +420,8 @@ Examples:
         "the flag is bare) is V-only 3-4 bit Lloyd-Max with K in FP16; "
         "``k8v4`` is the R15 Phase 4 mix — K at 8-bit Walsh-Hadamard + V at "
         "4-bit Lloyd-Max (~4.6x KV compression on dense models). "
-        "Experimental — mutually exclusive with --kv-cache-quantization.",
+        "Experimental — takes over the V cache, so pair it with "
+        "--kv-cache-dtype bf16 rather than a quantized dtype.",
     )
     serve_parser.add_argument(
         "--kv-cache-turboquant-bits",
@@ -501,32 +473,6 @@ Examples:
         default=True,
         help="Enable continuous batching (default: on).",
     )
-    # Deprecated flags — accepted silently to avoid breaking user scripts
-    serve_parser.add_argument(
-        "--simple-engine",
-        action="store_true",
-        default=False,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--kv-bits",
-        type=int,
-        default=None,
-        choices=[4, 8],
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--kv-group-size",
-        type=int,
-        default=64,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--draft-model",
-        type=str,
-        default=None,
-        help=argparse.SUPPRESS,
-    )
     # DFlash — block-diffusion drafter speculative decoding (z-lab / mlx-vlm).
     # Currently single-user serial mode; runs a dedicated DFlash server that
     # bypasses BatchedEngine. Eligible aliases declare ``supports_dflash=true``
@@ -543,36 +489,6 @@ Examples:
         "``pip install 'fusion-mlx[dflash]'``.",
     )
     serve_parser.add_argument(
-        "--num-draft-tokens",
-        type=int,
-        default=4,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--specprefill",
-        action="store_true",
-        default=False,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--specprefill-threshold",
-        type=int,
-        default=8192,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--specprefill-keep-pct",
-        type=float,
-        default=0.3,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
-        "--specprefill-draft-model",
-        type=str,
-        default=None,
-        help=argparse.SUPPRESS,
-    )
-    serve_parser.add_argument(
         "--gpu-memory-utilization",
         type=float,
         default=0.90,
@@ -581,11 +497,6 @@ Examples:
         "large models (200GB+) that need more memory headroom.",
     )
     # Paged cache options (experimental)
-    serve_parser.add_argument(
-        "--use-paged-cache",
-        action="store_true",
-        help="Use paged KV cache for memory efficiency (experimental)",
-    )
     serve_parser.add_argument(
         "--paged-cache-block-size",
         type=int,
@@ -938,12 +849,6 @@ Examples:
             "before JSON parsing or tokenization runs. 0 disables the cap. "
             "Falls back to the FUSION_MLX_MAX_REQUEST_BYTES env var if unset."
         ),
-    )
-    serve_parser.add_argument(
-        "--timeout",
-        type=float,
-        default=1800.0,
-        help="Default request timeout in seconds (default: 1800 = 30 min)",
     )
     # Tool calling options
     serve_parser.add_argument(
@@ -1348,37 +1253,7 @@ Examples:
         action="store_true",
         help="Disable memory-aware cache, use legacy entry-count based cache",
     )
-    # KV cache quantization options
-    bench_parser.add_argument(
-        "--kv-cache-quantization",
-        action="store_true",
-        help="Quantize stored KV caches to reduce memory (8-bit by default)",
-    )
-    bench_parser.add_argument(
-        "--kv-cache-quantization-bits",
-        type=int,
-        default=8,
-        choices=[4, 8],
-        help="Bit width for KV cache quantization (default: 8)",
-    )
-    bench_parser.add_argument(
-        "--kv-cache-quantization-group-size",
-        type=int,
-        default=64,
-        help="Group size for KV cache quantization (default: 64)",
-    )
-    bench_parser.add_argument(
-        "--kv-cache-min-quantize-tokens",
-        type=int,
-        default=256,
-        help="Minimum tokens for quantization to apply (default: 256)",
-    )
     # Paged cache options (experimental)
-    bench_parser.add_argument(
-        "--use-paged-cache",
-        action="store_true",
-        help="Use paged KV cache for memory efficiency (experimental)",
-    )
     bench_parser.add_argument(
         "--paged-cache-block-size",
         type=int,
@@ -2033,6 +1908,10 @@ Examples:
     if (
         getattr(args, "command", None) in ("serve", "chat", "run")
         and not getattr(args, "model", None)
+        # #1353 (H8): --model lands in model_flag, not model. Without this
+        # guard a configured settings.json default_model overwrote the
+        # explicit flag and serve_command then died on "mutually exclusive".
+        and not getattr(args, "model_flag", None)
         and not getattr(args, "model_dir", None)
         and not getattr(args, "base_path", None)
     ):

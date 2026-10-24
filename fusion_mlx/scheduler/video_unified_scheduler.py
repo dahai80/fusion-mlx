@@ -84,6 +84,15 @@ class VideoMemoryPressureError(RuntimeError):
     pass
 
 
+class VideoAdmissionRejected(VideoMemoryPressureError):
+    # #1335: the heavy admission gate rejected the request BEFORE any compute
+    # started (pre-load route projection or the engine's post-load activation
+    # check). Distinct from mid-denoise pressure: callers may safely unload a
+    # model this request just loaded, whereas a running generation must not be
+    # torn down from its own rejection path.
+    pass
+
+
 # #951-downstream: process-global abort event. Set by the enforcer (emergency
 # pressure while a video generation is in-flight) or by the parent watchdog
 # (orphaned mid-generation). The video backend's step callback checks this at

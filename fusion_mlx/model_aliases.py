@@ -326,10 +326,19 @@ def _is_path_like(name: str) -> bool:
     return False
 
 
+def _path_within(resolved: str, allowed: str) -> bool:
+    # #1353 (H9): a bare startswith let /Users/u/models2/x pass a
+    # /Users/u/models whitelist. Require the allowed dir itself or a
+    # path-separator boundary below it.
+    resolved = os.path.normpath(resolved)
+    allowed = os.path.normpath(allowed)
+    return resolved == allowed or resolved.startswith(allowed + os.sep)
+
+
 def _check_path_allowed(name: str) -> None:
     resolved = os.path.realpath(name)
     allowed = _allowed_model_dirs()
-    if not any(resolved.startswith(p) for p in allowed):
+    if not any(_path_within(resolved, p) for p in allowed):
         logger.warning("resolve_model: path outside allowed dirs: %s", name)
         raise ValueError(
             f"Path not allowed: {name}. Must be within allowed model directories."
@@ -379,7 +388,7 @@ def resolve_model(name: str) -> str:
     if os.path.exists(name):
         resolved = os.path.realpath(name)
         allowed = _allowed_model_dirs()
-        if any(resolved.startswith(p) for p in allowed):
+        if any(_path_within(resolved, p) for p in allowed):
             return name
     aliases = _load_aliases()
     if name in aliases:

@@ -2,19 +2,21 @@
 # #756: multi-tenant isolation in RouteGuardMiddleware + tenant helpers.
 #
 # When FUSION_TENANT_ISOLATION=on, the backend half of the gateway contract:
-#   - X-Fusion-Route VALUE must equal "gateway-decision" (not just present),
-#     else 403 invalid_route_origin.
+#   - FUSION_ROUTE_TOKEN is mandatory at install time: the gateway-decision
+#     constant is public, so without a shared secret X-Fusion-Tenant is
+#     client-forgeable (1019 audit H7). Missing token -> boot refused.
+#   - X-Fusion-Route must equal the shared secret, else 403
+#     invalid_route_token.
 #   - X-Fusion-Tenant must be present + non-empty, else 403 missing_tenant.
-# FUSION_ROUTE_TOKEN (shared secret) is stricter and takes precedence.
 # Default OFF: single-tenant dev keeps the legacy presence-check behavior.
 
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from fusion_mlx.middleware.tenant import (
-    GATEWAY_DECISION_ROUTE,
     scoped_principal,
     tenant_from_request,
     tenant_isolation_enabled,
@@ -35,13 +37,17 @@ def _guard_app() -> FastAPI:
 
 
 def _client(monkeypatch, isolation: bool, token: str | None = None) -> TestClient:
+    # #1354 audit H7: isolation requires a shared secret at install time;
+    # _guard_app() refuses to boot without FUSION_ROUTE_TOKEN. Isolation
+    # tests therefore default to one and send its value as X-Fusion-Route.
     monkeypatch.delenv("FUSION_ROUTE_WARN_ONLY", raising=False)
     monkeypatch.delenv("FUSION_ROUTE_ENFORCE", raising=False)
     monkeypatch.delenv("FUSION_ROUTE_TOKEN", raising=False)
     monkeypatch.delenv("FUSION_TENANT_ISOLATION", raising=False)
     if isolation:
         monkeypatch.setenv("FUSION_TENANT_ISOLATION", "true")
-    if token is not None:
+        monkeypatch.setenv("FUSION_ROUTE_TOKEN", token or "s3cret")
+    elif token is not None:
         monkeypatch.setenv("FUSION_ROUTE_TOKEN", token)
     return TestClient(_guard_app())
 
@@ -52,20 +58,30 @@ class TestRouteGuardTenantIsolation:
         r = client.get("/v1/chat/completions", headers={"X-Fusion-Route": "anything"})
         assert r.status_code == 200
 
-    def test_isolation_on_wrong_route_value_rejected(self, monkeypatch):
+    def test_isolation_without_token_refuses_install(self, monkeypatch):
+        # H7: the gateway-decision constant is public; without a shared
+        # secret the tenant header is client-forgeable, so isolation must
+        # not boot at all.
+        monkeypatch.delenv("FUSION_ROUTE_TOKEN", raising=False)
+        monkeypatch.delenv("FUSION_ROUTE_WARN_ONLY", raising=False)
+        monkeypatch.setenv("FUSION_TENANT_ISOLATION", "true")
+        with pytest.raises(RuntimeError, match="requires FUSION_ROUTE_TOKEN"):
+            _guard_app()
+
+    def test_isolation_on_wrong_token_rejected(self, monkeypatch):
         client = _client(monkeypatch, isolation=True)
         r = client.get(
             "/v1/chat/completions",
-            headers={"X-Fusion-Route": "not-gateway"},
+            headers={"X-Fusion-Route": "not-the-token"},
         )
         assert r.status_code == 403
-        assert r.json()["error"]["code"] == "invalid_route_origin"
+        assert r.json()["error"]["code"] == "invalid_route_token"
 
     def test_isolation_on_gateway_route_without_tenant_rejected(self, monkeypatch):
         client = _client(monkeypatch, isolation=True)
         r = client.get(
             "/v1/chat/completions",
-            headers={"X-Fusion-Route": GATEWAY_DECISION_ROUTE},
+            headers={"X-Fusion-Route": "s3cret"},
         )
         assert r.status_code == 403
         assert r.json()["error"]["code"] == "missing_tenant"
@@ -75,7 +91,7 @@ class TestRouteGuardTenantIsolation:
         r = client.get(
             "/v1/chat/completions",
             headers={
-                "X-Fusion-Route": GATEWAY_DECISION_ROUTE,
+                "X-Fusion-Route": "s3cret",
                 "X-Fusion-Tenant": "   ",
             },
         )
@@ -87,7 +103,7 @@ class TestRouteGuardTenantIsolation:
         r = client.get(
             "/v1/chat/completions",
             headers={
-                "X-Fusion-Route": GATEWAY_DECISION_ROUTE,
+                "X-Fusion-Route": "s3cret",
                 "X-Fusion-Tenant": "team-alpha",
             },
         )
@@ -218,7 +234,10 @@ class TestSessionEnforcedViaRealRouter:
         monkeypatch.setenv("FUSION_TENANT_ISOLATION", "true")
         monkeypatch.delenv("FUSION_ROUTE_WARN_ONLY", raising=False)
         monkeypatch.delenv("FUSION_ROUTE_ENFORCE", raising=False)
-        monkeypatch.delenv("FUSION_ROUTE_TOKEN", raising=False)
+        # #1354 audit H7: isolation install requires a shared secret, so the
+        # real-router app boots with FUSION_ROUTE_TOKEN and the request
+        # presents it as X-Fusion-Route.
+        monkeypatch.setenv("FUSION_ROUTE_TOKEN", "s3cret")
 
         # Use the in-memory session tracker so no real model is needed.
         from fusion_mlx.api import session_routes
@@ -256,7 +275,7 @@ class TestSessionEnforcedViaRealRouter:
         r = client.get(
             "/v1/sessions/sess-shared/stats",
             headers={
-                "X-Fusion-Route": GATEWAY_DECISION_ROUTE,
+                "X-Fusion-Route": "s3cret",
                 "X-Fusion-Tenant": "beta",
                 "X-Fusion-Api-Key": os.environ.get("FUSION_API_KEY", "test-key"),
             },

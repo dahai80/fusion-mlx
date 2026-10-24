@@ -134,6 +134,67 @@ class TestBlockAwarePrefixCache:
         assert table.num_tokens == 16
         assert remaining == tokens[16:]
 
+    def _seed_two_cached_blocks(self, paged_cache, tokens):
+        parent = None
+        block_ids = []
+        for i in range(2):
+            block = paged_cache.allocate_block()
+            block.token_count = 4
+            paged_cache.register_block_hash(block, tokens[i * 4 : (i + 1) * 4], parent)
+            parent = block.block_hash
+            block_ids.append(block.block_id)
+        return block_ids
+
+    def test_fetch_cache_fast_path_stops_at_evicted_block(
+        self, prefix_cache, paged_cache, monkeypatch
+    ):
+        # #1352 H3 (contract updated by #1354 H3): a shared-prefix block can
+        # go missing between the hash lookup and the caller's use. The claim
+        # now happens inside get_computed_blocks, which stops the match at the
+        # first missing block — the caller must never be told tokens are
+        # cached that no live block covers.
+        tokens = list(range(8))
+        block_ids = self._seed_two_cached_blocks(paged_cache, tokens)
+        dead = paged_cache.allocated_blocks[block_ids[1]]
+        real_get = paged_cache.cached_block_hash_to_block.get_block
+
+        def missing_second(block_hash):
+            if block_hash == dead.block_hash:
+                return None
+            return real_get(block_hash)
+
+        monkeypatch.setattr(
+            paged_cache.cached_block_hash_to_block, "get_block", missing_second
+        )
+
+        table, remaining = prefix_cache.fetch_cache("req-h3-evicted", tokens)
+
+        assert table is not None
+        assert table.block_ids == [block_ids[0]]
+        assert table.num_tokens == 4
+        assert remaining == tokens[4:]
+        assert prefix_cache._tokens_saved == 4
+
+    def test_fetch_cache_fast_path_all_blocks_evicted_is_miss(
+        self, prefix_cache, paged_cache, monkeypatch
+    ):
+        # #1352 H3 (contract updated by #1354 H3): when no matched block is
+        # live any more the fast path must report a miss with the full token
+        # list, not an empty table claiming a hit.
+        tokens = list(range(8))
+        block_ids = self._seed_two_cached_blocks(paged_cache, tokens)
+        for block_id in block_ids:
+            block = paged_cache.allocated_blocks[block_id]
+            paged_cache.cached_block_hash_to_block.pop(block.block_hash, block_id)
+            del paged_cache.allocated_blocks[block_id]
+
+        table, remaining = prefix_cache.fetch_cache("req-h3-all-dead", tokens)
+
+        assert table is None
+        assert remaining == tokens
+        assert prefix_cache._misses == 1
+        assert "req-h3-all-dead" not in paged_cache.request_tables
+
     def test_get_model_num_layers(self, paged_cache):
         """Test getting model num_layers from various sources."""
         # Model with layers attribute

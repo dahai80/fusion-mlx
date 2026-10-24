@@ -106,16 +106,23 @@ async def _resolve_pool_model(model_name: str) -> dict | None:
     return {"status": "ok", "model_id": model_name, "message": f"Loaded {model_name}"}
 
 
-async def _unload_pool_model(model_name: str) -> bool | None:
+async def _unload_pool_model(model_name: str):
     # Issue #631: pool fallback for unload, symmetric with _resolve_pool_model.
     # The gui_compat unload route shadows the main pool handler (registered
     # earlier), so a model loaded into the engine pool but absent from the gui
     # database would 404 here and leak in the pool. Resolve via the pool and
-    # unload there. Returns True (unloaded) / False (found but not loaded) /
-    # None (not in pool either -> caller keeps the original 404).
+    # unload there.
+    # #1351: returns the pool's UnloadResult (status unloaded / deferred /
+    # not_loaded) instead of bool, so the route can report a deferred lease or
+    # a no-op truthfully. None = the model is not in the pool at all (caller
+    # keeps its 404).
     srv = None
     try:
-        from fusion_mlx.server import get_server, resolve_model_id
+        from fusion_mlx.server import (
+            get_server,
+            resolve_model_id,
+            resolve_unload_key,
+        )
 
         srv = get_server()
     except Exception as e:
@@ -123,28 +130,63 @@ async def _unload_pool_model(model_name: str) -> bool | None:
         return None
     if srv is None or getattr(srv, "pool", None) is None:
         return None
-    resolved = resolve_model_id(model_name)
+    resolved = resolve_unload_key(srv.pool, resolve_model_id(model_name))
     entry = srv.pool.get_entry(resolved)
-    if entry is None and "/" in resolved:
-        hyphen = resolved.replace("/", "--")
-        hyphen_entry = srv.pool.get_entry(hyphen)
-        if hyphen_entry is not None:
-            logger.debug(
-                "unload fallback: slash->hyphen resolve %s -> %s", resolved, hyphen
-            )
-            resolved = hyphen
-            entry = hyphen_entry
     if entry is None:
         return None
     if getattr(entry, "engine", None) is None:
-        return False
+        logger.info(
+            "pool fallback unload %s: entry %s has no engine (#1351)",
+            model_name,
+            resolved,
+        )
+        return _make_unload_result("not_loaded", resolved)
     try:
-        await srv.pool.unload_engine_async(resolved)
+        result = await srv.pool.unload_engine_async(resolved)
     except Exception as e:
         logger.error("pool fallback unload failed for %s: %s", model_name, e)
         return None
-    logger.info("pool fallback unloaded %s", model_name)
-    return True
+    if result is None:
+        # Duck-typed/legacy pool without the structured contract.
+        result = _make_unload_result("unloaded", resolved)
+    logger.info(
+        "pool fallback unload %s (%s) -> %s (#1351)",
+        model_name,
+        resolved,
+        getattr(result, "status", "unknown"),
+    )
+    return result
+
+
+def _make_unload_result(status: str, model_id: str, reason: str | None = None):
+    from fusion_mlx.pool.engine_pool import UnloadResult
+
+    return UnloadResult(status=status, model_id=model_id, reason=reason)
+
+
+def _unload_route_response(model_name: str, result) -> dict:
+    # #1351: a no-op must never come back as 200 unloaded. deferred -> 409
+    # (engine still leased, retry after the in-flight request drains),
+    # not_loaded -> 200 not_loaded (entry exists but holds no engine).
+    status = getattr(result, "status", None) or "unloaded"
+    if status == "unloaded":
+        resp = {"message": f"Model '{model_name}' unloaded", "status": "unloaded"}
+        freed = getattr(result, "freed_bytes", None)
+        if freed is not None:
+            resp["freed_bytes"] = int(freed)
+        return resp
+    if status == "deferred":
+        reason = getattr(result, "reason", None) or "engine still leased"
+        logger.warning("unload %s deferred: %s (#1351)", model_name, reason)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Model '{model_name}' unload deferred: {reason}",
+        )
+    logger.info("unload %s: not loaded (#1351)", model_name)
+    return {
+        "message": f"Model '{model_name}' was not loaded",
+        "status": "not_loaded",
+    }
 
 
 # ── Pydantic models ──
@@ -573,30 +615,24 @@ def get_gui_compat_router() -> APIRouter:
             # the gui database (e.g. loaded via the main /v1/.../load handler).
             # Unload from the pool so it does not leak across load/unload cycles.
             pool_result = await _unload_pool_model(model_name)
-            if pool_result is True:
-                return {
-                    "message": f"Model '{model_name}' unloaded",
-                    "status": "unloaded",
-                }
-            if pool_result is False:
-                return {
-                    "message": f"Model '{model_name}' was not loaded",
-                    "status": "not_loaded",
-                }
-            raise HTTPException(
-                status_code=404, detail=f"Model '{model_name}' not found"
-            )
+            if pool_result is None:
+                raise HTTPException(
+                    status_code=404, detail=f"Model '{model_name}' not found"
+                )
+            return _unload_route_response(model_name, pool_result)
         try:
-            if get_model_manager().unload_model(model_name):
-                return {
-                    "message": f"Model '{model_name}' unloaded",
-                    "status": "unloaded",
-                }
-            return {
-                "message": f"Model '{model_name}' was not loaded",
-                "status": "not_loaded",
-            }
+            # #1351: the manager must drive the real pool API and report what
+            # the pool actually did (the old sync path called a nonexistent
+            # pool._unload_engine on a private EnginePool, so every unload
+            # reported not_loaded and left the engine resident).
+            result = await get_model_manager().unload_model_async(model_name)
+            if result is None:
+                raise HTTPException(status_code=500, detail="Internal server error")
+            return _unload_route_response(model_name, result)
+        except HTTPException:
+            raise
         except Exception as e:
+            logger.error("Unload error %s: %s", model_name, e)
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.delete("/v1/models/{model_name}")
@@ -612,7 +648,9 @@ def get_gui_compat_router() -> APIRouter:
                 status_code=404, detail=f"Model '{model_name}' not found"
             )
         try:
-            get_model_manager().unload_model(model_name)
+            # #1351: async route — await the pool unload so deleting the files
+            # cannot race a still-resident engine.
+            await get_model_manager().unload_model_async(model_name)
             db.delete(mr)
             db.commit()
             if remove_files and mr.path:

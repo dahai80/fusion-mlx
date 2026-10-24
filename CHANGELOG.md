@@ -2,6 +2,134 @@
 
 ## [Unreleased]
 
+### Fixed — admission and engine teardown no longer block the event loop
+- `add_request`'s post-timeout and post-cancel scheduler aborts called
+  `fut.result(timeout=5.0)` on the single MLX executor from a coroutine:
+  on a wedged worker that froze the whole event loop for 5s (the #1174
+  silent-hang signature — every HTTP connection stalls). The abort is now
+  awaited with `asyncio.wait_for(asyncio.wrap_future(...))` (#1354 audit M2).
+- Admission waited on the SSD→hot-cache preload with
+  `_preload_fut.result(timeout=10)` on the MLX worker itself, so a slow or
+  pressured SSD stalled every other inference request for up to 10s. On
+  timeout the request now skips prefix reuse (full prefill) while the
+  background preload keeps running, so a retry can still hit a warm cache.
+  Tunable via `FUSION_MLX_SSD_PRELOAD_TIMEOUT_S` (#1354 audit M3).
+- `aclose()` cancelled the engine-loop task and immediately offloaded
+  `close()` to a thread; cancellation is only delivered at the coroutine's
+  next await, so a still-live loop iteration could touch the scheduler and
+  model that `close()` had already nulled. `aclose()` now awaits the task's
+  exit (bounded, with a warning if it overruns) before teardown (#1354
+  audit M4).
+
+### Fixed — Ollama route stops dropping tool calls, reasoning and upstream errors
+- `/api/chat` streaming discarded every `delta.tool_calls` and
+  `delta.reasoning_content`, so an Ollama client driving a tool-using model
+  saw an empty assistant message and reported success. Tool-call fragments
+  are now accumulated per index and emitted as one Ollama message with
+  object-form `arguments`; reasoning is forwarded as `message.thinking`;
+  the non-streaming path forwards `message.tool_calls` and
+  `message.thinking` too (#1354 audit M20).
+- An upstream SSE error frame (`data: {"error": {...}}`) was skipped as an
+  empty delta, and the stream then ended with `done_reason: "stop"` — the
+  client could not tell a failed generation from a real one. Both
+  `/api/chat` and `/api/generate` now emit the Ollama ndjson
+  `{"error": "..."}` object and stop (#1354 audit M20).
+- `done_reason` now maps a `length` finish reason to `"length"` instead of
+  always reporting `"stop"`.
+- `options.num_ctx` is no longer mapped to `max_tokens`: it is the context
+  window, and mapping it overwrote `num_predict` (the real output cap) with
+  the default 2048 (or the client's window size), silently truncating
+  long answers (#1354 audit M19).
+
+### Fixed — prefix-cache hits now claim their blocks atomically
+- `fetch_cache`'s hash-map branch looked prefix blocks up with
+  `find_shared_prefix` (no reference taken) and incremented `ref_count`
+  afterwards, so a block freed and reallocated between the two steps was
+  pinned under a stale id holding different content — a silent KV hole
+  that decodes as garbage. `get_computed_blocks(claim=True)` now takes the
+  caller's reference inside the same paged-lock hold as the lookup, and
+  the index branch releases its unused hash-map claims when it wins
+  (#1354 audit H3). Blocks restored from SSD for a claiming caller now
+  transfer the lazy-restore pin instead of stacking a second reference on
+  it, which left every restored block permanently un-evictable
+  (#1354 audit M11).
+
+### Fixed — concurrent admissions can no longer evict the same model twice
+- LRU admission picked its victim locklessly and only then called
+  `unload_engine_async`, so two concurrent loads under memory pressure
+  could select the same idle model and run two teardowns against one
+  engine (two `stop()` calls). Victims are now claimed under the pool lock
+  (`is_unloading` + a teardown count), a claimed entry is excluded from
+  victim selection, and `unload_engine_async` skips an entry another
+  teardown already owns; a stranded `is_unloading` flag with no live
+  teardown is still recovered (#1354 audit H12). Recently evicted models
+  also sort last for 5s so a reload that lost the race is not immediately
+  evicted again.
+
+### Fixed — weight conversion streams tensors instead of fp32-for-all; migrate no longer forces trust_remote_code (#1354 audit H10/M24)
+- `convert_model` now scans the source shard headers, then reads one tensor at
+  a time, remaps and (optionally) quantizes it, and appends it to the output
+  safetensors shards (`model.safetensors` or `model-*-of-*.safetensors` plus an
+  index), capping the in-memory batch at 2 GiB. Before this, every shard tensor
+  was cast to fp32 and held in one dict — a 70B model peaked near 280 GB.
+- Source dtypes (bf16/fp16/fp32) are preserved; weights are only cast when the
+  operator passes an explicit `dtype`. The quantize-failure path still drops
+  quantization for the whole model (#1059), re-streaming unquantized.
+- The durability fsync after writing weights/config now opens the file `O_RDWR`
+  instead of fsyncing a read-only descriptor, so the #811 guard is effective.
+- Migration validation no longer forces `trust_remote_code=True`:
+  `validate_model(..., trust_remote_code=False)` is the default, the admin route
+  exposes the opt-in, and enabling it logs a warning naming the repo. The CLI
+  pytorch `.bin` fallback reuses the streaming writer and keeps source dtypes
+  instead of upcasting everything to fp32.
+
+### Fixed — abort_all_requests runs on the MLX executor; cogvideox backend honours the async video contract (#1354 audit H4/H5)
+- `abort_all_requests` (the memory-pressure batch abort) called
+  `scheduler.abort_request` directly on the event-loop thread while the MLX
+  executor thread's `step()` was concurrently popping/appending the same
+  scheduler `waiting`/`running` deques (non-atomic deque operations). The batch
+  abort is now submitted to the same single-worker MLX executor that runs
+  `step()`, so only that thread mutates the queues. Terminal outputs and
+  finished-event bookkeeping stay on the event loop, and the existing
+  abort-count/logging contract is unchanged.
+- Selecting the `cogvideox` video backend (`backend="cogvideox"` or any
+  `_ALIASES` spelling such as `cog_video`) failed with
+  `TypeError: object NoneType can't be used in 'await' expression`: the
+  backend overrode the async `start`/`stop`/`generate` contract with sync
+  methods, and `generate` still took the retired `prompt=` signature instead
+  of `VideoGenParams`. The backend now honours the async contract, runs the
+  blocking MLX generate on the video executor and the stop-path
+  `mx.synchronize()`/`mx.clear_cache()` on the io executor (never the event
+  loop thread), returns MP4 bytes like the other backends, and releases its
+  staged VAE encoder on stop so memory is not retained between requests.
+
+### Security (breaking) — tenant isolation now refuses to boot without FUSION_ROUTE_TOKEN
+- `FUSION_TENANT_ISOLATION=true` previously accepted the public
+  `X-Fusion-Route: gateway-decision` constant as proof of gateway origin.
+  The constant is documented and client-settable, so a direct-port caller
+  could forge both headers and reach another tenant's sessions/quota. The
+  route guard now raises at install time when isolation is enabled without
+  `FUSION_ROUTE_TOKEN` (#1354 audit H7). Multi-tenant deployments must set
+  the shared secret on both the gateway and the backend; single-tenant
+  deployments (isolation off) are unaffected.
+
+### Changed — dead and deprecated config knobs removed (#1354, audit D1–D6)
+- Removed `ServerConfig.default_timeout` and the serve `--timeout` flag. The
+  field had no production reader — per-modality timeouts are the contract
+  (#1191) — and the flag only mirrored its value, so operators who set it
+  believed a global timeout applied when nothing consumed it.
+- Removed the hidden deprecated serve flags `--simple-engine`, `--kv-bits`,
+  `--kv-group-size`, `--draft-model`, `--num-draft-tokens`, `--specprefill`,
+  `--specprefill-threshold`, `--specprefill-keep-pct` and
+  `--specprefill-draft-model`. All were `argparse.SUPPRESS` no-ops kept for a
+  one-release deprecation window that has now elapsed.
+- Removed the duplicate `ServerConfig.kv_cache_dtype`; `SchedulerConfig.
+  kv_cache_dtype` is the single source the `/metrics` resolver reads.
+- Renamed the `pool/settings.py` stub `GlobalSettings` to `PoolTtlSettings`,
+  ending the name collision with the admin settings surface.
+- Dropped the phantom `FUSION_GPU_MEMORY_UTILIZATION` reference from the
+  `gpu_memory_utilization` clamp comment — no code ever read that env var.
+
 ### Fixed — context budget no longer degrades to used=0 when a system message is inline
 - Claude Code 2.1.154+ sends `role: "system"` entries inside the messages
   array. The Anthropic route consolidates them, but on the gateway's
@@ -39,6 +167,25 @@
   rejected or ignored on a model that supports them. The loader now picks
   `VLMBatchedEngine` when the adopted entry is `vlm`-typed, and keeps
   `BatchedEngine` for `--text-only` / `force_text` as before.
+
+### Changed — paged-cache false switches and legacy KV-quantization aliases removed (#1354, audit D2/D7)
+- `SchedulerConfig.use_paged_cache` / `serve --use-paged-cache` /
+  `bench --use-paged-cache` and their admin settings, i18n strings and
+  reload wiring are gone. The scheduler never read that flag: paged
+  memory + SSD cache activate from `enable_prefix_cache` and
+  `paged_ssd_cache_dir`. `paged_cache_block_size` / `max_cache_blocks`
+  remain because they are live (`sched_init.py:327-357` feeds both into
+  `PagedCacheManager`; `_effective_max_blocks` at `sched_init.py:642`
+  honors the operator cap) — the 1019 audit's D2 claim was half wrong.
+- The legacy KV-quantization alias group is removed:
+  `SchedulerConfig.kv_cache_quantization` / `_bits` / `_group_size` /
+  `kv_cache_min_quantize_tokens`, the matching `serve` / `bench` flags,
+  the mutual-exclusion and reasoning-compat checks, the `/metrics`
+  legacy-bits fallback and `dtype_to_quantization_bits`. `--kv-cache-dtype`
+  (or TurboQuant) is the single KV quantization surface; flywheel apply
+  and the parity/flywheel routes now report `kv_cache_dtype`. Scripts
+  passing the removed flags now fail at argparse — migrate them to
+  `--kv-cache-dtype {bf16,int8,int4}`.
 
 ### Fixed — pool mode stops blaming external GPU processes; spec-route log flood
 - The per-scheduler "GPU contention detected" warning fired in pool mode
@@ -98,6 +245,7 @@
 - When the terminal result has been received, a non-zero worker exit code is
   now logged as a warning and the outputs are returned; the raise only fires
   when no result was delivered.
+
 
 ## [v0.10.14] — 2026-10-22
 

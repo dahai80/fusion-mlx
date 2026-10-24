@@ -137,14 +137,8 @@ def bench_command(args):
             cache_memory_mb=args.cache_memory_mb,
             cache_memory_percent=args.cache_memory_percent,
             # Paged cache options
-            use_paged_cache=args.use_paged_cache,
             paged_cache_block_size=args.paged_cache_block_size,
             max_cache_blocks=args.max_cache_blocks,
-            # KV cache quantization
-            kv_cache_quantization=args.kv_cache_quantization,
-            kv_cache_quantization_bits=args.kv_cache_quantization_bits,
-            kv_cache_quantization_group_size=args.kv_cache_quantization_group_size,
-            kv_cache_min_quantize_tokens=args.kv_cache_min_quantize_tokens,
             # R15-P1 (task #296): disk-backed KV checkpointing. Bench
             # path mirrors serve so a regression in the boundary trigger
             # surfaces in `fusion-mlx bench` numbers too.
@@ -158,11 +152,6 @@ def bench_command(args):
             model_name=args.model,
             scheduler_config=scheduler_config,
         )
-
-        if args.use_paged_cache:
-            print(
-                f"Paged cache: block_size={args.paged_cache_block_size}, max_blocks={args.max_cache_blocks}"
-            )
 
         # Generate prompts
         prompts = [

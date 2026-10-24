@@ -11,14 +11,14 @@ import pytest
 from fusion_mlx.pool import settings as pool_settings
 
 
-class TestGlobalSettings:
+class TestPoolTtlSettings:
     def test_defaults(self):
-        s = pool_settings.GlobalSettings()
+        s = pool_settings.PoolTtlSettings()
         assert s.idle_timeout == 3600
         assert s.custom_ceiling_bytes == 0
 
     def test_custom(self):
-        s = pool_settings.GlobalSettings(idle_timeout=60, custom_ceiling_bytes=1024)
+        s = pool_settings.PoolTtlSettings(idle_timeout=60, custom_ceiling_bytes=1024)
         assert s.idle_timeout == 60
         assert s.custom_ceiling_bytes == 1024
 

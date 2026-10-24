@@ -106,19 +106,12 @@ class SchedulerConfig:
     cache_memory_mb: int | None = None  # None = auto (20% available RAM)
     cache_memory_percent: float = 0.20
 
-    # KV cache quantization
-    kv_cache_quantization: bool = False
-    kv_cache_quantization_bits: int = 8
-    kv_cache_quantization_group_size: int = 64
-    kv_cache_min_quantize_tokens: int = 256
-
     # TurboQuant V-only compression
     kv_cache_turboquant: bool = False
     kv_cache_turboquant_bits: int | None = None
     kv_cache_turboquant_group_size: int = 32
 
     # Paged cache
-    use_paged_cache: bool = False
     paged_cache_block_size: int = 64
     max_cache_blocks: int = 1000
 
@@ -193,18 +186,16 @@ class SchedulerConfig:
     decode_clear_interval: int = 256
 
     def __post_init__(self):
-        # NOTE: chunked_prefill_tokens and use_paged_cache historically conflicted,
-        # but the scheduler only reads enable_prefix_cache / paged_ssd_cache_dir —
-        # not use_paged_cache.  Chunked prefill coexists with prefix cache (default
-        # ON) and boundary_prefix_persist (#257).  The old guard was a no-op since
-        # use_paged_cache had no runtime effect.  Removed the false conflict guard.
+        # Chunked prefill coexists with prefix cache (default ON) and
+        # boundary_prefix_persist (#257).
         # Validate ranges
         if self.max_num_seqs < 1:
             logger.warning("max_num_seqs=%s below 1 — clamped to 1", self.max_num_seqs)
             self.max_num_seqs = 1
-        # A-P3-1 (#0908 audit): clamp gpu_memory_utilization — env override
-        # (FUSION_GPU_MEMORY_UTILIZATION) had no bounds; 0/1.5 silently
-        # distorted the memory projection. Clamp to (0, 0.98].
+        # A-P3-1 (#0908 audit): clamp gpu_memory_utilization — an out-of-range
+        # value (0 / 1.5) silently distorted the memory projection. The field
+        # has no env override; --gpu-memory-utilization is the only knob.
+        # Clamp to (0, 0.98].
         if self.gpu_memory_utilization <= 0 or self.gpu_memory_utilization > 0.98:
             logger.warning(
                 "gpu_memory_utilization=%s out of (0, 0.98] — clamped to 0.90",
@@ -224,8 +215,6 @@ class SchedulerConfig:
             self.cache_memory_percent = 0.20
         if self.suffix_min_confidence < 0 or self.suffix_min_confidence > 1:
             self.suffix_min_confidence = 0.3
-        if self.kv_cache_quantization_bits not in (4, 8, 16):
-            self.kv_cache_quantization_bits = 8
         # Sync the runtime bool from the released int knob. The Scheduler
         # runtime reads ``config.chunked_prefill`` (bool); the released CLI
         # sets ``chunked_prefill_tokens`` (int). Respect an explicit True
@@ -356,8 +345,6 @@ class ServerConfig:
     default_max_tokens: int = 4096
     default_max_tokens_is_explicit: bool = False
     thinking_token_budget: int = 2048
-    # deprecated: never read; per-modality timeouts are the contract (#1191)
-    default_timeout: float = 1800.0
     default_temperature: float | None = None
     default_top_p: float | None = None
     default_top_k: int | None = None
@@ -443,9 +430,6 @@ class ServerConfig:
     # force_lm (VLM models load as BatchedEngine; vision requests fail
     # loudly instead of silently loading a broken vision tower).
     force_text: bool = False
-
-    # KV cache dtype (pre-load fallback for metrics)
-    kv_cache_dtype: str | None = None
 
     def __post_init__(self) -> None:
         if self.model_dir is None:

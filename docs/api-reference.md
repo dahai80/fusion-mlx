@@ -292,6 +292,31 @@ Convert text to speech (TTS). Returns WAV audio.
 
 **Response:** Raw WAV bytes (`Content-Type: audio/wav`)
 
+**Zero-shot voice cloning** (models whose `generate()` accepts `ref_audio`,
+e.g. Qwen3-TTS Base, Chatterbox): send a base64-encoded reference clip plus
+its transcript.
+
+```json
+{
+    "model": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
+    "input": "Clone this voice.",
+    "ref_audio": "<base64 of a WAV/FLAC reference clip>",
+    "ref_text": "Transcript of the reference clip."
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `ref_audio` | no | Base64 audio bytes. Max `MAX_REF_AUDIO_BASE64_BYTES` (~15 MB encoded). Invalid base64 → 400, oversize → 413. |
+| `ref_text` | with `ref_audio` | Transcript of the reference clip; the route rejects `ref_audio` without it (400). |
+
+The bytes are decoded to a temp file for the engine and deleted after
+synthesis. Models without a `ref_audio` generate parameter accept the
+request but log `dropping ref_audio` — the clip has no effect there.
+Filesystem paths and URLs are deliberately **not** accepted (`ref_audio`
+is not a local-file or SSRF entry point); remote clients base64-encode the
+clip instead.
+
 ### `POST /v1/audio/process`
 
 Process audio files — enhancement, source separation, etc.

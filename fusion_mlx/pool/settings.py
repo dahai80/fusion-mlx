@@ -7,7 +7,9 @@ import psutil
 
 
 @dataclass
-class GlobalSettings:
+class PoolTtlSettings:
+    # #1354 D5: renamed from GlobalSettings — that name belongs to the admin
+    # settings surface; this stub only carries idle-timeout inputs.
     idle_timeout: int = 3600
     custom_ceiling_bytes: int = 0
 

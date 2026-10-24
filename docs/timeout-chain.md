@@ -55,7 +55,7 @@ Timeouts current as of issue #1191. Every endpoint maps to a bounded wait;
 | STS | 60s | `engines/sts.py:305` | `FUSION_STS_TIMEOUT` |
 | music (ACE-Step) | **600s (NEW this PR — was NONE)** | `engines/music.py` | `FUSION_MUSIC_TIMEOUT` |
 | audio engine load | 120s | `api/audio_routes.py:246` | `FUSION_AUDIO_LOAD_TIMEOUT` |
-| images | 600s × n, cap 3600s; cancel grace 30s | `image_gen.py:245-260` | `FUSION_IMAGE_TIMEOUT` |
+| images | 600s × n, cap 3600s; cancel grace 30s; first-event load window 120s (#1332, <= 0 disables) | `image_gen.py:245-260`, `media/job_manager.py` | `FUSION_IMAGE_TIMEOUT`, `FUSION_IMAGE_LOAD_TIMEOUT` |
 | videos | 7200s | `engines/video.py` (`get_video_gen_timeout`) | `FUSION_VIDEO_GEN_TIMEOUT` |
 | video backends (wan2 / ltx2 / skyreels / svd / hunyuanvideo / cosmos / minimax_h3 / ltx2_5 / uniworld) | same knob; uniworld was hardcoded 600s (fixed this PR) | `video/uniworld/backend.py` | `FUSION_VIDEO_GEN_TIMEOUT` |
 | 3d | image timeout class + httpx 30s URL fetch | `api/threed_routes.py:111` | — |
@@ -80,20 +80,17 @@ the surface-appropriate failure: route layer → 503 (retryable), engine layer
 → `RuntimeError` with the knob name in the message. No poisoning is performed
 by these timeouts — poisoning belongs exclusively to the executor watchdog
 (#1189), which is the layer that can actually observe a wedged `mx.eval`.
+The image subprocess hang deadline and load window (#1332) likewise kill and
+reap the worker without poisoning; the next image request spawns a fresh
+worker.
 
-## ServerConfig.default_timeout
+## ServerConfig.default_timeout (removed)
 
-`ServerConfig.default_timeout` (`fusion_mlx/config.py`) is **deprecated, not
-removed**. An audit confirmed it has zero production readers (only two write
-sites in `cli_serve/config_resolve.py` and `cli_serve/audio_mode.py` that
-mirror the CLI `--timeout` value into it, plus test pins). Removal would break
-the existing test pins and any downstream readers, so the field is kept and
-marked:
-
-```python
-# deprecated: never read; per-modality timeouts are the contract (#1191)
-default_timeout: float = 1800.0
-```
+`ServerConfig.default_timeout` and the serve `--timeout` flag that mirrored
+it were **removed** in #1354 (config audit D1). The field never had a
+production reader — only write sites in `cli_serve/config_resolve.py` and
+`cli_serve/audio_mode.py` — so leaving it in place was a pure decoy for
+operators who expected a global timeout to apply.
 
 **Per-modality knobs are the contract** — each modality owns its bounded
 wait and its env override (table above). There is no global request timeout.

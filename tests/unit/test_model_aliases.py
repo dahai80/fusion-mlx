@@ -23,6 +23,37 @@ def test_unknown_name_passes_through():
     assert resolve_model("nonexistent-model") == "nonexistent-model"
 
 
+def test_path_whitelist_rejects_sibling_prefix(tmp_path, monkeypatch):
+    """#1353 (H9): /tmp/models2 must not pass a /tmp/models whitelist.
+
+    The old bare ``startswith`` made any sibling directory sharing the
+    whitelist prefix look like a child of it.
+    """
+    from fusion_mlx import model_aliases
+
+    allowed = tmp_path / "models"
+    sibling = tmp_path / "models2"
+    allowed.mkdir()
+    sibling.mkdir()
+    monkeypatch.setattr(model_aliases, "_allowed_model_dirs", lambda: [str(allowed)])
+
+    with pytest.raises(ValueError, match="Path not allowed"):
+        resolve_model(str(sibling / "model"))
+
+
+def test_path_whitelist_accepts_allowed_dir_and_children(tmp_path, monkeypatch):
+    """The boundary fix must not reject the allowed dir or its children."""
+    from fusion_mlx import model_aliases
+
+    allowed = tmp_path / "models"
+    child = allowed / "model"
+    child.mkdir(parents=True)
+    monkeypatch.setattr(model_aliases, "_allowed_model_dirs", lambda: [str(allowed)])
+
+    assert resolve_model(str(allowed)) == str(allowed)
+    assert resolve_model(str(child)) == str(child)
+
+
 def test_local_path_takes_priority_over_alias(tmp_path):
     """A local directory matching an alias name should win."""
     local_dir = tmp_path / "qwen3.5-9b-4bit"

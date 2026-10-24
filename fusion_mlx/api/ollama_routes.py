@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..middleware.auth import verify_api_key
+from ..middleware.auth import verify_api_key, verify_management_access
 from ._concurrency import (
     acquire_request_slot,
     concurrency_guarded,
@@ -110,12 +110,21 @@ def _options_to_params(options: dict | None) -> dict:
     """Map Ollama options dict to OpenAI sampling parameters."""
     if not options:
         return {}
+    # #1354 audit M19: num_ctx is the context-window size, not an output cap.
+    # Mapping it onto max_tokens made `num_ctx: 8192` request an 8192-token
+    # generation and silently overwrite num_predict. The served model's
+    # context length is the backend's job; ignore it here.
+    if options.get("num_ctx") is not None:
+        logger.debug(
+            "Ollama options.num_ctx=%s ignored (context window is set by the "
+            "loaded model; use num_predict for the output cap)",
+            options.get("num_ctx"),
+        )
     mapping = {
         "temperature": "temperature",
         "top_p": "top_p",
         "top_k": "top_k",
         "num_predict": "max_tokens",
-        "num_ctx": "max_tokens",
         "stop": "stop",
         "repeat_penalty": "repetition_penalty",
         "presence_penalty": "presence_penalty",
@@ -126,6 +135,53 @@ def _options_to_params(options: dict | None) -> dict:
     for ollama_key, openai_key in mapping.items():
         if ollama_key in options and options[ollama_key] is not None:
             out[openai_key] = options[ollama_key]
+    return out
+
+
+def _ollama_error_frame(error: Any) -> str:
+    # #1354 audit M20: surface an upstream SSE error as the Ollama ndjson
+    # error object instead of letting the stream end as a successful done.
+    if isinstance(error, dict):
+        message = error.get("message") or error.get("code") or str(error)
+    else:
+        message = str(error)
+    logger.error("ollama stream: upstream error frame forwarded: %s", message)
+    return json.dumps({"error": message})
+
+
+def _tool_calls_to_ollama(tool_calls: list) -> list[dict]:
+    # OpenAI tool_call: {"id", "type", "function": {"name", "arguments": str}}
+    # Ollama: {"function": {"name", "arguments": <object>}}
+    out = []
+    for tc in tool_calls or []:
+        fn = (
+            tc.get("function")
+            if isinstance(tc, dict)
+            else getattr(tc, "function", None)
+        )
+        name = None
+        raw_args = ""
+        if isinstance(fn, dict):
+            name = fn.get("name")
+            raw_args = fn.get("arguments") or ""
+        elif fn is not None:
+            name = getattr(fn, "name", None)
+            raw_args = getattr(fn, "arguments", "") or ""
+        if not name:
+            continue
+        if isinstance(raw_args, dict):
+            args = raw_args
+        else:
+            try:
+                args = json.loads(raw_args) if raw_args else {}
+            except json.JSONDecodeError:
+                logger.warning(
+                    "ollama: tool_call '%s' arguments are not valid JSON: %r",
+                    name,
+                    raw_args,
+                )
+                args = {}
+        out.append({"function": {"name": name, "arguments": args}})
     return out
 
 
@@ -309,6 +365,7 @@ async def api_generate(
         accumulated = ""
         eval_count = 0
         prompt_eval_count = 0
+        finish_reason = None
         try:
             async for chunk in gen:
                 if isinstance(chunk, str) and chunk.startswith("data: "):
@@ -317,8 +374,16 @@ async def api_generate(
                         break
                     try:
                         data = json.loads(payload)
+                        # #1354 audit M20: an upstream error frame has no
+                        # choices; skipping it and then reporting done_reason
+                        # "stop" told the client the empty generation worked.
+                        if data.get("error"):
+                            yield _ollama_error_frame(data["error"]) + "\n"
+                            return
                         for c in data.get("choices", []):
                             delta = c.get("delta", {})
+                            if c.get("finish_reason"):
+                                finish_reason = c["finish_reason"]
                             text = delta.get("content", "")
                             if text:
                                 accumulated += text
@@ -358,7 +423,9 @@ async def api_generate(
                         ),
                         "response": "",
                         "done": True,
-                        "done_reason": "stop",
+                        "done_reason": (
+                            "length" if finish_reason == "length" else "stop"
+                        ),
                         "context": [],
                         "total_duration": 0,
                         "load_duration": 0,
@@ -408,13 +475,23 @@ async def api_chat(
 
     if not request.stream:
         result = await _call_openai_chat(request.model, messages, False, params)
-        content = result.choices[0].message.content if result.choices else ""
+        msg = result.choices[0].message if result.choices else None
+        content = (msg.content if msg else "") or ""
         usage = result.usage
+        message: dict[str, Any] = {"role": "assistant", "content": content}
+        # #1354 audit M20: Ollama clients read tool calls from message.tool_calls
+        # (arguments as an object), and reasoning from message.thinking.
+        if msg is not None:
+            if getattr(msg, "reasoning_content", None):
+                message["thinking"] = msg.reasoning_content
+            tool_calls = _tool_calls_to_ollama(getattr(msg, "tool_calls", None))
+            if tool_calls:
+                message["tool_calls"] = tool_calls
         return JSONResponse(
             {
                 "model": request.model,
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()),
-                "message": {"role": "assistant", "content": content},
+                "message": message,
                 "done": True,
                 "done_reason": "stop",
                 "total_duration": 0,
@@ -433,6 +510,8 @@ async def api_chat(
         )
         eval_count = 0
         prompt_eval_count = 0
+        finish_reason = None
+        tool_acc: dict[int, dict[str, str]] = {}
         try:
             async for chunk in gen:
                 if isinstance(chunk, str) and chunk.startswith("data: "):
@@ -441,10 +520,21 @@ async def api_chat(
                         break
                     try:
                         data = json.loads(payload)
+                        # #1354 audit M20: forward the upstream error frame
+                        # instead of ending the stream as done_reason "stop".
+                        if data.get("error"):
+                            yield _ollama_error_frame(data["error"]) + "\n"
+                            return
                         for c in data.get("choices", []):
                             delta = c.get("delta", {})
-                            text = delta.get("content", "")
-                            if text:
+                            if c.get("finish_reason"):
+                                finish_reason = c["finish_reason"]
+                            text = delta.get("content") or ""
+                            thinking = delta.get("reasoning_content") or ""
+                            if text or thinking:
+                                message = {"role": "assistant", "content": text}
+                                if thinking:
+                                    message["thinking"] = thinking
                                 yield (
                                     json.dumps(
                                         {
@@ -453,15 +543,25 @@ async def api_chat(
                                                 "%Y-%m-%dT%H:%M:%S.000000Z",
                                                 time.gmtime(),
                                             ),
-                                            "message": {
-                                                "role": "assistant",
-                                                "content": text,
-                                            },
+                                            "message": message,
                                             "done": False,
                                         }
                                     )
                                     + "\n"
                                 )
+                            # #1354 audit M20: accumulate tool-call deltas by
+                            # index; Ollama carries them as whole calls in one
+                            # message with object-form arguments.
+                            for tc in delta.get("tool_calls") or []:
+                                idx = tc.get("index", 0)
+                                slot = tool_acc.setdefault(
+                                    idx, {"name": "", "arguments": ""}
+                                )
+                                fn = tc.get("function") or {}
+                                if fn.get("name"):
+                                    slot["name"] = fn["name"]
+                                if fn.get("arguments"):
+                                    slot["arguments"] += fn["arguments"]
                             usage_chunk = data.get("usage")
                             if usage_chunk:
                                 eval_count = usage_chunk.get(
@@ -475,6 +575,36 @@ async def api_chat(
                 elif isinstance(chunk, str) and chunk.startswith(": "):
                     yield chunk
                     continue
+            if tool_acc:
+                ollama_calls = _tool_calls_to_ollama(
+                    [
+                        {
+                            "function": {
+                                "name": tool_acc[i]["name"],
+                                "arguments": tool_acc[i]["arguments"],
+                            }
+                        }
+                        for i in sorted(tool_acc)
+                    ]
+                )
+                if ollama_calls:
+                    yield (
+                        json.dumps(
+                            {
+                                "model": request.model,
+                                "created_at": time.strftime(
+                                    "%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime()
+                                ),
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": ollama_calls,
+                                },
+                                "done": False,
+                            }
+                        )
+                        + "\n"
+                    )
             yield (
                 json.dumps(
                     {
@@ -484,7 +614,9 @@ async def api_chat(
                         ),
                         "message": {"role": "assistant", "content": ""},
                         "done": True,
-                        "done_reason": "stop",
+                        "done_reason": (
+                            "length" if finish_reason == "length" else "stop"
+                        ),
                         "total_duration": 0,
                         "load_duration": 0,
                         "prompt_eval_count": prompt_eval_count,
@@ -698,7 +830,7 @@ class OllamaPullRequest(BaseModel):
 @router.post("/api/pull")
 async def api_pull(
     request: OllamaPullRequest,
-    _auth: bool = Depends(verify_api_key),
+    _auth: bool = Depends(verify_management_access),
 ) -> Any:
     name = request.name or request.model or ""
     logger.info("Ollama /api/pull name=%s stream=%s", name, request.stream)
@@ -737,6 +869,11 @@ async def api_pull(
 # DELETE /api/delete — remove model files from disk (guarded)
 # =============================================================================
 
+# #1353 (H6): /api/delete, /api/pull and /api/copy are management surfaces —
+# they mutate model state on disk. Guard them with the management-access
+# dependency (same boundary as /metrics, /v1/status and the cluster routes),
+# not the inference dependency used by chat/generate.
+
 
 def _models_root() -> Path:
     return Path(os.path.expanduser("~/.fusion-mlx/models"))
@@ -760,7 +897,7 @@ def _safe_model_dir(model_path: str) -> Path:
 @router.delete("/api/delete")
 async def api_delete(
     name: str = Query(..., description="model name to delete"),
-    _auth: bool = Depends(verify_api_key),
+    _auth: bool = Depends(verify_management_access),
 ) -> JSONResponse:
     logger.warning("Ollama /api/delete name=%s", name)
     if _pool is None:
@@ -799,7 +936,7 @@ class OllamaCopyRequest(BaseModel):
 @router.post("/api/copy")
 async def api_copy(
     request: OllamaCopyRequest,
-    _auth: bool = Depends(verify_api_key),
+    _auth: bool = Depends(verify_management_access),
 ) -> JSONResponse:
     logger.info(
         "Ollama /api/copy source=%s destination=%s",

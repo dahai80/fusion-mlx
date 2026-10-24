@@ -95,7 +95,7 @@
                 scheduler_advanced: {
                     max_num_seqs: null, max_num_batched_tokens: null, policy: 'FCFS',
                     prefill_batch_size: null, completion_batch_size: null, prefill_step_size: null,
-                    max_waiting: 0, use_paged_cache: false, paged_cache_block_size: null,
+                    max_waiting: 0, paged_cache_block_size: null,
                     max_cache_blocks: null, enable_mtp: false, spec_decode: 'none',
                     gpu_memory_utilization: 0.9,
                 },
@@ -984,7 +984,6 @@
                             scheduler_completion_batch_size: this.globalSettings.scheduler_advanced?.completion_batch_size ?? null,
                             scheduler_prefill_step_size: this.globalSettings.scheduler_advanced?.prefill_step_size ?? null,
                             scheduler_max_waiting: this.globalSettings.scheduler_advanced?.max_waiting ?? null,
-                            scheduler_use_paged_cache: this.globalSettings.scheduler_advanced?.use_paged_cache ?? null,
                             scheduler_paged_cache_block_size: this.globalSettings.scheduler_advanced?.paged_cache_block_size ?? null,
                             scheduler_max_cache_blocks: this.globalSettings.scheduler_advanced?.max_cache_blocks ?? null,
                             scheduler_enable_mtp: this.globalSettings.scheduler_advanced?.enable_mtp ?? null,

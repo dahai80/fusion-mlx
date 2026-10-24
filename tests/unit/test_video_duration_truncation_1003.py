@@ -167,6 +167,12 @@ class TestRouteDurationResolution:
     # duration is echoed, mismatch is logged.
 
     def _setup(self, monkeypatch, mp4_bytes):
+        # The pre-load heavy-admission projection (#1335) depends on the
+        # host's physical RAM and resident footprint, so on a small CI
+        # runner (7GB) it rejects these synthetic requests before the code
+        # under test runs. This file tests duration/resolution resolution,
+        # not admission — disable the gate for the route.
+        monkeypatch.setenv("FUSION_MLX_HEAVY_ADMISSION", "off")
         pool = MagicMock()
         pool.get_engine = AsyncMock(return_value=_make_video_engine([mp4_bytes]))
         # Avoid coupling to resolve_backend/model loading: return a generic

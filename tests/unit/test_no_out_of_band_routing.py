@@ -612,6 +612,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # reconstructed from the SSD tier instead of re-prefilling; never
         # selects a model, parser, or routing tier.
         "FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS",
+        # #1354 (M3): SSD-tier preload wait budget in seconds
+        # (sched_admission). Pure admission-cost knob — how long admission
+        # may wait for the background SSD->hot preload before falling back
+        # to full prefill; never selects a model, parser, or routing tier.
+        "FUSION_MLX_SSD_PRELOAD_TIMEOUT_S",
         # #1276: web module bridge (admin/webserve). Deployment endpoint
         # knobs — upstream/engine-URL/key for the static+proxy bridge
         # (FUSION_MLX_WEB_DIST already allowlisted above, #1220); never

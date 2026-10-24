@@ -121,15 +121,13 @@ def test_video_gen_timeout_env_governor(monkeypatch):
     assert get_video_gen_timeout() == 0.2
 
 
-def test_default_timeout_deprecated_not_removed():
-    from fusion_mlx import config as config_mod
-    from fusion_mlx.cli_serve import (
-        audio_mode,  # noqa: F401
-        config_resolve,  # noqa: F401
-    )
+def test_default_timeout_field_and_flag_removed():
+    # #1354 D1: the global request timeout never had a production reader
+    # (per-modality timeouts are the contract, #1191), so the field and the
+    # serve --timeout flag it mirrored were removed outright.
+    from fusion_mlx import cli as cli_mod
     from fusion_mlx.config import ServerConfig
 
-    cfg = ServerConfig()
-    assert hasattr(cfg, "default_timeout")
-    src = Path(config_mod.__file__).read_text()
-    assert "deprecated: never read" in src
+    assert not hasattr(ServerConfig(), "default_timeout")
+    src = Path(cli_mod.__file__).read_text()
+    assert "Default request timeout in seconds" not in src

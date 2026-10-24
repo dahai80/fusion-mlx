@@ -60,7 +60,8 @@ def _make_prefix_cache(block_size=BLOCK_SIZE):
     paged.model_name = "test-model-1080"
     paged.register_block_freed_callback = MagicMock()
     paged.get_memory_usage = MagicMock(return_value={})
-    paged.find_shared_prefix = MagicMock(return_value=([], [1, 2, 3, 4]))
+    # #1354 H3: the shared-prefix path now claims through get_computed_blocks.
+    paged.get_computed_blocks = MagicMock(return_value=([], 0))
     paged.create_block_table = MagicMock(return_value=MagicMock())
     paged.allocated_blocks = {}
     cache = BlockAwarePrefixCache(model, paged)

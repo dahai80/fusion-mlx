@@ -1072,6 +1072,62 @@ def resolve_model_id(model_id: str) -> str:
     return model_id
 
 
+def resolve_unload_key(pool, model_id: str) -> str:
+    # #1351: the unload path must probe the same registry key the load path
+    # used. get_engine resolves repo-id / bare-name / path spellings through
+    # EnginePool._resolve_hf_repo_id, so an unload that only swapped "/" for
+    # "--" missed bare names ("Qwen3.5-9B-4bit" ->
+    # "mlx-community--Qwen3.5-9B-4bit") and reported on an entry that never
+    # held the engine. Falls back to the legacy slash->hyphen probe for
+    # duck-typed test pools without resolve_registry_key.
+    resolve = getattr(pool, "resolve_registry_key", None)
+    if callable(resolve):
+        try:
+            key = resolve(model_id)
+        except Exception:
+            logger.debug(
+                "unload: registry-key resolve failed for %s", model_id, exc_info=True
+            )
+            key = None
+        # Duck-typed pools (tests) may auto-create a non-str attribute; only a
+        # real key string is accepted.
+        if isinstance(key, str) and key:
+            if key != model_id:
+                logger.debug("unload: registry key %s -> %s", model_id, key)
+            return key
+    if pool.get_entry(model_id) is not None:
+        return model_id
+    if "/" in model_id:
+        hyphen = model_id.replace("/", "--")
+        if pool.get_entry(hyphen) is not None:
+            logger.debug("unload: slash->hyphen resolve %s -> %s", model_id, hyphen)
+            return hyphen
+    return model_id
+
+
+def unload_result_payload(model_id: str, result: Any) -> dict[str, Any]:
+    # #1351: HTTP contract for an unload. A no-op must never look like a
+    # success: "deferred" (engine still leased) -> 409, "not_loaded" -> 404,
+    # and only a real detach returns 200 with status="unloaded".
+    status = getattr(result, "status", None) or "unloaded"
+    resolved = getattr(result, "model_id", None) or model_id
+    if status == "unloaded":
+        payload: dict[str, Any] = {"status": "unloaded", "model_id": model_id}
+        freed = getattr(result, "freed_bytes", None)
+        if freed is not None:
+            payload["freed_bytes"] = int(freed)
+        return payload
+    if status == "deferred":
+        reason = getattr(result, "reason", None) or "engine still leased"
+        logger.warning("unload %s deferred: %s", resolved, reason)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Model unload deferred ({resolved}): {reason}",
+        )
+    logger.info("unload %s: not loaded (%s)", resolved, status)
+    raise HTTPException(status_code=404, detail=f"Model not loaded: {resolved}")
+
+
 def resolve_model_with_profile(model_id: str) -> tuple[str, dict[str, Any]]:
     """Resolve model:profile syntax into (resolved_model_id, profile_overrides).
 
@@ -1665,27 +1721,20 @@ class Server:
         async def _unload_model_impl(model_id: str) -> dict:
             if self.pool is None:
                 raise HTTPException(status_code=503, detail="Server not initialized")
-            resolved = resolve_model_id(model_id)
+            resolved = resolve_unload_key(self.pool, resolve_model_id(model_id))
             entry = self.pool.get_entry(resolved)
-            if entry is None and "/" in resolved:
-                hyphen = resolved.replace("/", "--")
-                hyphen_entry = self.pool.get_entry(hyphen)
-                if hyphen_entry is not None:
-                    logger.debug(
-                        "unload: slash->hyphen resolve %s -> %s", resolved, hyphen
-                    )
-                    resolved = hyphen
-                    entry = hyphen_entry
             if entry is None:
                 raise HTTPException(
                     status_code=404, detail=f"Model not found: {model_id}"
                 )
             if getattr(entry, "engine", None) is None:
                 raise HTTPException(
-                    status_code=400, detail=f"Model not loaded: {model_id}"
+                    status_code=404, detail=f"Model not loaded: {model_id}"
                 )
-            await self.pool.unload_engine_async(resolved)
-            return {"status": "ok", "model_id": model_id}
+            # #1351: surface the pool's verdict instead of assuming success —
+            # unload_engine_async defers when the engine is still leased.
+            result = await self.pool.unload_engine_async(resolved)
+            return unload_result_payload(model_id, result)
 
         @app.post("/v1/models/{model_id:path}/unload")
         async def unload_model_public(
@@ -2429,6 +2478,7 @@ class Server:
                     OQManager(
                         model_dirs=model_dirs,
                         on_complete=_refresh_models_after_task,
+                        settings_manager=settings_manager,
                     )
                 )
                 logger.info("oQ Quantizer initialized")

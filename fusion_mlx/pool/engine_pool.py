@@ -59,6 +59,11 @@ from .model_discovery import DiscoveredModel, discover_models, format_size
 
 logger = logging.getLogger(__name__)
 
+# #1354 H12: a model evicted within this window is only picked again when no
+# other idle candidate exists. Preference, not a hard gate — admission must
+# still be able to reclaim the only evictable model rather than fail with 507.
+_EVICTION_COOLDOWN_S = 5.0
+
 
 _LAZY_ENGINE_CLASSES: dict[str, tuple[str, str]] = {
     "BatchedEngine": ("fusion_mlx.engines.batched", "BatchedEngine"),
@@ -161,6 +166,14 @@ class EngineEntry:
     is_unloading: bool = (
         False  # P1-4: lockless unload in progress; block fast-path service
     )
+    # #1354 H12: number of teardowns that have claimed this entry (mutated
+    # only under EnginePool._lock). Unlike is_unloading, this cannot be left
+    # stranded by a cancelled teardown, so a stranded flag stays recoverable.
+    unloading_count: int = 0
+    # #1354 H12: monotonic timestamp of the last eviction. Used only as an
+    # LRU tiebreak so an evicted-then-reloaded model is not immediately
+    # picked again while another idle candidate exists.
+    last_evicted_at: float = 0.0
     loading_started_at: float | None = None  # Timestamp when current load started
     loading_event: asyncio.Event | None = None  # Signaled when loading completes
     is_pinned: bool = False  # Never evict if True
@@ -176,6 +189,23 @@ class EngineEntry:
     runtime_settings_signature: tuple[tuple[str, str], ...] | None = None
     adapter_path: str | None = None  # LoRA adapter path for derived adapter entries
     base_model_id: str | None = None  # Base model_id for derived adapter entries
+
+
+@dataclass
+class UnloadResult:
+    # #1351: unload_engine_async used to return None on every path, so a
+    # deferred (leased engine) or missing-entry unload was indistinguishable
+    # from a real teardown and every caller reported success. status is one of
+    # "unloaded" (engine detached), "deferred" (leased, pending unload armed),
+    # "not_loaded" (no entry or no engine attached).
+    status: str
+    model_id: str
+    reason: str | None = None
+    freed_bytes: int | None = None
+
+    @property
+    def unloaded(self) -> bool:
+        return self.status == "unloaded"
 
 
 def _mark_pool_shared_if_multi(entries) -> None:
@@ -949,7 +979,9 @@ class EnginePool:
                     evicted,
                 )
                 return True
-            victim = self._find_lru_victim()
+            # #1354 H12: claim under the lock so a concurrent admission loop
+            # cannot select the same victim for a second teardown.
+            victim = await self._claim_lru_victim()
             if victim is None:
                 # #1250: KV/prefix-cache bytes outlive the model that owned
                 # them, so the projection can stay above the ceiling with no
@@ -992,7 +1024,7 @@ class EnginePool:
                 format_size(required_bytes),
             )
             self._record_eviction("media_admission")
-            await self.unload_engine_async(victim)
+            await self.unload_engine_async(victim, _marker_already_set=True)
             evicted += 1
         return False
 
@@ -1351,7 +1383,16 @@ class EnginePool:
             return model_id
         return f"{model_id}::lora::{adapter_path}"
 
-    def _resolve_hf_repo_id(self, model_id: str) -> str:
+    def resolve_registry_key(self, model_id: str) -> str:
+        # #1351: the unload path must land on the same registry key the load
+        # path used (get_engine resolves through _resolve_hf_repo_id). The
+        # ad-hoc slash->hyphen substitution in the routes missed bare repo
+        # names ("Qwen3.5-9B-4bit" -> "mlx-community--Qwen3.5-9B-4bit") and
+        # the case/path spellings, so unload reported on an entry that never
+        # held the engine.
+        return self._resolve_hf_repo_id(model_id, log_level=logging.DEBUG)
+
+    def _resolve_hf_repo_id(self, model_id: str, log_level: int = logging.INFO) -> str:
         # Issue #372: accept HuggingFace repo ids (e.g.
         # "mlx-community/Qwen3-0.6B-4bit") in addition to registry short
         # names. HF-cache-backed entries carry the canonical repo id in
@@ -1375,7 +1416,8 @@ class EnginePool:
             if not repo:
                 continue
             if repo == target or repo.lower() == target.lower():
-                logger.info(
+                logger.log(
+                    log_level,
                     "resolve_hf_repo_id: %s -> %s (source_repo_id match)",
                     model_id,
                     mid,
@@ -1383,7 +1425,8 @@ class EnginePool:
                 return mid
         keyed = self._match_entry_by_repo_key_form(target)
         if keyed is not None:
-            logger.info(
+            logger.log(
+                log_level,
                 "resolve_hf_repo_id: %s -> %s (repo-key form match)",
                 model_id,
                 keyed,
@@ -1395,7 +1438,8 @@ class EnginePool:
         if os.sep in target:
             by_path = self._match_entry_by_model_path(target)
             if by_path is not None:
-                logger.info(
+                logger.log(
+                    log_level,
                     "resolve_hf_repo_id: %s -> %s (model_path match)",
                     model_id,
                     by_path,
@@ -1987,7 +2031,9 @@ class EnginePool:
                         format_size(kv_headroom),
                     )
                     break
-                victim = self._find_lru_victim()
+                # #1354 H12: claim under the lock — two concurrent get_engine
+                # admission loops must not evict the same victim twice.
+                victim = await self._claim_lru_victim()
                 if victim is not None:
                     logger.info(
                         f"Evicting '{victim}' to fit '{entry_key}' "
@@ -1996,7 +2042,7 @@ class EnginePool:
                         f"{format_size(ceiling)})"
                     )
                     self._record_eviction("lru")
-                    await self.unload_engine_async(victim)
+                    await self.unload_engine_async(victim, _marker_already_set=True)
                     continue
                 # Nothing to evict — clean up loading flag and raise
                 async with self._lock:
@@ -2059,6 +2105,20 @@ class EnginePool:
         self, model_id: str, adapter_path: str | None = None
     ) -> None:
         """Release one in-use lease previously taken via get_engine(_lease=True)."""
+        # #1351: get_engine resolves the request id to a registry key (repo-id
+        # / bare-name / path forms) BEFORE taking the lease, but release used
+        # the raw request id. A "/chat" for "Qwen3.5-9B-4bit" leased
+        # "mlx-community--Qwen3.5-9B-4bit" and released "Qwen3.5-9B-4bit",
+        # leaking one in_use per request — unload_engine_async then deferred
+        # forever and the model could never be evicted or unloaded.
+        resolved_model_id = self._resolve_hf_repo_id(model_id, log_level=logging.DEBUG)
+        if resolved_model_id != model_id:
+            logger.debug(
+                "release_engine: resolved %s -> %s for lease release",
+                model_id,
+                resolved_model_id,
+            )
+        model_id = resolved_model_id
         # Issue #389: in-place swap lease path. When the flag is on and this
         # was an adapter request served from the resident base engine, restore
         # the base weights and release the per-base swap lock.
@@ -2112,7 +2172,7 @@ class EnginePool:
                 )
                 # AS-4 (#0907 audit): marker under the lock, slow stop() +
                 # settle outside it (see header comment above).
-                e.is_unloading = True
+                self._claim_entry_locked(e)
                 unload_needed = True
         if unload_needed:
             settle_pre = await self._detach_engine(entry_key)
@@ -2120,7 +2180,7 @@ class EnginePool:
             async with self._lock:
                 e2 = self._entries.get(entry_key)
                 if e2 is not None:
-                    e2.is_unloading = False
+                    self._release_claim_locked(e2)
                     # Re-read the (possibly get_engine-created) wait event
                     # AFTER detach, then wake it — same as unload_engine_async.
                     wake_event = e2.loading_event
@@ -2149,6 +2209,7 @@ class EnginePool:
                 or entry.is_loading
                 or entry.is_pinned
                 or entry.in_use > 0
+                or entry.unloading_count > 0
             ):
                 return False
 
@@ -2156,13 +2217,13 @@ class EnginePool:
                 entry.last_access = time.time()
                 return False
 
-            entry.is_unloading = True
+            self._claim_entry_locked(entry)
         settle_pre = await self._detach_engine(model_id)
         wake_event = None
         async with self._lock:
             entry = self._entries.get(model_id)
             if entry is not None:
-                entry.is_unloading = False
+                self._release_claim_locked(entry)
                 wake_event = entry.loading_event
                 entry.loading_event = None
                 # P3 (#811): adapter cleanup under the lock we hold.
@@ -2384,10 +2445,17 @@ class EnginePool:
         snapshot = list(self._entries.items())
         p1_candidates = []
         p0_candidates = []
+        now = time.monotonic()
         for mid, e in snapshot:
             if e.engine is None or e.is_pinned:
                 continue
             if e.in_use > 0:
+                continue
+            # #1354 H12: a concurrent eviction already claimed this entry.
+            # Selecting it again would hand the same engine to a second
+            # teardown (two stop() calls on one engine).
+            if e.is_unloading:
+                logger.debug(f"Skipping victim '{mid}': unload already in progress")
                 continue
             if e.ane_pinned:
                 logger.debug(f"Skipping victim '{mid}': ANE-pinned (权重常驻)")
@@ -2395,20 +2463,71 @@ class EnginePool:
             if self._entry_has_active_requests(e):
                 logger.debug(f"Skipping victim '{mid}': has active requests")
                 continue
+            # H12: recently evicted models sort after everything else, so a
+            # reload that immediately loses the race is not thrashed again.
+            cooling = 0 < now - (e.last_evicted_at or 0.0) < _EVICTION_COOLDOWN_S
+            key = (1 if cooling else 0, e.last_access, mid)
             tier = getattr(e, "priority_tier", "P0_DYNAMIC") or "P0_DYNAMIC"
             if tier == "P1_TDM":
-                p1_candidates.append((e.last_access, mid))
+                p1_candidates.append(key)
             else:
-                p0_candidates.append((e.last_access, mid))
+                p0_candidates.append(key)
         if p1_candidates:
             p1_candidates.sort()
-            victim = p1_candidates[0][1]
+            victim = p1_candidates[0][2]
             logger.info("TDM eviction: P1 model '%s' yields memory to P0", victim)
             return victim
         if p0_candidates:
             p0_candidates.sort()
-            return p0_candidates[0][1]
+            return p0_candidates[0][2]
         return None
+
+    def _claim_entry_locked(self, entry: EngineEntry) -> None:
+        # #1354 H12: mark an entry as claimed by a teardown. Caller holds
+        # self._lock. unloading_count is the authoritative "a teardown is
+        # running" signal; is_unloading is the service gate get_engine reads.
+        entry.is_unloading = True
+        entry.unloading_count += 1
+        if entry.loading_event is None:
+            entry.loading_event = asyncio.Event()
+
+    def _release_claim_locked(self, entry: EngineEntry) -> None:
+        # #1354 H12: drop one teardown claim. The service gate clears only
+        # when the last claim is gone; a stranded flag with count 0 is
+        # force-cleared so the #1001 recovery path keeps working.
+        entry.unloading_count = max(0, entry.unloading_count - 1)
+        if entry.unloading_count == 0:
+            entry.is_unloading = False
+
+    async def _claim_lru_victim(self) -> str | None:
+        # #1354 H12: selection and claim under one lock acquisition. The old
+        # admission loop picked a victim locklessly and only then called
+        # unload_engine_async, so two concurrent admission loops could select
+        # the same idle model and run two teardowns against one engine (two
+        # stop() calls), and a victim that gained a lease in the gap merely
+        # deferred the unload and sent the loop back around.
+        # Claiming = setting is_unloading while holding the lock: get_engine's
+        # fast path gates on it and waits for loading_event, so no new lease
+        # can be taken. unload_engine_async(_marker_already_set=True) clears
+        # the marker in its finally block.
+        async with self._lock:
+            victim = self._find_lru_victim()
+            if victim is None:
+                return None
+            entry = self._entries.get(victim)
+            if entry is None or entry.engine is None:
+                return None
+            if entry.in_use > 0 or entry.is_loading or entry.unloading_count > 0:
+                logger.debug(
+                    "LRU claim skipped for '%s': in_use=%d loading=%s unloading=%d",
+                    victim,
+                    entry.in_use,
+                    entry.is_loading,
+                    entry.unloading_count,
+                )
+                return None
+            self._claim_entry_locked(entry)
+            return victim
 
     async def _detach_engine(self, model_id: str) -> int | None:
         # Stop and detach an engine (set entry.engine = None). Fast teardown:
@@ -2547,6 +2666,7 @@ class EnginePool:
                 )
         entry.last_access = 0.0
         entry.loaded_at = 0.0
+        entry.last_evicted_at = time.monotonic()
         entry.actual_size = None
         entry.abort_requested = False
         entry.pending_unload_reason = None
@@ -2579,7 +2699,12 @@ class EnginePool:
         with_settle: bool = True,
         caller_holds_lock: bool = False,
         _marker_already_set: bool = False,
-    ) -> None:
+    ) -> UnloadResult:
+        # #1351: returns a structured UnloadResult instead of None so callers
+        # can tell a real teardown ("unloaded") from a deferred leased engine
+        # ("deferred") and from an unknown/unloaded entry ("not_loaded").
+        # Every path logs, including the no-op ones.
+        #
         # Full unload (detach + settle). Used by get_engine's reload/evict
         # path (called outside the lock, guarded by entry.is_loading) and by
         # _unload_pending_if_idle_locked (memory_enforcer path). Callers that
@@ -2604,11 +2729,37 @@ class EnginePool:
         # releases it before calling here with _marker_already_set=True, so the
         # slow settle does not block all get_engine. We clear the marker in the
         # finally under the lock in that case.
+        #
+        # #1351: resolve the request id to the registry key that actually holds
+        # the engine (same resolution get_engine applies). Routes already pass
+        # an entry key, but admin/programmatic callers may send an alias or a
+        # slash-form repo id; without this the unload matched no entry and
+        # reported nothing. Reads _entries only — safe under caller_holds_lock.
+        resolved_id = self._resolve_hf_repo_id(model_id, log_level=logging.DEBUG)
+        if resolved_id != model_id:
+            logger.info(
+                "unload_engine_async: resolved %s -> %s (registry key)",
+                model_id,
+                resolved_id,
+            )
+        model_id = resolved_id
         marker_set = False
         if _marker_already_set:
             marker_set = True
         elif caller_holds_lock:
             entry = self._entries.get(model_id)
+            # #1354 H12: another teardown already claimed this entry. Running
+            # _detach_engine again would call stop() on the engine a second
+            # time (use-after-stop / garbled teardown). The in-flight unload
+            # finishes the job and clears the marker. A stranded is_unloading
+            # flag (unloading_count == 0, #1001) still proceeds as recovery.
+            if entry is not None and entry.unloading_count > 0:
+                logger.info(
+                    "unload_engine_async('%s') skipped: unload already in "
+                    "progress (#1354 H12)",
+                    model_id,
+                )
+                return
             if entry is not None and entry.engine is not None and not entry.is_loading:
                 # R-6 (#811): never stop() an engine a concurrent get_engine
                 # leased (in_use > 0) — doing so causes use-after-stop (garbage
@@ -2643,19 +2794,33 @@ class EnginePool:
                             model_id,
                             "unload_engine_async: deferred (busy)",
                         )
-                        logger.info(
-                            "unload_engine_async('%s') deferred: in_use=%d busy=%s "
-                            "(#811 R-6 use-after-stop guard)",
-                            model_id,
-                            entry.in_use,
-                            self._entry_has_active_requests(entry),
+                        reason = (
+                            f"in_use={entry.in_use} "
+                            f"busy={self._entry_has_active_requests(entry)}"
                         )
-                        return
-                entry.is_unloading = True
+                        logger.info(
+                            "unload_engine_async('%s') deferred: %s "
+                            "(#811 R-6 use-after-stop guard, #1351)",
+                            model_id,
+                            reason,
+                        )
+                        return UnloadResult(
+                            status="deferred",
+                            model_id=model_id,
+                            reason=reason,
+                        )
+                self._claim_entry_locked(entry)
                 marker_set = True
         else:
             async with self._lock:
                 entry = self._entries.get(model_id)
+                if entry is not None and entry.unloading_count > 0:
+                    logger.info(
+                        "unload_engine_async('%s') skipped: unload already in "
+                        "progress (#1354 H12)",
+                        model_id,
+                    )
+                    return
                 if (
                     entry is not None
                     and entry.engine is not None
@@ -2682,20 +2847,38 @@ class EnginePool:
                                 model_id,
                                 "unload_engine_async: deferred (busy)",
                             )
-                            logger.info(
-                                "unload_engine_async('%s') deferred: in_use=%d "
-                                "busy=%s (#811 R-6 use-after-stop guard)",
-                                model_id,
-                                entry.in_use,
-                                self._entry_has_active_requests(entry),
+                            reason = (
+                                f"in_use={entry.in_use} "
+                                f"busy={self._entry_has_active_requests(entry)}"
                             )
-                            return
-                    entry.is_unloading = True
+                            logger.info(
+                                "unload_engine_async('%s') deferred: %s "
+                                "(#811 R-6 use-after-stop guard, #1351)",
+                                model_id,
+                                reason,
+                            )
+                            return UnloadResult(
+                                status="deferred",
+                                model_id=model_id,
+                                reason=reason,
+                            )
+                    self._claim_entry_locked(entry)
                     marker_set = True
         try:
             pre_unload_active = await self._detach_engine(model_id)
             if pre_unload_active is None:
-                return
+                # #1351: no entry, or an entry with no engine attached. This
+                # used to return silently (indistinguishable from a teardown).
+                logger.info(
+                    "unload_engine_async('%s'): not loaded — nothing to unload "
+                    "(#1351)",
+                    model_id,
+                )
+                return UnloadResult(
+                    status="not_loaded",
+                    model_id=model_id,
+                    reason="no loaded engine for this model",
+                )
             # CS-1 (#811 audit 0906): invalidate cached completions for this
             # model on unload. The response-cache fingerprint keys on the
             # alias string, not weight revision/quant, so a re-pull or quant
@@ -2769,12 +2952,34 @@ class EnginePool:
                     f"active_memory={format_size(pre_unload_active)}"
                 )
                 self._wake_process_memory_enforcer()
+            # #1351: freed_bytes is best-effort — mx.get_active_memory() is a
+            # process-global gauge, so concurrent loads can mask (or invert)
+            # the delta. Never report a negative figure as freed.
+            freed_bytes = None
+            try:
+                freed_bytes = max(0, int(pre_unload_active - mx.get_active_memory()))
+            except Exception:
+                logger.debug(
+                    "unload_engine_async('%s'): freed_bytes unavailable",
+                    model_id,
+                    exc_info=True,
+                )
+            logger.info(
+                "unload_engine_async('%s'): unloaded (freed=%s, #1351)",
+                model_id,
+                format_size(freed_bytes) if freed_bytes is not None else "n/a",
+            )
+            return UnloadResult(
+                status="unloaded",
+                model_id=model_id,
+                freed_bytes=freed_bytes,
+            )
         finally:
             if marker_set:
                 if caller_holds_lock:
                     entry = self._entries.get(model_id)
                     if entry is not None:
-                        entry.is_unloading = False
+                        self._release_claim_locked(entry)
                         event = entry.loading_event
                         entry.loading_event = None
                     else:
@@ -2787,7 +2992,7 @@ class EnginePool:
                     async with self._lock:
                         entry = self._entries.get(model_id)
                         if entry is not None:
-                            entry.is_unloading = False
+                            self._release_claim_locked(entry)
                             event = entry.loading_event
                             entry.loading_event = None
                         else:
@@ -2920,6 +3125,28 @@ class EnginePool:
         # correct order), and (b) shutdown() calls this under self._lock, and
         # asyncio.Lock is not reentrant — acquiring it here would deadlock.
         self._current_model_memory -= entry.estimated_size
+
+        if settle_indeterminate:
+            # #1335: re-read the live gauge once and log the residual so a
+            # skipped settle is not reported as a clean release. The counter
+            # is decremented above regardless, and admission re-reads this
+            # same gauge (#1623 max()) — so only genuinely unreleased memory
+            # can keep resident inflated, never a cached counter figure.
+            try:
+                live_after_skip = max(
+                    int(mx.get_active_memory()), int(get_phys_footprint())
+                )
+            except Exception:  # noqa: BLE001
+                live_after_skip = 0
+            if live_after_skip > 0:
+                logger.warning(
+                    "Settle skipped for '%s': live memory %s still resident "
+                    "(tracked model memory now %s) — admission re-reads the "
+                    "live gauge (#1335)",
+                    model_id,
+                    format_size(live_after_skip),
+                    format_size(self._current_model_memory),
+                )
 
         if settled:
             logger.info(
@@ -3128,9 +3355,7 @@ class EnginePool:
                 # blocked every concurrent get_engine for the whole teardown.
                 victim_entry = self._entries.get(victim)
                 if victim_entry is not None:
-                    victim_entry.is_unloading = True
-                    if victim_entry.loading_event is None:
-                        victim_entry.loading_event = asyncio.Event()
+                    self._claim_entry_locked(victim_entry)
 
                 logger.info(
                     "Evicting idle model '%s' for prefill headroom on '%s' "

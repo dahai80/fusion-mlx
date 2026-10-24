@@ -396,7 +396,9 @@ def pull_command(args):
     # Guard against path traversal in repo_id (e.g. "foo/../bar")
     if ".." in repo_id or repo_id.startswith("/"):
         print(f"\n  Error: invalid model identifier: {repo_id}")
-        return
+        # #1353 (H11): every other pull failure branch exits non-zero so
+        # scripts/CI can detect the failure; this one returned exit 0.
+        sys.exit(1)
 
     t0 = time.monotonic()
 

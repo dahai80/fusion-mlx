@@ -54,8 +54,12 @@ def _convert_pytorch_to_safetensors(model_path: Path) -> Path:
     import shutil
     import tempfile
 
-    import mlx.core as mx
     import torch
+
+    from fusion_mlx.migrate.converter import (
+        tensor_to_mx,
+        write_safetensors_stream,
+    )
 
     pytorch_files = sorted(
         list(model_path.glob("pytorch_model.bin"))
@@ -68,17 +72,20 @@ def _convert_pytorch_to_safetensors(model_path: Path) -> Path:
         "Pre-converting %d pytorch weight file(s) to safetensors",
         len(pytorch_files),
     )
-    weights: dict[str, mx.array] = {}
-    for pf in pytorch_files:
-        state_dict = torch.load(str(pf), map_location="cpu", weights_only=True)
-        for k, v in state_dict.items():
-            v = v.detach().cpu().float().numpy()
-            weights[k] = mx.array(v)
+
+    def _iter_tensors():
+        for pf in pytorch_files:
+            state_dict = torch.load(str(pf), map_location="cpu", weights_only=True)
+            logger.info("Streaming %d tensors from %s", len(state_dict), pf.name)
+            try:
+                for k, v in state_dict.items():
+                    yield k, tensor_to_mx(v.detach().cpu())
+            finally:
+                del state_dict
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="fusion_mlx_convert_"))
-    out_file = tmp_dir / "model.safetensors"
-    mx.save_safetensors(str(out_file), weights)
-    logger.info("Safetensors cache written to %s", out_file)
+    written = write_safetensors_stream(str(tmp_dir), _iter_tensors())
+    logger.info("Safetensors cache written to %s (%d shard(s))", tmp_dir, len(written))
 
     for f in model_path.iterdir():
         if f.suffix in (".bin",) or f.name == "model.safetensors":

@@ -393,6 +393,20 @@ class RouteGuardMiddleware:
 
 
 def install_route_guard_middleware(app: Any) -> None:
+    # #1354 audit H7: isolation without a shared secret is not isolation.
+    # The gateway-decision route value is a public constant, so any
+    # direct-port caller can forge X-Fusion-Route + X-Fusion-Tenant and
+    # reach another tenant's sessions/quota. Refuse to boot instead of
+    # serving a tenant boundary that cannot be authenticated.
+    if _tenant_isolation_enabled() and not _configured_route_token():
+        raise RuntimeError(
+            "[route_guard] FUSION_TENANT_ISOLATION=true requires "
+            "FUSION_ROUTE_TOKEN: without a shared secret the gateway "
+            "contract value is public, so X-Fusion-Tenant is client-"
+            "forgeable and the tenant boundary is unenforceable. Set "
+            "FUSION_ROUTE_TOKEN on both the gateway and the backend, or "
+            "unset FUSION_TENANT_ISOLATION."
+        )
     # #1000: log the active mode at install so operators can see whether
     # direct clients will be rejected. Standalone (no gateway contract)
     # defaults to warn-only; gateway deployments enforce.

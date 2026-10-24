@@ -16,7 +16,7 @@ from fusion_mlx.api.ollama_routes import (
     _build_openai_messages_generate,
     _options_to_params,
 )
-from fusion_mlx.middleware.auth import verify_api_key
+from fusion_mlx.middleware.auth import verify_api_key, verify_management_access
 
 
 @dataclass
@@ -57,6 +57,7 @@ def app_client(monkeypatch):
         return True
 
     app.dependency_overrides[verify_api_key] = _fake_auth
+    app.dependency_overrides[verify_management_access] = _fake_auth
     app.include_router(ollama_routes.router)
     return TestClient(app)
 
@@ -293,3 +294,69 @@ class TestCopyEndpoint:
             "/api/copy", json={"source": "src-model", "destination": "alias-model"}
         )
         assert r.status_code == 409
+
+
+class TestManagementAuthGuard:
+    """#1353 (H6): model-mutating Ollama endpoints use the management auth
+    path; chat/generate/list endpoints keep the inference dependency."""
+
+    _MANAGEMENT_PATHS = ("/api/delete", "/api/pull", "/api/copy")
+    _INFERENCE_PATHS = ("/api/generate", "/api/ps")
+
+    @staticmethod
+    def _dependency_calls(path):
+        for route in ollama_routes.router.routes:
+            if getattr(route, "path", None) == path:
+                return {dep.call for dep in route.dependant.dependencies}
+        raise AssertionError(f"route not found: {path}")
+
+    @pytest.mark.parametrize("path", _MANAGEMENT_PATHS)
+    def test_management_endpoints_use_management_access(self, path):
+        calls = self._dependency_calls(path)
+        assert verify_management_access in calls
+        assert verify_api_key not in calls
+
+    @pytest.mark.parametrize("path", _INFERENCE_PATHS)
+    def test_inference_endpoints_keep_api_key_auth(self, path):
+        calls = self._dependency_calls(path)
+        assert verify_api_key in calls
+        assert verify_management_access not in calls
+
+    def test_delete_rejects_request_without_management_key(self, monkeypatch, tmp_path):
+        # The unit conftest opts into the documented FUSION_ALLOW_ANONYMOUS
+        # dev override; unset it to assert the production reject path.
+        monkeypatch.delenv("FUSION_ALLOW_ANONYMOUS", raising=False)
+        app = FastAPI()
+
+        async def _fake_inference_auth():
+            return True
+
+        app.dependency_overrides[verify_api_key] = _fake_inference_auth
+        app.include_router(ollama_routes.router)
+        client = TestClient(app)
+
+        monkeypatch.setattr(
+            "fusion_mlx.middleware.auth._get_configured_api_key",
+            lambda: "management-secret",
+        )
+        models_root = tmp_path / "models"
+        model_dir = models_root / "test-model"
+        model_dir.mkdir(parents=True)
+        entry = _FakeEntry(model_path=str(model_dir))
+        monkeypatch.setattr(ollama_routes, "_pool", _FakePool({"test-model": entry}))
+        monkeypatch.setattr(
+            "fusion_mlx.server.resolve_model_with_profile",
+            lambda m: ("test-model", {}),
+        )
+        monkeypatch.setattr(ollama_routes, "_models_root", lambda: models_root)
+
+        denied = client.delete("/api/delete?name=test-model")
+        assert denied.status_code == 401
+        assert model_dir.exists()
+
+        allowed = client.delete(
+            "/api/delete?name=test-model",
+            headers={"Authorization": "Bearer management-secret"},
+        )
+        assert allowed.status_code == 200
+        assert not model_dir.exists()
