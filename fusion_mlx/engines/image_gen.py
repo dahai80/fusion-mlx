@@ -281,10 +281,41 @@ async def wait_for_llm_idle(defer_s: float, poll_s: float = 0.5) -> float:
     return waited
 
 
+# #1407: observed per-denoise-step seconds, keyed by variant. Fed from the
+# worker's progress events, so the parent process learns how slow a variant
+# actually is on this machine and can project a job's runtime at admission
+# instead of surprising the caller with a long silence. Module-level so the
+# estimate survives across jobs in one process lifetime.
+_STEP_SECONDS: dict[str, float] = {}
+_STEP_EMA_ALPHA = 0.3
+
+
+def record_step_seconds(variant: str, seconds: float) -> None:
+    if seconds <= 0.0 or seconds > 600.0:
+        return
+    prev = _STEP_SECONDS.get(variant)
+    if prev is None:
+        _STEP_SECONDS[variant] = seconds
+    else:
+        _STEP_SECONDS[variant] = prev * (1.0 - _STEP_EMA_ALPHA) + (
+            seconds * _STEP_EMA_ALPHA
+        )
+
+
+def project_image_seconds(variant: str, steps: int, n_images: int) -> float | None:
+    per_step = _STEP_SECONDS.get(variant)
+    if not per_step:
+        return None
+    return per_step * max(1, int(steps or 1)) * max(1, int(n_images or 1))
+
+
 def get_image_gen_timeout(n_images: int = 1) -> float:
-    # n_images scales the deadline: multi-image jobs (one worker, N images)
-    # need proportionally more time. The base covers weight reload + one
-    # image; each additional image adds base again, capped at 3600s so a
+    # #1407: this is now the INACTIVITY budget (MediaJobManager restarts the
+    # clock on every worker event), not a total runtime cap — a 30-step bf16
+    # edit model that keeps emitting progress no longer gets killed at 600s.
+    # The absolute cap is FUSION_IMAGE_TOTAL_TIMEOUT (media/job_manager.py).
+    # n_images still scales it: multi-image jobs (one worker, N images) have
+    # longer gaps between events during per-image setup. Capped at 3600s so a
     # runaway n_images value cannot pin an executor forever. Model-load
     # callers pass n_images=1 (default).
     import os
@@ -1584,7 +1615,11 @@ class ImageGenEngine(BaseNonStreamingEngine):
         lora: list[dict] | None = None,
     ) -> list[bytes]:
         # S3: subprocess image generation via MediaJobManager.
-        from ..media.job_manager import MediaJobLoadHangError, MediaJobManager
+        from ..media.job_manager import (
+            MediaJobLoadHangError,
+            MediaJobManager,
+            get_image_total_timeout,
+        )
 
         # #1333: defer the worker spawn until active LLM requests drain
         # (bounded). Runs before run_image_job so the defer does not eat
@@ -1648,7 +1683,44 @@ class ImageGenEngine(BaseNonStreamingEngine):
 
         loop = asyncio.get_running_loop()
 
+        # #1407: announce the projected runtime before the worker spawns. The
+        # estimate comes from steps observed on earlier jobs of this variant,
+        # so it is real measurement for this machine, not a table guess.
+        _total_timeout = get_image_total_timeout()
+        _projected = project_image_seconds(self._variant, steps, n_images)
+        if _projected is not None:
+            if _total_timeout > 0 and _projected > _total_timeout:
+                logger.warning(
+                    "#1407 image job variant=%s steps=%d n_images=%d projects "
+                    "%.0fs from %.2fs/step, above the %.0fs total timeout — it "
+                    "will be killed. Lower steps or raise FUSION_IMAGE_TOTAL_TIMEOUT.",
+                    self._variant,
+                    steps,
+                    n_images,
+                    _projected,
+                    _STEP_SECONDS.get(self._variant, 0.0),
+                    _total_timeout,
+                )
+            else:
+                logger.info(
+                    "#1407 image job variant=%s steps=%d n_images=%d projects %.0fs "
+                    "from %.2fs/step (inactivity budget %.0fs, total cap %.0fs)",
+                    self._variant,
+                    steps,
+                    n_images,
+                    _projected,
+                    _STEP_SECONDS.get(self._variant, 0.0),
+                    get_image_gen_timeout(n_images),
+                    _total_timeout,
+                )
+
+        _last_step_t = [0.0]
+
         def _on_step(image_idx: int, step: int, total: int) -> None:
+            now = time.monotonic()
+            if _last_step_t[0] > 0.0:
+                record_step_seconds(self._variant, now - _last_step_t[0])
+            _last_step_t[0] = now
             if on_step is not None:
                 # on_step signature is (step, total); flatten across images
                 on_step(step, total)
@@ -1663,7 +1735,8 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 n_images=n_images,
                 gen_params=gen_params,
                 timeout=get_image_gen_timeout(n_images),
-                on_step=_on_step if on_step is not None else None,
+                on_step=_on_step,
+                total_timeout=_total_timeout,
             )
         except MediaJobLoadHangError as exc:
             from ..engine_core import reset_image_executor_poison
@@ -1674,7 +1747,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
             reset_image_executor_poison()
             logger.error("ImageGen load-hang fast-fail: %s", exc)
             raise
-        except TimeoutError:
+        except TimeoutError as exc:
             from ..engine_core import reset_image_executor_poison
 
             # #1332: the subprocess worker is a fresh process per job and
@@ -1687,16 +1760,17 @@ class ImageGenEngine(BaseNonStreamingEngine):
             # worker.
             reset_image_executor_poison()
             logger.error(
-                "ImageGen subprocess timed out after %.0fs; worker killed and "
+                "ImageGen subprocess timed out (%s); worker killed and "
                 "reaped, image executor NOT poisoned (#1332). The next image "
                 "request will spawn a fresh worker.",
-                get_image_gen_timeout(n_images),
+                exc or f"no event for {get_image_gen_timeout(n_images):.0f}s",
             )
             raise RuntimeError(
                 "image generation exceeded the hang deadline "
-                f"({get_image_gen_timeout(n_images):.0f}s) and the subprocess worker "
-                "was killed (S3). The worker was reaped and the image subsystem "
-                "is healthy; the next request will spawn a fresh worker (#1332)."
+                f"({exc or f'no worker event for {get_image_gen_timeout(n_images):.0f}s'}) "
+                "and the subprocess worker was killed (S3). The worker was "
+                "reaped and the image subsystem is healthy; the next request "
+                "will spawn a fresh worker (#1332)."
             )
         finally:
             # #1004: release the media reservation registered in

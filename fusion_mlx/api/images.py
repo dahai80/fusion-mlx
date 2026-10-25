@@ -58,8 +58,11 @@ class ImageGenerateRequest(BaseModel):
     steps: int | None = Field(default=None, ge=1, le=50)
     # Random seed (None = random)
     seed: int | None = None
-    # Guidance scale (None = variant default; txt2img=1.0, flux1 variants=4.0)
-    guidance: float | None = Field(default=None, ge=1.0, le=20.0)
+    # Guidance scale (None = variant default; txt2img=1.0, flux1 variants=4.0).
+    # #1407: floor is 0.0, not 1.0 — schnell/turbo LoRA distillation trains at
+    # CFG 0 and a hard floor of 1 silently forced those callers away from the
+    # setting their weights expect.
+    guidance: float | None = Field(default=None, ge=0.0, le=20.0)
     # Response format
     response_format: str = Field(default="url", pattern="^(url|b64_json)$")
     # Model name (default: first available image gen model)

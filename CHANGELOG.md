@@ -4,6 +4,22 @@
 
 ## [v0.10.17] — 2026-10-26
 
+### Fixed — image jobs were killed at 600s even while making progress (#1407)
+- The image hang deadline was a total wall-clock budget, so a variant whose
+  worker reports denoise steps the whole time was still killed at the limit.
+  `qwen_image_edit` (30-step default, 56GB bf16, ~80s/step) could never
+  finish: every request died at 602s. The deadline is now an **inactivity**
+  budget — each worker event restarts the clock — so a slow-but-progressing
+  job runs to completion, while a worker that goes silent is still killed
+  after `FUSION_IMAGE_TIMEOUT`. A new absolute cap,
+  `FUSION_IMAGE_TOTAL_TIMEOUT` (default 7200s, `<= 0` disables), bounds a
+  chatty-but-endless worker.
+- The engine now records observed per-step seconds per variant and logs a
+  runtime projection at admission, with a warning when the projection exceeds
+  the total cap — the failure is predictable instead of a 10-minute surprise.
+- `/v1/images/generate` rejected `guidance: 0.0` (`ge=1.0`), but schnell and
+  turbo LoRA distillation train at CFG 0. The floor is now `0.0`.
+
 ### Fixed — grammar ring called the xgrammar bitmask kernel with swapped arguments (#1402)
 - `apply_token_bitmask_mlx` takes `(bitmask, logits, vocab_size)`, but
   `shim/grammar_ring.apply_bitmask()` passed `(logits, words, vocab_size)`.
