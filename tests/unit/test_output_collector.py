@@ -10,7 +10,6 @@ Tests cover:
 - get(): async get
 - clear(): cleanup
 - _merge_outputs(): output merging
-- has_waiting_consumers(): class method
 
 Note: Uses pytest-asyncio for async tests.
 """
@@ -128,7 +127,6 @@ class TestRequestOutputCollectorInit:
 
         assert collector._merged is None
         assert collector.aggregate is True
-        assert collector._is_waiting is False
 
     def test_init_without_aggregation(self):
         """Test initialization without aggregation."""
@@ -180,11 +178,14 @@ class TestRequestOutputCollectorPut:
         collector.put(output1)
         collector.put(output2)
 
-        # Should be merged
-        assert collector._merged is not None
-        assert collector._merged.new_token_ids == [100, 101]
-        assert collector._merged.new_text == "Hello world"
-        assert collector._merged.completion_tokens == 2
+        # Should be merged. The aggregate is folded into one output on get()
+        # (M23: accumulating in lists instead of rebuilding per put).
+        merged = collector.get_nowait()
+        assert merged is not None
+        assert merged.new_token_ids == [100, 101]
+        assert merged.new_text == "Hello world"
+        assert merged.completion_tokens == 2
+        assert collector._merged is None
 
     def test_put_multiple_without_aggregation(self):
         """Test putting multiple outputs queues FIFO without aggregation."""
@@ -283,35 +284,6 @@ class TestRequestOutputCollectorGet:
         assert result is not None
         assert result.new_text == "Delayed"
 
-    @pytest.mark.asyncio
-    async def test_get_tracks_waiting_consumer(self):
-        """Test get() tracks waiting consumers."""
-        collector = RequestOutputCollector()
-
-        # Reset global counter
-        initial_count = RequestOutputCollector._waiting_consumers
-
-        async def get_with_delay():
-            return await collector.get()
-
-        # Start get task
-        task = asyncio.create_task(get_with_delay())
-
-        # Give time for task to start waiting
-        await asyncio.sleep(0.01)
-
-        # Check counter incremented
-        assert RequestOutputCollector._waiting_consumers > initial_count
-
-        # Provide output
-        collector.put(RequestOutput(request_id="test-001"))
-
-        # Wait for task to complete
-        await task
-
-        # Counter should be back to initial
-        assert RequestOutputCollector._waiting_consumers == initial_count
-
 
 class TestRequestOutputCollectorClear:
     """Tests for RequestOutputCollector.clear()."""
@@ -329,18 +301,6 @@ class TestRequestOutputCollectorClear:
         # instead of hanging forever. A fresh collector is unaffected.
         assert collector._closed is True
         assert collector.ready.is_set()
-
-    def test_clear_resets_waiting_flag(self):
-        """Test clear() resets waiting flag."""
-        collector = RequestOutputCollector()
-        collector._is_waiting = True
-
-        initial_count = RequestOutputCollector._waiting_consumers
-        RequestOutputCollector._waiting_consumers += 1
-
-        collector.clear()
-
-        assert collector._is_waiting is False
 
 
 class TestRequestOutputCollectorMergeOutputs:
@@ -497,62 +457,6 @@ class TestRequestOutputCollectorMergeOutputs:
         )
         result = collector._merge_outputs(existing, new)
         assert result.logprobs == [{"token": "a"}, {"token": "b"}]
-
-
-class TestRequestOutputCollectorHasWaitingConsumers:
-    """Tests for RequestOutputCollector.has_waiting_consumers()."""
-
-    def test_has_waiting_consumers_false_initially(self):
-        """Test has_waiting_consumers returns False when none waiting."""
-        # Reset counter for clean test
-        original = RequestOutputCollector._waiting_consumers
-        RequestOutputCollector._waiting_consumers = 0
-
-        try:
-            assert RequestOutputCollector.has_waiting_consumers() is False
-        finally:
-            RequestOutputCollector._waiting_consumers = original
-
-    def test_has_waiting_consumers_true_when_waiting(self):
-        """Test has_waiting_consumers returns True when consumers waiting."""
-        original = RequestOutputCollector._waiting_consumers
-        RequestOutputCollector._waiting_consumers = 1
-
-        try:
-            assert RequestOutputCollector.has_waiting_consumers() is True
-        finally:
-            RequestOutputCollector._waiting_consumers = original
-
-    @pytest.mark.asyncio
-    async def test_has_waiting_consumers_integration(self):
-        """Test has_waiting_consumers in realistic scenario."""
-        collector = RequestOutputCollector()
-
-        # Reset counter
-        original = RequestOutputCollector._waiting_consumers
-        RequestOutputCollector._waiting_consumers = 0
-
-        try:
-            assert RequestOutputCollector.has_waiting_consumers() is False
-
-            # Start waiting task
-            async def wait_for_output():
-                return await collector.get()
-
-            task = asyncio.create_task(wait_for_output())
-            await asyncio.sleep(0.01)  # Let task start waiting
-
-            assert RequestOutputCollector.has_waiting_consumers() is True
-
-            # Provide output
-            collector.put(RequestOutput(request_id="test-001"))
-            await task
-
-            # After task completes, should be back to original
-            assert RequestOutputCollector._waiting_consumers == 0
-
-        finally:
-            RequestOutputCollector._waiting_consumers = original
 
 
 class TestRequestOutputCollectorEdgeCases:

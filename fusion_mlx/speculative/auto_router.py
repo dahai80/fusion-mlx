@@ -270,6 +270,28 @@ class SpecAutoRouter:
     abandon_accept: float = 0.20
     keep_accept: float = 0.40
 
+    def _record(
+        self,
+        method: str,
+        reason: str,
+        signals: RouteSignals,
+        candidates: set[str] | frozenset[str],
+        rate: float | None,
+    ) -> None:
+        # Audit 1019 L30: six hand-built copies of this dict meant any new
+        # signal had to be added six times, and every copy could drift.
+        _append_spec_route_decision(
+            {
+                "method": method,
+                "reason": reason,
+                "candidates": sorted(candidates),
+                "model_family": signals.model_family,
+                "prompt_tokens": signals.prompt_token_count,
+                "accept_rate": rate,
+                "kv_pressure": getattr(signals, "kv_pressure", None),
+            }
+        )
+
     def decide(self, signals: RouteSignals) -> str:
         """Return the spec-decode method name to use for this request."""
         avail = signals.available or DEFAULT_AVAILABLE
@@ -293,17 +315,7 @@ class SpecAutoRouter:
             and rate is not None
             and rate >= self.keep_accept
         ):
-            _append_spec_route_decision(
-                {
-                    "method": cur,
-                    "reason": "keep_accept (rate >= threshold)",
-                    "candidates": sorted(avail),
-                    "model_family": signals.model_family,
-                    "prompt_tokens": signals.prompt_token_count,
-                    "accept_rate": rate,
-                    "kv_pressure": getattr(signals, "kv_pressure", None),
-                }
-            )
+            self._record(cur, "keep_accept (rate >= threshold)", signals, avail, rate)
             return cur
 
         candidates = avail - excluded
@@ -311,73 +323,23 @@ class SpecAutoRouter:
         if signals.model_family is not None:
             result = self._table_route(signals, candidates)
             if result is not None:
-                _append_spec_route_decision(
-                    {
-                        "method": result,
-                        "reason": "table_route hit",
-                        "candidates": sorted(candidates),
-                        "model_family": signals.model_family,
-                        "prompt_tokens": signals.prompt_token_count,
-                        "accept_rate": rate,
-                        "kv_pressure": getattr(signals, "kv_pressure", None),
-                    }
-                )
+                self._record(result, "table_route hit", signals, candidates, rate)
                 return result
 
         if (
             signals.prompt_token_count >= self.long_doc_threshold
             and METHOD_DFLASH in candidates
         ):
-            _append_spec_route_decision(
-                {
-                    "method": METHOD_DFLASH,
-                    "reason": "long_doc threshold",
-                    "candidates": sorted(candidates),
-                    "model_family": signals.model_family,
-                    "prompt_tokens": signals.prompt_token_count,
-                    "accept_rate": rate,
-                    "kv_pressure": getattr(signals, "kv_pressure", None),
-                }
-            )
+            self._record(METHOD_DFLASH, "long_doc threshold", signals, candidates, rate)
             return METHOD_DFLASH
         if signals.has_mtp and METHOD_MTP in candidates:
-            _append_spec_route_decision(
-                {
-                    "method": METHOD_MTP,
-                    "reason": "mtp available",
-                    "candidates": sorted(candidates),
-                    "model_family": signals.model_family,
-                    "prompt_tokens": signals.prompt_token_count,
-                    "accept_rate": rate,
-                    "kv_pressure": getattr(signals, "kv_pressure", None),
-                }
-            )
+            self._record(METHOD_MTP, "mtp available", signals, candidates, rate)
             return METHOD_MTP
         if METHOD_NGRAM in candidates:
-            _append_spec_route_decision(
-                {
-                    "method": METHOD_NGRAM,
-                    "reason": "ngram fallback",
-                    "candidates": sorted(candidates),
-                    "model_family": signals.model_family,
-                    "prompt_tokens": signals.prompt_token_count,
-                    "accept_rate": rate,
-                    "kv_pressure": getattr(signals, "kv_pressure", None),
-                }
-            )
+            self._record(METHOD_NGRAM, "ngram fallback", signals, candidates, rate)
             return METHOD_NGRAM
         fallback = next(iter(sorted(candidates)), METHOD_NGRAM)
-        _append_spec_route_decision(
-            {
-                "method": fallback,
-                "reason": "sorted fallback",
-                "candidates": sorted(candidates),
-                "model_family": signals.model_family,
-                "prompt_tokens": signals.prompt_token_count,
-                "accept_rate": rate,
-                "kv_pressure": getattr(signals, "kv_pressure", None),
-            }
-        )
+        self._record(fallback, "sorted fallback", signals, candidates, rate)
         return fallback
 
     def _method_usable(self, method: str, signals: RouteSignals) -> bool:

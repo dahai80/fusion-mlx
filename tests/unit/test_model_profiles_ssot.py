@@ -21,10 +21,9 @@ These tests pin down the new contract:
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from fusion_mlx.model_aliases import (
     AliasProfile,
@@ -268,11 +267,9 @@ def test_legacy_string_value_still_loads(tmp_path) -> None:
     assert profiles["foo"].supports_spec_decode is True
 
 
-def test_empty_hf_path_string_form_raises(tmp_path) -> None:
-    """Empty hf_path slips through downstream as a ``""`` and surfaces
-    as a confusing 404 — catch it at load time."""
+def _load_with_one_bad_entry(tmp_path, bad_entry, caplog):
     bad = tmp_path / "aliases.json"
-    bad.write_text(json.dumps({"foo": ""}))
+    bad.write_text(json.dumps({"foo": bad_entry, "ok": "org/ok"}))
 
     import fusion_mlx.model_aliases as ma
 
@@ -280,42 +277,45 @@ def test_empty_hf_path_string_form_raises(tmp_path) -> None:
         patch.object(ma, "_aliases", None),
         patch.object(ma, "_hf_to_alias", None),
         patch.object(ma, "_ALIASES_FILE", bad),
-        pytest.raises(ValueError, match="empty"),
+        caplog.at_level(logging.ERROR, logger="fusion_mlx.model_aliases"),
     ):
-        ma.list_profiles()
+        profiles = ma.list_profiles()
+    return profiles, caplog
 
 
-def test_empty_hf_path_dict_form_raises(tmp_path) -> None:
+def test_empty_hf_path_string_form_skipped(tmp_path, caplog) -> None:
+    """Empty hf_path slips through downstream as a ``""`` and surfaces as a
+    confusing 404 — it is rejected at load time, and only that entry."""
+    profiles, caplog = _load_with_one_bad_entry(tmp_path, "", caplog)
+
+    assert "foo" not in profiles
+    assert "ok" in profiles
+    assert any(
+        "empty" in r.message for r in caplog.records if r.levelno == logging.ERROR
+    )
+
+
+def test_empty_hf_path_dict_form_skipped(tmp_path, caplog) -> None:
     """Same empty-path check for the rich-schema form."""
-    bad = tmp_path / "aliases.json"
-    bad.write_text(json.dumps({"foo": {"hf_path": ""}}))
+    profiles, caplog = _load_with_one_bad_entry(tmp_path, {"hf_path": ""}, caplog)
 
-    import fusion_mlx.model_aliases as ma
-
-    with (
-        patch.object(ma, "_aliases", None),
-        patch.object(ma, "_hf_to_alias", None),
-        patch.object(ma, "_ALIASES_FILE", bad),
-        pytest.raises(ValueError, match="non-empty string"),
-    ):
-        ma.list_profiles()
+    assert "foo" not in profiles
+    assert "ok" in profiles
+    assert any(
+        "non-empty string" in r.message
+        for r in caplog.records
+        if r.levelno == logging.ERROR
+    )
 
 
-def test_invalid_value_raises_with_alias_name(tmp_path) -> None:
-    """A typo in the JSON should fail loud and point at the bad alias,
-    not crash deep in some downstream caller."""
-    bad = tmp_path / "aliases.json"
-    bad.write_text(json.dumps({"foo": 42}))
+def test_invalid_value_skipped_with_alias_name(tmp_path, caplog) -> None:
+    """A typo in the JSON is reported loudly with the alias name and does not
+    take the rest of the registry down (audit M25)."""
+    profiles, caplog = _load_with_one_bad_entry(tmp_path, 42, caplog)
 
-    import fusion_mlx.model_aliases as ma
-
-    with (
-        patch.object(ma, "_aliases", None),
-        patch.object(ma, "_hf_to_alias", None),
-        patch.object(ma, "_ALIASES_FILE", bad),
-        pytest.raises(ValueError, match="foo"),
-    ):
-        ma.list_profiles()
+    assert "foo" not in profiles
+    assert "ok" in profiles
+    assert any("foo" in r.message for r in caplog.records if r.levelno == logging.ERROR)
 
 
 # ---- Cross-family granularity (the whole point of the refactor) ----------

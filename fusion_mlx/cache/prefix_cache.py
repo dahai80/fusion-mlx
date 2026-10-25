@@ -36,6 +36,10 @@ from .type_registry import CacheTypeRegistry
 
 logger = logging.getLogger(__name__)
 
+# Audit M13: how often the lookup path re-checks pin TTLs when no new
+# pin_prefix() call arrives to trigger the sweep.
+_PIN_EXPIRY_CHECK_INTERVAL_S = 5.0
+
 
 @dataclass
 class BlockCacheEntry:
@@ -169,6 +173,7 @@ class BlockAwarePrefixCache(CacheManager):
         # block_id -> expiry epoch (0.0 = permanent). Pin increments
         # PagedCacheManager ref_count so LRU eviction skips the block.
         self._pinned_blocks: dict[int, float] = {}
+        self._last_pin_expiry_check = 0.0
         # O5.4 (optimization-0914 item 17/23): async SSD preload executor.
         # Single-thread pool — preload I/O is serialized to avoid contention
         # with the engine thread. The future is awaited before reconstruct.
@@ -399,6 +404,8 @@ class BlockAwarePrefixCache(CacheManager):
         """
         if not tokens:
             return None, tokens
+
+        self._maybe_expire_pinned_blocks()
 
         # #1080: record total lookup latency for p50/p99 percentile stats.
         _t0 = time.perf_counter()
@@ -990,6 +997,11 @@ class BlockAwarePrefixCache(CacheManager):
         # RotatingKVCache: sliding window, seq_len limited to max_size
         # ArraysCache: no traditional sequence dimension
         non_sliceable_types = {"RotatingKVCache", "ArraysCache", "CacheList"}
+        # Audit 1019 L19: both probe passes swallowed every exception, so a
+        # cache layout the probes could not read silently fell through to the
+        # shape guess below. Collect the failures and surface them at the one
+        # place that matters — the fallback return.
+        probe_errors: list[str] = []
 
         # Step 1: Search for a sliceable KVCache layer (full attention)
         for layer_idx, layer_state in enumerate(cache_data):
@@ -1033,7 +1045,8 @@ class BlockAwarePrefixCache(CacheManager):
                     )
                     return seq_len
 
-            except Exception:
+            except Exception as exc:
+                probe_errors.append(f"layer {layer_idx}: {exc!r}")
                 continue
 
         # Step 2: Fallback - find max seq_len among all 4D tensors
@@ -1062,7 +1075,8 @@ class BlockAwarePrefixCache(CacheManager):
                 keys = state_tuple[0]
                 if hasattr(keys, "shape") and len(keys.shape) == 4:
                     max_seq_len = max(max_seq_len, keys.shape[2])
-            except Exception:
+            except Exception as exc:
+                probe_errors.append(f"layer {layer_idx}: {exc!r}")
                 continue
 
         if max_seq_len > 0:
@@ -1094,6 +1108,16 @@ class BlockAwarePrefixCache(CacheManager):
                             logger.debug(f"Using CacheList sub-cache seq_len={seq_len}")
                             return seq_len
 
+        if probe_errors:
+            # Audit 1019 L19: this is the one path that returns a guessed
+            # value (0) after the probes failed — surface it instead of
+            # letting callers treat an unreadable cache as empty in silence.
+            logger.warning(
+                "prefix_cache: seq_len probe failed on %d layer(s) (%s) and no "
+                "layer yielded a seq_len; returning 0",
+                len(probe_errors),
+                "; ".join(probe_errors[:3]),
+            )
         return 0
 
     def _extract_block_tensor_slice(
@@ -2616,7 +2640,20 @@ class BlockAwarePrefixCache(CacheManager):
                     concat_keys = mx.concatenate(layer_keys, axis=1)
                     concat_values = mx.concatenate(layer_values, axis=1)
                 except Exception:
-                    # Last resort: use single state
+                    # Last resort: use the newest block state only.
+                    # Audit 1019 L20: this silently discarded every earlier
+                    # block, so a shape mismatch produced a truncated cache
+                    # with no signal. Warn with the offending shapes.
+                    shapes = [tuple(k.shape) for k in layer_keys]
+                    logger.warning(
+                        "prefix_cache: fallback reconstruct could not concat "
+                        "%d block states for %s (shapes=%s, mismatched=%s); "
+                        "using the last block only — cached prefix truncated",
+                        len(layer_keys),
+                        cache_type_name,
+                        shapes[:4],
+                        len(set(shapes)) > 1,
+                    )
                     concat_keys = layer_keys[-1]
                     concat_values = layer_values[-1]
 
@@ -2887,7 +2924,6 @@ class BlockAwarePrefixCache(CacheManager):
     ) -> tuple[int, tuple[int, ...], int] | None:
         """Find best matching prefix in the index."""
         best_match = None
-        best_len = 0
 
         if self.block_size <= 0 or not tokens:
             return None
@@ -2912,10 +2948,13 @@ class BlockAwarePrefixCache(CacheManager):
                 prefix_len += len(block_tokens)
                 num_blocks += 1
 
+                # Audit L18: the old ``prefix_len > best_len`` was always
+                # true (best_len was assigned prefix_len at the end of every
+                # iteration). Walk order is strictly increasing, so the last
+                # match is the longest prefix — just overwrite.
                 entry = self._prefix_index.get(parent_hash)
-                if entry and entry[0] == prefix_len and prefix_len > best_len:
+                if entry and entry[0] == prefix_len:
                     best_match = entry
-                best_len = prefix_len
 
         return best_match
 
@@ -3003,6 +3042,9 @@ class BlockAwarePrefixCache(CacheManager):
         Returns:
             Dictionary with cache statistics.
         """
+        # Metrics scrapes also drive the TTL sweep, so an idle server with
+        # stale pins still releases them (audit M13).
+        self._maybe_expire_pinned_blocks()
         paged_stats = self.paged_cache.get_memory_usage()
         bucket_stats = {}
         for name, (h, m) in self._hit_buckets.items():
@@ -3114,18 +3156,34 @@ class BlockAwarePrefixCache(CacheManager):
         return count
 
     def _expire_pinned_blocks(self) -> int:
+        # Audit M13: expiry used to run only inside pin_prefix(), so a pin
+        # taken with a TTL held its ref_count (block unevictable) until the
+        # next pin — possibly never. Also read the dict under the lock: the
+        # old scan iterated it unlocked and could raise "dictionary changed
+        # size during iteration" against a concurrent pin/unpin.
         now = time.time()
-        expired = [
-            bid for bid, exp in self._pinned_blocks.items() if exp and now >= exp
-        ]
-        if not expired:
-            return 0
         with self._cache_lock:
+            expired = [
+                bid for bid, exp in self._pinned_blocks.items() if exp and now >= exp
+            ]
             for bid in expired:
                 self._pinned_blocks.pop(bid, None)
                 self.paged_cache.free_block(bid)
-        logger.info("pin TTL expired: released %d blocks", len(expired))
+        if expired:
+            logger.info("pin TTL expired: released %d blocks", len(expired))
         return len(expired)
+
+    def _maybe_expire_pinned_blocks(self) -> None:
+        # Cheap periodic sweep for paths that never call pin_prefix again
+        # (audit M13). Throttled so the hot lookup path pays one float
+        # comparison per call, not a dict scan.
+        if not self._pinned_blocks:
+            return
+        now = time.monotonic()
+        if now - self._last_pin_expiry_check < _PIN_EXPIRY_CHECK_INTERVAL_S:
+            return
+        self._last_pin_expiry_check = now
+        self._expire_pinned_blocks()
 
     def reset_stats(self) -> None:
         """Reset statistics."""

@@ -837,6 +837,30 @@ class PagedCacheManager(CacheManager):
 
         return False
 
+    def _free_block_locked(self, block: CacheBlock) -> bool:
+        # Audit 1019 L15: the single-block and batch free paths used to keep
+        # two copies of this teardown, and #1034 fixed the orphan cascade in
+        # only one of them. Returns True when the block reached zero refs.
+        # Caller must hold _block_table_lock, _hash_map_lock, _free_queue_lock.
+        if block.is_null:
+            return False
+        block.ref_count -= 1
+        if block.ref_count > 0:
+            return False
+        if block.block_hash is not None:
+            freed_parent_hash = block.block_hash
+            self.cached_block_hash_to_block.pop(block.block_hash, block.block_id)
+            self._notify_block_content_invalidated(block.block_id)
+            # P3-1: cascade-clear orphaned descendant hash entries whose chain
+            # parent was this block. They are unreachable via the chain now
+            # and would linger until LRU reuse.
+            self._cascade_evict_orphans_locked(freed_parent_hash)
+        del self.allocated_blocks[block.block_id]
+        self.stats.allocated_blocks -= 1
+        self.stats.free_blocks += 1
+        self.stats.total_tokens_cached -= block.token_count
+        return True
+
     def free_block(self, block_id: int) -> bool:
         """
         Free a cache block (decrements ref_count, frees if 0).
@@ -850,40 +874,10 @@ class PagedCacheManager(CacheManager):
                 return False
 
             block = self.allocated_blocks[block_id]
-            if block.is_null:
-                return False  # Never free null block
-
-            block.ref_count -= 1
-
-            if block.ref_count <= 0:
-                # Remove from hash cache
-                freed_parent_hash = None
-                if block.block_hash is not None:
-                    freed_parent_hash = block.block_hash
-                    self.cached_block_hash_to_block.pop(
-                        block.block_hash, block.block_id
-                    )
-                    self._notify_block_content_invalidated(block_id)
-
-                # P3-1: cascade-clear orphaned descendant hash entries whose
-                # chain parent was this block. They are unreachable via the
-                # chain now and would linger until LRU reuse.
-                if freed_parent_hash is not None:
-                    self._cascade_evict_orphans_locked(freed_parent_hash)
-
-                # Remove from allocated
-                del self.allocated_blocks[block_id]
-
+            freed = self._free_block_locked(block)
+            if freed:
                 # Add to free queue (back = MRU)
                 self.free_block_queue.append(block)
-
-                self.stats.allocated_blocks -= 1
-                self.stats.free_blocks += 1
-                self.stats.total_tokens_cached -= block.token_count
-
-                freed = True
-            else:
-                freed = False
         self._flush_content_invalidated()
         return freed
 
@@ -901,38 +895,8 @@ class PagedCacheManager(CacheManager):
             blocks: Blocks to free (in eviction order)
         """
         with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
-            blocks_list = list(blocks)
-            to_free = []
-
-            for block in blocks_list:
-                if block.is_null:
-                    continue
-
-                block.ref_count -= 1
-
-                if block.ref_count <= 0:
-                    # Remove from hash cache
-                    freed_parent_hash = None
-                    if block.block_hash is not None:
-                        freed_parent_hash = block.block_hash
-                        self.cached_block_hash_to_block.pop(
-                            block.block_hash, block.block_id
-                        )
-                        self._notify_block_content_invalidated(block.block_id)
-
-                    # P3-1 (#1034): cascade-clear orphaned descendant hash
-                    # entries, matching the single free_block(). Without this
-                    # the batch path left orphans in the hash index until LRU
-                    # / memory pressure reclaimed them.
-                    if freed_parent_hash is not None:
-                        self._cascade_evict_orphans_locked(freed_parent_hash)
-
-                    del self.allocated_blocks[block.block_id]
-                    to_free.append(block)
-                    self.stats.allocated_blocks -= 1
-                    self.stats.free_blocks += 1
-                    self.stats.total_tokens_cached -= block.token_count
-
+            # Shared teardown with free_block() (audit 1019 L15).
+            to_free = [b for b in blocks if self._free_block_locked(b)]
             # Add to free queue (back = MRU, evicted last)
             self.free_block_queue.append_n(to_free)
 
@@ -1161,8 +1125,17 @@ class PagedCacheManager(CacheManager):
                 # Look up in cache
                 cached_block = self.cached_block_hash_to_block.get_block(block_hash)
 
-                # Lazy restore: if not in memory but exists on SSD, register it
-                if cached_block is None and self._paged_ssd_cache_manager is not None:
+                # Lazy restore: if not in memory but exists on SSD, register it.
+                # Audit M11: only on the claiming path. A non-claiming lookup
+                # (find_shared_prefix) would allocate the block with the lazy
+                # pin (ref_count=1) and nothing would ever claim or release it,
+                # so the block became permanently unevictable while the prefix
+                # kept matching a block whose data was never loaded.
+                if (
+                    cached_block is None
+                    and claim
+                    and self._paged_ssd_cache_manager is not None
+                ):
                     if self._paged_ssd_cache_manager.has_block(block_hash):
                         # Use standard allocation path so we handle an empty
                         # free queue gracefully (grow/evict) and keep stats in sync.
@@ -1465,30 +1438,10 @@ class PagedCacheManager(CacheManager):
         self._flush_content_invalidated()
         return blocks, was_copied
 
-    def _cow_copy_block(self, source_block: CacheBlock) -> CacheBlock | None:
-        """
-        Create a copy of a block for COW.
-
-        In paged SSD-only mode, we don't copy data - we just allocate a new block
-        with the same metadata. The actual KV data will be loaded from paged SSD
-        when needed.
-        """
-        new_block = self.allocate_block()
-        if not new_block:
-            return None
-
-        new_block.token_count = source_block.token_count
-        # #1352 H2: the copy is empty until written; never inherit the source
-        # hash (a lookup could hit it and serve empty KV).
-        new_block.reset_hash()
-
-        source_block.ref_count -= 1
-        if source_block.ref_count == 1:
-            self.stats.shared_blocks -= 1
-
-        logger.debug(f"COW copy: block {source_block.block_id} -> {new_block.block_id}")
-
-        return new_block
+    # Audit 1019 L16: the standalone _cow_copy_block() helper was removed. It
+    # diverged from the inline COW in get_blocks_for_generation (no metrics,
+    # no free-queue growth, no pool-exhaustion error) and had no production
+    # caller — only a test kept it alive.
 
     # =========================================================================
     # Legacy allocation methods (for backwards compatibility)
@@ -1506,6 +1459,7 @@ class PagedCacheManager(CacheManager):
     def _evict_lru_blocks_locked(self, num_blocks: int) -> int:
         """Evict LRU blocks — caller must hold _block_table_lock, _hash_map_lock, _free_queue_lock."""
         evicted = 0
+        purged_orphans = 0
         curr = self.free_block_queue.fake_head.next_free_block
         while curr is not None and curr is not self.free_block_queue.fake_tail:
             if evicted >= num_blocks:
@@ -1531,9 +1485,19 @@ class PagedCacheManager(CacheManager):
             evicted += 1
             curr = curr.next_free_block
             if evicted_parent_hash is not None:
-                evicted += self._cascade_evict_orphans_locked(evicted_parent_hash)
-        if evicted > 0:
-            logger.info(f"Evicted {evicted} LRU blocks from cache")
+                # Audit M18: keep the two counts apart. The cascade only
+                # purges stale hash entries for orphaned descendants — it
+                # does NOT free a block — so folding it into `evicted` made
+                # callers believe they had reclaimed N blocks and exit the
+                # eviction loop early with the pool still full.
+                cascaded = self._cascade_evict_orphans_locked(evicted_parent_hash)
+                purged_orphans += cascaded
+        if evicted > 0 or purged_orphans > 0:
+            logger.info(
+                "Evicted %d LRU blocks from cache (%d orphaned hash entries " "purged)",
+                evicted,
+                purged_orphans,
+            )
         return evicted
 
     def _cascade_evict_orphans_locked(self, parent_hash: BlockHash) -> int:

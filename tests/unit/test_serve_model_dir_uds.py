@@ -48,6 +48,11 @@ def stub_model_dir_deps(monkeypatch):
 
     sentinel_app = object()
     monkeypatch.setattr(server_mod, "create_app", lambda config: sentinel_app)
+    # The port preflight probes the real port (default 11434 may be a live
+    # prod server); these tests pin staging/dispatch, not port availability.
+    monkeypatch.setattr(
+        cli_serve_mod.config_resolve, "_port_preflight_or_die", lambda *a, **k: None
+    )
 
     cfg = get_config()
     cfg.bind_host = None
@@ -293,3 +298,49 @@ def test_model_dir_rate_limit_positive_keeps_limiter_enabled(
     assert called["run_uvicorn"] is True
     assert rate_limiter.enabled is True
     assert rate_limiter.requests_per_minute == 120
+
+
+def test_model_dir_runs_port_preflight(stub_model_dir_deps, monkeypatch):
+    """The model-dir path (what start.sh runs in prod) must probe the port
+    before importing the server, so a busy port fails fast instead of
+    booting Server() and dying at uvicorn bind."""
+    monkeypatch_fixture, sentinel_app = stub_model_dir_deps
+    calls = []
+    monkeypatch_fixture.setattr(
+        cli_serve_mod.config_resolve,
+        "_port_preflight_or_die",
+        lambda host, port, *, model: calls.append((host, port, model)),
+    )
+    _patch_dispatch(monkeypatch_fixture)
+
+    cli_serve_mod._serve_from_model_dir(
+        _make_args(host="127.0.0.1", port=7788, model_dir="/tmp/md-preflight")
+    )
+
+    assert calls == [("127.0.0.1", 7788, "/tmp/md-preflight")]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"host": "unix:/tmp/fusion-test-preflight.sock"},
+        {"listen_fd": 9, "port": 8000},
+    ],
+)
+def test_model_dir_skips_port_preflight_without_tcp_port(
+    stub_model_dir_deps, monkeypatch, overrides
+):
+    """UDS and inherited-fd modes have no host/port to probe — the
+    supervisor or the UDS path owns the listener."""
+    monkeypatch_fixture, sentinel_app = stub_model_dir_deps
+    calls = []
+    monkeypatch_fixture.setattr(
+        cli_serve_mod.config_resolve,
+        "_port_preflight_or_die",
+        lambda host, port, *, model: calls.append((host, port, model)),
+    )
+    _patch_dispatch(monkeypatch_fixture)
+
+    cli_serve_mod._serve_from_model_dir(_make_args(**overrides))
+
+    assert calls == []

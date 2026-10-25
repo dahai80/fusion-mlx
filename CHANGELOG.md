@@ -2,6 +2,75 @@
 
 ## [Unreleased]
 
+### Added — Kokoro voice fine-tuning (#1336)
+- `POST /admin/api/fine-tune/voice/jobs` trains a Kokoro voice package from
+  paired audio + transcripts (`metadata.csv`, `metadata.jsonl`, or
+  `<name>.wav` + `<name>.txt`) and writes
+  `~/.fusion-mlx/voices/<voice_id>/voice.safetensors` plus `manifest.json`
+  and `metrics.json`. The job surface mirrors SFT/DPO/GRPO: list, get,
+  cancel, delete, and an SSE progress stream. `GET
+  /admin/api/fine-tune/voice/backends` reports the trainable families.
+- `/v1/audio/speech` accepts `voice_ref`; the server resolves it under
+  `~/.fusion-mlx/voices/` and loads the pack like a stock voice, so a
+  trained voice needs no engine change. Unknown refs are a 404 raised
+  before any engine work. `GET /v1/audio/voices` lists trained packs under
+  `trained_voices`.
+- Training optimizes the **rendered waveform**, not the generator's
+  internal magnitude head: the waveform path is not differentiable in this
+  mlx-audio build (NaN through `MLXSTFT.inverse`), and the internal
+  magnitude LTAS differs enough from the rendered audio LTAS (mean |delta|
+  ~1.05 on the same generation) that an internal-objective pack renders
+  further from the reference than the stock voice. The trainer uses SPSA
+  (two forward passes per step) on the pack rows the phoneme lengths
+  select. Real-weights check on 6 synthesized sentences: spectral distance
+  0.0175 train / 0.0202 unseen text vs 0.1476 / 0.1444 for the stock
+  voice, loudness preserved (RMS 0.0482 vs 0.0445). A run that does not
+  beat the stock voice still completes but logs a WARNING and records
+  `quality: "regressed"` in the manifest.
+
+### Added — image LoRA adapters and multi-image edits
+- `/v1/images/generations` accepts `lora: [{"path": ..., "scale": ...}]` for
+  the FLUX/FLUX.2 mflux variants. Paths must live under
+  `FUSION_LORA_ALLOWED_DIRS` and the file must be a `.safetensors`; the
+  adapter is applied by the subprocess worker at weight load. In-process
+  serves reject the field instead of ignoring it (#1376).
+- `qwen_image_edit` now forwards the edit target plus every reference image
+  as mflux's `image_paths` list. The previous wiring passed `image_path`,
+  which `QwenImageEdit.generate_image` does not accept, so the variant
+  could not consume any input image (#1375).
+- Reference images are consumed by `redux` and `qwen_image_edit`; any other
+  variant logs a WARNING naming how many images it dropped instead of
+  silently discarding them (#1374).
+- The subprocess image worker now receives decoded file paths for every
+  image input. The API layer sends base64 blobs and only the in-process
+  branch decoded them, so any base64 `edit_image` (including every
+  `/v1/images/edits` upload) reached mflux as `open(<b64>)` and the worker
+  died before generating. Verified end to end with a 3-image
+  Qwen-Image-Edit-2509 request (#1375).
+
+### Fixed — image worker exit is reported instead of a bogus timeout
+- When an image worker exited without emitting any event, the stdout reader
+  re-read EOF in a hot loop because the child was not reaped yet
+  (`proc.returncode is None`). It burned the whole generation timeout and then
+  raised `TimeoutError: worker exceeded Ns timeout` instead of the worker's
+  real exit code and stderr tail. The reader now waits for the process exit on
+  EOF (#1375).
+
+### Fixed — SDXL prompts are actually encoded; Ollama model identity and /api/version
+- SDXL's tokenizer loader returned the snapshot root instead of the
+  `tokenizer/` subfolder, so `CLIPTokenizer.from_pretrained` fell back to a
+  degenerate tokenizer that emitted only BOS + padding: every prompt encoded
+  identically and SDXL ignored the prompt text. SD1.5/SD2/SDXL now share one
+  pipeline core (`fusion_mlx/image/pipeline_base.py`), which also removes the
+  three-way copy of the denoise loop (#1354 audit L11/L15/L17).
+- `/api/version` now requires the API key like every other route, and model
+  digests are a stable `sha256:` of the model id instead of a fresh UUID per
+  request, so Ollama clients keep seeing the same model identity (#1354 audit
+  L9).
+- A chat completion without `max_tokens` still defaults to 2048 tokens but now
+  logs that the output may be truncated and how to change the cap (#1354 audit
+  L7).
+
 ### Fixed — admission and engine teardown no longer block the event loop
 - `add_request`'s post-timeout and post-cancel scheduler aborts called
   `fut.result(timeout=5.0)` on the single MLX executor from a coroutine:

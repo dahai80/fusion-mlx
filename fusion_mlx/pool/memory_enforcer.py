@@ -430,6 +430,9 @@ class ProcessMemoryEnforcer:
         self._effective_metal_cap_bytes: int | None = None
         self._scheduler_resolve_warned: set[str] = set()
         self._eviction_marked: set[str] = set()
+        # Audit M14: set when a poll could not take the pool lock and had to
+        # defer LRU victim selection; the next lock-holding poll retries.
+        self._deferred_victim_pick: bool = False
         self._loaded_model_bytes: int = 0
         # #1190: debug-gated lock-order tracking (FUSION_MLX_LOCK_DEBUG).
         self._state_lock = TrackedThreadLock("enforcer.state")
@@ -1029,6 +1032,23 @@ class ProcessMemoryEnforcer:
     def _current_usage_bytes(self) -> int:
         """Process memory usage as seen by macOS jetsam.
 
+        Defined as ``max(mlx_active, phys_footprint) + ane_resident -
+        iosurface_shared`` (audit M15):
+
+        - ``phys_footprint`` is the kernel's jetsam accounting for this task;
+          it already covers the MLX/Metal allocations that are resident, so
+          the MLX sample can only ADD to it (a live Metal buffer the kernel
+          has not faulted in yet), never replace it — hence ``max``, not sum.
+        - ``ane_resident`` is per-engine ANE bookkeeping that jetsam does not
+          attribute to this process, so it is additive.
+        - ``iosurface_shared`` is the GPU/ANE shared bridge that both sides
+          report; subtracting it is what keeps one physical page from being
+          charged twice.
+
+        The result is clamped at 0 so a mismatched IOSurface registration can
+        never produce a negative reading (which would silently disable every
+        threshold comparison).
+
         During active requests this must not call MLX/Metal APIs from the
         background enforcer thread. The scheduler records the last
         mx.get_active_memory() sample on the MLX executor thread; the
@@ -1036,12 +1056,34 @@ class ProcessMemoryEnforcer:
         """
         phys = get_phys_footprint()
         if self._has_active_requests():
-            base = max(self._cached_executor_active_memory_bytes(), phys)
+            mlx_active = self._cached_executor_active_memory_bytes()
         else:
-            base = max(mx.get_active_memory(), phys)
+            mlx_active = mx.get_active_memory()
+        base = max(mlx_active, phys)
         ane = self.get_ane_resident_bytes()
         shared = self.get_iosurface_shared_bytes()
-        return base + ane - shared
+        total = base + ane - shared
+        if total < 0:
+            logger.warning(
+                "Memory usage formula went negative (phys=%d mlx=%d ane=%d "
+                "iosurface_shared=%d) — clamping to 0; check the IOSurface "
+                "registration path",
+                phys,
+                mlx_active,
+                ane,
+                shared,
+            )
+            total = 0
+        elif shared > base // 10:
+            logger.debug(
+                "Memory usage: base=%d ane=%d shared=%d total=%d "
+                "(IOSurface correction >10%% of base)",
+                base,
+                ane,
+                shared,
+                total,
+            )
+        return total
 
     def _is_emergency_pressure(self, current: int, ceiling: int) -> bool:
         """Return True only for pressure beyond the configured ceiling.
@@ -1792,25 +1834,36 @@ class ProcessMemoryEnforcer:
                 record_enforcer_timeout()
             except Exception:
                 logger.debug("record_enforcer_timeout() failed", exc_info=True)
-            victim = self._engine_pool._find_lru_victim()
-            if victim:
-                self._eviction_marked.add(victim)
-                entry = self._engine_pool._entries.get(victim)
-                if entry and entry.is_loading:
+            # Audit M14: do NOT touch eviction bookkeeping here. The old
+            # fallback called _find_lru_victim() and mutated _eviction_marked
+            # without the lock, racing a cross-thread pool mutation (set
+            # iteration during add raises RuntimeError). Victim selection is
+            # deferred to the next poll that DOES take the lock.
+            #
+            # The one thing still done unlocked is flipping abort_loading on
+            # a snapshot of live entries: it is a plain bool store on the
+            # entry object the loader itself polls, so it is atomic under the
+            # GIL and is the only OOM relief valve left when the lock is
+            # wedged.
+            _entries_snapshot = list(self._engine_pool._entries.values())
+            aborted = 0
+            for entry in _entries_snapshot:
+                if entry.is_loading and not entry.abort_loading:
                     entry.abort_loading = True
+                    aborted += 1
                     logger.warning(
-                        f"Marked loading model '{victim}' for eviction "
-                        f"(pressure={new_level}, lock timeout)"
+                        "Aborting load '%s' (pressure=%s, lock timeout)",
+                        entry.model_id,
+                        new_level,
                     )
-            if new_level == "hard":
-                _entries_snapshot = list(self._engine_pool._entries.values())
-                for entry in _entries_snapshot:
-                    if entry.is_loading and not entry.abort_loading:
-                        entry.abort_loading = True
-                        logger.warning(
-                            f"Aborting load '{entry.model_id}' "
-                            f"(hard pressure, lock timeout)"
-                        )
+            self._deferred_victim_pick = True
+            logger.error(
+                "Memory enforcer: LRU victim selection deferred "
+                "(pressure=%s, aborted_loads=%d) — will retry under the "
+                "pool lock on the next poll",
+                new_level,
+                aborted,
+            )
             post_current = self._current_usage_bytes()
             post_ceiling = self._get_hard_limit_bytes()
             post_soft = (
@@ -1834,6 +1887,16 @@ class ProcessMemoryEnforcer:
         if _lock_acquired:
             _lock_held = True
             try:
+                if self._deferred_victim_pick:
+                    # Audit M14: a previous poll timed out on the lock and
+                    # deferred victim selection to us. The loop below now
+                    # runs it under the lock.
+                    self._deferred_victim_pick = False
+                    logger.info(
+                        "Memory enforcer: running deferred LRU victim "
+                        "selection under the pool lock (pressure=%s)",
+                        new_level,
+                    )
                 while self._current_usage_bytes() > target:
                     for mid in list(self._eviction_marked):
                         entry = self._engine_pool._entries.get(mid)

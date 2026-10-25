@@ -115,7 +115,15 @@ def _load_aliases() -> dict[str, str]:
         if isinstance(data, dict):
             return data
     except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Failed to load aliases.json: %s", e)
+        # Audit M25: a corrupt/unreadable aliases.json silently emptied the
+        # whole registry (every aliased model id then failed to resolve).
+        # Keep the empty fallback but say so loudly, with the path.
+        logger.error(
+            "Failed to load alias registry %s: %s — every alias falls back "
+            "to unresolved. Fix or delete the file to restore aliases.",
+            _ALIASES_FILE,
+            e,
+        )
     return {}
 
 
@@ -295,14 +303,22 @@ def list_profiles() -> dict[str, AliasProfile]:
     for name, raw in aliases.items():
         try:
             profiles[name] = _coerce(name, raw)
-        except ValueError as e:
+        except Exception as e:
+            # Any malformed entry is isolated to that entry — a TypeError or
+            # KeyError from an unexpected field shape must not be fatal either.
             logger.warning("list_profiles: skipping alias %r: %s", name, e)
             skipped += 1
-            skipped_errors.append(str(e))
+            skipped_errors.append(f"{name}: {e}")
     if skipped:
-        raise ValueError(
-            f"list_profiles: {skipped}/{len(aliases)} aliases invalid: "
-            f"{'; '.join(skipped_errors)}"
+        # Audit M25: one malformed entry used to raise here and take every
+        # other alias down with it. Keep the valid profiles and report the
+        # bad ones loudly.
+        logger.error(
+            "list_profiles: %d/%d aliases rejected, %d loaded: %s",
+            skipped,
+            len(aliases),
+            len(profiles),
+            "; ".join(skipped_errors),
         )
     else:
         logger.debug("list_profiles: %d aliases loaded", len(aliases))

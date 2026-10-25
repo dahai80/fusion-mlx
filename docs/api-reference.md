@@ -317,6 +317,27 @@ Filesystem paths and URLs are deliberately **not** accepted (`ref_audio`
 is not a local-file or SSRF entry point); remote clients base64-encode the
 clip instead.
 
+**Trained voices** (`#1336`): a voice package produced by the voice
+fine-tune job is addressed by `voice_ref`, its directory name under
+`~/.fusion-mlx/voices/`. The server resolves it to
+`<voice_ref>/voice.safetensors` and hands that path to the kokoro pipeline,
+which loads it exactly like a stock voice name.
+
+```json
+{
+    "model": "mlx-community/Kokoro-82M-bf16",
+    "input": "Read this in the trained voice.",
+    "voice_ref": "my-voice"
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `voice_ref` | no | Directory name only. Rejected with 404 when the pack is missing; the check runs before any engine load. `/`, `\`, and a leading `.` are rejected, so a ref cannot escape `~/.fusion-mlx/voices/`. An explicit `voice` wins when both are set. |
+
+`GET /v1/audio/voices` lists trained packs under `trained_voices`
+alongside the stock voices.
+
 ### `POST /v1/audio/process`
 
 Process audio files — enhancement, source separation, etc.
@@ -396,6 +417,43 @@ matches the Euler baseline's sigma schedule but integrates 2nd-order,
 reaching comparable quality in fewer steps (e.g. 12-20 instead of 28).
 Scheduler overrides are logged (`image gen scheduler override=dpmpp_2m
 steps=12`).
+
+### Per-request LoRA adapters (`/v1/images/generations`, #1376)
+
+FLUX/FLUX.2 mflux variants accept a `lora` list:
+
+```json
+{
+    "model": "black-forest-labs/FLUX.1-dev",
+    "prompt": "watercolor portrait of a lighthouse",
+    "lora": [{"path": "/Users/me/.fusion-mlx/adapters/style.safetensors", "scale": 0.8}]
+}
+```
+
+- `scale` is the mflux adapter weight (`0.0` no effect, `1.0` fully
+  applied, max `2.0`).
+- The adapter is applied when the subprocess worker loads weights, so it
+  needs the default subprocess mode; an in-process serve rejects the field
+  with HTTP 400 instead of silently ignoring it.
+- Paths must resolve (after symlinks) inside `FUSION_LORA_ALLOWED_DIRS`
+  (`:` or `,` separated) — the same containment rule as chat LoRA
+  adapters. `~/.fusion-mlx/adapters` is added automatically. Without that
+  variable the field is rejected.
+- Only mflux-backed variants (FLUX/FLUX.2/Qwen-Image) support adapters;
+  the native MLX pipelines (SD1.5/SD2/SDXL) return an error naming the
+  variant.
+
+For multipart `/v1/images/edits` the list travels as a JSON string field:
+`lora=[{"path": "...", "scale": 0.9}]`.
+
+### Multi-image edit (`qwen_image_edit`, #1375)
+
+`Qwen/Qwen-Image-Edit-2509` conditions on several images per request.
+`/v1/images/edits` forwards the first image as the edit target and every
+`image[]` after it as a reference, all in one `image_paths` list, so one
+call can combine a character sheet and a scene. Reference images are only
+consumed by `redux` and `qwen_image_edit`; other variants log a WARNING
+naming how many images were dropped.
 
 ---
 

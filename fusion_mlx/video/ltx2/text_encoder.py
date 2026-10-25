@@ -612,6 +612,34 @@ class AudioEmbeddingsConnector(nn.Module):
         return self.linear(x)
 
 
+def _load_processor(model_path: Path, text_encoder_path: str):
+    # Audit 1019 L31: extracted so the silent gemma fallback is testable.
+    from transformers import AutoTokenizer
+
+    tokenizer_path = model_path / "tokenizer"
+    if tokenizer_path.exists():
+        return AutoTokenizer.from_pretrained(
+            str(tokenizer_path), trust_remote_code=True
+        )
+    try:
+        return AutoTokenizer.from_pretrained(text_encoder_path, trust_remote_code=True)
+    except Exception as exc:
+        # Audit 1019 L31: falling back to a hard-coded tokenizer used to be
+        # silent. If the model ships a different tokenizer the text
+        # conditioning is subtly wrong, so say which one failed.
+        logger.warning(
+            "tokenizer unavailable at %s (%r); falling back to "
+            "google/gemma-3-12b-it — conditioning will be wrong if this "
+            "checkpoint uses a different vocab",
+            text_encoder_path,
+            exc,
+            exc_info=True,
+        )
+        return AutoTokenizer.from_pretrained(
+            "google/gemma-3-12b-it", trust_remote_code=True
+        )
+
+
 class LTX2TextEncoder(nn.Module):
     def __init__(
         self,
@@ -724,22 +752,7 @@ class LTX2TextEncoder(nn.Module):
                 "text conditioning will use uninitialized weights"
             )
 
-        from transformers import AutoTokenizer
-
-        tokenizer_path = model_path / "tokenizer"
-        if tokenizer_path.exists():
-            self.processor = AutoTokenizer.from_pretrained(
-                str(tokenizer_path), trust_remote_code=True
-            )
-        else:
-            try:
-                self.processor = AutoTokenizer.from_pretrained(
-                    text_encoder_path, trust_remote_code=True
-                )
-            except Exception:
-                self.processor = AutoTokenizer.from_pretrained(
-                    "google/gemma-3-12b-it", trust_remote_code=True
-                )
+        self.processor = _load_processor(model_path, text_encoder_path)
         self.processor.padding_side = "left"
         logger.info("Text encoder loaded successfully")
 

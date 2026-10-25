@@ -222,6 +222,22 @@ class NGramSpecState:
             self._probe_counter = 0
             self._probing = False
 
+    def cleanup_request(self, request_id: str):
+        # #1038 abort path: the scheduler warns when a present spec state has
+        # no cleanup_request, because that means per-request state can leak.
+        # N-gram state holds no KV or generator, but it does keep the adaptive
+        # bookkeeping for the request that owned it; drop it so the next
+        # request starts clean and the abort stops logging a false leak.
+        if self._last_request_id == request_id:
+            self.predictor.reset()
+            self._last_request_id = None
+            self.steps = 0
+            self._paused = False
+            self._recent_rates.clear()
+            self._d1_rates.clear()
+            self._probe_counter = 0
+            self._probing = False
+
     def add_token(self, token: int):
         # Reset per-step; should_speculate sets it True when allowing a probe.
         self._probing = False

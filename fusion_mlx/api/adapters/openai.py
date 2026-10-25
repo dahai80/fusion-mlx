@@ -6,6 +6,7 @@ This adapter handles conversion between OpenAI API format and the internal
 request/response format used by the inference engine.
 """
 
+import logging
 import uuid
 
 from ..openai_models import (
@@ -34,6 +35,8 @@ from .base import (
     InternalResponse,
     StreamChunk,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIAdapter(BaseAdapter):
@@ -75,6 +78,16 @@ class OpenAIAdapter(BaseAdapter):
         if request.tools:
             tools = convert_tools_for_template(request.tools)
 
+        if request.max_tokens is None:
+            # Audit 1019 L7: a missing max_tokens used to become 2048 with no
+            # signal, so long answers were truncated and the client saw a
+            # normal finish_reason. Keep the bound (unbounded generation can
+            # OOM), but say so.
+            logger.warning(
+                "chat completion without max_tokens: defaulting to 2048 output "
+                "tokens — long answers will be truncated. Pass max_tokens to "
+                "control the limit."
+            )
         return InternalRequest(
             messages=internal_messages,
             max_tokens=request.max_tokens or 2048,

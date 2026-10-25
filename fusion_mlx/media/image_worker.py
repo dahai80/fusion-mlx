@@ -58,7 +58,11 @@ def _preflight_components(model_path: str) -> list[str]:
         for f in names:
             if f.endswith(".safetensors"):
                 st_paths.append((os.path.join(rel, f)).lower())
-    has_transformer = any("transformer" in p for p in st_paths)
+    # SD1.5/SD2/SDXL checkpoints ship the denoiser as unet/ (diffusers + the
+    # mlx-community conversion), while FLUX/Qwen-Image use transformer/. Both
+    # are the backbone; requiring one spelling rejected every SD model that
+    # reached the subprocess worker.
+    has_backbone = any("transformer" in p or "unet" in p for p in st_paths)
     has_vae = any("vae" in p for p in st_paths)
     has_text_encoder = any(
         "text_encoder" in p or "t5" in p or "clip" in p or "encoder" in p
@@ -69,8 +73,8 @@ def _preflight_components(model_path: str) -> list[str]:
     if not has_any_safetensors:
         missing.append("safetensors (none found)")
     else:
-        if not has_transformer:
-            missing.append("transformer shard")
+        if not has_backbone:
+            missing.append("unet/transformer shard")
         if not has_vae:
             missing.append("vae shard")
         if not has_text_encoder:
@@ -130,7 +134,14 @@ class _ProgressEmitter:
         )
 
 
-def _load_model(variant: str, model_path: str, quantize, config_label):
+def _load_model(
+    variant: str,
+    model_path: str,
+    quantize,
+    config_label,
+    lora_paths: list[str] | None = None,
+    lora_scales: list[float] | None = None,
+):
     import importlib
 
     from fusion_mlx.engines.image_gen import VARIANT_MAP, _infer_flux2_config
@@ -144,6 +155,13 @@ def _load_model(variant: str, model_path: str, quantize, config_label):
     mod = importlib.import_module(module_path)
     cls = getattr(mod, cls_name)
     if module_path.startswith("fusion_mlx."):
+        if lora_paths:
+            # #1376: only the mflux-backed variants load mflux LoRAs; the
+            # native MLX ports (SD15/SD2/SDXL) have no adapter path yet.
+            raise ValueError(
+                f"lora adapters are not supported for variant '{variant}' "
+                "(native MLX image pipelines); use a FLUX/FLUX.2 variant"
+            )
         flux = cls(model_config=None, model_path=model_path, quantize=quantize)
     else:
         from mflux.models.common.config.model_config import ModelConfig
@@ -167,7 +185,19 @@ def _load_model(variant: str, model_path: str, quantize, config_label):
             )
 
         mc = getattr(ModelConfig, config_label)()
-        flux = cls(model_config=mc, model_path=model_path, quantize=quantize)
+        flux = cls(
+            model_config=mc,
+            model_path=model_path,
+            quantize=quantize,
+            lora_paths=lora_paths,
+            lora_scales=lora_scales,
+        )
+    if lora_paths:
+        logger.info(
+            "image_worker: applied %d lora adapter(s): %s",
+            len(lora_paths),
+            list(zip(lora_paths, lora_scales or [])),
+        )
     return flux
 
 
@@ -195,6 +225,11 @@ def run_worker(spec: dict) -> int:
     output_format = spec.get("output_format", "PNG")
     n_images = max(1, spec.get("n_images", 1))
     gen_params = spec["gen_params"]
+    # #1376: pop before build_gen_kwargs sees it — the adapters apply at
+    # weight load, they are not a generate_image argument.
+    lora = gen_params.pop("lora", None)
+    lora_paths = [item["path"] for item in lora] if lora else None
+    lora_scales = [float(item.get("scale", 1.0)) for item in lora] if lora else None
     os.makedirs(output_dir, exist_ok=True)
 
     missing = _preflight_components(model_path)
@@ -208,7 +243,14 @@ def run_worker(spec: dict) -> int:
         )
         return 1
 
-    flux = _load_model(variant, model_path, quantize, config_label)
+    flux = _load_model(
+        variant,
+        model_path,
+        quantize,
+        config_label,
+        lora_paths=lora_paths,
+        lora_scales=lora_scales,
+    )
 
     # S4: apply CFG-free patch for Qwen-Image variants
     if variant in ("qwen_image", "qwen_image_edit"):

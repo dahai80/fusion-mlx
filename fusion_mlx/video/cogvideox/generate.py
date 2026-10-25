@@ -174,8 +174,11 @@ def generate_video(
 
     if seed < 0:
         seed = random.randint(0, 2**32 - 1)
-    mx.random.seed(seed)
-    np.random.seed(seed)
+    # Audit M8: never seed the process-global MLX/numpy RNG — a global seed
+    # leaks into every co-tenant executor in this process (image, audio,
+    # other video jobs), making their output depend on this request. Derive
+    # local keys instead and pass them to each draw.
+    _noise_key, _vae_key = mx.random.split(mx.random.key(seed))
 
     p = config.patch_size
     pt = config.patch_size_t if config.patch_size_t is not None else p
@@ -252,7 +255,7 @@ def generate_video(
         )
         vae_path = model_dir / "vae.safetensors"
         vae_enc = load_vae_encoder(vae_path, config)
-        z_video = vae_enc.encode(video[None])
+        z_video = vae_enc.encode(video[None], key=_vae_key)
         mx.eval(z_video)
         z_img = z_video[0]
         del vae_enc, img_arr, img_chw, video, z_video
@@ -278,7 +281,7 @@ def generate_video(
     sched.set_timesteps(steps, shift=shift)
 
     # Noise
-    noise = mx.random.normal(target_shape)
+    noise = mx.random.normal(target_shape, key=_noise_key)
     latents = noise
 
     # Compile

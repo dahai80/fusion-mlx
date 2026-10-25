@@ -76,8 +76,8 @@ def bench_command(args):
     _check_disk_space(args.model, force=getattr(args, "force_disk_check", False))
     _check_memory_capacity(args.model)
 
-    # Handle prefix cache flags
-    enable_prefix_cache = args.enable_prefix_cache and not args.disable_prefix_cache
+    # Handle prefix cache flags (Audit L23: single --prefix-cache switch)
+    enable_prefix_cache = args.prefix_cache
 
     # PFlash for the bench command — same per-alias default as serve:
     # verified Qwen3.5 / Qwen3.6 aliases switch to ``always``, everything

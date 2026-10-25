@@ -89,8 +89,16 @@ def get_model_path(model_repo: str) -> Path:
         from huggingface_hub import snapshot_download
 
         return Path(snapshot_download(repo_id=model_repo, local_files_only=True))
-    except Exception:
-        logger.info("Downloading model weights for %s", model_repo)
+    except Exception as exc:
+        # Audit 1019 L31: the local-snapshot miss was logged at INFO with no
+        # trace, so an unexpected failure (auth, corrupt cache, network) was
+        # indistinguishable from a plain first-run download.
+        logger.info(
+            "Local snapshot for %s unavailable (%r); downloading model weights",
+            model_repo,
+            exc,
+            exc_info=True,
+        )
         from huggingface_hub import snapshot_download
 
         return Path(

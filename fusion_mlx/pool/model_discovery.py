@@ -219,6 +219,17 @@ DIFFUSERS_PIPELINE_TASKS = {
     # not the Comfy FLUX.2 single-file layout) and discovery falls through
     # to "llm" — the model never reaches ImageGenEngine. PR#736 vendor.
     "QwenImage21Pipeline": "text-to-image",
+    # Qwen-Image-Edit ships model_index.json with _class_name=
+    # "QwenImageEditPlusPipeline" (official Qwen/Qwen-Image-Edit-2509) or
+    # "QwenImageEditPipeline" (older/community builds), plus the txt2img
+    # siblings. Without these the repo was classified "llm" and never
+    # discovered as an image model, so /v1/images/generations could not
+    # address it (#1375).
+    "QwenImagePipeline": "text-to-image",
+    "QwenImageImg2ImgPipeline": "text-to-image",
+    "QwenImageInpaintPipeline": "text-to-image",
+    "QwenImageEditPipeline": "text-to-image",
+    "QwenImageEditPlusPipeline": "text-to-image",
 }
 
 # Known embedding architectures

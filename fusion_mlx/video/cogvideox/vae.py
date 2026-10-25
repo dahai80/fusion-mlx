@@ -227,7 +227,7 @@ class AutoencoderKLCogVideoX(nn.Module):
 
         self.scaling_factor = config.scaling_factor
 
-    def encode(self, x: mx.array) -> mx.array:
+    def encode(self, x: mx.array, key: mx.array | None = None) -> mx.array:
         h = self.encoder_conv_in(x)
         for block in self.encoder_blocks:
             h = block(h)
@@ -235,7 +235,9 @@ class AutoencoderKLCogVideoX(nn.Module):
         mean, logvar = h.split(2, axis=1)
         logvar = mx.clip(logvar, -30.0, 20.0)
         std = mx.exp(0.5 * logvar)
-        noise = mx.random.normal(mean.shape)
+        # Audit M8: draw from the caller's key when given so encoding does
+        # not perturb the process-global RNG stream shared with co-tenants.
+        noise = mx.random.normal(mean.shape, key=key)
         z = mean + std * noise
         z = z * self.scaling_factor
         return z
