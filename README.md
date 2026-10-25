@@ -581,7 +581,7 @@ The macOS app offers a mode toggle between:
 | OpenAI Legacy | `/v1/completions` | ✅ Supported |
 | OpenAI Responses | `/v1/responses`, `/v1/responses/{id}`, `/v1/responses/compact`, `WS /v1/responses/ws` | ✅ Stateful chains (`previous_response_id`), base64 compaction blobs, WebSocket transport |
 | Anthropic Messages | `/v1/messages`, `/v1/count_tokens` | ✅ Fully compatible |
-| Audio | `/v1/audio/transcriptions`, `/v1/audio/speech`, `/v1/audio/music` | ✅ Supported |
+| Audio | `/v1/audio/transcriptions`, `/v1/audio/speech`, `/v1/audio/music`, `/v1/audio/voices` | ✅ Supported; preset voices, trained packs (`voice_ref`), server-side reference bundles (#1383) |
 | Images | `/v1/images/generate`, `/v1/images/generations`, `/v1/images/edits`, `/v1/images/super-resolution` | ✅ Generate (Flux 2, SD3-Medium, SDXL, Stable Cascade, Qwen-Image-2512, Qwen-Image-2.1 RGBA); edits (OpenAI SDK multipart, Fill/Kontext); Super-resolution (RealESRGAN x4plus, pure MLX, #752) |
 | Videos | `/v1/videos/generate` | ✅ Supported (LTX-2, Wan2, SkyReels-V3; pure-MLX ports) |
 | 3D | `/v1/3d/generate` | ✅ Hunyuan3D-2.1 image→textured GLB (shape MoE DiT + ShapeVAE + marching cubes + paint multiview diffusion + xatlas UV bake) |

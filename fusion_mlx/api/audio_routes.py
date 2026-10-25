@@ -250,6 +250,12 @@ def _write_ref_audio_tempfile(audio_bytes: bytes | None) -> str | None:
         tmp.close()
 
 
+# Explicit-None sentinel: a caller that passes ``cleanup_path=None`` means
+# "the ref audio is not a temp file, delete nothing" (#1383 bundles point at
+# a user-owned file under ~/.fusion-mlx/voices).
+_NO_CLEANUP_PATH = object()
+
+
 def _cleanup_tempfile(path: str | None) -> None:
     if path and os.path.exists(path):
         try:
@@ -367,6 +373,7 @@ async def _stream_speech_response(
     request: AudioSpeechRequest,
     ref_audio_path: str | None,
     streaming_interval: float,
+    cleanup_path: str | None | object = _NO_CLEANUP_PATH,
 ) -> AsyncIterator[bytes]:
     """Stream sentence-level TTS as a single WAV header plus PCM chunks."""
     try:
@@ -478,7 +485,10 @@ async def _stream_speech_response(
             if pcm_bytes:
                 yield pcm_bytes
     finally:
-        _cleanup_tempfile(ref_audio_path)
+        if cleanup_path is _NO_CLEANUP_PATH:
+            _cleanup_tempfile(ref_audio_path)
+        elif cleanup_path is not None:
+            _cleanup_tempfile(cleanup_path)
 
 
 async def _stream_with_prefetched_chunk(
@@ -731,7 +741,15 @@ async def list_voices():
                 "created_at": manifest.get("created_at"),
             }
         )
-    return {"voices": voices, "trained_voices": trained}
+    # #1383: server-side reference-voice bundles are addressable as `voice`
+    # on cloning-capable models, so list them alongside the model entries.
+    from fusion_mlx.audio.voice_bundles import list_voice_bundles
+
+    return {
+        "voices": voices,
+        "trained_voices": trained,
+        "voice_bundles": list_voice_bundles(),
+    }
 
 
 @router.post(
@@ -857,7 +875,38 @@ async def create_speech(request: AudioSpeechRequest):
             detail=f"Model '{resolved_model}' is not a text-to-speech model",
         )
 
-    ref_audio_path = _write_ref_audio_tempfile(audio_bytes)
+    temp_ref_audio_path = _write_ref_audio_tempfile(audio_bytes)
+    ref_audio_path = temp_ref_audio_path
+
+    # #1383: server-side reference-voice bundles. A ``voice`` naming
+    # ~/.fusion-mlx/voices/<name>/ (ref.wav + ref.txt) resolves to that pair
+    # for cloning-capable models, so clients need not ship their own
+    # reference audio. An explicit ref_audio in the request always wins, and
+    # models without a ref_audio parameter (Kokoro & co.) keep their preset
+    # voices untouched.
+    if request.voice and temp_ref_audio_path is None:
+        from fusion_mlx.audio.voice_bundles import resolve_voice_bundle
+
+        bundle = resolve_voice_bundle(request.voice)
+        if bundle is not None:
+            if engine.supports_voice_cloning():
+                request.voice = None
+                request.ref_text = request.ref_text or bundle.ref_text
+                ref_audio_path = str(bundle.audio_path)
+                logger.info(
+                    "audio/speech: voice %r resolved to bundle %s (%s)",
+                    bundle.name,
+                    bundle.audio_path,
+                    resolved_model,
+                )
+            else:
+                logger.warning(
+                    "audio/speech: voice %r matches bundle %s but %s does not "
+                    "accept ref_audio; using it as a preset voice name",
+                    bundle.name,
+                    bundle.audio_path,
+                    resolved_model,
+                )
 
     # R11-B-F3 (#725): resolve the literal ``voice="default"`` to the
     # registry's ``default_voice`` for the resolved model (short alias OR
@@ -884,6 +933,7 @@ async def create_speech(request: AudioSpeechRequest):
             request,
             ref_audio_path,
             streaming_interval,
+            cleanup_path=temp_ref_audio_path,
         )
         try:
             first_chunk = await stream.__anext__()
@@ -961,7 +1011,7 @@ async def create_speech(request: AudioSpeechRequest):
         )
         raise HTTPException(status_code=500, detail="Internal server error") from exc
     finally:
-        _cleanup_tempfile(ref_audio_path)
+        _cleanup_tempfile(temp_ref_audio_path)
 
     _record_audio_request(resolved_model)
 
