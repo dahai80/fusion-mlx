@@ -27,7 +27,11 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from fusion_mlx.training.service import ADAPTER_BASE_DIR, JobStatus
+from fusion_mlx.training.service import (
+    ADAPTER_BASE_DIR,
+    JobStatus,
+    format_job_error,
+)
 from fusion_mlx.training.voice import (
     VOICE_BASE_DIR,
     VoiceTrainConfig,
@@ -230,7 +234,7 @@ class VoiceService:
             else:
                 logger.exception("voice job %s failed: %s", job.job_id, exc)
                 job.status = JobStatus.FAILED
-                job.error = str(exc)
+                job.error = format_job_error(exc)
         else:
             job.status = JobStatus.COMPLETED
             logger.info(

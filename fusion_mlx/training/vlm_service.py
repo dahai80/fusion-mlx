@@ -37,6 +37,7 @@ from pathlib import Path
 import mlx.core as mx
 
 from fusion_mlx.training.proc import TrainingProcessKilled
+from fusion_mlx.training.service import format_job_error
 
 logger = logging.getLogger(__name__)
 
@@ -487,7 +488,7 @@ class VLMFineTuneService:
         except Exception as exc:
             logger.exception(f"VL fine-tune job {job.job_id} failed: {exc}")
             job.status = JobStatus.FAILED
-            job.error = str(exc)
+            job.error = format_job_error(exc)
             job.terminal = True
             job.finished_at = time.time()
             self._notify_job(job)
@@ -570,7 +571,7 @@ class VLMFineTuneService:
             return
         logger.error("VL training child died (%s); marking job FAILED", exc)
         job.status = JobStatus.FAILED
-        job.error = str(exc)
+        job.error = format_job_error(exc)
         job.terminal = True
         job.finished_at = time.time()
         self._notify_job(job)

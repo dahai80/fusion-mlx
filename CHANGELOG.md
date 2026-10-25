@@ -24,6 +24,19 @@
   mask holds. Rejected in distributed training; fails visibly on architectures
   whose blocks do not accept `(x, mask, cache)`.
 
+### Fixed — slim install broke DPO/ORPO/reward training (#1403)
+- The TurboQuant attention patch imported `mlx_vlm` on *every* attention
+  call. SFT survived it (a spawned child process never installs the patch),
+  but DPO, ORPO and reward-model jobs run in-process, so on a slim
+  (`pip install fusion-mlx`, no `[vlm]` extra) install they died with a bare
+  `No module named 'mlx_vlm'`. The cache classes are now resolved once, and
+  when `mlx_vlm` is absent the patch passes straight through to stock SDPA —
+  without it no TurboQuant cache can exist anyway.
+- Failed training jobs stored only `str(exc)`, so a missing-module error
+  arrived with no frames. The job record now carries the exception line plus
+  the innermost traceback frames (`format_job_error`), for all six training
+  services.
+
 ## [v0.10.16] — 2026-10-25
 
 ### Added — strict auth mode for gateway-as-sole-entry deployments (#1381)

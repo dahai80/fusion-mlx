@@ -28,6 +28,7 @@ import logging
 import os
 import threading
 import time
+import traceback
 import uuid
 from dataclasses import asdict, dataclass, field
 from dataclasses import fields as _dc_fields
@@ -41,6 +42,27 @@ from fusion_mlx.training.proc import TrainingProcessKilled
 logger = logging.getLogger(__name__)
 
 ADAPTER_BASE_DIR = Path(os.path.expanduser("~/.fusion-mlx/adapters"))
+
+_JOB_ERROR_MAX_CHARS = 4000
+
+
+def format_job_error(exc: BaseException, limit: int = 12) -> str:
+    # #1403: job records carried only str(exc), so a missing-module failure
+    # ("No module named 'mlx_vlm'") reached the caller with no frame and cost
+    # a full CI iteration to localize. Keep the message line first — that is
+    # what UIs and grep target — and append the innermost frames behind it.
+    try:
+        detail = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__, limit=limit)
+        ).strip()
+    except Exception:
+        detail = ""
+    head = f"{type(exc).__name__}: {exc}"
+    if not detail:
+        return head
+    if len(detail) > _JOB_ERROR_MAX_CHARS - len(head) - 1:
+        detail = detail[: _JOB_ERROR_MAX_CHARS - len(head) - 4] + "..."
+    return f"{head}\n{detail}"
 
 
 class JobStatus(str, Enum):
@@ -1045,7 +1067,7 @@ class FineTuneService:
         except Exception as exc:
             logger.exception(f"Fine-tune job {job.job_id} failed: {exc}")
             job.status = JobStatus.FAILED
-            job.error = str(exc)
+            job.error = format_job_error(exc)
             job.terminal = True
             job.finished_at = time.time()
             self._persist_jobs()
@@ -1134,7 +1156,7 @@ class FineTuneService:
             return
         logger.error("Training child died (%s); marking job FAILED", exc)
         job.status = JobStatus.FAILED
-        job.error = str(exc)
+        job.error = format_job_error(exc)
         job.terminal = True
         job.finished_at = time.time()
         self._persist_jobs()

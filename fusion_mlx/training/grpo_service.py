@@ -30,7 +30,11 @@ from pathlib import Path
 import mlx.core as mx
 
 from fusion_mlx.training.grpo import GRPOConfig, GRPOTrainer
-from fusion_mlx.training.service import ADAPTER_BASE_DIR, JobStatus
+from fusion_mlx.training.service import (
+    ADAPTER_BASE_DIR,
+    JobStatus,
+    format_job_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +281,7 @@ class GRPOService:
         except Exception as exc:
             logger.exception("GRPO job %s failed: %s", job.job_id, exc)
             job.status = JobStatus.FAILED
-            job.error = str(exc)
+            job.error = format_job_error(exc)
             job.terminal = True
             job.finished_at = time.time()
             self._persist_jobs()
