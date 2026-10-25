@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed — grammar ring called the xgrammar bitmask kernel with swapped arguments (#1402)
+- `apply_token_bitmask_mlx` takes `(bitmask, logits, vocab_size)`, but
+  `shim/grammar_ring.apply_bitmask()` passed `(logits, words, vocab_size)`.
+  Every call raised `broadcast_shapes` and fell back to the mx-native
+  expansion, so the GPU fast path never ran and debug logging emitted a full
+  traceback per generated token. The kernel is now called in the documented
+  order, and is skipped when the model pads logits wider than the mask vocab
+  (the kernel truncates the output to `vocab_size`).
+
 ## [v0.10.16] — 2026-10-25
 
 ### Added — strict auth mode for gateway-as-sole-entry deployments (#1381)

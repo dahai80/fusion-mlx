@@ -319,6 +319,54 @@ class TestGrammarMaskRing:
             np.testing.assert_array_equal(np.asarray(out)[0], ref)
 
 
+class TestApplyBitmaskKernelContract:
+    def test_kernel_receives_bitmask_first(self, monkeypatch):
+        # #1402: xgrammar's apply_token_bitmask_mlx takes (bitmask, logits,
+        # vocab_size). The ring called it as (logits, words, vocab_size),
+        # which raised broadcast_shapes on every token and silently fell back
+        # to the mx-native expansion.
+        import fusion_mlx.shim.grammar_ring as ring_mod
+
+        calls = {}
+
+        def fake_kernel(bitmask, logits, vocab_size):
+            calls["bitmask"] = bitmask
+            calls["logits"] = logits
+            calls["vocab_size"] = vocab_size
+            return logits
+
+        monkeypatch.setattr(ring_mod, "_XG_APPLY", fake_kernel)
+        monkeypatch.setattr(ring_mod, "_XG_TRIED", True)
+
+        logits = _logits()
+        mask = np.zeros((bitmask_width(VOCAB),), dtype=np.int32)
+        out = apply_bitmask(mask, logits, VOCAB)
+        assert out is logits
+        assert calls["logits"] is logits
+        assert calls["bitmask"].shape == (bitmask_width(VOCAB),)
+        assert calls["vocab_size"] == VOCAB
+
+    def test_kernel_skipped_when_logits_wider_than_vocab(self, monkeypatch):
+        # The kernel truncates to vocab_size; padded embedding tables need the
+        # full width, so that case must go through the fallback.
+        import fusion_mlx.shim.grammar_ring as ring_mod
+
+        called = {"n": 0}
+
+        def fake_kernel(bitmask, logits, vocab_size):
+            called["n"] += 1
+            return logits
+
+        monkeypatch.setattr(ring_mod, "_XG_APPLY", fake_kernel)
+        monkeypatch.setattr(ring_mod, "_XG_TRIED", True)
+
+        mask = np.full((bitmask_width(VOCAB),), -1, dtype=np.int32)
+        padded = mx.zeros((1, VOCAB + 224))
+        out = apply_bitmask(mask, padded, VOCAB)
+        assert called["n"] == 0
+        assert out.shape == (1, VOCAB + 224)
+
+
 class TestNextBucket:
     def test_snap_up(self):
         assert next_bucket(1) == 128
