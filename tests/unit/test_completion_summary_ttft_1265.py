@@ -99,3 +99,24 @@ def test_summary_carries_model_id(caplog, monkeypatch):
 def test_summary_defaults_to_empty_model(caplog, monkeypatch):
     line = _run(caplog, monkeypatch, _req(), _out(), now=189.28)
     assert "| completed | model= |" in line
+
+
+class TestModelLabel:
+    def test_hf_cache_snapshot_becomes_repo_id(self):
+        # config.model_name is the resolved load path, whose basename is a
+        # commit hash — not something a log reader can triage by.
+        path = "/m/models/models--mlx-community--Qwen3.5-4B-MLX-4bit/snapshots/32f3e8ec"
+        assert sr._model_label(path) == "mlx-community/Qwen3.5-4B-MLX-4bit"
+
+    def test_trailing_slash_tolerated(self):
+        path = "/m/models--mlx-community--Qwen3.5-9B-4bit/"
+        assert sr._model_label(path) == "mlx-community/Qwen3.5-9B-4bit"
+
+    def test_single_segment_repo_passes_through(self):
+        assert sr._model_label("/m/models--kokoro/snapshots/abc") == "kokoro"
+
+    def test_plain_local_dir_uses_basename(self):
+        assert sr._model_label("/Users/x/my-model/") == "my-model"
+
+    def test_empty_path(self):
+        assert sr._model_label("") == ""
