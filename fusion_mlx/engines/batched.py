@@ -867,6 +867,16 @@ class BatchedEngine(BaseEngine):
                 return
         logger.error("BatchedEngine mark_dead: no inner engine to mark: %s", reason)
 
+    def is_running(self) -> bool:
+        # #1409: liveness passthrough so EnginePool's get_engine fast path can
+        # tell a running engine from a stopped-but-still-attached one.
+        core = self._engine
+        inner = getattr(core, "engine", None) if core is not None else None
+        if inner is None:
+            return False
+        probe = getattr(inner, "is_running", None)
+        return bool(probe()) if callable(probe) else True
+
     def is_dead(self) -> bool:
         # #1176 recovery bug: the poison guard (api/_guards.py) scans pool
         # entries with getattr(engine, "is_dead", None) to find the dead
