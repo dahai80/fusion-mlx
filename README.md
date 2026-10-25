@@ -1151,6 +1151,52 @@ curl -X POST http://localhost:11434/admin/api/fine-tune/jobs \
 # logs: "mxfp8=True: routing to QLoRA 8-bit path (8-bit frozen base + LoRA)"
 ```
 
+### Sequence Packing (#1400)
+
+`pack_sequences: true` packs short training samples into rows of up to
+`max_seq_length` tokens instead of padding each sample to its own length.
+This is the standard throughput lever for short-sample SFT corpora (chat
+turns, K-12 math problems): batch assembly stops wasting compute on padding.
+
+mlx-lm 0.31.3 has no packing, so `fusion_mlx/training/packing.py` supplies
+the batch iterator and the loss, and patches the transformer blocks so the
+packed mask reaches attention:
+
+- **Block-diagonal attention mask** — a packed sample never attends to its
+  neighbour. Verified on a real model: segment logits are byte-identical to
+  a standalone forward pass, and changing a neighbour's content to the same
+  length leaves them unchanged.
+- **Per-token loss mask** — `mask_prompt` offsets are preserved per packed
+  segment, so prompt tokens stay untrained.
+- **No position-id reset** — MLX 0.32 rejects array RoPE offsets, and RoPE
+  attention is relative, so intra-segment scores match unpacked training as
+  long as the block mask holds. Absolute positions grow across a packed row,
+  which only matters near `max_position_embeddings`.
+
+```bash
+curl -X POST http://localhost:11434/admin/api/fine-tune/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model_id": "qwen3.5-9b",
+    "dataset": "~/data/short-samples-dir",
+    "adapter_name": "packed-lora",
+    "config": {
+      "pack_sequences": true,
+      "lora_rank": 8,
+      "learning_rate": 3e-4,
+      "batch_size": 2,
+      "iters": 100,
+      "max_seq_length": 2048,
+      "mask_prompt": true
+    }
+  }'
+```
+
+Packing changes batch composition, so losses are not comparable with
+unpacked runs. It is rejected in distributed training (world size > 1) and
+fails visibly if a model's transformer blocks do not accept
+`(x, mask, cache)`.
+
 ### Logprob Scoring (#363 Phase 1)
 
 Score a completion under a prompt (teacher-forcing single forward pass).
