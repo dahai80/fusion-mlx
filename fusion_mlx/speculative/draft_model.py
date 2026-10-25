@@ -10,6 +10,7 @@ small enough that sequential generation is fast).
 """
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 
@@ -17,12 +18,43 @@ import mlx.core as mx
 
 logger = logging.getLogger(__name__)
 
-DRAFT_MODEL_PATH = __import__("os").environ.get(
+DRAFT_MODEL_PATH = os.environ.get(
     "FUSION_DRAFT_MODEL_PATH",
-    __import__("os").path.expanduser(
-        "~/.fusion-mlx/models/mlx-community/Qwen3-0.6B-4bit"
-    ),
+    os.path.expanduser("~/.fusion-mlx/models/mlx-community/Qwen3-0.6B-4bit"),
 )
+
+
+def _resolve_draft_path(path: str) -> str:
+    # Downloads land in the HF cache layout
+    # ``<root>/models--org--name/snapshots/<sha>``, but the configured default
+    # (and any hand-written override) names the flat ``<root>/org/name`` form.
+    # mlx_lm.load then raised "Repo id must be in the form 'repo_name' or
+    # 'namespace/repo_name'", so draft-model speculative decode was silently
+    # off on every stock install. Resolve the flat form to the newest snapshot.
+    if not path:
+        return path
+    expanded = os.path.expanduser(path)
+    if os.path.isdir(expanded):
+        return expanded
+    norm = os.path.normpath(expanded)
+    name = os.path.basename(norm)
+    owner = os.path.basename(os.path.dirname(norm))
+    root = os.path.dirname(os.path.dirname(norm))
+    if not (owner and name and os.path.isdir(root)):
+        return expanded
+    snapshots = os.path.join(root, f"models--{owner}--{name}", "snapshots")
+    if not os.path.isdir(snapshots):
+        return expanded
+    candidates = [
+        os.path.join(snapshots, entry)
+        for entry in os.listdir(snapshots)
+        if os.path.isdir(os.path.join(snapshots, entry))
+    ]
+    if not candidates:
+        return expanded
+    newest = max(candidates, key=os.path.getmtime)
+    logger.info("draft_model: resolved %s to cache snapshot %s", path, newest)
+    return newest
 
 
 def _safe_int_env(name: str, default: int) -> int:
@@ -92,18 +124,29 @@ class DraftModelDecoder:
             t0 = time.perf_counter()
             import mlx_lm
 
-            self.model, self.tokenizer = mlx_lm.load(self.model_path)
+            resolved = _resolve_draft_path(self.model_path)
+            self.model, self.tokenizer = mlx_lm.load(resolved)
             dt = time.perf_counter() - t0
             self._loaded = True
+            self.model_path = resolved
             logger.info(
                 "draft_model: loaded %s in %.1fs, num_draft=%d",
-                self.model_path,
+                resolved,
                 dt,
                 self.num_draft,
             )
             return True
         except Exception as e:
-            logger.warning("draft_model: failed to load %s: %s", self.model_path, e)
+            parts = os.path.normpath(self.model_path).split(os.sep)
+            repo_hint = "/".join(parts[-2:]) if len(parts) >= 2 else self.model_path
+            logger.warning(
+                "draft_model: failed to load %s: %s — pull it with "
+                "`fusion-mlx pull %s` or set FUSION_DRAFT_MODEL_PATH to a local "
+                "directory; speculative draft decode stays disabled",
+                self.model_path,
+                e,
+                repo_hint,
+            )
             return False
 
     def reset(self):

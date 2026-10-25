@@ -154,6 +154,9 @@ class TestGrammarConstraintProcessor:
         p._terminated = False
         p._first_call = True
         p._backend = grammar.GrammarBackend.XGRAMMAR
+        # #1384: __init__ now records the EOS ids the completed-grammar path
+        # may emit. Empty here keeps the terminated call a passthrough.
+        p._eos_ids = []
         return p
 
     def test_init_sets_properties(self):

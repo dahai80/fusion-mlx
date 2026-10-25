@@ -25,6 +25,7 @@ from mlx_lm.sample_utils import make_logits_processors
 
 from ..request import Request, SamplingParams
 from ..utils.sampling import make_sampler as _make_sampler
+from ..utils.tokenizer import RAPID_EXTRA_EOS_ATTR
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
@@ -183,6 +184,7 @@ def _build_sampler_and_processors(
                 processor = GrammarConstraintProcessor(
                     compiled_grammar=sampling_params.compiled_grammar,
                     vocab_size=vocab_size,
+                    eos_token_ids=self._grammar_eos_ids(),
                 )
                 # PR-M: ring prefetch when FUSION_SHIM_GRAMMAR_RING=1;
                 # returns the processor unchanged when OFF.
@@ -208,6 +210,23 @@ def _build_sampler_and_processors(
         logits_processors.append(_suppress_tokens_processor)
 
     return sampler, logits_processors
+
+
+def _grammar_eos_ids(self) -> list[int]:
+    # EOS ids the grammar processor may force once the grammar is complete.
+    ids: list[int] = []
+    try:
+        eos = getattr(self.tokenizer, "eos_token_id", None)
+    except Exception:
+        return ids
+    if isinstance(eos, int):
+        ids.append(eos)
+    elif isinstance(eos, (list, tuple)):
+        ids.extend(t for t in eos if isinstance(t, int))
+    extra = getattr(self.tokenizer, RAPID_EXTRA_EOS_ATTR, None)
+    if isinstance(extra, (list, tuple)):
+        ids.extend(t for t in extra if isinstance(t, int) and t not in ids)
+    return ids
 
 
 def _get_model_vocab_size(self) -> int | None:

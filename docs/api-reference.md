@@ -335,8 +335,47 @@ which loads it exactly like a stock voice name.
 |-------|----------|-------|
 | `voice_ref` | no | Directory name only. Rejected with 404 when the pack is missing; the check runs before any engine load. `/`, `\`, and a leading `.` are rejected, so a ref cannot escape `~/.fusion-mlx/voices/`. An explicit `voice` wins when both are set. |
 
-`GET /v1/audio/voices` lists trained packs under `trained_voices`
-alongside the stock voices.
+**Reference-voice bundles** (`#1383`): a directory
+`~/.fusion-mlx/voices/<name>/` holding `ref.wav` (or `ref.mp3` /
+`ref.flac` / `ref.m4a` / `ref.ogg`) plus `ref.txt` with the transcript is
+addressable as a plain `voice` name on cloning-capable models, so clients do
+not have to base64-encode their own reference clip.
+
+```json
+{
+    "model": "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
+    "input": "Read this in the bundle voice.",
+    "voice": "narrator"
+}
+```
+
+Resolution rules:
+
+- An explicit `ref_audio` in the request always wins over a bundle.
+- The bundle only applies when the resolved model's `generate()` accepts
+  `ref_audio` (in-context cloning). On a model with preset voices (Kokoro)
+  the name is passed through unchanged, so presets keep working.
+- The bundle transcript is used unless the request also sends `ref_text`.
+- A `voice` that matches no bundle is passed through untouched, so stock
+  voice names and the model's own "unsupported voice" error are unchanged.
+
+Create, list and delete bundles through the admin API (API keys cannot
+write the voice library):
+
+```bash
+curl -X POST http://127.0.0.1:11434/admin/api/audio/voice-bundles \
+  -H "X-Admin-Key: $ADMIN_KEY" \
+  -F name=narrator -F ref_text="Transcript of the clip" -F file=@narrator.wav
+curl http://127.0.0.1:11434/admin/api/audio/voice-bundles -H "X-Admin-Key: $ADMIN_KEY"
+curl -X DELETE http://127.0.0.1:11434/admin/api/audio/voice-bundles/narrator -H "X-Admin-Key: $ADMIN_KEY"
+```
+
+`POST` returns 409 when the name exists (send `overwrite=true` to replace),
+400 on an invalid name / empty transcript / non-audio or undersized clip,
+413 above the 25 MB upload cap. `DELETE` never removes a fine-tune pack.
+
+`GET /v1/audio/voices` lists trained packs under `trained_voices` and
+bundles under `voice_bundles` alongside the stock voices.
 
 ### `POST /v1/audio/process`
 

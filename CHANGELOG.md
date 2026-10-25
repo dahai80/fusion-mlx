@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v0.10.16] — 2026-10-25
+
 ### Added — strict auth mode for gateway-as-sole-entry deployments (#1381)
 - `--strict-auth` / `FUSION_MLX_STRICT_AUTH=1` / `settings.json`
   `auth.strict` makes the server refuse to start when no API key resolves, or
@@ -22,6 +24,80 @@
   from the load path, whose basename for an HF cache entry is the commit
   hash. It now walks back to the `models--org--name` directory and reports
   `org/name`, so per-model triage of the summary line is possible.
+
+### Fixed — SSD write queue and engine teardown resilience (#1390)
+- The paged-SSD background writer unpacked queue items outside its
+  `try/except`, so one malformed item killed the thread and every later
+  SSD write was enqueued with no consumer. The unpack is now guarded: the
+  item is logged and dropped, the thread keeps running.
+- The synchronous pool unload paths (`unload_engine` /
+  `unregister_engine`) called the async `engine.stop()` without awaiting
+  it, dropping the coroutine (`RuntimeWarning: coroutine ... was never
+  awaited`) and skipping the teardown. They now run it to completion when
+  no loop is running and schedule it on the running loop otherwise.
+- `test_try_queue_write_reports_full` no longer races the live writer
+  thread (it asserted against a sentinel the writer drained first, which
+  made `main`'s `rest` shard red).
+
+### Fixed — draft-model speculative decode never loaded (#1386)
+- The default draft path was the flat `~/.fusion-mlx/models/org/name` form,
+  but downloads land in the HF cache layout
+  (`models--org--name/snapshots/<sha>`), so `mlx_lm.load` raised and
+  draft-model speculative decode stayed off on every stock install — a single
+  WARNING was the only trace. The path is now resolved to the newest cache
+  snapshot, and the failure message names the repo id plus the
+  `fusion-mlx pull` command that fixes it.
+
+### Fixed — spurious memory fragmentation warning at startup (#1388)
+- The `High memory fragmentation` warning fired at 100% on every boot,
+  where the footprint is startup allocation and MLX active memory is a few
+  bytes, so the ratio was ~1.0 by construction. The warning now requires at
+  least 256 MiB of MLX-active memory; the
+  `fusion_mlx_memory_fragmentation_ratio` gauge is unchanged.
+
+### Added — server-side reference-voice bundles (#1383)
+- A directory `~/.fusion-mlx/voices/<name>/` holding a reference clip
+  (`ref.wav` / `.mp3` / `.flac` / `.m4a` / `.ogg`) plus `ref.txt` is
+  addressable as a plain `voice` name on cloning-capable TTS models:
+  `POST /v1/audio/speech` resolves it to the pair internally, so clients no
+  longer have to host and base64-encode reference audio per speaker. An
+  explicit `ref_audio` always wins, models without a `ref_audio` generate
+  parameter (Kokoro) keep their preset voices, and an unmatched `voice` is
+  passed through unchanged.
+- `GET /v1/audio/voices` lists bundles under `voice_bundles`.
+- Admin surface: `GET` / `POST` / `DELETE /admin/api/audio/voice-bundles`
+  (multipart `name`, `ref_text`, `file`, optional `overwrite`). Writes stay
+  behind admin auth so an API key cannot modify the voice library; the
+  delete path never removes a fine-tune pack.
+
+### Fixed — `serve` of an unregistered audio checkpoint (#1392)
+- `fusion-mlx serve <hf-id>` for an audio model that has no row in the
+  alias registry (e.g. `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit`)
+  fell through to the text loader and died with `ValueError: Model type
+  qwen3_tts not supported`. The audio-serve fork now falls back to
+  `detect_model_type()` on the local weights when the registry misses,
+  so any TTS/STT checkpoint already on disk boots in audio mode. Text
+  checkpoints still take the text path unchanged.
+
+### Fixed — scheduler fragmentation guard was inert (#1395)
+- Both cache-clear paths read `self._fragmentation_ratio`, which nothing
+  ever assigned, so the "skip `clear_cache()` on a fragmented heap"
+  protection always saw 0.0 and never engaged (debug logs also always
+  printed `frag=0.00`). The ratio is now computed where it is read with
+  the same formula as the `fusion_mlx_memory_fragmentation_ratio` gauge.
+
+### Fixed — constrained decoding on models with a padded vocabulary (#1384)
+- Grammar masks are now aligned to the narrower of the model's `vocab_size`
+  and the tokenizer's id range. On Qwen3.5-4B the config advertises 248320 ids
+  while the tokenizer knows 248096, so `llguidance` produced a narrower bitmask
+  than the logits and every constrained request died with `[broadcast_shapes]
+  Shapes (1,248320) and (1,248096) cannot be broadcast`. Padding ids are now
+  masked out instead — they are not decodable tokens. The grammar-ring
+  prefetch path shares the same alignment, so it no longer degrades to the
+  inline path for such models.
+- A completed grammar now forces end-of-sequence. Previously generation ran on
+  unconstrained once the matcher accepted, so `{"type":"string",
+  "enum":["alpha","beta"]}` returned `"alpha"` followed by free text.
 
 ## [v0.10.15] — 2026-10-25
 

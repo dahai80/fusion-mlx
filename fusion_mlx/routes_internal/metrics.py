@@ -34,6 +34,9 @@ _METRICS_RENDER_TIMEOUT_S = 10.0
 # polls every couple of seconds; an unthrottled warning flooded the log and
 # buried real errors. Warn at most once per interval, keep the gauge current.
 _FRAG_WARN_INTERVAL_S = 300.0
+# Below this much MLX-active memory the ratio is dominated by process startup
+# allocations (a fresh server reported 100% with active=84 bytes).
+_FRAG_MIN_ACTIVE_BYTES = 256 * 1024 * 1024
 _last_frag_warning_at = 0.0
 _frag_warn_lock = threading.Lock()
 
@@ -649,7 +652,11 @@ def _render_uptime_metal() -> list[str]:
                     round(frag_ratio, 4),
                 )
             )
-            if frag_ratio > 0.30:
+            # Require MLX to actually hold memory before calling the rest
+            # "fragmentation": a freshly started process reports a ~1 GB
+            # footprint with ~0 active bytes, which is 100% by the formula and
+            # says nothing about fragmentation.
+            if frag_ratio > 0.30 and mlx_active >= _FRAG_MIN_ACTIVE_BYTES:
                 global _last_frag_warning_at
                 now = time.monotonic()
                 with _frag_warn_lock:
