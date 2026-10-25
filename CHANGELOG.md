@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v0.10.16] — 2026-10-25
+
 ### Added — strict auth mode for gateway-as-sole-entry deployments (#1381)
 - `--strict-auth` / `FUSION_MLX_STRICT_AUTH=1` / `settings.json`
   `auth.strict` makes the server refuse to start when no API key resolves, or
