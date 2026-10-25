@@ -2183,8 +2183,13 @@ class PagedSSDCacheManager:
                 continue
             if item is None:
                 break
-            block_hash, tensors_raw, file_metadata, block_metadata = item
+            block_hash = None
             try:
+                # #1390: unpack inside the guarded block. A malformed item
+                # used to raise here, outside any handler, and kill the
+                # writer thread — every later SSD write was then queued and
+                # never persisted.
+                block_hash, tensors_raw, file_metadata, block_metadata = item
                 self._persist_block_file(
                     block_hash, tensors_raw, file_metadata, block_metadata
                 )
@@ -2194,7 +2199,12 @@ class PagedSSDCacheManager:
                 # ENOSPC is an operational condition (warn + drop), anything
                 # else is a bug (error). _persist_block_file already removed
                 # the residual .tmp before re-raising.
-                if isinstance(e, OSError) and e.errno == errno.ENOSPC:
+                if block_hash is None:
+                    logger.error(
+                        "SSD write queue item is malformed, dropping: item_type=%s",
+                        type(item).__name__,
+                    )
+                elif isinstance(e, OSError) and e.errno == errno.ENOSPC:
                     logger.warning(
                         "SSD cache disk full, dropping block write: %s",
                         block_hash.hex()[:16],
@@ -2205,13 +2215,15 @@ class PagedSSDCacheManager:
                         block_hash.hex()[:16],
                         e,
                     )
-                with self._state_lock:
-                    self._index.remove(block_hash)
+                if block_hash is not None:
+                    with self._state_lock:
+                        self._index.remove(block_hash)
                 self._stats["errors"] += 1
             finally:
-                with self._pending_write_hashes_lock:
-                    self._pending_write_hashes.discard(block_hash)
-                    self._pending_writes.pop(block_hash, None)
+                if block_hash is not None:
+                    with self._pending_write_hashes_lock:
+                        self._pending_write_hashes.discard(block_hash)
+                        self._pending_writes.pop(block_hash, None)
                 self._write_queue.task_done()
 
     def _scan_disk_index(self):

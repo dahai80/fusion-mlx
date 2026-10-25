@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import inspect
 import json
 import logging
 import os
@@ -2342,6 +2343,28 @@ class EnginePool:
             f"Registered entry '{model_id}' in pool (engine_type={engine_type})"
         )
 
+    def _stop_engine_now(self, entry, model_id: str) -> None:
+        # #1390: every engine's stop() is a coroutine. The sync unload paths
+        # called it without awaiting, which dropped the coroutine (leaking a
+        # "never awaited" warning) and skipped the teardown entirely.
+        engine = entry.engine
+        if engine is None:
+            return
+        try:
+            result = engine.stop()
+        except Exception:
+            logger.warning("engine.stop() failed for %s", model_id, exc_info=True)
+            return
+        if not inspect.isawaitable(result):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(result)
+            return
+        loop.create_task(result)
+        logger.info("engine.stop() for %s scheduled on the running loop", model_id)
+
     def unload_engine(self, model_id: str) -> None:
         """Synchronously remove an engine from pool entries (non-blocking)."""
         entry = self._entries.get(model_id)
@@ -2359,10 +2382,7 @@ class EnginePool:
                 )
             # #209: stop engine + reclaim Metal memory (sync path previously
             # relied solely on Python GC which is nondeterministic)
-            try:
-                entry.engine.stop()
-            except Exception:
-                logger.warning("engine.stop() failed for %s", model_id, exc_info=True)
+            self._stop_engine_now(entry, model_id)
             entry.engine = None
             entry.last_access = 0.0
             entry.loaded_at = 0.0
@@ -2411,23 +2431,14 @@ class EnginePool:
             return False
         # Stop + cleanup if still loaded
         if entry.engine is not None:
-            try:
-                entry.engine.stop()
-            except Exception:
-                logger.warning(
-                    "engine.stop() failed for %s during unregister",
-                    model_id,
-                    exc_info=True,
-                )
-                # M2: fallback cleanup for _vision_cache if stop() failed
-                vc = getattr(entry.engine, "_vision_cache", None)
-                if vc is not None:
-                    try:
-                        vc.close()
-                    except Exception:
-                        logger.debug(
-                            "_vision_cache fallback close failed", exc_info=True
-                        )
+            self._stop_engine_now(entry, model_id)
+            # M2: fallback cleanup for _vision_cache if stop() failed
+            vc = getattr(entry.engine, "_vision_cache", None)
+            if vc is not None:
+                try:
+                    vc.close()
+                except Exception:
+                    logger.debug("_vision_cache fallback close failed", exc_info=True)
             try:
                 from ..cache.latent_cache import remove_image_latent_cache
 
