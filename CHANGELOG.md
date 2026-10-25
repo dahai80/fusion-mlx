@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v0.10.15] — 2026-10-25
+
 ### Added — Kokoro voice fine-tuning (#1336)
 - `POST /admin/api/fine-tune/voice/jobs` trains a Kokoro voice package from
   paired audio + transcripts (`metadata.csv`, `metadata.jsonl`, or
