@@ -6,6 +6,15 @@ on:
     pull_request:
         branches: [main]
 
+# #1397: one CI run per ref, newest wins. Without this, a force-push after a
+# rebase left the previous run holding macOS slots for hours (run 40164779555
+# kept seven macOS jobs alive for 2 h 21 m while the next run for the same
+# branch sat queued). A superseded run for the same commit series can never
+# produce a result that matters, so cancel it instead of queueing behind it.
+concurrency:
+    group: ci-${{ github.ref }}
+    cancel-in-progress: true
+
 jobs:
     lint:
         runs-on: ubuntu-latest
