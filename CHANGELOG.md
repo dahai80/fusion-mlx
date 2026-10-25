@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v0.10.17] — 2026-10-26
+
 ### Fixed — grammar ring called the xgrammar bitmask kernel with swapped arguments (#1402)
 - `apply_token_bitmask_mlx` takes `(bitmask, logits, vocab_size)`, but
   `shim/grammar_ring.apply_bitmask()` passed `(logits, words, vocab_size)`.

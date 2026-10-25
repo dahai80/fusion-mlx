@@ -4,6 +4,7 @@
 # .claude/worktrees/* as untracked. Keep this rule or that gate blocks
 # community PRs from worktrees (see PR #5 dogfood).
 .claude/
+.atomcode/
 
 # Python
 __pycache__/
