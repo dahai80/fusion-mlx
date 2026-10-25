@@ -46,6 +46,13 @@
   snapshot, and the failure message names the repo id plus the
   `fusion-mlx pull` command that fixes it.
 
+### Fixed — spurious memory fragmentation warning at startup (#1388)
+- The `High memory fragmentation` warning fired at 100% on every boot,
+  where the footprint is startup allocation and MLX active memory is a few
+  bytes, so the ratio was ~1.0 by construction. The warning now requires at
+  least 256 MiB of MLX-active memory; the
+  `fusion_mlx_memory_fragmentation_ratio` gauge is unchanged.
+
 ## [v0.10.15] — 2026-10-25
 
 ### Added — Kokoro voice fine-tuning (#1336)
