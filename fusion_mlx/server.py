@@ -252,6 +252,9 @@ app = None
 
 # Module-level server state — cli_serve.py reads/writes these directly
 _api_key: str | None = None
+# #1381 strict auth: set from --strict-auth / FUSION_MLX_STRICT_AUTH /
+# settings.json auth.strict. Refuses to boot without an API key.
+_strict_auth: bool = False
 # Staged single-model request from ``serve --model <X>``. ``load_model``
 # populates this before uvicorn starts; ``Server._startup`` loads + registers
 # the engine into the pool once the pool exists. None on the multi-model
@@ -325,6 +328,18 @@ def _resolve_api_key(argv_api_key: str | None = None) -> str | None:
     if _api_key:
         return _api_key
     return os.environ.get("FUSION_MLX_API_KEY")
+
+
+def _resolve_strict_auth(cli_value: bool = False) -> bool:
+    # Mirrors _resolve_api_key's staging: cli_serve sets the module global
+    # before Server.__init__, which then enforces it once the effective key is
+    # known. The CLI flag wins over env, which wins over settings.json.
+    global _strict_auth
+    from .middleware.auth import strict_auth_requested
+
+    if cli_value:
+        _strict_auth = True
+    return _strict_auth or strict_auth_requested()
 
 
 def _resolve_effective_api_key(
@@ -1370,7 +1385,18 @@ class Server:
             bool(effective_key),
         )
 
+        from .middleware.auth import enforce_strict_auth
+
+        enforce_strict_auth(effective_key, _strict_auth)
+
         self.app = self._create_app()
+
+        try:
+            from .middleware.auth_audit import log_auth_audit
+
+            log_auth_audit(self.app)
+        except Exception:
+            logger.error("auth audit failed to run", exc_info=True)
 
     def _create_app(self) -> FastAPI:
         """Create and configure the FastAPI application."""

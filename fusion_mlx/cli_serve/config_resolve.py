@@ -269,6 +269,9 @@ def _serve_from_model_dir(args):
     # ``create_app`` and skipped the staging, so ``--api-key X`` was dropped
     # and auth fell through to settings.json — /v1/* rejected X with 401.
     server._api_key = server._resolve_api_key(args.api_key)
+    server._strict_auth = server._resolve_strict_auth(
+        getattr(args, "strict_auth", False)
+    )
     create_app = server.create_app
 
     # Issue #692: --rate-limit 0 must disable the limiter on the model-dir
@@ -762,6 +765,9 @@ def _stage_server_config(args, server, logger):
 
     # API key
     server._api_key = server._resolve_api_key(args.api_key)
+    server._strict_auth = server._resolve_strict_auth(
+        getattr(args, "strict_auth", False)
+    )
 
     # Body-size cap
     _max_body_arg = getattr(args, "max_request_bytes", None)

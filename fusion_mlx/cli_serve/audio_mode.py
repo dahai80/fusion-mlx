@@ -105,6 +105,9 @@ def _serve_audio_mode(args, entry) -> None:
     # here would silently weaken the deployment posture for anyone who
     # added ``--api-key`` to their ``fusion-mlx serve kokoro`` command.
     server._api_key = server._resolve_api_key(args.api_key)
+    server._strict_auth = server._resolve_strict_auth(
+        getattr(args, "strict_auth", False)
+    )
 
     _max_body_arg = getattr(args, "max_request_bytes", None)
     if _max_body_arg is not None:
