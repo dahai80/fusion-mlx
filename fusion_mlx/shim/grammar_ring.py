@@ -103,9 +103,14 @@ def apply_bitmask(bitmask, logits, vocab_size: int):
     flat = np.ascontiguousarray(np.asarray(bitmask, dtype=np.int32).reshape(-1))
     words = mx.array(flat)
     kernel = _get_xgrammar_apply()
-    if kernel is not None:
+    # xgrammar's signature is (bitmask, logits, vocab_size) — passing the two
+    # arrays the other way round made every call raise broadcast_shapes and
+    # drop to the mx-native expansion, so the fast path never ran (#1402).
+    # The kernel also truncates logits to ``vocab_size``; when the model pads
+    # its embedding table past that, keep the full width via the fallback.
+    if kernel is not None and int(logits.shape[-1]) <= vocab_size:
         try:
-            return kernel(logits, words, vocab_size)
+            return kernel(words, logits, vocab_size)
         except Exception:
             logger.debug(
                 "xgrammar apply kernel failed; mx-native expansion", exc_info=True
