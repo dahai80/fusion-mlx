@@ -47,6 +47,35 @@ def get_image_load_timeout() -> float:
     return val
 
 
+# #1407: absolute wall-clock cap for one image job. The per-event deadline
+# below is an *inactivity* budget — a worker that keeps reporting denoise
+# steps is alive, however slow. This cap still bounds a chatty-but-endless
+# worker. Env override: FUSION_IMAGE_TOTAL_TIMEOUT (seconds); <= 0 disables.
+_IMAGE_TOTAL_TIMEOUT_DEFAULT_S = 7200.0
+
+
+def get_image_total_timeout() -> float:
+    raw = os.environ.get("FUSION_IMAGE_TOTAL_TIMEOUT")
+    if raw is None or raw == "":
+        return _IMAGE_TOTAL_TIMEOUT_DEFAULT_S
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "FUSION_IMAGE_TOTAL_TIMEOUT=%r is not a number, using default %.0fs",
+            raw,
+            _IMAGE_TOTAL_TIMEOUT_DEFAULT_S,
+        )
+        return _IMAGE_TOTAL_TIMEOUT_DEFAULT_S
+    if val <= 0:
+        logger.warning(
+            "FUSION_IMAGE_TOTAL_TIMEOUT=%r <= 0, cap disabled",
+            raw,
+        )
+        return 0.0
+    return val
+
+
 class MediaJobLoadHangError(RuntimeError):
     # #1332: distinct from the overall TimeoutError so the caller can tell a
     # load hang (no first event) from a generation hang (deadline exceeded).
@@ -124,13 +153,17 @@ class MediaJobManager:
         timeout: float,
         on_step: Callable[[int, int, int], None] | None = None,
         load_timeout: float | None = None,
+        total_timeout: float | None = None,
     ) -> MediaJobResult:
         # Returns MediaJobResult with output file paths. Raises TimeoutError
-        # if the worker exceeds timeout (subprocess killed). Raises
-        # MediaJobLoadHangError when no event arrives within load_timeout
-        # (#1332). Raises RuntimeError on worker crash/error.
+        # when the worker goes silent for `timeout` seconds (inactivity
+        # budget, #1407) or exceeds total_timeout wall clock (subprocess
+        # killed). Raises MediaJobLoadHangError when no event arrives within
+        # load_timeout (#1332). Raises RuntimeError on worker crash/error.
         if load_timeout is None:
             load_timeout = get_image_load_timeout()
+        if total_timeout is None:
+            total_timeout = get_image_total_timeout()
         output_dir, spec = self._build_spec(
             variant,
             model_path,
@@ -174,15 +207,19 @@ class MediaJobManager:
             self._kill(proc)
 
         try:
-            await self._read_stdout(proc, timeout, on_step, result, load_timeout, t0)
+            await self._read_stdout(
+                proc, timeout, on_step, result, load_timeout, t0, total_timeout
+            )
         except MediaJobLoadHangError as exc:
             _kill_worker()
             result.error = str(exc)
             result.exit_code = -1
             raise
-        except TimeoutError:
+        except TimeoutError as exc:
             _kill_worker()
-            result.error = f"worker exceeded {timeout:.0f}s timeout (killed)"
+            result.error = str(exc) or (
+                f"worker produced no event for {timeout:.0f}s (killed)"
+            )
             result.exit_code = -1
             raise TimeoutError(result.error)
         finally:
@@ -291,19 +328,48 @@ class MediaJobManager:
         result: MediaJobResult,
         load_timeout: float = 0.0,
         spawned_at: float | None = None,
+        total_timeout: float = 0.0,
     ) -> None:
-        # Read JSONL progress/result events from worker stdout. Raises
-        # TimeoutError if no event arrives within timeout. #1332: when
-        # load_timeout > 0, a first event that is still missing at that
-        # window raises MediaJobLoadHangError instead (fast-fail load hang).
+        # Read JSONL progress/result events from worker stdout. #1407: the
+        # deadline is an INACTIVITY budget, not a total budget — every event
+        # pushes it forward, because a worker reporting denoise steps is
+        # alive however slow the model is (30 steps of a 56GB bf16 edit
+        # model legitimately run far past 600s). A silent worker still dies
+        # after `timeout`. total_timeout caps the whole job so a chatty but
+        # endless worker cannot run forever. #1332: when load_timeout > 0, a
+        # first event that is still missing at that window raises
+        # MediaJobLoadHangError instead (fast-fail load hang).
         assert proc.stdout is not None
         if spawned_at is None:
             spawned_at = time.monotonic()
         deadline = spawned_at + timeout
+        hard_deadline = 0.0
+        if total_timeout and total_timeout > 0:
+            hard_deadline = spawned_at + total_timeout
         load_window = load_timeout if load_timeout and load_timeout > 0 else 0.0
+        if load_window:
+            # #1407: model load is legitimately silent — no events until the
+            # first denoise step. The inactivity clock therefore cannot start
+            # before the load window expires, or a large bf16 checkpoint that
+            # spends 5 minutes loading would be killed as "silent".
+            deadline = max(deadline, spawned_at + load_window)
         saw_event = False
+        events_seen = 0
         while True:
             now = time.monotonic()
+            if hard_deadline and now >= hard_deadline:
+                logger.error(
+                    "image worker pid=%d hit total timeout %.0fs after %d events "
+                    "(inactivity deadline was still open — raise "
+                    "FUSION_IMAGE_TOTAL_TIMEOUT if this job legitimately needs longer)",
+                    proc.pid,
+                    total_timeout,
+                    events_seen,
+                )
+                raise TimeoutError(
+                    f"worker exceeded the {total_timeout:.0f}s total timeout "
+                    f"after {events_seen} progress events (killed)"
+                )
             remaining = deadline - now
             if remaining <= 0:
                 raise TimeoutError()
@@ -349,6 +415,10 @@ class MediaJobManager:
             if not line_str:
                 continue
             saw_event = True
+            events_seen += 1
+            # #1407: any event proves the worker is alive; restart the
+            # inactivity clock so slow-but-progressing jobs finish.
+            deadline = max(deadline, time.monotonic() + timeout)
             try:
                 event = json.loads(line_str)
             except json.JSONDecodeError:
