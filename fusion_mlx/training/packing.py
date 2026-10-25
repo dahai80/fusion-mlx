@@ -115,20 +115,19 @@ def _build_batch(rows, max_seq_length: int):
     return mx.array(batch), mx.array(segments), mx.array(loss_mask)
 
 
-_ROWS_CACHE: dict[tuple, list] = {}
-
-
 def _packed_rows(dataset, max_seq_length: int):
     # train() builds one iterator for the epoch loop and evaluate() builds a
-    # fresh one per validation pass; packing the same dataset again every time
-    # re-runs the greedy layout (and re-logs the fill line).
-    key = (id(dataset), len(dataset), max_seq_length)
-    rows = _ROWS_CACHE.get(key)
-    if rows is None:
-        rows = pack_samples(_materialize(dataset), max_seq_length)
-        if len(_ROWS_CACHE) > 8:
-            _ROWS_CACHE.clear()
-        _ROWS_CACHE[key] = rows
+    # fresh one per validation pass; re-packing the same dataset every time
+    # re-runs the greedy layout (and re-logs the fill line). Cache on the
+    # dataset itself — a module-level id() key would alias after GC.
+    cached = getattr(dataset, "_fusion_packed_rows", None)
+    if cached is not None and cached[0] == max_seq_length:
+        return cached[1]
+    rows = pack_samples(_materialize(dataset), max_seq_length)
+    try:
+        dataset._fusion_packed_rows = (max_seq_length, rows)
+    except AttributeError:
+        pass
     return rows
 
 
