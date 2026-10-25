@@ -27,7 +27,15 @@ import asyncio
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import StreamingResponse
 
 from .auth import require_admin
@@ -1372,6 +1380,71 @@ async def list_voice_backends(
         "default": "kokoro",
         "voices": list_trained_voices(),
     }
+
+
+@_router.get("/api/audio/voice-bundles")
+async def list_voice_bundle_library(
+    is_admin: bool = Depends(require_admin),
+):
+    from fusion_mlx.audio.voice_bundles import (
+        list_voice_bundles,
+        voice_bundle_dir,
+    )
+
+    return {
+        "bundles": list_voice_bundles(),
+        "directory": str(voice_bundle_dir()),
+    }
+
+
+@_router.post("/api/audio/voice-bundles")
+async def create_voice_bundle_library_entry(
+    name: str = Form(...),
+    ref_text: str = Form(...),
+    file: UploadFile = File(...),
+    overwrite: bool = Form(False),
+    is_admin: bool = Depends(require_admin),
+):
+    from fusion_mlx.api.audio_routes import MAX_AUDIO_UPLOAD_BYTES
+    from fusion_mlx.audio.voice_bundles import (
+        bundle_to_dict,
+        write_voice_bundle,
+    )
+
+    data = await file.read()
+    if len(data) > MAX_AUDIO_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "reference clip exceeds the maximum allowed size "
+                f"({MAX_AUDIO_UPLOAD_BYTES} bytes)"
+            ),
+        )
+    try:
+        bundle = write_voice_bundle(name, data, ref_text, overwrite=overwrite)
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return bundle_to_dict(bundle)
+
+
+@_router.delete("/api/audio/voice-bundles/{name}")
+async def delete_voice_bundle_library_entry(
+    name: str,
+    is_admin: bool = Depends(require_admin),
+):
+    from fusion_mlx.audio.voice_bundles import delete_voice_bundle
+
+    if not delete_voice_bundle(name):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"voice bundle {name!r} not found (fine-tune packs are not "
+                "deleted by this endpoint)"
+            ),
+        )
+    return {"status": "deleted", "name": name}
 
 
 @_router.post("/api/fine-tune/voice/jobs")

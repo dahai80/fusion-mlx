@@ -53,6 +53,21 @@
   least 256 MiB of MLX-active memory; the
   `fusion_mlx_memory_fragmentation_ratio` gauge is unchanged.
 
+### Added — server-side reference-voice bundles (#1383)
+- A directory `~/.fusion-mlx/voices/<name>/` holding a reference clip
+  (`ref.wav` / `.mp3` / `.flac` / `.m4a` / `.ogg`) plus `ref.txt` is
+  addressable as a plain `voice` name on cloning-capable TTS models:
+  `POST /v1/audio/speech` resolves it to the pair internally, so clients no
+  longer have to host and base64-encode reference audio per speaker. An
+  explicit `ref_audio` always wins, models without a `ref_audio` generate
+  parameter (Kokoro) keep their preset voices, and an unmatched `voice` is
+  passed through unchanged.
+- `GET /v1/audio/voices` lists bundles under `voice_bundles`.
+- Admin surface: `GET` / `POST` / `DELETE /admin/api/audio/voice-bundles`
+  (multipart `name`, `ref_text`, `file`, optional `overwrite`). Writes stay
+  behind admin auth so an API key cannot modify the voice library; the
+  delete path never removes a fine-tune pack.
+
 ## [v0.10.15] — 2026-10-25
 
 ### Added — Kokoro voice fine-tuning (#1336)

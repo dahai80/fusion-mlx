@@ -109,6 +109,19 @@ class TTSEngine(BaseNonStreamingEngine):
             return False
         return "stream" in gen_params and "streaming_interval" in gen_params
 
+    def supports_voice_cloning(self) -> bool:
+        # #1383: reference-voice bundles only make sense for models whose
+        # generate() takes a reference clip. Kokoro accepts **kwargs but
+        # exposes neither ref_audio nor any preset list, so the signature is
+        # the only reliable discriminator.
+        if self._model is None:
+            return False
+        try:
+            gen_params = inspect.signature(self._model.generate).parameters
+        except (TypeError, ValueError):
+            return False
+        return "ref_audio" in gen_params
+
     async def start(self) -> None:
         if self._model is not None:
             return
