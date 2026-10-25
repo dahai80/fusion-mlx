@@ -115,6 +115,23 @@ def _build_batch(rows, max_seq_length: int):
     return mx.array(batch), mx.array(segments), mx.array(loss_mask)
 
 
+_ROWS_CACHE: dict[tuple, list] = {}
+
+
+def _packed_rows(dataset, max_seq_length: int):
+    # train() builds one iterator for the epoch loop and evaluate() builds a
+    # fresh one per validation pass; packing the same dataset again every time
+    # re-runs the greedy layout (and re-logs the fill line).
+    key = (id(dataset), len(dataset), max_seq_length)
+    rows = _ROWS_CACHE.get(key)
+    if rows is None:
+        rows = pack_samples(_materialize(dataset), max_seq_length)
+        if len(_ROWS_CACHE) > 8:
+            _ROWS_CACHE.clear()
+        _ROWS_CACHE[key] = rows
+    return rows
+
+
 def iterate_packed_batches(
     dataset,
     batch_size: int,
@@ -128,7 +145,7 @@ def iterate_packed_batches(
             "pack_sequences is not supported in distributed training "
             f"(world size {comm_group.size()}); run single-node or disable packing"
         )
-    rows = pack_samples(_materialize(dataset), max_seq_length)
+    rows = _packed_rows(dataset, max_seq_length)
     if len(rows) < batch_size:
         raise ValueError(
             f"Dataset must pack into at least batch_size={batch_size} rows "

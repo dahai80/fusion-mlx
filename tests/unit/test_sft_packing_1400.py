@@ -96,6 +96,12 @@ class TestIteratePackedBatches:
         for batch, segments, loss_mask in batches:
             assert batch.shape == segments.shape == loss_mask.shape
 
+    def test_rows_cached_across_iterators(self):
+        ds = _ListDataset(_items())
+        first = packing._packed_rows(ds, 8)
+        second = packing._packed_rows(ds, 8)
+        assert first is second
+
     def test_raises_when_rows_below_batch_size(self):
         with pytest.raises(ValueError, match="at least batch_size"):
             next(packing.iterate_packed_batches(_ListDataset(_items()), 100, 16))
