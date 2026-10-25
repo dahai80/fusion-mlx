@@ -29,6 +29,7 @@ from ..request import Request, RequestOutput, RequestStatus
 from ._contention import mark_decode, others_decoding, pool_shared
 from .config import SchedulerOutput
 from .helpers import (
+    _current_fragmentation_ratio,
     _should_clear_on_fragmentation,
     _sync_and_clear_cache,
 )
@@ -403,7 +404,7 @@ def step(self) -> SchedulerOutput:
                 # we never disrupt prefill activation buffers.
                 self._tokens_since_clear_cache += len(responses)
                 if self._tokens_since_clear_cache >= self.config.decode_clear_interval:
-                    frag = getattr(self, "_fragmentation_ratio", 0.0)
+                    frag = _current_fragmentation_ratio()
                     cache_mem = mx.get_cache_memory()
                     cache_threshold = self._periodic_clear_threshold_bytes()
                     if cache_mem > cache_threshold * 2 or (
@@ -510,7 +511,7 @@ def step(self) -> SchedulerOutput:
         should_clear = True
         self._deferred_clear_at = None
     if should_clear:
-        frag = getattr(self, "_fragmentation_ratio", 0.0)
+        frag = _current_fragmentation_ratio()
         cache_mem = mx.get_cache_memory()
         cache_threshold = self._periodic_clear_threshold_bytes()
         if _should_clear_on_fragmentation(frag) and cache_mem > cache_threshold:

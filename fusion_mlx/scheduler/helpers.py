@@ -1,9 +1,35 @@
+import logging
 from typing import Any
 
 import mlx.core as mx
 
 from .monkeypatches import _default_generation_stream
 from .types import _mx_buffer_access_lock
+
+logger = logging.getLogger(__name__)
+
+
+def _current_fragmentation_ratio() -> float:
+    """Share of phys_footprint the MLX allocator is not accounting for.
+
+    Same formula as the ``fusion_mlx_memory_fragmentation_ratio`` gauge
+    in ``routes_internal/metrics.py``: (phys - active - cache) / phys.
+    The scheduler used to read a ``self._fragmentation_ratio`` attribute
+    that nothing ever assigned, so the "skip clear_cache on a fragmented
+    heap" guard from the stability review always saw 0.0 (#1395).
+    """
+    try:
+        from ..utils.proc_memory import get_phys_footprint
+
+        phys = int(get_phys_footprint() or 0)
+        if phys <= 0:
+            return 0.0
+        active = int(mx.get_active_memory() or 0)
+        cache = int(mx.get_cache_memory() or 0)
+    except Exception:
+        logger.debug("fragmentation ratio unavailable", exc_info=True)
+        return 0.0
+    return max(0.0, (phys - active - cache) / phys)
 
 
 def _should_clear_on_fragmentation(frag_ratio: float, threshold: float = 0.7) -> bool:

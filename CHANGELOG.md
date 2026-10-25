@@ -77,6 +77,13 @@
   so any TTS/STT checkpoint already on disk boots in audio mode. Text
   checkpoints still take the text path unchanged.
 
+### Fixed — scheduler fragmentation guard was inert (#1395)
+- Both cache-clear paths read `self._fragmentation_ratio`, which nothing
+  ever assigned, so the "skip `clear_cache()` on a fragmented heap"
+  protection always saw 0.0 and never engaged (debug logs also always
+  printed `frag=0.00`). The ratio is now computed where it is read with
+  the same formula as the `fusion_mlx_memory_fragmentation_ratio` gauge.
+
 ## [v0.10.15] — 2026-10-25
 
 ### Added — Kokoro voice fine-tuning (#1336)
