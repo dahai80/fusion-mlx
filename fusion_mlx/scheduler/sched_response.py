@@ -19,6 +19,21 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _model_label(path: str) -> str:
+    # The scheduler only knows the resolved load path, which for an HF cache
+    # entry is ``.../models--org--name/snapshots/<sha>``. The basename is a
+    # commit hash, which makes the completion summary useless for per-model
+    # triage, so walk back to the repo directory and rebuild ``org/name``.
+    if not path:
+        return ""
+    cleaned = path.rstrip("/")
+    for part in reversed(cleaned.split(os.sep)):
+        if part.startswith("models--"):
+            owner, sep, name = part[len("models--") :].partition("--")
+            return f"{owner}/{name}" if sep else owner
+    return os.path.basename(cleaned)
+
+
 def _log_completion_summary(request, output, model_name=""):
     """Log Ollama-style request completion summary."""
     prompt_tokens = output.prompt_tokens
@@ -258,9 +273,7 @@ def _process_batch_responses(
             _log_completion_summary(
                 request,
                 output,
-                os.path.basename(
-                    getattr(getattr(self, "config", None), "model_name", "") or ""
-                ),
+                _model_label(getattr(getattr(self, "config", None), "model_name", "")),
             )
 
             if parser_session is not None:
