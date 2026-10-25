@@ -239,6 +239,45 @@ class TestDetectBackend:
 # ─── Integration: bitmask → logits ────────────────────────────────────────
 
 
+class TestTerminatedGrammarForcesEos:
+    def _terminated_proc(self, vocab_size=64, eos_token_ids=None):
+        fake_matcher = MagicMock()
+        fake_matcher.compute_bitmask.return_value = b"\xff" * 8
+        fake_matcher.is_stopped.return_value = False
+        fake_matcher.is_error.return_value = False
+        proc = GrammarConstraintProcessor(
+            fake_matcher,
+            vocab_size=vocab_size,
+            backend=GrammarBackend.LLGUIDANCE,
+            eos_token_ids=eos_token_ids,
+        )
+        proc._terminated = True
+        return proc
+
+    def test_only_eos_survives_after_termination(self):
+        import mlx.core as mx
+
+        proc = self._terminated_proc(eos_token_ids=[7])
+        out = np.array(proc(None, mx.zeros((1, 64))))
+        assert out[0, 7] == 0.0
+        assert np.all(np.isinf(out[0, :7]))
+        assert np.all(np.isinf(out[0, 8:]))
+
+    def test_without_eos_ids_logits_pass_through(self):
+        import mlx.core as mx
+
+        proc = self._terminated_proc()
+        out = np.array(proc(None, mx.zeros((1, 64))))
+        assert np.all(out == 0.0)
+
+    def test_out_of_range_eos_is_ignored(self):
+        import mlx.core as mx
+
+        proc = self._terminated_proc(eos_token_ids=[999])
+        out = np.array(proc(None, mx.zeros((1, 64))))
+        assert np.all(np.isinf(out))
+
+
 class TestBitmaskApplication:
     def test_bytes_bitmask_masks_tokens(self):
         vocab_size = 128
@@ -259,6 +298,57 @@ class TestBitmaskApplication:
         assert result.shape == (1, vocab_size)
         np_result = np.array(result)
         assert np.all(np_result <= 0)
+
+    def test_narrower_bitmask_than_logits_does_not_raise(self):
+        # Production case: a VLM's config vocab_size (248320) covers padded
+        # embeddings the tokenizer does not know, so llguidance hands back a
+        # bitmask for the tokenizer's ids only (248096) and the kernel died
+        # with broadcast_shapes. Padded ids must be masked out, not crash.
+        vocab_size = 160
+        tokenizer_vocab = 128
+        allow_all = b"\xff" * (((tokenizer_vocab + 31) // 32) * 4)
+        fake_matcher = MagicMock()
+        fake_matcher.compute_bitmask.return_value = allow_all
+        fake_matcher.is_stopped.return_value = False
+        fake_matcher.is_error.return_value = False
+
+        proc = GrammarConstraintProcessor(
+            fake_matcher, vocab_size=vocab_size, backend=GrammarBackend.LLGUIDANCE
+        )
+        import mlx.core as mx
+
+        result = proc(None, mx.zeros((1, vocab_size)))
+        assert result.shape == (1, vocab_size)
+        np_result = np.array(result)
+        assert np.all(np_result[0, :tokenizer_vocab] == 0.0)
+        assert np.all(np_result[0, tokenizer_vocab:] == float("-inf"))
+
+    def test_wider_bitmask_than_logits_is_truncated(self):
+        vocab_size = 96
+        allow_all = b"\xff" * (((128 + 31) // 32) * 4)
+        fake_matcher = MagicMock()
+        fake_matcher.compute_bitmask.return_value = allow_all
+        fake_matcher.is_stopped.return_value = False
+        fake_matcher.is_error.return_value = False
+
+        proc = GrammarConstraintProcessor(
+            fake_matcher, vocab_size=vocab_size, backend=GrammarBackend.LLGUIDANCE
+        )
+        import mlx.core as mx
+
+        result = proc(None, mx.zeros((1, vocab_size)))
+        assert result.shape == (1, vocab_size)
+
+    def test_manual_fallback_pads_mask_to_logits_width(self):
+        proc = GrammarConstraintProcessor.__new__(GrammarConstraintProcessor)
+        proc._vocab_size = 160
+        import mlx.core as mx
+
+        bitmask = mx.array(np.full((1, 4), -1, dtype=np.int32))
+        result = proc._apply_bitmask_manual(bitmask, mx.zeros((1, 160)), 128)
+        np_result = np.array(result)
+        assert np.all(np_result[0, :128] == 0.0)
+        assert np.all(np_result[0, 128:] == float("-inf"))
 
     def test_bytes_bitmask_allows_tokens(self):
         vocab_size = 128

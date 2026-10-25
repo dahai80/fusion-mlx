@@ -84,6 +84,19 @@
   printed `frag=0.00`). The ratio is now computed where it is read with
   the same formula as the `fusion_mlx_memory_fragmentation_ratio` gauge.
 
+### Fixed — constrained decoding on models with a padded vocabulary (#1384)
+- Grammar masks are now aligned to the narrower of the model's `vocab_size`
+  and the tokenizer's id range. On Qwen3.5-4B the config advertises 248320 ids
+  while the tokenizer knows 248096, so `llguidance` produced a narrower bitmask
+  than the logits and every constrained request died with `[broadcast_shapes]
+  Shapes (1,248320) and (1,248096) cannot be broadcast`. Padding ids are now
+  masked out instead — they are not decodable tokens. The grammar-ring
+  prefetch path shares the same alignment, so it no longer degrades to the
+  inline path for such models.
+- A completed grammar now forces end-of-sequence. Previously generation ran on
+  unconstrained once the matcher accepted, so `{"type":"string",
+  "enum":["alpha","beta"]}` returned `"alpha"` followed by free text.
+
 ## [v0.10.15] — 2026-10-25
 
 ### Added — Kokoro voice fine-tuning (#1336)
