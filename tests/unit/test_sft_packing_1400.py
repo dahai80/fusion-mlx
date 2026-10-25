@@ -96,6 +96,14 @@ class TestIteratePackedBatches:
         for batch, segments, loss_mask in batches:
             assert batch.shape == segments.shape == loss_mask.shape
 
+    def test_eval_clamps_batch_size_when_rows_are_few(self):
+        batches = list(
+            packing.iterate_packed_batches(_ListDataset(_items()), 100, 8, loop=False, seed=0)
+        )
+        assert len(batches) == 1
+        batch, segments, loss_mask = batches[0]
+        assert batch.shape[0] < 100
+
     def test_rows_cached_across_iterators(self):
         ds = _ListDataset(_items())
         first = packing._packed_rows(ds, 8)
@@ -104,7 +112,7 @@ class TestIteratePackedBatches:
 
     def test_raises_when_rows_below_batch_size(self):
         with pytest.raises(ValueError, match="at least batch_size"):
-            next(packing.iterate_packed_batches(_ListDataset(_items()), 100, 16))
+            next(packing.iterate_packed_batches(_ListDataset(_items()), 100, 16, loop=True))
 
     def test_distributed_rejected(self):
         class _World:

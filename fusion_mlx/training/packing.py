@@ -147,10 +147,21 @@ def iterate_packed_batches(
         )
     rows = _packed_rows(dataset, max_seq_length)
     if len(rows) < batch_size:
-        raise ValueError(
-            f"Dataset must pack into at least batch_size={batch_size} rows "
-            f"but only has {len(rows)}; lower batch_size or max_seq_length"
+        # Training keeps mlx-lm's strict contract. Evaluation must not kill an
+        # otherwise valid run just because the validation set packs into fewer
+        # rows than batch_size, so it runs with what it has.
+        if loop:
+            raise ValueError(
+                f"Dataset must pack into at least batch_size={batch_size} rows "
+                f"but only has {len(rows)}; lower batch_size or max_seq_length"
+            )
+        logger.info(
+            "packing: validation set has %d row(s) < batch_size=%d; "
+            "evaluating with the smaller batch",
+            len(rows),
+            batch_size,
         )
+        batch_size = len(rows)
     rng = np.random.default_rng(seed)
     while True:
         order = rng.permutation(len(rows))
