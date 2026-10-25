@@ -56,6 +56,6 @@
   "patches/specprefill.py": "9e1f62b88ca7a30aae2cad4a1db40ae9aa1c1e15300596d6fa9231783b71dcfe",
   "patches/step3p7/__init__.py": "8a56179a95ab061baf2a24c5e825e54756863308786636f512e97936dd9daa61",
   "patches/step3p7/step3p7_model.py": "f77c0345f58493d8054f3f59ae3a643561592c6989fcae166103dab981525edb",
-  "patches/turboquant_attention.py": "10988f80f213dd86766560f0c60a2fa19fb5bf05abbbf8baaef6c378395e1250",
+  "patches/turboquant_attention.py": "bbe4f1e137ad49232909ed26cc12fb89ca687de681ecdb5cb60c00966d6be6be",
   "patches/turboquant_fused_rht_guard.py": "1fae7a7d16f419d085912513bd7528c494511c0a373f5dac8d71eb858c3205fc"
 }
