@@ -127,6 +127,27 @@ class TestGrammarMaskRing:
         assert ring.is_terminated is False
         ring.stop()
 
+    def test_prefetch_pads_narrower_matcher_mask(self, monkeypatch):
+        # VLM-padded vocab: the matcher knows the tokenizer's 512 ids while the
+        # model reports 544. The slot is 17 words wide, the matcher produces 16;
+        # the ring must deny the padding ids instead of failing the copy.
+        monkeypatch.setenv("FUSION_SHIM_GRAMMAR_RING", "1")
+        padded_vocab = 544
+        p = FakeProcessor(VOCAB)
+        ring = GrammarMaskRing(p, padded_vocab)
+        logits = mx.zeros((1, padded_vocab))
+        ring([], logits)
+        ring.accept_token(2)
+        slot = ring._steps % ring._depth
+        assert ring._wait_ready(slot, timeout=2.0)
+        out = ring([], logits)
+        assert ring.stats["prefetched"] == 1
+        vals = np.asarray(out)
+        assert vals.shape == (1, padded_vocab)
+        assert vals[0, 0] == 0.0
+        assert np.all(np.isinf(vals[0, VOCAB:]))
+        ring.stop()
+
     def test_inline_fallback_when_worker_slow(self, monkeypatch):
         monkeypatch.setenv("FUSION_SHIM_GRAMMAR_RING", "1")
         p = FakeProcessor(VOCAB)
@@ -203,6 +224,30 @@ class TestGrammarMaskRing:
         ring.accept_token(2)
         assert ring.is_terminated is True
         assert ring._job_in_flight is False
+        ring.stop()
+
+    def test_terminated_delegates_to_wrapped_for_eos(self, monkeypatch):
+        # A completed grammar must reach the wrapped processor: it forces EOS
+        # from then on, which a prefetched slot never does.
+        monkeypatch.setenv("FUSION_SHIM_GRAMMAR_RING", "1")
+
+        class CountingProcessor(FakeProcessor):
+            def __init__(self, vocab):
+                super().__init__(vocab)
+                self.calls = 0
+
+            def __call__(self, tokens, logits):
+                self.calls += 1
+                return super().__call__(tokens, logits)
+
+        p = CountingProcessor(VOCAB)
+        ring = GrammarMaskRing(p, VOCAB)
+        ring([], _logits())
+        inline_calls = p.calls
+        p.is_terminated = True
+        ring.accept_token(2)
+        ring([], _logits())
+        assert p.calls == inline_calls + 1
         ring.stop()
 
     def test_depth_validation(self, monkeypatch):

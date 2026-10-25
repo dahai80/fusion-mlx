@@ -327,10 +327,16 @@ class GrammarConstraintProcessor:
         vocab_size: int,
         *,
         backend: GrammarBackend | None = None,
+        eos_token_ids: list[int] | None = None,
     ):
         self._vocab_size = vocab_size
         self._terminated = False
         self._first_call = True
+        # Once the grammar reaches an accepting state the only valid
+        # continuation is end-of-sequence. Without this the sampler keeps
+        # generating unconstrained text past a complete grammar (a JSON
+        # string schema produced ``"alpha"`` followed by prose).
+        self._eos_ids = [t for t in (eos_token_ids or []) if isinstance(t, int)]
 
         if backend is None:
             backend = self._detect_backend(compiled_grammar)
@@ -392,7 +398,7 @@ class GrammarConstraintProcessor:
     def __call__(self, tokens, logits: mx.array) -> mx.array:
         """Fill bitmask and apply to logits."""
         if self._terminated:
-            return logits
+            return self._eos_only(logits)
 
         if self._backend == GrammarBackend.XGRAMMAR:
             return self._call_xgrammar(logits)
@@ -400,13 +406,67 @@ class GrammarConstraintProcessor:
             return self._call_llguidance(logits)
         return logits
 
+    def _eos_only(self, logits: mx.array) -> mx.array:
+        # Grammar complete: allow EOS and nothing else so generation stops on
+        # a normal end-of-sequence instead of running on unconstrained.
+        if not self._eos_ids:
+            return logits
+        width = int(logits.shape[-1])
+        mask = np.full(width, float("-inf"), dtype=np.float32)
+        for tid in self._eos_ids:
+            if 0 <= tid < width:
+                mask[tid] = 0.0
+        mask_mx = mx.array(mask)
+        if logits.ndim == 2:
+            return logits + mask_mx.reshape(1, -1)
+        return logits + mask_mx
+
+    def _mask_vocab(self, logits: mx.array) -> int:
+        # The mask must cover the ids the logits can emit. ``self._vocab_size``
+        # comes from the model config, which for VLMs can exceed the
+        # tokenizer's id range (padded embeddings); a llguidance matcher built
+        # from that tokenizer then hands back a narrower bitmask than the
+        # logits, and the xgrammar kernel raises broadcast_shapes. Whatever the
+        # narrower number is, that is what we can safely mask against.
+        width = int(logits.shape[-1]) if len(logits.shape) else self._vocab_size
+        return min(self._vocab_size, width)
+
+    @staticmethod
+    def _align_words(mask_np: np.ndarray, vocab: int) -> np.ndarray:
+        # Pad (with 0 words = deny) or truncate the bitmask to ``vocab``. Padded
+        # ids are not decodable tokens, so denying them is correct, and it keeps
+        # the bitmask and logits widths equal for the kernel.
+        need = (vocab + 31) // 32
+        have = int(mask_np.shape[-1])
+        if have == need:
+            return mask_np
+        if have > need:
+            logger.debug(
+                "grammar: truncating bitmask %d -> %d words (vocab=%d)",
+                have,
+                need,
+                vocab,
+            )
+            return mask_np[..., :need]
+        logger.debug(
+            "grammar: padding bitmask %d -> %d words (vocab=%d); padded ids masked out",
+            have,
+            need,
+            vocab,
+        )
+        pad = np.zeros(mask_np.shape[:-1] + (need - have,), dtype=mask_np.dtype)
+        return np.concatenate([mask_np, pad], axis=-1)
+
     def _call_xgrammar(self, logits: mx.array) -> mx.array:
+        vocab = self._mask_vocab(logits)
         self._bitmask.fill(-1)
         self._matcher.fill_next_token_bitmask(self._bitmask)
-        mx_bitmask = mx.array(self._bitmask)
-        return self._apply_mask(mx_bitmask, logits, self._vocab_size)
+        mask_np = self._align_words(self._bitmask, vocab)
+        return self._apply_mask(mx.array(mask_np), logits, vocab)
 
     def _call_llguidance(self, logits: mx.array) -> mx.array:
+        vocab = self._mask_vocab(logits)
+        mask_np = None
         try:
             bitmask = self._matcher.compute_bitmask()
             if bitmask is not None:
@@ -415,33 +475,36 @@ class GrammarConstraintProcessor:
                     mask_np = np.frombuffer(bitmask, dtype=np.int32).reshape(
                         1, bitmask_width
                     )
-                    mx_bitmask = mx.array(mask_np)
                 elif isinstance(bitmask, np.ndarray):
-                    mx_bitmask = mx.array(bitmask)
+                    mask_np = bitmask
                 else:
-                    mx_bitmask = mx.array(np.array(bitmask, dtype=np.int32))
-            else:
-                self._bitmask.fill(-1)
-                mx_bitmask = mx.array(self._bitmask)
+                    mask_np = np.array(bitmask, dtype=np.int32)
         except Exception:
             logger.debug("llguidance compute_bitmask failed, using permissive mask")
+        if mask_np is None:
             self._bitmask.fill(-1)
-            mx_bitmask = mx.array(self._bitmask)
+            mask_np = self._bitmask
 
+        mx_bitmask = mx.array(self._align_words(mask_np, vocab))
         try:
             from xgrammar.kernels.apply_token_bitmask_mlx import apply_token_bitmask_mlx
 
-            return apply_token_bitmask_mlx(mx_bitmask, logits, self._vocab_size)
+            return apply_token_bitmask_mlx(mx_bitmask, logits, vocab)
         except ImportError:
-            return self._apply_bitmask_manual(mx_bitmask, logits)
+            return self._apply_bitmask_manual(mx_bitmask, logits, vocab)
 
-    def _apply_bitmask_manual(self, bitmask: mx.array, logits: mx.array) -> mx.array:
+    def _apply_bitmask_manual(
+        self, bitmask: mx.array, logits: mx.array, vocab: int | None = None
+    ) -> mx.array:
         """Fallback bitmask application when xgrammar kernel is unavailable."""
         neg_inf = float("-inf")
-        flat = bitmask.reshape(-1)
-        vocab = self._vocab_size
+        if vocab is None:
+            vocab = self._mask_vocab(logits)
+        flat = np.array(bitmask).reshape(-1)
         allowed = np.zeros(vocab, dtype=bool)
-        for i in range(0, min(flat.shape[0] * 32, vocab), 32):
+        for i in range(0, vocab, 32):
+            if i // 32 >= flat.shape[0]:
+                break
             word = int(flat[i // 32])
             for bit in range(32):
                 idx = i + bit
@@ -449,7 +512,11 @@ class GrammarConstraintProcessor:
                     break
                 if word & (1 << bit):
                     allowed[idx] = True
-        mask = np.where(allowed, 0.0, neg_inf).astype(np.float32)
+        # Slots between ``vocab`` and the logits width are padding embeddings:
+        # the tokenizer never emits them, so they stay masked out.
+        width = int(logits.shape[-1]) if len(logits.shape) else vocab
+        mask = np.full(width, neg_inf, dtype=np.float32)
+        mask[:vocab] = np.where(allowed, 0.0, neg_inf)
         mask_mx = mx.array(mask)
         if logits.ndim == 2:
             return logits + mask_mx.reshape(1, -1)

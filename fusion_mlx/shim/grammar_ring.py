@@ -113,6 +113,14 @@ def apply_bitmask(bitmask, logits, vocab_size: int):
     one, neg_inf, shifts = _get_apply_consts()
     bits = (words[:, None].astype(mx.uint32) >> shifts) & one
     bits = bits.reshape(-1)[:vocab_size] == one
+    # ``bits`` covers only ``vocab_size`` ids; the logits can be wider when the
+    # model pads its embedding table. Those extra ids are not decodable, so pad
+    # the mask with False (deny) instead of failing to broadcast.
+    width = int(logits.shape[-1])
+    if bits.shape[0] < width:
+        bits = mx.concatenate(
+            [bits, mx.zeros((width - bits.shape[0],), dtype=mx.bool_)]
+        )
     if logits.ndim == 2:
         return mx.where(bits.reshape(1, -1), logits, neg_inf)
     return mx.where(bits, logits, neg_inf)
@@ -168,7 +176,18 @@ class GrammarMaskRing:
         try:
             mask = self._compute_mask(slot)
             if mask is not None:
-                np.copyto(self._slots[slot], mask.reshape(1, -1))
+                target = self._slots[slot]
+                flat = mask.reshape(1, -1)
+                # The produced words can be fewer than the slot (an llguidance
+                # matcher knows only the tokenizer's ids, which on VLM-padded
+                # vocabs is less than the model's vocab_size). Copy what the
+                # matcher produced and deny the padding slots: those ids are
+                # not decodable tokens, and a short slot would break the apply
+                # kernel's shapes.
+                width = min(flat.shape[-1], target.shape[-1])
+                np.copyto(target[:, :width], flat[:, :width])
+                if width < target.shape[-1]:
+                    target[:, width:] = 0
                 produced = True
         except Exception:
             logger.debug(
@@ -277,7 +296,9 @@ class GrammarMaskRing:
 
     def __call__(self, tokens, logits):
         if self._terminated:
-            return logits
+            # Terminated grammar still needs the wrapped processor: it forces
+            # EOS from here on, which the ring's prefetched masks never do.
+            return self._wrapped(tokens, logits)
         slot = self._steps % self._depth
         # Consume only a slot whose ready flag belongs to THIS epoch —
         # stale flags from abandoned (timed-out) jobs never match.
