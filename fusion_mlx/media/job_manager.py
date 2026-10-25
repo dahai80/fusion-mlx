@@ -347,6 +347,12 @@ class MediaJobManager:
         if total_timeout and total_timeout > 0:
             hard_deadline = spawned_at + total_timeout
         load_window = load_timeout if load_timeout and load_timeout > 0 else 0.0
+        if load_window:
+            # #1407: model load is legitimately silent — no events until the
+            # first denoise step. The inactivity clock therefore cannot start
+            # before the load window expires, or a large bf16 checkpoint that
+            # spends 5 minutes loading would be killed as "silent".
+            deadline = max(deadline, spawned_at + load_window)
         saw_event = False
         events_seen = 0
         while True:

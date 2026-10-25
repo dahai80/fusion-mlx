@@ -25,6 +25,12 @@ import time
 time.sleep(30)
 """
 
+SLOW_LOAD = """
+import json, time
+time.sleep(0.6)
+print(json.dumps({"type": "result", "outputs": ["/tmp/slow.png"]}), flush=True)
+"""
+
 
 async def _spawn(script: str):
     return await asyncio.create_subprocess_exec(
@@ -88,6 +94,16 @@ class TestInactivityDeadline:
     def test_load_hang_still_fires(self):
         with pytest.raises(jm.MediaJobLoadHangError):
             asyncio.run(_read(SILENT, timeout=5.0, load_timeout=0.3))
+
+    def test_first_event_waits_for_the_load_window(self):
+        # Silent model load outlasts the inactivity budget but stays inside
+        # the load window: a big checkpoint must not be killed as "silent".
+        result = asyncio.run(_read(SLOW_LOAD, timeout=0.3, load_timeout=3.0))
+        assert result.outputs == ["/tmp/slow.png"]
+
+    def test_no_events_past_load_window_still_fails(self):
+        with pytest.raises(jm.MediaJobLoadHangError):
+            asyncio.run(_read(SILENT, timeout=0.2, load_timeout=0.4))
 
 
 class TestStepProjection:
