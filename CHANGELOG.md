@@ -37,6 +37,15 @@
   thread (it asserted against a sentinel the writer drained first, which
   made `main`'s `rest` shard red).
 
+### Fixed — draft-model speculative decode never loaded (#1386)
+- The default draft path was the flat `~/.fusion-mlx/models/org/name` form,
+  but downloads land in the HF cache layout
+  (`models--org--name/snapshots/<sha>`), so `mlx_lm.load` raised and
+  draft-model speculative decode stayed off on every stock install — a single
+  WARNING was the only trace. The path is now resolved to the newest cache
+  snapshot, and the failure message names the repo id plus the
+  `fusion-mlx pull` command that fixes it.
+
 ## [v0.10.15] — 2026-10-25
 
 ### Added — Kokoro voice fine-tuning (#1336)
