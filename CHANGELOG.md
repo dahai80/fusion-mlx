@@ -17,6 +17,12 @@
   during a gateway migration are discoverable. Recipe:
   `docs/gateway-sole-entry.md`.
 
+### Fixed — completion summary printed a snapshot hash as the model (#1380)
+- The `| completed | model=... |` scheduler summary resolved the model name
+  from the load path, whose basename for an HF cache entry is the commit
+  hash. It now walks back to the `models--org--name` directory and reports
+  `org/name`, so per-model triage of the summary line is possible.
+
 ## [v0.10.15] — 2026-10-25
 
 ### Added — Kokoro voice fine-tuning (#1336)
