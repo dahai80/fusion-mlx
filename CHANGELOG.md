@@ -11,6 +11,19 @@
   order, and is skipped when the model pads logits wider than the mask vocab
   (the kernel truncates the output to `vocab_size`).
 
+### Added — sequence packing for SFT (`pack_sequences`) (#1400)
+- `FineTuneConfig.pack_sequences` (default off) packs short samples into rows
+  of at most `max_seq_length` tokens instead of padding each sample to its own
+  length, cutting the padding waste that dominates short-sample SFT corpora.
+  mlx-lm 0.31.3 has no packing, so `fusion_mlx/training/packing.py` supplies
+  the batch iterator and loss and patches the transformer blocks to thread a
+  block-diagonal attention mask through: packed samples never attend across
+  their segment boundary, and `mask_prompt` offsets are preserved per segment.
+  Position ids are not reset (MLX 0.32 rejects array RoPE offsets) — RoPE is
+  relative, so intra-segment scores match unpacked training while the block
+  mask holds. Rejected in distributed training; fails visibly on architectures
+  whose blocks do not accept `(x, mask, cache)`.
+
 ## [v0.10.16] — 2026-10-25
 
 ### Added — strict auth mode for gateway-as-sole-entry deployments (#1381)

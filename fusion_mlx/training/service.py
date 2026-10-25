@@ -117,6 +117,14 @@ class FineTuneConfig:
     # via init_adapter_path); "auto_restart" re-queues up to max_restarts.
     on_process_kill: str = "mark_failed"
     max_restarts: int = 1
+    # #1400: sequence packing for short-sample corpora. mlx-lm 0.31.3 has no
+    # packing, so training/packing.py supplies the batch iterator and the loss:
+    # samples are concatenated into rows of at most max_seq_length tokens with
+    # a block-diagonal attention mask (no cross-sample attention) and a
+    # per-token loss mask that still honours mask_prompt offsets. Off by
+    # default — it changes batch composition, so results are not
+    # byte-comparable with unpacked runs.
+    pack_sequences: bool = False
 
     def to_mlx_args(self, adapter_path: str, data_path: str, model_path: str):
         lora_params = {
@@ -154,6 +162,7 @@ class FineTuneConfig:
             "adapter_path": adapter_path,
             "lora_parameters": lora_params,
             "mask_prompt": self.mask_prompt,
+            "pack_sequences": self.pack_sequences,
             "lr_schedule": self.lr_schedule,
             "hf_dataset": False,
             "test": False,
@@ -690,6 +699,23 @@ def execute_training_core(
             cfg.max_grad_norm,
         )
 
+    # #1400: sequence packing swaps the batch iterator and the loss; the model
+    # blocks are patched so the packed mask reaches attention. Everything else
+    # in mlx-lm's train() (eval, save, reporting, grad accumulation) keeps
+    # working because it routes both callables through the same arguments.
+    train_kwargs = {}
+    if cfg.pack_sequences:
+        from . import packing
+
+        packing.install_mask_injection(model)
+        train_kwargs["loss"] = packing.packed_loss
+        train_kwargs["iterate_batches"] = packing.iterate_packed_batches
+        logger.info(
+            "Sequence packing enabled: rows up to max_seq_length=%d, "
+            "block-diagonal attention mask",
+            cfg.max_seq_length,
+        )
+
     # Run training
     logger.info(
         f"Starting training: iters={cfg.iters} "
@@ -708,6 +734,7 @@ def execute_training_core(
             train_dataset=CacheDataset(train_set),
             val_dataset=CacheDataset(valid_set) if valid_set else None,
             training_callback=callback,
+            **train_kwargs,
         )
 
     # Save final adapter weights
