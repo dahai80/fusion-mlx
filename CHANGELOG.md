@@ -23,6 +23,20 @@
   hash. It now walks back to the `models--org--name` directory and reports
   `org/name`, so per-model triage of the summary line is possible.
 
+### Fixed — SSD write queue and engine teardown resilience (#1390)
+- The paged-SSD background writer unpacked queue items outside its
+  `try/except`, so one malformed item killed the thread and every later
+  SSD write was enqueued with no consumer. The unpack is now guarded: the
+  item is logged and dropped, the thread keeps running.
+- The synchronous pool unload paths (`unload_engine` /
+  `unregister_engine`) called the async `engine.stop()` without awaiting
+  it, dropping the coroutine (`RuntimeWarning: coroutine ... was never
+  awaited`) and skipping the teardown. They now run it to completion when
+  no loop is running and schedule it on the running loop otherwise.
+- `test_try_queue_write_reports_full` no longer races the live writer
+  thread (it asserted against a sentinel the writer drained first, which
+  made `main`'s `rest` shard red).
+
 ## [v0.10.15] — 2026-10-25
 
 ### Added — Kokoro voice fine-tuning (#1336)

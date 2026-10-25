@@ -222,16 +222,44 @@ class TestSsdWritePathsDeduped:
 
         from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
 
+        class _FullQueue:
+            # #1390: filling the real queue raced the live writer thread
+            # (it drained the sentinel first, so the put succeeded and the
+            # assertion flipped). Exercise the Full policy directly.
+            def put(self, item, timeout=None):
+                raise queue_mod.Full
+
         manager = PagedSSDCacheManager(
             cache_dir=tmp_path / "ssd", max_size_bytes=1024**3
         )
         try:
             assert manager._try_queue_write(b"a" * 32, [], {}, None) is True
             manager._write_queue.get_nowait()
-            manager._write_queue = queue_mod.Queue(maxsize=1)
-            manager._write_queue.put("filler")
+            manager._write_queue = _FullQueue()
             assert manager._try_queue_write(b"b" * 32, [], {}, None) is False
             assert manager._stats["ssd_write_drops"] == 0
         finally:
             manager._write_queue = queue_mod.Queue()
+            manager.close()
+
+    def test_malformed_queue_item_does_not_kill_writer(self, tmp_path):
+        # #1390: the unpack used to sit outside the writer's try/except, so
+        # a single bad item killed the thread and every later SSD write was
+        # queued forever with no listener.
+        import time
+
+        from fusion_mlx.cache.paged_ssd_cache import PagedSSDCacheManager
+
+        manager = PagedSSDCacheManager(
+            cache_dir=tmp_path / "ssd", max_size_bytes=1024**3
+        )
+        try:
+            manager._write_queue.put("not-a-queue-item")
+            deadline = time.time() + 5.0
+            while manager._write_queue.unfinished_tasks and time.time() < deadline:
+                time.sleep(0.01)
+            assert manager._write_queue.unfinished_tasks == 0
+            assert manager._writer_thread.is_alive()
+            assert manager._stats["errors"] >= 1
+        finally:
             manager.close()
