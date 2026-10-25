@@ -838,6 +838,18 @@ Examples:
         ),
     )
     serve_parser.add_argument(
+        "--strict-auth",
+        action="store_true",
+        default=False,
+        help=(
+            "Refuse to start unless an API key is configured (--api-key, "
+            "FUSION_MLX_API_KEY, or settings.json auth.api_key), and reject "
+            "FUSION_ALLOW_ANONYMOUS. For gateway-fronted deployments where "
+            ":11434 must never serve anonymous requests (#1381). Also "
+            "FUSION_MLX_STRICT_AUTH=1 / settings.json auth.strict."
+        ),
+    )
+    serve_parser.add_argument(
         "--cors-origins",
         type=str,
         nargs="+",

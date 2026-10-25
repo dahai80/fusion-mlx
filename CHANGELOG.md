@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added — strict auth mode for gateway-as-sole-entry deployments (#1381)
+- `--strict-auth` / `FUSION_MLX_STRICT_AUTH=1` / `settings.json`
+  `auth.strict` makes the server refuse to start when no API key resolves, or
+  when `FUSION_ALLOW_ANONYMOUS=true` would disable auth anyway. A missing key
+  in a gateway-fronted deployment now fails at boot instead of serving
+  anonymous inference behind a single warning line.
+- Every mounted route is audited for key coverage at startup, and
+  `tests/unit/test_auth_strict_1381.py` fails if a new route becomes reachable
+  without an auth dependency. Exempt set: `/`, the `/health*` / `/livez` /
+  `/readyz` probes, the docs endpoints and `/favicon.ico`.
+- Rejected key checks now log the client host and path at WARN, rate-limited to
+  one line per host+path per 60 s, so callers still hitting `:11434` directly
+  during a gateway migration are discoverable. Recipe:
+  `docs/gateway-sole-entry.md`.
+
+### Fixed — completion summary printed a snapshot hash as the model (#1380)
+- The `| completed | model=... |` scheduler summary resolved the model name
+  from the load path, whose basename for an HF cache entry is the commit
+  hash. It now walks back to the `models--org--name` directory and reports
+  `org/name`, so per-model triage of the summary line is possible.
+
 ## [v0.10.15] — 2026-10-25
 
 ### Added — Kokoro voice fine-tuning (#1336)

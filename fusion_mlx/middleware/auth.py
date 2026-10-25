@@ -332,13 +332,16 @@ def _verify_api_key_values(
             "Anonymous access rejected - no API key configured host=%s",
             _client_host(request),
         )
+        _log_auth_rejection(request, "no key configured on server")
         raise HTTPException(status_code=401, detail="API key required")
     provided_keys = [api_key for api_key in api_keys if api_key]
     if not provided_keys:
+        _log_auth_rejection(request, "missing API key")
         raise HTTPException(status_code=401, detail="API key required")
     if not all(
         secrets.compare_digest(api_key, configured_key) for api_key in provided_keys
     ):
+        _log_auth_rejection(request, "invalid API key")
         raise HTTPException(status_code=401, detail="Invalid API key")
     return True
 
@@ -477,6 +480,104 @@ def _client_host(request: Request | None) -> str:
     return "unknown"
 
 
+# ---------------------------------------------------------------------------
+# #1381: strict auth mode (gateway as sole entry) + rejection visibility
+# ---------------------------------------------------------------------------
+
+_STRICT_ENV = "FUSION_MLX_STRICT_AUTH"
+_SETTINGS_PATH = ("~/.fusion-mlx/settings.json",)
+
+# One WARN per (host, path) per window. During a migration window a whole
+# fleet still pointing at :11434 would otherwise emit a line per request.
+_AUTH_REJECT_WARN_WINDOW_S = 60.0
+_auth_reject_last: dict[tuple[str, str], float] = {}
+_auth_reject_lock = threading.Lock()
+
+
+def _log_auth_rejection(request: Request | None, reason: str) -> None:
+    host = _client_host(request)
+    path = request.url.path if request is not None else "unknown"
+    now = time.monotonic()
+    key = (host, path)
+    with _auth_reject_lock:
+        last = _auth_reject_last.get(key)
+        if last is not None and now - last < _AUTH_REJECT_WARN_WINDOW_S:
+            return
+        if len(_auth_reject_last) > 512:
+            cutoff = now - _AUTH_REJECT_WARN_WINDOW_S
+            for stale in [k for k, ts in _auth_reject_last.items() if ts < cutoff]:
+                _auth_reject_last.pop(stale, None)
+        _auth_reject_last[key] = now
+    logger.warning(
+        "auth: rejected (%s) host=%s path=%s — a caller still using :%s "
+        "directly? (one line per %ds per host+path)",
+        reason,
+        host,
+        path,
+        os.environ.get("FUSION_PORT", "11434"),
+        int(_AUTH_REJECT_WARN_WINDOW_S),
+    )
+
+
+def _settings_strict_auth() -> bool:
+    # settings.json auth.strict, read from disk the same way Settings.load
+    # reads auth.api_key (the file's schema is owned by the admin/GUI layer).
+    import json
+    from pathlib import Path
+
+    try:
+        path = Path(os.path.expanduser(_SETTINGS_PATH[0]))
+        if not path.exists():
+            return False
+        data = json.loads(path.read_text())
+    except Exception:
+        logger.warning(
+            "auth: could not read settings.json to resolve auth.strict; "
+            "treating strict mode as disabled",
+            exc_info=True,
+        )
+        return False
+    auth_data = data.get("auth")
+    if isinstance(auth_data, dict) and auth_data.get("strict") is not None:
+        return bool(auth_data.get("strict"))
+    return bool(data.get("strict_auth", False))
+
+
+def strict_auth_requested(cli_value: bool = False) -> bool:
+    if cli_value:
+        return True
+    if _env_truthy(_STRICT_ENV):
+        return True
+    return _settings_strict_auth()
+
+
+def enforce_strict_auth(configured_key: str | None, cli_value: bool = False) -> bool:
+    # Called from Server.__init__ once the effective key is resolved. Refusing
+    # to boot is the point: a gateway-fronted deployment that silently served
+    # anonymous requests is the failure this mode exists to prevent, so a
+    # warning line nobody reads is not an acceptable substitute.
+    if not strict_auth_requested(cli_value):
+        return False
+    if _env_truthy("FUSION_ALLOW_ANONYMOUS"):
+        raise RuntimeError(
+            "strict auth (#1381) conflicts with FUSION_ALLOW_ANONYMOUS=true: "
+            "the anonymous override disables auth on every route. Unset it, or "
+            "drop strict mode."
+        )
+    if not configured_key:
+        raise RuntimeError(
+            "strict auth (#1381) requires an API key, and none is configured. "
+            "Set FUSION_MLX_API_KEY, pass --api-key, or put auth.api_key in "
+            "~/.fusion-mlx/settings.json. Refusing to start rather than serve "
+            "anonymous requests."
+        )
+    logger.info(
+        "auth: strict mode enabled — startup fails without an API key, "
+        "anonymous override rejected"
+    )
+    return True
+
+
 def _anonymous_access_allowed(request: Request | None) -> bool:
     if _env_truthy("FUSION_ALLOW_ANONYMOUS"):
         # OP-5 (#0907 audit): anonymous access disables auth across ALL routes.
@@ -518,8 +619,10 @@ async def verify_management_access(request: Request) -> bool:
     provided = [k for k in (bearer, x_api_key) if k]
     if configured_key is not None and provided:
         if not all(secrets.compare_digest(k, configured_key) for k in provided):
+            _log_auth_rejection(request, "invalid API key (management)")
             raise HTTPException(status_code=401, detail="Invalid API key")
         return True
+    _log_auth_rejection(request, "missing API key (management)")
     # #350: loopback no longer exempts management endpoints from auth. A
     # same-host client must forward a valid api_key (or the deployment sets
     # FUSION_ALLOW_ANONYMOUS=true for dev/test). X-Fusion-Route is not auth

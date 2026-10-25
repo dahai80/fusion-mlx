@@ -1454,6 +1454,10 @@ This applies to **every serve path**: single-model (`serve <model>`), audio (`se
 
 `start.sh` resolves the key from `FUSION_MLX_API_KEY` (env) then `settings.json`, passes it as `--api-key`, and exports `FUSION_MLX_API_KEY` into the server process — so the env path also catches it for `--model-dir` launches.
 
+### Strict auth mode (#1381)
+
+`--strict-auth` (or `FUSION_MLX_STRICT_AUTH=1`, or `settings.json` `auth.strict`) refuses to start unless an API key is configured, and rejects `FUSION_ALLOW_ANONYMOUS`. Use it when `:11434` is a gateway-internal backend and must never serve anonymous requests. Every route's key coverage is audited at startup and pinned by `tests/unit/test_auth_strict_1381.py`; see [docs/gateway-sole-entry.md](docs/gateway-sole-entry.md).
+
 ### Keychain API-key storage (#770)
 
 By default the API key is stored in `~/.fusion-mlx/settings.json` (mode `0o600`). For macOS deployments that prefer the Keychain over plaintext on disk, set `FUSION_KEYCHAIN=on`:
