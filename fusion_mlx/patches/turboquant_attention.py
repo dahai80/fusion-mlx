@@ -18,6 +18,36 @@ _LONG_PREFILL_QUANTIZED_THRESHOLD = 8192
 _LONG_PREFILL_QUERY_BLOCK_SIZE = 256
 _LONG_PREFILL_KEY_CHUNK_SIZE = 16384
 
+_TQ_TYPES: tuple | None = None
+_TQ_TYPES_TRIED = False
+
+
+def _tq_cache_types():
+    # #1403: both TurboQuant cache classes live behind mlx_vlm, which a slim
+    # install does not have. Resolve them once instead of per attention call.
+    # Without mlx_vlm no TurboQuant cache can exist at all, so every call
+    # takes the plain SDPA path — a text-model DPO/ORPO/reward job (they run
+    # in-process, unlike SFT) must never require the [vlm] extra.
+    global _TQ_TYPES, _TQ_TYPES_TRIED
+    if not _TQ_TYPES_TRIED:
+        _TQ_TYPES_TRIED = True
+        try:
+            from mlx_vlm.turboquant import TurboQuantKVCache
+
+            from ..turboquant_kv import (
+                BatchTurboQuantKVCache,
+                _state_length,
+            )
+
+            _TQ_TYPES = (TurboQuantKVCache, BatchTurboQuantKVCache, _state_length)
+        except ImportError:
+            _TQ_TYPES = ()
+            logger.info(
+                "turboquant attention patch: mlx_vlm not installed, "
+                "TurboQuant caches unavailable — attention stays on stock SDPA"
+            )
+    return _TQ_TYPES
+
 
 def apply_turboquant_attention_patch() -> bool:
     """Monkey-patch mlx-lm's scaled_dot_product_attention for TurboQuant."""
@@ -41,9 +71,10 @@ def apply_turboquant_attention_patch() -> bool:
         mask: mx.array | None,
         sinks: mx.array | None = None,
     ) -> mx.array:
-        from mlx_vlm.turboquant import TurboQuantKVCache as _TQCache
-
-        from ..turboquant_kv import BatchTurboQuantKVCache, _state_length
+        tq = _tq_cache_types()
+        if not tq:
+            return original_sdpa(queries, keys, values, cache, scale, mask, sinks)
+        _TQCache, BatchTurboQuantKVCache, _state_length = tq
 
         # Detect underlying TQ cache (may be wrapped by proxy objects)
         real_cache = cache
