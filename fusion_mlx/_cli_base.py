@@ -867,4 +867,84 @@ def _resolve_audio_model_for_serve(model_name: str):
     """
     from .audio.registry import resolve_audio_alias
 
-    return resolve_audio_alias(model_name)
+    entry = resolve_audio_alias(model_name)
+    if entry is not None:
+        return entry
+    # #1392: the registry is a curated list, so an audio repo id that is
+    # already on disk but not aliased (mlx-community/Qwen3-TTS-12Hz-1.7B-
+    # Base-8bit) missed the fork and fell into mlx_lm.load_model, which
+    # dies with "Model type qwen3_tts not supported". Detect from the
+    # local config.json instead of requiring a registry row.
+    return _detect_local_audio_entry(model_name)
+
+
+def _local_audio_model_dir(model_name: str):
+    from pathlib import Path
+
+    as_path = Path(model_name).expanduser()
+    if as_path.is_dir():
+        return as_path
+    if "/" not in model_name:
+        return None
+    env = os.environ.get("FUSION_MLX_MODELS", "").strip()
+    roots = [Path(p) for p in env.split(os.pathsep) if p.strip()]
+    if not roots:
+        roots = [Path.home() / ".fusion-mlx" / "models"]
+    cache_name = "models--" + model_name.replace("/", "--")
+    for root in roots:
+        candidate = root / cache_name
+        if not candidate.is_dir():
+            continue
+        from .pool.model_discovery import _resolve_hf_cache_entry
+
+        cache_entry = _resolve_hf_cache_entry(candidate)
+        if cache_entry is not None:
+            return cache_entry.snapshot_path
+    return None
+
+
+def _detect_local_audio_entry(model_name: str):
+    from .audio.registry import AudioAliasEntry
+
+    if not isinstance(model_name, str) or not model_name:
+        return None
+    model_dir = _local_audio_model_dir(model_name)
+    if model_dir is None:
+        return None
+    from .pool.model_discovery import detect_model_type
+
+    detected = detect_model_type(model_dir)
+    kind = _AUDIO_TYPE_BY_MODEL_TYPE.get(detected)
+    if kind is None:
+        return None
+    logger.info(
+        "audio serve: %s is not in the alias registry but %s detects as %s",
+        model_name,
+        model_dir,
+        detected,
+    )
+    return AudioAliasEntry(
+        alias=model_name,
+        type=kind,
+        hf_id=model_name,
+        family=_audio_family_hint(model_dir),
+        notes="detected from local weights",
+    )
+
+
+_AUDIO_TYPE_BY_MODEL_TYPE = {
+    "audio_tts": "tts",
+    "audio_stt": "stt",
+    "audio_music": "music",
+}
+
+
+def _audio_family_hint(model_dir) -> str:
+    import json
+
+    try:
+        with open(model_dir / "config.json") as f:
+            model_type = json.load(f).get("model_type")
+    except (OSError, ValueError):
+        model_type = None
+    return model_type or model_dir.name

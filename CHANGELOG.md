@@ -68,6 +68,15 @@
   behind admin auth so an API key cannot modify the voice library; the
   delete path never removes a fine-tune pack.
 
+### Fixed — `serve` of an unregistered audio checkpoint (#1392)
+- `fusion-mlx serve <hf-id>` for an audio model that has no row in the
+  alias registry (e.g. `mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit`)
+  fell through to the text loader and died with `ValueError: Model type
+  qwen3_tts not supported`. The audio-serve fork now falls back to
+  `detect_model_type()` on the local weights when the registry misses,
+  so any TTS/STT checkpoint already on disk boots in audio mode. Text
+  checkpoints still take the text path unchanged.
+
 ## [v0.10.15] — 2026-10-25
 
 ### Added — Kokoro voice fine-tuning (#1336)
