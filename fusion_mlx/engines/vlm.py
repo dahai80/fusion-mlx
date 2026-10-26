@@ -890,9 +890,13 @@ class VLMBatchedEngine(BaseEngine):
 
         # Strategy 2: qwen-style (vision_tower + grid_thw)
         if model_type in _QWEN_VISION_MODELS:
-            grid_thw = extra_model_inputs.get(
-                "image_grid_thw"
-            ) or extra_model_inputs.get("video_grid_thw")
+            # Explicit None check — ``or`` evaluates bool(mx.array), which
+            # raises "[convert] Only length-1 arrays can be converted to
+            # Python scalars" for the shape-(n,3) grid every real image
+            # produces, killing Strategy 2 before it runs.
+            grid_thw = extra_model_inputs.get("image_grid_thw")
+            if grid_thw is None:
+                grid_thw = extra_model_inputs.get("video_grid_thw")
             if grid_thw is None:
                 return None
             dtype = model.vision_tower.patch_embed.proj.weight.dtype

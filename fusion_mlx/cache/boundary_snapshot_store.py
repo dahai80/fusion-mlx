@@ -50,6 +50,13 @@ _SOFT_LIMIT_PCT = 0.80
 
 _PREFIX_DEFAULT_MAX_BYTES = 20 * 1024 * 1024 * 1024
 
+# Live store instances per base_dir, mirroring PagedSSDCacheManager's
+# _ACTIVE_MANAGERS_BY_CACHE_DIR (#1299). _boundary_snapshots lives under the
+# shared SSD cache dir, so a second engine's store init rmtree'ing it deletes
+# the first store's in-flight writes (observed 2026-10-26: startup rmtree at
+# 20:55:05 killed request 57633a26's background snapshot write with ENOENT).
+_ACTIVE_STORES_BY_BASE_DIR: dict[str, int] = {}
+
 
 class _PrefixEntry:
     __slots__ = (
@@ -112,23 +119,42 @@ class BoundarySnapshotSSDStore:
         prefix_max_bytes: int | None = None,
     ) -> None:
         self._snapshot_dir = base_dir / "_boundary_snapshots"
+        # Register before the rmtree decision so the count includes us.
+        base_key = str(base_dir)
+        _ACTIVE_STORES_BY_BASE_DIR[base_key] = (
+            _ACTIVE_STORES_BY_BASE_DIR.get(base_key, 0) + 1
+        )
+        self._base_dir_key = base_key
         # Clean up orphaned files from previous crashes. Retry a few times:
         # rmtree can race with a dying writer thread recreating files, which
         # surfaces as Errno 66 and (before the retry) left 100s of GB of
         # orphans behind permanently.
+        # Skip entirely while another live store shares this base_dir — its
+        # writer may be mid-write (same shared-dir rule as the SSD orphan
+        # sweep, #1299). Crash orphans still get reclaimed later by
+        # _enforce_disk_budget and per-request cleanup_request.
         if self._snapshot_dir.exists():
-            for _attempt in range(3):
-                try:
-                    shutil.rmtree(self._snapshot_dir)
-                    break
-                except Exception as e:
-                    logger.warning(
-                        "Failed to clean up orphaned boundary snapshots "
-                        "(attempt %d/3): %s",
-                        _attempt + 1,
-                        e,
-                    )
-                    time.sleep(0.5)
+            if _ACTIVE_STORES_BY_BASE_DIR.get(base_key, 0) > 1:
+                logger.warning(
+                    "Boundary snapshot startup rmtree skipped for %s: %d "
+                    "BoundarySnapshotStore instances share this base_dir — "
+                    "cleaning would delete live in-flight writes",
+                    base_dir,
+                    _ACTIVE_STORES_BY_BASE_DIR[base_key],
+                )
+            else:
+                for _attempt in range(3):
+                    try:
+                        shutil.rmtree(self._snapshot_dir)
+                        break
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to clean up orphaned boundary snapshots "
+                            "(attempt %d/3): %s",
+                            _attempt + 1,
+                            e,
+                        )
+                        time.sleep(0.5)
         self._snapshot_dir.mkdir(parents=True, exist_ok=True)
         self._disk_bytes = self._scan_disk_bytes()
 
@@ -613,6 +639,11 @@ class BoundarySnapshotSSDStore:
 
     def shutdown(self) -> None:
         """Stop background writer thread."""
+        remaining = _ACTIVE_STORES_BY_BASE_DIR.get(self._base_dir_key, 1) - 1
+        if remaining > 0:
+            _ACTIVE_STORES_BY_BASE_DIR[self._base_dir_key] = remaining
+        else:
+            _ACTIVE_STORES_BY_BASE_DIR.pop(self._base_dir_key, None)
         self._shutdown.set()
         try:
             self._write_queue.put_nowait(None)  # Sentinel

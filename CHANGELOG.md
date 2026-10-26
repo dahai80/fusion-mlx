@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Fixed — shared-cache-dir startup races + qwen2.5-VL image 500s
+- Paged SSD cache startup repair unlinked every hex-shard `.tmp` file
+  unconditionally, so a newly loaded engine's `verify_and_repair_index`
+  deleted another active manager's in-flight background write mid-flight
+  (observed: block 17dd4716f518b61a ENOENT). Repair now applies the same
+  30s age gate as the orphan sweeper (#1299): fresh `.tmp` files belong to
+  live writers; only crashed-write orphans older than the sweep age are
+  removed.
+- `BoundarySnapshotSSDStore.__init__` rmtree'd the shared
+  `_boundary_snapshots` directory while other engines' stores were live,
+  killing in-flight snapshot writes with ENOENT. Stores now register per
+  base_dir (mirroring `PagedSSDCacheManager._ACTIVE_MANAGERS_BY_CACHE_DIR`);
+  a second store skips the startup rmtree with a warning, and the first
+  store in a process still reclaims crash orphans.
+- qwen2.5-VL image requests 500'd twice over: `image_grid_thw or
+  video_grid_thw` evaluated `bool(mx.array)` on the shape-(n,3) grid
+  (ValueError) before the vision tower ran — now an explicit None check;
+  and mlx-vlm 0.5.0 passes `grid_thw[i, 0]` (mx.array) as `mx.repeat`
+  repeats, which MLX 0.32 rejects (TypeError). A scoped compat patch
+  (registry id `mlx_vlm_qwen_vl_repeat_compat`, self-guarding — upstream
+  main already fixed) proxies the vision module's `mx` attribute and
+  converts array repeats via `.item()`; the global `mlx.core` is untouched.
+
 ## [v0.10.20] — 2026-10-26
 
 ### Fixed — degenerate agent turns now detected, logged, and retried once (#1415)
