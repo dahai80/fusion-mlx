@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Fixed — the pool served a stopped engine forever, and the OpenAI route dropped tool history (#1409)
+- `EnginePool.get_engine`'s fast path only consulted `is_dead()`. A clean
+  `stop()`/`close()` sets `_running = False` without marking the engine dead,
+  and `VLMBatchedEngine` had no liveness surface at all — so a teardown that
+  was cancelled *after* `stop()` (the pool's inline pending-unload drain runs
+  inside the request task, so a client disconnect cancels it) left a stopped
+  engine attached to its entry. Every later request then took the fast path
+  and 500'd with `engine is not running; request rejected` while `/health`
+  still reported the model loaded. `BatchedEngine` and `VLMBatchedEngine` now
+  expose `is_running()`, and the fast path detaches + reloads instead of
+  serving a stopped engine. Engines without a liveness probe (media engines)
+  are unaffected.
+- `release_engine` clears a stranded unload claim when the drain raises or is
+  cancelled, so `is_unloading` can no longer stay set with a `loading_event`
+  nobody signals (which hung every later `get_engine` for that model).
+- `_messages_for_engine` dropped assistant `tool_calls` (and `tool_call_id` /
+  `name`), so the model saw tool results with no record of its own calls and
+  agent clients re-issued the identical call indefinitely. Tool history is now
+  preserved on both the text and multimodal paths, with `arguments` parsed
+  into a mapping — the Qwen chat template iterates `arguments|items` and
+  raises `TypeError` on the raw JSON string.
+- `VLMBatchedEngine` gained `is_dead` / `dead_reason` / `mark_dead`
+  passthroughs, mirroring `BatchedEngine` (#1176), so the poison-guard scan
+  can see a dead VLM engine.
+
 ## [v0.10.17] — 2026-10-26
 
 ### Fixed — image jobs were killed at 600s even while making progress (#1407)

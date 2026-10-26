@@ -1919,6 +1919,22 @@ class EnginePool:
                 elif entry.is_unloading:
                     wait_event = entry.loading_event or asyncio.Event()
                     entry.loading_event = wait_event
+                # #1409: an engine that was torn down but never detached from
+                # its entry (a teardown cancelled/aborted after stop(), an
+                # EngineCore.close() from any path) is not "dead" — is_dead
+                # stays False for a clean stop — so the old fast path handed
+                # the stopped engine out and every request 500'd with
+                # "engine is not running; request rejected" forever, while
+                # /health kept reporting the model loaded. Consult the
+                # liveness surface too and reload instead.
+                elif not self._engine_is_running(entry.engine):
+                    logger.warning(
+                        "get_engine: engine for '%s' is attached but not "
+                        "running (%s) — detaching and reloading (#1409)",
+                        entry_key,
+                        type(entry.engine).__name__,
+                    )
+                    needs_reload = True
                 else:
                     needs_reload = False
                     if (
@@ -2202,7 +2218,32 @@ class EnginePool:
                 self._claim_entry_locked(e)
                 unload_needed = True
         if unload_needed:
-            settle_pre = await self._detach_engine(entry_key)
+            detach_failed = True
+            settle_pre = None
+            try:
+                settle_pre = await self._detach_engine(entry_key)
+                detach_failed = False
+            finally:
+                # #1409: this drain runs inside a request task (the lease
+                # release), so a client disconnect cancels it mid-teardown.
+                # Without this, the claim set above stranded is_unloading=True
+                # forever and every later get_engine for the model waited on a
+                # loading_event nobody would ever set (silent hang). Clearing
+                # is best-effort and lock-free: _release_claim_locked only
+                # touches two fields, and the lock cannot be acquired from a
+                # cancelled task.
+                _cancelled_entry = (
+                    self._entries.get(entry_key) if detach_failed else None
+                )
+                if _cancelled_entry is not None and _cancelled_entry.is_unloading:
+                    self._release_claim_locked(_cancelled_entry)
+                    logger.warning(
+                        "release_engine: cleared a stranded unload claim for "
+                        "'%s' (teardown was cancelled or raised)",
+                        entry_key,
+                    )
+                    if _cancelled_entry.loading_event is not None:
+                        _cancelled_entry.loading_event.set()
             wake_event = None
             async with self._lock:
                 e2 = self._entries.get(entry_key)
@@ -2519,6 +2560,27 @@ class EnginePool:
             return p0_candidates[0][2]
         return None
 
+    @staticmethod
+    def _engine_is_running(engine) -> bool:
+        # #1409: liveness probe for the get_engine fast path. Engines that
+        # expose is_running() (BatchedEngine / VLMBatchedEngine delegate to
+        # the inner EngineCore) report False once stopped, even though the
+        # object is still attached to its pool entry. Engines with no
+        # liveness surface (media engines) keep the old behaviour of being
+        # served as-is, so this gate cannot break them.
+        probe = getattr(engine, "is_running", None)
+        if not callable(probe):
+            return True
+        try:
+            return bool(probe())
+        except Exception:
+            logger.warning(
+                "engine.is_running() raised for %s — treating as running",
+                type(engine).__name__,
+                exc_info=True,
+            )
+            return True
+
     def _claim_entry_locked(self, entry: EngineEntry) -> None:
         # #1354 H12: mark an entry as claimed by a teardown. Caller holds
         # self._lock. unloading_count is the authoritative "a teardown is
@@ -2686,6 +2748,9 @@ class EnginePool:
                 "inplace_swap: released held swap lock for %s on unload", model_id
             )
         entry.engine = None
+        # #1409: a teardown cancelled between stop() and this line leaves a
+        # stopped engine attached to the entry; get_engine's liveness gate
+        # detects that and detaches + reloads instead of serving it.
         # RC-3 (#811 audit 0906): notify the Server so it drops its
         # engine_cores reference for this model. Without this, an unload
         # via LRU eviction / admin route / TTL (not Server.unload_model)

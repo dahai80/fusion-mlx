@@ -9,6 +9,7 @@ all route decorators across the package register on the same router.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Any
@@ -278,6 +279,50 @@ async def _inject_web_search(request: ChatCompletionRequest) -> None:
         logger.warning("web_search failed: %s(%s)", type(exc).__name__, exc)
 
 
+def _tool_calls_for_engine(msg: Any) -> list[dict] | None:
+    # #1409: the chat template renders assistant tool calls
+    # (<tool_call><function=NAME><parameter=p>v</parameter>...), and the Qwen
+    # templates iterate tool_call.arguments|items — so arguments MUST reach
+    # the template as a mapping, not the JSON string the wire format uses.
+    raw = getattr(msg, "tool_calls", None)
+    if not raw and isinstance(msg, dict):
+        raw = msg.get("tool_calls")
+    if not raw:
+        return None
+    out: list[dict] = []
+    for tc in raw:
+        if hasattr(tc, "model_dump"):
+            tc = tc.model_dump(exclude_none=True)
+        if not isinstance(tc, dict):
+            logger.warning(
+                "tool_calls: dropping non-dict entry %r",
+                type(tc).__name__,
+            )
+            continue
+        fn = tc.get("function") or {}
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except (ValueError, TypeError):
+                logger.warning(
+                    "tool_calls: arguments for %s are not JSON (%r) — passing "
+                    "the raw string to the template",
+                    fn.get("name"),
+                    args[:120],
+                )
+        if args is None:
+            args = {}
+        out.append(
+            {
+                "id": tc.get("id") or "",
+                "type": tc.get("type") or "function",
+                "function": {"name": fn.get("name") or "", "arguments": args},
+            }
+        )
+    return out or None
+
+
 def _messages_for_engine(request_msgs: Any, is_mllm: bool) -> list[dict]:
     """Convert request messages to the dict list engines expect.
 
@@ -286,10 +331,18 @@ def _messages_for_engine(request_msgs: Any, is_mllm: bool) -> list[dict]:
     (image_url / video_url blocks) as dicts so the VLM engine can extract the
     media - flattening here would discard the URLs and the model would see
     only "[video]" / "[image]" placeholders.
+
+    Tool history is preserved (#1409): dropping assistant tool_calls left the
+    model with a transcript where every prior action had vanished but its
+    tool_response blocks remained, so agents re-issued the same tool call
+    forever (the Claude Code "death loop").
     """
     out: list[dict] = []
     for m in request_msgs:
         content = getattr(m, "content", "")
+        tool_calls = _tool_calls_for_engine(m)
+        tool_call_id = getattr(m, "tool_call_id", None)
+        name = getattr(m, "name", None)
         if is_mllm and isinstance(content, list):
             parts: list[dict] = []
             for part in content:
@@ -299,9 +352,16 @@ def _messages_for_engine(request_msgs: Any, is_mllm: bool) -> list[dict]:
                     parts.append(part.model_dump(exclude_none=True))
                 else:
                     parts.append(dict(part))
-            out.append({"role": m.role, "content": parts})
+            entry: dict = {"role": m.role, "content": parts}
         else:
-            out.append({"role": m.role, "content": _extract_text(m)})
+            entry = {"role": m.role, "content": _extract_text(m)}
+        if tool_calls:
+            entry["tool_calls"] = tool_calls
+        if tool_call_id:
+            entry["tool_call_id"] = tool_call_id
+        if name:
+            entry["name"] = name
+        out.append(entry)
     return out
 
 

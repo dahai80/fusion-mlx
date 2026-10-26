@@ -804,6 +804,46 @@ class VLMBatchedEngine(BaseEngine):
                 "DFlash2 drafter load failed for VLM %s: %s", self._model_name, e
             )
 
+    def is_running(self) -> bool:
+        # #1409: VLMBatchedEngine had no liveness surface, so EnginePool's
+        # get_engine fast path (which only consults is_dead) kept handing out
+        # a torn-down VLM engine: every request then 500'd with "engine is not
+        # running; request rejected" while /health still reported it loaded.
+        # stop() nulls self._engine, so a hollow shell reports not-running.
+        core = self._engine
+        if core is None:
+            return False
+        inner = getattr(core, "engine", None)
+        if inner is None:
+            return False
+        probe = getattr(inner, "is_running", None)
+        return bool(probe()) if callable(probe) else True
+
+    def is_dead(self) -> bool:
+        # Mirror BatchedEngine.is_dead (#1176): delegate to the inner core,
+        # which the loop-death / circuit-breaker paths mark dead.
+        core = self._engine
+        inner = getattr(core, "engine", None) if core is not None else None
+        if inner is not None and hasattr(inner, "is_dead"):
+            return bool(inner.is_dead())
+        return False
+
+    @property
+    def dead_reason(self) -> str | None:
+        core = self._engine
+        inner = getattr(core, "engine", None) if core is not None else None
+        if inner is not None and hasattr(inner, "dead_reason"):
+            return inner.dead_reason
+        return None
+
+    def mark_dead(self, reason: str) -> None:
+        core = self._engine
+        inner = getattr(core, "engine", None) if core is not None else None
+        if inner is not None and hasattr(inner, "mark_dead"):
+            inner.mark_dead(reason)
+            return
+        logger.error("VLMBatchedEngine mark_dead: no inner engine to mark: %s", reason)
+
     async def stop(self) -> None:
         if self._engine:
             await self._engine.stop()
