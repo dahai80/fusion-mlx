@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.21] - 2026-10-27
 
 ### Fixed — shared-cache-dir startup races + qwen2.5-VL image 500s
 - Paged SSD cache startup repair unlinked every hex-shard `.tmp` file
