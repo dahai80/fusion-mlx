@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.22] - 2026-10-27
 
 ### Fixed — TurboQuant remote-code model 500s + SSD signature sync regression (#1421)
 - trust_remote_code models (e.g. `jais3-7b-4bit`'s `k2_horizon`) bind
