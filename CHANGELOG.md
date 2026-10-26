@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v0.10.18] — 2026-10-26
+
 ### Fixed — the pool served a stopped engine forever, and the OpenAI route dropped tool history (#1409)
 - `EnginePool.get_engine`'s fast path only consulted `is_dead()`. A clean
   `stop()`/`close()` sets `_running = False` without marking the engine dead,
