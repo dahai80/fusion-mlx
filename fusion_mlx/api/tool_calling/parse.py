@@ -124,6 +124,16 @@ class ToolCallExtraction:
     tool_calls_from_thinking: bool = False
 
 
+def _undouble_braces(text: str) -> str:
+    # #1412: some chat templates escape literal braces, so a model emits
+    # {{"name": "Read", "arguments": {...}}} where {"name": ...} was meant.
+    # json.loads then dies at char 1 (the second '{') and the whole match was
+    # dropped, leaving agentic clients with a bare-text reply. Only ever
+    # applied AFTER the raw parse failed, so valid JSON that legitimately
+    # contains '{{' or '}}' sequences is never rewritten.
+    return text.replace("{{", "{").replace("}}", "}")
+
+
 def _parse_xml_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
     """
     Fallback parser for XML-based tool call formats.
@@ -158,8 +168,36 @@ def _parse_xml_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
                 )
             )
             continue
-        except (json.JSONDecodeError, AttributeError):
-            pass
+        except (json.JSONDecodeError, AttributeError) as brace_err:
+            # #1412: retry the same body with doubled braces collapsed before
+            # giving up on it. A structurally valid call must never be dropped
+            # just because the template escaped its braces.
+            undoubled = _undouble_braces(content)
+            if undoubled != content:
+                try:
+                    parsed = json.loads(undoubled)
+                    name = parsed.get("name", "")
+                    arguments = parsed.get("arguments", {})
+                    logger.warning(
+                        "tool_calls: recovered a doubled-brace tool call after "
+                        "the raw parse failed (%s: %s): %s",
+                        type(brace_err).__name__,
+                        brace_err,
+                        name,
+                    )
+                    tool_calls.append(
+                        ToolCall(
+                            id=f"call_{uuid.uuid4().hex[:8]}",
+                            type="function",
+                            function=FunctionCall(
+                                name=name,
+                                arguments=_serialize_tool_call_arguments(arguments),
+                            ),
+                        )
+                    )
+                    continue
+                except (json.JSONDecodeError, AttributeError):
+                    pass
 
         # Qwen/Llama format: <function=name><parameter=key>value</parameter></function>
         func_match = re.match(r"<function=(\w+)>(.*?)</function>", content, re.DOTALL)
@@ -605,6 +643,48 @@ def parse_tool_calls(
 
                     if gemma4_handled:
                         continue
+
+                    # #1412: a doubled-brace body (template escaping) fails the
+                    # native parser but is a valid call once collapsed. Retry
+                    # the native parser on the de-doubled snippet before the
+                    # regex fallbacks, so argument types survive.
+                    undoubled_match = _undouble_braces(match)
+                    if undoubled_match != match:
+                        try:
+                            parsed = tool_parser(undoubled_match.strip(), tools)
+                            items = parsed if isinstance(parsed, list) else [parsed]
+                            for p in items:
+                                d = _tool_parser_result_to_dict(p)
+                                tool_calls.append(
+                                    ToolCall(
+                                        id=f"call_{uuid.uuid4().hex[:8]}",
+                                        type="function",
+                                        function=FunctionCall(
+                                            name=d.get("name", ""),
+                                            arguments=_serialize_tool_call_arguments(
+                                                d.get("arguments", {})
+                                            ),
+                                        ),
+                                    )
+                                )
+                            logger.warning(
+                                "Native tool parser failed (%s: %s) on a "
+                                "doubled-brace body, recovered after "
+                                "de-doubling: %r",
+                                type(primary_err).__name__,
+                                primary_err,
+                                match[:200],
+                            )
+                            continue
+                        except (
+                            ValueError,
+                            json.JSONDecodeError,
+                            AttributeError,
+                            KeyError,
+                            SyntaxError,
+                            TypeError,
+                        ):
+                            pass
 
                     # Per-match XML fallback: regex-only, no ast.literal_eval,
                     # recovers Qwen/GLM/Hermes-JSON formats. Prevents silent
