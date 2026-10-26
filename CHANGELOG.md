@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed — doubled-brace tool calls were dropped instead of parsed (#1412)
+- Some chat templates escape literal braces, so a model emits
+  `{{"name": "Read", "arguments": {...}}}` where `{"name": ...}` was meant.
+  `json.loads` failed at char 1 (the second brace), the native tokenizer
+  parser raised, and the XML fallback gave up on the match — the tool call
+  was silently dropped and agent clients received a bare-text reply, then
+  stalled. Both parse paths now retry the same body once with doubled braces
+  collapsed, and only after the raw parse has already failed, so valid JSON
+  that legitimately contains `{{` / `}}` is never rewritten. Recoveries are
+  logged at warning level.
+
 ## [v0.10.18] — 2026-10-26
 
 ### Fixed — the pool served a stopped engine forever, and the OpenAI route dropped tool history (#1409)
