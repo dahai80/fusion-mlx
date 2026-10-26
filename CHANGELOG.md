@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed — TurboQuant pre-load attention patch for trust_remote_code models (#1421 follow-up)
+- v0.10.22's rebind loop still missed remote-code architectures in
+  production: `mlx_lm` loads them via
+  `spec_from_file_location("custom_model", ...) + exec_module`, which never
+  registers the module in `sys.modules` — the rebind loop cannot see it, and
+  the module's by-value SDPA import ran (inside the model load) before the
+  patch. The engine now applies the TurboQuant attention patch **before**
+  the model load whenever TurboQuant KV will be enabled, so the remote
+  module's import captures the patched fn directly. Passthrough-safe when
+  TurboQuant ends up disabled.
+
 ## [0.10.22] - 2026-10-27
 
 ### Fixed — TurboQuant remote-code model 500s + SSD signature sync regression (#1421)
