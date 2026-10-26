@@ -286,6 +286,15 @@ Each model can have custom settings stored in `~/.fusion-mlx/settings/`:
 
 > The speculative-decoding settings above (`specprefill_enabled`, `dflash_enabled`, `mtp_enabled`, `vlm_mtp_enabled`) map onto the `serve` flags for the methods that expose one (`--enable-dflash`, `--enable-mtp`; the deprecated `--specprefill*` CLI group was removed in #1354). For the full method matrix, selection guide, the boot-time loading constraint, and the `SpecAutoRouter` API, see [Speculative Decoding](speculative-decoding.md).
 
+## Agent Client Reliability
+
+Agent clients (Claude Code, OpenClaw, anything driving tool loops through an Anthropic-to-OpenAI converter such as fusion-gateway) have two serving-layer guards, both env-gated and default-on:
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `FUSION_MLX_CC_THINKING_FORCE` | `1` | Claude Code requests (detected by system-prompt signature) get `enable_thinking=True` forced and temperature capped at 0.6. Without thinking, thinking-family models degenerate to terse echoes on long agent contexts. An explicit client `enable_thinking=False` still wins. |
+| `FUSION_MLX_AGENT_DEGENERATE_RETRY` | `1` | On the non-stream chat route, a degenerate agent turn — tools attached, `finish_reason=stop`, no tool calls, post-thinking content under 256 chars — is logged at WARNING with the raw evidence and retried once. Long genuine answers and non-tool requests are never retried. Set `0` to disable. |
+
 ## Concurrent Multi-Model Serving (#796)
 
 fusion-mlx keeps multiple models resident at once and serves them concurrently — a Fast model (small, low-latency) and a Slow model (large, high-quality) can both stay loaded and handle interleaved requests without evicting each other. This is the Fast+Slow pattern: route trivial/interactive turns to the fast model and heavy reasoning to the slow model.

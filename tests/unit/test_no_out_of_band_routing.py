@@ -179,6 +179,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # disables the normalization. A sampling-params adjustment for an
         # already-admitted request — which model loads never changes.
         "FUSION_MLX_CC_THINKING_FORCE",
+        # #1415: kill switch for the degenerate-agent-turn retry (tools
+        # attached, finish=stop, no tool calls, <256 chars post-thinking
+        # content → one retry). Generation-reliability knob on the
+        # already-selected engine; never chooses model/routing.
+        "FUSION_MLX_AGENT_DEGENERATE_RETRY",
         # Operator request-shape safety cap for nested JSON bodies.
         # Bounds validation recursion only; never chooses model/routing.
         "FUSION_MLX_MAX_BODY_DEPTH",

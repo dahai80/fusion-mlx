@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import time
 import uuid
 from typing import Any
@@ -58,6 +59,42 @@ from .grammar import (
 )
 from .markitdown import _create_markitdown_chat_completion
 from .streaming import _stream_chat
+
+# #1415: degenerate agent turn detection. On long agent contexts (43k+)
+# thinking models intermittently announce a tool call in prose ("Batch
+# probe: X + Y") and then emit EOS — finish=stop, no tool_calls, no
+# parser warnings. The agent client receives the tiny text + end_turn and
+# stalls waiting for a manual "continue". Detect that shape here and retry
+# once: sampling is stochastic at agent temps, and the prefix cache makes
+# the re-prefill nearly free. Env-gated, default on.
+_DEGENERATE_AGENT_TEXT_MAX_CHARS = 256
+
+
+def _agent_degenerate_retry_enabled() -> bool:
+    return os.environ.get("FUSION_MLX_AGENT_DEGENERATE_RETRY", "1").strip() != "0"
+
+
+def _post_think_content(gen: Any) -> str:
+    # Mirror _gen_to_internal's thinking extraction so the detection sees
+    # the final content, not the raw text with the <think> block embedded.
+    _reasoning = getattr(gen, "reasoning_content", None)
+    _text = gen.text or ""
+    if _reasoning is None and _text:
+        from ..thinking import extract_thinking
+
+        _, _content = extract_thinking(_text, gen.finish_reason)
+        return _content or ""
+    return _text
+
+
+def _is_degenerate_agent_turn(request: ChatCompletionRequest, gen: Any) -> bool:
+    if not getattr(request, "tools", None):
+        return False
+    if getattr(gen, "tool_calls", None):
+        return False
+    if getattr(gen, "finish_reason", None) != "stop":
+        return False
+    return len(_post_think_content(gen).strip()) < _DEGENERATE_AGENT_TEXT_MAX_CHARS
 
 
 async def _run_chat(
@@ -209,7 +246,7 @@ async def _run_chat(
             ct_kwargs, client_thinking=client_thinking_from_request(request)
         )
         compiled_grammar = _compile_grammar_for_request(engine, request)
-        gen = await engine.chat(
+        _gen_kwargs = dict(
             messages=messages,
             max_tokens=sampling.max_tokens,
             temperature=sampling.temperature,
@@ -227,6 +264,7 @@ async def _run_chat(
             ),
             compiled_grammar=compiled_grammar,
         )
+        gen = await engine.chat(**_gen_kwargs)
         # R12-4 (#514): strict json_schema post-generate validation +
         # single repair retry with a context-length guard. The chat
         # surface normally enforces strict mode via constrained
@@ -279,6 +317,7 @@ async def _run_chat(
                     param="response_format.json_schema",
                     metrics_prefix="chat",
                 )
+
         # R12: route-level fallback tool-call extraction. Real engines
         # self-parse via _fallback_parse_tool_calls (engines/batched.py),
         # but engines that don't (or test harnesses) leave the hermes
@@ -286,42 +325,85 @@ async def _run_chat(
         # then leaks into message.content. Parse here as a safety net,
         # gated on tools present + no engine-emitted tool_calls so real
         # engines skip (no double-parse).
-        if request.tools and not getattr(gen, "tool_calls", None):
-            try:
-                from ..tool_calling import convert_tools_for_template, parse_tool_calls
-
-                _dict_tools = convert_tools_for_template(request.tools) or request.tools
-                _tok = getattr(engine, "_tokenizer", None) or getattr(
-                    engine, "tokenizer", None
-                )
-                _cleaned, _tc_list = parse_tool_calls(gen.text, _tok, _dict_tools)
-                if _tc_list:
-                    _tc_dicts = []
-                    for _tc in _tc_list:
-                        _tc_dicts.append(
-                            {
-                                "id": _tc.id,
-                                "type": _tc.type,
-                                "function": {
-                                    "name": _tc.function.name,
-                                    "arguments": _tc.function.arguments,
-                                },
-                            }
-                        )
-                    gen = copy.deepcopy(gen)
-                    gen.tool_calls = _tc_dicts
-                    if (
-                        _cleaned.strip()
-                        and _cleaned.strip() != (gen.text or "").strip()
-                    ):
-                        gen.text = _cleaned
-                    logger.info(
-                        "r12 fallback tool-call parse: model=%s calls=%d",
-                        model_name,
-                        len(_tc_dicts),
+        def _r12_fallback_parse(_gen: Any) -> Any:
+            if request.tools and not getattr(_gen, "tool_calls", None):
+                try:
+                    from ..tool_calling import (
+                        convert_tools_for_template,
+                        parse_tool_calls,
                     )
-            except Exception as e:
-                logger.debug("r12 fallback tool-call parse failed: %s", e)
+
+                    _dict_tools = (
+                        convert_tools_for_template(request.tools) or request.tools
+                    )
+                    _tok = getattr(engine, "_tokenizer", None) or getattr(
+                        engine, "tokenizer", None
+                    )
+                    _cleaned, _tc_list = parse_tool_calls(_gen.text, _tok, _dict_tools)
+                    if _tc_list:
+                        _tc_dicts = []
+                        for _tc in _tc_list:
+                            _tc_dicts.append(
+                                {
+                                    "id": _tc.id,
+                                    "type": _tc.type,
+                                    "function": {
+                                        "name": _tc.function.name,
+                                        "arguments": _tc.function.arguments,
+                                    },
+                                }
+                            )
+                        _gen = copy.deepcopy(_gen)
+                        _gen.tool_calls = _tc_dicts
+                        if (
+                            _cleaned.strip()
+                            and _cleaned.strip() != (_gen.text or "").strip()
+                        ):
+                            _gen.text = _cleaned
+                        logger.info(
+                            "r12 fallback tool-call parse: model=%s calls=%d",
+                            model_name,
+                            len(_tc_dicts),
+                        )
+                except Exception as e:
+                    logger.debug("r12 fallback tool-call parse failed: %s", e)
+            return _gen
+
+        gen = _r12_fallback_parse(gen)
+
+        # #1415: degenerate agent turn — model announced a tool call in
+        # prose then hit EOS with no tool_calls. Retry once (stochastic
+        # sampling usually breaks the degeneration; prefix cache makes
+        # the re-prefill cheap). Log the evidence loudly either way:
+        # today this failure mode is invisible in server logs.
+        if _agent_degenerate_retry_enabled() and _is_degenerate_agent_turn(
+            request, gen
+        ):
+            _evidence = _post_think_content(gen).strip()[:120]
+            logger.warning(
+                "#1415 degenerate agent turn: model=%s prompt_tokens=%s "
+                "completion_tokens=%s content=%r — retrying once",
+                model_name,
+                getattr(gen, "prompt_tokens", None),
+                getattr(gen, "completion_tokens", None),
+                _evidence,
+            )
+            gen = _r12_fallback_parse(await engine.chat(**_gen_kwargs))
+            if _is_degenerate_agent_turn(request, gen):
+                logger.warning(
+                    "#1415 degenerate agent turn persisted after retry: "
+                    "model=%s content=%r — returning as-is",
+                    model_name,
+                    _post_think_content(gen).strip()[:120],
+                )
+            else:
+                logger.info(
+                    "#1415 degenerate agent turn recovered after retry: "
+                    "model=%s tool_calls=%d",
+                    model_name,
+                    len(getattr(gen, "tool_calls", None) or []),
+                )
+
         # Honor parallel_tool_calls=false by capping to 1 call
         tool_calls = gen.tool_calls
         if (
