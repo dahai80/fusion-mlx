@@ -1,0 +1,581 @@
+{
+  "dpi": 200,
+  "base_url": "http://127.0.0.1:11434",
+  "models": {
+    "mlx-community--Qwen2.5-VL-7B-Instruct-4bit": {
+      "categories": {
+        "printed": {
+          "score": {
+            "n_samples": 6,
+            "exact_match_rate": 0.1667,
+            "median_similarity": 0.1992,
+            "valid_json_rate": 1.0,
+            "median_latency_s": 0.977,
+            "p90_latency_s": 1.218,
+            "errors": 0,
+            "truncated": 0
+          },
+          "gt": [
+            "FLOOR PLAN - LEVEL 02",
+            "EXTERNAL WALL TYPE A - 200mm CAVITY BRICK",
+            "THERMAL INSULATION TO ALL EXTERNAL WALLS",
+            "CEILING HEIGHT 2800mm ABOVE FFL",
+            "WATERPROOF MEMBRANE AT BALCONY THRESHOLD",
+            "STEEL BEAM 254x146x31 UB OVER OPENING"
+          ]
+        },
+        "dimensions": {
+          "score": {
+            "n_samples": 1,
+            "exact_match_rate": 1.0,
+            "median_similarity": 1.0,
+            "valid_json_rate": 1.0,
+            "median_latency_s": 1.417,
+            "p90_latency_s": 1.417,
+            "errors": 0,
+            "truncated": 0
+          },
+          "gt": [
+            "3600",
+            "2400",
+            "1800",
+            "1200",
+            "900",
+            "450"
+          ]
+        },
+        "table": {
+          "score": {
+            "n_samples": 1,
+            "exact_match_rate": 0.0,
+            "median_similarity": 0.1932,
+            "valid_json_rate": 1.0,
+            "median_latency_s": 1.993,
+            "p90_latency_s": 1.993,
+            "errors": 0,
+            "truncated": 0
+          },
+          "gt": [
+            [
+              "MARK",
+              "DESCRIPTION",
+              "QTY"
+            ],
+            [
+              "A-01",
+              "200mm CAVITY BRICK WALL",
+              "12"
+            ],
+            [
+              "A-02",
+              "REINFORCED CONCRETE SLAB",
+              "8"
+            ],
+            [
+              "A-03",
+              "ALUMINIUM CURTAIN WALL",
+              "5"
+            ],
+            [
+              "A-04",
+              "TIMBER DECKING 32mm",
+              "3"
+            ],
+            [
+              "A-05",
+              "STEEL CHANNEL 152x76",
+              "16"
+            ]
+          ]
+        },
+        "handwriting": {
+          "score": {
+            "n_samples": 5,
+            "exact_match_rate": 1.0,
+            "median_similarity": 1.0,
+            "valid_json_rate": 1.0,
+            "median_latency_s": 0.893,
+            "p90_latency_s": 0.911,
+            "errors": 0,
+            "truncated": 0
+          },
+          "gt": [
+            "check with structural engineer",
+            "verify levels on site",
+            "RCP to match above",
+            "confirm with client",
+            "not to scale drawing"
+          ]
+        }
+      },
+      "long_image": {
+        "slice_px": 2048,
+        "overlap_pct": 15,
+        "n_slices": 12,
+        "regions_recovered": 4,
+        "regions_total": 7,
+        "oom_or_5xx": 0,
+        "truncated_slices": 1,
+        "median_latency_s": 4.701,
+        "max_latency_s": 19.114,
+        "per_slice": [
+          {
+            "offset": [
+              0,
+              0
+            ],
+            "latency_s": 19.114,
+            "finish_reason": "length",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": [
+              0
+            ]
+          },
+          {
+            "offset": [
+              1740,
+              0
+            ],
+            "latency_s": 4.312,
+            "finish_reason": "stop",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": []
+          },
+          {
+            "offset": [
+              3480,
+              0
+            ],
+            "latency_s": 4.268,
+            "finish_reason": "stop",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": []
+          },
+          {
+            "offset": [
+              4574,
+              0
+            ],
+            "latency_s": 4.312,
+            "finish_reason": "stop",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": []
+          },
+          {
+            "offset": [
+              0,
+              1740
+            ],
+            "latency_s": 4.437,
+            "finish_reason": "stop",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": []
+          },
+          {
+            "offset": [
+              1740,
+              1740
+            ],
+            "latency_s": 4.647,
+            "finish_reason": "stop",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": []
+          },
+          {
+            "offset": [
+              3480,
+              1740
+            ],
+            "latency_s": 4.755,
+            "finish_reason": "stop",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": []
+          },
+          {
+            "offset": [
+              4574,
+              1740
+            ],
+            "latency_s": 4.585,
+            "finish_reason": "stop",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": []
+          },
+          {
+            "offset": [
+              0,
+              2629
+            ],
+            "latency_s": 4.988,
+            "finish_reason": "stop",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": [
+              4
+            ]
+          },
+          {
+            "offset": [
+              1740,
+              2629
+            ],
+            "latency_s": 5.009,
+            "finish_reason": "stop",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": [
+              5
+            ]
+          },
+          {
+            "offset": [
+              3480,
+              2629
+            ],
+            "latency_s": 5.161,
+            "finish_reason": "stop",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": []
+          },
+          {
+            "offset": [
+              4574,
+              2629
+            ],
+            "latency_s": 5.124,
+            "finish_reason": "stop",
+            "http_status": 200,
+            "error": null,
+            "new_region_hits": [
+              6
+            ]
+          }
+        ]
+      },
+      "slice_sizes": {
+        "2048": {
+          "slice_px": 2048,
+          "overlap_pct": 15,
+          "n_slices": 12,
+          "regions_recovered": 0,
+          "regions_total": 0,
+          "oom_or_5xx": 0,
+          "truncated_slices": 0,
+          "median_latency_s": 1.171,
+          "max_latency_s": 3.514,
+          "per_slice": [
+            {
+              "offset": [
+                0,
+                0
+              ],
+              "latency_s": 3.514,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                1740,
+                0
+              ],
+              "latency_s": 1.286,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                3480,
+                0
+              ],
+              "latency_s": 1.222,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                4574,
+                0
+              ],
+              "latency_s": 1.015,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                0,
+                1740
+              ],
+              "latency_s": 1.043,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                1740,
+                1740
+              ],
+              "latency_s": 1.174,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                3480,
+                1740
+              ],
+              "latency_s": 1.259,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                4574,
+                1740
+              ],
+              "latency_s": 1.011,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                0,
+                2629
+              ],
+              "latency_s": 1.169,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                1740,
+                2629
+              ],
+              "latency_s": 1.118,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                3480,
+                2629
+              ],
+              "latency_s": 1.211,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                4574,
+                2629
+              ],
+              "latency_s": 1.094,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            }
+          ]
+        },
+        "2560": {
+          "slice_px": 2560,
+          "overlap_pct": 15,
+          "n_slices": 6,
+          "regions_recovered": 0,
+          "regions_total": 0,
+          "oom_or_5xx": 0,
+          "truncated_slices": 1,
+          "median_latency_s": 11.299,
+          "max_latency_s": 27.239,
+          "per_slice": [
+            {
+              "offset": [
+                0,
+                0
+              ],
+              "latency_s": 27.239,
+              "finish_reason": "length",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                2176,
+                0
+              ],
+              "latency_s": 9.755,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                4062,
+                0
+              ],
+              "latency_s": 10.414,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                0,
+                2117
+              ],
+              "latency_s": 10.77,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                2176,
+                2117
+              ],
+              "latency_s": 11.828,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                4062,
+                2117
+              ],
+              "latency_s": 13.105,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            }
+          ]
+        },
+        "3072": {
+          "slice_px": 3072,
+          "overlap_pct": 15,
+          "n_slices": 6,
+          "regions_recovered": 0,
+          "regions_total": 0,
+          "oom_or_5xx": 0,
+          "truncated_slices": 0,
+          "median_latency_s": 26.225,
+          "max_latency_s": 29.553,
+          "per_slice": [
+            {
+              "offset": [
+                0,
+                0
+              ],
+              "latency_s": 27.803,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                2611,
+                0
+              ],
+              "latency_s": 29.553,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                3550,
+                0
+              ],
+              "latency_s": 26.081,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                0,
+                1605
+              ],
+              "latency_s": 25.538,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                2611,
+                1605
+              ],
+              "latency_s": 26.369,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            },
+            {
+              "offset": [
+                3550,
+                1605
+              ],
+              "latency_s": 24.638,
+              "finish_reason": "stop",
+              "http_status": 200,
+              "error": null,
+              "new_region_hits": []
+            }
+          ]
+        }
+      },
+      "summary": {
+        "mean_exact_match": 0.5417,
+        "mean_valid_json": 1.0,
+        "long_image_stable": false
+      }
+    }
+  },
+  "recommendation": {
+    "quant_tier": "none-met-threshold",
+    "max_safe_slice_px": 3072,
+    "rationale": "mean exact-match >= 0.8 and valid-JSON >= 0.9 on category suite; slice probes up to 3072px had zero OOM/5xx and zero truncation. If no model met the accuracy threshold, drawing-parser M2 should use the cloud fallback path."
+  }
+}
