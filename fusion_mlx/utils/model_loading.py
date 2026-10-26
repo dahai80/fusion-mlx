@@ -300,6 +300,23 @@ def maybe_apply_pre_load_patches(
         if apply_step3p7_patch():
             logger.info("step3p7 pre-load patch applied for %s", model_name)
 
+    if for_vlm and model_type == "diffusion_gemma":
+        # mlx-vlm quantized soft-embedding dequantize needs the mode kwarg.
+        from ..patches.mlx_vlm_diffusion import apply_mlx_vlm_diffusion_patch
+
+        if apply_mlx_vlm_diffusion_patch():
+            logger.info("mlx-vlm diffusion pre-load patch applied for %s", model_name)
+
+    if for_vlm and model_type == "qwen2_5_vl":
+        # mlx-vlm 0.5.0 + MLX 0.32: mx.repeat rejects mx.array repeats, so
+        # every qwen2.5-VL image request 500s in the vision tower.
+        from ..patches.mlx_vlm_qwen_vl_repeat import (
+            apply_mlx_vlm_qwen_vl_repeat_patch,
+        )
+
+        if apply_mlx_vlm_qwen_vl_repeat_patch():
+            logger.info("qwen2.5-VL mx.repeat compat patch applied for %s", model_name)
+
     if _has_mtp_heads(config) and model_type:
         mtp_enabled = bool(
             model_settings is not None and getattr(model_settings, "mtp_enabled", False)

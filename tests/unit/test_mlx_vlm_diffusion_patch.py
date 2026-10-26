@@ -4,9 +4,13 @@
 import importlib
 
 import mlx.nn as nn
+import pytest
 
 
 def test_diffusion_embedding_dequantize_passes_quantization_mode(monkeypatch):
+    # mlx-vlm 0.5.0 dropped mlx_vlm.generate.diffusion; the patch module
+    # self-guards on import failure, so the runtime path is a no-op there.
+    pytest.importorskip("mlx_vlm.generate.diffusion")
     diffusion_mod = importlib.import_module("mlx_vlm.generate.diffusion")
 
     from fusion_mlx.patches import mlx_vlm_diffusion

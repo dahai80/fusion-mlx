@@ -234,12 +234,10 @@ class TestBoundarySnapshotSSDStore:
         assert not orphan_dir.exists()
         assert (self.base_dir / "_boundary_snapshots").exists()
 
-    @pytest.mark.skip(
-        reason="REDESIGN-DRIFT b29 2026-08-20: asserts store2._snapshot_dir "
-        "!= store1._snapshot_dir (per-session dirs). Prod uses one shared "
-        "_boundary_snapshots dir (Rule 7). See PR #553."
-    )
     def test_store_creation_does_not_delete_existing_session(self):
+        # Shared _boundary_snapshots dir (Rule 7), but a second store's init
+        # must NOT rmtree it while the first store is live — that killed
+        # in-flight background writes with ENOENT (observed 2026-10-26).
         self.store.save("req-a", 1024, [MagicMock()], _mock_extract_cache_states)
         self._wait_for_disk(self.store, "req-a", 1024)
 
@@ -247,10 +245,32 @@ class TestBoundarySnapshotSSDStore:
         try:
             assert self.store._snapshot_dir.exists()
             assert store2._snapshot_dir.exists()
-            assert store2._snapshot_dir != self.store._snapshot_dir
+            assert store2._snapshot_dir == self.store._snapshot_dir
             assert self.store.load("req-a", 1024) is not None
         finally:
             store2.shutdown()
+
+    def test_first_store_init_still_cleans_crash_orphans(self):
+        # The rmtree guard only applies while another live store shares the
+        # base_dir; the FIRST store in a process must still reclaim orphans
+        # left by a crashed previous process.
+        self.store.shutdown()
+        orphan = self.store._snapshot_dir / "deadbeef.safetensors"
+        orphan.write_bytes(b"crash leftover")
+        assert orphan.exists()
+
+        from fusion_mlx.cache.boundary_snapshot_store import (
+            _ACTIVE_STORES_BY_BASE_DIR,
+        )
+
+        _ACTIVE_STORES_BY_BASE_DIR.pop(str(self.base_dir), None)
+        fresh = BoundarySnapshotSSDStore(base_dir=self.base_dir)
+        try:
+            assert not orphan.exists()
+            assert fresh._snapshot_dir.exists()
+        finally:
+            fresh.shutdown()
+        self.store = fresh
 
     @pytest.mark.skip(
         reason="REDESIGN-DRIFT b29 2026-08-20: asserts cleanup_all only "

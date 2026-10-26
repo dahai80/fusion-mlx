@@ -44,6 +44,7 @@ def ensure_all_registered() -> None:
         "llama4_attention",
         "turboquant_attention",
         "mlx_vlm_diffusion",
+        "mlx_vlm_qwen_vl_repeat",
         "qwen3_6_nested_visual",
         "minimax_m3_sparse_attention",
     ):

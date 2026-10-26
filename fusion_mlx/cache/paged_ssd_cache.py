@@ -2792,6 +2792,18 @@ class PagedSSDCacheManager:
                 continue
             if not _is_hex_blob_name(f.stem):
                 continue
+            # Age gate (same rule as _sweep_orphaned_files): a fresh .tmp
+            # belongs to an in-flight background write of another active
+            # manager sharing this cache_dir (#1037/#1299). Startup repair of
+            # a new manager must not unlink it — that raced the writer's
+            # temp_path.replace() into ENOENT and dropped a live block
+            # (observed: block 17dd4716f518b61a, 2026-10-26). Only
+            # crashed-write orphans older than the sweep age are removed.
+            try:
+                if time.time() - f.stat().st_mtime < _ORPHAN_SWEEP_MIN_AGE_S:
+                    continue
+            except OSError:
+                continue
             try:
                 f.unlink()
                 report["orphaned_files_removed"] += 1

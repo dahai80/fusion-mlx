@@ -888,6 +888,9 @@ class TestVerifyAndRepairIndex:
         cache_dir = ssd_cache._cache_dir
         own = cache_dir / "a" / "deadbeef.tmp"
         own.write_bytes(b"orphan")
+        # Age-gate: only crashed-write orphans (old mtime) are removed.
+        old = time.time() - 60.0
+        os.utime(own, (old, old))
         foreign1 = cache_dir / "a" / "foreign.tmp"
         foreign1.write_bytes(b"not ours")
         foreign_dir = cache_dir / "notashard"
@@ -900,6 +903,29 @@ class TestVerifyAndRepairIndex:
         assert not own.exists()
         assert foreign1.exists()
         assert foreign2.exists()
+        assert report["orphaned_files_removed"] == 1
+
+    def test_keeps_fresh_tmp_in_flight_write(self, ssd_cache):
+        # A fresh .tmp belongs to an in-flight background write of another
+        # active manager sharing the cache_dir; startup repair must not
+        # unlink it (observed 2026-10-26: repair raced the writer's
+        # temp_path.replace() into ENOENT and dropped a live block).
+        cache_dir = ssd_cache._cache_dir
+        inflight = cache_dir / "1" / "17dd4716f518b61a.tmp"
+        inflight.parent.mkdir(parents=True, exist_ok=True)
+        inflight.write_bytes(b"in-flight")
+
+        report = ssd_cache.verify_and_repair_index()
+
+        assert inflight.exists()
+        assert report["orphaned_files_removed"] == 0
+
+        # Once the write crashed and the mtime ages past the sweep age, the
+        # orphan is reclaimed.
+        old = time.time() - 60.0
+        os.utime(inflight, (old, old))
+        report = ssd_cache.verify_and_repair_index()
+        assert not inflight.exists()
         assert report["orphaned_files_removed"] == 1
 
 
