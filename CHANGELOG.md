@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [v0.10.20] — 2026-10-26
+
+### Fixed — degenerate agent turns now detected, logged, and retried once (#1415)
+- On long agent contexts (43k+ prompt tokens) thinking models intermittently
+  announce a tool call in prose ("Batch probe: X + Y") and then emit EOS —
+  `finish_reason=stop`, zero `tool_calls`, zero parser warnings. Agent
+  clients (Claude Code via fusion-gateway) received the fragment +
+  `end_turn` and stalled waiting for a manual "continue", with no
+  server-side evidence at all. The non-stream chat route now detects the
+  shape (tools present + no parsed tool calls + finish=stop + post-thinking
+  content under 256 chars), logs a loud warning with the raw text evidence,
+  and retries the request once — sampling is stochastic at agent
+  temperatures so the retry usually breaks the degeneration, and the prefix
+  cache makes the re-prefill nearly free. Genuine long answers,
+  `finish_reason=length`, and non-tool requests are never retried. Kill
+  switch: `FUSION_MLX_AGENT_DEGENERATE_RETRY=0`.
+
 ## [v0.10.19] — 2026-10-26
 
 ### Fixed — doubled-brace tool calls were dropped instead of parsed (#1412)
