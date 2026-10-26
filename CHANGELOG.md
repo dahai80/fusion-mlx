@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [v0.10.19] — 2026-10-26
+
 ### Fixed — doubled-brace tool calls were dropped instead of parsed (#1412)
 - Some chat templates escape literal braces, so a model emits
   `{{"name": "Read", "arguments": {...}}}` where `{"name": ...}` was meant.
