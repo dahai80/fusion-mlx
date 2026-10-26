@@ -398,6 +398,86 @@ def test_attention_patch_rebinds_remote_code_modules(monkeypatch):
     assert out.shape == (1, 4, 1, 32)
 
 
+def test_attention_patch_pre_load_covers_exec_loaded_modules(monkeypatch, tmp_path):
+    # Regression (#1421 follow-up): mlx_lm loads trust_remote_code models via
+    # spec_from_file_location("custom_model", ...) + exec_module — the module
+    # is NEVER registered in sys.modules, so the rebind loop cannot see it.
+    # The engine applies the patch pre-load for exactly this reason; a module
+    # exec'd after the patch must capture the patched fn via its by-value
+    # from-import, with no sys.modules entry at all.
+    import importlib.util
+
+    from fusion_mlx.patches import turboquant_attention as tq_attention
+
+    monkeypatch.setattr(tq_attention, "_PATCHED", False)
+    assert tq_attention.apply_turboquant_attention_patch() is True
+
+    src = tmp_path / "fake_remote_arch.py"
+    src.write_text(
+        "from mlx_lm.models.base import scaled_dot_product_attention\n"
+        "def call(queries, keys, values, cache, scale, mask):\n"
+        "    return scaled_dot_product_attention(\n"
+        "        queries, keys, values, cache, scale=scale, mask=mask\n"
+        "    )\n"
+    )
+    spec = importlib.util.spec_from_file_location("custom_model", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    import sys
+
+    assert "custom_model" not in sys.modules
+
+    fp_cache = KVCache()
+    keys = mx.random.normal((1, 2, 8, 32))
+    values = mx.random.normal((1, 2, 8, 32))
+    fp_cache.update_and_fetch(keys, values)
+    tq = TurboQuantKVCache.from_cache(fp_cache, bits=4.0)
+    ks, vs = tq.state
+
+    queries = mx.random.normal((1, 4, 1, 32))
+    out = mod.call(queries, ks, vs, tq, scale=32**-0.5, mask=None)
+    assert out.shape == (1, 4, 1, 32)
+
+
+def test_turboquant_kv_will_enable_mirrors_post_load_decision():
+    # The pre-load predicate must agree with the post-load enable block in
+    # BatchedEngine.start(): auto-enable by default, balanced-tier claude场景
+    # opt-out, explicit override wins either way.
+    from types import SimpleNamespace
+
+    from fusion_mlx.engines.batched import BatchedEngine
+
+    assert BatchedEngine("m")._turboquant_kv_will_enable() is False
+    assert (
+        BatchedEngine(
+            "m", model_settings=SimpleNamespace()
+        )._turboquant_kv_will_enable()
+        is True
+    )
+    assert (
+        BatchedEngine(
+            "m", model_settings=SimpleNamespace(memory_tier="balanced")
+        )._turboquant_kv_will_enable()
+        is False
+    )
+    assert (
+        BatchedEngine(
+            "m",
+            model_settings=SimpleNamespace(
+                memory_tier="balanced", turboquant_kv_enabled=True
+            ),
+        )._turboquant_kv_will_enable()
+        is True
+    )
+    assert (
+        BatchedEngine(
+            "m", model_settings=SimpleNamespace(turboquant_kv_enabled=False)
+        )._turboquant_kv_will_enable()
+        is False
+    )
+
+
 def test_attention_patch_preserves_sinks_with_dequant_fallback(monkeypatch):
     from mlx_lm.models import base as mlx_base
 

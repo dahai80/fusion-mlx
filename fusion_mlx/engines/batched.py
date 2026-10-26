@@ -252,6 +252,19 @@ class BatchedEngine(BaseEngine):
             return preprocess_harmony_messages(messages)
         return messages
 
+    def _turboquant_kv_will_enable(self) -> bool:
+        # Mirror of the enable decision in start()'s post-load TurboQuant
+        # block, computed before the model loads so the attention patch can
+        # be applied pre-load (see start()). Inputs (_model_settings,
+        # _memory_tier) are both set in __init__.
+        if self._model_settings is None:
+            return False
+        enabled = getattr(self._model_settings, "turboquant_kv_enabled", None)
+        if enabled is None:
+            # Auto-enable, except the balanced-tier claude场景 opt-out.
+            return getattr(self, "_memory_tier", None) != "balanced"
+        return bool(enabled)
+
     async def start(self) -> None:
         if self._loaded:
             return
@@ -324,6 +337,30 @@ class BatchedEngine(BaseEngine):
         from concurrent.futures import ThreadPoolExecutor
 
         from ..engine_core import _init_mlx_step_thread
+
+        # TurboQuant attention patch must run BEFORE the model load.
+        # trust_remote_code architectures load via
+        # spec_from_file_location("custom_model", ...) + exec_module — the
+        # module is never registered in sys.modules, so the post-load rebind
+        # loop cannot see it. The remote module binds
+        # scaled_dot_product_attention by value at import time (inside the
+        # load), so only a pre-load patch guarantees it captures the patched
+        # fn (#1421 follow-up: post-load patch alone still 500'd jais3).
+        # Harmless when TQ ends up disabled: patched SDPA passes non-TQ
+        # caches straight through to stock.
+        if self._turboquant_kv_will_enable():
+            try:
+                from ..patches.turboquant_attention import (
+                    apply_turboquant_attention_patch,
+                )
+
+                apply_turboquant_attention_patch()
+            except Exception:
+                logger.error(
+                    "TurboQuant attention pre-load patch failed for '%s'",
+                    self._model_name,
+                    exc_info=True,
+                )
 
         # Dedicated single-worker executor: model load + scheduler + prefill +
         # decode all run on this SAME thread so MLX binds model weights and runs
