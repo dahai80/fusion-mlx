@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added — language capability metadata on `/v1/models` + optional Arabic-capable model (#1416)
+- Every `/v1/models` entry now carries a `languages` array (ISO 639-1
+  codes; `[]` = unknown) so downstream consumers can discover per-model
+  language capability without hardcoding. Values come from an
+  alias-declared `languages` field (validated, malformed entries reject
+  the alias loudly) or a conservative family-hint table — never guessed.
+- New optional alias `jais3-7b-4bit` (Inception Jais-3 7B,
+  Arabic-English bilingual, 4-bit MLX build, downloadable via the
+  configured HF mirror) serves the ai-speech-exam Arabic scenarios and
+  advertises `["ar", "en"]`. See docs/configuration.md "Language
+  Capability Metadata".
+
 ## [v0.10.19] — 2026-10-26
 
 ### Fixed — doubled-brace tool calls were dropped instead of parsed (#1412)

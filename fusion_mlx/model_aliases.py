@@ -70,6 +70,10 @@ class AliasProfile:
     model_family: str | None = None
     spec_methods: tuple[str, ...] = ()
     spec_drafter_map: dict[str, str] | None = None
+    # #1416: ISO 639-1 codes this model is known to serve. Empty = unknown.
+    # Surfaced via /v1/models ``languages``. Alias-declared values override
+    # the conservative family hints in model_languages.py.
+    languages: tuple[str, ...] = ()
     spec_constraints: tuple[str, ...] = ()
 
     @property
@@ -176,6 +180,29 @@ def _coerce_recommended_sampling(
     return tuple(coerced)
 
 
+_ISO_639_1 = re.compile(r"^[a-z]{2}$")
+
+
+def _coerce_languages(raw) -> tuple[str, ...]:
+    # #1416: validate the optional ``languages`` list — ISO 639-1 lowercase
+    # codes only. Anything else rejects the whole alias loudly (fail
+    # visibly) rather than silently advertising wrong capability metadata.
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("languages must be a non-empty list of ISO 639-1 codes")
+    seen = set()
+    for code in raw:
+        if not isinstance(code, str) or not _ISO_639_1.match(code):
+            raise ValueError(
+                f"invalid language code {code!r} (want ISO 639-1, e.g. 'ar')"
+            )
+        if code in seen:
+            raise ValueError(f"duplicate language code {code!r}")
+        seen.add(code)
+    return tuple(raw)
+
+
 def _coerce(name: str, raw: str | dict) -> AliasProfile:
     if isinstance(raw, str):
         if not raw:
@@ -261,6 +288,7 @@ def _coerce(name: str, raw: str | dict) -> AliasProfile:
         spec_methods=spec_methods,
         spec_drafter_map=spec_drafter_map,
         spec_constraints=spec_constraints,
+        languages=_coerce_languages(raw.get("languages")),
     )
     return _migrate_legacy_spec_fields(profile)
 

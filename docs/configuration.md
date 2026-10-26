@@ -185,6 +185,50 @@ Custom aliases via `aliases.json` in `~/.fusion-mlx/`:
 }
 ```
 
+## Language Capability Metadata (#1416)
+
+Every `/v1/models` entry carries a `languages` array (ISO 639-1 codes) so
+downstream consumers (fusion-gateway language-aware routing, fusion-bench
+`run arabic`) can discover per-model language capability without
+hardcoding. Empty `[]` means unknown — the field always exists, the value
+may not.
+
+Resolution order:
+
+1. **Alias-declared** — a `languages` list on the alias entry in
+   `fusion_mlx/aliases.json` (validated: lowercase 2-letter codes, no
+   duplicates; a malformed entry rejects the whole alias loudly).
+2. **Family hints** — conservative curated table in
+   `fusion_mlx/model_languages.py` (`jais`/`allam`/`acegpt` → `["ar","en"]`,
+   `qwen`/`gemma` → `["en","zh"]`). Only families whose multilingual
+   support is documented; never guessed.
+3. `[]` — unknown.
+
+```json
+{
+  "jais3-7b-4bit": {
+    "hf_path": "IFM/Jais-3-7B-MLX-4bit",
+    "modality": "text",
+    "languages": ["ar", "en"],
+    "description": "Jais-3 7B Arabic-English bilingual LLM, 4-bit MLX build."
+  }
+}
+```
+
+### Arabic-capable optional model
+
+`jais3-7b-4bit` (Inception Jais-3 7B, Arabic-English bilingual, 4-bit MLX)
+is the optional Arabic-capable model for the ai-speech-exam Arabic
+scenarios. It is not loaded by default — pull it on demand (downloads go
+through the configured mirror, default `https://hf-mirror.com`):
+
+```bash
+fusion-mlx pull jais3-7b-4bit
+fusion-mlx serve jais3-7b-4bit
+```
+
+Once registered, `/v1/models` advertises `"languages": ["ar", "en"]` for it.
+
 ## Cloud Router
 
 Automatically route large-context requests to cloud providers:

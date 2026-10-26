@@ -852,5 +852,15 @@
     "supports_spec_decode": true,
     "supports_dflash2": true,
     "model_family": "qwen3_8"
+  },
+  "jais3-7b-4bit": {
+    "hf_path": "IFM/Jais-3-7B-MLX-4bit",
+    "modality": "text",
+    "is_hybrid": false,
+    "is_hybrid_explicit": true,
+    "is_moe": false,
+    "supports_spec_decode": false,
+    "languages": ["ar", "en"],
+    "description": "Jais-3 7B (Inception) Arabic-English bilingual LLM, 4-bit MLX build. Optional Arabic-capable model for ai-speech-exam Arabic scenarios (#1416)."
   }
 }
