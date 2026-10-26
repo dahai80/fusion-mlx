@@ -566,7 +566,12 @@ def _apply_turboquant_kv_convert(self, prompt_cache: list[Any]) -> None:
             f"TurboQuant: converted {converted}/{len(prompt_cache)} "
             f"cache layers to {bits}-bit{skip_msg}{mode_msg}"
         )
-        self._sync_expected_layer_signature(prompt_cache)
+        # Module-level call, not self.<name>: the function was never attached
+        # to Scheduler (core.py only wraps public underscore fns explicitly,
+        # star-imports skip underscore names), so self.<name> raised
+        # AttributeError on every real conversion and silently killed the
+        # #1236 SSD signature sync.
+        _sync_expected_layer_signature(self, prompt_cache)
 
 
 def _sync_expected_layer_signature(self, prompt_cache: list[Any]) -> None:

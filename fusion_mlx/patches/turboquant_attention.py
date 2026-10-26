@@ -14,6 +14,7 @@ import mlx.core as mx
 logger = logging.getLogger(__name__)
 
 _PATCHED = False
+_ORIGINAL_SDPA = None
 _LONG_PREFILL_QUANTIZED_THRESHOLD = 8192
 _LONG_PREFILL_QUERY_BLOCK_SIZE = 256
 _LONG_PREFILL_KEY_CHUNK_SIZE = 16384
@@ -51,7 +52,7 @@ def _tq_cache_types():
 
 def apply_turboquant_attention_patch() -> bool:
     """Monkey-patch mlx-lm's scaled_dot_product_attention for TurboQuant."""
-    global _PATCHED
+    global _PATCHED, _ORIGINAL_SDPA
     if _PATCHED:
         return False
 
@@ -60,7 +61,12 @@ def apply_turboquant_attention_patch() -> bool:
     except ImportError:
         return False
 
-    original_sdpa = mlx_base.scaled_dot_product_attention
+    # _ORIGINAL_SDPA survives re-application after a test resets _PATCHED,
+    # so the rebind loop below still sees the true stock function even when
+    # mlx_base.scaled_dot_product_attention is already the patched one.
+    if _ORIGINAL_SDPA is None:
+        _ORIGINAL_SDPA = mlx_base.scaled_dot_product_attention
+    original_sdpa = _ORIGINAL_SDPA
 
     def patched_sdpa(
         queries,
@@ -175,12 +181,31 @@ def apply_turboquant_attention_patch() -> bool:
     import sys
 
     for mod_name, mod in list(sys.modules.items()):
-        if mod is None:
+        if mod is None or mod is mlx_base:
             continue
         if not (
             mod_name.startswith("mlx_lm.models.")
             or mod_name.startswith("mlx_vlm.models.")
         ):
+            # Remote-code architectures (trust_remote_code, e.g. k2_horizon)
+            # live outside the mlx_*.models.* namespace but bind the stock
+            # SDPA by value at import time — during model load, which happens
+            # before this patch in BatchedEngine.__init__. Without a rebind
+            # the stock fn sees cache.bits on a TurboQuant cache and routes
+            # to quantized_scaled_dot_product_attention, which subscripts the
+            # _QuantizedStateProxy state → TypeError 500 on every request.
+            # Only exact stock references are rebound; custom model SDPA
+            # implementations are left alone.
+            try:
+                func = getattr(mod, "scaled_dot_product_attention", None)
+            except Exception:
+                continue
+            if func is original_sdpa:
+                mod.scaled_dot_product_attention = patched_sdpa
+                logger.debug(
+                    "TurboQuant attention patch: rebound stock SDPA in %s",
+                    mod_name,
+                )
             continue
         if hasattr(mod, "scaled_dot_product_attention"):
             func = mod.scaled_dot_product_attention
