@@ -356,6 +356,48 @@ def test_attention_patch_routes_tq():
     assert out.shape == (1, 4, 1, 32)
 
 
+def test_attention_patch_rebinds_remote_code_modules(monkeypatch):
+    # Regression (jais3-7b-4bit 500s): trust_remote_code modules like
+    # k2_horizon import scaled_dot_product_attention by value at module
+    # import — during model load, before the TurboQuant patch runs. The
+    # rebind loop must catch them even though their module name is outside
+    # the mlx_*.models.* namespace.
+    import sys
+    import types
+
+    from mlx_lm.models import base as mlx_base
+
+    from fusion_mlx.patches import turboquant_attention as tq_attention
+
+    monkeypatch.setattr(tq_attention, "_PATCHED", False)
+
+    remote_mod = types.ModuleType("k2_horizon_fake")
+    remote_mod.scaled_dot_product_attention = (
+        tq_attention._ORIGINAL_SDPA or mlx_base.scaled_dot_product_attention
+    )
+    stock = remote_mod.scaled_dot_product_attention
+    monkeypatch.setitem(sys.modules, "k2_horizon_fake", remote_mod)
+
+    assert tq_attention.apply_turboquant_attention_patch() is True
+    assert remote_mod.scaled_dot_product_attention is not stock
+
+    # Rebound remote SDPA must survive a real TurboQuant cache end to end —
+    # the stock fn would raise TypeError ('_QuantizedStateProxy' not
+    # subscriptable) on this call.
+    fp_cache = KVCache()
+    keys = mx.random.normal((1, 2, 8, 32))
+    values = mx.random.normal((1, 2, 8, 32))
+    fp_cache.update_and_fetch(keys, values)
+    tq = TurboQuantKVCache.from_cache(fp_cache, bits=4.0)
+    ks, vs = tq.state
+
+    queries = mx.random.normal((1, 4, 1, 32))
+    out = remote_mod.scaled_dot_product_attention(
+        queries, ks, vs, tq, scale=32**-0.5, mask=None
+    )
+    assert out.shape == (1, 4, 1, 32)
+
+
 def test_attention_patch_preserves_sinks_with_dequant_fallback(monkeypatch):
     from mlx_lm.models import base as mlx_base
 

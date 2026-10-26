@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed — TurboQuant remote-code model 500s + SSD signature sync regression (#1421)
+- trust_remote_code models (e.g. `jais3-7b-4bit`'s `k2_horizon`) bind
+  `scaled_dot_product_attention` by value at module import — during model
+  load, before the TurboQuant attention patch runs. The patch's rebind
+  loop only covered `mlx_lm.models.*` / `mlx_vlm.models.*` namespaces, so
+  the remote module kept the stock fn, which dispatched on `cache.bits`
+  into `quantized_scaled_dot_product_attention` and crashed subscripting
+  `_QuantizedStateProxy` — 500 `chat_generation_failed` on every request.
+  The rebind now catches any loaded module holding the exact stock
+  reference (exact `is` matches only; custom model SDPA untouched).
+- `_apply_turboquant_kv_convert` called `self._sync_expected_layer_signature`
+  but the function was never attached to `Scheduler` — every real
+  TurboQuant layer conversion raised `AttributeError`, silently disabling
+  the #1236 SSD expected-layer-signature sync (#1239 regression, caught by
+  a test failing on main). Now calls the module-level function directly.
+
 ## [0.10.21] - 2026-10-27
 
 ### Fixed — shared-cache-dir startup races + qwen2.5-VL image 500s
