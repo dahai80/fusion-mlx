@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.23] - 2026-10-27
 
 ### Fixed — TurboQuant pre-load attention patch for trust_remote_code models (#1421 follow-up)
 - v0.10.22's rebind loop still missed remote-code architectures in
