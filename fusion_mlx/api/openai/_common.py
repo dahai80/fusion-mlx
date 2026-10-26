@@ -120,6 +120,18 @@ def _resolve_context_length(model_id: str) -> int | None:
     return None
 
 
+def _resolve_languages(model_id: str) -> list[str]:
+    # #1416: per-model language capability metadata. Alias-declared values
+    # win; conservative family hints next; [] when unknown (allowed).
+    from ...model_languages import languages_for
+
+    try:
+        return languages_for(model_id)
+    except Exception:
+        logger.debug("languages: lookup failed for %s", model_id)
+        return []
+
+
 def set_openai_context(pool: EnginePool, req_router: RequestRouter) -> None:
     """Inject engine pool and request router into this module."""
     global _pool, _request_router

@@ -753,6 +753,8 @@ class ModelInfo(BaseModel):
     capabilities: dict | None = None
     default_for_chat: bool | None = None
     context_length: int | None = None
+    # #1416: advertised language capability (ISO 639-1). Empty = unknown.
+    languages: list[str] = Field(default_factory=list)
 
 
 class ModelsResponse(BaseModel):
