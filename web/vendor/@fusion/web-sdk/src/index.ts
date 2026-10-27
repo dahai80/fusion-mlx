@@ -1,4 +1,5 @@
 import { HttpError, withRetry } from './retry';
+import { createThemeState } from './theme';
 import type {
     BridgeMessage,
     DeviceInfo,
@@ -12,6 +13,7 @@ import type {
 } from './types';
 
 export { withRetry, withTimeout, isRetryableError, TimeoutError, HttpError } from './retry';
+export { createThemeState } from './theme';
 export { createPoller, type PollerOptions } from './poll';
 export { createHostBridge, type HostBridgeHandle, type HostBridgeOptions } from './host';
 export * from './types';
@@ -260,7 +262,9 @@ export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
         );
     }
 
-    const themeListeners = new Set<(mode: ThemeMode) => void>();
+    const themeState = createThemeState(
+        document.documentElement.classList.contains('light') ? 'light' : 'dark'
+    );
     const visListeners = new Set<(visible: boolean) => void>();
 
     const bridge = createBridge(
@@ -279,8 +283,15 @@ export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
 
     bridge.eventListeners.set(
         'theme',
-        new Set([(payload) => themeListeners.forEach((fn) => fn(payload as ThemeMode))])
+        new Set([(payload) => themeState.set(payload as ThemeMode)])
     );
+    // Seed from the host (issue #77): the mount-time theme push can be lost
+    // to about:blank before the module's listener exists, so pull once in the
+    // background; themeState.set dedupes against a push that did land.
+    void bridge
+        .call<ThemeMode>('theme', null, 5000)
+        .then((mode) => themeState.set(mode))
+        .catch(() => undefined);
     bridge.eventListeners.set(
         'visibility',
         new Set([(payload) => visListeners.forEach((fn) => fn(payload as boolean))])
@@ -386,14 +397,12 @@ export function createShellSdk(options?: ShellSdkOptions): FusionShellSdk {
             },
         },
         theme: {
-            get: () =>
-                typeof document !== 'undefined' &&
-                document.documentElement.classList.contains('light')
-                    ? 'light'
-                    : 'dark',
+            // Cached sync read (issue #77): seeded from the module document,
+            // corrected by the background host pull above, kept fresh by
+            // host push events.
+            get: () => themeState.get(),
             subscribe(listener) {
-                themeListeners.add(listener);
-                return () => themeListeners.delete(listener);
+                return themeState.subscribe(listener);
             },
         },
         devices: {

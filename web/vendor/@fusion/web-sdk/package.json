@@ -1,6 +1,6 @@
 {
     "name": "@fusion/web-sdk",
-    "version": "0.1.0",
+    "version": "0.1.2",
     "description": "postMessage bridge client for fusion-web-shell modules (http proxy, toast, tab, theme, devices)",
     "license": "Apache-2.0",
     "type": "module",

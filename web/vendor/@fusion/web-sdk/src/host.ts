@@ -17,6 +17,15 @@ export interface HostBridgeOptions {
     }): Promise<{ status: number; data: unknown }>;
 }
 
+/** Issue #75: handleRequest returns bare strings ('theme'), plain objects
+ * (http results, devices) and __httpError envelopes — only the last kind is
+ * an error. `in` on a non-object throws, so guard the type first. */
+export function isHttpErrorResult(
+    result: unknown
+): result is { __httpError: true; status: number; code: string; message: string } {
+    return result !== null && typeof result === 'object' && '__httpError' in result;
+}
+
 export interface HostBridgeHandle {
     iframeWindow: Window | null;
     destroy(): void;
@@ -166,7 +175,7 @@ export function createHostBridge(
         if (typeof raw.id !== 'string' || typeof msg.method !== 'string') return;
         void handleRequest(msg).then(
             (result) => {
-                if ('__httpError' in (result as object)) {
+                if (isHttpErrorResult(result)) {
                     const e = result as { status: number; code: string; message: string };
                     respond({
                         type: 'response',
