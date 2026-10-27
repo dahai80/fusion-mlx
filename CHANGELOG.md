@@ -1,5 +1,39 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed — tool-call parser gaps that dropped valid calls (test debt cleared)
+- `tests/unit/test_tool_calling.py` was quarantined with 57 failures from
+  the `tool_calling.py` module split (commit `31ce9b68`); the truncated
+  port had silently dropped several recovery paths that the original
+  implementation (omlx lineage) still had. All 230 tests now pass and the
+  file is unquarantined:
+  - **Gemma 4 robust fallback** (`api/tool_calling/gemma4.py`): ported the
+    hardened args parser — `<|"|>` string delimiter, linear-time span
+    scanner with length/depth DoS bounds, single-pass transcoder with
+    legacy key-anchored fallback, and the parenthesized
+    `call:name(key=value)` kwargs variant. Namespaced MCP tool names
+    (`call:google:mcp:...`) are remapped to the registered unique suffix
+    at the single post-parse chokepoint.
+  - **Hermes envelope fallback**: `<|tool_call_start|>[func(a=1),
+    other(b="x")]<|tool_call_end|>` multi-call Python-kwargs blocks are
+    parsed via `ast` when the native parser rejects the payload —
+    previously dropped with no tool_use, stalling agent loops.
+  - **Raw control characters**: model-emitted JSON with literal tabs or
+    newlines inside string values no longer fails the fallback parse
+    (`json.loads(..., strict=False)` on both the direct and doubled-brace
+    retry paths).
+  - **Stream filter**: MiniMax M3 and Hermes marker pairs are recognized
+    without tokenizer metadata; orphan close markers
+    (`<|tool_call_end|>` and the configured end marker when not
+    XML-style) are suppressed even when split across feeds; Gemma 4's
+    stray bare `<tool_call|>` close token is stripped from emitted
+    content while XML-style closers in prose pass through.
+  - **Template-safe schemas**: property schemas always carry a
+    `description` (empty string when absent) when converted for the chat
+    template, so strict Jinja templates (`StrictUndefined`) no longer
+    raise `KeyError: 'description'`.
+
 ## [0.10.25] - 2026-10-27
 
 ### Fixed — inline-argument tool calls were dropped (#1430)

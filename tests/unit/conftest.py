@@ -785,22 +785,6 @@ def _add_missing_symbols():
     except Exception:
         pass
 
-    # fusion_mlx.api.tool_calling missing
-    try:
-        from fusion_mlx.api import tool_calling
-
-        for name in ("is_strict_json_schema", "_remap_tool_call_names"):
-            if not hasattr(tool_calling, name):
-                setattr(
-                    tool_calling,
-                    name,
-                    lambda *a, _n=name, **k: (
-                        False if "strict" in _n else a[0] if a else None
-                    ),
-                )
-    except Exception:
-        pass
-
     # fusion_mlx.request missing
     try:
         from fusion_mlx import request

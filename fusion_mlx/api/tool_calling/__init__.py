@@ -10,6 +10,7 @@ from jsonschema import ValidationError, validate
 
 # Re-export imported names for backward compatibility
 from ..openai_models import FunctionCall, ResponseFormat, ToolCall
+from .gemma4 import _remap_tool_call_names
 from .parse import (
     ToolCallExtraction,
     _decode_json_like,

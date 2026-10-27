@@ -39,7 +39,11 @@ class ToolCallStreamFilter:
             marker = ""
         if marker_end is None:
             marker_end = ""
-        self._marker_pairs: list[tuple[str, str]] = [("<tool_call>", "</tool_call>")]
+        self._marker_pairs: list[tuple[str, str]] = [
+            ("]<]minimax[>[<tool_call>", "]<]minimax[>[</tool_call>"),
+            ("<|tool_call_start|>", "<|tool_call_end|>"),
+            ("<tool_call>", "</tool_call>"),
+        ]
         # 裸 XML 工具调用 (Qwen3.5/3.8 taught format): envelope 控制字符被
         # remove_special_tokens_preserve_whitespace 从流式 delta 剥掉后, 剩余
         # "<function=...>\n<parameter=...>...</function>" 纯文本形态. 没有这
@@ -55,6 +59,19 @@ class ToolCallStreamFilter:
                 # One-sided markers (e.g. Mistral "[TOOL_CALLS]" with no
                 # end marker): suppress everything after the start marker.
                 self._suppress_after_markers.append(marker)
+        # Gemma 4 can emit a bare close token outside a matched tool-call
+        # envelope. Do not apply this to XML-style closers like </tool_call>,
+        # which may appear as literal prose.
+        is_gemma4_tool_marker = (
+            marker == "<|tool_call>" and marker_end == "<tool_call|>"
+        )
+        self._stray_close_markers: list[str] = (
+            [marker_end] if is_gemma4_tool_marker else []
+        )
+        self._orphan_close_markers: list[str] = ["<|tool_call_end|>"]
+        if marker_end and not self._is_xml_close_marker(marker_end):
+            self._orphan_close_markers.append(marker_end)
+        self._orphan_close_markers = list(dict.fromkeys(self._orphan_close_markers))
         self._namespaced_open_re = re.compile(r"<([A-Za-z_][\w.-]*):tool_call>")
         self._bracket_prefixes = ["[Calling tool:", "[Tool call:"]
         self._bracket_call_re = re.compile(
@@ -64,6 +81,10 @@ class ToolCallStreamFilter:
         self._buffer = ""
         self._suppressing_until: str | None = None
         self._suppressing = False
+
+    @staticmethod
+    def _is_xml_close_marker(marker: str) -> bool:
+        return marker.startswith("</") and marker.endswith(">")
 
     @property
     def active(self) -> bool:
@@ -84,6 +105,11 @@ class ToolCallStreamFilter:
             idx = text.find(marker)
             if idx >= 0:
                 starts.append((idx, len(marker), close))
+
+        for close in self._orphan_close_markers:
+            close_idx = text.find(close)
+            if close_idx >= 0:
+                starts.append((close_idx, len(close), None))
 
         ns_match = self._namespaced_open_re.search(text)
         if ns_match:
@@ -161,6 +187,10 @@ class ToolCallStreamFilter:
         # Same for suppress-after markers (e.g. "[TOOL" for "[TOOL_CALLS]").
         for sa_marker in self._suppress_after_markers:
             keep = max(keep, self._partial_prefix_len(text, sa_marker))
+        # Hold partial prefix of a stray-close marker so it reassembles before
+        # the strip check — prevents the "hello<tool_call|" + ">" split leak.
+        for close_marker in self._orphan_close_markers:
+            keep = max(keep, self._partial_prefix_len(text, close_marker))
 
         bracket_idx = -1
         for bp in self._bracket_prefixes:
@@ -187,6 +217,15 @@ class ToolCallStreamFilter:
 
         for marker, _close in self._marker_pairs:
             if marker.startswith(tail):
+                # MiniMax M3 markers start with "]". A single closing
+                # bracket at end-of-stream is much more likely to be literal
+                # prose than an incomplete MiniMax control marker.
+                if tail == "]":
+                    continue
+                return True
+
+        for close_marker in self._orphan_close_markers:
+            if close_marker.startswith(tail):
                 return True
 
         # Drop unresolved bracket tool-call prefixes
@@ -303,7 +342,14 @@ class ToolCallStreamFilter:
                 self._buffer = self._buffer[-keep:]
             break
 
-        return "".join(out)
+        return self._strip_stray_closes("".join(out))
+
+    def _strip_stray_closes(self, text: str) -> str:
+        for close in self._stray_close_markers:
+            if close in text:
+                logger.debug("stripped stray tool-call close marker %r", close)
+                text = text.replace(close, "")
+        return text
 
     def finish(self) -> str:
         """Flush remaining safe buffer content.
@@ -340,14 +386,69 @@ class ToolCallStreamFilter:
                     tail,
                 )
                 return ""
-            return tail
+            return self._strip_stray_closes(tail)
 
         if keep:
             buf = self._buffer[:-keep]
         else:
             buf = self._buffer
         self._buffer = ""
-        return buf
+        return self._strip_stray_closes(buf)
+
+
+_SCHEMA_CHILD_KEYS = {
+    "items",
+    "additionalProperties",
+    "contains",
+    "propertyNames",
+    "not",
+    "if",
+    "then",
+    "else",
+}
+_SCHEMA_CHILD_LIST_KEYS = {"oneOf", "anyOf", "allOf", "prefixItems"}
+
+
+def _template_safe_description(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _copy_schema_with_template_defaults(value: object, *, is_schema: bool) -> object:
+    if isinstance(value, dict):
+        copied: dict = {}
+        for key, child in value.items():
+            if key == "properties" and isinstance(child, dict):
+                copied[key] = {
+                    name: _copy_schema_with_template_defaults(
+                        prop_schema, is_schema=True
+                    )
+                    for name, prop_schema in child.items()
+                }
+            elif key in _SCHEMA_CHILD_KEYS:
+                copied[key] = _copy_schema_with_template_defaults(child, is_schema=True)
+            elif key in _SCHEMA_CHILD_LIST_KEYS and isinstance(child, list):
+                copied[key] = [
+                    _copy_schema_with_template_defaults(item, is_schema=True)
+                    for item in child
+                ]
+            else:
+                copied[key] = _copy_schema_with_template_defaults(
+                    child, is_schema=False
+                )
+        if is_schema:
+            copied["description"] = _template_safe_description(
+                copied.get("description")
+            )
+        return copied
+    if isinstance(value, list):
+        return [
+            _copy_schema_with_template_defaults(item, is_schema=False) for item in value
+        ]
+    return value
 
 
 def convert_tools_for_template(tools: list | None) -> list[dict] | None:
@@ -397,14 +498,21 @@ def convert_tools_for_template(tools: list | None) -> list[dict] | None:
             if isinstance(tool_func, dict):
                 func_name = tool_func.get("name", "")
                 func_desc = tool_func.get("description", "")
+                params_present = "parameters" in tool_func
                 func_params = tool_func.get(
                     "parameters", {"type": "object", "properties": {}}
                 )
             else:
                 func_name = getattr(tool_func, "name", "")
                 func_desc = getattr(tool_func, "description", "")
+                params_present = getattr(tool_func, "parameters", None) is not None
                 func_params = getattr(
                     tool_func, "parameters", {"type": "object", "properties": {}}
+                )
+
+            if params_present:
+                func_params = _copy_schema_with_template_defaults(
+                    func_params, is_schema=True
                 )
 
             converted.append(
@@ -412,7 +520,7 @@ def convert_tools_for_template(tools: list | None) -> list[dict] | None:
                     "type": "function",
                     "function": {
                         "name": func_name,
-                        "description": func_desc,
+                        "description": _template_safe_description(func_desc),
                         "parameters": func_params,
                     },
                 }
@@ -423,7 +531,9 @@ def convert_tools_for_template(tools: list | None) -> list[dict] | None:
         if tool_name_direct and tool_schema_direct is not None:
             desc = tool_desc_direct or ""
             if isinstance(tool_schema_direct, dict):
-                params = tool_schema_direct
+                params = _copy_schema_with_template_defaults(
+                    tool_schema_direct, is_schema=True
+                )
             else:
                 params = {"type": "object", "properties": {}}
 
@@ -432,7 +542,7 @@ def convert_tools_for_template(tools: list | None) -> list[dict] | None:
                     "type": "function",
                     "function": {
                         "name": str(tool_name_direct),
-                        "description": str(desc),
+                        "description": _template_safe_description(desc),
                         "parameters": params,
                     },
                 }
