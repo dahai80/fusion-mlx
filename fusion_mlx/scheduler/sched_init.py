@@ -282,6 +282,13 @@ def __init__(
     self._inflight_store_futures: dict[str, concurrent.futures.Future] = {}
     self._inflight_store_info: dict[str, Any] = {}
 
+    # #1429: set while this scheduler is being torn down. Abort-time KV
+    # checkpoint writes are skipped once this is true — during teardown the
+    # step thread is exactly what the caller is waiting on, and a multi-second
+    # save_prompt_cache there is what turned an engine eviction into a
+    # process-wide fatal_exit.
+    self._closing: bool = False
+
     # Admission control: memory and store-cache stall tracking
     self._memory_admission_blocked_request_id: str | None = None
     self._memory_admission_blocked_since: float = 0.0

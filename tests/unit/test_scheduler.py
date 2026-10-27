@@ -1661,6 +1661,41 @@ class TestSchedulerReset:
         # after SSD close.
         fake_executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
 
+    def test_shutdown_bounded_join_when_worker_never_finishes(
+        self, mock_model, mock_tokenizer, caplog
+    ):
+        """#1429: shutdown() must return even if a store worker is wedged.
+
+        The old ``shutdown(wait=True)`` had no timeout: a worker blocked on a
+        full SSD writer queue hung Scheduler.shutdown forever, which hung
+        EngineCore.close() and made the process-wide fatal_exit fire. The
+        bounded join gives up, leaves the SSD manager open (closing fds under
+        a live writer corrupts blocks) and returns.
+        """
+        scheduler = Scheduler(model=mock_model, tokenizer=mock_tokenizer)
+
+        fake_executor = MagicMock()
+        scheduler._store_cache_executor = fake_executor
+        scheduler._store_cache_gate = MagicMock()
+        stuck = MagicMock()
+        scheduler._inflight_store_futures["req-wedged"] = stuck
+        ssd_manager = MagicMock()
+        scheduler.paged_ssd_cache_manager = ssd_manager
+
+        with (
+            patch(
+                "concurrent.futures.wait",
+                side_effect=[(set(), {stuck}), (set(), {stuck})],
+            ),
+            caplog.at_level("CRITICAL", logger="fusion_mlx.scheduler"),
+        ):
+            scheduler.shutdown()
+
+        fake_executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+        ssd_manager.close.assert_not_called()
+        assert "KEEPING" not in caplog.text
+        assert "skipping paged SSD close" in caplog.text
+
 
 class TestSchedulerStopTokens:
     """Tests for stop token handling."""

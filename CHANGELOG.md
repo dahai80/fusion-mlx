@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.10.25] - 2026-10-27
+
+### Fixed — inline-argument tool calls were dropped (#1430)
+- A checkpoint served OpenAI-style arguments inside the Qwen tag
+  (`<function=Read({file_path: "/workspace/src/settings.py"})}`). The
+  native parser raised `ValueError: No function provided.`,
+  `_parse_xml_tool_calls` had no branch for the shape, and the call was
+  dropped — the client saw a bare-text assistant message and the agent
+  loop stalled. The fallback now recognises `<function=name({...})`,
+  quotes bare object keys and repairs a stray trailing brace before
+  giving up; genuinely unparseable bodies are still dropped.
+
+### Fixed — SSD warm cache lost on every restart + cross-model eviction (#1428)
+- **Boot scan compared the wrong model identity**: SSD block files are
+  stamped with the model *content* fingerprint (`PagedCacheManager`
+  rewrites `model_name = model_path_signature(...)` and
+  `BlockAwarePrefixCache` passes that into `save_block`), but the
+  scheduler handed the raw model path to the scanner as
+  `expected_model_name`. Every block therefore looked foreign after a
+  restart: boot logged `0 compatible, skipped_incompatible=<N>` against
+  a cache full of valid blocks, and each request paid a full cold
+  prefill of the entire prompt (87k tokens, ~6 min at ~465 tok/s)
+  instead of a delta. The scan identity now comes from the paged cache
+  manager's fingerprint (`_expected_ssd_model_name`), falling back to
+  the configured path only when no manager exists.
+- **Startup reclaim and eviction deleted another live model's cache**:
+  reclaim preferred "incompatible" blocks, which includes blocks
+  stamped by another model that is still loaded in this process (27B
+  and 4B share `~/.fusion-mlx/ssd_cache`). Blocks owned by a live
+  manager on the same cache_dir are now skipped
+  (`_ACTIVE_MANAGER_MODELS_BY_CACHE_DIR`); model-switch reclaim (no
+  live manager for that stamp) and legacy pre-format blocks stay
+  reclaimable, so a switched-away model still frees its disk.
+
 ## [0.10.24] - 2026-10-27
 
 ### Fixed — VibeThinker-3B streaming channel duplication + degenerate output (#1423)

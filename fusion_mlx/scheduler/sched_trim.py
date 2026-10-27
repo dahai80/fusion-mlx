@@ -316,7 +316,17 @@ def _do_abort_request(self, request_id: str) -> bool:
             from ..service.kv_resume import persist_request_kv
 
             decode_phase = int(req_to_remove.num_output_tokens or 0) > 0
-            if decode_phase:
+            if self._closing:
+                # #1429: teardown is waiting on THIS step thread. A 71k-token
+                # save_prompt_cache took ~11s inline here and turned an engine
+                # eviction into a 60s teardown timeout + process-wide
+                # fatal_exit. A resumable checkpoint is worthless for an
+                # engine that is being unloaded — skip it.
+                logger.info(
+                    "KV persist skipped for %s: scheduler closing/teardown",
+                    request_id,
+                )
+            elif decode_phase:
                 logger.debug(
                     "KV persist skipped for %s: decode-phase abort "
                     "(%d output tokens); prefill checkpoint kept",
@@ -344,7 +354,7 @@ def _do_abort_request(self, request_id: str) -> bool:
                 if not live_cache or state_tokens > live_tokens:
                     live_cache = prefill_state.cache
                     live_tokens = state_tokens
-            if live_cache and not decode_phase:
+            if live_cache and not decode_phase and not self._closing:
                 persist_request_kv(
                     request_id,
                     live_cache,
