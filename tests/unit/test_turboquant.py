@@ -850,6 +850,70 @@ def test_turboquant_convert_preserves_skip_last_after_partial_tq_restore():
     assert isinstance(cache[2], KVCache)
 
 
+def _kv_layer_with_key_max(key_max: float) -> KVCache:
+    cache = KVCache()
+    keys = mx.random.normal((1, 2, 4, 32))
+    keys = keys * (key_max / mx.abs(keys).max())
+    values = mx.random.normal((1, 2, 4, 32))
+    cache.update_and_fetch(keys, values)
+    mx.eval(cache.state)
+    return cache
+
+
+def test_turboquant_convert_skips_outlier_key_states():
+    """#1423: any layer with fp16 key max-abs above the outlier threshold
+    cancels the whole conversion — 4-bit group quantization collapses on
+    such states and produces degenerate output. Cache must stay fp16."""
+    from types import SimpleNamespace
+
+    from fusion_mlx.scheduler import Scheduler
+
+    healthy = _kv_layer_with_key_max(19.0)
+    outlier = _kv_layer_with_key_max(107.0)
+
+    ns = SimpleNamespace(_turboquant_kv_bits=4.0, _turboquant_skip_last=False)
+    cache = [healthy, outlier]
+
+    Scheduler._apply_turboquant_kv_convert(ns, cache)
+
+    assert isinstance(cache[0], KVCache)
+    assert isinstance(cache[1], KVCache)
+    assert cache[0] is healthy
+    assert cache[1] is outlier
+
+
+def test_turboquant_convert_proceeds_on_healthy_key_states():
+    """Counterpart of the outlier gate: keys under the threshold convert
+    normally (regression guard so the gate cannot silently disable TQ)."""
+    from types import SimpleNamespace
+
+    from fusion_mlx.scheduler import Scheduler
+
+    a = _kv_layer_with_key_max(12.0)
+    b = _kv_layer_with_key_max(19.4)
+
+    ns = SimpleNamespace(_turboquant_kv_bits=4.0, _turboquant_skip_last=False)
+    cache = [a, b]
+
+    Scheduler._apply_turboquant_kv_convert(ns, cache)
+
+    assert isinstance(cache[0], TurboQuantKVCache)
+    assert isinstance(cache[1], TurboQuantKVCache)
+
+
+def test_turboquant_convert_outlier_gate_ignores_empty_layers():
+    """Empty KVCache layers (no tokens yet) carry no measurable state and
+    must not trip the gate."""
+    from fusion_mlx.scheduler.sched_token import _turboquant_kv_outlier_layers
+
+    empty = KVCache()
+    healthy = _kv_layer_with_key_max(19.0)
+    outlier = _kv_layer_with_key_max(107.0)
+
+    assert _turboquant_kv_outlier_layers(None, [empty, healthy]) == []
+    assert _turboquant_kv_outlier_layers(None, [empty, outlier]) == [1]
+
+
 def test_from_cache_merge_builds_working_batch():
     """Mirror the scheduler path: fp16 prefill -> from_cache (post-prefill
     quantize) -> _merge_caches builds a BatchTurboQuantKVCache that decodes.

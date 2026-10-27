@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.10.24] - 2026-10-27
+
+### Fixed — VibeThinker-3B streaming channel duplication + degenerate output (#1423)
+- **Channel duplication**: when a model opens a `<think>` block and the
+  stream ends before `</think>` (truncation via `max_tokens` or a
+  `stop` sequence), `ThinkingParser.finish()` re-emitted the entire
+  accumulated thinking text as a single content delta — on the OpenAI
+  streaming route those bytes had already streamed live as
+  `reasoning_content`, so clients saw identical text in both channels
+  (RC_LEN == CT_LEN). `ThinkingParser` now takes
+  `recovery_as_content` (default `True`, legacy behavior preserved for
+  non-channel callers); the OpenAI streaming route passes `False`, so a
+  truncated thinking stream ends with empty content and the buffered
+  partial tag flushes into the reasoning channel — matching the
+  truncation-stays-in-reasoning contract. Fixes duplicate rendering in
+  reasoning-bridge clients (e.g. fusion-gateway `/v1/messages`).
+- **Degenerate output**: TurboQuant 4-bit KV auto-quantization collapses
+  on models whose KV key states carry extreme outliers
+  (VibeThinker-3B L0 key max ~107, Qwen3-0.6B ~500, vs healthy
+  Qwen3.5-4B ~19) — group quantization loses the outlier structure and
+  generation degenerates into token soup. `_apply_turboquant_kv_convert`
+  now probes the fp16 key states per layer before converting; any layer
+  with key max-abs above `64.0` cancels the whole conversion with a loud
+  warning and the cache stays fp16. Auto-protects current and future
+  outlier models without per-model configuration.
+
 ## [0.10.23] - 2026-10-27
 
 ### Fixed — TurboQuant pre-load attention patch for trust_remote_code models (#1421 follow-up)

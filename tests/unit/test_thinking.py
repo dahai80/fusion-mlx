@@ -382,6 +382,47 @@ class TestThinkingParser:
         assert t == ""
         assert c == "open but never closed"
 
+    def test_recovery_as_content_false_suppresses_dup(self):
+        """#1423: the OpenAI streaming route streams thinking deltas live as
+        reasoning_content. recovery_as_content=False must stop finish() from
+        re-emitting the same accumulated text as content — the client would
+        otherwise see identical text in both channels."""
+        open_tag = "<think>"
+        close_tag = "</think>"
+        parser = ThinkingParser(recovery_as_content=False)
+        chunks = [open_tag, "Hello world ", "this is the body"]
+        thinking_streamed = []
+        for chunk in chunks:
+            t, _ = parser.feed(chunk)
+            thinking_streamed.append(t)
+        t, c = parser.finish()
+
+        assert c == ""
+        assert t == ""
+        assert "".join(thinking_streamed) == "Hello world this is the body"
+        assert open_tag not in "".join(thinking_streamed)
+        assert close_tag not in "".join(thinking_streamed)
+
+    def test_recovery_as_content_false_flushes_partial_as_thinking(self):
+        """With recovery suppressed, a dangling partial tag at stream end
+        must still flush — into the thinking channel, not content."""
+        parser = ThinkingParser(recovery_as_content=False)
+        parser.feed("<think>body text")
+        parser.feed("</thi")
+        t, c = parser.finish()
+        assert t == "</thi"
+        assert c == ""
+
+    def test_recovery_as_content_false_normal_path_unaffected(self):
+        """Closed think block streams normally regardless of the flag."""
+        parser = ThinkingParser(recovery_as_content=False)
+        t1, c1 = parser.feed("<think>reasoning</think>")
+        t2, c2 = parser.feed("the answer")
+        t3, c3 = parser.finish()
+        assert (t1, c1) == ("reasoning", "")
+        assert (t2, c2) == ("", "the answer")
+        assert (t3, c3) == ("", "")
+
 
 class TestCleanSpecialTokens:
     """Tests for clean_special_tokens (preserves think tags)."""

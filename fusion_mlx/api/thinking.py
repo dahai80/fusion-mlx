@@ -138,7 +138,11 @@ class ThinkingParser:
         t, c = parser.finish()
     """
 
-    def __init__(self, start_in_thinking: bool = False):
+    def __init__(
+        self,
+        start_in_thinking: bool = False,
+        recovery_as_content: bool = True,
+    ):
         self._in_thinking: bool = start_in_thinking
         self._buffer: str = ""  # Buffer for potential partial tags
         # Recovery state for malformed thinking: when the prompt prepends
@@ -147,6 +151,15 @@ class ThinkingParser:
         # cannot be retracted, so finish() emits the accumulated thinking
         # text once more as content — the client will show both panels but
         # the answer body is no longer empty.
+        #
+        # recovery_as_content=False disables that re-emission: callers that
+        # already streamed the thinking deltas as a dedicated reasoning
+        # channel (OpenAI reasoning_content) must NOT re-emit the same
+        # bytes as content — the client would see identical text in both
+        # channels (#1423). The buffered partial tag still flushes as
+        # thinking; the answer body stays empty, matching the
+        # truncation-stays-in-reasoning contract.
+        self._recovery_as_content: bool = recovery_as_content
         self._close_seen: bool = False
         self._thinking_accumulated: list[str] = []
         self._content_emitted: bool = False
@@ -245,6 +258,7 @@ class ThinkingParser:
             and not self._close_seen
             and not self._content_emitted
             and self._thinking_accumulated
+            and self._recovery_as_content
         ):
             recovered = "".join(self._thinking_accumulated) + partial
             self._content_emitted = True

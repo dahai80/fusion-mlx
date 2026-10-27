@@ -332,7 +332,12 @@ async def _stream_chat_generator(
         # Streaming thinking parser: splits <think...</think > blocks into
         # reasoning_content vs content so OpenAI clients can tell thinking
         # from the real answer (issue #21). No-op for tag-free text.
-        parser = ThinkingParser()
+        # recovery_as_content=False (#1423): this route streams thinking
+        # deltas live as reasoning_content, so the finish() recovery
+        # re-emission of accumulated thinking as content would put the
+        # identical text in both channels. Suppressed here; a truncated
+        # thinking stream ends with empty content by design.
+        parser = ThinkingParser(recovery_as_content=False)
         # #444 流式 channel-based reasoning parser: harmony/gpt_oss/gemma4
         # 用 channel token 路由推理，ThinkingParser 会把 channel 标记当
         # content 泄漏。检测到 channel 解析器时，delta 先过其
