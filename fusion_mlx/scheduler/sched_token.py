@@ -520,6 +520,59 @@ def _apply_turboquant_kv_empty(self, prompt_cache: list[Any]) -> None:
         )
 
 
+# #1423: TurboQuant 4-bit group quantization collapses on models whose KV
+# key states carry extreme outliers (VibeThinker-3B L0 key max ~107,
+# Qwen3-0.6B ~500 vs healthy Qwen3.5-4B ~19). Degenerate generation
+# follows. Any layer exceeding this fp16 key max-abs makes the whole
+# cache ineligible for TQ conversion — skip loudly, stay fp16.
+_TQ_KV_OUTLIER_KEY_MAX = 64.0
+
+
+def _turboquant_kv_outlier_layers(self, prompt_cache: list[Any]) -> list[int]:
+    """Return indices of KVCache layers whose fp16 key max-abs exceeds the
+    TQ outlier threshold. Empty cache layers (no tokens yet) are skipped."""
+    from mlx_lm.models.cache import CacheList, KVCache
+
+    try:
+        import mlx.core as mx
+    except ImportError:
+        return []
+
+    outliers: list[int] = []
+
+    def _check(idx: int, cache_obj: Any) -> None:
+        if not isinstance(cache_obj, KVCache):
+            return
+        state = getattr(cache_obj, "state", None)
+        if not isinstance(state, tuple) or len(state) < 1:
+            return
+        keys = state[0]
+        if keys is None or keys.size == 0:
+            return
+        try:
+            k_max = mx.abs(keys).max().item()
+        except Exception:
+            logger.debug("TQ outlier probe failed on layer %s", idx, exc_info=True)
+            return
+        if k_max > _TQ_KV_OUTLIER_KEY_MAX:
+            outliers.append(idx)
+            logger.warning(
+                "TurboQuant outlier gate: layer %d key max-abs %.1f exceeds "
+                "threshold %.1f",
+                idx,
+                k_max,
+                _TQ_KV_OUTLIER_KEY_MAX,
+            )
+
+    for i, cache_obj in enumerate(prompt_cache):
+        if isinstance(cache_obj, CacheList):
+            for c in cache_obj.caches:
+                _check(i, c)
+        else:
+            _check(i, cache_obj)
+    return outliers
+
+
 def _apply_turboquant_kv_convert(self, prompt_cache: list[Any]) -> None:
     """Convert existing KVCache data to TurboQuantKVCache via from_cache().
 
@@ -534,6 +587,18 @@ def _apply_turboquant_kv_convert(self, prompt_cache: list[Any]) -> None:
     from ..turboquant_kv import _apply_turboquant_merge_patch  # noqa: F401
 
     _apply_turboquant_merge_patch()
+
+    # #1423 outlier gate: 4-bit group quantization is lossy beyond repair on
+    # models with extreme KV key outliers — quantizing them produces
+    # degenerate output. Probe the fp16 states first; any outlier layer
+    # cancels the whole conversion and the cache stays fp16.
+    if _turboquant_kv_outlier_layers(self, prompt_cache):
+        logger.warning(
+            "TurboQuant: skipping KV conversion — outlier key states "
+            "detected (threshold %.1f, #1423); cache stays fp16",
+            _TQ_KV_OUTLIER_KEY_MAX,
+        )
+        return
 
     kv_indices = [i for i, c in enumerate(prompt_cache) if isinstance(c, KVCache)]
     # See _apply_turboquant_kv_empty: partial restores must keep the final
