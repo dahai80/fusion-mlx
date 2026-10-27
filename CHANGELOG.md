@@ -24,7 +24,12 @@
   prefill of the entire prompt (87k tokens, ~6 min at ~465 tok/s)
   instead of a delta. The scan identity now comes from the paged cache
   manager's fingerprint (`_expected_ssd_model_name`), falling back to
-  the configured path only when no manager exists.
+  the configured path only when no manager exists. The same identity is
+  now passed on the SSD-directory path in `_init_tiered_cache` (it had
+  been corrected only on the pure-memory path). Production after the
+  fix: `669 compatible` for the 4B and `80 compatible` for the 27B
+  instead of `0`, and a 40,622-token replay right after a restart
+  restored 38,912 cached tokens (131s, vs 383s cold).
 - **Startup reclaim and eviction deleted another live model's cache**:
   reclaim preferred "incompatible" blocks, which includes blocks
   stamped by another model that is still loaded in this process (27B
