@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import fusion_mlx.engine_core
 from fusion_mlx.engine_core import (
     AsyncEngineCore,
     EngineConfig,
@@ -548,9 +549,11 @@ class TestEngineCoreClose:
             engine.close()
             engine.close()
 
-    def test_close_fatal_exits_when_teardown_future_times_out(
-        self, mock_model, mock_tokenizer
+    def test_close_keeps_process_alive_when_teardown_future_times_out(
+        self, mock_model, mock_tokenizer, caplog
     ):
+        # #1429: a wedged engine teardown must NOT kill the process — one
+        # eviction used to take every healthy co-tenant engine down with it.
         with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
             mock_registry.return_value.acquire.return_value = True
             engine = EngineCore(model=mock_model, tokenizer=mock_tokenizer)
@@ -560,18 +563,15 @@ class TestEngineCoreClose:
             executor = MagicMock()
             executor.submit.return_value = future
             engine._mlx_executor = executor
-            with (
-                patch(
-                    "fusion_mlx.engine_core.fatal_exit", side_effect=SystemExit
-                ) as fatal,
-                pytest.raises(SystemExit),
-            ):
+            with caplog.at_level("CRITICAL", logger="fusion_mlx.engine_core"):
                 engine.close()
             future.result.assert_called_once_with(timeout=60.0)
-            assert "scheduler teardown timed out" in fatal.call_args.args[0]
+            assert "KEEPING THE PROCESS ALIVE" in caplog.text
+            assert engine._mlx_executor is None
+            assert executor in fusion_mlx.engine_core._immortal_mlx_executors
 
-    def test_close_fatal_exits_when_compile_cache_clear_times_out(
-        self, mock_model, mock_tokenizer
+    def test_close_keeps_process_alive_when_compile_cache_clear_times_out(
+        self, mock_model, mock_tokenizer, caplog
     ):
         with patch("fusion_mlx.engine_core.get_registry") as mock_registry:
             mock_registry.return_value.acquire.return_value = True
@@ -589,14 +589,12 @@ class TestEngineCoreClose:
                     "fusion_mlx.engine_core.compile_cache_clear_available",
                     return_value=True,
                 ),
-                patch(
-                    "fusion_mlx.engine_core.fatal_exit", side_effect=SystemExit
-                ) as fatal,
-                pytest.raises(SystemExit),
+                caplog.at_level("CRITICAL", logger="fusion_mlx.engine_core"),
             ):
                 engine.close()
             timeout_future.result.assert_called_once_with(timeout=60.0)
-            assert "compile cache" in fatal.call_args.args[0].lower()
+            assert "compile cache clear still pending" in caplog.text
+            assert engine._mlx_executor is None
 
 
 class TestEngineCoreGetCacheStats:

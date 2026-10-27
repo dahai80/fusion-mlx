@@ -134,6 +134,38 @@ def _undouble_braces(text: str) -> str:
     return text.replace("{{", "{").replace("}}", "}")
 
 
+def _quote_bare_keys(text: str) -> str:
+    # #1430: some checkpoints emit Python-dict style arguments
+    # ({file_path: "/a"}) inside the call body. json.loads and the truncated
+    # JSON repair both reject an unquoted key, so the call was dropped.
+    return re.sub(
+        r"([{,]\s*)([A-Za-z_][A-Za-z0-9_\-.]*)(\s*:)",
+        r'\1"\2"\3',
+        text,
+    )
+
+
+def _loads_inline_arguments(text: str) -> dict | None:
+    # #1430: arguments emitted as a bare object (optionally with a stray
+    # trailing brace) after an inline <function=name({...}) call.
+    if not text.startswith("{"):
+        return None
+    for candidate in (text, _quote_bare_keys(text)):
+        try:
+            parsed = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    try:
+        parsed = json.loads(repair_tool_call_json(_quote_bare_keys(text)))
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if isinstance(parsed, dict) and parsed and "value" not in parsed:
+        return parsed
+    return None
+
+
 def _parse_xml_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
     """
     Fallback parser for XML-based tool call formats.
@@ -225,6 +257,42 @@ def _parse_xml_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
                 )
             )
             continue
+
+        # #1430: `<function=name({...})` — the OpenAI-style argument object
+        # written inside the Qwen tag with no <parameter> children. Observed
+        # from a 27B checkpoint serving Claude Code; the native parser raised
+        # "No function provided." and this fallback had no branch for it, so
+        # the call was dropped and the agent loop stalled until the user typed
+        # "continue".
+        inline_match = re.match(
+            r"<function=([A-Za-z_][A-Za-z0-9_.\-]*)\s*\(\s*(\{.*)",
+            content,
+            re.DOTALL,
+        )
+        if inline_match:
+            args_source = inline_match.group(2)
+            close = args_source.rfind(")")
+            if close >= 0:
+                args_source = args_source[:close]
+            arguments = _loads_inline_arguments(args_source.strip())
+            if arguments is not None:
+                func_name = inline_match.group(1)
+                tool_calls.append(
+                    ToolCall(
+                        id=f"call_{uuid.uuid4().hex[:8]}",
+                        type="function",
+                        function=FunctionCall(
+                            name=func_name,
+                            arguments=json.dumps(arguments, ensure_ascii=False),
+                        ),
+                    )
+                )
+                logger.warning(
+                    "tool_calls: recovered an inline-argument call (%s, %d args)",
+                    func_name,
+                    len(arguments),
+                )
+                continue
 
         # GLM XML format: func_name<arg_key>k</arg_key><arg_value>v</arg_value>...
         arg_keys = re.findall(r"<arg_key>(.*?)</arg_key>", content)

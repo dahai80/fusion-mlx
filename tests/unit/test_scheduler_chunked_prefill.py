@@ -350,6 +350,22 @@ class TestAbortPrefilling:
         assert req.request_id not in sched._prefill_states
         assert all(r.request_id != req.request_id for r in sched.prefilling)
 
+    def test_abort_skips_kv_persist_while_closing(self):
+        # #1423: teardown waits on the step thread. A 71k-token
+        # save_prompt_cache inline in _do_abort_request took ~11s and made
+        # an engine eviction time out into a process-wide fatal_exit.
+        sched = _make_scheduler()
+        req = _make_request("abort-during-teardown")
+        req.prompt_cache = [MagicMock()]
+        sched.requests[req.request_id] = req
+        sched.mark_closing()
+
+        with patch("fusion_mlx.service.kv_resume.persist_request_kv") as persist:
+            sched._do_abort_request(req.request_id)
+
+        persist.assert_not_called()
+        assert req.prompt_cache is None
+
 
 # ---------------------------------------------------------------------------
 # _advance_chunked_prefills(): core logic

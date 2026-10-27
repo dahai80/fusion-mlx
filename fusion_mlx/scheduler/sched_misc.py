@@ -240,6 +240,21 @@ def _set_model_info_for_monitor(self) -> None:
         logger.debug(f"Failed to extract model info: {e}")
 
 
+def _expected_ssd_model_name(self) -> str:
+    # SSD block files are stamped with the model CONTENT fingerprint:
+    # PagedCacheManager rewrites model_name = model_path_signature(config.model_name)
+    # and BlockAwarePrefixCache passes that value into save_block(). The scan
+    # side must therefore use the SAME value. Passing the raw model path (as
+    # #1413 did) made every block look foreign, so a restart reported
+    # "0 compatible" against a cache full of valid blocks and every request
+    # paid a full cold prefill (87k tokens, ~6 min at 465 tok/s).
+    paged = getattr(self, "paged_cache_manager", None)
+    fingerprint = getattr(paged, "model_name", "") or ""
+    if fingerprint:
+        return fingerprint
+    return self.config.model_name or ""
+
+
 def _init_tiered_cache(self) -> None:
     """Initialize paged SSD cache components if configured.
 
@@ -299,7 +314,7 @@ def _init_tiered_cache(self) -> None:
                 max_size_bytes=self.config.paged_ssd_cache_max_size,
                 hot_cache_max_bytes=hot_cache_max_bytes,
                 hot_cache_only=True,
-                expected_model_name=self.config.model_name or "",
+                expected_model_name=self._expected_ssd_model_name(),
                 expected_num_layers=expected_num_layers,
                 expected_block_size_tokens=expected_block_size_tokens,
                 expected_kv_bytes_per_token=expected_kv_bytes_per_token,
@@ -352,7 +367,7 @@ def _init_tiered_cache(self) -> None:
             max_size_bytes=self.config.paged_ssd_cache_max_size,
             hot_cache_max_bytes=self.config.hot_cache_max_size,
             hot_cache_only=self.config.hot_cache_only,
-            expected_model_name=self.config.model_name or "",
+            expected_model_name=self._expected_ssd_model_name(),
             expected_num_layers=expected_num_layers,
             expected_block_size_tokens=expected_block_size_tokens,
             expected_kv_bytes_per_token=expected_kv_bytes_per_token,

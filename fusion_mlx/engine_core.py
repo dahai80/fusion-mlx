@@ -25,7 +25,7 @@ from .utils.compile_cache import (
     clear_thread_compile_cache,
     compile_cache_clear_available,
 )
-from .utils.fatal import FATAL_TEARDOWN_TIMEOUT_S, fatal_exit
+from .utils.fatal import FATAL_TEARDOWN_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 
@@ -2908,11 +2908,27 @@ class EngineCore:
                 mgr.close()
             except Exception:
                 logger.debug("SSD cache manager close failed", exc_info=True)
+        # #1429: an eviction must never be able to kill the process. Before
+        # this, a teardown that outran its 60s budget called fatal_exit and
+        # took every healthy co-tenant engine with it (observed: a 71k-token
+        # KV checkpoint write inside _do_abort_request wedged the evicted
+        # engine's MLX worker; the 27B CC request on another engine died with
+        # the process). Teardown timeouts are now loud but non-fatal: the
+        # wedged executor is pinned immortal (same doctrine as E-10) and the
+        # rest of the process keeps serving.
+        mark_closing = getattr(self.scheduler, "mark_closing", None)
+        if callable(mark_closing):
+            try:
+                mark_closing()
+            except Exception:
+                logger.debug("scheduler mark_closing failed", exc_info=True)
+        teardown_abandoned = False
         for fn in (
             (self.scheduler.shutdown, self.scheduler.deep_reset)
             if self.scheduler
             else ()
         ):
+            fn_name = getattr(fn, "__name__", repr(fn))
             # #1179: the single-worker MLX executor may still be grinding
             # the step that triggered the poison (the worker is abandoned,
             # not dead — its current task runs to completion). Submitting
@@ -2932,17 +2948,30 @@ class EngineCore:
                 th.start()
                 th.join(FATAL_TEARDOWN_TIMEOUT_S)
                 if th.is_alive():
-                    fatal_exit(
-                        f"scheduler teardown (fresh thread) timed out after "
-                        f"{FATAL_TEARDOWN_TIMEOUT_S}s"
+                    teardown_abandoned = True
+                    logger.critical(
+                        "scheduler teardown %s (fresh thread) still running after "
+                        "%.0fs on engine %s; abandoning teardown and KEEPING THE "
+                        "PROCESS ALIVE so healthy co-tenant engines keep serving",
+                        fn_name,
+                        FATAL_TEARDOWN_TIMEOUT_S,
+                        self._engine_id,
                     )
+                    break
                 continue
             try:
                 self._mlx_executor.submit(fn).result(timeout=FATAL_TEARDOWN_TIMEOUT_S)
             except concurrent.futures.TimeoutError:
-                fatal_exit(
-                    f"scheduler teardown timed out after {FATAL_TEARDOWN_TIMEOUT_S}s"
+                teardown_abandoned = True
+                logger.critical(
+                    "scheduler teardown %s still queued/running after %.0fs on "
+                    "engine %s MLX worker; abandoning teardown and KEEPING THE "
+                    "PROCESS ALIVE so healthy co-tenant engines keep serving",
+                    fn_name,
+                    FATAL_TEARDOWN_TIMEOUT_S,
+                    self._engine_id,
                 )
+                break
             except RuntimeError:
                 try:
                     fn()
@@ -2964,16 +2993,39 @@ class EngineCore:
         self._active_contexts.clear()
         self._finished_at.clear()
         if self._mlx_executor is not None:
+            if teardown_abandoned:
+                # The worker is still grinding teardown (or a KV checkpoint
+                # write queued in front of it). Do not queue anything else
+                # behind it and do not shut it down — a blocked
+                # ThreadPoolExecutor.shutdown(wait=True) would hang close()
+                # forever. Pin it immortal like E-10 and drop our refs.
+                _pin_immortal(self._mlx_executor, self._mlx_stream)
+                self._mlx_executor = None
+                self._mlx_stream = None
+                self.model = None
+                self.tokenizer = None
+                self.scheduler = None
+                return
             if compile_cache_clear_available():
                 try:
                     self._mlx_executor.submit(clear_thread_compile_cache).result(
                         timeout=FATAL_TEARDOWN_TIMEOUT_S
                     )
                 except concurrent.futures.TimeoutError:
-                    fatal_exit(
-                        "compile cache clear timed out after "
-                        f"{FATAL_TEARDOWN_TIMEOUT_S}s"
+                    logger.critical(
+                        "compile cache clear still pending after %.0fs on engine "
+                        "%s; pinning the MLX executor immortal and KEEPING THE "
+                        "PROCESS ALIVE",
+                        FATAL_TEARDOWN_TIMEOUT_S,
+                        self._engine_id,
                     )
+                    _pin_immortal(self._mlx_executor, self._mlx_stream)
+                    self._mlx_executor = None
+                    self._mlx_stream = None
+                    self.model = None
+                    self.tokenizer = None
+                    self.scheduler = None
+                    return
                 except RuntimeError:
                     pass
             else:

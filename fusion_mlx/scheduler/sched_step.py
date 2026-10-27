@@ -38,6 +38,12 @@ from .types import (
     _PrefillAbortedError,
 )
 
+# #1429: bounded final join for store_cache workers during shutdown. The
+# unbounded ThreadPoolExecutor.shutdown(wait=True) it replaces could hang
+# forever on a worker blocked on a full SSD writer queue, which hung
+# EngineCore.close() and killed the whole process via fatal_exit.
+_STORE_CACHE_SHUTDOWN_JOIN_S: float = 20.0
+
 
 def _sync_paged_pool_active(self) -> None:
     """#781: publish the batch-wide active set to the paged KV pool each step.
@@ -1100,6 +1106,12 @@ def deep_reset(self) -> None:
     logger.info("Deep reset completed - all caches cleared")
 
 
+def mark_closing(self) -> None:
+    # #1429: called by EngineCore.close() before teardown so the step thread
+    # stops writing disconnect KV checkpoints it is about to have waited on.
+    self._closing = True
+
+
 def shutdown(self) -> None:
     """
     Graceful shutdown.
@@ -1107,6 +1119,7 @@ def shutdown(self) -> None:
     Flushes hot cache to SSD and closes the background writer.
     paged SSD cache files are NOT cleared to allow reuse on reload.
     """
+    self._closing = True
     logger.info("Scheduler shutdown initiated...")
     # The store-cache gate is a non-blocking counter (#1496), so there is
     # no step-thread caller to wake here. Inflight futures are drained
@@ -1114,6 +1127,7 @@ def shutdown(self) -> None:
     # Wait for any inflight async store_cache futures + drain pending
     # batch_generator removes so the writer thread / underlying paged SSD
     # cache see all blocks before close().
+    writer_still_active = False
     if self._store_cache_executor is not None:
         try:
             inflight = list(self._inflight_store_futures.values())
@@ -1138,10 +1152,27 @@ def shutdown(self) -> None:
                 # this second cap rather than hanging shutdown indefinitely.
                 logger.warning(
                     "store_cache: %d future(s) still running after 30s wait; "
-                    "joining executor (bounded) before SSD close",
+                    "joining executor (bounded to %.0fs) before SSD close",
                     len(not_done),
+                    _STORE_CACHE_SHUTDOWN_JOIN_S,
                 )
-                self._store_cache_executor.shutdown(wait=True, cancel_futures=True)
+                # #1429: shutdown(wait=True) has NO timeout. A worker blocked
+                # on a full SSD writer queue (paged_ssd_cache._try_queue_write)
+                # hung it forever, which in turn hung EngineCore.close() and
+                # triggered the process-wide fatal_exit. Bounded wait instead.
+                self._store_cache_executor.shutdown(wait=False, cancel_futures=True)
+                _done2, still_running = concurrent.futures.wait(
+                    not_done, timeout=_STORE_CACHE_SHUTDOWN_JOIN_S
+                )
+                if still_running:
+                    writer_still_active = True
+                    logger.critical(
+                        "store_cache: %d worker(s) STILL running %.0fs after the "
+                        "queue drained; skipping paged SSD close so a live writer "
+                        "cannot corrupt block files (fds left open)",
+                        len(still_running),
+                        _STORE_CACHE_SHUTDOWN_JOIN_S,
+                    )
             else:
                 # All futures completed — no live writer, safe to skip the
                 # blocking join. cancel_futures clears any queued-but-unstarted
@@ -1159,7 +1190,12 @@ def shutdown(self) -> None:
         self._store_cache_executor = None
         self._store_cache_gate = None
     if self.paged_ssd_cache_manager is not None:
-        self.paged_ssd_cache_manager.close()
+        if writer_still_active:
+            logger.warning(
+                "paged SSD cache manager left open: store_cache writer still active"
+            )
+        else:
+            self.paged_ssd_cache_manager.close()
         self.paged_ssd_cache_manager = None
     logger.info("Scheduler shutdown completed")
 

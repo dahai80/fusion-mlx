@@ -45,6 +45,11 @@ _ORPHAN_SWEEP_MIN_AGE_S = 30.0
 # sweeping is disabled — orphan reclaim is a space optimization, deleting
 # a live manager's blocks is data loss.
 _ACTIVE_MANAGERS_BY_CACHE_DIR: dict[str, int] = {}
+# #1428: same reasoning applied to eviction. A live manager's blocks are the
+# warm prefix cache its next request depends on — reclaiming them turns a
+# delta prefill back into a full cold prefill. Only models with no live
+# manager on this cache_dir (a switched-away model) stay reclaimable.
+_ACTIVE_MANAGER_MODELS_BY_CACHE_DIR: dict[str, set[str]] = {}
 _ACTIVE_MANAGERS_LOCK = threading.Lock()
 # #1037: single-hex-char shard subdirs created under the cache dir (see
 # __init__). The default cache dir is a shared global path, so the startup
@@ -878,6 +883,10 @@ class PagedSSDCacheManager:
                     _ACTIVE_MANAGERS_BY_CACHE_DIR.get(self._cache_dir_key, 0) + 1
                 )
                 active = _ACTIVE_MANAGERS_BY_CACHE_DIR[self._cache_dir_key]
+                if self._expected_model_name:
+                    _ACTIVE_MANAGER_MODELS_BY_CACHE_DIR.setdefault(
+                        self._cache_dir_key, set()
+                    ).add(self._expected_model_name)
             if active > 1:
                 logger.warning(
                     "SSD orphan sweep disabled for %s: %d PagedSSDCacheManager "
@@ -1864,6 +1873,15 @@ class PagedSSDCacheManager:
                     _ACTIVE_MANAGERS_BY_CACHE_DIR[self._cache_dir_key] = remaining
                 else:
                     _ACTIVE_MANAGERS_BY_CACHE_DIR.pop(self._cache_dir_key, None)
+                live_models = _ACTIVE_MANAGER_MODELS_BY_CACHE_DIR.get(
+                    self._cache_dir_key
+                )
+                if live_models is not None:
+                    live_models.discard(self._expected_model_name or "")
+                    if not live_models:
+                        _ACTIVE_MANAGER_MODELS_BY_CACHE_DIR.pop(
+                            self._cache_dir_key, None
+                        )
             logger.debug(
                 "SSD manager deregistered for %s (%d active)",
                 self._cache_dir,
@@ -2359,10 +2377,16 @@ class PagedSSDCacheManager:
         while (
             self._tracked_ssd_size() > effective and self._incompatible_index.count > 0
         ):
-            lru = self._incompatible_index.get_lru_entries(1)
-            if not lru:
+            victim = self._pick_reclaimable_incompatible()
+            if victim is None:
+                logger.info(
+                    "SSD startup reclaim stopped: %d incompatible blocks all "
+                    "belong to another live model sharing this cache_dir "
+                    "(expected=%s)",
+                    self._incompatible_index.count,
+                    (self._expected_model_name or "<unset>")[:12],
+                )
                 break
-            victim = lru[0]
             file_path = self._get_file_path(victim.block_hash)
             try:
                 # #681: _get_file_path returns None in pure-memory mode.
@@ -2374,6 +2398,34 @@ class PagedSSDCacheManager:
                 logger.warning("SSD startup unlink failed: %s: %s", file_path, e)
                 self._stats["evict_unlink_failures"] += 1
             self._incompatible_index.remove(victim.block_hash)
+
+    def _reclaimable_incompatible(self, count: int) -> list[PagedSSDBlockMetadata]:
+        # Several models share one cache_dir. A block stamped with the
+        # fingerprint of a model that still has a live manager here is that
+        # model's warm prefix cache — deleting it forces its next request into
+        # a full cold prefill. Model-switch reclaim (no live manager for the
+        # stamp) stays allowed, otherwise a switched-away model's disk usage
+        # would be pinned forever.
+        live_foreign = self._live_foreign_models()
+        entries = self._incompatible_index.get_lru_entries(max(1, count))
+        return [
+            meta
+            for meta in entries
+            if not meta.model_name or meta.model_name not in live_foreign
+        ]
+
+    def _live_foreign_models(self) -> set[str]:
+        key = self._cache_dir_key
+        if key is None:
+            return set()
+        with _ACTIVE_MANAGERS_LOCK:
+            live = set(_ACTIVE_MANAGER_MODELS_BY_CACHE_DIR.get(key, ()))
+        live.discard(self._expected_model_name or "")
+        return live
+
+    def _pick_reclaimable_incompatible(self) -> PagedSSDBlockMetadata | None:
+        victims = self._reclaimable_incompatible(max(1, self._incompatible_index.count))
+        return victims[0] if victims else None
 
     def _is_compatible_block(self, meta: PagedSSDBlockMetadata) -> bool:
         if not self._expected_model_name:
@@ -2449,9 +2501,8 @@ class PagedSSDCacheManager:
             unlinks_done = 0
             while self._tracked_ssd_size() > effective:
                 if self._incompatible_index.count > 0:
-                    lru = self._incompatible_index.get_lru_entries(1)
-                    if lru:
-                        victim = lru[0]
+                    victim = self._pick_reclaimable_incompatible()
+                    if victim is not None:
                         victims.append(self._get_file_path(victim.block_hash))
                         self._incompatible_index.remove(victim.block_hash)
                         continue
@@ -2513,7 +2564,7 @@ class PagedSSDCacheManager:
                     self._tracked_ssd_size() > effective
                     and self._incompatible_index.count > 0
                 ):
-                    for victim in self._incompatible_index.get_lru_entries(
+                    for victim in self._reclaimable_incompatible(
                         _MAX_INLINE_UNLINKS_PER_SAVE
                     ):
                         if (
