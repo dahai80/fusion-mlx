@@ -367,7 +367,7 @@ def _init_tiered_cache(self) -> None:
             max_size_bytes=self.config.paged_ssd_cache_max_size,
             hot_cache_max_bytes=self.config.hot_cache_max_size,
             hot_cache_only=self.config.hot_cache_only,
-            expected_model_name=self.config.model_name or "",
+            expected_model_name=self._expected_ssd_model_name(),
             expected_num_layers=expected_num_layers,
             expected_block_size_tokens=expected_block_size_tokens,
             expected_kv_bytes_per_token=expected_kv_bytes_per_token,

@@ -67,6 +67,56 @@ def test_expected_ssd_model_name_without_paged_cache():
     assert sched_misc._expected_ssd_model_name(fake) == RAW_PATH
 
 
+def test_production_ssd_path_passes_fingerprint_not_raw_path(tmp_path: Path):
+    captured = {}
+
+    class _Manager:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def set_paged_ssd_cache_manager(self, manager):
+            pass
+
+    fake = SimpleNamespace(
+        config=SimpleNamespace(
+            model_name=RAW_PATH,
+            paged_ssd_cache_dir=str(tmp_path / "ssd_cache"),
+            paged_ssd_cache_max_size=1 << 30,
+            hot_cache_max_size=0,
+            hot_cache_only=False,
+            paged_cache_block_size=2048,
+            boundary_prefix_persist=False,
+            boundary_prefix_max_bytes=0,
+        ),
+        paged_cache_manager=SimpleNamespace(
+            model_name=FINGERPRINT,
+            set_paged_ssd_cache_manager=lambda manager: None,
+        ),
+        block_aware_cache=SimpleNamespace(
+            expected_num_layers=64,
+            set_paged_ssd_cache_manager=lambda manager: None,
+        ),
+        memory_monitor=None,
+        _activate_tiered_cache_manager=lambda: None,
+        _activate_rollback_manager=lambda: None,
+        _format_bytes=lambda value: str(value),
+    )
+    fake._expected_ssd_model_name = lambda: sched_misc._expected_ssd_model_name(fake)
+
+    original_manager = sched_misc.PagedSSDCacheManager
+    original_store = sched_misc.BoundarySnapshotSSDStore
+    sched_misc.PagedSSDCacheManager = _Manager
+    sched_misc.BoundarySnapshotSSDStore = None
+    try:
+        sched_misc._init_tiered_cache(fake)
+    finally:
+        sched_misc.PagedSSDCacheManager = original_manager
+        sched_misc.BoundarySnapshotSSDStore = original_store
+
+    assert captured["expected_model_name"] == FINGERPRINT
+    assert captured["expected_model_name"] != RAW_PATH
+
+
 def test_fingerprint_block_is_compatible_after_restart(tmp_path: Path):
     mgr = _manager(tmp_path, FINGERPRINT)
     assert mgr._is_compatible_block(_meta(b"aa" * 10, FINGERPRINT)) is True
