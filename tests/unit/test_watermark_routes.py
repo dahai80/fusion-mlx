@@ -66,19 +66,15 @@ def client():
     app.dependency_overrides.clear()
 
 
-def test_embed_rejects_default_secret(client):
-    with patch.dict(
-        "os.environ", {"FMH_WATERMARK_SECRET": "fusion-model-hub-default-secret"}
-    ):
-        r = client.post(
-            "/v1/watermark/embed",
-            json={
-                "model": "m",
-                "payload": {"a": 1},
-                "secret": "fusion-model-hub-default-secret",
-            },
-        )
-        assert r.status_code == 503
+def test_embed_prod_missing_secret_raises_runtime_error(client):
+    with patch.dict("os.environ", {"FUSION_PROFILE": "prod"}, clear=False):
+        if "FMH_WATERMARK_SECRET" in os.environ:
+            del os.environ["FMH_WATERMARK_SECRET"]
+        with pytest.raises(RuntimeError, match="FMH_WATERMARK_SECRET not set"):
+            client.post(
+                "/v1/watermark/embed",
+                json={"model": "m", "payload": {"a": 1}, "secret": ""},
+            )
 
 
 def test_embed_rejects_empty_secret(client):
@@ -89,10 +85,10 @@ def test_embed_rejects_empty_secret(client):
     assert r.status_code == 503
 
 
-def test_verify_rejects_default_secret(client):
+def test_verify_rejects_missing_secret(client):
     r = client.post(
         "/v1/watermark/verify",
-        json={"model": "m", "secret": "fusion-model-hub-default-secret"},
+        json={"model": "m", "secret": ""},
     )
     assert r.status_code == 503
 

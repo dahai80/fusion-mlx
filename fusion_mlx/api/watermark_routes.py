@@ -25,20 +25,29 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["watermark"])
 
-_DEFAULT_SECRET = "fusion-model-hub-default-secret"
 _QUANTIZED_CONFIG_KEYS = ("quantization", "quantization_config")
 
 
 def _resolve_secret(provided: str) -> str:
-    env_secret = os.environ.get("FMH_WATERMARK_SECRET", "")
-    secret = provided or env_secret
-    if not secret or secret == _DEFAULT_SECRET:
-        raise HTTPException(
-            status_code=503,
-            detail="Watermark disabled: set a non-default FMH_WATERMARK_SECRET env "
-            "(high entropy) before embedding/verifying watermarks",
+    secret = provided or os.environ.get("FMH_WATERMARK_SECRET", "")
+    if secret:
+        return secret
+    if os.getenv("FUSION_PROFILE", "dev") == "prod":
+        raise RuntimeError(
+            "FMH_WATERMARK_SECRET not set — generate a high-entropy secret "
+            '(e.g. `python -c "import secrets; print(secrets.token_urlsafe(32))"`) '
+            "and export it before enabling watermark routes; "
+            "see architecture/config-conventions.md §3"
         )
-    return secret
+    logger.warning(
+        "FMH_WATERMARK_SECRET not set (dev profile) — watermark embed/verify "
+        "returns 503 until a secret is provided"
+    )
+    raise HTTPException(
+        status_code=503,
+        detail="Watermark disabled: set FMH_WATERMARK_SECRET env "
+        "(high entropy) before embedding/verifying watermarks",
+    )
 
 
 def _seed_for(secret: str, name: str) -> int:
