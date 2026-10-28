@@ -7,7 +7,7 @@ The ``vllm_mlx.server`` standalone entrypoint historically only honored
 so ``ps -ef`` exposed the per-launch bearer token to any local user
 (codex BLOCKER taxonomy #3 — "bearer-in-shell-history").
 
-The fix introduces ``vllm_mlx.server._resolve_api_key`` as the single
+The fix introduces ``vllm_mlx.server._boot_api_key`` as the single
 SSOT and routes both entrypoints (``cli.py``'s ``rapid-mlx serve`` and
 ``server.py``'s ``python -m vllm_mlx.server``) through it; the
 ``rapid-mlx serve`` banner reads the same SSOT via
@@ -39,14 +39,14 @@ import urllib.request
 import pytest
 
 # ---------------------------------------------------------------------------
-# In-process unit tests: call the REAL _resolve_api_key helper
+# In-process unit tests: call the REAL _boot_api_key helper
 # ---------------------------------------------------------------------------
 
 
 def test_api_key_env_only_resolves_to_env_value(monkeypatch):
     """Env-only is the supported rapid-desktop sidecar path. If the
     production helper drops its env-var branch, this assertion fails."""
-    from fusion_mlx.server import _resolve_api_key
+    from fusion_mlx.server import _boot_api_key
 
     # CI runners load ~/.fusion-mlx/settings.json auth.api_key into the
     # module-level _api_key global BEFORE pytest collects. That global
@@ -54,45 +54,45 @@ def test_api_key_env_only_resolves_to_env_value(monkeypatch):
     # the env branch is never reached and this test is tautological.
     monkeypatch.setattr("fusion_mlx.server._api_key", None)
     monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_SECRET")
-    assert _resolve_api_key(argv_api_key=None) == "ENV_SECRET"
+    assert _boot_api_key(argv_api_key=None) == "ENV_SECRET"
 
 
 def test_api_key_argv_only_still_works(monkeypatch):
     """Inline argv is the legacy path — backwards-compat must hold."""
-    from fusion_mlx.server import _resolve_api_key
+    from fusion_mlx.server import _boot_api_key
 
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
-    assert _resolve_api_key(argv_api_key="ARGV_SECRET") == "ARGV_SECRET"
+    assert _boot_api_key(argv_api_key="ARGV_SECRET") == "ARGV_SECRET"
 
 
 def test_api_key_both_set_argv_wins(monkeypatch):
     """Argv override is documented in --api-key help; pin the priority."""
-    from fusion_mlx.server import _resolve_api_key
+    from fusion_mlx.server import _boot_api_key
 
     monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_VALUE")
-    assert _resolve_api_key(argv_api_key="ARGV_VALUE") == "ARGV_VALUE"
+    assert _boot_api_key(argv_api_key="ARGV_VALUE") == "ARGV_VALUE"
 
 
 def test_api_key_neither_set_is_none(monkeypatch):
     """No-auth dev path stays anonymous-OK."""
-    from fusion_mlx.server import _resolve_api_key
+    from fusion_mlx.server import _boot_api_key
 
     # Neutralize the settings.json-loaded global (see env-only test note).
     monkeypatch.setattr("fusion_mlx.server._api_key", None)
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
-    assert _resolve_api_key(argv_api_key=None) is None
+    assert _boot_api_key(argv_api_key=None) is None
 
 
 def test_api_key_empty_string_argv_falls_back_to_env(monkeypatch):
     """Edge case: an empty ``--api-key ""`` should not silently disable
     auth when the env var is set. The ``or`` short-circuit means env
     wins because empty string is falsy."""
-    from fusion_mlx.server import _resolve_api_key
+    from fusion_mlx.server import _boot_api_key
 
     # Neutralize the settings.json-loaded global (see env-only test note).
     monkeypatch.setattr("fusion_mlx.server._api_key", None)
     monkeypatch.setenv("FUSION_MLX_API_KEY", "ENV_FALLBACK")
-    assert _resolve_api_key(argv_api_key="") == "ENV_FALLBACK"
+    assert _boot_api_key(argv_api_key="") == "ENV_FALLBACK"
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +104,7 @@ def test_banner_renders_auth_on_when_only_env_is_set(monkeypatch):
     """Pre-fix the banner gate was ``if args.api_key`` — a sidecar
     that set env-only saw the line omitted even though enforcement
     was on. The fix routes through ``_auth_feature_str`` which calls
-    the same ``_resolve_api_key`` SSOT the server reads. Calling the
+    the same ``_boot_api_key`` SSOT the server reads. Calling the
     renderer directly proves the banner path mirrors the enforcement
     path; if the gate regresses to ``args.api_key`` only, this flips
     red because the input ``argv_api_key=None`` produces no feature."""

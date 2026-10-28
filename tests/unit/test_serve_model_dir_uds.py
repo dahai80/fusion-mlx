@@ -238,7 +238,7 @@ def test_model_dir_no_api_key_leaves_global_unset(stub_model_dir_deps, monkeypat
 
 def test_model_dir_cli_key_beats_env(stub_model_dir_deps, monkeypatch):
     """``--api-key <CLI>`` on the model-dir path must win over a set
-    ``FUSION_MLX_API_KEY`` env, matching ``_resolve_api_key``'s CLI >
+    ``FUSION_MLX_API_KEY`` env, matching ``_boot_api_key``'s CLI >
     env order."""
     monkeypatch_fixture, sentinel_app = stub_model_dir_deps
     from fusion_mlx import server as server_mod

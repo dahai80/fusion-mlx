@@ -351,7 +351,9 @@ async def run_graph(
     gov = get_governor()
     run = gov.start_run(graph_id)
 
-    api_key = os.environ.get("FUSION_MLX_API_KEY", "")
+    from ..config_seam import api_key as seam_api_key
+
+    api_key = seam_api_key()
     base_url = os.environ.get("FUSION_HOST", "http://127.0.0.1:11434").rstrip("/")
     headers = {"Content-Type": "application/json"}
     if api_key:

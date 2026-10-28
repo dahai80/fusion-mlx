@@ -104,7 +104,7 @@ def _serve_audio_mode(args, entry) -> None:
     # and CLI flags govern auth + body-size caps + CORS. Diverging
     # here would silently weaken the deployment posture for anyone who
     # added ``--api-key`` to their ``fusion-mlx serve kokoro`` command.
-    server._api_key = server._resolve_api_key(args.api_key)
+    server._api_key = server._boot_api_key(args.api_key)
     server._strict_auth = server._resolve_strict_auth(
         getattr(args, "strict_auth", False)
     )

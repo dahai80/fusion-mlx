@@ -319,19 +319,23 @@ def configure_logging(log_level: str) -> str:
     return log_level.upper()
 
 
-def _resolve_api_key(argv_api_key: str | None = None) -> str | None:
+def _boot_api_key(argv_api_key: str | None = None) -> str | None:
     global _api_key
-    import os
 
+    # Staging helper only (argv > staged module global > env): keeps the
+    # bearer out of argv/ps for env-only sidecars. Env/settings policy
+    # lives in config_seam / fusion_core.config (#1439).
     if argv_api_key:
         return argv_api_key
     if _api_key:
         return _api_key
-    return os.environ.get("FUSION_MLX_API_KEY")
+    from .config_seam import env_api_key
+
+    return env_api_key() or None
 
 
 def _resolve_strict_auth(cli_value: bool = False) -> bool:
-    # Mirrors _resolve_api_key's staging: cli_serve sets the module global
+    # Mirrors _boot_api_key's staging: cli_serve sets the module global
     # before Server.__init__, which then enforces it once the effective key is
     # known. The CLI flag wins over env, which wins over settings.json.
     global _strict_auth
@@ -342,18 +346,19 @@ def _resolve_strict_auth(cli_value: bool = False) -> bool:
     return _strict_auth or strict_auth_requested()
 
 
-def _resolve_effective_api_key(
+def _effective_api_key(
     argv_key: str | None = None,
     settings_key: str | None = None,
 ) -> tuple[str | None, str]:
     # Single source of truth for the startup key priority:
     #   CLI --api-key  >  FUSION_MLX_API_KEY env  >  settings.json auth.api_key
-    # ``_resolve_api_key`` folds CLI+env into the module global before
+    # ``_boot_api_key`` folds CLI+env into the module global before
     # ``Server.__init__`` runs, so callers may pass that global as
     # ``argv_key`` (the operator-provided key). Returns ``(key, source)``
     # where source is one of ``"cli"`` / ``"env"`` / ``"settings"`` /
-    # ``"none"`` for the startup log line.
-    import os
+    # ``"none"`` for the startup log line. Env-tier reads go through
+    # config_seam so the resolution policy lives in one place (#1439).
+    from .config_seam import env_api_key
 
     if argv_key:
         if settings_key and settings_key != argv_key:
@@ -363,7 +368,7 @@ def _resolve_effective_api_key(
                 "will get 401"
             )
         return argv_key, "cli"
-    env_key = os.environ.get("FUSION_MLX_API_KEY")
+    env_key = env_api_key()
     if env_key:
         if settings_key and settings_key != env_key:
             logger.warning(
@@ -1366,7 +1371,7 @@ class Server:
         # operator passing ``--api-key <X>`` still got 401 "Invalid API
         # key" because the /v1 middleware enforced the settings.json key.
         # Priority: CLI --api-key > FUSION_MLX_API_KEY env > settings.json.
-        effective_key, key_source = _resolve_effective_api_key(
+        effective_key, key_source = _effective_api_key(
             argv_key=_api_key,
             settings_key=self.settings.api_key,
         )
@@ -3220,9 +3225,9 @@ def main():
     args = parser.parse_args()
 
     # Route both the standalone entry and the shared serve command through
-    # _resolve_api_key so env-only sidecars keep the bearer out of argv/ps.
+    # _boot_api_key so env-only sidecars keep the bearer out of argv/ps.
     global _api_key
-    _api_key = _resolve_api_key(args.api_key)
+    _api_key = _boot_api_key(args.api_key)
     logger.info(
         "server entry: api_key resolved (source=%s)",
         "argv" if args.api_key else "env" if _api_key else "none",

@@ -132,7 +132,7 @@ def _pick_port(preferred: int) -> int:
     raise RuntimeError("no free port available for share")
 
 
-def _resolve_served_model_name(port: int, api_key: str) -> str | None:
+def _fetch_served_model_name(port: int, api_key: str) -> str | None:
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/v1/models",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -369,7 +369,7 @@ def share_command(args: argparse.Namespace) -> None:
             )
             sys.exit(1)
 
-        display_model = _resolve_served_model_name(port, api_key) or alias
+        display_model = _fetch_served_model_name(port, api_key) or alias
         print(
             warning.render(
                 tunnel.public_url,

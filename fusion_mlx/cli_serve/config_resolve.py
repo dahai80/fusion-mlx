@@ -264,11 +264,11 @@ def _serve_from_model_dir(args):
     # Issue #636: stage the CLI --api-key into the server module global
     # BEFORE create_app constructs Server(), whose __init__ auth-sync reads
     # the bare ``_api_key`` global (server.py:696). The text/audio paths
-    # stage it via ``server._api_key = server._resolve_api_key(args.api_key)``
+    # stage it via ``server._api_key = server._boot_api_key(args.api_key)``
     # (cli_serve.py:102/1154); this model-dir path previously imported only
     # ``create_app`` and skipped the staging, so ``--api-key X`` was dropped
     # and auth fell through to settings.json — /v1/* rejected X with 401.
-    server._api_key = server._resolve_api_key(args.api_key)
+    server._api_key = server._boot_api_key(args.api_key)
     server._strict_auth = server._resolve_strict_auth(
         getattr(args, "strict_auth", False)
     )
@@ -764,7 +764,7 @@ def _stage_server_config(args, server, logger):
     _apply_mem(_get_config(), cli_tier=getattr(args, "memory_tier", "auto"))
 
     # API key
-    server._api_key = server._resolve_api_key(args.api_key)
+    server._api_key = server._boot_api_key(args.api_key)
     server._strict_auth = server._resolve_strict_auth(
         getattr(args, "strict_auth", False)
     )

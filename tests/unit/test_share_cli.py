@@ -124,7 +124,7 @@ def test_share_command_happy_path(capsys):
         patch.object(share_cli.ws_tunnel, "wait_for_public_url", return_value=True),
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", side_effect=_ctrl_c_in_monitor_loop()),
     ):
@@ -379,7 +379,7 @@ def test_verify_auth_gate_handles_timeout_error():
         assert share_cli._verify_auth_gate(18765, "K") is False
 
 
-def test_resolve_served_model_name_sends_bearer():
+def test_fetch_served_model_name_sends_bearer():
     """The served-name probe is auth-gated by /v1/models too — must
     include the bearer, otherwise the helper silently returns None on
     a healthy server and the banner shows the alias instead of the HF id."""
@@ -395,14 +395,14 @@ def test_resolve_served_model_name_sends_bearer():
         return response
 
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-        name = share_cli._resolve_served_model_name(18765, "the-secret-key")
+        name = share_cli._fetch_served_model_name(18765, "the-secret-key")
     assert name == "mlx-community/Qwen3.5-4B"
     assert captured["auth"] == "Bearer the-secret-key"
 
 
-def test_resolve_served_model_name_handles_timeout_error():
+def test_fetch_served_model_name_handles_timeout_error():
     with patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
-        assert share_cli._resolve_served_model_name(18765, "K") is None
+        assert share_cli._fetch_served_model_name(18765, "K") is None
 
 
 # ─────────────────────────── auth gate / aborts ─────────────────────────────
@@ -466,7 +466,7 @@ def test_share_command_exits_nonzero_when_serve_crashes(capsys):
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", return_value=None),
         pytest.raises(SystemExit) as exc_info,
@@ -496,7 +496,7 @@ def test_share_command_exits_nonzero_when_serve_exits_cleanly(capsys):
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", return_value=None),
         pytest.raises(SystemExit) as exc_info,
@@ -533,7 +533,7 @@ def test_share_command_exits_when_tunnel_drops_post_banner(capsys):
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", side_effect=fake_sleep),
         pytest.raises(SystemExit) as exc_info,
@@ -558,7 +558,7 @@ def test_share_command_ctrl_c_keeps_exit_zero(capsys):
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", side_effect=_ctrl_c_in_monitor_loop()),
     ):
@@ -591,7 +591,7 @@ def test_share_command_sigterm_runs_cleanup():
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", side_effect=raise_sigterm_handler_once),
     ):
@@ -647,7 +647,7 @@ def test_share_command_forwards_multiple_cors_origins_to_child(capsys):
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", side_effect=_ctrl_c_in_monitor_loop()),
     ):
@@ -694,7 +694,7 @@ def _drive_share_capture(args, *, extra_patches=()):
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", side_effect=_ctrl_c_in_monitor_loop()),
     ]
@@ -817,7 +817,7 @@ def test_share_command_forwards_original_alias_to_child(capsys):
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", side_effect=_ctrl_c_in_monitor_loop()),
     ):
@@ -845,7 +845,7 @@ def test_share_command_falls_back_to_args_model_when_no_original_alias(capsys):
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", side_effect=_ctrl_c_in_monitor_loop()),
     ):
@@ -1172,7 +1172,7 @@ def test_share_command_forwards_chat_frontend_to_banner(capsys):
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", side_effect=_ctrl_c_in_monitor_loop()),
     ):
@@ -1201,7 +1201,7 @@ def test_share_command_omits_chat_line_when_frontend_disabled(capsys):
         patch.object(share_cli, "_pick_port", return_value=18765),
         patch.object(share_cli, "_maybe_confirm_download"),
         patch.object(
-            share_cli, "_resolve_served_model_name", return_value="qwen3.5-4b-4bit"
+            share_cli, "_fetch_served_model_name", return_value="qwen3.5-4b-4bit"
         ),
         patch("time.sleep", side_effect=_ctrl_c_in_monitor_loop()),
     ):

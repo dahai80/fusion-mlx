@@ -27,7 +27,7 @@ def _auth_feature_str(argv_api_key: str | None) -> str | None:
 
     Lives at module scope (not inline in ``serve_command``) so the
     banner gate is directly unit-testable without booting a model.
-    Routes through ``server._resolve_api_key`` — the same SSOT the
+    Routes through ``server._boot_api_key`` — the same SSOT the
     server-side enforcement reads — so a refactor of the env-var
     policy cannot drift the banner from the actual auth state.
     Pre-fix the gate was ``if args.api_key`` directly, which printed
@@ -36,7 +36,7 @@ def _auth_feature_str(argv_api_key: str | None) -> str | None:
     """
     from fusion_mlx import server as _server
 
-    if _server._resolve_api_key(argv_api_key):
+    if _server._boot_api_key(argv_api_key):
         return "auth: on"
     return None
 

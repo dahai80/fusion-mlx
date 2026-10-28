@@ -748,7 +748,8 @@ class TestServeCommandFunctions:
         fake_server.configure_logging = MagicMock()
         # config_resolve stages the CLI --api-key through the server module
         # before building the app (#636); the stub must expose it.
-        fake_server._resolve_api_key = lambda *a, **k: None
+        fake_server._boot_api_key = lambda *a, **k: None
+        fake_server._resolve_strict_auth = lambda *a, **k: False
         monkeypatch.setitem(sys.modules, "fusion_mlx.server", fake_server)
         monkeypatch.setattr(fusion_mlx, "server", fake_server, raising=False)
 
