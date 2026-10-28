@@ -35,7 +35,7 @@ def _resolve_secret(provided: str) -> str:
     if os.getenv("FUSION_PROFILE", "dev") == "prod":
         raise RuntimeError(
             "FMH_WATERMARK_SECRET not set — generate a high-entropy secret "
-            "(e.g. `python -c \"import secrets; print(secrets.token_urlsafe(32))\"`) "
+            '(e.g. `python -c "import secrets; print(secrets.token_urlsafe(32))"`) '
             "and export it before enabling watermark routes; "
             "see architecture/config-conventions.md §3"
         )
