@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.25] - 2026-10-28
+
 ### Fixed — tool-call parser gaps that dropped valid calls (test debt cleared)
 - `tests/unit/test_tool_calling.py` was quarantined with 57 failures from
   the `tool_calling.py` module split (commit `31ce9b68`); the truncated
@@ -34,7 +36,36 @@
     template, so strict Jinja templates (`StrictUndefined`) no longer
     raise `KeyError: 'description'`.
 
-## [0.10.25] - 2026-10-27
+### Fixed — web module bridge autostart + status visibility (#1432)
+- `start.sh start` only launched the engine; with the web module bridge
+  (:11471) down the Fusion Shell sidebar rendered the module "offline"
+  while the engine was healthy. `FUSION_MLX_WEB_AUTOSTART=1` now brings
+  the bridge up with the engine (gated on `web/dist` being built; bridge
+  failure never fails the engine start), `./start.sh status` reports
+  bridge state, and README documents the workflow.
+
+### Fixed — hardcoded default watermark secret removed (#1434)
+- `watermark_routes.py` no longer falls back to the guessable
+  `fusion-model-hub-default-secret` literal. Missing
+  `FMH_WATERMARK_SECRET` under `FUSION_PROFILE=prod` raises a
+  `RuntimeError` with guidance; dev profile keeps the request-scoped 503
+  plus a loud warning. `scripts/check-env.py` reports 0 findings.
+
+### Fixed — opencv-python replaced with opencv-python-headless (#1435)
+- Both flavors ship the same `cv2` package; co-installation in the
+  shared root venv made module resolution nondeterministic. No GUI call
+  sites exist, so `video`/`vision` extras now declare
+  `opencv-python-headless>=4.10.0`, matching the root requirements.lock.
+
+### Fixed — CI rest-shard mock poisoning (pytest 9.2 drift)
+- CI resolves unpinned `pytest>=9.2.0`; its monkeypatch teardown
+  `delattr`'s attributes absent from `__dict__`, and MagicMock
+  auto-children live in `_mock_children` — the first
+  `monkeypatch.setattr(huggingface_hub, "try_to_load_from_cache", ...)`
+  poisoned the session-wide conftest mock and broke 8 downstream tests.
+  The conftest mock now sets `try_to_load_from_cache`/`scan_cache_dir`
+  explicitly.
+
 
 ### Fixed — inline-argument tool calls were dropped (#1430)
 - A checkpoint served OpenAI-style arguments inside the Qwen tag
