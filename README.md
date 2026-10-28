@@ -1587,6 +1587,19 @@ FUSION_HOST=unix:/run/fusion-mlx.sock ./start.sh start
 
 > UDS is orthogonal to the #349/#350 auth chain: even over the socket, a valid API key is still required when one is configured. UDS removes the *transport* reachability; auth removes *request* authorization. Use both for defense in depth.
 
+### Web module bridge (:11471, #1432)
+
+The web module bridge serves the union-web shell module (search/notifications endpoints plus the gateway registration/heartbeat loop) on `127.0.0.1:11471`. `start.sh start` only launches the inference engine — with the bridge down, the Fusion Shell sidebar shows the module as *offline* even though the engine is healthy.
+
+```bash
+./start.sh web start     # manual bring-up (requires web/dist built: cd web && bun install && bun run build)
+./start.sh web status
+./start.sh web stop
+FUSION_MLX_WEB_AUTOSTART=1 ./start.sh start   # opt-in: bring the bridge up with the engine
+```
+
+`FUSION_MLX_WEB_AUTOSTART=1` is gated on `web/dist/index.html` existing; a failed bridge bring-up never fails the engine start. `./start.sh status` reports the bridge state either way.
+
 ### Supply-chain verification (#804)
 
 Published wheels carry **PEP 740 build provenance attestations** signed with keyless Sigstore (OIDC-backed, no long-lived signing key). The `publish` GitHub Actions workflow (`attest: true` on `pypa/gh-action-pypi-publish`) signs every distribution at publish time and attaches the attestation to the PyPI release. A downstream user can verify a wheel was built from a specific commit on this repo, not tampered in transit.

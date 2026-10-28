@@ -480,6 +480,18 @@ do_start() {
 
     if wait_healthy "${health_timeout}"; then
         log_info "Fusion-MLX v$(fusion-mlx version 2>/dev/null | /usr/bin/grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) started successfully"
+        # #1432: opt-in web module bridge bring-up. Without the bridge the
+        # gateway shell renders the module "offline" while the engine is
+        # healthy. Off by default; gated on web/dist being built. Bridge
+        # failure must never fail the engine start.
+        if [[ "${FUSION_MLX_WEB_AUTOSTART:-0}" == "1" ]]; then
+            if [[ -f "${PROJ_DIR}/web/dist/index.html" ]]; then
+                log_info "FUSION_MLX_WEB_AUTOSTART=1 — bringing up web module bridge"
+                do_web start || log_warn "Web bridge autostart failed (engine unaffected); see ${LOG_DIR}/web.log"
+            else
+                log_warn "FUSION_MLX_WEB_AUTOSTART=1 but web/dist not built — skipping bridge (cd web && bun install && bun run build)"
+            fi
+        fi
         show_status
     else
         log_error "Start failed. Check logs: ${LOG_DIR}/server.log"
@@ -639,6 +651,16 @@ show_status() {
     local log_size
     log_size=$(du -sh "${LOG_DIR}" 2>/dev/null | awk '{print $1}' || echo "N/A")
     printf "\n  Cache: %s  Logs: %s\n" "${cache_size}" "${log_size}"
+
+    # Web module bridge state (#1432): shell sidebar reads it via the gateway;
+    # a down bridge renders "offline" in the UI even when the engine is fine.
+    local wp
+    wp=$(web_pid 2>/dev/null || echo "")
+    if [[ -n "${wp}" ]]; then
+        printf "  Web bridge: ${GREEN}running${NC} on :${WEB_PORT} (PID ${wp})\n"
+    else
+        printf "  Web bridge: ${YELLOW}not running${NC} on :${WEB_PORT} (shell integration offline; '$0 web start' to bring up)\n"
+    fi
     echo ""
     return "${rc}"
 }
@@ -967,7 +989,7 @@ do_web() {
             fi
             if [[ ! -f "${PROJ_DIR}/web/dist/index.html" ]]; then
                 log_error "web/dist not built — run: cd ${PROJ_DIR}/web && bun install && bun run build"
-                exit 1
+                return 1
             fi
             # Shell registry envs: same settings.json fallback as do_start's
             # preflight (engine re-exports them; the bridge process needs its
@@ -994,7 +1016,7 @@ do_web() {
                 (( waited += 1 ))
             done
             log_error "Web bridge failed to become healthy in 15s — check ${LOG_DIR}/web.log"
-            exit 1
+            return 1
             ;;
         stop)
             local wp
@@ -1053,6 +1075,10 @@ Environment:
   FUSION_HOST     Bind address (default: 127.0.0.1). Set to unix:/path/to.sock
                   for UDS listen mode (#351) - only a process with filesystem
                   access to the socket can reach MLX. TCP loopback is the default.
+  FUSION_MLX_WEB_AUTOSTART
+                  Set to 1 to bring up the web module bridge (:11471) together
+                  with the engine (#1432). Gated on web/dist being built;
+                  bridge failure never fails the engine start.
   HF_MIRROR       HuggingFace mirror override (default: read from config)
   PRELOAD_MODELS  Comma-separated models to preload (overrides --preload)
 
