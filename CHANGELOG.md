@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.26] - 2026-10-28
 
 ### Changed — single-point API-key/env resolution via `fusion_core.config` (#1439)
 - API-key resolution now has one home: new `fusion_mlx/config_seam.py`,
