@@ -67,7 +67,7 @@ def resolve_web_api_key() -> str:
 
 
 def resolve_engine_api_key() -> str:
-    from .config_seam import api_key as seam_api_key
+    from ..config_seam import api_key as seam_api_key
 
     key = seam_api_key().strip()
     if key:
