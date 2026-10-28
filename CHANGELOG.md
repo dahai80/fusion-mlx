@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.27] - 2026-10-28
+
+### Fixed — merged stranded fix branches into main
+- **SSD fingerprint identity wired into the production call site (#1428)**:
+  SSD restart cache, eviction crash fix, and dropped tool call recovery
+  from the quarantined branch are now on main; production scan and
+  restart-reuse numbers recorded in the changelog history.
+- **Web module bridge autostart (#1432)**: opt-in
+  `FUSION_MLX_WEB_AUTOSTART=1` brings the bridge (:11471) up with the
+  engine, `./start.sh status` reports bridge state.
+- **Hardcoded default watermark secret removed (#1434)**: missing
+  `FMH_WATERMARK_SECRET` under `FUSION_PROFILE=prod` fails fast with
+  guidance; CI rest-shard mock poisoning (pytest 9.2 drift) fixed.
+- **opencv-python replaced with opencv-python-headless (#1435)**: both
+  flavors ship the same `cv2` package; co-installation in the shared
+  root venv made module resolution nondeterministic. No GUI call sites
+  exist; `video`/`vision` extras now declare
+  `opencv-python-headless>=4.10.0`, matching the root requirements.lock.
+
 ## [0.10.26] - 2026-10-28
 
 ### Changed — single-point API-key/env resolution via `fusion_core.config` (#1439)
