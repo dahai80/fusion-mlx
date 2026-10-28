@@ -12,6 +12,7 @@ Uses mlx-lm's modular tool parser system to support multiple model formats:
 The tool parser is automatically selected based on the model's chat template.
 """
 
+import ast
 import json
 import logging
 import re
@@ -186,7 +187,8 @@ def _parse_xml_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
         content = match.strip()
         try:
             # Try JSON format first: {"name": "func", "arguments": {...}}
-            parsed = json.loads(content)
+            # strict=False: models emit raw tabs/newlines inside string values.
+            parsed = json.loads(content, strict=False)
             name = parsed.get("name", "")
             arguments = parsed.get("arguments", {})
             tool_calls.append(
@@ -207,7 +209,7 @@ def _parse_xml_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
             undoubled = _undouble_braces(content)
             if undoubled != content:
                 try:
-                    parsed = json.loads(undoubled)
+                    parsed = json.loads(undoubled, strict=False)
                     name = parsed.get("name", "")
                     arguments = parsed.get("arguments", {})
                     logger.warning(
@@ -385,6 +387,84 @@ def _parse_namespaced_tool_calls(
     return cleaned, tool_calls
 
 
+def _parse_hermes_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
+    """Fallback parser for Hermes-style tool call formats.
+
+    Handles ``<|tool_call_start|>...<|tool_call_end|>`` envelopes containing
+    either a JSON body or a Python-expression body such as
+    ``[func(a=1), other_tool(b="x")]``. Some clients emit this wire format
+    even when the tokenizer has no native Hermes parser.
+    """
+    pattern = r"<\|tool_call_start\|>(.*?)<\|tool_call_end\|>"
+    tool_calls: list[ToolCall] = []
+
+    for match in re.findall(pattern, text, re.DOTALL):
+        content = match.strip()
+
+        try:
+            parsed = json.loads(content, strict=False)
+            name = parsed.get("name", "")
+            arguments = parsed.get("arguments", {})
+            if name:
+                tool_calls.append(
+                    ToolCall(
+                        id=f"call_{uuid.uuid4().hex[:8]}",
+                        type="function",
+                        function=FunctionCall(
+                            name=name,
+                            arguments=_serialize_tool_call_arguments(arguments),
+                        ),
+                    )
+                )
+                continue
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+        # The payload is Python-expression-like; ast keeps commas inside
+        # quoted strings or nested containers from splitting calls.
+        try:
+            parsed_expr = ast.parse(content, mode="eval").body
+        except SyntaxError:
+            parsed_expr = None
+
+        calls = parsed_expr.elts if isinstance(parsed_expr, ast.List) else [parsed_expr]
+        for call in calls:
+            if not isinstance(call, ast.Call):
+                continue
+            if isinstance(call.func, ast.Name):
+                func_name = call.func.id
+            elif isinstance(call.func, ast.Attribute):
+                func_name = ast.unparse(call.func)
+            else:
+                continue
+
+            arguments = {}
+            for kw in call.keywords:
+                if kw.arg is None:
+                    continue
+                try:
+                    arguments[kw.arg] = ast.literal_eval(kw.value)
+                except (ValueError, SyntaxError):
+                    arguments[kw.arg] = ast.unparse(kw.value)
+
+            tool_calls.append(
+                ToolCall(
+                    id=f"call_{uuid.uuid4().hex[:8]}",
+                    type="function",
+                    function=FunctionCall(
+                        name=func_name,
+                        arguments=_serialize_tool_call_arguments(arguments),
+                    ),
+                )
+            )
+
+    if not tool_calls:
+        return text, None
+
+    cleaned = re.sub(pattern, "", text, flags=re.DOTALL).strip()
+    return cleaned, tool_calls
+
+
 def _parse_bracket_tool_calls(text: str) -> tuple[str, list[ToolCall] | None]:
     """
     Fallback parser for bracket-style tool call formats.
@@ -515,90 +595,26 @@ def _recover_bare_json_tool_calls(
     return tool_calls, cleaned.strip()
 
 
-# ---------------------------------------------------------------------------
-# Gemma 4 robust fallback parser
-# ---------------------------------------------------------------------------
-
-
-def _gemma4_args_to_json_robust(args_str: str) -> dict:
-    """Convert Gemma 4 tool call args to a Python dict.
-
-    Handles the common failure cases that mlx-lm's parser cannot:
-    - Bare string values without ``<|"|>`` delimiters (e.g. ``{location: Tokyo}``)
-    - Spaces after commas in key-value pairs
-    """
-    import regex
-
-    # 1. Extract <|"|>-delimited strings and replace with placeholders
-    strings: list[str] = []
-
-    def _capture(m):
-        strings.append(m.group(1))
-        return f"\x00{len(strings) - 1}\x00"
-
-    text = regex.sub(r'<\|"\|>(.*?)<\|"\|>', _capture, args_str, flags=regex.DOTALL)
-
-    # 2. Quote bare keys (allow whitespace after { or ,)
-    text = regex.sub(r"(?<=[{,])\s*(\w+)\s*:", r' "\1":', text)
-
-    # 3. Restore captured strings as properly escaped JSON strings
-    for i, s in enumerate(strings):
-        text = text.replace(f"\x00{i}\x00", json.dumps(s))
-
-    # 4. Try json.loads — works when all values are already valid JSON primitives
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # 5. Quote bare string values that are not numbers, booleans, or null
-    def _quote_bare(m):
-        value = m.group(2).strip()
-        suffix = m.group(3)
-        if value.lower() in ("true", "false", "null"):
-            return f": {value}{suffix}"
-        try:
-            json.loads(value)
-            return f": {value}{suffix}"
-        except (json.JSONDecodeError, ValueError):
-            return f": {json.dumps(value)}{suffix}"
-
-    text = regex.sub(r"(:\s*)([^\",\[\]{}\s][^,}]*?)(\s*[,}])", _quote_bare, text)
-    return json.loads(text)
-
-
-def _parse_gemma4_tool_call_fallback(text: str) -> dict | list:
-    """Robust fallback parser for Gemma 4 ``call:name{args}`` format.
-
-    Activated only for Gemma 4 models (guarded by ``tool_call_start`` check).
-    Extends mlx-lm's parser to handle:
-    - Bare string values without ``<|"|>`` delimiters
-    - Colons / dots / hyphens in function names
-    """
-    import regex
-
-    pattern = regex.compile(r"call:([\w:.-]+)(\{(?:[^{}]|(?2))*\})", regex.DOTALL)
-    matches = list(pattern.finditer(text))
-    if not matches:
-        raise ValueError("No function call found in Gemma 4 format")
-
-    results = []
-    for match in matches:
-        func_name = match.group(1)
-        args_str = match.group(2)
-
-        # Try standard JSON first (model may emit valid JSON args)
-        try:
-            arguments = json.loads(args_str)
-        except json.JSONDecodeError:
-            arguments = _gemma4_args_to_json_robust(args_str)
-
-        results.append({"name": func_name, "arguments": arguments})
-
-    return results[0] if len(results) == 1 else results
+from .gemma4 import (  # noqa: E402,F401
+    _extract_tool_names,
+    _gemma4_args_to_json_robust,
+    _parse_gemma4_tool_call_fallback,
+    _remap_tool_call_names,
+)
 
 
 def parse_tool_calls(
+    text: str,
+    tokenizer: Any,
+    tools: list | None = None,
+) -> tuple[str, list[ToolCall] | None]:
+    cleaned_text, tool_calls = _parse_tool_calls_impl(text, tokenizer, tools)
+    if tool_calls:
+        _remap_tool_call_names(tool_calls, tools)
+    return cleaned_text, tool_calls
+
+
+def _parse_tool_calls_impl(
     text: str,
     tokenizer: Any,
     tools: list | None = None,
@@ -862,6 +878,12 @@ def parse_tool_calls(
         ns = ns_match.group(1)
         return _parse_namespaced_tool_calls(cleaned_text, ns)
 
+    # Fallback: Hermes-style tool calls
+    if "<|tool_call_start|>" in cleaned_text:
+        hermes_result = _parse_hermes_tool_calls(cleaned_text)
+        if hermes_result[1] is not None:
+            return hermes_result
+
     # Fallback: bracket tool call formats (from text-formatted history)
     if "[Calling tool:" in cleaned_text or "[Tool call:" in cleaned_text:
         return _parse_bracket_tool_calls(cleaned_text)
@@ -948,19 +970,6 @@ def sanitize_tool_call_markup(text: str, tokenizer: Any) -> str:
     cleaned = stream_filter.feed(text)
     cleaned += stream_filter.finish()
     return cleaned.strip()
-
-
-def _extract_tool_names(tools: list) -> set:
-    """Extract function names from OpenAI-format tool definitions."""
-    names = set()
-    for tool in tools:
-        if isinstance(tool, dict):
-            func = tool.get("function", {})
-            if isinstance(func, dict):
-                name = func.get("name")
-                if name:
-                    names.add(name)
-    return names
 
 
 def extract_tool_calls_with_thinking(

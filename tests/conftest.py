@@ -264,6 +264,11 @@ _hf_hub.list_models = MagicMock
 _hf_hub.model_info = MagicMock
 _hf_hub.hf_hub_download = MagicMock
 _hf_hub.snapshot_download = MagicMock
+# explicit attrs: pytest 9.2 monkeypatch teardown delattr's attrs absent from
+# __dict__ (mock auto-children live in _mock_children), poisoning the session
+# mock for every later patch()/monkeypatch of the same name
+_hf_hub.try_to_load_from_cache = MagicMock
+_hf_hub.scan_cache_dir = MagicMock
 sys.modules["huggingface_hub"] = _hf_hub
 _hf_hub_utils = MagicMock()
 _hf_hub_utils.RepositoryNotFoundError = Exception
