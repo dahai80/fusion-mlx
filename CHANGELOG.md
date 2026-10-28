@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Changed — single-point API-key/env resolution via `fusion_core.config` (#1439)
+- API-key resolution now has one home: new `fusion_mlx/config_seam.py`,
+  which delegates to `fusion_core.config.resolve_api_key` when fusion-core
+  is installed (monorepo; optional `fusion-mlx[core]` extra) and falls back
+  to a stdlib resolver with identical precedence — explicit
+  `--api-key` > `FUSION_MLX_API_KEY` env > `~/.fusion-mlx/settings.json`
+  `auth.api_key` — so a bare PyPI slim install still boots (#805).
+- All hand-rolled resolver functions deleted or renamed to boot-layer glue
+  (`server._boot_api_key` / `server._effective_api_key`,
+  `middleware.auth._config_layer_api_key`); client-side callers (chat REPL,
+  share, admin web bridge, agent routes, eval gates, CUDA node guard) route
+  through the seam instead of reading the env var / settings file directly.
+- Fixed pre-existing `test_cli.py` fake-server stub missing
+  `_resolve_strict_auth`, which failed
+  `test_serve_model_dir_dispatches_app_to_uvicorn` at the previous release.
+- New `tests/unit/test_config_seam.py` pins the precedence contract on both
+  the fusion_core and fallback paths.
+
 ## [0.10.25] - 2026-10-28
 
 ### Fixed — tool-call parser gaps that dropped valid calls (test debt cleared)

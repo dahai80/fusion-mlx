@@ -203,7 +203,9 @@ def main() -> int:
     parser.add_argument(
         "--host", default=os.environ.get("FUSION_HOST", "http://127.0.0.1:11434")
     )
-    parser.add_argument("--api-key", default=os.environ.get("FUSION_MLX_API_KEY", ""))
+    from fusion_mlx.config_seam import api_key as seam_api_key
+
+    parser.add_argument("--api-key", default=seam_api_key())
     parser.add_argument("--baseline", default=_DEFAULT_BASELINE_PATH)
     parser.add_argument(
         "--record-baseline", action="store_true", help="Record result as new baseline"

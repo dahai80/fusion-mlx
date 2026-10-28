@@ -1456,23 +1456,6 @@ def _stream_chat_response(
     return full
 
 
-def _resolve_chat_api_key(argv_api_key: str | None = None) -> str | None:
-    import os
-    from pathlib import Path
-
-    key = argv_api_key or os.environ.get("FUSION_MLX_API_KEY")
-    if key:
-        return key
-    try:
-        from fusion_mlx.settings import Settings
-
-        settings = Settings.load(Path.home() / ".fusion-mlx" / "settings.json")
-        return settings.auth.api_key or None
-    except Exception as e:
-        logger.warning("chat: could not read settings.json api_key: %s", e)
-        return None
-
-
 def chat_command(args):
     """Interactive REPL chat with a model.
 
@@ -1488,9 +1471,12 @@ def chat_command(args):
     from fusion_mlx._tempfile_safe import managed_tempfile_path
 
     # Client-side auth: same SSOT priority the server enforces
-    # (CLI --api-key > FUSION_MLX_API_KEY env > settings.json auth.api_key).
+    # (CLI --api-key > FUSION_MLX_API_KEY env > settings.json auth.api_key),
+    # resolved via config_seam / fusion_core.config (#1439).
     # Without this, a REPL against a key-protected server 401s on turn one.
-    _chat_api_key = _resolve_chat_api_key(getattr(args, "api_key", None))
+    from .config_seam import api_key as seam_api_key
+
+    _chat_api_key = seam_api_key(getattr(args, "api_key", None)) or None
 
     base_url: str
     proc = None

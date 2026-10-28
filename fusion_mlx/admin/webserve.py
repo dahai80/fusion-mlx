@@ -67,7 +67,9 @@ def resolve_web_api_key() -> str:
 
 
 def resolve_engine_api_key() -> str:
-    key = os.environ.get("FUSION_MLX_API_KEY", "").strip()
+    from ..config_seam import api_key as seam_api_key
+
+    key = seam_api_key().strip()
     if key:
         return key
     try:

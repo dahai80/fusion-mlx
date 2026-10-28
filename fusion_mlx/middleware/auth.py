@@ -228,11 +228,11 @@ async def check_rate_limit_or_x_api_key(request: Request):
     await check_rate_limit(request)
 
 
-def _resolve_api_key_from_config() -> str | None:
+def _config_layer_api_key() -> str | None:
     """Read the config-layer API key (ServerConfig.api_key).
 
     The config layer is the boot-time source of truth: at startup
-    ``_resolve_effective_api_key`` resolves CLI > env > settings.json and
+    ``_effective_api_key`` resolves CLI > env > settings.json and
     writes the effective key onto BOTH ``self.settings.api_key`` (admin
     layer) and ``get_config().api_key`` (config layer). Runtime admin
     writes (auth_routes initial-setup) mutate the admin layer without
@@ -307,7 +307,7 @@ def _get_configured_api_key() -> str | None:
     # config — "same machine, two instances, two keys". Config is the
     # source of truth (CLI > env > settings.json resolved at boot); if
     # the admin layer disagrees, fail visibly and re-align it.
-    resolved = _resolve_api_key_from_config()
+    resolved = _config_layer_api_key()
     admin_key = _read_admin_layer_api_key()
     if resolved and admin_key and admin_key != resolved:
         logger.error(

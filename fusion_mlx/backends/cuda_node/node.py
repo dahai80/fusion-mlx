@@ -192,10 +192,10 @@ def create_cuda_app(config: CudaNodeConfig):
     # bind with no api_key is an open inference relay — refuse to serve
     # rather than silently expose an unauthenticated GPU to the network.
     _configured_key = config.api_key
-    import os
-
     if not _configured_key:
-        env_key = os.environ.get("FUSION_MLX_API_KEY")
+        from ...config_seam import env_api_key
+
+        env_key = env_api_key()
         if env_key:
             _configured_key = env_key
     _bind_loopback = config.host in {"127.0.0.1", "::1", "localhost"}

@@ -18,7 +18,7 @@
 #
 # Contract after fix: effective key priority is
 #   CLI --api-key  >  FUSION_MLX_API_KEY env  >  settings.json auth.api_key
-# matching ``_resolve_api_key``'s documented order, and every read path
+# matching ``_boot_api_key``'s documented order, and every read path
 # (``set_api_key`` module global, ``self.settings.api_key``, the
 # ServerConfig singleton) agrees on the SAME resolved value.
 
@@ -41,10 +41,10 @@ def _reset_server_key_globals(monkeypatch):
 def test_cli_key_beats_settings_json_key(monkeypatch):
     # Operator passes --api-key fg-admin-key; settings.json has dahai168.
     # Effective key MUST be the CLI value, not settings.json.
-    from fusion_mlx.server import _resolve_effective_api_key
+    from fusion_mlx.server import _effective_api_key
 
     _reset_server_key_globals(monkeypatch)
-    effective, source = _resolve_effective_api_key(
+    effective, source = _effective_api_key(
         argv_key="fg-admin-key",
         settings_key="dahai168",
     )
@@ -56,11 +56,11 @@ def test_env_key_beats_settings_json_key(monkeypatch):
     # No CLI flag; FUSION_MLX_API_KEY set; settings.json also set.
     # Env wins over settings.json (operator env is more explicit than a
     # stale persisted file).
-    from fusion_mlx.server import _resolve_effective_api_key
+    from fusion_mlx.server import _effective_api_key
 
     _reset_server_key_globals(monkeypatch)
     monkeypatch.setenv("FUSION_MLX_API_KEY", "env-secret")
-    effective, source = _resolve_effective_api_key(
+    effective, source = _effective_api_key(
         argv_key=None,
         settings_key="dahai168",
     )
@@ -71,11 +71,11 @@ def test_env_key_beats_settings_json_key(monkeypatch):
 def test_settings_json_key_used_when_no_cli_no_env(monkeypatch):
     # No CLI, no env -> settings.json is the fallback (preserves the
     # admin-set persisted key for bare ``fusion-mlx serve`` launches).
-    from fusion_mlx.server import _resolve_effective_api_key
+    from fusion_mlx.server import _effective_api_key
 
     _reset_server_key_globals(monkeypatch)
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
-    effective, source = _resolve_effective_api_key(
+    effective, source = _effective_api_key(
         argv_key=None,
         settings_key="dahai168",
     )
@@ -86,11 +86,11 @@ def test_settings_json_key_used_when_no_cli_no_env(monkeypatch):
 def test_none_when_nothing_configured(monkeypatch):
     # No CLI, no env, no settings.json key -> anonymous dev path stays
     # anonymous-OK (must not regress test_server_auth_ordering leg 4).
-    from fusion_mlx.server import _resolve_effective_api_key
+    from fusion_mlx.server import _effective_api_key
 
     _reset_server_key_globals(monkeypatch)
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
-    effective, source = _resolve_effective_api_key(
+    effective, source = _effective_api_key(
         argv_key=None,
         settings_key=None,
     )
@@ -100,11 +100,11 @@ def test_none_when_nothing_configured(monkeypatch):
 
 def test_cli_wins_over_both_env_and_settings(monkeypatch):
     # Full stack: CLI > env > settings. Pins the top of the order.
-    from fusion_mlx.server import _resolve_effective_api_key
+    from fusion_mlx.server import _effective_api_key
 
     _reset_server_key_globals(monkeypatch)
     monkeypatch.setenv("FUSION_MLX_API_KEY", "env-secret")
-    effective, source = _resolve_effective_api_key(
+    effective, source = _effective_api_key(
         argv_key="cli-secret",
         settings_key="settings-secret",
     )
@@ -121,11 +121,11 @@ def test_warns_when_cli_key_differs_from_settings_key(monkeypatch, caplog):
     # are logged — only the source that won and that it differs.
     import logging
 
-    from fusion_mlx.server import _resolve_effective_api_key
+    from fusion_mlx.server import _effective_api_key
 
     _reset_server_key_globals(monkeypatch)
     with caplog.at_level(logging.WARNING, logger="fusion_mlx.server"):
-        effective, source = _resolve_effective_api_key(
+        effective, source = _effective_api_key(
             argv_key="fg-admin-key",
             settings_key="dahai168",
         )
@@ -148,12 +148,12 @@ def test_warns_when_cli_key_differs_from_settings_key(monkeypatch, caplog):
 def test_warns_when_env_key_differs_from_settings_key(monkeypatch, caplog):
     import logging
 
-    from fusion_mlx.server import _resolve_effective_api_key
+    from fusion_mlx.server import _effective_api_key
 
     _reset_server_key_globals(monkeypatch)
     monkeypatch.setenv("FUSION_MLX_API_KEY", "env-secret")
     with caplog.at_level(logging.WARNING, logger="fusion_mlx.server"):
-        effective, source = _resolve_effective_api_key(
+        effective, source = _effective_api_key(
             argv_key=None,
             settings_key="dahai168",
         )
@@ -176,11 +176,11 @@ def test_no_warn_when_resolved_key_matches_settings_key(monkeypatch, caplog):
     # resolve_api_key reads settings.json -> --api-key same value).
     import logging
 
-    from fusion_mlx.server import _resolve_effective_api_key
+    from fusion_mlx.server import _effective_api_key
 
     _reset_server_key_globals(monkeypatch)
     with caplog.at_level(logging.WARNING, logger="fusion_mlx.server"):
-        effective, source = _resolve_effective_api_key(
+        effective, source = _effective_api_key(
             argv_key="dahai168",
             settings_key="dahai168",
         )
@@ -199,12 +199,12 @@ def test_no_warn_when_settings_only(monkeypatch, caplog):
     # scenario): no CLI, no env, settings.json carries the key.
     import logging
 
-    from fusion_mlx.server import _resolve_effective_api_key
+    from fusion_mlx.server import _effective_api_key
 
     _reset_server_key_globals(monkeypatch)
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)
     with caplog.at_level(logging.WARNING, logger="fusion_mlx.server"):
-        effective, source = _resolve_effective_api_key(
+        effective, source = _effective_api_key(
             argv_key=None,
             settings_key="dahai168",
         )

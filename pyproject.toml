@@ -76,6 +76,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# #1439: single-point API-key/env resolution (config-conventions §1).
+# fusion-core is a local in-tree monorepo package, NOT on PyPI, so it lives
+# in an optional extra (same pattern as fusion-agent-studio's `identity`
+# extra). When absent — a standalone PyPI install — fusion_mlx/config_seam.py
+# falls back to a stdlib resolver with identical precedence, so a bare
+# `pip install fusion-mlx` still boots (#805).
+core = [
+    "fusion-core>=0.7.0",
+]
 grammar = [
     "xgrammar>=0.1.32",
 ]
@@ -177,7 +186,7 @@ threed = [
 # Self-reference (PEP 508 / pip 21+): each entry expands this project's own
 # optional-dependency group.
 full = [
-    "fusion-mlx[vlm,dflash,embeddings,document,audio,image,video,mfa,vision,grammar,llguidance,mcp,modelscope,paroquant,dflash2,chat,threed]",
+    "fusion-mlx[core,vlm,dflash,embeddings,document,audio,image,video,mfa,vision,grammar,llguidance,mcp,modelscope,paroquant,dflash2,chat,threed]",
 ]
 dev = [
     "pytest>=7.0.0",
