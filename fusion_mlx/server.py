@@ -1210,7 +1210,7 @@ def get_server() -> "Server | None":
     return _server_instance
 
 
-async def init_mcp(config_path: str | None = None):
+async def init_mcp(config_path: str | None = None, settings: Any = None):
     """Initialize MCP manager from config path (standalone, test-friendly).
 
     Loads config, creates MCPClientManager, starts it, and wires the
@@ -1221,7 +1221,7 @@ async def init_mcp(config_path: str | None = None):
     from .mcp import MCPClientManager, load_mcp_config
 
     try:
-        mcp_config = load_mcp_config(config_path)
+        mcp_config = load_mcp_config(config_path, settings=settings)
         if not mcp_config.servers:
             logger.info("init_mcp: no servers configured")
             return
@@ -2331,7 +2331,7 @@ class Server:
             try:
                 from .mcp import MCPClientManager, load_mcp_config
 
-                mcp_config = load_mcp_config()
+                mcp_config = load_mcp_config(settings=getattr(self, "settings", None))
                 if mcp_config.servers:
                     _mcp_manager = MCPClientManager(mcp_config)
                     await _mcp_manager.start()

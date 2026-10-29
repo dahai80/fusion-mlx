@@ -46,6 +46,26 @@ class IntegrationSettings:
 
 
 @dataclass
+class MCPSettings:
+    # #1442: fusion-plugin-server used to be spawned unconditionally at boot
+    # whenever it was on PATH. On-demand is the default now — the operator
+    # opts in via settings.json {"mcp": {"auto_discover": true}} or the
+    # FUSION_MLX_MCP_AUTO_DISCOVER=1 env var.
+    enabled: bool = True
+    auto_discover: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"enabled": self.enabled, "auto_discover": self.auto_discover}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> MCPSettings:
+        return cls(
+            enabled=bool(data.get("enabled", True)),
+            auto_discover=bool(data.get("auto_discover", False)),
+        )
+
+
+@dataclass
 class SubKeyEntry:
     """Represents a sub-API key entry."""
 
@@ -122,6 +142,7 @@ class Settings:
     model_settings: dict[str, Any] = field(default_factory=dict)
     global_settings: dict[str, Any] = field(default_factory=dict)
     integrations: IntegrationSettings = field(default_factory=IntegrationSettings)
+    mcp: MCPSettings = field(default_factory=MCPSettings)
 
     @property
     def auth(self) -> _SettingsAuthView:
@@ -159,6 +180,7 @@ class Settings:
             "model_settings": self.model_settings,
             "global_settings": self.global_settings,
             "integrations": self.integrations.to_dict(),
+            "mcp": self.mcp.to_dict(),
         }
         # 审计0830 P0-6: settings.json 含明文 api_key, 原 write_text 无权限约束,
         # 默认 umask 022 -> 0644 任意本地进程可读。os.open 0o600 原子建新文件
@@ -247,12 +269,19 @@ class Settings:
                 if isinstance(integrations_data, dict)
                 else IntegrationSettings()
             )
+            mcp_data = data.get("mcp", {})
+            mcp = (
+                MCPSettings.from_dict(mcp_data)
+                if isinstance(mcp_data, dict)
+                else MCPSettings()
+            )
             return cls(
                 api_key=api_key,
                 sub_keys=sub_keys,
                 model_settings=data.get("model_settings", {}),
                 global_settings=data.get("global_settings", {}),
                 integrations=integrations,
+                mcp=mcp,
             )
         except (json.JSONDecodeError, KeyError):
             return cls()

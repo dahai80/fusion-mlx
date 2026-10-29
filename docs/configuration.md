@@ -298,6 +298,37 @@ Agent session storage configuration:
 
 Sessions are evicted in LRU order when the cap is reached. The TTL timer resets on every turn, tool-result submission, or session GET.
 
+## MCP Tool Servers (#1442)
+
+MCP is on-demand: `fusion-mlx-server` no longer spawns `fusion-plugin-server`
+just because the binary sits on PATH. Enable it in
+`~/.fusion-mlx/settings.json`:
+
+```json
+{
+  "mcp": {
+    "enabled": true,
+    "auto_discover": true
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mcp.enabled` | `true` | Master switch. `false` skips MCP entirely — no config file parsed, no child processes spawned. |
+| `mcp.auto_discover` | `false` | Register `fusion-plugin-server` (stdio) when it is on PATH. |
+
+Explicitly configured servers in `~/.config/fusion-mlx/mcp.json` (or
+`FUSION_MLX_MCP_CONFIG`) still load when `mcp.enabled` is `true`; the toggle
+only gates the implicit plugin-server discovery.
+
+Environment overrides win over settings.json:
+
+```bash
+FUSION_MLX_MCP_ENABLED=0        # same as mcp.enabled=false
+FUSION_MLX_MCP_AUTO_DISCOVER=1  # same as mcp.auto_discover=true
+```
+
 ## Per-Model Settings
 
 Each model can have custom settings stored in `~/.fusion-mlx/settings/`:

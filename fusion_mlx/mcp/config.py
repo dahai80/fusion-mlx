@@ -40,12 +40,49 @@ CONFIG_ENV_VAR_LEGACY = "RAPID_MLX_MCP_CONFIG"
 CONFIG_ENV_VAR_LEGACY2 = "VLLM_MLX_MCP_CONFIG"
 
 
-def _auto_discover_servers() -> dict[str, "MCPServerConfig"]:
+def _load_settings(settings: Any = None) -> Any:
+    # #1442: settings.json is the front door for the MCP toggles; env vars win
+    # when set. Import lazily — fusion_mlx.settings is imported by server.py
+    # long before the MCP subsystem, and a module-level import here would
+    # create a cycle through fusion_mlx/__init__.
+    if settings is not None:
+        return settings
+    try:
+        from ..settings import Settings
+
+        path = Path.home() / ".fusion-mlx" / "settings.json"
+        return Settings.load(path)
+    except Exception as e:
+        logger.debug("MCP: settings load failed, using defaults: %s", e)
+        return None
+
+
+def _auto_discover_enabled(settings: Any = None) -> bool:
+    env = os.environ.get("FUSION_MLX_MCP_AUTO_DISCOVER")
+    if env is not None:
+        return env != "0"
+    loaded = _load_settings(settings)
+    mcp_settings = getattr(loaded, "mcp", None)
+    return bool(getattr(mcp_settings, "auto_discover", False))
+
+
+def _mcp_enabled(settings: Any = None) -> bool:
+    env = os.environ.get("FUSION_MLX_MCP_ENABLED")
+    if env is not None:
+        return env != "0"
+    loaded = _load_settings(settings)
+    mcp_settings = getattr(loaded, "mcp", None)
+    return bool(getattr(mcp_settings, "enabled", True))
+
+
+def _auto_discover_servers(settings: Any = None) -> dict[str, "MCPServerConfig"]:
     """Auto-detect fusion-plugin-server on PATH and register it.
 
-    Disabled if FUSION_MLX_MCP_AUTO_DISCOVER=0 is set.
+    Off by default (#1442): the plugin server is an on-demand integration, not
+    part of the inference engine. Opt in via settings.json
+    ``{"mcp": {"auto_discover": true}}`` or FUSION_MLX_MCP_AUTO_DISCOVER=1.
     """
-    if os.environ.get("FUSION_MLX_MCP_AUTO_DISCOVER", "1") == "0":
+    if not _auto_discover_enabled(settings):
         return {}
 
     from .types import MCPServerConfig, MCPTransport
@@ -66,7 +103,10 @@ def _auto_discover_servers() -> dict[str, "MCPServerConfig"]:
     return servers
 
 
-def load_mcp_config(path: str | Path | None = None) -> MCPConfig:
+def load_mcp_config(
+    path: str | Path | None = None,
+    settings: Any = None,
+) -> MCPConfig:
     """
     Load MCP configuration from file.
 
@@ -82,6 +122,9 @@ def load_mcp_config(path: str | Path | None = None) -> MCPConfig:
 
     Args:
         path: Optional explicit path to config file
+        settings: Optional fusion_mlx.settings.Settings instance; drives the
+            mcp.enabled / mcp.auto_discover toggles. Loaded from
+            ~/.fusion-mlx/settings.json when omitted.
 
     Returns:
         MCPConfig object
@@ -90,11 +133,15 @@ def load_mcp_config(path: str | Path | None = None) -> MCPConfig:
         FileNotFoundError: If no config file found
         ValueError: If config is invalid
     """
+    if not _mcp_enabled(settings):
+        logger.info("MCP disabled by settings (mcp.enabled=false)")
+        return MCPConfig()
+
     config_path = _find_config_file(path)
 
     if config_path is None:
         logger.info("No MCP config file found, checking for auto-discoverable servers")
-        auto_servers = _auto_discover_servers()
+        auto_servers = _auto_discover_servers(settings)
         if auto_servers:
             return MCPConfig(servers=auto_servers)
         return MCPConfig()

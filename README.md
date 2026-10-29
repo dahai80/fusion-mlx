@@ -152,7 +152,7 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **Priority scheduling** - `policy=PRIORITY` admits requests by `Request.priority` (lower int = higher priority), FIFO within the same priority; soft priority with anti-starvation rotation
 - **4-tier memory enforcer** - safe / balanced / aggressive / custom hard limits with deadlock-free eviction
 - **Multi-model concurrency** - EnginePool with LRU eviction, pinning, and TTL
-- **MCP tool support** - list, discover, and execute MCP tools via API; auto-discovers fusion-plugin-server on PATH via stdio transport
+- **MCP tool support** - list, discover, and execute MCP tools via API; `fusion-plugin-server` (stdio) is auto-discovered on PATH only when `mcp.auto_discover` is enabled in `settings.json`
 - **LoRA / DORA fine-tuning** - train adapters on Apple Silicon via mlx_lm; job queue, SSE progress, adapter management
 - **Admin web panel** - model management, live chat, HuggingFace downloads, online quantization
 - **macOS native app** - SwiftUI with menu bar, auto-update, benchmark, fine-tune, model management, **hardware-aware setup wizard**

@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **`fusion-plugin-server` is no longer spawned unconditionally (#1442)**:
+  MCP auto-discovery is now opt-in via `settings.json`
+  `{"mcp": {"auto_discover": true}}` or `FUSION_MLX_MCP_AUTO_DISCOVER=1`.
+  A new `mcp.enabled` key (`FUSION_MLX_MCP_ENABLED`) turns the MCP subsystem
+  off wholesale, skipping config parsing and all child processes.
+
 ## [0.10.27] - 2026-10-28
 
 ### Fixed — merged stranded fix branches into main
