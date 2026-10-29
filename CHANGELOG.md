@@ -2,7 +2,29 @@
 
 ## [Unreleased]
 
+## [0.10.28] - 2026-10-29
+
 ### Fixed
+- **Guided decoding is no longer corrupted by speculative decode (#1441)**:
+  grammar-constrained requests (`response_format: json_schema`) now skip
+  every heuristic speculative path. N-gram, eagle3, medusa, dflash,
+  dflash2, dspark and the draft-model path all verified drafts with a raw
+  argmax over unmasked logits and emitted the accepted tokens without
+  running `logits_processors` / `GrammarConstraintProcessor.accept_token()`,
+  so the llguidance matcher desynced from the emitted stream — invented
+  schema fields, fused keys, and 6000-token loops at ~7x token overhead.
+  The grammar bitmap is now authoritative (reference invoice extraction:
+  87 completion tokens vs 84 for plain prompting, ~1.04x). MTP is
+  unaffected: it already refused grammar batches on its own.
+- **Guided decoding tokenizer now uses exact token bytes (#1441)**:
+  `_build_ll_tokenizer` prefers `llguidance.hf.from_tokenizer` and falls
+  back to the hand-rolled wrapper, which now decodes byte-level vocab
+  strings through the tokenizer's `byte_decoder` instead of UTF-8-encoding
+  the `Ġ`/`Ċ` permutation. Built tokenizers are cached.
+- **`FUSION_MLX_MCP_ENABLED` registered in the out-of-band routing
+  allowlist**: the MCP master switch added in #1442 was read from the
+  environment but never added to `ALLOWED_FUSION_MLX_ENV_VARS`, leaving
+  `test_no_routing_shaped_rapid_mlx_env_vars` red on main.
 - **`fusion-plugin-server` is no longer spawned unconditionally (#1442)**:
   MCP auto-discovery is now opt-in via `settings.json`
   `{"mcp": {"auto_discover": true}}` or `FUSION_MLX_MCP_AUTO_DISCOVER=1`.
