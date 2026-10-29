@@ -721,17 +721,34 @@ def test_estimate_prompt_tokens_zero_when_no_build_prompt():
     assert n == 0
 
 
-def test_estimate_prompt_tokens_zero_when_mllm():
-    """MLLM engines: tokens are computed by the multimodal processor;
-    skip text-only render to avoid a misleading estimate."""
+def test_estimate_prompt_tokens_zero_when_mllm_without_build_prompt():
+    """MLLM engines with no text-only prompt builder report 0: their
+    tokens are computed by the multimodal processor, so a text-only
+    render would be a misleading estimate."""
 
     class _MLLMEngine(_BaseEngine):
         is_mllm = True
+        build_prompt = None
 
     n = compute_prompt_tokens_for_messages(
         _MLLMEngine(), [{"role": "user", "content": "x"}], tools=None
     )
     assert n == 0
+
+
+def test_estimate_prompt_tokens_counted_when_mllm_has_build_prompt():
+    """#1445: VLMBatchedEngine DOES provide build_prompt, and returning 0
+    for it disabled the context preflight for every Claude Code turn on a
+    VLM-served model. With no images the prompt is plain text and must be
+    counted like any other engine."""
+
+    class _MLLMEngine(_BaseEngine):
+        is_mllm = True
+
+    n = compute_prompt_tokens_for_messages(
+        _MLLMEngine(), [{"role": "user", "content": "hello there"}], tools=None
+    )
+    assert n == 4, n
 
 
 def test_stream_message_start_carries_nonzero_input_tokens():
