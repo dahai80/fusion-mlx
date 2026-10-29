@@ -1056,6 +1056,11 @@ class BatchedEngine(BaseEngine):
                             return self._tokenizer.apply_chat_template(
                                 messages, **fallback_kwargs
                             )
+                    logger.warning(
+                        "Surgical fallback unavailable (no strippable kwargs), "
+                        "dropping tools and re-rendering — tool definitions will "
+                        "be invisible to the model for this prompt"
+                    )
                     template_kwargs.pop("tools", None)
                     template_kwargs.pop("enable_thinking", None)
                     template_kwargs.pop("preserve_thinking", None)

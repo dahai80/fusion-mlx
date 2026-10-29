@@ -205,6 +205,92 @@ class TestComputePromptTokensForMessages:
         assert result == 0
 
 
+# ─── #1445: header must not recount raw model_dump() messages ────────
+
+
+class _StrictArgsEngine(_StubEngine):
+    # Mirrors the Qwen3.5 template: tool_call.arguments is rendered with
+    # `|items`, which raises TypeError unless it is a mapping.
+    def __init__(self, model=None, tokenizer=None):
+        super().__init__(model=model, tokenizer=tokenizer)
+        self.counted = []
+
+    def count_chat_tokens(self, messages, tools=None, chat_template_kwargs=None):
+        for m in messages:
+            for tc in m.get("tool_calls") or []:
+                args = tc.get("function", {}).get("arguments")
+                if not isinstance(args, dict):
+                    raise TypeError("Can only get item pairs from a mapping.")
+        self.counted.append(messages)
+        return 97759
+
+
+class TestContextBudgetHeaderUsesPreflightEstimate:
+    def test_header_from_preflight_estimate(self):
+        from fusion_mlx.api.openai.streaming import _context_budget_headers
+
+        engine = _StubEngine(
+            model=_StubModel(args=_StubArgs(max_position_embeddings=262144))
+        )
+        headers = _context_budget_headers(engine, 97759)
+        assert headers["X-Context-Budget"] == (
+            "used=97759;total=262144;remaining=164385"
+        )
+
+    def test_tool_history_string_arguments_count_nonzero(self):
+        # The failure mode of #1445: arguments arrive as a JSON string, the
+        # raw-dump recount raised TypeError, the estimate became 0 and the
+        # header advertised used=0 for every Claude Code turn.
+        from fusion_mlx.api.openai.streaming import _context_preflight
+
+        engine = _StrictArgsEngine(
+            model=_StubModel(args=_StubArgs(max_position_embeddings=262144))
+        )
+        from fusion_mlx.api.openai_models import ChatCompletionRequest
+
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[
+                {"role": "user", "content": "run ls"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "Bash",
+                                "arguments": '{"command": "ls"}',
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "a.py b.py"},
+            ],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "Bash",
+                        "description": "run a shell command",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+        )
+
+        import asyncio
+
+        messages, estimate = asyncio.run(
+            _context_preflight(request, engine, "test-model")
+        )
+        assert estimate > 0
+        assert messages[1]["tool_calls"][0]["function"]["arguments"] == {
+            "command": "ls"
+        }
+
+
 # ─── Route-level integration ─────────────────────────────────────────
 
 

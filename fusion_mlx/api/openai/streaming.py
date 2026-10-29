@@ -219,6 +219,26 @@ async def _context_preflight(
     return messages, prompt_token_estimate
 
 
+def _context_budget_headers(engine: Any, prompt_tokens: int) -> dict[str, str]:
+    # #1445: the X-Context-Budget header used to re-count the request's raw
+    # model_dump() messages, which leave tool_calls[].function.arguments as
+    # the JSON string the client sent. The Qwen chat template renders them
+    # with `|items` -> TypeError -> the count collapsed to 0, so every
+    # tool-history request (i.e. every Claude Code turn past the first
+    # tool call) advertised used=0 and the context preflight was disabled.
+    # Deriving the header from the preflight's estimate means there is one
+    # count, over the normalized messages _messages_for_engine produced.
+    from ...service.helpers import build_context_budget_headers, get_model_max_context
+
+    context_window = get_model_max_context(engine)
+    if context_window <= 0:
+        return {}
+    return build_context_budget_headers(
+        prompt_tokens=prompt_tokens,
+        context_window=context_window,
+    )
+
+
 async def _stream_chat_generator(
     request: ChatCompletionRequest,
     engine: Any,
@@ -879,27 +899,7 @@ async def _stream_chat(
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     }
-    from ...service.helpers import (
-        build_context_budget_headers,
-        compute_prompt_tokens_for_messages,
-        get_model_max_context,
-    )
-
-    _ctx_window = get_model_max_context(engine)
-    if _ctx_window > 0:
-        _msg_dicts = [
-            m.model_dump() if hasattr(m, "model_dump") else m for m in request.messages
-        ]
-        _est_prompt = compute_prompt_tokens_for_messages(
-            engine,
-            _msg_dicts,
-            tools=request.tools,
-        )
-        _ctx_budget_headers = build_context_budget_headers(
-            prompt_tokens=_est_prompt,
-            context_window=_ctx_window,
-        )
-        _stream_headers.update(_ctx_budget_headers)
+    _stream_headers.update(_context_budget_headers(engine, preflight[1]))
 
     return StreamingResponse(
         concurrency_guarded(

@@ -1544,7 +1544,15 @@ def compute_prompt_tokens_for_messages(
     tools: list | None = None,
     enable_thinking: bool | None = None,
 ) -> int:
-    if getattr(engine, "is_mllm", False):
+    if (
+        getattr(engine, "is_mllm", False)
+        and getattr(engine, "build_prompt", None) is None
+    ):
+        # MLLM engines without a text-only prompt builder cannot be counted
+        # cheaply, so they report 0. VLMBatchedEngine does provide one
+        # (#1445): with no images in the request its prompt is plain text
+        # and answering 0 here disabled the context preflight for every
+        # Claude Code turn on a VLM-served model.
         return 0
     build_prompt = getattr(engine, "build_prompt", None)
     if build_prompt is None:
