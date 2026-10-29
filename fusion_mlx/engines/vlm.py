@@ -2002,6 +2002,58 @@ class VLMBatchedEngine(BaseEngine):
 
     # -- Utilities --
 
+    def build_prompt(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict] | None = None,
+        enable_thinking: bool | None = None,
+    ) -> str | None:
+        # #1445: text-only requests served by this engine (the common case —
+        # every Claude Code turn on a Qwen3.5 VLM) had no cheap exact token
+        # count, so compute_prompt_tokens_for_messages returned 0 for MLLM
+        # engines and both context preflights plus X-Context-Budget were
+        # dead. Renders the same template _prepare_vision_inputs renders,
+        # with the same system-message merge, so the count matches the
+        # real prompt. Returns None when images are present: their token
+        # cost depends on the vision preprocessing and is not counted here.
+        text_messages, images, _, _ = extract_images_from_messages(messages)
+        if images:
+            return None
+
+        template_target = self._processor
+        if not hasattr(template_target, "apply_chat_template"):
+            template_target = getattr(self._processor, "tokenizer", self._processor)
+
+        template_kwargs: dict[str, Any] = {
+            "tokenize": False,
+            "add_generation_prompt": True,
+        }
+        if tools:
+            from ..api.tool_calling import convert_tools_for_template
+
+            template_kwargs["tools"] = convert_tools_for_template(tools)
+        thinking = self._enable_thinking if enable_thinking is None else enable_thinking
+        if thinking is not None:
+            template_kwargs["enable_thinking"] = thinking
+
+        systems = [m for m in text_messages if m.get("role") in ("system", "developer")]
+        others = [
+            m for m in text_messages if m.get("role") not in ("system", "developer")
+        ]
+        if systems:
+            sys_text = "\n\n".join(
+                m.get("content", "") for m in systems if m.get("content")
+            )
+            merged = [{"role": "system", "content": sys_text}] + others
+        elif others:
+            merged = [
+                {"role": "system", "content": "You are a helpful assistant."}
+            ] + others
+        else:
+            return None
+
+        return template_target.apply_chat_template(merged, **template_kwargs)
+
     def count_chat_tokens(
         self, messages: list[dict[str, Any]], tools: list[dict] | None = None
     ) -> int:
