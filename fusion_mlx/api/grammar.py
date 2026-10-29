@@ -240,27 +240,115 @@ class _HfTokenizerForLlguidance:
             special.add(self.bos_token_id)
         self.special_token_ids: list[int] = sorted(special)
 
+        self._byte_decoder = _tokenizer_byte_decoder(hf_tokenizer)
         self.tokens: list[bytes] = []
         for idx in range(len(self._vocab)):
             tok_str = hf_tokenizer.convert_ids_to_tokens(idx)
-            if tok_str is None:
-                self.tokens.append(b"")
-            else:
-                self.tokens.append(
-                    tok_str.encode("utf-8") if isinstance(tok_str, str) else tok_str
-                )
+            self.tokens.append(self._token_bytes(tok_str))
+
+    def _token_bytes(self, tok_str) -> bytes:
+        if tok_str is None:
+            return b""
+        if not isinstance(tok_str, str):
+            return bytes(tok_str)
+        if self._byte_decoder is not None:
+            try:
+                return bytes(self._byte_decoder[c] for c in tok_str)
+            except KeyError:
+                pass
+        # SentencePiece marks word starts with U+2581 instead of a space.
+        return tok_str.replace("▁", " ").encode("utf-8")
 
     def __call__(self, s: str) -> list[int]:
         return self._hf.encode(s, add_special_tokens=False)
 
 
+def _standard_byte_level_decoder() -> dict[str, int]:
+    # GPT-2 bytes_to_unicode() inverted: the character → raw byte map used by
+    # byte-level BPE vocabularies (Qwen, GPT-2, Llama-3, ...).
+    bs = (
+        list(range(ord("!"), ord("~") + 1))
+        + list(range(ord("¡"), ord("¬") + 1))
+        + list(range(ord("®"), ord("ÿ") + 1))
+    )
+    cs = bs[:]
+    n = 0
+    for b in range(256):
+        if b not in bs:
+            bs.append(b)
+            cs.append(256 + n)
+            n += 1
+    return {chr(c): b for b, c in zip(bs, cs)}
+
+
+def _tokenizer_byte_decoder(hf_tokenizer) -> dict[str, int] | None:
+    # #1441: byte-level BPE tokenizers report vocab strings whose characters are
+    # a permutation of the 256 byte values — a leading space is ``Ġ`` (Ġ),
+    # not 0x20. Encoding those strings as UTF-8 feeds the WRONG bytes to the
+    # matcher, so nearly every space-prefixed token became invalid and the mask
+    # forced the model onto the few tokens that happened to match, which is how
+    # json_schema guided decoding produced corrupted values ("invoice_no": ": ")
+    # instead of the actual field contents. Detect the byte-level alphabet and
+    # return the char → byte map so token bytes are exact.
+    dec = getattr(hf_tokenizer, "byte_decoder", None)
+    if isinstance(dec, dict) and dec:
+        try:
+            return {str(k): int(v) for k, v in dec.items()}
+        except (TypeError, ValueError):
+            pass
+    try:
+        vocab = hf_tokenizer.get_vocab()
+    except Exception:
+        return None
+    if not any("Ġ" in t or "Ċ" in t for t in vocab):
+        return None
+    return _standard_byte_level_decoder()
+
+
+_LL_TOKENIZER_CACHE: dict[tuple[int, int | None], tuple[object, object]] = {}
+_LL_TOKENIZER_CACHE_MAX = 8
+
+
 def _build_ll_tokenizer(hf_tokenizer, *, vocab_size: int | None = None):
-    """Build an ``llguidance.LLTokenizer`` from a HF tokenizer."""
+    # #1441: prefer llguidance's own HF bridge (``llguidance.hf.from_tokenizer``);
+    # it serialises the Rust backend tokenizer, so token bytes are exact for
+    # byte-level BPE and SentencePiece alike. The hand-rolled wrapper below is
+    # only a fallback for llguidance versions that predate that helper.
     import llguidance as lg
 
-    wrapped = _HfTokenizerForLlguidance(hf_tokenizer)
-    wrapper = lg.TokenizerWrapper(wrapped)
-    return lg.LLTokenizer(wrapper)
+    key = (id(hf_tokenizer), vocab_size)
+    cached = _LL_TOKENIZER_CACHE.get(key)
+    if cached is not None and cached[0] is hf_tokenizer:
+        return cached[1]
+
+    ll_tokenizer = None
+    hf_bridge = getattr(lg, "hf", None)
+    if hf_bridge is not None and hasattr(hf_bridge, "from_tokenizer"):
+        try:
+            ll_tokenizer = hf_bridge.from_tokenizer(hf_tokenizer, n_vocab=vocab_size)
+            logger.info(
+                "llguidance tokenizer built via llguidance.hf (vocab_size=%s)",
+                vocab_size,
+            )
+        except Exception as exc:
+            logger.warning(
+                "llguidance.hf.from_tokenizer failed (%s); falling back to the "
+                "hand-rolled tokenizer wrapper",
+                exc,
+            )
+
+    if ll_tokenizer is None:
+        wrapped = _HfTokenizerForLlguidance(hf_tokenizer)
+        ll_tokenizer = lg.LLTokenizer(lg.TokenizerWrapper(wrapped))
+        logger.info(
+            "llguidance tokenizer built via hand-rolled wrapper (vocab_size=%s)",
+            vocab_size,
+        )
+
+    if len(_LL_TOKENIZER_CACHE) >= _LL_TOKENIZER_CACHE_MAX:
+        _LL_TOKENIZER_CACHE.clear()
+    _LL_TOKENIZER_CACHE[key] = (hf_tokenizer, ll_tokenizer)
+    return ll_tokenizer
 
 
 def _resolve_llguidance_grammar(grammar_spec: dict | str) -> str:

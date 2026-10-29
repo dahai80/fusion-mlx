@@ -416,6 +416,10 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # skip the auto-scan for MCP tool servers. Pure tool-server
         # toggle — external tool endpoints, never engine routing.
         "FUSION_MLX_MCP_AUTO_DISCOVER",
+        # MCP master switch (mcp/config.py:71, #1442). Set to ``0`` to turn
+        # the whole MCP subsystem off — no config parsing, no tool-server
+        # child processes. Pure integration toggle, never engine routing.
+        "FUSION_MLX_MCP_ENABLED",
         # Base URL for the comfyui integration client
         # (integrations/comfyui.py:498). Where to POST generation jobs
         # to the external ComfyUI stage. Pure integration-endpoint knob

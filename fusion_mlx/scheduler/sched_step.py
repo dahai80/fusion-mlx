@@ -833,9 +833,26 @@ def _loaded_spec_methods(self) -> dict[str, bool]:
     )
 
 
+def _grammar_constrained(request) -> bool:
+    params = getattr(request, "sampling_params", None)
+    return getattr(params, "compiled_grammar", None) is not None
+
+
 def _decide_spec_method(self, request) -> str:
     from ..model_auto_config import _detect_family_from_path
     from ..speculative.per_request_route import select_active_method
+
+    # #1441: grammar-constrained requests get no heuristic spec method. The
+    # sentinel is truthy (sticky: no re-decide) but matches no dispatch
+    # branch, which also keeps the self-contained dspark branch in
+    # _step_pure_decode away from this request. MTP needs no exemption here -
+    # it refuses grammar batches itself (_has_grammar_processors).
+    if _grammar_constrained(request):
+        logger.info(
+            "Spec decode disabled for %s: grammar-constrained request (#1441)",
+            request.request_id,
+        )
+        return "spec-disabled"
 
     loaded = self._loaded_spec_methods()
     model_name = getattr(self.config, "model_name", "") or ""
@@ -883,6 +900,18 @@ def _try_spec_decode(
 
     request = self.running.get(request_id)
     if request is None or request.is_finished():
+        return []
+
+    # #1441: grammar-constrained requests must never take the heuristic spec
+    # paths below. Every one of them (n-gram/_verify_drafts, eagle3, medusa,
+    # dflash, dflash2, dspark, draft-model) verifies drafts with a raw argmax
+    # over the target's UNMASKED logits and emits the accepted tokens without
+    # running logits_processors or GrammarConstraintProcessor.accept_token(),
+    # so the bitmap never sees those tokens and the matcher desyncs from the
+    # emitted stream: invented schema fields, fused keys, degenerate loops.
+    # MTP is exempt - it runs inside bg._next() and bails on grammar
+    # processors there (_has_grammar_processors), so it never gets here.
+    if _grammar_constrained(request):
         return []
 
     if self._vlm_mtp_active:
