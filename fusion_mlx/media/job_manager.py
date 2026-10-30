@@ -195,6 +195,15 @@ class MediaJobManager:
             model_path,
         )
 
+        # #1453: drain stderr CONCURRENTLY with stdout. mflux tqdm bars and
+        # mlx deprecation warnings all write to stderr; if the worker ever
+        # exceeds the 64KB pipe buffer it blocks mid-write (observed frozen
+        # at "0%|          | 0/4 [") and no one sees why. The old code only
+        # read stderr after process exit.
+        stderr_task = (
+            asyncio.create_task(proc.stderr.read()) if proc.stderr is not None else None
+        )
+
         result = MediaJobResult()
         # #1332: track our own kills so an external-signal death (rc < 0) is
         # logged as external instead of being blamed on the timeout/teardown
@@ -236,6 +245,18 @@ class MediaJobManager:
                 else:
                     _kill_worker()
             await proc.wait()
+            # #1453: the child is reaped, so the stderr write end is closed
+            # and the drain task returns promptly. A short guard in case a
+            # grandchild inherited the fd.
+            if stderr_task is not None:
+                try:
+                    await asyncio.wait_for(stderr_task, timeout=5.0)
+                except TimeoutError:
+                    stderr_task.cancel()
+                    logger.warning(
+                        "image worker stderr drain did not finish 5s after "
+                        "process exit; stderr tail may be truncated"
+                    )
             result.elapsed = time.monotonic() - t0
 
         if proc.returncode not in (0, None):
@@ -252,7 +273,14 @@ class MediaJobManager:
                 )
                 result.exit_code = rc
                 return result
-            stderr_data = await proc.stderr.read() if proc.stderr else b""
+            # #1453: stderr was drained concurrently; take the accumulated
+            # buffer. A cancelled drain (timeout path above) yields empty.
+            stderr_data = b""
+            if stderr_task is not None:
+                try:
+                    stderr_data = stderr_task.result() or b""
+                except (asyncio.CancelledError, asyncio.InvalidStateError):
+                    stderr_data = b""
             stderr_text = stderr_data.decode(errors="replace")[-2000:]
             elapsed = result.elapsed
             if rc < 0 and not killed_by_us:
@@ -297,7 +325,26 @@ class MediaJobManager:
             elif rc == 139:
                 result.error = f"worker segfaulted/Metal crash (exit {rc})"
             else:
-                result.error = f"worker exited {rc}: {stderr_text}"
+                # #1453: result.error holds the worker's structured error
+                # event — the real exception type + message. The old code
+                # discarded it in favor of raw stderr, whose tail was just
+                # the mlx deprecation warning + tqdm bar, masking the cause.
+                worker_err = result.error
+                if worker_err:
+                    logger.error(
+                        "#1453 image worker pid=%d exited %d; worker error "
+                        "event: %s; stderr tail: %s",
+                        proc.pid,
+                        rc,
+                        worker_err,
+                        stderr_text[-500:] or "(empty)",
+                    )
+                    result.error = (
+                        f"worker exited {rc} after {elapsed:.1f}s: "
+                        f"{worker_err} (stderr tail: {stderr_text})"
+                    )
+                else:
+                    result.error = f"worker exited {rc}: {stderr_text}"
             result.exit_code = rc
             raise RuntimeError(result.error)
 
