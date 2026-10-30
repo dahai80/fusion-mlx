@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.30] - 2026-10-30
 
 ### Fixed
 - **Crashed image workers no longer swallow the real error (#1453)**: when a
