@@ -81,7 +81,7 @@ jobs:
             fail-fast: false
             matrix:
                 shard: ["core", "llm", "modal", "infra", "exp", "rest", "rest2"]
-        runs-on: macos-14
+        runs-on: macos-latest
         steps:
             - uses: actions/checkout@v7
             - uses: actions/setup-python@v7
@@ -147,7 +147,7 @@ jobs:
             fail-fast: false
             matrix:
                 python-version: ["3.11", "3.13"]
-        runs-on: macos-14
+        runs-on: macos-latest
         steps:
             - uses: actions/checkout@v7
             - uses: actions/setup-python@v7
@@ -171,7 +171,7 @@ jobs:
         # the Python boundary (never a real GPU/Metal stall — that would
         # hang the runner itself). Time-boxed: every scenario asserts its
         # own detection/recovery bounds; the job timeout is the backstop.
-        runs-on: macos-14
+        runs-on: macos-latest
         timeout-minutes: 15
         steps:
             - uses: actions/checkout@v7
@@ -200,7 +200,7 @@ jobs:
         # No baseline → ADVISORY (warn, never fail CI). When a baseline file
         # exists (evals/baselines/), regressions beyond threshold become enforce.
         # CI has no running server → gates skip gracefully (advisory contract).
-        runs-on: macos-14
+        runs-on: macos-latest
         steps:
             - uses: actions/checkout@v7
             - uses: actions/setup-python@v7
