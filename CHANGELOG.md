@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`/v1/recommend` no longer 500s on degenerate size estimates (#1449)**:
+  `estimate_tok_per_sec` raised `ZeroDivisionError` when
+  `_estimate_weight_bytes` truncated to 0 (tiny `params` + a low-bit quant,
+  e.g. params=1 with `TQ1_0` at 0.1875 bytes/weight). It now returns
+  `estimated_tok_per_sec: 0.0` with a warning log instead of a 500.
+
 ## [0.10.29] - 2026-10-30
 
 ### Fixed
