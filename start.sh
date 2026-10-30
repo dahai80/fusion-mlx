@@ -217,6 +217,22 @@ preflight() {
         exit 1
     fi
 
+    # #1447: port-registry self-check — fail at start when this service's
+    # port is not registered, instead of being caught later by CI check-ports.
+    # Missing registry file = warn + continue (standalone deploy); the
+    # check itself can be bypassed with FUSION_SKIP_REGISTRY_CHECK=1.
+    local SERVICE="fusion-mlx"
+    local REGISTRY="${FUSION_REGISTRY:-$HOME/fusion/architecture/port-registry.yaml}"
+    if [ ! -f "$REGISTRY" ]; then
+        log_warn "port-registry.yaml not found at $REGISTRY — registry self-check skipped"
+    elif ! /usr/bin/grep -A3 "^  ${SERVICE}:" "$REGISTRY" 2>/dev/null | /usr/bin/grep -q "port: $PORT$"; then
+        if [ "${FUSION_SKIP_REGISTRY_CHECK:-}" != "1" ]; then
+            log_error "port $PORT for ${SERVICE} not registered in $REGISTRY — refusing to start"
+            exit 1
+        fi
+        log_warn "registry check bypassed (FUSION_SKIP_REGISTRY_CHECK=1)"
+    fi
+
     # Ensure log directory
     mkdir -p "${LOG_DIR}"
 
