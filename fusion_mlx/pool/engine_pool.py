@@ -1344,6 +1344,22 @@ class EnginePool:
     def _entry_is_busy(self, entry: EngineEntry) -> bool:
         return entry.in_use > 0 or self._entry_has_active_requests(entry)
 
+    def any_active_requests(self) -> bool:
+        # #1456 guard-mode busy probe: True when any loaded engine has
+        # in-flight work. Sync-safe — _lock is an asyncio.Lock, so snapshot
+        # the entry dict directly (retry: concurrent add/evict can race a
+        # plain list()); a snapshot that keeps failing is treated as busy.
+        entries = None
+        for _ in range(3):
+            try:
+                entries = list(self._entries.values())
+                break
+            except RuntimeError:
+                continue
+        if entries is None:
+            return True
+        return any(self._entry_is_busy(e) for e in entries)
+
     def _raise_if_reload_busy(self, entry: EngineEntry, operation: str) -> None:
         if self._entry_is_busy(entry):
             raise ModelBusyError(entry.model_id, operation)

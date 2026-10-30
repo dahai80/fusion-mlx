@@ -137,6 +137,14 @@ def serve_command(args):
     _chain_k = getattr(args, "mtp_chain_k", 2) or 2
     _chain_k = max(1, min(4, _chain_k))
     os.environ["FUSION_MLX_MTP_CHAIN_K"] = str(_chain_k)
+    # #1456: --guard-mode → env for the signal handler in
+    # _parent_watchdog.install_signal_handlers, installed during server
+    # lifespan startup below. Same stamp-before-use pattern as MTP above.
+    if getattr(args, "guard_mode", False):
+        os.environ.setdefault("FUSION_MLX_GUARD_MODE", "1")
+        logging.getLogger(__name__).info(
+            "guard mode enabled: SIGTERM deferred while requests are in flight"
+        )
     if _chain_k >= 2:
         logging.getLogger(__name__).info(
             "MTP chain-of-K enabled: K=%d (AWSD Phase A, production default)",

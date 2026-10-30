@@ -120,6 +120,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # of that changes. Read by ``vllm_mlx.scheduler._get_request_sampler``
         # only, never by config / aliases / model_auto_config.
         "FUSION_MLX_DISABLE_FUSED_SAMPLER",
+        # #1456: guard mode — SIGTERM deferral while requests are in flight.
+        # Shutdown lifecycle knob, not routing: which model loads or which
+        # parser fires never changes. Read by _parent_watchdog only.
+        "FUSION_MLX_GUARD_MODE",
+        "FUSION_MLX_GUARD_MAX_DEFER_SEC",
         # #1197: submission pacing gate knobs — per-class token-bucket
         # rate/burst + master switch. Pacing, not routing: which model
         # loads or which parser fires never changes.

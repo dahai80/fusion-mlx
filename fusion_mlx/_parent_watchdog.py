@@ -51,6 +51,120 @@ _CRASH_WINDOW = 300  # 5 minutes
 _active_watchdog_thread: threading.Thread | None = None
 _active_watchdog_stop_event: threading.Event | None = None
 
+# #1456 guard mode: defer SIGTERM shutdown while work is in flight. The
+# 2026-10-30 22:53 supervisor stop-all wave SIGTERMed a busy server and the
+# in-flight jobs were lost. Probes are registered by the server lifespan
+# (EnginePool.any_active_requests, video scheduler); a probe returning True
+# (or raising — conservative) means "jobs in flight, don't die yet".
+ENV_GUARD_MODE = "FUSION_MLX_GUARD_MODE"
+ENV_GUARD_MAX_DEFER_SEC = "FUSION_MLX_GUARD_MAX_DEFER_SEC"
+_GUARD_DEFAULT_MAX_DEFER_SEC = 900.0
+_GUARD_POLL_INTERVAL = 2.0
+_busy_probes: dict[str, object] = {}
+_busy_probe_lock = threading.Lock()
+_GUARD_DEFERRING = threading.Event()
+_GUARD_FORCE = False
+
+
+def _guard_mode_enabled() -> bool:
+    return os.environ.get(ENV_GUARD_MODE, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def _guard_max_defer_sec() -> float:
+    raw = os.environ.get(ENV_GUARD_MAX_DEFER_SEC, "").strip()
+    if not raw:
+        return _GUARD_DEFAULT_MAX_DEFER_SEC
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        logger.warning(
+            "invalid %s=%r, using default %.0fs",
+            ENV_GUARD_MAX_DEFER_SEC,
+            raw,
+            _GUARD_DEFAULT_MAX_DEFER_SEC,
+        )
+        return _GUARD_DEFAULT_MAX_DEFER_SEC
+
+
+def register_busy_probe(name: str, probe) -> None:
+    if not callable(probe):
+        raise TypeError("busy probe must be callable")
+    with _busy_probe_lock:
+        _busy_probes[name] = probe
+    logger.debug("guard busy probe registered: %s", name)
+
+
+def unregister_busy_probe(name: str) -> None:
+    with _busy_probe_lock:
+        _busy_probes.pop(name, None)
+    logger.debug("guard busy probe unregistered: %s", name)
+
+
+def _jobs_in_flight() -> bool:
+    with _busy_probe_lock:
+        probes = list(_busy_probes.values())
+    for probe in probes:
+        try:
+            if probe() is True:
+                return True
+        except Exception:
+            # Conservative: an erroring probe counts as busy so a broken
+            # probe never green-lights killing live work.
+            return True
+    return False
+
+
+def _run_guard_deferral(sig_name: str, max_defer: float) -> None:
+    global _GUARD_FORCE
+    deadline = time.monotonic() + max_defer
+    while True:
+        if not _jobs_in_flight():
+            logger.warning(
+                "guard: in-flight work drained, proceeding with %s shutdown",
+                sig_name,
+            )
+            break
+        if time.monotonic() >= deadline:
+            logger.error(
+                "guard: max defer window (%.0fs) expired with work still in "
+                "flight, forcing shutdown",
+                max_defer,
+            )
+            break
+        time.sleep(_GUARD_POLL_INTERVAL)
+    _GUARD_DEFERRING.clear()
+    _GUARD_FORCE = True
+    # Re-deliver the signal so the normal shutdown path (including the
+    # chained uvicorn handler) runs in the main thread.
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+def _start_guard_deferral(sig_name: str) -> None:
+    max_defer = _guard_max_defer_sec()
+    _GUARD_DEFERRING.set()
+    write_status("guard_deferring")
+    logger.warning(
+        "guard mode: %s received with in-flight work, deferring shutdown up "
+        "to %.0fs (poll %.1fs). Send %s again to force shutdown now. Note: "
+        "an external stopper (start.sh stop) still SIGKILLs after its own "
+        "grace window.",
+        sig_name,
+        max_defer,
+        _GUARD_POLL_INTERVAL,
+        sig_name,
+    )
+    threading.Thread(
+        target=_run_guard_deferral,
+        args=(sig_name, max_defer),
+        name="fusion-mlx-guard-defer",
+        daemon=True,
+    ).start()
+
 
 def _resolve_pid_file(port: int | None = None) -> Path:
     if port and port > 0:
@@ -299,11 +413,14 @@ def install_signal_handlers() -> None:
         # the frame's caller chain and whether the handler was chained).
         sender = "unknown"
         try:
-            # /proc-style attribution is not available on macOS; report the
-            # process's own parent + session leader as context so operators
-            # can at least tell "parent sent it" from "external kill".
+            # /proc-style attribution is not available on macOS. ppid is NOT
+            # the sender: a reparented process (original parent gone) reports
+            # ppid=1 no matter who signalled it — the 2026-10-30 stop-all
+            # incident read as "SIGTERM from ppid=1" while the real sender
+            # was fusion-supervisor's start.sh stop. Report it as context
+            # only (#1456).
             ppid = os.getppid()
-            sender = f"ppid={ppid}"
+            sender = f"unknown (ppid={ppid} is context, not the sender)"
         except Exception:
             pass
         in_flight = ""
@@ -314,6 +431,32 @@ def install_signal_handlers() -> None:
                 in_flight = " (video generation IN FLIGHT — job output lost)"
         except Exception:
             pass
+        # #1456 guard mode: a SIGTERM with work in flight defers shutdown
+        # until drained (bounded), instead of killing live jobs. A second
+        # SIGTERM during deferral is the operator override — fall through
+        # and shut down now. SIGINT (Ctrl-C at a terminal) never defers.
+        if (
+            signum == signal.SIGTERM
+            and not _GUARD_FORCE
+            and not _SHUTDOWN_EVENT.is_set()
+            and _guard_mode_enabled()
+            and _jobs_in_flight()
+        ):
+            if _GUARD_DEFERRING.is_set():
+                logger.warning(
+                    "second SIGTERM during guard deferral — operator "
+                    "override, shutting down now"
+                )
+            else:
+                logger.warning(
+                    "received %s from %s%s (#1256 attribution); " "chained_previous=%s",
+                    sig_name,
+                    sender,
+                    in_flight,
+                    _prev_handlers.get(signum) is not None,
+                )
+                _start_guard_deferral(sig_name)
+                return
         logger.warning(
             "received %s from %s%s, initiating graceful shutdown (#1256 "
             "attribution); chained_previous=%s",
