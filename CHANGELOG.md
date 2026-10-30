@@ -3,6 +3,18 @@
 ## [Unreleased]
 
 ### Fixed
+- **Crashed image workers no longer swallow the real error (#1453)**: when a
+  worker died at 0% progress the 500 body carried only the raw stderr tail
+  (the mlx `set_cache_limit` deprecation warning + a tqdm bar) because
+  `MediaJobManager` discarded the worker's structured `{"type":"error"}`
+  event, which holds the actual exception type + message. The crash message
+  now includes the worker error event alongside the stderr tail, and stderr
+  is drained concurrently with stdout instead of only after process exit —
+  a chatty worker could previously fill the 64KB pipe and block mid-write.
+  The concurrent-burst worker crash itself is fixed by the #1452 admission
+  stacking above (second and later jobs get a 507 with `Retry-After`).
+  The `200`-with-`url`-data-URI follow-up in the issue was a client bug
+  (reading only `data[0].b64_json`), not a server defect.
 - **Concurrent media jobs no longer oversubscribe GPU memory (#1452)**:
   admission (`EnginePool.admit_media_job` and the `#1187` heavy gate's
   `admit_media`) now stacks outstanding media reservations into the
