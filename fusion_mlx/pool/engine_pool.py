@@ -945,6 +945,18 @@ class EnginePool:
     def set_settings_manager(self, manager) -> None:
         self._settings_manager = manager
 
+    def media_admission_slot(self):
+        # #1452: serializes admit_media_job + the caller's reservation
+        # register as one atomic unit on the event loop. Two concurrent
+        # admissions otherwise both pass the projection check before either
+        # registers its reservation, re-oversubscribing the ceiling. Lazy
+        # init so minimal stand-in pools (tests) work unchanged.
+        lock = getattr(self, "_media_admit_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._media_admit_lock = lock
+        return lock
+
     async def admit_media_job(
         self,
         required_bytes: int,
@@ -981,6 +993,17 @@ class EnginePool:
         caches_purged = False
         for _ in range(20):
             current = self._admission_current_usage(exclude_entry_key=exclude_model_id)
+            # #1452: stack outstanding media reservations onto the projection.
+            # Each admitted media job registers its budget with the enforcer;
+            # without this, N concurrent jobs each saw the same `current` and
+            # each passed `current + required <= ceiling` — 3x57GB admitted
+            # against a 120GB ceiling, all dying in Metal GPU-timeout. ANE
+            # admissions are excluded: media jobs draw from the GPU process
+            # ceiling, not the separate ANE budget.
+            if kind != "ane":
+                enforcer = self._process_memory_enforcer
+                if enforcer is not None:
+                    current += enforcer.get_media_reservation_bytes()
             if kind == "ane":
                 enforcer = self._process_memory_enforcer
                 if enforcer is not None:

@@ -206,7 +206,24 @@ class HeavyAdmissionGate:
         return self.admit("training", int(budget_bytes))
 
     def admit_media(self, kind: str, budget_bytes: int) -> HeavyAdmissionDecision:
-        return self.admit(kind, int(budget_bytes))
+        # #1452: stack outstanding media reservations from the enforcer onto
+        # the budget. admit() computes usage + budget against the safety line;
+        # concurrent media jobs each passed that check because the others'
+        # admitted-but-not-yet-resident budgets were invisible — N jobs each
+        # admitted at usage + own_budget. The pool gate (admit_media_job)
+        # stacks the same reservations for its own ceiling check.
+        outstanding = 0
+        try:
+            from .server import _server_state
+
+            enforcer = getattr(
+                _server_state.engine_pool, "process_memory_enforcer", None
+            )
+            if enforcer is not None:
+                outstanding = int(enforcer.get_media_reservation_bytes())
+        except Exception:
+            outstanding = 0
+        return self.admit(kind, int(budget_bytes) + outstanding)
 
     # -- pause / resume -------------------------------------------------
 

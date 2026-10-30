@@ -321,6 +321,9 @@ class VideoGenEngine(BaseNonStreamingEngine):
         # (#976 follow-up); without the raise the enforcer aborts a healthy
         # job. Single-slot — video jobs are serialized by the scheduler.
         _enforcer = None
+        # #1452: the reservation registry is shared with image jobs — this
+        # job must release exactly its own key, never the whole registry.
+        _reservation_key = None
         try:
             from ..server import _server_state
 
@@ -332,7 +335,7 @@ class VideoGenEngine(BaseNonStreamingEngine):
                 # activations/cache (LTX-2.5 A/V late-stage peaks are mostly
                 # Metal cache reuse, bounded by the 64GB metal cache cap).
                 _weights = _resolve_video_weight_bytes(self._model_name)
-                _enforcer.register_media_reservation(
+                _reservation_key = _enforcer.register_media_reservation(
                     int(_weights * 1.4) if _weights > 0 else 0
                 )
         except Exception:  # noqa: BLE001
@@ -423,7 +426,7 @@ class VideoGenEngine(BaseNonStreamingEngine):
                 logger.debug("video watchdog end_job failed", exc_info=True)
             if _enforcer is not None:
                 try:
-                    _enforcer.unregister_media_reservation()
+                    _enforcer.unregister_media_reservation(_reservation_key)
                 except Exception:  # noqa: BLE001
                     logger.debug(
                         "video admission: reservation release failed", exc_info=True

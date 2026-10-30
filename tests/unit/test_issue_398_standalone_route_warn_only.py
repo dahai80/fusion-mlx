@@ -23,6 +23,11 @@ def _run_preflight(env_overrides: dict | None = None) -> dict:
     env = {
         "HOME": os.environ.get("HOME", "/tmp"),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        # #1447 added a port-registry self-check to preflight(): with the
+        # real HOME the registry exists and says fusion-mlx=11434, so
+        # PORT=12345 trips "exit 1" before the #398 logic under test.
+        # This test only exercises FUSION_ROUTE_WARN_ONLY — bypass it.
+        "FUSION_SKIP_REGISTRY_CHECK": "1",
     }
     env.update(env_overrides or {})
     # Inline bash: stub helpers, extract+source only preflight(), call it,
