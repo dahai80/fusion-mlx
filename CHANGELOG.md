@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.10.29] - 2026-10-30
+
+### Fixed
+- **start.sh now self-checks the port registry before serving (#1447)**:
+  `preflight()` verifies that the port it is about to serve on is registered
+  under `fusion-mlx:` in `architecture/port-registry.yaml` (path overridable
+  via `FUSION_REGISTRY`), so an unregistered or misconfigured port fails at
+  start instead of being caught later by CI `check-ports`. A missing registry
+  file warns and continues (standalone deploys); `FUSION_SKIP_REGISTRY_CHECK=1`
+  bypasses the check.
+
 ## [0.10.28] - 2026-10-29
 
 ### Fixed
