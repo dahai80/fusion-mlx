@@ -3,6 +3,21 @@
 ## [Unreleased]
 
 ### Fixed
+- **Concurrent media jobs no longer oversubscribe GPU memory (#1452)**:
+  admission (`EnginePool.admit_media_job` and the `#1187` heavy gate's
+  `admit_media`) now stacks outstanding media reservations into the
+  projection. Previously N concurrent image jobs each saw the same
+  `current` and each passed `current + required <= ceiling` (3x57GB
+  admitted against a 120GB ceiling), all dying in Metal GPU-timeout; the
+  second and later jobs now get a 507 `InsufficientMemoryError` instead.
+  The enforcer's media reservation is a keyed registry instead of a
+  last-writer-wins scalar, so one job's release no longer drops a
+  concurrent job's reservation, and image/video engines register/release
+  by per-job key. `admit + register` is serialized by a pool-level
+  `media_admission_slot()` lock. ANE loads are unaffected (separate
+  budget). Also fixes the `#398` preflight unit tests, broken by the
+  `#1447` registry self-check (`FUSION_SKIP_REGISTRY_CHECK=1` in the test
+  harness — the tests exercise `FUSION_ROUTE_WARN_ONLY` only).
 - **`/v1/recommend` no longer 500s on degenerate size estimates (#1449)**:
   `estimate_tok_per_sec` raised `ZeroDivisionError` when
   `_estimate_weight_bytes` truncated to 0 (tiny `params` + a low-bit quant,

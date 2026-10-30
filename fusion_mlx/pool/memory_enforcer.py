@@ -34,6 +34,7 @@ import logging
 import os
 import subprocess
 import time
+import uuid
 from contextlib import suppress
 from enum import Enum
 from typing import TYPE_CHECKING, Any
@@ -465,8 +466,12 @@ class ProcessMemoryEnforcer:
         # reservation is active the hard watermark is raised to the full
         # ceiling so admitted usage is tolerated up to the limit the gate
         # already approved. Set/cleared by ImageGenEngine.generate prologue/
-        # finally. Thread-safe single-slot (one media job at a time per pool).
-        self._media_reservation_bytes: int = 0
+        # finally.
+        # #1452: keyed registry, not a scalar — concurrent media jobs each
+        # register their own reservation; a last-writer-wins scalar let job 2
+        # clobber job 1's reservation (and job 1's unregister zeroed it while
+        # job 2 still ran), and admit_media_job saw nothing of either.
+        self._media_reservations: dict = {}
         # C++ dispatch_source MEMORYPRESSURE sentinel (PR-B). Additive to the
         # 1s polling loop: on a kernel pressure event the sentinel callback
         # fires immediately and wakes this loop before the next poll tick,
@@ -570,31 +575,48 @@ class ProcessMemoryEnforcer:
         with self._state_lock:
             self._ane_memory_budget_bytes = max(0, int(gb * 1024**3))
 
-    def register_media_reservation(self, bytes_: int) -> None:
+    def register_media_reservation(self, bytes_: int, key: str | None = None) -> str:
         # OP-901 (defect 1): raise the hard watermark to the full ceiling for
         # the duration of an admitted media job so the enforcer does not
         # hard-abort the job it just admitted (usage between 95% and 100% of
         # ceiling is expected for a job whose projected peak was approved).
+        # #1452: returns the registry key — callers that run concurrent jobs
+        # must pass that key to unregister_media_reservation so one job's
+        # release does not drop the others'.
         b = max(0, int(bytes_))
+        if key is None:
+            key = uuid.uuid4().hex
         with self._state_lock:
-            self._media_reservation_bytes = b
+            self._media_reservations[key] = b
         if b > 0:
             logger.info(
-                "media reservation registered: %s (hard watermark raised to "
-                "ceiling for admitted job)",
+                "media reservation registered: key=%s bytes=%s total=%s "
+                "(hard watermark raised to ceiling for admitted job)",
+                key,
                 _format_gb(b),
+                _format_gb(self.get_media_reservation_bytes()),
             )
+        return key
 
-    def unregister_media_reservation(self) -> None:
+    def unregister_media_reservation(self, key: str | None = None) -> None:
+        # key=None clears the whole registry (legacy single-job semantics).
         with self._state_lock:
-            prev = self._media_reservation_bytes
-            self._media_reservation_bytes = 0
-        if prev > 0:
-            logger.info("media reservation released: %s", _format_gb(prev))
+            if key is None:
+                released = sum(self._media_reservations.values())
+                self._media_reservations.clear()
+            else:
+                released = self._media_reservations.pop(key, 0)
+        if released > 0:
+            logger.info(
+                "media reservation released: key=%s bytes=%s remaining=%s",
+                key,
+                _format_gb(released),
+                _format_gb(self.get_media_reservation_bytes()),
+            )
 
     def get_media_reservation_bytes(self) -> int:
         with self._state_lock:
-            return self._media_reservation_bytes
+            return sum(self._media_reservations.values())
 
     @staticmethod
     def _normalize_tier(tier: str) -> str:
@@ -1734,7 +1756,7 @@ class ProcessMemoryEnforcer:
         # without this raise, usage in [95%, 100%] of ceiling trips hard
         # pressure and aborts the admitted job — the self-conflict that
         # wedged four-view FLUX (#901). Emergency (over-ceiling) still fires.
-        if self._media_reservation_bytes > 0:
+        if self.get_media_reservation_bytes() > 0:
             hard = ceiling
         prev_level = self._pressure_level
         emergency = self._is_emergency_pressure(current, ceiling)

@@ -949,29 +949,41 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 model_id=self._model_name,
                 loaded_models=[],
             )
-        ok = await pool.admit_media_job(required, exclude_model_id=self._model_name)
-        if not ok:
-            raise InsufficientMemoryError(
-                required=required,
-                current=0,
-                ceiling=0,
-                message=(
-                    f"Image generation (variant={self._variant}, "
-                    f"{width}x{height}, n={n_images}) requires "
-                    f"{required / 1024**3:.1f}GB headroom that cannot be freed "
-                    f"even after evicting all non-pinned LLM models. Lower "
-                    f"resolution, reduce n_images, or unload models manually."
-                ),
-                model_id=self._model_name,
-                loaded_models=[],
-            )
-        # OP-901 (defect 1): register the admitted reservation so the enforcer
-        # raises its hard watermark to the ceiling for this job's duration.
-        # Without it, usage in [95%,100%] of ceiling trips hard pressure and
-        # aborts the job the gate just admitted (#901 self-conflict wedge).
+        # #1452: hold the pool's media admission slot across the projection
+        # check AND the reservation register so two concurrent jobs cannot
+        # both pass the check before either registers (admit + register is
+        # atomic on the event loop).
         enforcer = getattr(pool, "process_memory_enforcer", None)
-        if enforcer is not None and required > 0:
-            enforcer.register_media_reservation(required)
+        async with pool.media_admission_slot():
+            ok = await pool.admit_media_job(required, exclude_model_id=self._model_name)
+            if not ok:
+                raise InsufficientMemoryError(
+                    required=required,
+                    current=0,
+                    ceiling=0,
+                    message=(
+                        f"Image generation (variant={self._variant}, "
+                        f"{width}x{height}, n={n_images}) requires "
+                        f"{required / 1024**3:.1f}GB headroom that cannot be "
+                        f"freed even after evicting all non-pinned LLM models "
+                        f"and accounting for in-flight media jobs. Lower "
+                        f"resolution, reduce n_images, or unload models "
+                        f"manually."
+                    ),
+                    model_id=self._model_name,
+                    loaded_models=[],
+                )
+            # OP-901 (defect 1): register the admitted reservation so the
+            # enforcer raises its hard watermark to the ceiling for this
+            # job's duration. Without it, usage in [95%,100%] of ceiling
+            # trips hard pressure and aborts the job the gate just admitted
+            # (#901 self-conflict wedge).
+            # #1452: return the registry key — the engine instance is shared
+            # by concurrent requests, so each job must release exactly its
+            # own reservation in the finally blocks, not clear the registry.
+            if enforcer is not None and required > 0:
+                return enforcer.register_media_reservation(required)
+        return None
 
     async def generate(
         self,
@@ -1126,7 +1138,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         # process into EXC_BAD_ACCESS on wired exhaustion. Subprocess mode
         # reserves the worker lease; in-process mode reserves the estimated
         # activation peak (weights already counted in current usage).
-        await self._admit_generation(
+        reservation_key = await self._admit_generation(
             width=width,
             height=height,
             steps=steps,
@@ -1196,6 +1208,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 kwargs=kwargs,
                 t0=t0,
                 activity_id=activity_id,
+                reservation_key=reservation_key,
             )
 
         # G2-SR: in-process image gen runs on the shared Metal command queue
@@ -1561,14 +1574,15 @@ class ImageGenEngine(BaseNonStreamingEngine):
         finally:
             # OP-901 (defect 1): release the media reservation so the hard
             # watermark drops back to ceiling * hard_threshold for normal
-            # LLM policing.
+            # LLM policing. #1452: release only THIS job's key — the engine
+            # instance is shared by concurrent requests.
             try:
                 from ..server import _server_state
 
                 _pool = _server_state.engine_pool
                 _enf = getattr(_pool, "process_memory_enforcer", None)
                 if _enf is not None:
-                    _enf.unregister_media_reservation()
+                    _enf.unregister_media_reservation(reservation_key)
             except Exception:  # noqa: BLE001
                 logger.debug(
                     "media reservation release: pool unavailable", exc_info=True
@@ -1613,6 +1627,7 @@ class ImageGenEngine(BaseNonStreamingEngine):
         t0: float,
         activity_id: str,
         lora: list[dict] | None = None,
+        reservation_key: str | None = None,
     ) -> list[bytes]:
         # S3: subprocess image generation via MediaJobManager.
         from ..media.job_manager import (
@@ -1776,15 +1791,17 @@ class ImageGenEngine(BaseNonStreamingEngine):
             # #1004: release the media reservation registered in
             # _admit_generation. The subprocess branch returned early from
             # generate() and bypassed the inproc finally that does this;
-            # without it _media_reservation_bytes stayed >0 forever, keeping
-            # the hard watermark raised and suppressing LLM pressure eviction.
+            # without it the reservation stayed >0 forever, keeping the hard
+            # watermark raised and suppressing LLM pressure eviction.
+            # #1452: release only THIS job's key so a concurrent job's
+            # reservation survives.
             try:
                 from ..server import _server_state
 
                 _pool = _server_state.engine_pool
                 _enf = getattr(_pool, "process_memory_enforcer", None)
                 if _enf is not None:
-                    _enf.unregister_media_reservation()
+                    _enf.unregister_media_reservation(reservation_key)
             except Exception:  # noqa: BLE001
                 logger.debug(
                     "media reservation release: pool unavailable", exc_info=True
