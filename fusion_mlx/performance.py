@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from .compatibility import _estimate_weight_bytes
 from .hardware.types import GPUInfo
 
@@ -39,6 +41,8 @@ _QUANT_EFFICIENCY: dict[str, float] = {
 }
 _DEFAULT_QUANT_EFFICIENCY = 0.45
 
+logger = logging.getLogger(__name__)
+
 _BACKEND_FACTOR: dict[str, float] = {
     "nvidia": 1.00,
     "amd": 0.78,
@@ -69,6 +73,13 @@ def estimate_tok_per_sec(
         return max(0.3, 18.0 / max(params_b, 0.5) * quant_factor)
 
     model_size = _estimate_weight_bytes(params, quant_type)
+    if model_size <= 0:
+        logger.warning(
+            "estimate_tok_per_sec: non-positive model size, cannot estimate: params=%s quant=%s",
+            params,
+            quant_type,
+        )
+        return 0.0
     bandwidth = gpu.memory_bandwidth_gbps * 1e9 if gpu.memory_bandwidth_gbps else 0
     if bandwidth == 0:
         return 0.0
