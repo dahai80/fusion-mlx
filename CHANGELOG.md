@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.31] - 2026-10-31
+
 ### Added
 - **Guard mode: SIGTERM deferral while jobs are in flight (#1456)**: new
   `--guard-mode` serve flag (env `FUSION_MLX_GUARD_MODE=1`, window
