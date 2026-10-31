@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Fixed
+- **DPO on large models OOMs the server without gradient checkpointing
+  (#1469)**: DPO retains policy + reference activations per pair, so a 27B
+  8-bit job drove wired memory to 203GB against the 120GB ceiling and the
+  memory enforcer exited fatally (latent before #1463 — the first backward
+  used to fail fast before activations could pile up). `_execute_dpo` now
+  auto-enables gradient checkpointing when the loaded model's parameter
+  bytes exceed 16GB, unless `gradient_checkpointing` was set explicitly.
+  Log line `auto-enabling gradient checkpointing` confirms the override.
 - **Embeddings/rerank starve behind a wedged llm executor (#1468, first
   slice)**: `EmbeddingEngine` and `RerankerEngine` ran load, teardown, and
   compute on the shared single-worker `llm` executor, so a wedged
