@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.33] - 2026-10-31
 
 ### Fixed
 - **DPO `init_adapter_path` double-applies LoRA (#1461)**: chaining loaded
