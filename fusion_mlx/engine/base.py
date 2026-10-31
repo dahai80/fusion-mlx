@@ -15,7 +15,7 @@ from typing import Any
 
 import mlx.core as mx
 
-from ..engine_core import get_mlx_executor
+from ..engine_core import get_executor
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +216,12 @@ class BaseNonStreamingEngine(ABC):
     support streaming or chat completion interfaces.
     """
 
+    # #1468: engines on a dedicated executor override this (embedding/
+    # reranker use "embed") so a wedged llm executor can't also stall the
+    # post-compute activity cleanup (mx.synchronize + clear_cache) after
+    # the embed itself already ran on the healthy pool.
+    _mlx_executor_name = "llm"
+
     def __init__(self):
         self._active_count = 0
         self._active_lock = threading.Lock()
@@ -303,7 +309,7 @@ class BaseNonStreamingEngine(ABC):
         self._end_activity(activity_id)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(
-            get_mlx_executor(),
+            get_executor(self._mlx_executor_name),
             lambda: (mx.synchronize(), mx.clear_cache()),
         )
 

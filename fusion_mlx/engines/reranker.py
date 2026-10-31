@@ -1023,6 +1023,10 @@ class MLXRerankerModel:
 
 
 class RerankerEngine(BaseNonStreamingEngine):
+    # #1468: dedicated "embed" executor (shared with EmbeddingEngine) so a
+    # wedged llm-side eval can't starve reranks until a restart.
+    _mlx_executor_name = "embed"
+
     def __init__(self, model_name: str, trust_remote_code: bool = False):
         super().__init__()
         self._model_name = model_name
@@ -1050,7 +1054,10 @@ class RerankerEngine(BaseNonStreamingEngine):
         )
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), self._model.load), timeout=120.0
+            loop.run_in_executor(
+                get_executor(self._mlx_executor_name), self._model.load
+            ),
+            timeout=120.0,
         )
 
     async def stop(self) -> None:
@@ -1062,7 +1069,9 @@ class RerankerEngine(BaseNonStreamingEngine):
         from ..scheduler.helpers import _safe_clear_cache_for_non_llm
 
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), _safe_clear_cache_for_non_llm),
+            loop.run_in_executor(
+                get_executor(self._mlx_executor_name), _safe_clear_cache_for_non_llm
+            ),
             timeout=5.0,
         )
 
@@ -1085,7 +1094,8 @@ class RerankerEngine(BaseNonStreamingEngine):
                 )
 
             output = await asyncio.wait_for(
-                loop.run_in_executor(get_executor("llm"), _rerank), timeout=30.0
+                loop.run_in_executor(get_executor(self._mlx_executor_name), _rerank),
+                timeout=30.0,
             )
             self._update_activity(activity_id, token_count=output.total_tokens)
             if top_n is not None and top_n < len(output.indices):

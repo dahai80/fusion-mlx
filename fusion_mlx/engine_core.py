@@ -137,6 +137,13 @@ _executor_config: dict[str, dict[str, Any]] = {
     # because laya predict is ~7ms of Metal work — it interleaves at the
     # Metal command-queue boundary, not the Python thread boundary.
     "laya": {"max_workers": 1, "prefix": "mlx-laya"},
+    # embed (#1468): embedding/reranker load + compute on a dedicated
+    # executor so a wedged llm-side eval (e.g. stuck QuantizedMatmul on the
+    # single-worker llm pool) cannot starve every embedding until restart.
+    # Same reasoning as laya above — small Metal work interleaves at the
+    # command-queue boundary. max_workers=1 keeps weights bound to one
+    # thread/stream (same as the llm pool guarantee).
+    "embed": {"max_workers": 1, "prefix": "mlx-embed"},
 }
 _global_executors: dict[str, concurrent.futures.ThreadPoolExecutor] = {}
 

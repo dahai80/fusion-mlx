@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Embeddings/rerank starve behind a wedged llm executor (#1468, first
+  slice)**: `EmbeddingEngine` and `RerankerEngine` ran load, teardown, and
+  compute on the shared single-worker `llm` executor, so a wedged
+  quantized eval (stuck `QuantizedMatmul` holding the llm thread + GPU)
+  timed out every embedding until a restart. Both engines now run on a
+  dedicated `embed` executor (same pattern as the #1161 `laya` pool);
+  `BaseNonStreamingEngine._finish_activity` honors a per-engine
+  `_mlx_executor_name` so the post-compute `mx.synchronize`/`clear_cache`
+  no longer queues behind the llm pool either.
+
 ## [0.10.35] - 2026-10-31
 
 ### Fixed
