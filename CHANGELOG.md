@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **DPO `init_adapter_path` double-applies LoRA (#1461)**: chaining loaded
+  the policy model via `mlx_utils.load(adapter_path=...)`, which builds LoRA
+  layers from the saved `adapter_config.json`; the subsequent
+  `linear_to_lora_layers` call then raised "Can't convert layer of type
+  LoRALinear to LoRALinear" — the #1149 feature was never exercisable
+  end-to-end. Now loads the base model, builds LoRA from this run's cfg,
+  and loads the chained adapter weights with `strict=False` (same
+  convention as the #1182 SFT resume path). Rank and `num_layers` mismatches
+  against the source `adapter_config.json` are rejected loudly (previously a
+  mismatch silently trained from fresh LoRA). Real-model E2E verified:
+  Qwen3-0.6B-8bit chained on a rank-16 SFT adapter trains and saves.
+- **`heavy_admission_safety_line` had no settings.json mapping (#1459)**:
+  start.sh now maps `{"memory": {"heavy_admission_safety_line": 0.99}}` to
+  `FUSION_MLX_HEAVY_ADMISSION_LINE` (env var wins), so daemon-spawned
+  processes (supervisor/launchd, `env_n=0`) can raise the line durably —
+  previously both config channels were dead for daemon-managed boots.
+
+### Added
+- **DPOConfig `gradient_checkpointing` + `memory_limit_gb` (#1460)**: DPO
+  runs policy + reference forwards per pair — double the SFT forward
+  traffic — yet had no way to enable gradient checkpointing (the documented
+  27B-8bit SFT OOM remedy) or an admission budget.
+  `gradient_checkpointing=True` applies the mlx-lm tuner `grad_checkpoint`
+  mechanism to the policy model; `memory_limit_gb` feeds the existing
+  admission gate (the service already read it via `getattr`, the field just
+  didn't exist so passing it raised `TypeError`).
+
 ## [0.10.32] - 2026-10-31
 
 ### Fixed

@@ -43,6 +43,11 @@ class DPOConfig:
     max_seq_length: int = 1024
     seed: int = 0
     init_adapter_path: str = ""  # SFT adapter to chain DPO on (#1149)
+    # #1460: DPO runs policy + reference forwards per pair — double the SFT
+    # forward traffic — yet had no way to enable gradient checkpointing or an
+    # admission budget. Same semantics as FineTuneConfig.
+    gradient_checkpointing: bool = False
+    memory_limit_gb: float = 0.0  # admission-gate budget; 0 = auto
 
     def to_dict(self):
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
