@@ -410,29 +410,34 @@ class DPOService:
         if n_pairs == 0:
             raise ValueError(f"{cfg.method} job has no preference_pairs")
 
-        for it in range(cfg.iters):
-            start = (it * batch_size) % n_pairs
-            batch = [pairs[(start + i) % n_pairs] for i in range(batch_size)]
-            result = trainer.train_step(batch)
-            self._push_event(
-                job,
-                {
-                    "type": f"{cfg.method}_step",
-                    "iter": it,
+        try:
+            for it in range(cfg.iters):
+                start = (it * batch_size) % n_pairs
+                batch = [pairs[(start + i) % n_pairs] for i in range(batch_size)]
+                result = trainer.train_step(batch)
+                self._push_event(
+                    job,
+                    {
+                        "type": f"{cfg.method}_step",
+                        "iter": it,
+                        "total_iters": cfg.iters,
+                        "loss": result.loss,
+                        "reward_margin": result.reward_margin,
+                        "acc_chosen": result.acc_chosen,
+                        "n_pairs": len(batch),
+                    },
+                )
+                job.progress = {
+                    "iter": it + 1,
                     "total_iters": cfg.iters,
                     "loss": result.loss,
                     "reward_margin": result.reward_margin,
                     "acc_chosen": result.acc_chosen,
-                    "n_pairs": len(batch),
-                },
-            )
-            job.progress = {
-                "iter": it + 1,
-                "total_iters": cfg.iters,
-                "loss": result.loss,
-                "reward_margin": result.reward_margin,
-                "acc_chosen": result.acc_chosen,
-            }
+                }
+        finally:
+            # #1472: free a resident reference model even on step failure —
+            # otherwise a failed job leaks ~model-bytes into the engine.
+            trainer.close()
 
         Path(job.adapter_path).mkdir(parents=True, exist_ok=True)
         trainer.save_adapter(str(Path(job.adapter_path) / "adapters.safetensors"))

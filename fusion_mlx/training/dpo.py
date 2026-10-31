@@ -48,6 +48,16 @@ class DPOConfig:
     # admission budget. Same semantics as FineTuneConfig.
     gradient_checkpointing: bool = False
     memory_limit_gb: float = 0.0  # admission-gate budget; 0 = auto
+    # #1472: keep ONE reference model resident for the whole job instead of
+    # the per-pair load-and-evict (2 full loads per pair: chosen + rejected).
+    # On a large base the repeated same-size allocations churn the Metal
+    # allocator and phys_footprint climbs until the memory_enforcer fatal-exits
+    # the engine (27B-8bit DPO observed at 165.9GB over a 120GB ceiling ~90s
+    # after job start). Resident = policy + ref weights held steady (~2x model
+    # bytes) — the right trade on a dedicated training box with free memory.
+    # Default False preserves the load-and-evict behavior for
+    # shared/serving deployments.
+    keep_ref_resident: bool = False
 
     def to_dict(self):
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
@@ -91,23 +101,39 @@ class DPOTrainer:
         self.config = config
         self.optimizer = optim.AdamW(learning_rate=config.learning_rate)
         self._ref_cache = {}  # (prompt, chosen, rejected) -> (ref_w, ref_l)
+        self._ref_model = None  # #1472: resident ref when keep_ref_resident
 
-    def _ref_logprob(self, prompt_ids, completion_ids):
+    def close(self):
+        # #1472: free a resident reference model. Load-and-evict mode has
+        # nothing to free here (per-pair evict already ran).
+        if self._ref_model is not None:
+            del self._ref_model
+            self._ref_model = None
+            gc.collect()
+            mx.clear_cache()
+
+    def _ref_logprob(self, prompt_ids, completion_ids, ref_model=None):
         # Load base model (no adapter), score, evict. Standalone load-and-evict.
+        # #1472: ref_model given = resident mode — no load, no evict.
         import gc
 
         import mlx_lm.utils as mlx_utils
 
-        model, _ = mlx_utils.load(self.model_path, adapter_path=None)
+        model = ref_model
+        owned = False
+        if model is None:
+            model, _ = mlx_utils.load(self.model_path, adapter_path=None)
+            owned = True
         try:
             from fusion_mlx.training.logprob import compute_logprob
 
             total, _, _ = compute_logprob(model, prompt_ids, completion_ids)
             return total
         finally:
-            del model
-            gc.collect()
-            mx.clear_cache()
+            if owned:
+                del model
+                gc.collect()
+                mx.clear_cache()
 
     def _ref_logprobs_pair(self, prompt_ids, chosen_ids, rejected_ids):
         # Cache ref logprobs per pair to avoid reloading the base twice per step.
@@ -120,8 +146,29 @@ class DPOTrainer:
         )
         if key in self._ref_cache:
             return self._ref_cache[key]
-        ref_w = self._ref_logprob(prompt_ids, chosen_ids)
-        ref_l = self._ref_logprob(prompt_ids, rejected_ids)
+        if self.config.keep_ref_resident:
+            # #1472: one resident ref load for the whole job — per-pair
+            # load-and-evict churns same-size Metal allocations on large
+            # bases until the memory_enforcer fatal-exits.
+            if self._ref_model is None:
+                import mlx_lm.utils as mlx_utils
+
+                self._ref_model, _ = mlx_utils.load(
+                    self.model_path, adapter_path=None
+                )
+                logger.info(
+                    "%s: resident reference model loaded (#1472)",
+                    self.config.method.upper(),
+                )
+            ref_w = self._ref_logprob(
+                prompt_ids, chosen_ids, ref_model=self._ref_model
+            )
+            ref_l = self._ref_logprob(
+                prompt_ids, rejected_ids, ref_model=self._ref_model
+            )
+        else:
+            ref_w = self._ref_logprob(prompt_ids, chosen_ids)
+            ref_l = self._ref_logprob(prompt_ids, rejected_ids)
         self._ref_cache[key] = (ref_w, ref_l)
         return ref_w, ref_l
 

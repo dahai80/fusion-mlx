@@ -254,6 +254,9 @@ def test_dpo_execute_enables_grad_checkpointing(monkeypatch, tmp_path):
         def save_adapter(self, path):
             pass
 
+        def close(self):
+            pass
+
     monkeypatch.setattr("mlx_lm.utils.load", fake_load)
     monkeypatch.setattr(
         "mlx_lm.tuner.utils.linear_to_lora_layers", lambda *a, **k: None
@@ -429,6 +432,9 @@ def test_dpo_execute_chains_adapter_weights_not_double_lora(monkeypatch, tmp_pat
         def save_adapter(self, path):
             pass
 
+        def close(self):
+            pass
+
     monkeypatch.setattr("mlx_lm.utils.load", fake_load)
     monkeypatch.setattr(
         "mlx_lm.tuner.utils.linear_to_lora_layers", lambda *a, **k: None
@@ -552,6 +558,9 @@ def test_dpo_execute_no_init_adapter_backward_compat(monkeypatch, tmp_path):
             return DPOStepResult(loss=0.1, reward_margin=0.2, acc_chosen=0.5)
 
         def save_adapter(self, path):
+            pass
+
+        def close(self):
             pass
 
     monkeypatch.setattr("mlx_lm.utils.load", fake_load)
