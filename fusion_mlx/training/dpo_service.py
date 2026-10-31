@@ -400,10 +400,14 @@ class DPOService:
         # forward pair, so a large model without gradient checkpointing
         # retains every layer intermediate of BOTH passes — a 27B-8bit job
         # was observed driving wired memory to 203GB (fatal enforcer exit).
-        # Auto-enable checkpointing for big models unless the caller set the
-        # flag explicitly. Threshold 16GB: covers 27B-8bit (~28GB) and
-        # larger, leaves small models on the fast path.
-        if not cfg.gradient_checkpointing:
+        # #1472: the per-pair reference load-and-evict churns same-size
+        # Metal allocations on large bases and climbs phys_footprint until
+        # the enforcer fatal-exits (observed 147.5GB with checkpointing ON
+        # but keep_ref_resident OFF — checkpointing alone is not enough).
+        # Auto-enable BOTH for big models unless the caller set the flag
+        # explicitly. Threshold 16GB: covers 27B-8bit (~27GB) and larger,
+        # leaves small models on the fast path.
+        if not cfg.gradient_checkpointing or not cfg.keep_ref_resident:
             try:
                 from mlx.utils import tree_flatten as _mlx_tree_flatten
 
@@ -415,21 +419,36 @@ class DPOService:
             except Exception:
                 param_bytes = 0
                 logger.warning(
-                    "%s: could not estimate param bytes for grad-checkpoint "
-                    "auto-enable; leaving gradient_checkpointing=%s",
+                    "%s: could not estimate param bytes for large-model "
+                    "auto-enable; leaving gradient_checkpointing=%s "
+                    "keep_ref_resident=%s",
                     cfg.method.upper(),
                     cfg.gradient_checkpointing,
+                    cfg.keep_ref_resident,
                 )
             if param_bytes >= _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES:
-                cfg.gradient_checkpointing = True
-                logger.info(
-                    "%s: auto-enabling gradient checkpointing — "
-                    "param_bytes=%.1fGB >= %.0fGB threshold (policy+reference "
-                    "activations would overflow wired memory otherwise, #1469)",
-                    cfg.method.upper(),
-                    param_bytes / 1024**3,
-                    _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES / 1024**3,
-                )
+                if not cfg.gradient_checkpointing:
+                    cfg.gradient_checkpointing = True
+                    logger.info(
+                        "%s: auto-enabling gradient checkpointing — "
+                        "param_bytes=%.1fGB >= %.0fGB threshold (policy+"
+                        "reference activations would overflow wired memory "
+                        "otherwise, #1469)",
+                        cfg.method.upper(),
+                        param_bytes / 1024**3,
+                        _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES / 1024**3,
+                    )
+                if not cfg.keep_ref_resident:
+                    cfg.keep_ref_resident = True
+                    logger.info(
+                        "%s: auto-enabling resident reference model — "
+                        "param_bytes=%.1fGB >= %.0fGB threshold (per-pair "
+                        "load-and-evict churns Metal allocations until the "
+                        "enforcer fatal-exits, #1472)",
+                        cfg.method.upper(),
+                        param_bytes / 1024**3,
+                        _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES / 1024**3,
+                    )
         if cfg.gradient_checkpointing:
             # #1460: same mechanism as the SFT path (mlx_lm tuner
             # grad_checkpoint) — patch the transformer block __call__ with
