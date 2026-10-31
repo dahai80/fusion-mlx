@@ -73,9 +73,19 @@ class HeavyAdmissionGate:
                 self._safety_line = max(0.5, min(0.99, float(safety_line_fraction)))
             if enabled is not None:
                 self._enabled = bool(enabled)
+        # #1459: the env override wins per-request (_resolve_safety_line), so
+        # a boot log of only the config default misleads — surface the
+        # effective line when the env var is set.
+        effective = self._resolve_safety_line()
+        suffix = (
+            ""
+            if abs(effective - self._safety_line) < 1e-9
+            else f" (effective={effective:.2f} via {ENV_SAFETY_LINE})"
+        )
         logger.info(
-            "heavy admission gate configured: line=%.2f enabled=%s",
+            "heavy admission gate configured: line=%.2f%s enabled=%s",
             self._safety_line,
+            suffix,
             self._enabled,
         )
 

@@ -446,3 +446,32 @@ class TestGRPOService(_ServiceFixtureBase):
         assert job.status == JobStatus.RUNNING
         await asyncio.sleep(0)
         svc._run_job.assert_awaited_once()
+
+
+class TestConfigureLogsEffectiveLine:
+    # #1459: the env override wins per-request, so the boot log must surface
+    # the effective line instead of only the config default.
+    def test_configure_log_includes_env_effective(self, caplog, monkeypatch):
+        import logging as _logging
+
+        monkeypatch.setenv("FUSION_MLX_HEAVY_ADMISSION_LINE", "0.99")
+        gate = HeavyAdmissionGate()
+        with caplog.at_level(_logging.INFO, logger="fusion_mlx.admission"):
+            gate.configure(safety_line_fraction=0.85)
+        joined = " ".join(r.getMessage() for r in caplog.records)
+        assert "effective=0.99" in joined
+        assert "FUSION_MLX_HEAVY_ADMISSION_LINE" in joined
+        # Configured state itself stays at the config value; env layers on
+        # top per-request.
+        assert gate._resolve_safety_line() == 0.99
+
+    def test_configure_log_plain_without_env(self, caplog, monkeypatch):
+        import logging as _logging
+
+        monkeypatch.delenv("FUSION_MLX_HEAVY_ADMISSION_LINE", raising=False)
+        gate = HeavyAdmissionGate()
+        with caplog.at_level(_logging.INFO, logger="fusion_mlx.admission"):
+            gate.configure(safety_line_fraction=0.85)
+        joined = " ".join(r.getMessage() for r in caplog.records)
+        assert "effective" not in joined
+        assert "line=0.85" in joined
