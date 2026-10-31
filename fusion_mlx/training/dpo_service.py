@@ -38,6 +38,11 @@ from fusion_mlx.training.service import (
 
 logger = logging.getLogger(__name__)
 
+# #1469: DPO keeps policy + reference activations per pair; without gradient
+# checkpointing a large model's layer intermediates overflow wired memory
+# (27B-8bit observed at 203GB, fatal enforcer exit). Auto-enable above this.
+_GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES = 16 * 1024**3
+
 
 def _chain_adapter_weights(model, cfg: DPOConfig):
     # #1461: chaining must NOT go through mlx_utils.load(adapter_path=...) —
@@ -391,6 +396,40 @@ class DPOService:
         # model.train() only flips the flag; MLX freeze is separate, so
         # frozen-base + LoRA-trainable semantics are unchanged.
         model.train()
+        # #1469: DPO keeps policy + reference activations for the same
+        # forward pair, so a large model without gradient checkpointing
+        # retains every layer intermediate of BOTH passes — a 27B-8bit job
+        # was observed driving wired memory to 203GB (fatal enforcer exit).
+        # Auto-enable checkpointing for big models unless the caller set the
+        # flag explicitly. Threshold 16GB: covers 27B-8bit (~28GB) and
+        # larger, leaves small models on the fast path.
+        if not cfg.gradient_checkpointing:
+            try:
+                from mlx.utils import tree_flatten as _mlx_tree_flatten
+
+                param_bytes = sum(
+                    int(p.nbytes)
+                    for _path, p in _mlx_tree_flatten(model.parameters())
+                    if isinstance(p, mx.array)
+                )
+            except Exception:
+                param_bytes = 0
+                logger.warning(
+                    "%s: could not estimate param bytes for grad-checkpoint "
+                    "auto-enable; leaving gradient_checkpointing=%s",
+                    cfg.method.upper(),
+                    cfg.gradient_checkpointing,
+                )
+            if param_bytes >= _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES:
+                cfg.gradient_checkpointing = True
+                logger.info(
+                    "%s: auto-enabling gradient checkpointing — "
+                    "param_bytes=%.1fGB >= %.0fGB threshold (policy+reference "
+                    "activations would overflow wired memory otherwise, #1469)",
+                    cfg.method.upper(),
+                    param_bytes / 1024**3,
+                    _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES / 1024**3,
+                )
         if cfg.gradient_checkpointing:
             # #1460: same mechanism as the SFT path (mlx_lm tuner
             # grad_checkpoint) — patch the transformer block __call__ with
