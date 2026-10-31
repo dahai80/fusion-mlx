@@ -285,6 +285,169 @@ def test_dpo_execute_enables_grad_checkpointing(monkeypatch, tmp_path):
     assert "gc_layer" in captured, "#1460: grad_checkpoint must be applied"
 
 
+def test_dpo_execute_auto_enables_grad_checkpointing_for_big_model(
+    monkeypatch, tmp_path
+):
+    # #1469: a big model (param_bytes >= threshold) with
+    # gradient_checkpointing unset must auto-enable it — DPO retains
+    # policy + reference activations per pair and a 27B-8bit job was
+    # observed driving wired memory to 203GB without checkpointing.
+    import mlx.core as mx
+
+    import fusion_mlx.training.dpo_service as svc_mod
+    from fusion_mlx.training.dpo import DPOStepResult
+
+    captured = {}
+
+    class _BigModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.big = mx.zeros((1024, 1024), dtype=mx.float32)
+            self.layers = [nn.Linear(4, 4)]
+
+        def __call__(self, ids):
+            return self.layers[0](mx.zeros((1, 4)))
+
+        def freeze(self):
+            pass
+
+        def parameters(self):
+            return {"big": self.big}
+
+    class _FakeTokenizer:
+        def encode(self, text):
+            return [1, 2, 3, 4]
+
+        def decode(self, ids):
+            return "x"
+
+    def fake_load(path, adapter_path=None):
+        m = _BigModel()
+        m.eval()
+        captured["model"] = m
+        return m, _FakeTokenizer()
+
+    class _FakeTrainer:
+        def __init__(self, model, tokenizer, model_path, config):
+            pass
+
+        def train_step(self, batch):
+            return DPOStepResult(loss=0.1, reward_margin=0.2, acc_chosen=0.5)
+
+        def save_adapter(self, path):
+            pass
+
+    monkeypatch.setattr("mlx_lm.utils.load", fake_load)
+    monkeypatch.setattr(
+        "mlx_lm.tuner.utils.linear_to_lora_layers", lambda *a, **k: None
+    )
+    monkeypatch.setattr(svc_mod, "DPOTrainer", _FakeTrainer)
+    monkeypatch.setattr(
+        "mlx_lm.tuner.trainer.grad_checkpoint",
+        lambda layer: captured.setdefault("gc_layer", layer),
+    )
+    # 4MB param array + threshold dropped below it — same decision path as
+    # a 28GB model against the 16GB production threshold.
+    monkeypatch.setattr(svc_mod, "_GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES", 1024)
+
+    service = DPOService.__new__(DPOService)
+    service._resolve_model_path = lambda mid: "/fake/model"
+    service._push_event = lambda *a, **k: None
+    service._persist_jobs = lambda: None
+
+    cfg = DPOConfig(method="dpo", iters=1, lora_layers=0)
+    assert cfg.gradient_checkpointing is False
+    job = DPOJob(
+        job_id="gc-auto",
+        model_id="m1",
+        preference_pairs=_PAIRS,
+        config=cfg,
+        adapter_name="dpo-gc-auto",
+        adapter_path=str(tmp_path / "dpo-gc-auto"),
+    )
+    service._execute_dpo(job)
+    assert (
+        cfg.gradient_checkpointing is True
+    ), "#1469: auto-enable must fire for a model over the threshold"
+    assert "gc_layer" in captured, "#1469: grad_checkpoint must be applied"
+
+
+def test_dpo_execute_no_auto_gc_below_threshold(monkeypatch, tmp_path):
+    # #1469: below the threshold the fast path (no checkpointing) must hold.
+    import fusion_mlx.training.dpo_service as svc_mod
+    from fusion_mlx.training.dpo import DPOStepResult
+
+    captured = {}
+
+    class _SmallModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.small = mx.zeros((8, 8), dtype=mx.float32)
+            self.layers = [nn.Linear(4, 4)]
+
+        def __call__(self, ids):
+            return self.layers[0](mx.zeros((1, 4)))
+
+        def freeze(self):
+            pass
+
+        def parameters(self):
+            return {"small": self.small}
+
+    class _FakeTokenizer:
+        def encode(self, text):
+            return [1, 2, 3, 4]
+
+        def decode(self, ids):
+            return "x"
+
+    def fake_load(path, adapter_path=None):
+        m = _SmallModel()
+        m.eval()
+        return m, _FakeTokenizer()
+
+    class _FakeTrainer:
+        def __init__(self, model, tokenizer, model_path, config):
+            pass
+
+        def train_step(self, batch):
+            return DPOStepResult(loss=0.1, reward_margin=0.2, acc_chosen=0.5)
+
+        def save_adapter(self, path):
+            pass
+
+    monkeypatch.setattr("mlx_lm.utils.load", fake_load)
+    monkeypatch.setattr(
+        "mlx_lm.tuner.utils.linear_to_lora_layers", lambda *a, **k: None
+    )
+    monkeypatch.setattr(svc_mod, "DPOTrainer", _FakeTrainer)
+    monkeypatch.setattr(
+        "mlx_lm.tuner.trainer.grad_checkpoint",
+        lambda layer: captured.setdefault("gc_layer", layer),
+    )
+    monkeypatch.setattr(svc_mod, "_GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES", 1024)
+
+    service = DPOService.__new__(DPOService)
+    service._resolve_model_path = lambda mid: "/fake/model"
+    service._push_event = lambda *a, **k: None
+    service._persist_jobs = lambda: None
+
+    cfg = DPOConfig(method="dpo", iters=1, lora_layers=0)
+    job = DPOJob(
+        job_id="gc-small",
+        model_id="m1",
+        preference_pairs=_PAIRS,
+        config=cfg,
+        adapter_name="dpo-gc-small",
+        adapter_path=str(tmp_path / "dpo-gc-small"),
+    )
+    service._execute_dpo(job)
+    assert (
+        cfg.gradient_checkpointing is False
+    ), "#1469: below-threshold model must stay on the fast path"
+    assert "gc_layer" not in captured
+
+
 def test_dpo_job_init_adapter_path_in_dict():
     cfg = DPOConfig(init_adapter_path="/saves/bnup-sft")
     job = DPOJob(
