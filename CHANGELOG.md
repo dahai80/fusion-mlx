@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.35] - 2026-10-31
 
 ### Fixed
 - **In-process trainers never call `model.train()` — hybrid linear-attn
