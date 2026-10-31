@@ -701,6 +701,10 @@ class MLXEmbeddingModel:
 
 
 class EmbeddingEngine(BaseNonStreamingEngine):
+    # #1468: load/teardown/embed run on the dedicated "embed" executor so a
+    # wedged llm-side eval can't starve embeddings until a restart.
+    _mlx_executor_name = "embed"
+
     def __init__(
         self,
         model_name: str,
@@ -742,7 +746,10 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         )
         loop = asyncio.get_running_loop()
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), self._model.load), timeout=120.0
+            loop.run_in_executor(
+                get_executor(self._mlx_executor_name), self._model.load
+            ),
+            timeout=120.0,
         )
 
     async def stop(self) -> None:
@@ -754,7 +761,9 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         from ..scheduler.helpers import _safe_clear_cache_for_non_llm
 
         await asyncio.wait_for(
-            loop.run_in_executor(get_executor("llm"), _safe_clear_cache_for_non_llm),
+            loop.run_in_executor(
+                get_executor(self._mlx_executor_name), _safe_clear_cache_for_non_llm
+            ),
             timeout=5.0,
         )
 
@@ -793,7 +802,9 @@ class EmbeddingEngine(BaseNonStreamingEngine):
 
                 try:
                     output = await asyncio.wait_for(
-                        loop.run_in_executor(get_executor("llm"), _embed_sync),
+                        loop.run_in_executor(
+                            get_executor(self._mlx_executor_name), _embed_sync
+                        ),
                         timeout=30.0,
                     )
                 except TimeoutError:
