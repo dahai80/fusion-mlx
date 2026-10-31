@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **27B DPO still OOMs with checkpointing alone — auto-enable the resident
+  reference too (#1469 follow-up, #1472)**: the #1469 auto-checkpoint fix
+  was verified insufficient on prod — a 27B-8bit E2E job with gradient
+  checkpointing ON still drove wired memory to 147.5GB over the 120GB
+  ceiling, because the per-pair reference load-and-evict (#1472's churn
+  pattern) churns same-size Metal allocations faster than the allocator
+  reuses them. `_execute_dpo` now auto-enables BOTH
+  `gradient_checkpointing` and `keep_ref_resident` for models ≥16GB param
+  bytes; either stays caller-controlled when set explicitly. Log lines
+  `auto-enabling gradient checkpointing` and `auto-enabling resident
+  reference model` confirm each override.
+
 ## [0.10.36] - 2026-11-01
 
 ### Fixed

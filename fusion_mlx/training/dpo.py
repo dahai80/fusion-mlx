@@ -18,6 +18,7 @@ User verbatim instruction: "启动3个功能issue的修复落地"
 
 from __future__ import annotations
 
+import gc
 import logging
 from dataclasses import dataclass
 
@@ -153,16 +154,12 @@ class DPOTrainer:
             if self._ref_model is None:
                 import mlx_lm.utils as mlx_utils
 
-                self._ref_model, _ = mlx_utils.load(
-                    self.model_path, adapter_path=None
-                )
+                self._ref_model, _ = mlx_utils.load(self.model_path, adapter_path=None)
                 logger.info(
                     "%s: resident reference model loaded (#1472)",
                     self.config.method.upper(),
                 )
-            ref_w = self._ref_logprob(
-                prompt_ids, chosen_ids, ref_model=self._ref_model
-            )
+            ref_w = self._ref_logprob(prompt_ids, chosen_ids, ref_model=self._ref_model)
             ref_l = self._ref_logprob(
                 prompt_ids, rejected_ids, ref_model=self._ref_model
             )

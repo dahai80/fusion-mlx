@@ -340,6 +340,9 @@ def test_dpo_execute_auto_enables_grad_checkpointing_for_big_model(
         def save_adapter(self, path):
             pass
 
+        def close(self):
+            pass
+
     monkeypatch.setattr("mlx_lm.utils.load", fake_load)
     monkeypatch.setattr(
         "mlx_lm.tuner.utils.linear_to_lora_layers", lambda *a, **k: None
@@ -373,6 +376,9 @@ def test_dpo_execute_auto_enables_grad_checkpointing_for_big_model(
         cfg.gradient_checkpointing is True
     ), "#1469: auto-enable must fire for a model over the threshold"
     assert "gc_layer" in captured, "#1469: grad_checkpoint must be applied"
+    assert (
+        cfg.keep_ref_resident is True
+    ), "#1472: auto-enable must also keep the reference model resident"
 
 
 def test_dpo_execute_no_auto_gc_below_threshold(monkeypatch, tmp_path):
@@ -419,6 +425,9 @@ def test_dpo_execute_no_auto_gc_below_threshold(monkeypatch, tmp_path):
         def save_adapter(self, path):
             pass
 
+        def close(self):
+            pass
+
     monkeypatch.setattr("mlx_lm.utils.load", fake_load)
     monkeypatch.setattr(
         "mlx_lm.tuner.utils.linear_to_lora_layers", lambda *a, **k: None
@@ -449,6 +458,7 @@ def test_dpo_execute_no_auto_gc_below_threshold(monkeypatch, tmp_path):
         cfg.gradient_checkpointing is False
     ), "#1469: below-threshold model must stay on the fast path"
     assert "gc_layer" not in captured
+    assert cfg.keep_ref_resident is False, "#1472: small model keeps load-and-evict"
 
 
 def test_dpo_job_init_adapter_path_in_dict():
