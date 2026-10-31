@@ -270,3 +270,58 @@ class TestSubprocessMediaReservationRelease:
         enf.unregister_media_reservation.assert_called_once()
         sma.assert_called_with(False)
         engine._finish_activity.assert_awaited_once_with("act-2")
+
+
+class TestResolveWeightBytes:
+    # #1458: diffusers-layout repos (FLUX etc.) have no root config.json —
+    # resolution must also probe model_index.json so weight bytes resolve
+    # instead of falling to the lease fallback.
+    def test_resolves_via_config_json(self, tmp_path):
+        from fusion_mlx.engines.image_gen import _resolve_weight_bytes
+
+        snapshot = tmp_path / "snap"
+        snapshot.mkdir()
+        (snapshot / "config.json").write_text("{}")
+        (snapshot / "model.safetensors").write_bytes(b"\x00" * 4096)
+        with patch(
+            "fusion_mlx.engines.image_gen.try_to_load_from_cache",
+            create=True,
+        ):
+            # Direct-dir path — no HF cache involved.
+            assert _resolve_weight_bytes(str(snapshot)) >= 4096
+
+    def test_resolves_via_model_index_json_when_no_config(self, tmp_path):
+        import sys
+        import types
+
+        from fusion_mlx.engines.image_gen import _resolve_weight_bytes
+
+        snapshot = tmp_path / "snap"
+        snapshot.mkdir()
+        (snapshot / "model_index.json").write_text("{}")
+        (snapshot / "model.safetensors").write_bytes(b"\x00" * 4096)
+        calls = []
+
+        def fake_try_load(repo_id, filename):
+            calls.append(filename)
+            if filename == "config.json":
+                return None
+            return str(snapshot / filename)
+
+        fake_hub = types.ModuleType("huggingface_hub")
+        fake_hub.try_to_load_from_cache = fake_try_load
+        with patch.dict(sys.modules, {"huggingface_hub": fake_hub}):
+            result = _resolve_weight_bytes("black-forest-labs/FLUX.1-schnell")
+        assert calls == ["config.json", "model_index.json"]
+        assert result >= 4096, "model_index.json probe must resolve diffusers layouts"
+
+    def test_returns_zero_when_neither_probe_hits(self):
+        import sys
+        import types
+
+        from fusion_mlx.engines.image_gen import _resolve_weight_bytes
+
+        fake_hub = types.ModuleType("huggingface_hub")
+        fake_hub.try_to_load_from_cache = lambda repo_id, filename: None
+        with patch.dict(sys.modules, {"huggingface_hub": fake_hub}):
+            assert _resolve_weight_bytes("no/such-repo") == 0

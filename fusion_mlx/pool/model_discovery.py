@@ -1174,6 +1174,7 @@ def estimate_model_size(model_path: Path) -> int:
     # trips the memory guard 507. Dedup the pair, keeping the larger for a
     # worst-case admission (dev bf16 42GB > distilled q8 38GB typically).
     candidates = _dedup_ltx2_5_alternatives(model_path, candidates)
+    candidates = _dedup_dual_layout_transformer(model_path, candidates)
 
     total_size = sum(sz for _, sz in candidates)
 
@@ -1181,6 +1182,45 @@ def estimate_model_size(model_path: Path) -> int:
     overhead_factor = 1.05
 
     return int(total_size * overhead_factor)
+
+
+def _dedup_dual_layout_transformer(
+    model_path: Path, candidates: list[tuple[Path, int]]
+) -> list[tuple[Path, int]]:
+    # #1458: official FLUX repos ship BOTH layouts — a root single-file
+    # transformer (flux1-schnell.safetensors) AND the diffusers transformer/
+    # subdir shards of the same weights. The root-glob + subdir-merge in
+    # estimate_model_size summed both (~57.8GB for a ~34GB model), which
+    # inflated the image admission budget to 507-rejecting levels AND the
+    # pool's tracked _current_model_memory via entry.estimated_size. Treat a
+    # root-level big single file whose size matches the transformer/ subdir
+    # total (within 10%) as a duplicate of the subdir and count it once.
+    transformer_dir = model_path / "transformer"
+    if not transformer_dir.is_dir():
+        return candidates
+    subdir_total = 0
+    for p, sz in candidates:
+        if transformer_dir in p.parents:
+            subdir_total += sz
+    if subdir_total < 1024**3:
+        return candidates
+    dropped = []
+    for p, sz in candidates:
+        if p.parent != model_path or sz < 1024**3:
+            continue
+        if abs(sz - subdir_total) <= 0.10 * max(sz, subdir_total):
+            dropped.append((p, sz))
+    if not dropped:
+        return candidates
+    dropped_names = {p.name for p, _ in dropped}
+    logger.info(
+        "estimate_model_size: dual-layout transformer dedup — root single-file "
+        "%s (%d B) duplicates transformer/ subdir total (%d B); counting once (#1458)",
+        ",".join(sorted(dropped_names)),
+        sum(sz for _, sz in dropped),
+        subdir_total,
+    )
+    return [(p, sz) for p, sz in candidates if p.name not in dropped_names]
 
 
 def _dedup_ltx2_5_alternatives(

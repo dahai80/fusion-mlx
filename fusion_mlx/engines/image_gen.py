@@ -427,16 +427,22 @@ def _resolve_weight_bytes(model_path: str) -> int:
     if p.is_dir():
         candidate = p
     else:
-        # Resolve HF repo id → local snapshot dir.
+        # Resolve HF repo id → local snapshot dir. Probe config.json first
+        # (MLX/LLM layout); diffusers-layout repos (FLUX etc.) have no root
+        # config.json but always ship model_index.json — probe it too so the
+        # resolution does not fall to the 60%-of-available lease fallback
+        # (#1458).
         try:
             from huggingface_hub import try_to_load_from_cache
 
-            cached = try_to_load_from_cache(
-                repo_id=str(model_path), filename="config.json"
-            )
-            if not cached or not isinstance(cached, str):
+            candidate = None
+            for probe in ("config.json", "model_index.json"):
+                cached = try_to_load_from_cache(repo_id=str(model_path), filename=probe)
+                if cached and isinstance(cached, str):
+                    candidate = Path(cached).parent
+                    break
+            if candidate is None:
                 return 0
-            candidate = Path(cached).parent
         except Exception:  # noqa: BLE001
             return 0
     try:
@@ -919,8 +925,23 @@ class ImageGenEngine(BaseNonStreamingEngine):
                 required = weight_bytes + activation
             else:
                 from ..media.job_manager import MediaJobManager
+                from ..pool.model_discovery import format_size
 
-                required = MediaJobManager()._compute_lease_bytes()
+                lease = MediaJobManager()._compute_lease_bytes()
+                # Fail visibly (#1458): an unresolved weight path means this
+                # job is charged the generic lease (60% of available RAM,
+                # cap 32GB) instead of its real weight size — small jobs
+                # get massively overcharged and can spuriously 507.
+                logger.warning(
+                    "image admission: weight bytes unresolved for '%s' "
+                    "(path=%s); falling back to lease estimate %s + "
+                    "activation %s — admission is intentionally conservative",
+                    self._model_name,
+                    self._model_path,
+                    format_size(lease),
+                    format_size(activation),
+                )
+                required = lease
         else:
             required = _estimate_activation_peak(
                 width,
