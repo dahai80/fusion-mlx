@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **In-process trainers never call `model.train()` — hybrid linear-attn
+  backwards fail (#1463)**: DPO/ORPO, GRPO, reward-model, and RFT services
+  load + freeze + build LoRA but never flip the module train flag, so
+  `qwen3_5`/`qwen3_next` models routed `gated_delta_update` through the
+  no-vjp Metal kernel and the first backward raised `[Primitive::vjp] Not
+  implemented for CustomKernel`. All four services now call `model.train()`
+  after `linear_to_lora_layers` (train flag only — MLX freeze is separate,
+  frozen-base + LoRA-trainable semantics unchanged). Real-model E2E: DPO on
+  Qwen3.5-4B (model_type `qwen3_5`) completes gradient steps that previously
+  failed on step 1.
+
 ## [0.10.34] - 2026-10-31
 
 ### Fixed
