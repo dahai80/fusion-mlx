@@ -18,6 +18,7 @@ User verbatim instruction: "启动3个功能issue的修复落地"
 
 from __future__ import annotations
 
+import gc
 import logging
 from dataclasses import dataclass
 
