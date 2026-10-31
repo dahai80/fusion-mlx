@@ -1,5 +1,30 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Guard mode: SIGTERM deferral while jobs are in flight (#1456)**: new
+  `--guard-mode` serve flag (env `FUSION_MLX_GUARD_MODE=1`, window
+  `FUSION_MLX_GUARD_MAX_DEFER_SEC`, default 900s, drain poll 2s). With guard
+  mode on, a SIGTERM that arrives while any engine has active requests no
+  longer kills live work: shutdown defers until the work drains or the
+  window expires, then re-delivers SIGTERM through the normal graceful
+  path. A second SIGTERM during deferral is the operator override and
+  shuts down immediately. SIGINT never defers. The 2026-10-30 incident
+  (fusion-supervisor stop-all wave killing a 25-minute render batch) is the
+  motivating case; an external stopper like `start.sh stop` still SIGKILLs
+  after its own 45s grace window, which the deferral log states explicitly.
+  Busy state comes from a probe registry in `_parent_watchdog`
+  (`register_busy_probe`); the server lifespan registers
+  `EnginePool.any_active_requests()` as the `engine_pool` probe.
+
+### Fixed
+- **SIGTERM attribution no longer misreports ppid as the sender (#1456)**:
+  the `#1256` log line read `received SIGTERM from ppid=1`, but a reparented
+  process reports `ppid=1` no matter who signalled it — the real sender was
+  fusion-supervisor's `start.sh stop`. The log now says the sender is
+  unknown and ppid is context only.
+
 ## [0.10.30] - 2026-10-30
 
 ### Fixed

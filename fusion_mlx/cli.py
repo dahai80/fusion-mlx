@@ -282,6 +282,18 @@ Examples:
         ),
     )
     serve_parser.add_argument(
+        "--guard-mode",
+        action="store_true",
+        default=False,
+        help=(
+            "Defer SIGTERM shutdown while requests are in flight, until "
+            "they drain or the max defer window passes (default 900s; "
+            "also: FUSION_MLX_GUARD_MODE=1, "
+            "FUSION_MLX_GUARD_MAX_DEFER_SEC). A second SIGTERM overrides "
+            "and shuts down immediately (#1456)."
+        ),
+    )
+    serve_parser.add_argument(
         "--max-num-seqs", type=int, default=256, help="Max concurrent sequences"
     )
     serve_parser.add_argument(

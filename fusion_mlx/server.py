@@ -1999,14 +1999,31 @@ class Server:
             clear_crash_counter,
             install_signal_handlers,
             record_crash,
+            register_busy_probe,
             remove_pid_file,
             stop_watchdog,
+            unregister_busy_probe,
             write_exit_status,
             write_pid_file,
             write_status,
         )
 
         install_signal_handlers()
+
+        # #1456 guard mode: pool busy probe for SIGTERM deferral. Registered
+        # for the whole lifespan; the pool is up after _startup().
+        def _pool_busy_probe() -> bool:
+            pool = getattr(self, "pool", None)
+            if pool is None:
+                return False
+            try:
+                return pool.any_active_requests()
+            except Exception:
+                logger.debug("pool busy probe failed", exc_info=True)
+                return True
+
+        register_busy_probe("engine_pool", _pool_busy_probe)
+
         # ENG-04: pass the port so the PID file is port-suffixed
         # (server.{port}.pid) for multi-instance safety.
         write_pid_file(port=self.config.port)
@@ -2036,6 +2053,7 @@ class Server:
             write_exit_status("crash")
             raise
         finally:
+            unregister_busy_probe("engine_pool")
             from .server_metrics import get_server_metrics
 
             # ENG-12 (#0909 audit): wrap flush_alltime in try/except so a
