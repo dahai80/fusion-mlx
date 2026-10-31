@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.36] - 2026-11-01
 
 ### Fixed
 - **DPO on large models OOMs the server without gradient checkpointing
