@@ -384,6 +384,13 @@ class DPOService:
         linear_to_lora_layers(model, cfg.lora_layers, lora_params, use_dora=False)
         if cfg.init_adapter_path:
             _chain_adapter_weights(model, cfg)
+        # #1463: hybrid linear-attention models (qwen3_5/qwen3_next) gate
+        # gated_delta_update on the module training flag — eval mode routes
+        # the forward through the no-vjp metal kernel and the first backward
+        # raises "[Primitive::vjp] Not implemented for CustomKernel".
+        # model.train() only flips the flag; MLX freeze is separate, so
+        # frozen-base + LoRA-trainable semantics are unchanged.
+        model.train()
         if cfg.gradient_checkpointing:
             # #1460: same mechanism as the SFT path (mlx_lm tuner
             # grad_checkpoint) — patch the transformer block __call__ with

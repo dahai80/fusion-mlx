@@ -345,6 +345,9 @@ class GRPOService:
             "scale": cfg.lora_alpha,
         }
         linear_to_lora_layers(model, cfg.lora_layers, lora_params, use_dora=False)
+        # #1463: route hybrid linear-attn (qwen3_5/qwen3_next) forwards
+        # through the differentiable ops path — see dpo_service note.
+        model.train()
 
         trainer = GRPOTrainer(model, tokenizer, model_path, cfg)
 
