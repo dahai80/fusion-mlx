@@ -239,7 +239,10 @@ def test_dpo_execute_enables_grad_checkpointing(monkeypatch, tmp_path):
             return "x"
 
     def fake_load(path, adapter_path=None):
-        return _FakeModel(), _FakeTokenizer()
+        m = _FakeModel()
+        m.eval()
+        captured["model"] = m
+        return m, _FakeTokenizer()
 
     class _FakeTrainer:
         def __init__(self, model, tokenizer, model_path, config):
@@ -276,6 +279,9 @@ def test_dpo_execute_enables_grad_checkpointing(monkeypatch, tmp_path):
         adapter_path=str(tmp_path / "dpo-gc"),
     )
     service._execute_dpo(job)
+    # #1463: the service must flip the model to train mode after building
+    # LoRA (hybrid linear-attn kernels gate on the flag).
+    assert captured["model"].training is True, "#1463: model.train() not called"
     assert "gc_layer" in captured, "#1460: grad_checkpoint must be applied"
 
 
@@ -572,3 +578,39 @@ def test_dpo_execute_no_init_adapter_backward_compat(monkeypatch, tmp_path):
     assert (
         captured["adapter_path"] is None
     ), f"empty init_adapter_path must yield None, got {captured['adapter_path']}"
+
+
+def test_inprocess_trainers_set_train_mode_1463():
+    # #1463: all in-process training services must call model.train() after
+    # linear_to_lora_layers — hybrid linear-attn models (qwen3_5/qwen3_next)
+    # route gated_delta_update through the no-vjp metal kernel in eval mode
+    # and the first backward raises "[Primitive::vjp] Not implemented for
+    # CustomKernel". Pins the contract on every service in one place.
+    import inspect
+
+    import fusion_mlx.training.dpo_service as dpo_mod
+    import fusion_mlx.training.grpo_service as grpo_mod
+    import fusion_mlx.training.reward_service as reward_mod
+    import fusion_mlx.training.rft_service as rft_mod
+
+    cases = [
+        (dpo_mod.DPOService, "_execute_dpo"),
+        (grpo_mod.GRPOService, "_run_grpo"),
+        (reward_mod.RewardService, "_execute_reward"),
+        (rft_mod.RFTService, "_run_rft"),
+    ]
+    for svc, method_name in cases:
+        fn = getattr(svc, method_name, None)
+        assert fn is not None, f"{svc.__name__}.{method_name} missing"
+        src = inspect.getsource(fn)
+        lora_idx = src.find("linear_to_lora_layers(")
+        train_idx = src.find("model.train()")
+        assert lora_idx != -1, f"{svc.__name__}.{method_name}: no lora build"
+        assert train_idx != -1, (
+            f"{svc.__name__}.{method_name}: no model.train() — hybrid "
+            "linear-attn backwards will hit the no-vjp CustomKernel (#1463)"
+        )
+        assert train_idx > lora_idx, (
+            f"{svc.__name__}.{method_name}: model.train() must come after "
+            "linear_to_lora_layers (#1463)"
+        )
