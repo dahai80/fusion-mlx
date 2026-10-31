@@ -791,9 +791,21 @@ class EmbeddingEngine(BaseNonStreamingEngine):
                         truncation=truncation,
                     )
 
-                output = await asyncio.wait_for(
-                    loop.run_in_executor(get_executor("llm"), _embed_sync), timeout=30.0
-                )
+                try:
+                    output = await asyncio.wait_for(
+                        loop.run_in_executor(get_executor("llm"), _embed_sync),
+                        timeout=30.0,
+                    )
+                except TimeoutError:
+                    logger.error(
+                        "Embedding batch timed out after 30s: model=%s batch=%d "
+                        "texts max_length=%d — executor contention or slow batch; "
+                        "cancelling request (client should retry)",
+                        self._model_name,
+                        len(batch),
+                        max_length,
+                    )
+                    raise
                 embeddings.extend(output.embeddings)
                 mx.synchronize()
                 mx.clear_cache()
