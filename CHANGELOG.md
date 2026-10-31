@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Embedding batch timeout surfaces as a retryable 504, not a 500**: when the
+  30s per-batch cap in `EmbeddingEngine.embed` fires (e.g. a heavy in-process
+  training job saturates the GPU), the raw `TimeoutError` fell through to the
+  unhandled-exception handler — clients got a 500 with no hint to retry, and
+  the server log had a full traceback but no line naming the model, batch
+  size, or timeout. The route now maps it to 504 with a retry hint, and the
+  engine logs the timed-out batch (model, batch size, max_length) before
+  re-raising.
+
 ## [0.10.34] - 2026-10-31
 
 ### Fixed

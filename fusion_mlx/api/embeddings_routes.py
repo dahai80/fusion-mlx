@@ -290,6 +290,24 @@ async def create_embeddings(request: EmbeddingRequest):
             tokens = output.total_tokens
     except (ValueError, TypeError) as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except TimeoutError as e:
+        # Per-batch 30s cap in EmbeddingEngine.embed — hit when the GPU is
+        # saturated (e.g. a heavy training job is resident) or the batch is
+        # oversized. 504 (not 500) so callers know it is retryable.
+        logger.error(
+            "Embedding batch timed out after 30s (model=%s, inputs=%d, "
+            "max_length=%d) — GPU contention or oversized batch; retry later",
+            request.model,
+            len(embedding_inputs),
+            max_length,
+        )
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                "Embedding batch timed out (30s per batch). The server is "
+                "likely under heavy GPU load; retry the request later."
+            ),
+        ) from e
 
     elapsed = time.perf_counter() - start_time
     logger.info(
