@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+- **start.sh reads `image_load_timeout_s` from settings.json**: optional key
+  `{"image_load_timeout_s": 300}` seeds the #1332 image worker load-hang
+  fast-fail window (`FUSION_IMAGE_LOAD_TIMEOUT`, default 120s). Cold image
+  model loads under heavy co-resident LLM load can legitimately exceed 120s;
+  env var still wins.
+
 ## [0.10.31] - 2026-10-31
 
 ### Added

@@ -270,6 +270,14 @@ preflight() {
         gen_to=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('generate_timeout_s',''))" 2>/dev/null || echo "")
         [[ -n "${gen_to}" ]] && export FUSION_MLX_GENERATE_TIMEOUT_S="${gen_to}"
     fi
+    # #1332: image worker load-hang fast-fail window (default 120s). A cold
+    # image model load under heavy co-resident LLM load can legitimately
+    # exceed 120s on this box. Optional settings.json key
+    # {"image_load_timeout_s": 300}; env var wins. <= 0 disables the window.
+    if [[ -z "${FUSION_IMAGE_LOAD_TIMEOUT:-}" && -f "${SETTINGS:-}" ]]; then
+        img_lt=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('image_load_timeout_s',''))" 2>/dev/null || echo "")
+        [[ -n "${img_lt}" ]] && export FUSION_IMAGE_LOAD_TIMEOUT="${img_lt}"
+    fi
 
     # SSD reconstruct cap — with the #1286 batch-eval tiered store,
     # reconstruct (~11k tok/s) beats re-prefill (~175 tok/s) by ~65x, so the
