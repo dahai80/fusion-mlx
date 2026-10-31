@@ -127,6 +127,74 @@ class TestEstimateModelSize:
         # 4K * 1.05 = 4200, nothing dropped.
         assert 4000 <= result <= 4400
 
+    @staticmethod
+    def _sparse(p, size):
+        with open(p, "wb") as f:
+            f.truncate(size)
+
+    def test_dual_layout_dedup_counts_transformer_once(self, tmp_path):
+        # #1458: FLUX.1-schnell snapshot ships BOTH a root single-file
+        # transformer AND the diffusers transformer/ shards of the same
+        # weights. Root file within 10% of subdir total -> counted once.
+        gb = 1024**3
+        model_dir = tmp_path / "flux-schnell"
+        model_dir.mkdir()
+        (model_dir / "model_index.json").write_text("{}")
+        self._sparse(model_dir / "flux1-schnell.safetensors", int(2.4 * gb))
+        self._sparse(model_dir / "ae.safetensors", 100 * 1024**2)
+        tdir = model_dir / "transformer"
+        tdir.mkdir()
+        self._sparse(
+            tdir / "diffusion_pytorch_model-00001-of-00002.safetensors", int(1.1 * gb)
+        )
+        self._sparse(
+            tdir / "diffusion_pytorch_model-00002-of-00002.safetensors", int(1.2 * gb)
+        )
+        result = estimate_model_size(model_dir)
+        # Root 2.4GB dropped; (2.3GB subdir + 0.1GB ae) * 1.05 = 2.52GB.
+        expected = (int(1.1 * gb) + int(1.2 * gb) + 100 * 1024**2) * 1.05
+        assert (
+            abs(result - expected) <= 0.01 * expected
+        ), f"got {result} (expected ~{expected:.0f}, root single-file must be deduped)"
+
+    def test_dual_layout_no_dedup_when_size_mismatch(self, tmp_path):
+        # Root single-file NOT within 10% of transformer/ total -> both real,
+        # both counted.
+        gb = 1024**3
+        model_dir = tmp_path / "mismatch"
+        model_dir.mkdir()
+        self._sparse(model_dir / "big-root.safetensors", int(2.4 * gb))
+        tdir = model_dir / "transformer"
+        tdir.mkdir()
+        self._sparse(tdir / "shard.safetensors", int(1.2 * gb))
+        result = estimate_model_size(model_dir)
+        expected = (int(2.4 * gb) + int(1.2 * gb)) * 1.05
+        assert (
+            abs(result - expected) <= 0.01 * expected
+        ), f"got {result} (expected ~{expected:.0f}, mismatched sizes must both count)"
+
+    def test_dual_layout_no_dedup_when_root_small(self, tmp_path):
+        # Root file below 1GB never deduped even if it matches subdir total —
+        # could be a genuinely different component.
+        gb = 1024**3
+        model_dir = tmp_path / "small-root"
+        model_dir.mkdir()
+        self._sparse(model_dir / "extra.safetensors", 100 * 1024**2)
+        tdir = model_dir / "transformer"
+        tdir.mkdir()
+        self._sparse(tdir / "shard.safetensors", int(1.5 * gb))
+        result = estimate_model_size(model_dir)
+        expected = (100 * 1024**2 + int(1.5 * gb)) * 1.05
+        assert abs(result - expected) <= 0.01 * expected
+
+    def test_dual_layout_no_dedup_without_subdir(self, tmp_path):
+        # No transformer/ subdir -> nothing to dedup against.
+        model_dir = tmp_path / "flat-only"
+        model_dir.mkdir()
+        (model_dir / "model.safetensors").write_bytes(b"\x00" * 2048)
+        result = estimate_model_size(model_dir)
+        assert 2000 <= result <= 2300
+
     def test_h3_multicomponent_lora_not_counted(self, tmp_path):
         # H3 ddalcu 4bit: root has turbo_lora.safetensors (0.78GB) + subdir
         # weights (transformer/ + text_encoder/ + video_vae/ + audio_vae/).

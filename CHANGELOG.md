@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Image admission 507 on dual-layout repos (#1458)**: official FLUX
+  snapshots ship BOTH a root single-file transformer and the diffusers
+  `transformer/` shards of the same weights; `estimate_model_size` summed
+  both (~57.8GB for a ~34GB model), inflating the image admission budget
+  and the pool's tracked resident memory to 507-rejecting levels. A root
+  single-file ≥1GB whose size matches the `transformer/` subdir total
+  within 10% is now counted once. `_resolve_weight_bytes` additionally
+  probes `model_index.json` so diffusers-layout repos resolve real weight
+  bytes instead of falling to the generic 32GB lease, and the lease
+  fallback now logs a visible warning.
+
 ### Changed
 - **start.sh reads `image_load_timeout_s` from settings.json**: optional key
   `{"image_load_timeout_s": 300}` seeds the #1332 image worker load-hang
