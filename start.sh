@@ -282,6 +282,18 @@ preflight() {
         [[ -n "${ssd_cap}" ]] && export FUSION_MLX_SSD_RECONSTRUCT_MAX_TOKENS="${ssd_cap}"
     fi
 
+    # #1456: guard mode — defer SIGTERM while jobs are in flight. Optional
+    # settings.json block {"guard_mode": {"enabled": true, "max_defer_sec": 900}};
+    # env vars win. Absent/false = off.
+    if [[ -z "${FUSION_MLX_GUARD_MODE:-}" && -f "${SETTINGS:-}" ]]; then
+        gm=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); g=d.get('guard_mode',{}); print('1' if (g.get('enabled') if isinstance(g,dict) else g) else '')" 2>/dev/null || echo "")
+        [[ -n "${gm}" ]] && export FUSION_MLX_GUARD_MODE="${gm}"
+    fi
+    if [[ -z "${FUSION_MLX_GUARD_MAX_DEFER_SEC:-}" && -f "${SETTINGS:-}" ]]; then
+        gmd=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('guard_mode',{}).get('max_defer_sec','') if isinstance(d.get('guard_mode'),dict) else '')" 2>/dev/null || echo "")
+        [[ -n "${gmd}" ]] && export FUSION_MLX_GUARD_MAX_DEFER_SEC="${gmd}"
+    fi
+
     # #398: start.sh is the standalone launcher (loopback, no gateway
     # injecting X-Fusion-Route). Default to route-guard warn-only so
     # local /v1/* calls are not rejected. Gateway deployments inject the
