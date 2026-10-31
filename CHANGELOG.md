@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.37] - 2026-11-01
 
 ### Fixed
 - **27B DPO still OOMs with checkpointing alone — auto-enable the resident
