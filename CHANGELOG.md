@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.34] - 2026-10-31
+
+### Fixed
+- **Admission gate boot log surfaces the env-effective safety line (#1459
+  follow-up)**: `configure()` logged only the `MemoryConfig` default
+  (`line=0.85`) while the env override (now mapped from settings.json by
+  start.sh) wins per-request — the boot line now appends
+  `(effective=0.99 via FUSION_MLX_HEAVY_ADMISSION_LINE)` when set.
+
 ## [0.10.33] - 2026-10-31
 
 ### Fixed
