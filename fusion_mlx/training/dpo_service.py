@@ -39,6 +39,59 @@ from fusion_mlx.training.service import (
 logger = logging.getLogger(__name__)
 
 
+def _chain_adapter_weights(model, cfg: DPOConfig):
+    # #1461: chaining must NOT go through mlx_utils.load(adapter_path=...) —
+    # that re-applies linear_to_lora_layers from the saved adapter_config.json
+    # and double-applies on the tree we just built ("Can't convert layer of
+    # type LoRALinear to LoRA"). The layers are already built by this run's
+    # cfg; load only the weights (same convention as
+    # service._resume_adapter_weights, #1182).
+    resume_dir = Path(cfg.init_adapter_path)
+    resume_file = resume_dir / "adapters.safetensors"
+    if not resume_file.exists():
+        raise ValueError(
+            f"init_adapter_path has no adapters.safetensors: "
+            f"{resume_file} (issue #1461)"
+        )
+    config_file = resume_dir / "adapter_config.json"
+    if config_file.exists():
+        try:
+            saved = json.loads(config_file.read_text())
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                f"init_adapter_path adapter_config.json unreadable: "
+                f"{config_file} ({exc}) (issue #1461)"
+            ) from exc
+        saved_rank = (saved.get("lora_parameters") or {}).get("rank")
+        if saved_rank is not None and int(saved_rank) != int(cfg.lora_rank):
+            # strict=False loads nothing on a rank mismatch and trains from
+            # fresh LoRA silently — reject loudly instead (issue #1461).
+            raise ValueError(
+                f"init_adapter_path adapter rank {saved_rank} != cfg.lora_rank "
+                f"{cfg.lora_rank} ({resume_dir}) — a mismatch silently trains "
+                "from fresh LoRA (issue #1461)"
+            )
+        saved_layers = saved.get("num_layers")
+        if saved_layers is not None and int(saved_layers) != int(cfg.lora_layers):
+            raise ValueError(
+                f"init_adapter_path adapter num_layers {saved_layers} != "
+                f"cfg.lora_layers {cfg.lora_layers} ({resume_dir}) — a "
+                "mismatch loads only part of the adapter (issue #1461)"
+            )
+    else:
+        logger.warning(
+            "init_adapter_path has no adapter_config.json (%s) — cannot "
+            "validate rank/layers against cfg; loading weights as-is (#1461)",
+            resume_dir,
+        )
+    model.load_weights(str(resume_file), strict=False)
+    logger.info(
+        "%s: chained adapter weights from %s (#1461)",
+        cfg.method.upper(),
+        cfg.init_adapter_path,
+    )
+
+
 @dataclass
 class DPOJob:
     job_id: str
@@ -313,9 +366,13 @@ class DPOService:
                 cfg.init_adapter_path,
             )
 
-        model, tokenizer = mlx_utils.load(
-            model_path, adapter_path=cfg.init_adapter_path or None
-        )
+        # #1461: load the BASE model — not the adapter. The old
+        # mlx_utils.load(..., adapter_path=cfg.init_adapter_path) returned a
+        # tree with LoRA layers already built, and the
+        # linear_to_lora_layers call below then double-applied ("Can't
+        # convert layer of type LoRALinear to LoRA"). Chained weights are
+        # loaded into the freshly-built LoRA tree by _chain_adapter_weights.
+        model, tokenizer = mlx_utils.load(model_path)
 
         mx.random.seed(cfg.seed)
         model.freeze()
@@ -325,6 +382,18 @@ class DPOService:
             "scale": cfg.lora_alpha,
         }
         linear_to_lora_layers(model, cfg.lora_layers, lora_params, use_dora=False)
+        if cfg.init_adapter_path:
+            _chain_adapter_weights(model, cfg)
+        if cfg.gradient_checkpointing:
+            # #1460: same mechanism as the SFT path (mlx_lm tuner
+            # grad_checkpoint) — patch the transformer block __call__ with
+            # mx.checkpoint to trade compute for activation memory.
+            from mlx_lm.tuner.trainer import grad_checkpoint
+
+            grad_checkpoint(model.layers[0])
+            logger.info(
+                "%s: gradient checkpointing enabled (#1460)", cfg.method.upper()
+            )
 
         trainer = DPOTrainer(model, tokenizer, model_path, cfg)
 

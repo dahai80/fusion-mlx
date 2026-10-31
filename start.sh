@@ -302,6 +302,15 @@ preflight() {
         [[ -n "${gmd}" ]] && export FUSION_MLX_GUARD_MAX_DEFER_SEC="${gmd}"
     fi
 
+    # #1459: heavy admission safety line — daemon-spawned processes (supervisor/
+    # launchd, env_n=0) can't pass inline env, and settings.json
+    # {"memory": {"heavy_admission_safety_line": 0.99}} was inert with no
+    # mapping here. Env var wins; admission.py clamps 0.5-0.99.
+    if [[ -z "${FUSION_MLX_HEAVY_ADMISSION_LINE:-}" && -f "${SETTINGS:-}" ]]; then
+        hal=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); m=d.get('memory',{}); print(m.get('heavy_admission_safety_line','') if isinstance(m,dict) else '')" 2>/dev/null || echo "")
+        [[ -n "${hal}" ]] && export FUSION_MLX_HEAVY_ADMISSION_LINE="${hal}"
+    fi
+
     # #398: start.sh is the standalone launcher (loopback, no gateway
     # injecting X-Fusion-Route). Default to route-guard warn-only so
     # local /v1/* calls are not rejected. Gateway deployments inject the

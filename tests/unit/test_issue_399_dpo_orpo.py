@@ -10,8 +10,11 @@
 
 from __future__ import annotations
 
+import json
+
 import mlx.core as mx
 import mlx.nn as nn
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -189,6 +192,93 @@ def test_dpo_config_init_adapter_path_roundtrip():
     assert cfg2.init_adapter_path == "/saves/sft-adapter"
 
 
+def test_dpo_config_1460_fields_roundtrip():
+    # #1460: DPOConfig must accept gradient_checkpointing + memory_limit_gb
+    # (parity with FineTuneConfig) — previously TypeError on unknown keys,
+    # so fusion-trainer couldn't pass them through defensively.
+    cfg = DPOConfig(gradient_checkpointing=True, memory_limit_gb=64.0)
+    assert cfg.gradient_checkpointing is True
+    assert cfg.memory_limit_gb == 64.0
+    d = cfg.to_dict()
+    assert d["gradient_checkpointing"] is True
+    assert d["memory_limit_gb"] == 64.0
+    cfg2 = DPOConfig(**d)
+    assert cfg2.gradient_checkpointing is True
+    assert cfg2.memory_limit_gb == 64.0
+
+
+def test_dpo_execute_enables_grad_checkpointing(monkeypatch, tmp_path):
+    # #1460: cfg.gradient_checkpointing=True must reach
+    # mlx_lm.tuner.trainer.grad_checkpoint on the policy model's first layer.
+    import fusion_mlx.training.dpo_service as svc_mod
+    from fusion_mlx.training.dpo import DPOStepResult
+
+    captured = {}
+
+    class _FakeModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed = nn.Embedding(32, 4)
+            self.head = nn.Linear(4, 32)
+            self.layers = [nn.Linear(4, 4)]
+
+        def __call__(self, ids):
+            return self.head(self.embed(ids))
+
+        def freeze(self):
+            pass
+
+        def parameters(self):
+            return []
+
+    class _FakeTokenizer:
+        def encode(self, text):
+            return [ord(c) % 32 for c in text][:4]
+
+        def decode(self, ids):
+            return "x"
+
+    def fake_load(path, adapter_path=None):
+        return _FakeModel(), _FakeTokenizer()
+
+    class _FakeTrainer:
+        def __init__(self, model, tokenizer, model_path, config):
+            pass
+
+        def train_step(self, batch):
+            return DPOStepResult(loss=0.1, reward_margin=0.2, acc_chosen=0.5)
+
+        def save_adapter(self, path):
+            pass
+
+    monkeypatch.setattr("mlx_lm.utils.load", fake_load)
+    monkeypatch.setattr(
+        "mlx_lm.tuner.utils.linear_to_lora_layers", lambda *a, **k: None
+    )
+    monkeypatch.setattr(svc_mod, "DPOTrainer", _FakeTrainer)
+    monkeypatch.setattr(
+        "mlx_lm.tuner.trainer.grad_checkpoint",
+        lambda layer: captured.setdefault("gc_layer", layer),
+    )
+
+    service = DPOService.__new__(DPOService)
+    service._resolve_model_path = lambda mid: "/fake/model"
+    service._push_event = lambda *a, **k: None
+    service._persist_jobs = lambda: None
+
+    cfg = DPOConfig(method="dpo", iters=1, lora_layers=0, gradient_checkpointing=True)
+    job = DPOJob(
+        job_id="gc-test",
+        model_id="m1",
+        preference_pairs=_PAIRS,
+        config=cfg,
+        adapter_name="dpo-gc",
+        adapter_path=str(tmp_path / "dpo-gc"),
+    )
+    service._execute_dpo(job)
+    assert "gc_layer" in captured, "#1460: grad_checkpoint must be applied"
+
+
 def test_dpo_job_init_adapter_path_in_dict():
     cfg = DPOConfig(init_adapter_path="/saves/bnup-sft")
     job = DPOJob(
@@ -278,14 +368,20 @@ def test_orpo_loss_runs_without_ref():
     assert len(margins) == 1
 
 
-def test_dpo_execute_passes_init_adapter_path(monkeypatch, tmp_path):
-    # #1149: _execute_dpo must pass init_adapter_path to mlx_utils.load
-    # for the POLICY model. The reference model (dpo.py _ref_logprob) stays
-    # adapter_path=None — tested by source inspection, not here.
+def test_dpo_execute_chains_adapter_weights_not_double_lora(monkeypatch, tmp_path):
+    # #1461: _execute_dpo must load the BASE model (never pass
+    # adapter_path to mlx_utils.load — that builds LoRA layers from the
+    # saved adapter_config.json and the subsequent linear_to_lora_layers
+    # call double-applies: "Can't convert layer of type LoRALinear to
+    # LoRA"). Chained weights go through model.load_weights(strict=False)
+    # into the freshly-built tree.
     import fusion_mlx.training.dpo_service as svc_mod
     from fusion_mlx.training.dpo import DPOStepResult
 
     captured = {}
+    adapter_dir = tmp_path / "sft-adapter"
+    adapter_dir.mkdir()
+    (adapter_dir / "adapters.safetensors").write_bytes(b"fake-weights")
 
     class _FakeModel(nn.Module):
         def __init__(self):
@@ -301,6 +397,9 @@ def test_dpo_execute_passes_init_adapter_path(monkeypatch, tmp_path):
 
         def parameters(self):
             return []
+
+        def load_weights(self, path, strict=False):
+            captured["load_weights"] = (path, strict)
 
     class _FakeTokenizer:
         def encode(self, text):
@@ -339,7 +438,7 @@ def test_dpo_execute_passes_init_adapter_path(monkeypatch, tmp_path):
         method="dpo",
         iters=1,
         lora_layers=0,
-        init_adapter_path="/saves/bnup-sft",
+        init_adapter_path=str(adapter_dir),
     )
     job = DPOJob(
         job_id="chain-test",
@@ -350,9 +449,59 @@ def test_dpo_execute_passes_init_adapter_path(monkeypatch, tmp_path):
         adapter_path=str(tmp_path / "dpo-chain"),
     )
     service._execute_dpo(job)
-    assert (
-        captured["adapter_path"] == "/saves/bnup-sft"
-    ), f"policy load must pass init_adapter_path, got {captured['adapter_path']}"
+    assert captured["adapter_path"] is None, (
+        f"#1461: policy load must NOT pass adapter_path "
+        f"(double-applies LoRA), got {captured['adapter_path']}"
+    )
+    assert captured["load_weights"][0].endswith("adapters.safetensors")
+    assert captured["load_weights"][1] is False
+
+
+def test_chain_adapter_weights_rank_mismatch_rejected(tmp_path):
+    # #1461: strict=False silently loads nothing on a rank mismatch and
+    # would train from fresh LoRA — must raise instead.
+    import fusion_mlx.training.dpo_service as svc_mod
+
+    adapter_dir = tmp_path / "rank16-adapter"
+    adapter_dir.mkdir()
+    (adapter_dir / "adapters.safetensors").write_bytes(b"fake-weights")
+    (adapter_dir / "adapter_config.json").write_text(
+        json.dumps({"num_layers": 16, "lora_parameters": {"rank": 16}})
+    )
+    cfg = DPOConfig(lora_rank=8, lora_layers=16, init_adapter_path=str(adapter_dir))
+    with pytest.raises(ValueError, match="rank 16 != cfg.lora_rank 8"):
+        svc_mod._chain_adapter_weights(object(), cfg)
+
+
+def test_chain_adapter_weights_missing_file_rejected(tmp_path):
+    import fusion_mlx.training.dpo_service as svc_mod
+
+    cfg = DPOConfig(
+        lora_rank=8,
+        lora_layers=16,
+        init_adapter_path=str(tmp_path / "missing-adapter"),
+    )
+    with pytest.raises(ValueError, match="no adapters.safetensors"):
+        svc_mod._chain_adapter_weights(object(), cfg)
+
+
+def test_chain_adapter_weights_no_config_warns_and_loads(tmp_path):
+    # No adapter_config.json (e.g. foreign adapter) — cannot validate, load
+    # weights as-is with a warning.
+    import fusion_mlx.training.dpo_service as svc_mod
+
+    adapter_dir = tmp_path / "foreign-adapter"
+    adapter_dir.mkdir()
+    (adapter_dir / "adapters.safetensors").write_bytes(b"fake-weights")
+    cfg = DPOConfig(lora_rank=8, lora_layers=16, init_adapter_path=str(adapter_dir))
+
+    class _M:
+        def load_weights(self, path, strict=False):
+            self.loaded = (path, strict)
+
+    m = _M()
+    svc_mod._chain_adapter_weights(m, cfg)
+    assert m.loaded[0].endswith("adapters.safetensors")
 
 
 def test_dpo_execute_no_init_adapter_backward_compat(monkeypatch, tmp_path):
