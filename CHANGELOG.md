@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.32] - 2026-10-31
 
 ### Fixed
 - **Image admission 507 on dual-layout repos (#1458)**: official FLUX
