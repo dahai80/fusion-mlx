@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.38] - 2026-11-01
+
+### Fixed
+- **27B DPO OOM root cause: compile the DPO/ORPO train step (#1469, PR
+  #1475)**: even with gradient checkpointing and a resident reference model
+  engaged (v0.10.37 auto-enables), a Qwen3.8-27B-8bit DPO step at seq 1024
+  still peaked at 178GB wired and the memory_enforcer fatal-exited the
+  engine. Root cause: MLX only streams (allocates+freed per-op) inside
+  `mx.compile` — a bare `nn.value_and_grad` retains every layer's
+  activations through one whole backward eval, and `mx.checkpoint` only
+  relieves the forward. `DPOTrainer.train_step` now runs a compiled step
+  (`mx.compile` over model/optimizer/random state, `optimizer.update`
+  inside — the same pattern as the mlx_lm SFT trainer), with the batch
+  padded to one (P, C) shape plus completion masks so every call traces the
+  same graph. Falls back to the eager path with a loud warning if
+  `mx.compile` is unavailable. Measured on 4B/seq2048: eager 37GB peak,
+  compiled+checkpointing 6.7GB. Prod E2E on 27B-8bit: 3 steps completed in
+  32s (loss 0.720→0.438, chosen-acc 0→1.0), zero enforcer pressure —
+  previously a fatal 178GB exit ~90s in.
+
 ## [0.10.37] - 2026-11-01
 
 ### Fixed
