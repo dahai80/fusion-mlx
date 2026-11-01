@@ -625,6 +625,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # never select a model, parser, or routing tier.
         "FUSION_MLX_QUEUE_WAIT_WARN_S",
         "FUSION_MLX_EXEC_WEDGE_WARN_S",
+        # #1480 item 2b: enable/disable the enforcer's cooperative
+        # training-job abort under sustained pressure
+        # (fusion_mlx/training/abort.py). Pure safety toggle — never
+        # selects a model, parser, or routing tier.
+        "FUSION_MLX_ENFORCER_ABORT_TRAINING",
         # #1192: FD watchdog pressure thresholds (fusion_mlx/fd_watchdog.py).
         # Fractions of RLIMIT_NOFILE deciding when the watchdog warns and
         # when NEW streams are rejected; pure fd-capacity knob (#1192).

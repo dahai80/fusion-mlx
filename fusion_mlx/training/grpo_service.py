@@ -340,11 +340,15 @@ class GRPOService:
         worker_stream = mx.new_thread_local_stream(mx.default_device())
         saved_gen_stream = getattr(_mlx_gen, "generation_stream", None)
         _mlx_gen.generation_stream = worker_stream
+        from .abort import deregister_job, register_job
+
+        register_job(job.job_id, "grpo")
         try:
             with mx.stream(worker_stream):
                 self._run_grpo(job)
         finally:
             _mlx_gen.generation_stream = saved_gen_stream
+            deregister_job(job.job_id)
 
     def _run_grpo(self, job: GRPOJob):
         import mlx_lm.utils as mlx_utils
@@ -378,7 +382,11 @@ class GRPOService:
         if n_prompts == 0:
             raise ValueError("GRPO job has no prompts")
 
+        from .abort import check_abort
+
         for it in range(cfg.iters):
+            # #1480 item 2b: cooperative abort between steps (#1480).
+            check_abort(job.job_id)
             start = (it * batch_size) % n_prompts
             batch = [prompts[(start + i) % n_prompts] for i in range(batch_size)]
             result = trainer.train_step(batch)
