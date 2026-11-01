@@ -18,6 +18,7 @@ User verbatim instruction: "启动3个功能issue的修复落地"
 
 from __future__ import annotations
 
+import functools
 import gc
 import logging
 from dataclasses import dataclass
@@ -103,6 +104,16 @@ class DPOTrainer:
         self.optimizer = optim.AdamW(learning_rate=config.learning_rate)
         self._ref_cache = {}  # (prompt, chosen, rejected) -> (ref_w, ref_l)
         self._ref_model = None  # #1472: resident ref when keep_ref_resident
+        # #1469: compiled train step. MLX only streams (allocates+freed
+        # per-op) inside mx.compile — a bare nn.value_and_grad keeps every
+        # layer's activations alive through the whole backward eval, so a
+        # 27B-8bit DPO step at seq 1024 peaked at 178GB wired and the
+        # memory_enforcer fatal-exited the engine. Same pattern as the
+        # mlx_lm SFT trainer: optimizer.update INSIDE the compiled fn,
+        # grads never escape it. Measured on 4B/seq2048: eager 37GB peak,
+        # compiled+checkpointing 6.7GB.
+        self._compiled_step = None
+        self._compile_failed = False
 
     def close(self):
         # #1472: free a resident reference model. Load-and-evict mode has
@@ -169,61 +180,150 @@ class DPOTrainer:
         self._ref_cache[key] = (ref_w, ref_l)
         return ref_w, ref_l
 
+    @staticmethod
+    def _pad_to(ids, n, pad_id=0):
+        # Normalize to python ints: tokenizers return list[int], but stubs
+        # (and some callers) hand back mx arrays whose list() yields 0-d
+        # arrays — mx.array of those misbehaves.
+        return [int(x) for x in ids] + [pad_id] * (n - len(ids))
+
+    def _batch_tensors(self, samples):
+        # Pad the batch to one (P, C) shape so every mx.compile call traces
+        # the same graph — variable per-sample lengths would recompile per
+        # step and grow the compile cache (#1469). Pads sit after each real
+        # sequence; causal attention keeps them from touching real rows,
+        # and completion masks zero their logprob contribution.
+        P = max(len(s["prompt_ids"]) for s in samples)
+        C = max(max(len(s["chosen_ids"]), len(s["rejected_ids"])) for s in samples)
+        C = max(C, 1)
+        prompt = mx.array([self._pad_to(s["prompt_ids"], P) for s in samples])
+        starts = mx.array([len(s["prompt_ids"]) - 1 for s in samples])
+        chosen = mx.array([self._pad_to(s["chosen_ids"], C) for s in samples])
+        rejected = mx.array([self._pad_to(s["rejected_ids"], C) for s in samples])
+        cmask = mx.array(
+            [
+                [1.0] * len(s["chosen_ids"]) + [0.0] * (C - len(s["chosen_ids"]))
+                for s in samples
+            ]
+        )
+        rmask = mx.array(
+            [
+                [1.0] * len(s["rejected_ids"]) + [0.0] * (C - len(s["rejected_ids"]))
+                for s in samples
+            ]
+        )
+        ref_w = mx.array([float(s.get("ref_w", 0.0)) for s in samples])
+        ref_l = mx.array([float(s.get("ref_l", 0.0)) for s in samples])
+        return {
+            "prompt": prompt,
+            "starts": starts,
+            "chosen": chosen,
+            "rejected": rejected,
+            "chosen_mask": cmask,
+            "rejected_mask": rmask,
+            "ref_w": ref_w,
+            "ref_l": ref_l,
+        }
+
+    @staticmethod
+    def _padded_logprob(model, prompt, starts, comp, comp_mask):
+        # prompt (B,P) int; comp (B,C) int; starts (B,) = per-sample predictor
+        # row for comp[0] (prompt_len-1); comp_mask (B,C) zeroes padded rows.
+        # Returns (totals (B,), per_token (B,C)) differentiable logprobs.
+        full = mx.concatenate([prompt, comp], axis=1)
+        out = model(full)
+        logits = out[0] if isinstance(out, tuple) else out
+        C = int(comp.shape[1])
+        idx = starts[:, None, None] + mx.arange(C)[None, :, None]
+        pred = mx.take_along_axis(logits, idx, axis=1).astype(mx.float32)
+        log_probs = nn.log_softmax(pred)
+        per_token = mx.take_along_axis(log_probs, comp[..., None], axis=-1)[..., 0]
+        totals = mx.sum(per_token * comp_mask, axis=1)
+        return totals, per_token
+
+    def _dpo_graph_loss(self, model, t):
+        # L = -log sigma(beta*((pi_w-ref_w) - (pi_l-ref_l))), batched tensors.
+        p_w, _ = self._padded_logprob(
+            model, t["prompt"], t["starts"], t["chosen"], t["chosen_mask"]
+        )
+        p_l, _ = self._padded_logprob(
+            model, t["prompt"], t["starts"], t["rejected"], t["rejected_mask"]
+        )
+        logits = self.config.beta * ((p_w - t["ref_w"]) - (p_l - t["ref_l"]))
+        loss = mx.mean(-nn.log_sigmoid(logits))
+        return loss, logits
+
+    def _orpo_graph_loss(self, model, t):
+        # ORPO: SFT loss on chosen + lambda*log sigma(log(p_w/p_l)) odds-ratio
+        # penalty. No reference model (the odds ratio replaces the ref subtraction).
+        p_w, per_w = self._padded_logprob(
+            model, t["prompt"], t["starts"], t["chosen"], t["chosen_mask"]
+        )
+        p_l, _ = self._padded_logprob(
+            model, t["prompt"], t["starts"], t["rejected"], t["rejected_mask"]
+        )
+        n_tok = mx.maximum(mx.sum(t["chosen_mask"]), 1e-8)
+        sft = -mx.sum(per_w * t["chosen_mask"]) / n_tok
+        log_odds = p_w - p_l
+        loss = sft + self.config.lambda_odds * mx.mean(-nn.log_sigmoid(log_odds))
+        return loss, log_odds
+
     def _dpo_loss(self, model, batch):
-        # batch: list of {prompt_ids, chosen_ids, rejected_ids, ref_w, ref_l}.
-        # L = -log sigma(beta*((pi_w-ref_w) - (pi_l-ref_l)))
-        cfg = self.config
-        losses = []
-        margins = []
-        accs = []
-        for s in batch:
-            p = mx.array(s["prompt_ids"])
-            cw = mx.array(s["chosen_ids"])
-            cl = mx.array(s["rejected_ids"])
-            _, policy_w = _seq_logprob_differentiable(model, p, cw)
-            _, policy_l = _seq_logprob_differentiable(model, p, cl)
-            ref_w = mx.array(s["ref_w"])
-            ref_l = mx.array(s["ref_l"])
-            logits = cfg.beta * ((policy_w - ref_w) - (policy_l - ref_l))
-            losses.append(-nn.log_sigmoid(logits))
-            margins.append(float(logits))
-            accs.append(float(logits > 0))
-        loss = mx.mean(mx.stack(losses))
+        # Legacy sample-list entry point (unit tests). Runs the same graph
+        # loss as the compiled path, evaluated eagerly.
+        t = self._batch_tensors(batch)
+        loss, logits = self._dpo_graph_loss(model, t)
+        mx.eval(loss, logits)
+        margins = logits.tolist()
+        accs = [float(m > 0) for m in margins]
         return loss, margins, accs
 
     def _orpo_loss(self, model, batch):
-        # ORPO: SFT loss on chosen + lambda*log sigma(log(p_w/p_l)) odds-ratio
-        # penalty. No reference model (the odds ratio replaces the ref subtraction).
-        cfg = self.config
-        sft_losses = []
-        odds_losses = []
-        margins = []
-        accs = []
-        for s in batch:
-            p = mx.array(s["prompt_ids"])
-            cw = mx.array(s["chosen_ids"])
-            cl = mx.array(s["rejected_ids"])
-            per_w, policy_w = _seq_logprob_differentiable(model, p, cw)
-            _, policy_l = _seq_logprob_differentiable(model, p, cl)
-            # SFT: negative log-likelihood of chosen (per-token mean)
-            sft_losses.append(-mx.mean(per_w))
-            # Odds-ratio: log sigma(log p_w - log p_l)
-            log_odds = policy_w - policy_l
-            odds_losses.append(-nn.log_sigmoid(log_odds))
-            margins.append(float(log_odds))
-            accs.append(float(log_odds > 0))
-        loss = mx.mean(mx.stack(sft_losses)) + cfg.lambda_odds * mx.mean(
-            mx.stack(odds_losses)
-        )
+        t = self._batch_tensors(batch)
+        loss, logits = self._orpo_graph_loss(model, t)
+        mx.eval(loss, logits)
+        margins = logits.tolist()
+        accs = [float(m > 0) for m in margins]
         return loss, margins, accs
+
+    def _ensure_compiled_step(self):
+        if self._compiled_step is not None or self._compile_failed:
+            return
+        cfg = self.config
+        loss_fn = (
+            self._orpo_graph_loss if cfg.method == "orpo" else self._dpo_graph_loss
+        )
+        value_and_grad = nn.value_and_grad(self.model, loss_fn)
+        state = [self.model.state, self.optimizer.state, mx.random.state]
+
+        @functools.partial(mx.compile, inputs=state, outputs=state)
+        def step(prompt, starts, chosen, rejected, cmask, rmask, ref_w, ref_l):
+            t = {
+                "prompt": prompt,
+                "starts": starts,
+                "chosen": chosen,
+                "rejected": rejected,
+                "chosen_mask": cmask,
+                "rejected_mask": rmask,
+                "ref_w": ref_w,
+                "ref_l": ref_l,
+            }
+            (loss, per_sample), grad = value_and_grad(self.model, t)
+            self.optimizer.update(self.model, grad)
+            return loss, per_sample
+
+        self._compiled_step = step
+        logger.info(
+            "%s: compiled train step enabled (mx.compile streams forward+backward "
+            "intermediates; bare value_and_grad retains them, #1469)",
+            cfg.method.upper(),
+        )
 
     def train_step(self, pairs_batch):
         # One step over a batch of preference pairs. For DPO, precompute ref
-        # logprobs (load-and-evict); for ORPO no ref needed.
+        # logprobs (load-and-evict or resident); for ORPO no ref needed.
         cfg = self.config
         is_orpo = cfg.method == "orpo"
-        loss_fn = self._orpo_loss if is_orpo else self._dpo_loss
-        loss_value_and_grad = nn.value_and_grad(self.model, loss_fn)
 
         samples = []
         for pair in pairs_batch:
@@ -249,10 +349,42 @@ class DPOTrainer:
                 sample["ref_l"] = ref_l
             samples.append(sample)
 
-        (loss, margins, accs), grad = loss_value_and_grad(self.model, samples)
-        self.optimizer.update(self.model, grad)
-        mx.eval(self.model.parameters(), self.optimizer.state)
+        t = self._batch_tensors(samples)
+        loss = per_sample = None
+        if not self._compile_failed:
+            try:
+                self._ensure_compiled_step()
+                loss, per_sample = self._compiled_step(
+                    t["prompt"],
+                    t["starts"],
+                    t["chosen"],
+                    t["rejected"],
+                    t["chosen_mask"],
+                    t["rejected_mask"],
+                    t["ref_w"],
+                    t["ref_l"],
+                )
+                mx.eval(loss, per_sample)
+            except Exception as exc:
+                self._compiled_step = None
+                self._compile_failed = True
+                logger.warning(
+                    "%s: mx.compile train step failed (%s) — falling back to "
+                    "eager value_and_grad; backward intermediates will NOT "
+                    "stream and large models may hit the memory enforcer (#1469)",
+                    cfg.method.upper(),
+                    exc,
+                )
+        if self._compile_failed:
+            loss_fn = self._orpo_graph_loss if is_orpo else self._dpo_graph_loss
+            value_and_grad = nn.value_and_grad(self.model, loss_fn)
+            (loss, per_sample), grad = value_and_grad(self.model, t)
+            self.optimizer.update(self.model, grad)
+            mx.eval(loss, per_sample)
+            mx.eval(self.model.parameters(), self.optimizer.state)
 
+        margins = [float(m) for m in per_sample.tolist()]
+        accs = [float(m > 0) for m in margins]
         n = max(len(margins), 1)
         result = DPOStepResult(
             loss=float(loss),
