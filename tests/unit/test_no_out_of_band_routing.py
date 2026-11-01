@@ -614,6 +614,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # projected job peak before any weights load; reject-only safety
         # knob — never selects a model, parser, or routing tier.
         "FUSION_MLX_TRAIN_MEM_BUDGET_GB",
+        # #1473: memory_enforcer soft-pressure busy-eviction escalation
+        # poll count (fusion_mlx/pool/memory_enforcer.py). Pure capacity
+        # knob — how long soft pressure with no idle victim waits before
+        # evicting a busy model. Never selects a model, parser, or tier.
+        "FUSION_MLX_SOFT_BUSY_EVICT_POLLS",
         # #1192: FD watchdog pressure thresholds (fusion_mlx/fd_watchdog.py).
         # Fractions of RLIMIT_NOFILE deciding when the watchdog warns and
         # when NEW streams are rejected; pure fd-capacity knob (#1192).

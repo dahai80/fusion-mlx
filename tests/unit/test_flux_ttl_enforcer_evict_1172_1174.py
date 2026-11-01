@@ -308,7 +308,16 @@ class TestSoftPressureNoVictimDoesNotAbort:
         idx_break = src.find("break", idx_soft_guard)
         assert idx_break != -1, "soft-pressure guard must break"
         soft_block = src[idx_soft_guard:idx_break]
-        assert "abort_all_requests" not in soft_block, (
-            "#1174 Bug 2: soft-pressure no-victim path must NOT call "
-            "abort_all_requests on active bystander models"
-        )
+        # #1174 Bug 2 (amended by #1473): soft pressure must not abort
+        # active bystanders IMMEDIATELY. The #1473 hard tier may abort
+        # after sustained polls, but only behind the escalation counter
+        # guard — an unguarded abort_all_requests in the soft block is
+        # the original bug.
+        idx_abort = soft_block.find("abort_all_requests")
+        if idx_abort != -1:
+            idx_escalation = soft_block.find("_soft_busy_cycles >=")
+            assert idx_escalation != -1 and idx_escalation < idx_abort, (
+                "#1174 Bug 2: abort_all_requests in the soft-pressure "
+                "no-victim path must be gated behind the #1473 "
+                "sustained-poll escalation guard"
+            )

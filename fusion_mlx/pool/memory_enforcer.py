@@ -183,6 +183,14 @@ _UNRECOVERABLE_FATAL_THRESHOLD = int(
 # step boundaries — so the grace is expressed in polls, not a thread
 # signal. Bounded so a wedged trainer still exits.
 _TRAINING_GRACE_POLLS = int(os.environ.get("FUSION_TRAINING_FATAL_GRACE_POLLS", "30"))
+# #1473 item (2): hard-eviction tier under sustained SOFT pressure. Soft
+# pressure with no idle victim used to loop on the waiting-warning while
+# the process kept growing into a host swap storm (72.8GB RSS, 5 kernel
+# watchdog panics in 12h). After this many consecutive soft-pressure
+# polls with no idle evictable model, escalate to the same busy-victim
+# eviction the hard watermark uses (abort in-flight requests + pending
+# unload; clients re-route/retry). 0 = disabled (legacy warn-and-wait).
+_SOFT_BUSY_EVICT_POLLS = int(os.environ.get("FUSION_MLX_SOFT_BUSY_EVICT_POLLS", "10"))
 
 
 def _fine_tune_service_if_running():
@@ -445,6 +453,10 @@ class ProcessMemoryEnforcer:
         # warning spam and escalate once it is clearly not resolving.
         self._hard_busy_victim: str | None = None
         self._hard_busy_cycles: int = 0
+        # #1473 item (2): consecutive soft-pressure polls that found no
+        # idle evictable model. At _SOFT_BUSY_EVICT_POLLS the enforcer
+        # escalates to busy-victim eviction instead of warn-and-wait.
+        self._soft_busy_cycles: int = 0
         # No-models-loaded bookkeeping: hard pressure with nothing evictable.
         # Throttle warning spam, run periodic self-rescue, escalate to
         # unrecoverable after sustained pressure (#1084).
@@ -1813,6 +1825,7 @@ class ProcessMemoryEnforcer:
         if new_level == "ok":
             self._unrecoverable_polls = 0
             self._no_models_loaded_cycles = 0
+            self._soft_busy_cycles = 0
             self._walk_store_cache_caps()
             return
 
@@ -1941,23 +1954,81 @@ class ProcessMemoryEnforcer:
                         # stays resident. Wait for a model to go idle instead.
                         # Hard pressure falls through to the busy-victim path
                         # below where abort is intentional and logged.
-                        active_models = [
-                            mid
-                            for mid, e in self._engine_pool._entries.items()
-                            if e.engine is not None
-                            and not e.is_pinned
-                            and self._engine_pool._entry_has_active_requests(e)
-                        ]
-                        logger.warning(
-                            "Soft memory pressure %s but no idle evictable "
-                            "model (all non-pinned loaded models have active "
-                            "requests: %s). Waiting for a model to go idle; "
-                            "memory will stay high until then. Consider "
-                            "unloading a model manually via POST "
-                            "/v1/models/{id}/unload.",
-                            new_level,
-                            active_models,
-                        )
+                        #
+                        # #1473 item (2): but warn-and-wait alone let the
+                        # process grow into a host swap storm while every
+                        # non-pinned model stayed busy. After
+                        # _SOFT_BUSY_EVICT_POLLS consecutive polls, escalate
+                        # to the same busy-victim eviction the hard
+                        # watermark uses — in-flight requests re-route/retry,
+                        # which is better than the whole box dying.
+                        self._soft_busy_cycles += 1
+                        escalated = False
+                        if (
+                            _SOFT_BUSY_EVICT_POLLS > 0
+                            and self._soft_busy_cycles >= _SOFT_BUSY_EVICT_POLLS
+                        ):
+                            busy_victim = self._find_lru_busy_non_pinned_victim_locked()
+                            if busy_victim is not None:
+                                entry = self._engine_pool._entries.get(busy_victim)
+                                aborted = 0
+                                if (
+                                    entry
+                                    and entry.engine is not None
+                                    and hasattr(entry.engine, "abort_all_requests")
+                                ):
+                                    result = await entry.engine.abort_all_requests()
+                                    aborted = max(0, int(result or 0))
+                                if entry is not None:
+                                    self._engine_pool._mark_pending_unload_locked(
+                                        busy_victim,
+                                        "sustained soft memory pressure "
+                                        "(#1473 hard tier)",
+                                        abort_requested=True,
+                                    )
+                                    await self._engine_pool._unload_pending_if_idle_locked(
+                                        busy_victim
+                                    )
+                                logger.critical(
+                                    "Memory enforcer hard tier (#1473): "
+                                    "sustained soft pressure for %d polls with "
+                                    "no idle evictable model — evicting busy "
+                                    "model '%s' (%d in-flight request(s) "
+                                    "aborted; clients re-route/retry) instead "
+                                    "of waiting for idle.",
+                                    self._soft_busy_cycles,
+                                    busy_victim,
+                                    aborted,
+                                )
+                                self._soft_busy_cycles = 0
+                                escalated = True
+                        if not escalated:
+                            active_models = [
+                                mid
+                                for mid, e in self._engine_pool._entries.items()
+                                if e.engine is not None
+                                and not e.is_pinned
+                                and self._engine_pool._entry_has_active_requests(e)
+                            ]
+                            logger.warning(
+                                "Soft memory pressure %s but no idle evictable "
+                                "model (all non-pinned loaded models have active "
+                                "requests: %s). Waiting for a model to go idle; "
+                                "memory will stay high until then. Hard-tier "
+                                "eviction in %d poll(s) (#1473). Consider "
+                                "unloading a model manually via POST "
+                                "/v1/models/{id}/unload.",
+                                new_level,
+                                active_models,
+                                (
+                                    max(
+                                        0,
+                                        _SOFT_BUSY_EVICT_POLLS - self._soft_busy_cycles,
+                                    )
+                                    if _SOFT_BUSY_EVICT_POLLS > 0
+                                    else -1
+                                ),
+                            )
                         break
                     if victim is not None:
                         loaded_non_pinned = [
@@ -2006,6 +2077,9 @@ class ProcessMemoryEnforcer:
                             # enforcer.state is the declared order.
                             with self._state_lock:
                                 self._last_evicted_at[victim] = time.monotonic()
+                            # #1473: idle eviction worked — the soft-busy
+                            # escalation counter starts fresh next time.
+                            self._soft_busy_cycles = 0
                             self._engine_pool._lock.release()
                             _lock_held = False
                             await self._engine_pool.unload_engine_async(victim)
