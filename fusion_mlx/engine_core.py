@@ -200,19 +200,128 @@ def _init_mlx_thread() -> None:
     logger.debug("MLX executor thread initialized: generation_stream = %s", stream)
 
 
+# #1468 queue-wait visibility. A wedged/stuck eval on a single-worker
+# executor used to be invisible: tasks queued behind it sat silently until
+# their own timeout fired (or forever), with nothing in the log naming the
+# holder. Two event-driven signals on every global-pool submission:
+#   1. a task that STARTS after >= FUSION_MLX_QUEUE_WAIT_WARN_S queue wait
+#      logs a WARNING (worker was busy/starved — the starvation the #1468
+#      embeddings saw);
+#   2. a NEW submit arriving while all workers are busy and the oldest
+#      running task is >= FUSION_MLX_EXEC_WEDGE_WARN_S old logs an ERROR
+#      naming the possible wedged task. Fires once per stuck task, only
+#      when harm starts (something queues behind it) — no timers, no
+#      watchdog thread. Per-engine scheduler executors keep their own G2
+#      watchdog; this covers the shared pools (loads, gc, sync, embed...).
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        val = float(raw)
+    except ValueError:
+        logger.warning("%s=%r is not a number, using default %.0fs", name, raw, default)
+        return default
+    if val <= 0:
+        logger.warning("%s=%r <= 0, using default %.0fs", name, raw, default)
+        return default
+    return val
+
+
+_QUEUE_WAIT_WARN_S = _env_float("FUSION_MLX_QUEUE_WAIT_WARN_S", 5.0)
+_EXEC_WEDGE_WARN_S = _env_float("FUSION_MLX_EXEC_WEDGE_WARN_S", 300.0)
+
+
+class _TrackedExecutor:
+    # Duck-typed submit() proxy over a ThreadPoolExecutor. _global_executors
+    # keeps the RAW executor (atexit shutdown + poison replacement operate on
+    # it); get_executor() hands out this proxy so every run_in_executor /
+    # .submit call site gets queue-wait + wedge logging with zero changes.
+    def __init__(self, inner, pool_type: str, max_workers: int):
+        self._inner = inner
+        self._pool_type = pool_type
+        self._max_workers = max(1, int(max_workers))
+        self._lock = threading.Lock()
+        # task_id -> [name, started_at, wedge_fired]
+        self._running: dict[int, list] = {}
+        self._queued = 0
+        self._next_id = 0
+
+    def submit(self, fn, /, *args, **kwargs):
+        with self._lock:
+            self._next_id += 1
+            task_id = self._next_id
+            name = getattr(fn, "__name__", None) or fn.__class__.__name__
+            self._queued += 1
+            if len(self._running) >= self._max_workers and self._running:
+                oldest_id = min(self._running, key=lambda k: self._running[k][1])
+                entry = self._running[oldest_id]
+                age = time.monotonic() - entry[1]
+                if age >= _EXEC_WEDGE_WARN_S and not entry[2]:
+                    entry[2] = True
+                    logger.error(
+                        "executor '%s' task '%s' has been running %.0fs with "
+                        "%d task(s) now queued behind it — possible wedged "
+                        "eval (#1468). Recovery: executor poison or restart.",
+                        self._pool_type,
+                        entry[0],
+                        age,
+                        self._queued,
+                    )
+        submitted_at = time.monotonic()
+
+        def _tracked():
+            waited = time.monotonic() - submitted_at
+            with self._lock:
+                self._queued -= 1
+                self._running[task_id] = [name, time.monotonic(), False]
+            try:
+                if waited >= _QUEUE_WAIT_WARN_S:
+                    logger.warning(
+                        "executor '%s' task '%s' started after %.1fs queue "
+                        "wait — worker was busy or starved (#1468)",
+                        self._pool_type,
+                        name,
+                        waited,
+                    )
+                return fn(*args, **kwargs)
+            finally:
+                with self._lock:
+                    self._running.pop(task_id, None)
+
+        return self._inner.submit(_tracked)
+
+    def __getattr__(self, item):
+        return getattr(self._inner, item)
+
+
+# pool_type -> (raw executor the proxy wraps, proxy). Identity-checked so a
+# poison replacement writing a fresh raw executor into _global_executors
+# gets a fresh proxy on the next get_executor call.
+_global_executor_proxies: dict[str, tuple[Any, _TrackedExecutor]] = {}
+
+
 def get_executor(pool_type: str = "llm") -> concurrent.futures.ThreadPoolExecutor:
-    if pool_type in _global_executors:
-        return _global_executors[pool_type]
+    raw = _global_executors.get(pool_type)
+    if raw is None:
+        cfg = _executor_config.get(
+            pool_type, {"max_workers": 1, "prefix": f"mlx-{pool_type}"}
+        )
+        raw = concurrent.futures.ThreadPoolExecutor(
+            max_workers=cfg["max_workers"],
+            thread_name_prefix=cfg["prefix"],
+            initializer=_init_mlx_thread,
+        )
+        _global_executors[pool_type] = raw
+    cached = _global_executor_proxies.get(pool_type)
+    if cached is not None and cached[0] is raw:
+        return cached[1]
     cfg = _executor_config.get(
         pool_type, {"max_workers": 1, "prefix": f"mlx-{pool_type}"}
     )
-    exec_ = concurrent.futures.ThreadPoolExecutor(
-        max_workers=cfg["max_workers"],
-        thread_name_prefix=cfg["prefix"],
-        initializer=_init_mlx_thread,
-    )
-    _global_executors[pool_type] = exec_
-    return exec_
+    proxy = _TrackedExecutor(raw, pool_type, cfg["max_workers"])
+    _global_executor_proxies[pool_type] = (raw, proxy)
+    return proxy
 
 
 def get_mlx_executor() -> concurrent.futures.ThreadPoolExecutor:
