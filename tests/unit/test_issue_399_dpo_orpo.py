@@ -796,3 +796,117 @@ def test_inprocess_trainers_set_train_mode_1463():
             f"{svc.__name__}.{method_name}: model.train() must come after "
             "linear_to_lora_layers (#1463)"
         )
+
+
+# =============================================================================
+# Compiled train step (#1469)
+# =============================================================================
+
+
+class _SmallTok:
+    # Tiny-int ids so _StubModel(vocab=32) lookups stay in range.
+    def encode(self, text):
+        return [1 + (i % 8) for i in range(min(len(text), 6))]
+
+
+def test_dpo_batch_tensors_pads_to_batch_shape():
+    # #1469: per-sample padding to one (P, C) shape so every mx.compile call
+    # traces the same graph. Masks must carry the real completion lengths.
+    model = _StubModel()
+    cfg = DPOConfig(method="dpo", iters=1)
+    trainer = DPOTrainer(model, _StubTokenizer(), "/dev/null", cfg)
+    samples = [
+        {
+            "prompt_ids": [1, 2, 3],
+            "chosen_ids": [4, 5],
+            "rejected_ids": [6],
+            "ref_w": 0.0,
+            "ref_l": 0.0,
+        },
+        {
+            "prompt_ids": [7],
+            "chosen_ids": [8],
+            "rejected_ids": [9, 10, 11],
+            "ref_w": 1.0,
+            "ref_l": 2.0,
+        },
+    ]
+    t = trainer._batch_tensors(samples)
+    assert t["prompt"].shape == (2, 3)
+    assert t["starts"].tolist() == [2, 0]
+    assert t["chosen"].shape == (2, 3)
+    assert t["rejected"].shape == (2, 3)
+    assert t["chosen_mask"].tolist() == [[1.0, 1.0, 0.0], [1.0, 0.0, 0.0]]
+    assert t["rejected_mask"].tolist() == [[1.0, 0.0, 0.0], [1.0, 1.0, 1.0]]
+    assert t["ref_w"].tolist() == [0.0, 1.0]
+    assert t["ref_l"].tolist() == [0.0, 2.0]
+
+
+def test_dpo_padded_logprob_masks_padding():
+    # Padded completion rows are masked out of the total; the masked total
+    # must equal the unpadded differentiable path on the same stub model.
+    from fusion_mlx.training.dpo import _seq_logprob_differentiable
+
+    model = _StubModel()
+    prompt = mx.array([[1, 2, 3]])
+    starts = mx.array([2])
+    comp = mx.array([[4, 5, 0]])
+    mask = mx.array([[1.0, 1.0, 0.0]])
+    totals, per_tok = DPOTrainer._padded_logprob(model, prompt, starts, comp, mask)
+    mx.eval(totals, per_tok)
+    _, total_ref = _seq_logprob_differentiable(
+        model, mx.array([1, 2, 3]), mx.array([4, 5])
+    )
+    mx.eval(total_ref)
+    assert abs(float(totals[0]) - float(total_ref)) < 1e-6
+    assert per_tok.shape == (1, 3)
+
+
+def test_dpo_train_step_compiled_engages_and_runs():
+    # Default path builds the mx.compile step (optimizer update inside) and
+    # returns finite metrics — ORPO needs no reference model.
+    model = _StubModel()
+    cfg = DPOConfig(method="orpo", iters=1, batch_size=1, lambda_odds=0.5)
+    trainer = DPOTrainer(model, _SmallTok(), "/dev/null", cfg)
+    result = trainer.train_step([_PAIRS[0]])
+    assert trainer._compiled_step is not None
+    assert not trainer._compile_failed
+    assert mx.isfinite(result.loss)
+    assert -1.0 <= result.acc_chosen <= 1.0
+
+
+def test_dpo_train_step_dpo_method_uses_ref_logprobs():
+    # DPO method consults _ref_logprobs_pair once per pair and still takes
+    # the compiled path.
+    model = _StubModel()
+    cfg = DPOConfig(method="dpo", iters=1, batch_size=1, beta=0.1)
+    trainer = DPOTrainer(model, _SmallTok(), "/dev/null", cfg)
+    calls = []
+
+    def fake_ref(p, c, r):
+        calls.append((list(p), list(c), list(r)))
+        return (-1.0, -2.0)
+
+    trainer._ref_logprobs_pair = fake_ref
+    result = trainer.train_step([_PAIRS[0]])
+    assert len(calls) == 1
+    assert not trainer._compile_failed
+    assert mx.isfinite(result.loss)
+
+
+def test_dpo_train_step_compile_failure_falls_back(monkeypatch):
+    # If mx.compile is unavailable (unsupported op, exotic kernel), the step
+    # must fail visible-ly into the eager path and still train.
+    import fusion_mlx.training.dpo as dpo_mod
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("compile unsupported here")
+
+    monkeypatch.setattr(dpo_mod.mx, "compile", boom)
+    model = _StubModel()
+    cfg = DPOConfig(method="orpo", iters=1, batch_size=1)
+    trainer = DPOTrainer(model, _SmallTok(), "/dev/null", cfg)
+    result = trainer.train_step([_PAIRS[0]])
+    assert trainer._compile_failed
+    assert trainer._compiled_step is None
+    assert mx.isfinite(result.loss)
