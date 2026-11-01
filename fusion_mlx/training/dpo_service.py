@@ -294,9 +294,30 @@ class DPOService:
         )
 
         _gate = get_heavy_admission_gate()
-        _budget = _gate.training_budget_bytes(
-            getattr(job.config, "memory_limit_gb", 0.0)
+        # #1473: real per-job budget from the model on disk (weights +
+        # reference + activation headroom) instead of the blind 60%-of-RAM
+        # default; fail-closed preflight against the memory ceiling before
+        # any weights load.
+        from .mem_preflight import resolve_training_budget_bytes
+
+        _budget, _preflight_reason = resolve_training_budget_bytes(
+            job_id=job_id,
+            memory_limit_gb=getattr(job.config, "memory_limit_gb", 0.0),
+            model_path=self._resolve_model_path(job.model_id),
+            needs_reference=getattr(job.config, "method", "dpo") == "dpo",
         )
+        if _preflight_reason is not None:
+            job.status = JobStatus.FAILED
+            job.error = _preflight_reason
+            job.terminal = True
+            job.finished_at = time.time()
+            self._persist_jobs()
+            self._notify_job(job)
+            logger.warning(
+                "DPO job %s rejected by training memory preflight (#1473)", job_id
+            )
+            self._process_queue()
+            return
         _decision = _gate.admit_training(_budget)
         if not _decision.admitted:
             if _decision.deferred:

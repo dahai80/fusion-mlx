@@ -609,6 +609,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # routing tier — they only decide whether heavy work starts.
         "FUSION_MLX_HEAVY_ADMISSION_LINE",
         "FUSION_MLX_HEAVY_ADMISSION",
+        # #1473: training memory budget ceiling (GB,
+        # fusion_mlx/training/mem_preflight.py). Caps resident usage +
+        # projected job peak before any weights load; reject-only safety
+        # knob — never selects a model, parser, or routing tier.
+        "FUSION_MLX_TRAIN_MEM_BUDGET_GB",
         # #1192: FD watchdog pressure thresholds (fusion_mlx/fd_watchdog.py).
         # Fractions of RLIMIT_NOFILE deciding when the watchdog warns and
         # when NEW streams are rejected; pure fd-capacity knob (#1192).
