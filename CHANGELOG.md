@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.10.40] - 2026-11-02
+
+### Fixed
+- **Wedged executor tasks are no longer invisible — queue-wait and
+  wedge signals on every global-pool submission (#1468, PR #1481)**:
+  the #1468 wedge (stuck `QuantizedMatmul` holding the single-worker
+  llm executor) starved queued tasks with zero log output until their
+  own timeout fired. `get_executor()` now hands out a submit-tracking
+  proxy (zero call-site changes; the raw executors stay in the registry
+  so atexit shutdown and poison replacement are untouched). A task that
+  starts after ≥ `FUSION_MLX_QUEUE_WAIT_WARN_S` (default 5s) queue wait
+  logs a WARNING naming the wait; a new submit arriving while all
+  workers are busy and the oldest running task is ≥
+  `FUSION_MLX_EXEC_WEDGE_WARN_S` (default 300s) old logs an ERROR
+  naming the possible wedged holder and queue depth — event-driven, no
+  timers. Completes the #1468 set alongside v0.10.36's dedicated
+  `embed` executor.
+
+### Added
+- **Cooperative training-job abort under sustained memory pressure
+  (#1473 follow-up, #1480, PR #1482)**: when the enforcer's soft
+  pressure persists past the hard-tier threshold and there is no idle
+  AND no busy non-pinned inference victim — the training job itself is
+  the pressure source — the enforcer now requests a cooperative abort
+  of the active in-process training job(s) (CRITICAL log, once per
+  pressure episode; `FUSION_MLX_ENFORCER_ABORT_TRAINING=0` opts out).
+  DPO/ORPO, GRPO, RFT, reward, and SFT thread-mode loops check between
+  iterations and fail the job with `TrainingAbortedError: <reason>`;
+  blast radius is one train step. VLM thread mode is intentionally not
+  registered (mlx_vlm's `train()` is an opaque single call — no
+  in-thread boundary; the #1186 process-mode default supports a hard
+  kill instead).
+
 ## [0.10.39] - 2026-11-01
 
 ### Fixed
