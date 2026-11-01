@@ -106,6 +106,7 @@ def _make_enforcer(me, pool):
     enforcer._unrecoverable_polls = 0
     enforcer._no_models_loaded_cycles = 0
     enforcer._soft_busy_cycles = 0
+    enforcer._train_abort_fired = False
     enforcer._hard_busy_victim = None
     enforcer._hard_busy_cycles = 0
     enforcer._eviction_marked = set()

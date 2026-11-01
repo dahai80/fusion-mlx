@@ -598,7 +598,14 @@ class VLMFineTuneService:
         self._notify_job(job)
 
     def _execute_training(self, job: VLMFineTuneJob):
-        """Legacy in-process path (execution_mode="thread")."""
+        """Legacy in-process path (execution_mode="thread").
+
+        #1480 item 2b note: NOT registered with the training-abort registry
+        — mlx_vlm's train() is an opaque single call (progress arrives via
+        stdout pipe on a drain thread), so there is no in-thread iteration
+        boundary to raise at. The #1186 process-mode default supports a hard
+        kill instead; thread mode relies on the memory preflight (#1473)
+        to keep oversized jobs out in the first place."""
 
         cfg = job.config
         model_path = self._resolve_model_path(job.model_id)

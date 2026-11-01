@@ -378,6 +378,15 @@ class DPOService:
         import mlx_lm.utils as mlx_utils
         from mlx_lm.tuner.utils import linear_to_lora_layers
 
+        from .abort import deregister_job, register_job
+
+        register_job(job.job_id, f"{job.config.method}")
+        try:
+            self._run_dpo_inner(job, mlx_utils, linear_to_lora_layers)
+        finally:
+            deregister_job(job.job_id)
+
+    def _run_dpo_inner(self, job: DPOJob, mlx_utils, linear_to_lora_layers):
         model_path = self._resolve_model_path(job.model_id)
         if model_path is None:
             raise ValueError(f"Cannot resolve model path for {job.model_id}")
@@ -489,8 +498,14 @@ class DPOService:
         if n_pairs == 0:
             raise ValueError(f"{cfg.method} job has no preference_pairs")
 
+        from .abort import check_abort
+
         try:
             for it in range(cfg.iters):
+                # #1480 item 2b: cooperative abort between steps — the
+                # memory enforcer can request the job stop when sustained
+                # pressure has no inference victim left to evict.
+                check_abort(job.job_id)
                 start = (it * batch_size) % n_pairs
                 batch = [pairs[(start + i) % n_pairs] for i in range(batch_size)]
                 result = trainer.train_step(batch)

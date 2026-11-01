@@ -464,6 +464,12 @@ class _ProgressCallback(_BaseProgressCallback):
         self._push(event)
 
     def _push(self, event: dict):
+        # #1480 item 2b: cooperative abort check on every progress event —
+        # mlx_lm's train loop calls callbacks unguarded, so raising here
+        # propagates and fails the job instead of training through pressure.
+        from .abort import check_abort
+
+        check_abort(self._job.job_id)
         self._job.events.append(event)
 
         async def _notify():
@@ -1189,6 +1195,15 @@ class FineTuneService:
         on a background thread. #1186 default is the spawned-process path
         (_run_job_in_process)."""
 
+        from .abort import deregister_job, register_job
+
+        register_job(job.job_id, "sft")
+        try:
+            return self._run_training_thread(job)
+        finally:
+            deregister_job(job.job_id)
+
+    def _run_training_thread(self, job: FineTuneJob):
         cfg = job.config
         model_path = self._resolve_model_path(job.model_id)
         if model_path is None:

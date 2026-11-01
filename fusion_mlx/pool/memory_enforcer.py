@@ -457,6 +457,10 @@ class ProcessMemoryEnforcer:
         # idle evictable model. At _SOFT_BUSY_EVICT_POLLS the enforcer
         # escalates to busy-victim eviction instead of warn-and-wait.
         self._soft_busy_cycles: int = 0
+        # #1480 item 2b: one training-abort request per pressure episode —
+        # request_abort_all is idempotent but the CRITICAL log is not; the
+        # flag re-arms when pressure clears (new_level == "ok").
+        self._train_abort_fired: bool = False
         # No-models-loaded bookkeeping: hard pressure with nothing evictable.
         # Throttle warning spam, run periodic self-rescue, escalate to
         # unrecoverable after sustained pressure (#1084).
@@ -1558,6 +1562,38 @@ class ProcessMemoryEnforcer:
         candidates.sort()
         return candidates[0][1]
 
+    def _request_training_abort(self) -> bool:
+        """#1480 item 2b: request a cooperative abort of every active
+        in-process training job. Returns True when at least one job was
+        signalled (so the caller logs CRITICAL + arms the once-per-episode
+        flag). Silent no-op when none are registered or the knob is off."""
+        try:
+            from ..training.abort import abort_all_active, abort_enabled, active_jobs
+        except Exception:  # noqa: BLE001
+            logger.debug("training abort module unavailable", exc_info=True)
+            return False
+        if not abort_enabled():
+            return False
+        jobs = active_jobs()
+        if not jobs:
+            return False
+        requested = abort_all_active(
+            "memory enforcer (#1480): sustained memory pressure with no "
+            "evictable inference model — training job aborted between "
+            "iterations to protect the host"
+        )
+        if requested > 0:
+            logger.critical(
+                "Memory enforcer (#1480 item 2b): sustained soft pressure "
+                "with no idle AND no busy non-pinned victim — requested "
+                "cooperative abort of %d active training job(s) %s. Job(s) "
+                "fail at the next iteration boundary; host protection takes "
+                "priority over the run.",
+                requested,
+                [jid for jid, _svc in jobs],
+            )
+        return requested > 0
+
     async def stop(self) -> None:
         """Stop the background enforcement loop."""
         self._running = False
@@ -1826,6 +1862,7 @@ class ProcessMemoryEnforcer:
             self._unrecoverable_polls = 0
             self._no_models_loaded_cycles = 0
             self._soft_busy_cycles = 0
+            self._train_abort_fired = False
             self._walk_store_cache_caps()
             return
 
@@ -2003,6 +2040,23 @@ class ProcessMemoryEnforcer:
                                 self._soft_busy_cycles = 0
                                 escalated = True
                         if not escalated:
+                            # #1480 item 2b: pressure persisted past the
+                            # hard-tier threshold and there is NO busy
+                            # non-pinned victim either — an in-process
+                            # training job (policy + reference + optimizer)
+                            # is the likely dominant consumer and evicting
+                            # inference models cannot relieve it. Request a
+                            # cooperative abort of the active training job(s)
+                            # before the host dies (the #1473 panic class).
+                            # Fails the job at the next iteration boundary;
+                            # FUSION_MLX_ENFORCER_ABORT_TRAINING=0 opts out.
+                            if (
+                                not self._train_abort_fired
+                                and _SOFT_BUSY_EVICT_POLLS > 0
+                                and self._soft_busy_cycles >= _SOFT_BUSY_EVICT_POLLS
+                                and self._request_training_abort()
+                            ):
+                                self._train_abort_fired = True
                             active_models = [
                                 mid
                                 for mid, e in self._engine_pool._entries.items()
