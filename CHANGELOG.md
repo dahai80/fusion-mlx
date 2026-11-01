@@ -1,5 +1,45 @@
 # Changelog
 
+## [0.10.39] - 2026-11-01
+
+### Fixed
+- **Training jobs get a real memory preflight instead of a blind 60%-of-RAM
+  budget (#1473, PR #1476)**: every in-process training service (SFT, DPO,
+  GRPO, reward, RFT, VL) charged the heavy-admission gate the same blind
+  default budget when no explicit `memory_limit_gb` was configured, so a
+  27B DPO job could be admitted alongside a busy serving stack and drive
+  the host into a swap storm. New `training/mem_preflight.py` estimates the
+  real per-job peak from the weights on disk (`estimate_model_size`) plus a
+  reference-model copy for DPO/GRPO plus activation headroom
+  (0.35× weights, 4GiB floor), and fails the job closed at queue time —
+  FAILED with the full arithmetic in `job.error` — when
+  `resident usage + job peak` exceeds the memory ceiling
+  (`FUSION_MLX_TRAIN_MEM_BUDGET_GB` env knob, else the enforcer's
+  `get_final_ceiling()`). An explicit per-job `memory_limit_gb` still wins
+  for the gate budget, but the ceiling check always runs. Calibrated on the
+  measured 27B-8bit DPO steady peak after the #1469/#1472 fixes.
+- **Enforcer soft pressure with all models busy now escalates instead of
+  warning forever (#1473, PR #1477)**: when the process hit the soft
+  watermark with no idle model to evict, the enforcer only logged
+  "waiting for a model to go idle" — structurally unable to act while
+  memory pressure climbed. After `FUSION_MLX_SOFT_BUSY_EVICT_POLLS`
+  consecutive soft-pressure polls (default 10, `0` restores the legacy
+  warn-only behavior) with no idle victim, the enforcer now escalates to
+  the hard-tier machinery: abort the LRU busy non-pinned model's requests
+  and mark it for unload, with a CRITICAL log. The counter resets when
+  pressure clears, an idle eviction succeeds, or after an escalation.
+  The #1174 guarantee is preserved — aborts sit strictly behind the
+  sustained-poll guard.
+- **Stale discovery entries return a clean 404, not an HFValidationError
+  500 (#1478, PR #1479)**: when a model directory is deleted after boot,
+  the discovery registry still advertised it, and `mlx_lm.load()` fell
+  through to `snapshot_download` treating the dead absolute path as an HF
+  repo id — every request for the model failed with a confusing
+  `HFValidationError: Repo id must be in the form 'repo_name' or
+  'namespace/repo_name'` 500. `_load_engine` now checks absolute model
+  paths up front and raises `ModelNotFoundError` (mapped to 404) with the
+  removed path and a rescan/restart hint.
+
 ## [0.10.38] - 2026-11-01
 
 ### Fixed
