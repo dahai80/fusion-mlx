@@ -3598,6 +3598,31 @@ class EnginePool:
         load_completed = False
         pre_load_memory = max(mx.get_active_memory(), get_phys_footprint())
         try:
+            # #1478: stale-discovery guard. The model dir can vanish after
+            # boot (external cleanup / manual rm). mlx_lm.load() only
+            # treats an argument as a local path when os.path.isdir() is
+            # true, so a nonexistent absolute snapshot path falls into
+            # snapshot_download and dies with a confusing HFValidationError
+            # on every retry. Fail closed with a clear 404 instead.
+            _stale_path = entry.model_path
+            if _stale_path and os.path.isabs(_stale_path):
+                if not os.path.isdir(_stale_path):
+                    logger.error(
+                        "Model '%s' path removed after discovery: %s — "
+                        "failing load with 404 (rescan or restart to "
+                        "refresh the registry)",
+                        model_id,
+                        _stale_path,
+                    )
+                    raise ModelNotFoundError(
+                        model_id,
+                        message=(
+                            f"Model '{model_id}' no longer exists on disk: "
+                            f"{_stale_path} was removed after the server "
+                            f"discovered it. Re-run the model scan or "
+                            f"restart the server to refresh the registry."
+                        ),
+                    )
             # Resolve engine classes via module globals so test patches
             # (patch("fusion_mlx.pool.engine_pool.BatchedEngine", ...)) take
             # effect. __getattr__ lazily imports + caches on first access.
