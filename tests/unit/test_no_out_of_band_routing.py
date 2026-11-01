@@ -619,6 +619,12 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # knob — how long soft pressure with no idle victim waits before
         # evicting a busy model. Never selects a model, parser, or tier.
         "FUSION_MLX_SOFT_BUSY_EVICT_POLLS",
+        # #1468: executor queue-wait / wedged-task log thresholds
+        # (fusion_mlx/engine_core.py, seconds). Pure observability knobs —
+        # they only decide when queue-wait WARNING / wedge ERROR logs fire;
+        # never select a model, parser, or routing tier.
+        "FUSION_MLX_QUEUE_WAIT_WARN_S",
+        "FUSION_MLX_EXEC_WEDGE_WARN_S",
         # #1192: FD watchdog pressure thresholds (fusion_mlx/fd_watchdog.py).
         # Fractions of RLIMIT_NOFILE deciding when the watchdog warns and
         # when NEW streams are rejected; pure fd-capacity knob (#1192).
