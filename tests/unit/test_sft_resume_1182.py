@@ -126,7 +126,11 @@ class TestExecuteWiring:
         # spawned child cannot drift from the legacy thread path.
         import fusion_mlx.training.service as svc
 
+        # #1480 split the thread path in two: _execute_training wraps the
+        # abort registry around _run_training_thread, which owns the core
+        # call. Follow that one internal hop instead of assuming one body.
         thread_src = inspect.getsource(svc.FineTuneService._execute_training)
+        thread_src += inspect.getsource(svc.FineTuneService._run_training_thread)
         assert "execute_training_core" in thread_src
         child_src = inspect.getsource(svc.execute_training_spec)
         assert "execute_training_core" in child_src

@@ -769,6 +769,7 @@ def test_inprocess_trainers_set_train_mode_1463():
     # and the first backward raises "[Primitive::vjp] Not implemented for
     # CustomKernel". Pins the contract on every service in one place.
     import inspect
+    import re
 
     import fusion_mlx.training.dpo_service as dpo_mod
     import fusion_mlx.training.grpo_service as grpo_mod
@@ -781,10 +782,27 @@ def test_inprocess_trainers_set_train_mode_1463():
         (reward_mod.RewardService, "_execute_reward"),
         (rft_mod.RFTService, "_run_rft"),
     ]
-    for svc, method_name in cases:
+
+    def _effective_src(svc, method_name):
+        # #1480 split some cores behind a `self.<helper>(...)` hop (DPO's
+        # _execute_dpo now wraps register_job around _run_dpo_inner), so a
+        # bare getsource() would miss the lora/train pair. Follow one hop.
         fn = getattr(svc, method_name, None)
         assert fn is not None, f"{svc.__name__}.{method_name} missing"
         src = inspect.getsource(fn)
+        if "linear_to_lora_layers(" in src:
+            return src
+        for helper_name in re.findall(r"self\.(_\w+)\(", src):
+            helper = getattr(svc, helper_name, None)
+            if helper is None:
+                continue
+            helper_src = inspect.getsource(helper)
+            if "linear_to_lora_layers(" in helper_src:
+                return src + "\n" + helper_src
+        return src
+
+    for svc, method_name in cases:
+        src = _effective_src(svc, method_name)
         lora_idx = src.find("linear_to_lora_layers(")
         train_idx = src.find("model.train()")
         assert lora_idx != -1, f"{svc.__name__}.{method_name}: no lora build"
