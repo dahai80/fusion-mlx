@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useT } from "./i18n";
 import { LogsPage } from "./pages/LogsPage";
 import { MetricsPage } from "./pages/MetricsPage";
 import { ModelsPage } from "./pages/ModelsPage";
@@ -53,10 +54,11 @@ function EmbeddedTabs({
     route,
     onChange,
 }: { route: Route; onChange: (r: Route) => void }) {
+    const t = useT();
     const items: Array<{ id: Route; label: string }> = [
-        { id: "models", label: "Models" },
-        { id: "metrics", label: "Metrics" },
-        { id: "logs", label: "Logs" },
+        { id: "models", label: t("模型", "Models") },
+        { id: "metrics", label: t("指标", "Metrics") },
+        { id: "logs", label: t("日志", "Logs") },
     ];
     return (
         <nav className="flex shrink-0 border-b border-border bg-bg-elevated">
@@ -82,10 +84,11 @@ function BottomNav({
     route,
     onChange,
 }: { route: Route; onChange: (r: Route) => void }) {
+    const t = useT();
     const items: Array<{ id: Route; label: string }> = [
-        { id: "models", label: "Models" },
-        { id: "metrics", label: "Metrics" },
-        { id: "logs", label: "Logs" },
+        { id: "models", label: t("模型", "Models") },
+        { id: "metrics", label: t("指标", "Metrics") },
+        { id: "logs", label: t("日志", "Logs") },
     ];
     return (
         <nav className="fixed inset-x-0 bottom-0 z-10 flex border-t border-border bg-bg-elevated">

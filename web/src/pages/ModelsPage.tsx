@@ -9,24 +9,26 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type ModelEntry, api } from "../api";
 import { PageHeader } from "../components/PageHeader";
+import { useT } from "../i18n";
 import { sdk } from "../sdk";
 
 // Model registry cards (#1278 C4): grouped by engine/modality, groups
 // collapsible (31+ flat rows were the old table), one-click load/unload
 // per card. Polling + toast flow unchanged from the table version.
-const GROUP_LABELS: Record<string, string> = {
-    llm: "Chat / LLM",
-    vlm: "Vision-language",
-    embedding: "Embedding",
-    reranker: "Reranker",
-    image: "Image",
-    video: "Video",
-    audio: "Audio",
-    speech: "Speech",
-    tts: "TTS",
-    stt: "STT",
-    ner: "NER",
-    ocr: "OCR",
+// Spec S9: group labels are zh/en pairs picked by the host language.
+const GROUP_LABELS: Record<string, [string, string]> = {
+    llm: ["对话 / LLM", "Chat / LLM"],
+    vlm: ["视觉语言", "Vision-language"],
+    embedding: ["向量", "Embedding"],
+    reranker: ["重排", "Reranker"],
+    image: ["图像", "Image"],
+    video: ["视频", "Video"],
+    audio: ["音频", "Audio"],
+    speech: ["语音", "Speech"],
+    tts: ["TTS 合成", "TTS"],
+    stt: ["STT 识别", "STT"],
+    ner: ["NER", "NER"],
+    ocr: ["OCR", "OCR"],
 };
 
 function groupKey(m: ModelEntry): string {
@@ -34,11 +36,13 @@ function groupKey(m: ModelEntry): string {
     return GROUP_LABELS[t] ? t : t.split("_")[0] || "other";
 }
 
-function groupLabel(key: string): string {
-    return GROUP_LABELS[key] ?? key.toUpperCase();
+function groupLabel(key: string, lang: "zh" | "en"): string {
+    const pair = GROUP_LABELS[key];
+    return pair ? (lang === "en" ? pair[1] : pair[0]) : key.toUpperCase();
 }
 
 export function ModelsPage() {
+    const t = useT();
     const { data, error, loading, manualRetry } = useAutoRetry(
         () => api.models(),
         [],
@@ -56,25 +60,33 @@ export function ModelsPage() {
     const act = useCallback(
         async (id: string, op: "load" | "unload") => {
             setPending(id);
+            const okMsg =
+                op === "load"
+                    ? t("加载成功", "Load ok")
+                    : t("卸载成功", "Unload ok");
+            const failMsg =
+                op === "load"
+                    ? t("加载失败", "Load failed")
+                    : t("卸载失败", "Unload failed");
             try {
                 if (op === "load") await api.load(id);
                 else await api.unload(id);
                 sdk.toast.show({
                     level: "success",
-                    message: `${op} ok: ${id}`,
+                    message: `${okMsg}: ${id}`,
                 });
             } catch (e) {
                 console.error("[web] model op failed", id, op, e);
                 sdk.toast.show({
                     level: "error",
-                    message: `${op} failed: ${id}`,
+                    message: `${failMsg}: ${id}`,
                 });
             } finally {
                 setPending(null);
                 manualRetry();
             }
         },
-        [manualRetry],
+        [manualRetry, t],
     );
 
     const models = data?.models ?? [];
@@ -102,29 +114,37 @@ export function ModelsPage() {
     if (error)
         return (
             <div className="mx-auto max-w-5xl px-4">
-                <PageHeader title="Models" />
+                <PageHeader title={t("模型", "Models")} />
                 <ErrorState message={error.message} onRetry={manualRetry} />
             </div>
         );
     if (models.length === 0)
         return (
             <div className="mx-auto max-w-5xl px-4">
-                <PageHeader title="Models" />
+                <PageHeader title={t("模型", "Models")} />
                 <EmptyState
-                    title="No models discovered"
-                    description="Download models to ~/.fusion-mlx/models and restart the server."
+                    title={t("未发现模型", "No models discovered")}
+                    description={t(
+                        "请将模型下载到 ~/.fusion-mlx/models 后重启服务。",
+                        "Download models to ~/.fusion-mlx/models and restart the server.",
+                    )}
                 />
             </div>
         );
 
+    const loadedCount = models.filter((m) => m.loaded).length;
     return (
         <div className="mx-auto max-w-5xl px-4">
             <PageHeader
-                title="Models"
-                subtitle={`${models.filter((m) => m.loaded).length} loaded / ${models.length} discovered`}
+                title={t("模型", "Models")}
+                subtitle={t(
+                    `已加载 ${loadedCount} / 共发现 ${models.length}`,
+                    `${loadedCount} loaded / ${models.length} discovered`,
+                )}
             />
             {groups.map(([key, entries]) => {
                 const isCollapsed = collapsed.has(key);
+                const groupLoaded = entries.filter((m) => m.loaded).length;
                 return (
                     <section key={key} className="mb-4">
                         <button
@@ -138,11 +158,13 @@ export function ModelsPage() {
                                 ▶
                             </span>
                             <span className="text-sm text-text-primary">
-                                {groupLabel(key)}
+                                {groupLabel(key, sdk.i18n.lang())}
                             </span>
                             <span className="text-xs text-text-muted">
-                                {entries.filter((m) => m.loaded).length}/
-                                {entries.length} loaded
+                                {t(
+                                    `已加载 ${groupLoaded}/${entries.length}`,
+                                    `${groupLoaded}/${entries.length} loaded`,
+                                )}
                             </span>
                         </button>
                         {!isCollapsed && (
@@ -163,9 +185,12 @@ export function ModelsPage() {
             })}
             <ConfirmDialog
                 open={confirmUnload !== null}
-                title="Unload model"
-                description={`Evict ${confirmUnload?.id ?? ""} from the engine pool (LRU-free slot).`}
-                confirmLabel="Unload"
+                title={t("卸载模型", "Unload model")}
+                description={t(
+                    `将从引擎池卸载 ${confirmUnload?.id ?? ""}（释放 LRU 槽位）。`,
+                    `Evict ${confirmUnload?.id ?? ""} from the engine pool (LRU-free slot).`,
+                )}
+                confirmLabel={t("卸载", "Unload")}
                 danger
                 onConfirm={() => {
                     const m = confirmUnload;
@@ -189,6 +214,7 @@ function ModelCard({
     onLoad: () => void;
     onUnload: () => void;
 }) {
+    const t = useT();
     const busy = pending || m.is_loading;
     return (
         <div className="rounded-card border border-border bg-bg-elevated p-3">
@@ -198,7 +224,7 @@ function ModelCard({
                         {m.id}
                         {m.pinned ? (
                             <span className="ml-2 text-xs text-warning">
-                                pinned
+                                {t("已固定", "pinned")}
                             </span>
                         ) : null}
                     </div>
@@ -210,11 +236,17 @@ function ModelCard({
                     </div>
                 </div>
                 {m.is_loading ? (
-                    <StatusBadge status="running" label="loading" />
+                    <StatusBadge
+                        status="running"
+                        label={t("加载中", "loading")}
+                    />
                 ) : m.loaded ? (
-                    <StatusBadge status="success" label="loaded" />
+                    <StatusBadge
+                        status="success"
+                        label={t("已加载", "loaded")}
+                    />
                 ) : (
-                    <StatusBadge status="offline" label="idle" />
+                    <StatusBadge status="offline" label={t("空闲", "idle")} />
                 )}
             </div>
             <div className="mt-2 flex justify-end">
@@ -225,7 +257,7 @@ function ModelCard({
                         onClick={onUnload}
                         className="rounded-md border border-error px-3 py-1 text-sm text-error hover:bg-bg-muted disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                        {pending ? "…" : "Unload"}
+                        {pending ? "…" : t("卸载", "Unload")}
                     </button>
                 ) : (
                     <button
@@ -234,7 +266,7 @@ function ModelCard({
                         onClick={onLoad}
                         className="rounded-md bg-brand px-3 py-1 text-sm text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                     >
-                        {busy ? "…" : "Load"}
+                        {busy ? "…" : t("加载", "Load")}
                     </button>
                 )}
             </div>

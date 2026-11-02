@@ -1,4 +1,5 @@
 import {
+    ErrorState,
     MetricChart,
     type MetricSeries,
     MetricTile,
@@ -22,6 +23,7 @@ import {
     loadSamples,
     windowSeries,
 } from "../components/usageStore";
+import { useT } from "../i18n";
 
 const POLL_MS = 3000;
 const RING_MAX = 4000; // matches usageStore persistence cap
@@ -31,12 +33,14 @@ const RING_MAX = 4000; // matches usageStore persistence cap
 // memory + /metrics gauges; usage windows (#1278) aggregate the local sample
 // ring persisted to localStorage (components/usageStore.ts) — no backend.
 export function MetricsPage() {
+    const t = useT();
     const [health, setHealth] = useState<HealthReport | null>(null);
     const [last, setLast] = useState<Partial<MetricSample> | null>(null);
     const [samples, setSamples] = useState<UsageSample[]>([]);
     const [winKey, setWinKey] = useState("5m");
     const [error, setError] = useState<string | null>(null);
     const [loaded, setLoaded] = useState(false);
+    const pollRef = useRef<() => void>(() => undefined);
     const samplesRef = useRef<UsageSample[]>([]);
     samplesRef.current = samples;
 
@@ -88,6 +92,7 @@ export function MetricsPage() {
             }
         };
         void poll();
+        pollRef.current = poll;
         const timer = window.setInterval(poll, POLL_MS);
         return () => {
             alive = false;
@@ -99,24 +104,35 @@ export function MetricsPage() {
     if (error && !health)
         return (
             <div className="mx-auto max-w-5xl px-4">
-                <PageHeader title="Metrics" />
-                <div className="py-12 text-center text-sm text-error">
-                    {error}
-                </div>
+                <PageHeader title={t("指标", "Metrics")} />
+                <ErrorState
+                    message={error}
+                    onRetry={() => {
+                        setError(null);
+                        pollRef.current();
+                    }}
+                />
             </div>
         );
 
+    const oomRiskLabels: Record<string, string> = {
+        none: t("无", "none"),
+        imminent: t("迫近", "imminent"),
+        high: t("高", "high"),
+        moderate: t("中", "moderate"),
+        low: t("低", "low"),
+    };
     const mem = health?.memory;
     const perModel = mem?.per_model ?? [];
     const qpsSeries: MetricSeries[] = [
         {
-            label: "requests/s",
+            label: t("请求/秒", "requests/s"),
             points: derivePoints(samples, (s) => s.requests),
         },
     ];
     const tokSeries: MetricSeries[] = [
         {
-            label: "completion tokens/s",
+            label: t("生成 tokens/秒", "completion tokens/s"),
             points: derivePoints(samples, (s) => s.completion),
         },
     ];
@@ -126,10 +142,10 @@ export function MetricsPage() {
     return (
         <div className="mx-auto max-w-5xl px-4">
             <PageHeader
-                title="Metrics"
+                title={t("指标", "Metrics")}
                 subtitle={
                     health
-                        ? `v${health.version ?? "?"} · up ${Math.floor((health.uptime_seconds ?? 0) / 60)}m`
+                        ? `v${health.version ?? "?"} · ${t("已运行", "up")} ${Math.floor((health.uptime_seconds ?? 0) / 60)}m`
                         : undefined
                 }
                 actions={
@@ -142,52 +158,52 @@ export function MetricsPage() {
                                       ? "warning"
                                       : "success"
                             }
-                            label={`OOM: ${health.oom_risk}`}
+                            label={`OOM: ${oomRiskLabels[health.oom_risk] ?? health.oom_risk}`}
                         />
                     ) : undefined
                 }
             />
             {error ? (
                 <div className="mb-2 text-xs text-warning">
-                    {error} — retrying
+                    {error} — {t("重试中", "retrying")}
                 </div>
             ) : null}
             <CapacityGauge mem={mem} last={last} perModel={perModel} />
             <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
                 <MetricTile
-                    label="Requests"
+                    label={t("请求数", "Requests")}
                     value={fmt(last?.requests_total)}
                 />
                 <MetricTile
-                    label="Failed"
+                    label={t("失败数", "Failed")}
                     value={fmt(last?.requests_failed_total)}
                 />
                 <MetricTile
-                    label="Running"
+                    label={t("运行中", "Running")}
                     value={fmt(last?.requests_running)}
                 />
                 <MetricTile
-                    label="Waiting"
+                    label={t("排队中", "Waiting")}
                     value={fmt(last?.requests_waiting)}
                 />
                 <MetricTile
-                    label="Prompt tokens"
+                    label={t("输入 tokens", "Prompt tokens")}
                     value={formatTokenCount(
                         last?.prompt_tokens_total ?? Number.NaN,
                     )}
                 />
                 <MetricTile
-                    label="Completion tokens"
+                    label={t("输出 tokens", "Completion tokens")}
                     value={formatTokenCount(
                         last?.completion_tokens_total ?? Number.NaN,
                     )}
                 />
                 <MetricTile
-                    label="Models loaded"
+                    label={t("已加载模型", "Models loaded")}
                     value={fmt(last?.models_loaded)}
                 />
                 <MetricTile
-                    label="RSS"
+                    label={t("进程内存 (RSS)", "RSS")}
                     value={formatBytes(mem?.rss_bytes ?? Number.NaN)}
                 />
             </div>
@@ -198,25 +214,25 @@ export function MetricsPage() {
             </div>
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
                 <MetricTile
-                    label="MLX active"
+                    label={t("MLX 活跃", "MLX active")}
                     value={formatBytes(mem?.mlx_active_bytes ?? Number.NaN)}
                 />
                 <MetricTile
-                    label="MLX cache"
+                    label={t("MLX 缓存", "MLX cache")}
                     value={formatBytes(mem?.mlx_cache_bytes ?? Number.NaN)}
                 />
                 <MetricTile
-                    label="MLX peak"
+                    label={t("MLX 峰值", "MLX peak")}
                     value={formatBytes(mem?.mlx_peak_bytes ?? Number.NaN)}
                 />
             </div>
             <div className="mt-4 rounded-card border border-border bg-bg-elevated p-4">
                 <div className="text-sm text-text-primary">
-                    Per-model memory
+                    {t("各模型内存", "Per-model memory")}
                 </div>
                 {perModel.length === 0 ? (
                     <div className="mt-2 text-xs text-text-muted">
-                        No resident models
+                        {t("暂无常驻模型", "No resident models")}
                     </div>
                 ) : (
                     <ul className="mt-2 space-y-1">
@@ -259,6 +275,7 @@ function CapacityGauge({
 }) {
     const usedB = mem?.used_bytes ?? 0;
     const totalB = mem?.total_bytes ?? 0;
+    const t = useT();
     const pct = totalB > 0 ? Math.min(100, (usedB / totalB) * 100) : null;
     const residentBytes = perModel.reduce((acc, p) => acc + p.bytes, 0);
     const barColor =
@@ -272,7 +289,9 @@ function CapacityGauge({
     return (
         <div className="mt-4 rounded-card border border-border bg-bg-elevated p-4">
             <div className="flex items-center justify-between text-sm">
-                <span className="text-text-primary">Memory pressure</span>
+                <span className="text-text-primary">
+                    {t("内存压力", "Memory pressure")}
+                </span>
                 <span className="font-mono text-xs tabular-nums text-text-secondary">
                     {pct === null ? "-" : `${pct.toFixed(0)}%`} ·{" "}
                     {formatBytes(usedB)} / {formatBytes(totalB)}
@@ -286,41 +305,41 @@ function CapacityGauge({
             </div>
             <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-3">
                 <MetricTile
-                    label="KV utilization"
+                    label={t("KV 利用率", "KV utilization")}
                     value={pctGauge(last?.paged_kv_utilization)}
                 />
                 <MetricTile
-                    label="Metal active"
+                    label={t("Metal 活跃", "Metal active")}
                     value={formatBytes(last?.metal_active_bytes ?? Number.NaN)}
                 />
                 <MetricTile
-                    label="Metal wired"
+                    label={t("Metal 接线", "Metal wired")}
                     value={formatBytes(last?.metal_wired_bytes ?? Number.NaN)}
                 />
                 <MetricTile
-                    label="Phys footprint"
+                    label={t("物理占用", "Phys footprint")}
                     value={formatBytes(
                         last?.phys_footprint_bytes ?? Number.NaN,
                     )}
                 />
                 <MetricTile
-                    label="Resident models"
+                    label={t("常驻模型", "Resident models")}
                     value={`${perModel.length} · ${formatBytes(residentBytes)}`}
                 />
                 <MetricTile
-                    label="Cache hit / spec accept"
+                    label={t("缓存命中 / 投机接受", "Cache hit / spec accept")}
                     value={`${pctGauge(last?.response_cache_hit_rate)} / ${pctGauge(last?.spec_decode_accept_rate)}`}
                 />
                 <MetricTile
-                    label="Available"
+                    label={t("可用内存", "Available")}
                     value={formatBytes(mem?.free_bytes ?? Number.NaN)}
                 />
                 <MetricTile
-                    label="Swap used"
+                    label={t("已用 Swap", "Swap used")}
                     value={`${formatBytes(last?.swap_used_bytes ?? Number.NaN)} / ${formatBytes(last?.swap_total_bytes ?? Number.NaN)}`}
                 />
                 <MetricTile
-                    label="Swap rate"
+                    label={t("Swap 速率", "Swap rate")}
                     value={formatRate(last?.swap_rate_bytes_per_second)}
                 />
             </div>
@@ -351,11 +370,12 @@ function UsageWindow({
     };
 }) {
     const [view, setView] = useState<"req" | "p95">("req");
+    const t = useT();
     return (
         <div className="mt-4 rounded-card border border-border bg-bg-elevated p-4">
             <div className="flex items-center justify-between">
                 <span className="text-sm text-text-primary">
-                    Usage retrospection
+                    {t("用量回溯", "Usage retrospection")}
                 </span>
                 <div className="flex gap-1">
                     <button
@@ -367,7 +387,7 @@ function UsageWindow({
                                 : "border border-border text-text-secondary"
                         }`}
                     >
-                        Requests
+                        {t("请求", "Requests")}
                     </button>
                     <button
                         type="button"
@@ -378,7 +398,7 @@ function UsageWindow({
                                 : "border border-border text-text-secondary"
                         }`}
                     >
-                        p95 TTFT
+                        {t("p95 首 token", "p95 TTFT")}
                     </button>
                     <span className="mx-1 w-px bg-border" />
                     {WINDOWS.map((w) => (
@@ -398,17 +418,20 @@ function UsageWindow({
                 </div>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-5">
-                <MetricTile label="Requests" value={String(res.totals.req)} />
                 <MetricTile
-                    label="Failed"
+                    label={t("请求数", "Requests")}
+                    value={String(res.totals.req)}
+                />
+                <MetricTile
+                    label={t("失败数", "Failed")}
                     value={`${res.totals.failed} (${pctGauge(res.totals.req > 0 ? res.totals.failed / res.totals.req : null)})`}
                 />
                 <MetricTile
-                    label="Tokens"
+                    label={t("Token 数", "Tokens")}
                     value={formatTokenCount(res.totals.tok)}
                 />
                 <MetricTile
-                    label="Avg TPS"
+                    label={t("平均 TPS", "Avg TPS")}
                     value={
                         res.totals.tps === null
                             ? "-"
@@ -416,7 +439,10 @@ function UsageWindow({
                     }
                 />
                 <MetricTile
-                    label="p95 TTFT (since start)"
+                    label={t(
+                        "p95 首 token（自启动）",
+                        "p95 TTFT (since start)",
+                    )}
                     value={
                         res.totals.p95 === null
                             ? "-"
@@ -428,10 +454,18 @@ function UsageWindow({
                 <MetricChart
                     series={
                         view === "req"
-                            ? [{ label: "requests/min", points: res.points }]
+                            ? [
+                                  {
+                                      label: t("请求/分钟", "requests/min"),
+                                      points: res.points,
+                                  },
+                              ]
                             : [
                                   {
-                                      label: "p95 TTFT (cumulative)",
+                                      label: t(
+                                          "p95 首 token（累计）",
+                                          "p95 TTFT (cumulative)",
+                                      ),
                                       points: res.latencyPoints,
                                   },
                               ]

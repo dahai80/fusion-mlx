@@ -2,6 +2,7 @@ import { type LogLine, LogStream, SkeletonLines } from "@fusion/web-ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, parseLogLine } from "../api";
 import { PageHeader } from "../components/PageHeader";
+import { useT } from "../i18n";
 
 const MAX_LINES = 2000;
 
@@ -23,6 +24,7 @@ const LEVEL_RANK: Record<LogLine["level"], number> = {
 };
 
 export function LogsPage() {
+    const t = useT();
     const [lines, setLines] = useState<LogLine[]>([]);
     const [streamError, setStreamError] = useState<string | null>(null);
     const [loaded, setLoaded] = useState(false);
@@ -137,15 +139,20 @@ export function LogsPage() {
     return (
         <div className="mx-auto flex h-full max-w-5xl flex-col px-4">
             <PageHeader
-                title="Logs"
-                subtitle={`server.log live tail (SSE) · ${filtered.length}/${lines.length} shown`}
+                title={t("日志", "Logs")}
+                subtitle={t(
+                    `server.log 实时输出（SSE） · 已显示 ${filtered.length}/${lines.length} 条`,
+                    `server.log live tail (SSE) · ${filtered.length}/${lines.length} shown`,
+                )}
                 actions={
                     streamError ? (
                         <span className="text-xs text-warning">
-                            reconnecting…
+                            {t("重连中…", "reconnecting…")}
                         </span>
                     ) : (
-                        <span className="text-xs text-success">live</span>
+                        <span className="text-xs text-success">
+                            {t("实时", "live")}
+                        </span>
                     )
                 }
             />
@@ -154,11 +161,13 @@ export function LogsPage() {
                     value={level}
                     onChange={(e) => setLevel(e.target.value as LevelFilter)}
                     className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary"
-                    aria-label="Minimum log level"
+                    aria-label={t("最低日志级别", "Minimum log level")}
                 >
                     {LEVELS.map((lv) => (
                         <option key={lv} value={lv}>
-                            {lv === "all" ? "all levels" : `≥ ${lv}`}
+                            {lv === "all"
+                                ? t("全部级别", "all levels")
+                                : `≥ ${lv}`}
                         </option>
                     ))}
                 </select>
@@ -166,16 +175,16 @@ export function LogsPage() {
                     type="search"
                     value={keyword}
                     onChange={(e) => setKeyword(e.target.value)}
-                    placeholder="keyword…"
+                    placeholder={t("关键字…", "keyword…")}
                     className="w-44 rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary placeholder:text-text-muted"
-                    aria-label="Keyword filter"
+                    aria-label={t("关键字过滤", "Keyword filter")}
                 />
                 <input
                     type="time"
                     value={since}
                     onChange={(e) => setSince(e.target.value)}
                     className="rounded-md border border-border bg-bg-elevated px-2 py-1 text-xs text-text-primary"
-                    aria-label="Show lines from"
+                    aria-label={t("从此时间起显示", "Show lines from")}
                 />
                 {level !== "all" || keyword || since ? (
                     <button
@@ -187,7 +196,7 @@ export function LogsPage() {
                         }}
                         className="rounded-md border border-border px-2 py-1 text-xs text-text-secondary hover:bg-bg-muted"
                     >
-                        clear
+                        {t("清除", "clear")}
                     </button>
                 ) : null}
             </div>
