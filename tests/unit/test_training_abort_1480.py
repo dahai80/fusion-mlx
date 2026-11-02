@@ -246,10 +246,12 @@ def test_dpo_service_abort_wiring():
     src = _source("training/dpo_service.py")
     assert src.index("register_job(job.job_id") < src.index("self._run_dpo_inner(")
     assert src.index("self._run_dpo_inner(") < src.index("deregister_job(job.job_id)")
-    assert "check_abort(job.job_id)" in src
+    # #1483 item 3: the loop body moved wholesale into _execute_dpo_core,
+    # which takes a bare job_id — the call is check_abort(job_id) now.
+    assert "check_abort(job_id)" in src
     # Check sits inside the train loop, before the step.
     loop_start = src.index("for it in range(cfg.iters):")
-    check = src.index("check_abort(job.job_id)")
+    check = src.index("check_abort(job_id)")
     step = src.index("result = trainer.train_step(batch)", loop_start)
     assert loop_start < check < step
 

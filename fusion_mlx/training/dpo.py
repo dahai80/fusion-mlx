@@ -60,6 +60,11 @@ class DPOConfig:
     # Default False preserves the load-and-evict behavior for
     # shared/serving deployments.
     keep_ref_resident: bool = False
+    # #1483 item 3: "process" (default) spawns the trainer into a child
+    # process with its own Metal limit — symmetric with FineTuneConfig, so a
+    # DPO blow-up cannot take the serving process down. "thread" keeps the
+    # legacy in-process path (single-process deployments, debugging).
+    execution_mode: str = "process"
 
     def to_dict(self):
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
