@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.10.43] - 2026-11-03
+
+### Added
+- **Spark-TTS 0.5B as a TTS backend (#1486)**: lifelike Mandarin TTS with
+  5-10s reference voice cloning. Load `Spark-TTS-0.5B-bf16` (mlx-community
+  conversion) and call `/v1/audio/speech` with `ref_audio` (base64 or a
+  voice file) + `ref_text` to clone. Real-model verified: 5.6s zh synthesis
+  in 2.7s wall on M-series GPU; cloning 4.0s in 2.4s.
+- **`POST /v1/videos/generations` alias (#1486)**: OpenAI-style video
+  endpoint accepting `{model, prompt, image_b64?, duration?, ...}` —
+  `duration` maps to `num_frames` (1+8k frame constraint), raw base64
+  images wrap as data URIs; response is the standard
+  `VideoGenerateResponse` envelope.
+
+### Changed
+- **`/v1/images/generate` surfaces `negative_prompt` drops (#1486)**:
+  responses now carry a `warnings[]` field; FLUX-family variants (no true
+  CFG) that ignore `negative_prompt` state so in the response instead of
+  only the server log. Qwen-Image-2.1 and other CFG variants honor it as
+  before.
+
 ## [0.10.42] - 2026-11-02
 
 ### Changed
