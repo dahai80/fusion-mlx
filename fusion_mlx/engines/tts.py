@@ -50,6 +50,11 @@ class TTSEngine(BaseNonStreamingEngine):
             return "csm"
         if "cosyvoice" in name_lower:
             return "cosyvoice"
+        # #1486: Spark-TTS 0.5B — lifelike zh TTS with 5-10s reference
+        # cloning (generate(ref_audio=...) signature, auto-detected by
+        # supports_voice_cloning()).
+        if "spark" in name_lower:
+            return "spark"
         return None
 
     @staticmethod

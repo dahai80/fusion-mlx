@@ -387,6 +387,7 @@ def _build_audio_detection_sets():
             "vibevoice_streaming",
             "kugelaudio",
             "audiodit",
+            "spark",
         }
         _sts = {"deepfilternet", "mossformer2_se", "sam_audio", "lfm_audio"}
         return _stt, _tts, _sts
@@ -935,6 +936,13 @@ def detect_model_type(model_path: Path) -> ModelType:
     # detect by name so /v1/audio/music routes to MusicGenEngine.
     if "ace-step" in name_lower or "acestep" in name_lower:
         return "audio_music"
+
+    # #1486: Spark-TTS (mlx-community conversions) carries model_type
+    # "qwen2" / Qwen2ForCausalLM — the LLM base it shares weights with.
+    # Without this name check it classifies as LLM and never appears on
+    # /v1/audio/speech.
+    if "spark" in name_lower:
+        return "audio_tts"
 
     return "llm"
 

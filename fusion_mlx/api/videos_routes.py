@@ -1328,6 +1328,70 @@ async def generate_video(
         ) from exc
 
 
+# --- #1486: /v1/videos/generations alias ----------------------------------
+#
+# Downstream clients (e.g. ai-ads-videobuilder) call POST /v1/videos/
+# generations with {model, prompt, image_b64?, duration} expecting the
+# OpenAI-style images-like envelope. This alias maps onto the existing
+# /generate pipeline: image_b64 (raw b64 or data URI) → image, duration
+# (seconds) → num_frames at 24 fps (the /generate fps default). Response =
+# VideoGenerateResponse (data[].url is a data:video/mp4 URI, or b64_json
+# with response_format).
+
+_ALIAS_FPS = 24
+
+
+class VideoGenerationsAliasRequest(BaseModel):
+    model: str | None = None
+    prompt: str
+    image_b64: str | None = None
+    duration: float | None = Field(default=None, gt=0.0, le=45.0)
+    response_format: str = Field(default="url", pattern="^(url|b64_json)$")
+    n: int = Field(default=1, ge=1, le=4)
+    negative_prompt: str | None = None
+    seed: int | None = None
+
+
+@router.post("/generations")
+async def generate_video_alias(
+    request: VideoGenerationsAliasRequest,
+    _auth: bool = Depends(verify_api_key),
+    _rate: bool = Depends(check_rate_limit),
+) -> VideoGenerateResponse:
+    num_frames = None
+    if request.duration is not None:
+        # LTX frame constraint num_frames % 8 == 1 (1 + 8k); snap via the
+        # shared helper, then clamp to the schema ceiling keeping 1+8k form.
+        num_frames = _duration_to_num_frames(request.duration, _ALIAS_FPS, block=8)
+        if num_frames > 1024:
+            num_frames = ((1024 - 1) // 8) * 8 + 1
+        logger.info(
+            "/generations alias: duration=%.2fs -> num_frames=%d (fps=%d)",
+            request.duration,
+            num_frames,
+            _ALIAS_FPS,
+        )
+    image = None
+    if request.image_b64 is not None:
+        if request.image_b64.startswith("data:"):
+            image = request.image_b64
+        else:
+            # Raw b64 (no data-URI header): wrap as png; the image loader
+            # sniffs the real format from the bytes.
+            image = f"data:image/png;base64,{request.image_b64}"
+    inner = VideoGenerateRequest(
+        prompt=request.prompt,
+        model=request.model,
+        n=request.n,
+        num_frames=num_frames if num_frames is not None else 97,
+        image=image,
+        response_format=request.response_format,
+        negative_prompt=request.negative_prompt,
+        seed=request.seed,
+    )
+    return await generate_video(inner)
+
+
 # --- #1079: video job endpoints ------------------------------------------
 
 
