@@ -630,6 +630,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # (fusion_mlx/training/abort.py). Pure safety toggle — never
         # selects a model, parser, or routing tier.
         "FUSION_MLX_ENFORCER_ABORT_TRAINING",
+        # #1483 item 2b: training-side RSS hard-stop limit in GB
+        # (fusion_mlx/training/abort.py). Pure safety knob — aborts a
+        # training job whose process RSS stays over the limit; never
+        # selects a model, parser, or routing tier.
+        "FUSION_MLX_TRAIN_HARD_STOP_RSS_GB",
         # #1192: FD watchdog pressure thresholds (fusion_mlx/fd_watchdog.py).
         # Fractions of RLIMIT_NOFILE deciding when the watchdog warns and
         # when NEW streams are rejected; pure fd-capacity knob (#1192).
