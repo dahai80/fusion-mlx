@@ -3,6 +3,20 @@
 ## [Unreleased]
 
 ### Added
+- **DPO/ORPO runs in a spawned child process (#1483 item 3)**: DPO used
+  to train on a background thread inside the serving process, so a
+  training blow-up (OOM killer, fatal Metal error, bad backward) could
+  take the server down with it. The trainer now runs in a `spawn`-context
+  child with its own Metal memory budget — symmetric with the #1186 SFT
+  path — streaming step events back over a duplex pipe. The serving
+  process stays up and serves inference while the job runs; cancel sends
+  SIGTERM/SIGKILL to the child; a child death marks the job FAILED with
+  the reason instead of crashing the server. The training loop itself is
+  shared verbatim with the legacy thread path (`_execute_dpo_core`), so
+  the two modes cannot drift; `DPOConfig(execution_mode="thread")` keeps
+  the old in-process behavior for single-process deployments. The #1483
+  RSS hard-stop watcher now lives in `training/proc.py` and covers both
+  SFT and DPO children.
 - **Training-side RSS hard stop — jobs abort before the host dies
   (#1483, deferred #1473 item 2b)**: an in-process training job can
   balloon past the enforcer's reaction window (activation headroom

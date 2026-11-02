@@ -97,6 +97,200 @@ def _chain_adapter_weights(model, cfg: DPOConfig):
     )
 
 
+def _execute_dpo_core(
+    job_id: str,
+    model_path: str,
+    pairs: list,
+    config: DPOConfig,
+    adapter_path: str,
+    mlx_utils,
+    linear_to_lora_layers,
+    emit,
+) -> dict:
+    # #1483 item 3: the training body, shared verbatim by the thread path
+    # (_run_dpo_inner) and the spawned-process entrypoint (execute_dpo_spec)
+    # so the two modes cannot drift. No service or loop state in here — the
+    # caller owns progress bookkeeping and terminal job status.
+    cfg = config
+    logger.info("%s execute: model=%s job=%s", cfg.method.upper(), model_path, job_id)
+    if cfg.init_adapter_path:
+        logger.info(
+            "%s: chaining on SFT adapter %s (#1149)",
+            cfg.method.upper(),
+            cfg.init_adapter_path,
+        )
+
+    # #1461: load the BASE model — not the adapter. The old
+    # mlx_utils.load(..., adapter_path=cfg.init_adapter_path) returned a
+    # tree with LoRA layers already built, and the
+    # linear_to_lora_layers call below then double-applied ("Can't
+    # convert layer of type LoRALinear to LoRA"). Chained weights are
+    # loaded into the freshly-built LoRA tree by _chain_adapter_weights.
+    model, tokenizer = mlx_utils.load(model_path)
+
+    mx.random.seed(cfg.seed)
+    model.freeze()
+    lora_params = {
+        "rank": cfg.lora_rank,
+        "dropout": cfg.lora_dropout,
+        "scale": cfg.lora_alpha,
+    }
+    linear_to_lora_layers(model, cfg.lora_layers, lora_params, use_dora=False)
+    if cfg.init_adapter_path:
+        _chain_adapter_weights(model, cfg)
+    # #1463: hybrid linear-attention models (qwen3_5/qwen3_next) gate
+    # gated_delta_update on the module training flag — eval mode routes
+    # the forward through the no-vjp metal kernel and the first backward
+    # raises "[Primitive::vjp] Not implemented for CustomKernel".
+    # model.train() only flips the flag; MLX freeze is separate, so
+    # frozen-base + LoRA-trainable semantics are unchanged.
+    model.train()
+    # #1469: DPO keeps policy + reference activations for the same
+    # forward pair, so a large model without gradient checkpointing
+    # retains every layer intermediate of BOTH passes — a 27B-8bit job
+    # was observed driving wired memory to 203GB (fatal enforcer exit).
+    # #1472: the per-pair reference load-and-evict churns same-size
+    # Metal allocations on large bases and climbs phys_footprint until
+    # the enforcer fatal-exits (observed 147.5GB with checkpointing ON
+    # but keep_ref_resident OFF — checkpointing alone is not enough).
+    # Auto-enable BOTH for big models unless the caller set the flag
+    # explicitly. Threshold 16GB: covers 27B-8bit (~27GB) and larger,
+    # leaves small models on the fast path.
+    if not cfg.gradient_checkpointing or not cfg.keep_ref_resident:
+        try:
+            from mlx.utils import tree_flatten as _mlx_tree_flatten
+
+            param_bytes = sum(
+                int(p.nbytes)
+                for _path, p in _mlx_tree_flatten(model.parameters())
+                if isinstance(p, mx.array)
+            )
+        except Exception:
+            param_bytes = 0
+            logger.warning(
+                "%s: could not estimate param bytes for large-model "
+                "auto-enable; leaving gradient_checkpointing=%s "
+                "keep_ref_resident=%s",
+                cfg.method.upper(),
+                cfg.gradient_checkpointing,
+                cfg.keep_ref_resident,
+            )
+        if param_bytes >= _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES:
+            if not cfg.gradient_checkpointing:
+                cfg.gradient_checkpointing = True
+                logger.info(
+                    "%s: auto-enabling gradient checkpointing — "
+                    "param_bytes=%.1fGB >= %.0fGB threshold (policy+"
+                    "reference activations would overflow wired memory "
+                    "otherwise, #1469)",
+                    cfg.method.upper(),
+                    param_bytes / 1024**3,
+                    _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES / 1024**3,
+                )
+            if not cfg.keep_ref_resident:
+                cfg.keep_ref_resident = True
+                logger.info(
+                    "%s: auto-enabling resident reference model — "
+                    "param_bytes=%.1fGB >= %.0fGB threshold (per-pair "
+                    "load-and-evict churns Metal allocations until the "
+                    "enforcer fatal-exits, #1472)",
+                    cfg.method.upper(),
+                    param_bytes / 1024**3,
+                    _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES / 1024**3,
+                )
+    if cfg.gradient_checkpointing:
+        # #1460: same mechanism as the SFT path (mlx_lm tuner
+        # grad_checkpoint) — patch the transformer block __call__ with
+        # mx.checkpoint to trade compute for activation memory.
+        from mlx_lm.tuner.trainer import grad_checkpoint
+
+        grad_checkpoint(model.layers[0])
+        logger.info("%s: gradient checkpointing enabled (#1460)", cfg.method.upper())
+
+    trainer = DPOTrainer(model, tokenizer, model_path, cfg)
+
+    batch_size = max(cfg.batch_size, 1)
+    n_pairs = len(pairs)
+    if n_pairs == 0:
+        raise ValueError(f"{cfg.method} job has no preference_pairs")
+
+    from .abort import check_abort
+
+    try:
+        for it in range(cfg.iters):
+            # #1480 item 2b: cooperative abort between steps — the
+            # memory enforcer can request the job stop when sustained
+            # pressure has no inference victim left to evict.
+            check_abort(job_id)
+            start = (it * batch_size) % n_pairs
+            batch = [pairs[(start + i) % n_pairs] for i in range(batch_size)]
+            result = trainer.train_step(batch)
+            emit(
+                {
+                    "type": f"{cfg.method}_step",
+                    "iter": it,
+                    "total_iters": cfg.iters,
+                    "loss": result.loss,
+                    "reward_margin": result.reward_margin,
+                    "acc_chosen": result.acc_chosen,
+                    "n_pairs": len(batch),
+                }
+            )
+    finally:
+        # #1472: free a resident reference model even on step failure —
+        # otherwise a failed job leaks ~model-bytes into the engine.
+        trainer.close()
+
+    Path(adapter_path).mkdir(parents=True, exist_ok=True)
+    trainer.save_adapter(str(Path(adapter_path) / "adapters.safetensors"))
+
+    adapter_cfg = {
+        "adapter_path": adapter_path,
+        "num_layers": cfg.lora_layers,
+        "lora_parameters": {
+            "rank": cfg.lora_rank,
+            "scale": cfg.lora_alpha,
+            "dropout": cfg.lora_dropout,
+        },
+        "fine_tune_type": "lora",
+    }
+    with open(Path(adapter_path) / "adapter_config.json", "w") as f:
+        json.dump(adapter_cfg, f, indent=2)
+
+    del model
+    del tokenizer
+    gc.collect()
+    mx.clear_cache()
+
+    logger.info(
+        "%s job %s adapter saved: %s",
+        cfg.method.upper(),
+        job_id,
+        adapter_path,
+    )
+    return {"adapter_path": adapter_path}
+
+
+def execute_dpo_spec(spec: dict, report) -> dict:
+    # #1483 item 3: spawned-process entrypoint for DPO/ORPO, symmetric to
+    # service.execute_training_spec. The child loads its own weights under
+    # its own Metal limit, so a training blow-up cannot take the serving
+    # process down with it.
+    import mlx_lm.utils as mlx_utils
+    from mlx_lm.tuner.utils import linear_to_lora_layers
+
+    return _execute_dpo_core(
+        job_id=spec["job_id"],
+        model_path=spec["model_path"],
+        pairs=spec["preference_pairs"],
+        config=spec["config"],
+        adapter_path=spec["adapter_path"],
+        mlx_utils=mlx_utils,
+        linear_to_lora_layers=linear_to_lora_layers,
+        emit=report,
+    )
+
+
 @dataclass
 class DPOJob:
     job_id: str
@@ -145,7 +339,21 @@ class DPOService:
         self._engine_pool = None
         self._running = False
         self._pending_tasks: set = set()
+        self._proc = None
+        self._child_kill_note: str | None = None
         self._load_jobs()
+
+    def _kill_training_process(self) -> bool:
+        # #1483 item 3: terminate (SIGTERM then SIGKILL) the spawned DPO
+        # child, if one is running. Safe to call when there is none.
+        from fusion_mlx.training.proc import kill_training_process
+
+        proc = self._proc
+        self._proc = None
+        killed = kill_training_process(proc)
+        if killed:
+            logger.info("DPO training child process terminated")
+        return killed
 
     def set_engine_pool(self, pool):
         self._engine_pool = pool
@@ -234,6 +442,11 @@ class DPOService:
             self._persist_jobs()
             return True
         if job.status == JobStatus.RUNNING:
+            # #1483 item 3: process mode runs in a child — terminate it so
+            # the GPU memory is actually released, then mark the job
+            # terminal. The pipe drain raises TrainingProcessKilled, which
+            # _run_job recognises as an expected post-cancel death.
+            self._kill_training_process()
             job.status = JobStatus.CANCELLED
             job.terminal = True
             job.finished_at = time.time()
@@ -358,8 +571,31 @@ class DPOService:
         _t.add_done_callback(self._pending_tasks.discard)
 
     async def _run_job(self, job: DPOJob):
+        from fusion_mlx.training.proc import TrainingProcessKilled
+
         try:
-            await asyncio.to_thread(self._execute_dpo, job)
+            if getattr(job.config, "execution_mode", "process") == "process":
+                await self._run_job_in_process(job)
+                self._mark_job_completed(job)
+            else:
+                await asyncio.to_thread(self._execute_dpo, job)
+        except TrainingProcessKilled as exc:
+            # #1483 item 3: child died without reporting (SIGTERM cancel,
+            # RSS hard stop, OOM kill, crash). A user cancel is already
+            # terminal; anything else is a FAILED job with the reason.
+            if job.status == JobStatus.CANCELLED:
+                logger.info(
+                    "DPO training child death after cancel (job %s) — expected",
+                    job.job_id,
+                )
+            else:
+                logger.error("DPO training child died (job %s): %s", job.job_id, exc)
+                job.status = JobStatus.FAILED
+                job.error = self._child_kill_note or format_job_error(exc)
+                job.terminal = True
+                job.finished_at = time.time()
+                self._persist_jobs()
+                self._notify_job(job)
         except Exception as exc:
             logger.exception("DPO job %s failed: %s", job.job_id, exc)
             job.status = JobStatus.FAILED
@@ -369,8 +605,86 @@ class DPOService:
             self._persist_jobs()
             self._notify_job(job)
         finally:
+            self._proc = None
+            self._child_kill_note = None
             self._current_job_id = None
             self._process_queue()
+
+    async def _run_job_in_process(self, job: DPOJob):
+        # #1483 item 3: spawn the trainer into a child process with its own
+        # Metal budget; step events stream back over the pipe. Unlike SFT,
+        # DPO intentionally shares the box with serving — the #1473
+        # preflight already budgets resident inference weights, so there is
+        # no model eviction here.
+        import threading
+
+        from fusion_mlx.training.proc import (
+            child_rss_hard_stop_watcher,
+            run_training_process,
+        )
+
+        model_path = self._resolve_model_path(job.model_id)
+        if model_path is None:
+            raise ValueError(f"Cannot resolve model path for {job.model_id}")
+
+        spec = {
+            "config": job.config,
+            "model_path": model_path,
+            "preference_pairs": job.preference_pairs,
+            "adapter_path": job.adapter_path,
+            "job_id": job.job_id,
+            "entrypoint": "fusion_mlx.training.dpo_service:execute_dpo_spec",
+        }
+
+        def _on_event(event: dict):
+            self._push_event(job, event)
+            if "iter" in event:
+                job.progress = {
+                    "iter": event["iter"] + 1,
+                    "total_iters": event.get("total_iters", 0),
+                    "loss": event.get("loss"),
+                    "reward_margin": event.get("reward_margin"),
+                    "acc_chosen": event.get("acc_chosen"),
+                }
+
+        # #1483 item 2b: parent-side RSS hard-stop watcher.
+        stop_watch = threading.Event()
+        self._child_kill_note = None
+        watcher = threading.Thread(
+            target=child_rss_hard_stop_watcher,
+            args=(
+                lambda: self._proc,
+                stop_watch,
+                lambda note: setattr(self, "_child_kill_note", note),
+            ),
+            daemon=True,
+            name="dpo-child-rss-watch",
+        )
+        watcher.start()
+        try:
+            return await asyncio.to_thread(
+                run_training_process,
+                spec,
+                _on_event,
+                getattr(job.config, "memory_limit_gb", 0.0),
+                lambda proc: setattr(self, "_proc", proc),
+            )
+        finally:
+            stop_watch.set()
+            watcher.join(timeout=5)
+
+    def _mark_job_completed(self, job: DPOJob):
+        job.status = JobStatus.COMPLETED
+        job.terminal = True
+        job.finished_at = time.time()
+        self._persist_jobs()
+        self._push_event(job, {"type": "done", "adapter_path": job.adapter_path})
+        logger.info(
+            "%s job %s completed: adapter=%s",
+            job.config.method.upper(),
+            job.job_id,
+            job.adapter_path,
+        )
 
     def _execute_dpo(self, job: DPOJob):
         # Run DPO/ORPO training in a background thread (blocking). Load model,
@@ -390,170 +704,28 @@ class DPOService:
         model_path = self._resolve_model_path(job.model_id)
         if model_path is None:
             raise ValueError(f"Cannot resolve model path for {job.model_id}")
-        cfg = job.config
-        logger.info(
-            "%s execute: model=%s job=%s", cfg.method.upper(), model_path, job.job_id
-        )
-        if cfg.init_adapter_path:
-            logger.info(
-                "%s: chaining on SFT adapter %s (#1149)",
-                cfg.method.upper(),
-                cfg.init_adapter_path,
-            )
 
-        # #1461: load the BASE model — not the adapter. The old
-        # mlx_utils.load(..., adapter_path=cfg.init_adapter_path) returned a
-        # tree with LoRA layers already built, and the
-        # linear_to_lora_layers call below then double-applied ("Can't
-        # convert layer of type LoRALinear to LoRA"). Chained weights are
-        # loaded into the freshly-built LoRA tree by _chain_adapter_weights.
-        model, tokenizer = mlx_utils.load(model_path)
-
-        mx.random.seed(cfg.seed)
-        model.freeze()
-        lora_params = {
-            "rank": cfg.lora_rank,
-            "dropout": cfg.lora_dropout,
-            "scale": cfg.lora_alpha,
-        }
-        linear_to_lora_layers(model, cfg.lora_layers, lora_params, use_dora=False)
-        if cfg.init_adapter_path:
-            _chain_adapter_weights(model, cfg)
-        # #1463: hybrid linear-attention models (qwen3_5/qwen3_next) gate
-        # gated_delta_update on the module training flag — eval mode routes
-        # the forward through the no-vjp metal kernel and the first backward
-        # raises "[Primitive::vjp] Not implemented for CustomKernel".
-        # model.train() only flips the flag; MLX freeze is separate, so
-        # frozen-base + LoRA-trainable semantics are unchanged.
-        model.train()
-        # #1469: DPO keeps policy + reference activations for the same
-        # forward pair, so a large model without gradient checkpointing
-        # retains every layer intermediate of BOTH passes — a 27B-8bit job
-        # was observed driving wired memory to 203GB (fatal enforcer exit).
-        # #1472: the per-pair reference load-and-evict churns same-size
-        # Metal allocations on large bases and climbs phys_footprint until
-        # the enforcer fatal-exits (observed 147.5GB with checkpointing ON
-        # but keep_ref_resident OFF — checkpointing alone is not enough).
-        # Auto-enable BOTH for big models unless the caller set the flag
-        # explicitly. Threshold 16GB: covers 27B-8bit (~27GB) and larger,
-        # leaves small models on the fast path.
-        if not cfg.gradient_checkpointing or not cfg.keep_ref_resident:
-            try:
-                from mlx.utils import tree_flatten as _mlx_tree_flatten
-
-                param_bytes = sum(
-                    int(p.nbytes)
-                    for _path, p in _mlx_tree_flatten(model.parameters())
-                    if isinstance(p, mx.array)
-                )
-            except Exception:
-                param_bytes = 0
-                logger.warning(
-                    "%s: could not estimate param bytes for large-model "
-                    "auto-enable; leaving gradient_checkpointing=%s "
-                    "keep_ref_resident=%s",
-                    cfg.method.upper(),
-                    cfg.gradient_checkpointing,
-                    cfg.keep_ref_resident,
-                )
-            if param_bytes >= _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES:
-                if not cfg.gradient_checkpointing:
-                    cfg.gradient_checkpointing = True
-                    logger.info(
-                        "%s: auto-enabling gradient checkpointing — "
-                        "param_bytes=%.1fGB >= %.0fGB threshold (policy+"
-                        "reference activations would overflow wired memory "
-                        "otherwise, #1469)",
-                        cfg.method.upper(),
-                        param_bytes / 1024**3,
-                        _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES / 1024**3,
-                    )
-                if not cfg.keep_ref_resident:
-                    cfg.keep_ref_resident = True
-                    logger.info(
-                        "%s: auto-enabling resident reference model — "
-                        "param_bytes=%.1fGB >= %.0fGB threshold (per-pair "
-                        "load-and-evict churns Metal allocations until the "
-                        "enforcer fatal-exits, #1472)",
-                        cfg.method.upper(),
-                        param_bytes / 1024**3,
-                        _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES / 1024**3,
-                    )
-        if cfg.gradient_checkpointing:
-            # #1460: same mechanism as the SFT path (mlx_lm tuner
-            # grad_checkpoint) — patch the transformer block __call__ with
-            # mx.checkpoint to trade compute for activation memory.
-            from mlx_lm.tuner.trainer import grad_checkpoint
-
-            grad_checkpoint(model.layers[0])
-            logger.info(
-                "%s: gradient checkpointing enabled (#1460)", cfg.method.upper()
-            )
-
-        trainer = DPOTrainer(model, tokenizer, model_path, cfg)
-
-        pairs = job.preference_pairs
-        batch_size = max(cfg.batch_size, 1)
-        n_pairs = len(pairs)
-        if n_pairs == 0:
-            raise ValueError(f"{cfg.method} job has no preference_pairs")
-
-        from .abort import check_abort
-
-        try:
-            for it in range(cfg.iters):
-                # #1480 item 2b: cooperative abort between steps — the
-                # memory enforcer can request the job stop when sustained
-                # pressure has no inference victim left to evict.
-                check_abort(job.job_id)
-                start = (it * batch_size) % n_pairs
-                batch = [pairs[(start + i) % n_pairs] for i in range(batch_size)]
-                result = trainer.train_step(batch)
-                self._push_event(
-                    job,
-                    {
-                        "type": f"{cfg.method}_step",
-                        "iter": it,
-                        "total_iters": cfg.iters,
-                        "loss": result.loss,
-                        "reward_margin": result.reward_margin,
-                        "acc_chosen": result.acc_chosen,
-                        "n_pairs": len(batch),
-                    },
-                )
+        def _emit(event: dict):
+            self._push_event(job, event)
+            if "iter" in event:
                 job.progress = {
-                    "iter": it + 1,
-                    "total_iters": cfg.iters,
-                    "loss": result.loss,
-                    "reward_margin": result.reward_margin,
-                    "acc_chosen": result.acc_chosen,
+                    "iter": event["iter"] + 1,
+                    "total_iters": event.get("total_iters", 0),
+                    "loss": event.get("loss"),
+                    "reward_margin": event.get("reward_margin"),
+                    "acc_chosen": event.get("acc_chosen"),
                 }
-        finally:
-            # #1472: free a resident reference model even on step failure —
-            # otherwise a failed job leaks ~model-bytes into the engine.
-            trainer.close()
 
-        Path(job.adapter_path).mkdir(parents=True, exist_ok=True)
-        trainer.save_adapter(str(Path(job.adapter_path) / "adapters.safetensors"))
-
-        adapter_cfg = {
-            "adapter_path": job.adapter_path,
-            "num_layers": cfg.lora_layers,
-            "lora_parameters": {
-                "rank": cfg.lora_rank,
-                "scale": cfg.lora_alpha,
-                "dropout": cfg.lora_dropout,
-            },
-            "fine_tune_type": "lora",
-        }
-        with open(Path(job.adapter_path) / "adapter_config.json", "w") as f:
-            json.dump(adapter_cfg, f, indent=2)
-
-        del model
-        del tokenizer
-        gc.collect()
-        mx.clear_cache()
-
+        _execute_dpo_core(
+            job_id=job.job_id,
+            model_path=model_path,
+            pairs=job.preference_pairs,
+            config=job.config,
+            adapter_path=job.adapter_path,
+            mlx_utils=mlx_utils,
+            linear_to_lora_layers=linear_to_lora_layers,
+            emit=_emit,
+        )
         job.status = JobStatus.COMPLETED
         job.terminal = True
         job.finished_at = time.time()
@@ -561,7 +733,7 @@ class DPOService:
         self._push_event(job, {"type": "done", "adapter_path": job.adapter_path})
         logger.info(
             "%s job %s completed: adapter=%s",
-            cfg.method.upper(),
+            job.config.method.upper(),
             job.job_id,
             job.adapter_path,
         )

@@ -37,7 +37,12 @@ from pathlib import Path
 
 import mlx.core as mx
 
-from fusion_mlx.training.proc import TrainingProcessKilled
+from fusion_mlx.training.proc import (
+    TrainingProcessKilled,
+)
+from fusion_mlx.training.proc import (
+    child_rss_hard_stop_watcher as _child_rss_hard_stop_watcher,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -792,67 +797,6 @@ def execute_training_spec(spec: dict, report) -> dict:
         adapter_path=spec["adapter_path"],
         callback=callback,
     )
-
-
-def _child_rss_hard_stop_watcher(get_proc, stop: threading.Event, record_note) -> None:
-    # #1483 item 2b: parent-side RSS backstop for process-mode training.
-    # The child runs an opaque mlx_lm train() — there is no
-    # between-iteration hook inside it, so the cooperative check_abort()
-    # gate cannot run there. Poll the child's RSS instead; a sustained
-    # breach terminates the child and the standard kill policy marks the
-    # job FAILED with the recorded reason.
-    from .abort import _RSS_STRIKES, hard_stop_limit_gb
-
-    def _child_rss_gb(proc) -> float | None:
-        try:
-            import psutil
-
-            return psutil.Process(proc.pid).memory_info().rss / (2**30)
-        except Exception:
-            return None
-
-    strikes = 0
-    while not stop.is_set():
-        stop.wait(2.0)
-        if stop.is_set():
-            return
-        proc = get_proc()
-        if proc is None or not proc.is_alive():
-            return
-        limit = hard_stop_limit_gb()
-        if limit <= 0:
-            strikes = 0
-            continue
-        rss = _child_rss_gb(proc)
-        if rss is None:
-            continue
-        if rss < limit:
-            strikes = 0
-            continue
-        strikes += 1
-        logger.warning(
-            "training child pid=%d RSS %.1fGB over hard-stop limit %.1fGB "
-            "(%d/%d consecutive, #1483)",
-            proc.pid,
-            rss,
-            limit,
-            strikes,
-            _RSS_STRIKES,
-        )
-        if strikes >= _RSS_STRIKES:
-            note = (
-                f"RSS hard stop (#1483): training child RSS {rss:.1f}GB "
-                f"exceeded FUSION_MLX_TRAIN_HARD_STOP_RSS_GB={limit:.1f}GB "
-                f"for {strikes} consecutive polls — child terminated before "
-                f"host-level damage. Partial adapter state (if saved) is "
-                f"resumable."
-            )
-            logger.critical("training child terminated by RSS hard stop (#1483)")
-            record_note(note)
-            from fusion_mlx.training.proc import kill_training_process
-
-            kill_training_process(proc)
-            return
 
 
 class FineTuneService:

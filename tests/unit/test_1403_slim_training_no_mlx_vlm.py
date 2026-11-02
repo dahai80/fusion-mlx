@@ -29,6 +29,15 @@ def _attn_inputs():
     return q, q, q
 
 
+def _real_tq_types_available() -> bool:
+    # conftest installs a MagicMock mlx_vlm when the real package is absent,
+    # so pytest.importorskip("mlx_vlm") is not a reliable guard — importing
+    # the mock succeeds and hands back non-types, which then blow up inside
+    # isinstance() on the patched SDPA path. Require real classes.
+    tq = turboquant_attention._tq_cache_types()
+    return len(tq) == 3 and isinstance(tq[0], type) and isinstance(tq[1], type)
+
+
 class TestPatchWithoutMlxVlm:
     def test_sdpa_passes_through_when_mlx_vlm_missing(self, restore_patch, monkeypatch):
         # sys.modules[name] = None makes `import mlx_vlm` raise ImportError,
@@ -64,13 +73,15 @@ class TestPatchWithoutMlxVlm:
 
 class TestPatchWithMlxVlm:
     def test_tq_types_include_state_length_helper(self, restore_patch):
-        pytest.importorskip("mlx_vlm")
+        if not _real_tq_types_available():
+            pytest.skip("mlx_vlm TurboQuant caches not installed")
         tq = turboquant_attention._tq_cache_types()
         assert len(tq) == 3
         assert callable(tq[2])
 
     def test_plain_cache_still_uses_tq_path_when_available(self, restore_patch):
-        pytest.importorskip("mlx_vlm")
+        if not _real_tq_types_available():
+            pytest.skip("mlx_vlm TurboQuant caches not installed")
         assert turboquant_attention.apply_turboquant_attention_patch() is True
         q, k, v = _attn_inputs()
         expected = restore_patch(q, k, v, None, 0.5, None)

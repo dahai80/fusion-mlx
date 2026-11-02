@@ -770,6 +770,7 @@ def test_inprocess_trainers_set_train_mode_1463():
     # CustomKernel". Pins the contract on every service in one place.
     import inspect
     import re
+    import sys
 
     import fusion_mlx.training.dpo_service as dpo_mod
     import fusion_mlx.training.grpo_service as grpo_mod
@@ -783,22 +784,30 @@ def test_inprocess_trainers_set_train_mode_1463():
         (rft_mod.RFTService, "_run_rft"),
     ]
 
-    def _effective_src(svc, method_name):
-        # #1480 split some cores behind a `self.<helper>(...)` hop (DPO's
-        # _execute_dpo now wraps register_job around _run_dpo_inner), so a
-        # bare getsource() would miss the lora/train pair. Follow one hop.
+    def _effective_src(svc, method_name, depth=3):
+        # #1480/#1483 split some cores behind class-level and module-level
+        # hops (DPO: _execute_dpo -> _run_dpo_inner -> module _execute_dpo_core
+        # shared with the spawned child), so a bare getsource() would miss
+        # the lora/train pair. Follow up to `depth` hops and concatenate.
         fn = getattr(svc, method_name, None)
         assert fn is not None, f"{svc.__name__}.{method_name} missing"
         src = inspect.getsource(fn)
-        if "linear_to_lora_layers(" in src:
+        if "linear_to_lora_layers(" in src or depth <= 0:
             return src
-        for helper_name in re.findall(r"self\.(_\w+)\(", src):
-            helper = getattr(svc, helper_name, None)
-            if helper is None:
+        module = sys.modules[svc.__module__]
+        for helper_name in re.findall(r"(?:self\.)?(_[a-z0-9_]+)\(", src):
+            if helper_name == method_name:
                 continue
-            helper_src = inspect.getsource(helper)
-            if "linear_to_lora_layers(" in helper_src:
-                return src + "\n" + helper_src
+            for holder in (svc, module):
+                helper = getattr(holder, helper_name, None)
+                if helper is None or not callable(helper):
+                    continue
+                helper_src = inspect.getsource(helper)
+                if "linear_to_lora_layers(" in helper_src:
+                    return src + "\n" + helper_src
+                deeper = _effective_src(holder, helper_name, depth - 1)
+                if "linear_to_lora_layers(" in deeper:
+                    return src + "\n" + deeper
         return src
 
     for svc, method_name in cases:
