@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.10.41] - 2026-11-02
 
 ### Added
 - **DPO/ORPO runs in a spawned child process (#1483 item 3)**: DPO used
