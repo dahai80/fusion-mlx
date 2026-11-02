@@ -794,6 +794,67 @@ def execute_training_spec(spec: dict, report) -> dict:
     )
 
 
+def _child_rss_hard_stop_watcher(get_proc, stop: threading.Event, record_note) -> None:
+    # #1483 item 2b: parent-side RSS backstop for process-mode training.
+    # The child runs an opaque mlx_lm train() — there is no
+    # between-iteration hook inside it, so the cooperative check_abort()
+    # gate cannot run there. Poll the child's RSS instead; a sustained
+    # breach terminates the child and the standard kill policy marks the
+    # job FAILED with the recorded reason.
+    from .abort import _RSS_STRIKES, hard_stop_limit_gb
+
+    def _child_rss_gb(proc) -> float | None:
+        try:
+            import psutil
+
+            return psutil.Process(proc.pid).memory_info().rss / (2**30)
+        except Exception:
+            return None
+
+    strikes = 0
+    while not stop.is_set():
+        stop.wait(2.0)
+        if stop.is_set():
+            return
+        proc = get_proc()
+        if proc is None or not proc.is_alive():
+            return
+        limit = hard_stop_limit_gb()
+        if limit <= 0:
+            strikes = 0
+            continue
+        rss = _child_rss_gb(proc)
+        if rss is None:
+            continue
+        if rss < limit:
+            strikes = 0
+            continue
+        strikes += 1
+        logger.warning(
+            "training child pid=%d RSS %.1fGB over hard-stop limit %.1fGB "
+            "(%d/%d consecutive, #1483)",
+            proc.pid,
+            rss,
+            limit,
+            strikes,
+            _RSS_STRIKES,
+        )
+        if strikes >= _RSS_STRIKES:
+            note = (
+                f"RSS hard stop (#1483): training child RSS {rss:.1f}GB "
+                f"exceeded FUSION_MLX_TRAIN_HARD_STOP_RSS_GB={limit:.1f}GB "
+                f"for {strikes} consecutive polls — child terminated before "
+                f"host-level damage. Partial adapter state (if saved) is "
+                f"resumable."
+            )
+            logger.critical("training child terminated by RSS hard stop (#1483)")
+            record_note(note)
+            from fusion_mlx.training.proc import kill_training_process
+
+            kill_training_process(proc)
+            return
+
+
 class FineTuneService:
     """Singleton managing fine-tune job queue and execution.
 
@@ -822,6 +883,10 @@ class FineTuneService:
         # #1186: handle to the spawned training child (process mode) so
         # cancel/interrupt/fatal paths can terminate it.
         self._proc = None
+        # #1483: human-readable reason recorded by the child RSS hard-stop
+        # watcher; surfaced as the FAILED job error instead of the generic
+        # "child died without reporting" message.
+        self._child_kill_note: str | None = None
         self._load_jobs()
 
     def has_active_job(self) -> bool:
@@ -1102,6 +1167,7 @@ class FineTuneService:
             self._notify_job(job)
         finally:
             self._proc = None
+            self._child_kill_note = None
             self._current_job_id = None
             self._process_queue()
 
@@ -1132,13 +1198,32 @@ class FineTuneService:
             _apply_progress_event(job, event)
             self._notify_job(job)
 
-        return await asyncio.to_thread(
-            run_training_process,
-            spec,
-            _on_event,
-            cfg.memory_limit_gb,
-            lambda proc: setattr(self, "_proc", proc),
+        # #1483: parent-side child RSS hard-stop watcher (the child has no
+        # between-iteration hook — see _child_rss_hard_stop_watcher).
+        stop_watch = threading.Event()
+        self._child_kill_note = None
+        watcher = threading.Thread(
+            target=_child_rss_hard_stop_watcher,
+            args=(
+                lambda: self._proc,
+                stop_watch,
+                lambda note: setattr(self, "_child_kill_note", note),
+            ),
+            daemon=True,
+            name="train-child-rss-watch",
         )
+        watcher.start()
+        try:
+            return await asyncio.to_thread(
+                run_training_process,
+                spec,
+                _on_event,
+                cfg.memory_limit_gb,
+                lambda proc: setattr(self, "_proc", proc),
+            )
+        finally:
+            stop_watch.set()
+            watcher.join(timeout=5)
 
     def _mark_job_completed(self, job: FineTuneJob):
         job.status = JobStatus.COMPLETED
@@ -1184,7 +1269,8 @@ class FineTuneService:
             return
         logger.error("Training child died (%s); marking job FAILED", exc)
         job.status = JobStatus.FAILED
-        job.error = format_job_error(exc)
+        # #1483: prefer the RSS hard-stop note over the generic kill message
+        job.error = self._child_kill_note or format_job_error(exc)
         job.terminal = True
         job.finished_at = time.time()
         self._persist_jobs()

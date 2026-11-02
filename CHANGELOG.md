@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Training-side RSS hard stop — jobs abort before the host dies
+  (#1483, deferred #1473 item 2b)**: an in-process training job can
+  balloon past the enforcer's reaction window (activation headroom
+  underestimates, co-resident growth after admission) — the #1473
+  panic class died mid-flight with preflight passed. New knob
+  `FUSION_MLX_TRAIN_HARD_STOP_RSS_GB`: when process RSS stays above it
+  for 3 consecutive between-iteration checks, the job aborts with
+  FAILED + reason (partial adapter state stays resumable). Thread-mode
+  DPO/GRPO/reward/RFT/SFT get it via the existing `check_abort()` gate;
+  process-mode SFT gets a parent-side child-RSS watcher that terminates
+  the child on sustained breach (the kill policy records the reason).
+  0/unset = disabled; invalid values disable loudly.
+
 ## [0.10.40] - 2026-11-02
 
 ### Fixed

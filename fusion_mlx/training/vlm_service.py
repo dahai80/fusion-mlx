@@ -605,7 +605,9 @@ class VLMFineTuneService:
         stdout pipe on a drain thread), so there is no in-thread iteration
         boundary to raise at. The #1186 process-mode default supports a hard
         kill instead; thread mode relies on the memory preflight (#1473)
-        to keep oversized jobs out in the first place."""
+        to keep oversized jobs out in the first place. The #1483 RSS hard
+        stop rides check_abort() and is therefore also out of reach here —
+        same reasoning, same process-mode escape hatch."""
 
         cfg = job.config
         model_path = self._resolve_model_path(job.model_id)
