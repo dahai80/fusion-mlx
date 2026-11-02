@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.42] - 2026-11-02
+
+### Changed
+- **Web monitor UI is bilingual per the fusion-web-shell spec**: the
+  Models/Metrics/Logs pages hardcoded English copy, so the shell host's
+  language switch had no effect on them. All page copy now routes through
+  the SDK i18n channel (`useT()`) — embedded tabs follow the host language
+  live, standalone falls back to `<html lang>` (now zh-CN). The metrics
+  error state also gained a retry button per the spec's four-state rule.
+
 ## [0.10.41] - 2026-11-02
 
 ### Added
