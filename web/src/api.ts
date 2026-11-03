@@ -154,7 +154,10 @@ export interface MetricSample {
     metal_peak_bytes?: number;
     phys_footprint_bytes?: number;
     response_cache_hit_rate?: number;
+    response_cache_hits_total?: number;
+    response_cache_misses_total?: number;
     spec_decode_accept_rate?: number;
+    spec_decode_drafted_total?: number;
     // #1296 monitor additions
     swap_total_bytes?: number;
     swap_used_bytes?: number;
@@ -183,14 +186,24 @@ const METRIC_NAMES = [
     "fusion_mlx_metal_peak_bytes",
     "fusion_mlx_phys_footprint_bytes",
     "fusion_mlx_response_cache_hit_rate",
+    "fusion_mlx_response_cache_hits_total",
+    "fusion_mlx_response_cache_misses_total",
     "fusion_mlx_spec_decode_accept_rate",
+    "fusion_mlx_spec_decode_drafted_total",
     // #1296 monitor additions
     "fusion_mlx_swap_total_bytes",
     "fusion_mlx_swap_used_bytes",
     "fusion_mlx_swap_free_bytes",
     "fusion_mlx_swap_percent",
     "fusion_mlx_swap_rate_bytes_per_second",
-    "fusion_mlx_request_latency_p95_seconds",
+    // #1489 metrics-truth pass: the engine emits fusion_mlx_ttft_p95_seconds
+    // (per-model) + fusion_mlx_ttft_p95_seconds_all_models (aggregate) — the
+    // old fusion_mlx_request_latency_p95_seconds name never existed, so the
+    // p95 tile/chart read undefined forever. Per-model lines come first and
+    // the _all_models aggregate last, so last-wins lands on the aggregate;
+    // the bare name covers engines that only emit per-model series.
+    "fusion_mlx_ttft_p95_seconds",
+    "fusion_mlx_ttft_p95_seconds_all_models",
     "fusion_mlx_tps_sum",
     "fusion_mlx_tps_count",
 ] as const;
@@ -211,13 +224,17 @@ const SHORT: Record<string, keyof MetricSample> = {
     fusion_mlx_metal_peak_bytes: "metal_peak_bytes",
     fusion_mlx_phys_footprint_bytes: "phys_footprint_bytes",
     fusion_mlx_response_cache_hit_rate: "response_cache_hit_rate",
+    fusion_mlx_response_cache_hits_total: "response_cache_hits_total",
+    fusion_mlx_response_cache_misses_total: "response_cache_misses_total",
     fusion_mlx_spec_decode_accept_rate: "spec_decode_accept_rate",
+    fusion_mlx_spec_decode_drafted_total: "spec_decode_drafted_total",
     fusion_mlx_swap_total_bytes: "swap_total_bytes",
     fusion_mlx_swap_used_bytes: "swap_used_bytes",
     fusion_mlx_swap_free_bytes: "swap_free_bytes",
     fusion_mlx_swap_percent: "swap_percent",
     fusion_mlx_swap_rate_bytes_per_second: "swap_rate_bytes_per_second",
-    fusion_mlx_request_latency_p95_seconds: "ttft_p95_seconds",
+    fusion_mlx_ttft_p95_seconds: "ttft_p95_seconds",
+    fusion_mlx_ttft_p95_seconds_all_models: "ttft_p95_seconds",
     fusion_mlx_tps_sum: "tps_sum",
     fusion_mlx_tps_count: "tps_count",
 };
@@ -227,8 +244,11 @@ export function parsePrometheus(text: string): Partial<MetricSample> {
     for (const raw of text.split("\n")) {
         const line = raw.trim();
         if (!line || line.startsWith("#")) continue;
-        // "name{labels} value" or "name value"
-        const m = line.match(/^([a-z_]+)(?:\{[^}]*\})?\s+([-\d.eE+]+)$/);
+        // "name{labels} value" or "name value". Names may contain digits
+        // (e.g. fusion_mlx_ttft_p95_seconds) — [a-z_]+ dropped every one.
+        const m = line.match(
+            /^([a-z_][a-z0-9_]*)(?:\{[^}]*\})?\s+([-\d.eE+]+)$/,
+        );
         if (!m) continue;
         const name = m[1] as (typeof METRIC_NAMES)[number];
         if (!(METRIC_NAMES as readonly string[]).includes(name)) continue;

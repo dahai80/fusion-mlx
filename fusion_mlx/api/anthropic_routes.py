@@ -398,6 +398,7 @@ async def _run_anthropic_messages(
             cached_tokens=getattr(gen, "cached_tokens", 0) or 0,
             generation_duration=_time.perf_counter() - _start,
             model_id=model_name,
+            ttft_ms=(getattr(gen, "time_to_first_token", None) or 0.0) * 1000.0,
         )
         resp = _adapter.format_response(internal, req)
 
@@ -475,6 +476,10 @@ async def _stream_anthropic_generator(
     import time as _time
 
     _start = _time.perf_counter()
+    # #1489 metrics-truth pass: captured on the first real output chunk and
+    # fed to record_llm_metrics so the TTFT histogram (p95 tile) sees
+    # Anthropic streaming traffic too — it previously stayed empty.
+    _stream_ttft_ms = 0.0
 
     async def _release() -> None:
         await _release_engine(model_name, adapter_path=adapter_path)
@@ -646,6 +651,11 @@ async def _stream_anthropic_generator(
             if gen is KEEPALIVE_PING:
                 yield 'event: ping\ndata: {"type": "ping"}\n\n'
                 continue
+            if _stream_ttft_ms == 0.0:
+                _stream_ttft_ms = (
+                    getattr(gen, "time_to_first_token", None)
+                    or (_time.perf_counter() - _start)
+                ) * 1000.0
             if gen.new_text:
                 if keepalive:
                     keepalive.reset()
@@ -767,6 +777,7 @@ async def _stream_anthropic_generator(
                     cached_tokens=getattr(gen, "cached_tokens", 0) or 0,
                     generation_duration=_time.perf_counter() - _start,
                     model_id=model_name,
+                    ttft_ms=_stream_ttft_ms,
                 )
 
     except ModelNotFoundError as exc:

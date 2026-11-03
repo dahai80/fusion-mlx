@@ -328,7 +328,7 @@ function CapacityGauge({
                 />
                 <MetricTile
                     label={t("缓存命中 / 投机接受", "Cache hit / spec accept")}
-                    value={`${pctGauge(last?.response_cache_hit_rate)} / ${pctGauge(last?.spec_decode_accept_rate)}`}
+                    value={`${cacheHitText(last)} / ${specAcceptText(last)}`}
                 />
                 <MetricTile
                     label={t("可用内存", "Available")}
@@ -482,6 +482,28 @@ function UsageWindow({
 function pctGauge(v: number | undefined | null): string {
     if (!Number.isFinite(v ?? Number.NaN)) return "-";
     return `${((v as number) * 100).toFixed(1)}%`;
+}
+
+// Metrics-truth pass: a 0.0% hit/accept rate with zero observations is a
+// disabled feature, not a real measurement — print "-" unless the engine
+// actually served traffic through that path.
+function cacheHitText(last: Partial<MetricSample> | null): string {
+    const hits = last?.response_cache_hits_total;
+    const misses = last?.response_cache_misses_total;
+    if (
+        !Number.isFinite(hits ?? Number.NaN) ||
+        !Number.isFinite(misses ?? Number.NaN)
+    )
+        return "-";
+    if ((hits as number) + (misses as number) === 0) return "-";
+    return pctGauge(last?.response_cache_hit_rate);
+}
+
+function specAcceptText(last: Partial<MetricSample> | null): string {
+    const drafted = last?.spec_decode_drafted_total;
+    if (!Number.isFinite(drafted ?? Number.NaN) || (drafted as number) === 0)
+        return "-";
+    return pctGauge(last?.spec_decode_accept_rate);
 }
 
 interface Point {

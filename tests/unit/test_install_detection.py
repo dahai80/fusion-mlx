@@ -16,7 +16,20 @@ class TestInstallDetection:
     def test_not_app_bundle_in_dev(self):
         """Dev/pip install should not detect as app bundle."""
         assert not is_app_bundle()
-        assert get_cli_prefix() == "fusion-mlx"
+        # Hermetic: the pip-script branch depends on shutil.which finding
+        # the console script — pin it so the test passes with or without
+        # .venv/bin on PATH.
+        with patch(
+            "fusion_mlx.utils.install.shutil.which",
+            return_value="/usr/local/bin/fusion-mlx",
+        ):
+            assert get_cli_prefix() == "fusion-mlx"
+
+    def test_cli_prefix_dev_fallback_without_console_script(self):
+        """No console script on PATH → <python> -m fusion_mlx prefix."""
+        with patch("fusion_mlx.utils.install.shutil.which", return_value=None):
+            prefix = get_cli_prefix()
+        assert prefix.endswith("-m fusion_mlx")
 
     def test_app_bundle_detected(self, tmp_path):
         """Simulate running inside .app bundle."""

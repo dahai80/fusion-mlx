@@ -62,6 +62,24 @@ def _load_manifest() -> dict[str, Any]:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     if not manifest.get("id"):
         raise ValueError(f"shell manifest missing id: {path}")
+    # #1489: supply the credential the ENGINE validates. Without an api_key
+    # the gateway issues its own fm- service key for the registration and the
+    # shell proxy then injects that upstream — the engine auth middleware
+    # rejects it ("invalid API key (management)") and every proxied module
+    # request (e.g. /v1/health) 401s. Resolution goes through the config seam
+    # (env > settings.json) so no secret lands in the committed manifest.
+    if not manifest.get("api_key"):
+        from .config_seam import api_key as _resolve_api_key
+
+        key = _resolve_api_key()
+        if key:
+            manifest["api_key"] = key
+        else:
+            logger.warning(
+                "shell manifest has no api_key and no engine key is configured; "
+                "the gateway will issue its own service key, which the engine "
+                "auth middleware will reject on proxied module requests"
+            )
     return manifest
 
 
