@@ -1557,6 +1557,10 @@ class Server:
             ("admin", admin_router, None),
             ("cluster", cluster_router, None),
             ("decisions", decisions_router, None),
+            # #1489: shell-module manifest endpoints — always-on (modality
+            # None); the gateway shell proxy dials the engine for these
+            # regardless of whether the optional web bridge is running.
+            ("shell_module", None, None),
         ]
         _mounted: list[str] = []
         _skipped: list[str] = []

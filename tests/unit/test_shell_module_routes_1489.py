@@ -94,6 +94,17 @@ class TestManifestDriftContract:
         assert manifest["upstream"].rstrip("/") == "http://127.0.0.1:11434"
         assert manifest["id"] == "fusion-mlx"
 
+    def test_shell_module_in_route_registry(self):
+        # Regression: shell_module was added to _LAZY_ROUTES but not to the
+        # _ROUTE_REGISTRY list inside Server._mount_routes — the dict entry
+        # alone never mounts, and the endpoints 404'd in production. The
+        # registry entry is what actually mounts the router (modality None
+        # = always on).
+        src = (REPO_ROOT / "fusion_mlx" / "server.py").read_text(encoding="utf-8")
+        assert '("shell_module", None, None)' in src
+        # And the lazy route it resolves must exist too.
+        assert '"shell_module": (' in src
+
 
 async def _async(value):
     return value
