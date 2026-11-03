@@ -51,6 +51,37 @@ class TestSparkDiscovery:
 
 
 class TestSparkVoiceCloning:
+    def test_scalar_eos_token_ids_wrapped(self):
+        # Upstream mlx_audio: spark post_load_hook leaves an int on
+        # tokenizer.eos_token_ids while newer lm.generate._eos_ids expects
+        # an iterable — first generate would raise set(int) TypeError.
+        eng = TTSEngine("Spark-TTS-0.5B-bf16")
+
+        class _Tok:
+            eos_token_ids = 151645
+
+        class _Model:
+            tokenizer = _Tok()
+
+        TTSEngine._fix_spark_eos_ids(_Model)
+        assert _Model.tokenizer.eos_token_ids == [151645]
+
+    def test_list_eos_token_ids_untouched(self):
+        eng = TTSEngine("Spark-TTS-0.5B-bf16")
+
+        class _Tok:
+            eos_token_ids = [151645, 151643]
+
+        class _Model:
+            tokenizer = _Tok()
+
+        TTSEngine._fix_spark_eos_ids(_Model)
+        assert _Model.tokenizer.eos_token_ids == [151645, 151643]
+
+    def test_missing_tokenizer_noop(self):
+        eng = TTSEngine("Spark-TTS-0.5B-bf16")
+        TTSEngine._fix_spark_eos_ids(object())
+
     def test_cloning_detected_from_generate_signature(self):
         # Spark-TTS-0.5B-bf16 on disk: real mlx_audio load is covered by
         # real-model tests; here verify the discriminator — Spark's
