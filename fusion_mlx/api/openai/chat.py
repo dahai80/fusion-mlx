@@ -421,6 +421,7 @@ async def _run_chat(
             cached_tokens=getattr(gen, "cached_tokens", 0) or 0,
             generation_duration=time.perf_counter() - _start,
             model_id=model_name,
+            ttft_ms=(getattr(gen, "time_to_first_token", None) or 0.0) * 1000.0,
         )
         record_chat_session(
             getattr(request, "session_id", None),

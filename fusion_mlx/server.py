@@ -116,6 +116,10 @@ _LAZY_ROUTES: dict[str, tuple[str, str, str | None]] = {
     "rerank": (".api.rerank_routes", "router", "reranker"),
     "recommend_batch": (".api.recommend_batch_routes", "router", "llm"),
     "threed": (".api.threed_routes", "router", "threed"),
+    # #1489: shell-module manifest endpoints — always-on (modality None),
+    # the gateway shell proxy dials the engine for these regardless of
+    # whether the optional web bridge is running.
+    "shell_module": (".api.shell_module_routes", "router", None),
 }
 
 

@@ -705,6 +705,7 @@ async def _stream_chat_generator(
             cached_tokens=cached_tokens or 0,
             generation_duration=time.perf_counter() - _start,
             model_id=model_name,
+            ttft_ms=(_stream_ttft * 1000.0) if _stream_ttft else 0.0,
         )
         record_chat_session(
             getattr(request, "session_id", None),

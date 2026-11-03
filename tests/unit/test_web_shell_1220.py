@@ -150,6 +150,40 @@ async def test_register_once_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_register_once_supplies_engine_api_key(monkeypatch, tmp_path):
+    # #1489: without a manifest api_key the gateway issues its own fm- service
+    # key and the shell proxy injects it upstream — the engine rejects it and
+    # every proxied module request 401s. The registration must carry the key
+    # the engine itself validates (config seam: env > settings.json).
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({"id": "fusion-mlx"}), encoding="utf-8")
+    monkeypatch.setenv(shell_registry.GATEWAY_URL_ENV, "http://127.0.0.1:11432")
+    monkeypatch.setenv(shell_registry.ADMIN_KEY_ENV, "fg-admin-key")
+    monkeypatch.setenv(shell_registry.MANIFEST_PATH_ENV, str(manifest_path))
+    monkeypatch.setattr("fusion_mlx.config_seam.api_key", lambda: "engine-key-123")
+    monkeypatch.setattr("httpx.AsyncClient", _FakeClient)
+    ok, _ = await shell_registry.register_once()
+    assert ok is True
+    assert _FakeClient.last_request["json"]["api_key"] == "engine-key-123"
+
+
+@pytest.mark.asyncio
+async def test_register_once_keeps_manifest_api_key(monkeypatch, tmp_path):
+    # A manifest that already carries api_key wins — no seam lookup override.
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps({"id": "fusion-mlx", "api_key": "manifest-key"}), encoding="utf-8"
+    )
+    monkeypatch.setenv(shell_registry.GATEWAY_URL_ENV, "http://127.0.0.1:11432")
+    monkeypatch.setenv(shell_registry.ADMIN_KEY_ENV, "fg-admin-key")
+    monkeypatch.setenv(shell_registry.MANIFEST_PATH_ENV, str(manifest_path))
+    monkeypatch.setattr("httpx.AsyncClient", _FakeClient)
+    ok, _ = await shell_registry.register_once()
+    assert ok is True
+    assert _FakeClient.last_request["json"]["api_key"] == "manifest-key"
+
+
+@pytest.mark.asyncio
 async def test_register_once_failure_returns_false(monkeypatch):
     monkeypatch.setenv(shell_registry.GATEWAY_URL_ENV, "http://127.0.0.1:11432")
     monkeypatch.setenv(shell_registry.ADMIN_KEY_ENV, "fg-admin-key")

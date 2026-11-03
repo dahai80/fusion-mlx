@@ -4,7 +4,7 @@
     "title_en": "MLX Inference Monitor",
     "description": "MLX 推理引擎监控：模型加载、显存、QPS/延迟、日志流。",
     "description_en": "MLX inference engine monitoring: models, VRAM, QPS/latency, log stream.",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "path": "/mlx",
     "icon": "Cpu",
     "entry": "/shell/fusion-mlx/",
@@ -15,7 +15,7 @@
         "mobile-ready"
     ],
     "category": "platform",
-    "upstream": "http://127.0.0.1:11471",
+    "upstream": "http://127.0.0.1:11434",
     "api_key_env": "FUSION_MLX_WEB_API_KEY",
     "pages": [
         {
