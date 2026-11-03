@@ -27,6 +27,20 @@ def _reset_videos_pool(monkeypatch):
     # key and loopback anonymous access is fail-closed (#350) — the dev/test
     # override is the supported bypass.
     monkeypatch.setenv("FUSION_ALLOW_ANONYMOUS", "1")
+    # The heavy-admission gate is host-memory dependent — a 1000+ frame
+    # projection fails on a 7GB CI runner but not locally. This is a wiring
+    # test, not an admission test: stub the gate as always-admitting.
+    from types import SimpleNamespace
+
+    import fusion_mlx.admission as admission_mod
+
+    monkeypatch.setattr(
+        admission_mod,
+        "get_heavy_admission_gate",
+        lambda: SimpleNamespace(
+            admit_media=lambda *a, **k: SimpleNamespace(admitted=True, reason="")
+        ),
+    )
     yield
     import fusion_mlx.api.videos_routes as vr
 
