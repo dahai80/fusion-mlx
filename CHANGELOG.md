@@ -1,3 +1,17 @@
+## [0.10.44] - 2026-11-03 — shell-module integration truth pass (#1490, closes #1489)
+
+### Fixed
+- **Shell-module endpoints served by the engine (#1489)**: `/api/search/models` and `/api/notifications` now live on `:11434` — the gateway shell proxy dials the static upstream, so bridge-only endpoints 503'd whenever the opt-in web bridge (`:11471`) was off. Both degrade explicitly (200 + `degraded` flag) instead of erroring.
+- **Shell registration 401**: registration now supplies the engine-validated `api_key` (config seam); the gateway previously injected its own `fm-` service key and every proxied module request failed with `invalid API key (management)`.
+- **Manifest drift**: `web/manifest.json` registers `upstream=11434` (= gateway static) — no more drift-guard WARN on every heartbeat (fusion-gateway#478).
+- **Metrics page truth pass**: parser regex dropped every metric name containing digits (`ttft_p95_seconds` et al); p95 now mapped to the engine-emitted `fusion_mlx_ttft_p95_seconds[_all_models]`; all four `record_llm_metrics` call sites (openai/anthropic × streaming/non-streaming) now feed `ttft_ms` so the TTFT p95 actually renders; cache-hit / spec-accept tiles show `-` with zero observations instead of a fake `0.0%`.
+- **Web module theme sync**: the module follows the shell theme via `sdk.theme` → `html.light` (same convention as fusion-cowork / fusion-agent-studio); the shell theme switch previously had no effect on the MLX module.
+- Hermetic `test_install_detection` (PATH-dependent `shutil.which`).
+
+### Verification
+- Full suite: 16622 passed / 0 failed (436 skipped, 320 xfailed, 120 xpassed).
+- Live E2E: proxied `/v1/health` 401s stopped after re-registration; streaming chat + anthropic stream → `fusion_mlx_ttft_p95_seconds` emitted; request/token counters increment on real traffic.
+
 # Changelog
 
 ## [0.10.43] - 2026-11-03
