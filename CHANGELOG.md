@@ -1,3 +1,12 @@
+## [0.10.45] - 2026-11-03
+
+### Fixed
+- **Shell-module router was never mounted (#1491)**: #1490 added `shell_module`
+  to the `_LAZY_ROUTES` dict only, but mounting is driven by `_ROUTE_REGISTRY`
+  in `Server._mount_routes` — `/api/search/models` and `/api/notifications`
+  404'd in production. Registry entry added + regression test asserting both
+  halves exist. Verified live on :11434 after restart.
+
 ## [0.10.44] - 2026-11-03 — shell-module integration truth pass (#1490, closes #1489)
 
 ### Fixed
