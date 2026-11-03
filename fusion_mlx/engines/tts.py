@@ -50,6 +50,11 @@ class TTSEngine(BaseNonStreamingEngine):
             return "csm"
         if "cosyvoice" in name_lower:
             return "cosyvoice"
+        # #1486: Spark-TTS 0.5B — lifelike zh TTS with 5-10s reference
+        # cloning (generate(ref_audio=...) signature, auto-detected by
+        # supports_voice_cloning()).
+        if "spark" in name_lower:
+            return "spark"
         return None
 
     @staticmethod
@@ -122,6 +127,28 @@ class TTSEngine(BaseNonStreamingEngine):
             return False
         return "ref_audio" in gen_params
 
+    @staticmethod
+    def _fix_spark_eos_ids(model: Any) -> None:
+        # #1486 upstream mlx_audio bug: spark's post_load_hook passes an int
+        # eos_token_id to AutoTokenizer(eos_token_ids=...), but newer
+        # mlx_audio lm.generate._eos_ids() does set(tokenizer.eos_token_ids)
+        # — set(int) raises TypeError('int' object is not iterable) on the
+        # first generate. Wrap the scalar at our load boundary; no-op when
+        # the installed mlx_audio stores a list (or lacks the attr).
+        tokenizer = getattr(model, "tokenizer", None)
+        eos_ids = getattr(tokenizer, "eos_token_ids", None)
+        if isinstance(eos_ids, int):
+            logger.warning(
+                "spark tokenizer.eos_token_ids is scalar int %d (upstream "
+                "mlx_audio spark/generate mismatch); wrapping in list",
+                eos_ids,
+            )
+            # transformers TokenizerBase.__setattr__ intercepts *_id(s)
+            # attrs and rejects non-string values ("Cannot set a
+            # non-string value as the eos_token") — bypass it via
+            # object.__setattr__ so generate-time getattr sees the list.
+            object.__setattr__(tokenizer, "eos_token_ids", [eos_ids])
+
     async def start(self) -> None:
         if self._model is not None:
             return
@@ -153,6 +180,8 @@ class TTSEngine(BaseNonStreamingEngine):
         self._model = await asyncio.wait_for(
             loop.run_in_executor(get_executor("audio"), _load_sync), timeout=120.0
         )
+        if self._model_family == "spark":
+            self._fix_spark_eos_ids(self._model)
 
     async def stop(self) -> None:
         if self._model is None:

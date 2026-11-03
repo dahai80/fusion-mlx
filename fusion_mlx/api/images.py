@@ -142,6 +142,25 @@ class ImageGenerateResponse(BaseModel):
     # requested id when quality="fast" routed to the distilled sibling.
     model: str | None = None
     requested_model: str | None = None
+    # #1486: unsupported-param notices (empty = all params honored), mirroring
+    # VideoGenerateResponse.warnings.
+    warnings: list[str] = Field(default_factory=list)
+
+
+# Variants whose generate() honors negative_prompt (must match the honored
+# set in ImageGenEngine.generate, fusion_mlx/engines/image_gen.py).
+_NEG_PROMPT_HONORED_VARIANTS = frozenset(
+    {
+        "sd3",
+        "sdxl",
+        "cosxl",
+        "sdxs",
+        "sd15",
+        "sd2",
+        "stable_cascade",
+        "qwen_image_21",
+    }
+)
 
 
 def _validate_image_loras(items: list[LoRAAdapter]) -> list[dict]:
@@ -344,6 +363,17 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
 
         image_bytes_list = await engine.generate(**gen_kwargs)
 
+        # #1486: surface negative_prompt drops in the response instead of
+        # only the server log — non-CFG variants silently ignore it upstream.
+        response_warnings: list[str] = []
+        if request.negative_prompt and engine.variant not in (
+            _NEG_PROMPT_HONORED_VARIANTS
+        ):
+            response_warnings.append(
+                f"negative_prompt is not supported by the {engine.variant} "
+                "backend and was ignored"
+            )
+
         # Format response
         outputs = []
         for img_bytes in image_bytes_list:
@@ -387,6 +417,7 @@ async def generate_image(request: ImageGenerateRequest) -> ImageGenerateResponse
             data=outputs,
             model=routed_model,
             requested_model=model_name,
+            warnings=response_warnings,
         )
 
     except HTTPException:
