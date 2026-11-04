@@ -216,16 +216,17 @@
                             <div class="divide-y divide-neutral-100">
                                 <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 sm:px-6 py-4"
                                      x-data="{
-                                         _mode: (globalSettings.server.host === '127.0.0.1' || globalSettings.server.host === '0.0.0.0') ? null : 'custom',
+                                         _mode: (globalSettings.server.host === '127.0.0.1') ? null : 'custom',
                                          get hostMode() {
+                                             // #1492 iron law: public (non-loopback) bind is no
+                                             // longer offered — a persisted legacy 0.0.0.0 shows as
+                                             // custom and is rejected server-side on save.
                                              if (this._mode === 'custom') return 'custom';
                                              if (globalSettings.server.host === '127.0.0.1') return 'localhost';
-                                             if (globalSettings.server.host === '0.0.0.0') return 'public';
                                              return 'custom';
                                          },
                                          setHostMode(mode) {
                                              if (mode === 'localhost') { this._mode = null; globalSettings.server.host = '127.0.0.1'; }
-                                             else if (mode === 'public') { this._mode = null; globalSettings.server.host = '0.0.0.0'; }
                                              else { this._mode = 'custom'; globalSettings.server.host = ''; }
                                          }
                                      }">
@@ -239,7 +240,6 @@
                                                     @change="setHostMode($event.target.value)"
                                                     class="px-3 py-2 text-sm border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all bg-white">
                                                 <option value="localhost">{{ t('settings.server.host_localhost') }}</option>
-                                                <option value="public">{{ t('settings.server.host_public') }}</option>
                                                 <option value="custom">{{ t('settings.server.host_custom') }}</option>
                                             </select>
                                             <input x-show="hostMode === 'custom'" x-cloak

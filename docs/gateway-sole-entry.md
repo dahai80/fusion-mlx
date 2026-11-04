@@ -14,8 +14,8 @@ gateway logging, metering and routing.
 
 ## 1. Set the key, and turn on strict mode
 
-Pick one source for the key (`--api-key` > `FUSION_MLX_API_KEY` >
-`settings.json` `auth.api_key`), then enable strict mode by any of:
+Pick one source for the key (`--api-key` or `settings.json` `auth.api_key`),
+then enable strict mode by any of:
 
 ```bash
 fusion-mlx serve <model> --strict-auth          # flag
@@ -38,7 +38,7 @@ mode being prevented is a production box quietly serving anonymous inference.
 ## 2. Share the key with the gateway only
 
 Give the key to `fusion-gateway` via `backends.fusion-mlx.api_key_env`, and do
-not put `FUSION_MLX_API_KEY` in any client environment. Clients authenticate to
+not put the engine key in any client environment. Clients authenticate to
 the gateway, not to fusion-mlx.
 
 ## 3. Point clients at the gateway

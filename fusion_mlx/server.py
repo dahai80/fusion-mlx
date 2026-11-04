@@ -355,13 +355,14 @@ def _effective_api_key(
     settings_key: str | None = None,
 ) -> tuple[str | None, str]:
     # Single source of truth for the startup key priority:
-    #   CLI --api-key  >  FUSION_MLX_API_KEY env  >  settings.json auth.api_key
-    # ``_boot_api_key`` folds CLI+env into the module global before
-    # ``Server.__init__`` runs, so callers may pass that global as
-    # ``argv_key`` (the operator-provided key). Returns ``(key, source)``
-    # where source is one of ``"cli"`` / ``"env"`` / ``"settings"`` /
-    # ``"none"`` for the startup log line. Env-tier reads go through
-    # config_seam so the resolution policy lives in one place (#1439).
+    #   CLI --api-key  >  settings.json auth.api_key
+    # ``_boot_api_key`` folds CLI + the INTERNAL sidecar env transport into
+    # the module global before ``Server.__init__`` runs, so callers may pass
+    # that global as ``argv_key`` (the operator-provided key). Returns
+    # ``(key, source)`` where source is one of ``"cli"`` / ``"env"`` /
+    # ``"settings"`` / ``"none"`` for the startup log line. The env tier is
+    # internal transport only since #1492 (share/sidecar anti-argv-leak) —
+    # NOT an operator convention; reads go through config_seam (#1439).
     from .config_seam import env_api_key
 
     if argv_key:
@@ -1374,7 +1375,8 @@ class Server:
         # via global_settings_getter) as the settings.json value, so an
         # operator passing ``--api-key <X>`` still got 401 "Invalid API
         # key" because the /v1 middleware enforced the settings.json key.
-        # Priority: CLI --api-key > FUSION_MLX_API_KEY env > settings.json.
+        # Priority: CLI --api-key > settings.json (env tier = internal
+        # sidecar transport only, #1492).
         effective_key, key_source = _effective_api_key(
             argv_key=_api_key,
             settings_key=self.settings.api_key,
@@ -2651,8 +2653,9 @@ class Server:
             if _get_configured_api_key() is None:
                 logger.warning(
                     "SECURITY: No API key configured — all endpoints allow "
-                    "anonymous access. Set FUSION_MLX_API_KEY env var or "
-                    "api_key in config for production deployments."
+                    "anonymous access. Set auth.api_key in "
+                    "~/.fusion-mlx/settings.json or pass --api-key for "
+                    "production deployments."
                 )
         except Exception:
             # ENG-01 (#0909 audit): was bare `pass` — a broken auth config
@@ -3244,8 +3247,8 @@ def main():
         type=str,
         default=None,
         help=(
-            "API key for authentication (if not set, falls back to the "
-            "FUSION_MLX_API_KEY env var; if neither, no auth required)"
+            "API key for authentication (if not set, falls back to "
+            "settings.json auth.api_key; if neither, no auth required)"
         ),
     )
     args = parser.parse_args()

@@ -64,11 +64,11 @@ resolve_hf_mirror() {
 }
 
 # ── Read API key from settings.json ─────────────────────────────────
+# #1492: the env var is NOT an operator input — settings.json auth.api_key
+# is the only operator-facing key source. The export below (into the server
+# process) is internal sidecar transport so --model-dir launches keep the
+# bearer out of argv/ps.
 resolve_api_key() {
-    if [[ -n "${FUSION_MLX_API_KEY:-}" ]]; then
-        API_KEY="${FUSION_MLX_API_KEY}"
-        return 0
-    fi
     if [[ -f "${SETTINGS}" ]]; then
         local key
         key=$(python3 -c "import json; d=json.load(open('${SETTINGS}')); print(d.get('auth',{}).get('api_key',''))" 2>/dev/null || echo "")

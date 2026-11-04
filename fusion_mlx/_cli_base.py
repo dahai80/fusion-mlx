@@ -395,6 +395,14 @@ def _run_uvicorn(app, args, log_level: str) -> None:
 
     import uvicorn
 
+    # #1492 iron law: loopback-only binding, enforced at the last chokepoint
+    # before uvicorn for every CLI serve path (serve_command, audio mode,
+    # --model-dir). ServerConfig.__post_init__ covers programmatic paths;
+    # this closes the args.host path where the CLI never constructs one.
+    from .config import LoopbackBindError, enforce_loopback_bind
+
+    enforce_loopback_bind(getattr(args, "host", None))
+
     listen_fd = getattr(args, "listen_fd", None)
     uds_path = _uds_path_from_host(getattr(args, "host", None))
     uds_fd = None
@@ -420,6 +428,32 @@ def _run_uvicorn(app, args, log_level: str) -> None:
             # bound + validated the auth secret BEFORE execve'ing, and the
             # FastAPI ``app`` (with route auth dependencies) is fully
             # constructed at module load before this call.
+            #
+            # #1492 iron law: verify (don't trust) the supervisor contract
+            # that the inherited fd is loopback-bound.
+            try:
+                import socket as _socket
+
+                try:
+                    _probe = _socket.fromfd(
+                        listen_fd, _socket.AF_INET, _socket.SOCK_STREAM
+                    )
+                except OSError:
+                    _probe = _socket.fromfd(
+                        listen_fd, _socket.AF_INET6, _socket.SOCK_STREAM
+                    )
+                with _probe:
+                    enforce_loopback_bind(_probe.getsockname()[0])
+            except LoopbackBindError:
+                raise
+            except OSError:
+                # Probe failed (exotic fd shape / not yet bound): warn loudly
+                # rather than block a legitimate socket-activation boot.
+                logger.warning(
+                    "listen-fd %s: could not probe bound address; iron-law "
+                    "loopback check skipped (#1492)",
+                    listen_fd,
+                )
             uvicorn.run(
                 app,
                 fd=listen_fd,

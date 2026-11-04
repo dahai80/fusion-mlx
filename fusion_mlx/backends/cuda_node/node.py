@@ -64,7 +64,8 @@ class CudaNodeConfig:
     host: str = "127.0.0.1"
     port: int = 8000
     # CL-2 (#811 audit 0906): API key gating the node's inference routes.
-    # Sourced from CudaNodeConfig.api_key (CLI --api-key / FUSION_MLX_API_KEY).
+    # Sourced from CudaNodeConfig.api_key (CLI --api-key, or the internal
+    # sidecar env transport via config_seam).
     # When unset AND the bind is loopback, anonymous access is permitted
     # (dev/single-host); when unset AND the bind is non-loopback, the node
     # REFUSES to start (fail visible — no silent open relay).
@@ -204,7 +205,7 @@ def create_cuda_app(config: CudaNodeConfig):
             "CL-2 (#811 audit 0906): CUDA node bound to non-loopback host "
             f"'{config.host}' with no api_key. An unauthenticated node on a "
             "cluster network is an open inference relay. Set --api-key "
-            "(or FUSION_MLX_API_KEY) or bind 127.0.0.1. Refusing to start."
+            "or bind 127.0.0.1. Refusing to start."
         )
     if _configured_key:
         logger.info("cuda-node: API-key auth ENABLED (bind=%s)", config.host)

@@ -22,7 +22,7 @@ ERROR_SOLUTIONS_MAP: dict[int, list[str]] = {
         "Inspect the error.detail field for the specific validation failure",
     ],
     401: [
-        "Set FUSION_MLX_API_KEY in settings.json or pass Authorization: Bearer <key>",
+        "Set auth.api_key in ~/.fusion-mlx/settings.json or pass Authorization: Bearer <key>",
         "Verify the API key matches the server's configured key",
         "If using a proxy, ensure it forwards the Authorization header",
     ],

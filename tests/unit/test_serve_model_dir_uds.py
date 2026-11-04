@@ -26,7 +26,9 @@ from fusion_mlx import cli_serve as cli_serve_mod
 def _make_args(**overrides):
     ns = types.SimpleNamespace(
         model_dir="/tmp/fake-model-dir",
-        host="0.0.0.0",
+        # #1492 iron law: non-loopback binds are refused, so tests use the
+        # loopback default.
+        host="127.0.0.1",
         port=None,
         log_level="INFO",
         listen_fd=None,
@@ -135,11 +137,11 @@ def test_model_dir_default_host_port_dispatches_via_run_uvicorn(
 ):
     """Default ``--model-dir`` (no unix:, no fd) MUST go through
     ``_run_uvicorn`` with ``bind_host``/``bind_port`` stamped, not bare
-    ``uvicorn.run``. ``0.0.0.0`` rewrites to ``localhost`` for the banner."""
+    ``uvicorn.run``."""
     monkeypatch_fixture, sentinel_app = stub_model_dir_deps
     called = _patch_dispatch(monkeypatch_fixture)
 
-    cli_serve_mod._serve_from_model_dir(_make_args(host="0.0.0.0", port=12345))
+    cli_serve_mod._serve_from_model_dir(_make_args(port=12345))
 
     assert called["run_uvicorn"] is True
     assert called["uvicorn_run"] is False
@@ -147,10 +149,22 @@ def test_model_dir_default_host_port_dispatches_via_run_uvicorn(
     from fusion_mlx.config import get_config
 
     cfg = get_config()
-    assert cfg.bind_host == "localhost"
+    assert cfg.bind_host == "127.0.0.1"
     assert cfg.bind_port == 12345
     assert cfg.bind_uds is None
     assert cfg.bind_listen_fd is None
+
+
+def test_model_dir_non_loopback_host_refused(stub_model_dir_deps, monkeypatch):
+    """#1492 iron law: a non-loopback bind is refused at ServerConfig
+    construction — the wildcard-bind path is dead."""
+    monkeypatch_fixture, sentinel_app = stub_model_dir_deps
+    _patch_dispatch(monkeypatch_fixture)
+
+    from fusion_mlx.config import LoopbackBindError
+
+    with pytest.raises(LoopbackBindError):
+        cli_serve_mod._serve_from_model_dir(_make_args(host="0.0.0.0", port=12345))
 
 
 def test_model_dir_explicit_host_kept_verbatim(stub_model_dir_deps, monkeypatch):

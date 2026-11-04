@@ -77,8 +77,11 @@ class TestServerConfig(unittest.TestCase):
         self.assertGreater(c.port, 0)
 
     def test_custom_values(self):
-        c = cfg.ServerConfig(host="0.0.0.0", port=9000)
-        self.assertEqual(c.host, "0.0.0.0")
+        # #1492 iron law: custom host must stay loopback — a non-loopback
+        # bind raises LoopbackBindError at construction (see
+        # test_loopback_bind_1492.py).
+        c = cfg.ServerConfig(host="127.0.0.1", port=9000)
+        self.assertEqual(c.host, "127.0.0.1")
         self.assertEqual(c.port, 9000)
 
 

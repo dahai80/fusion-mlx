@@ -768,7 +768,7 @@ async def reset_cache(
 - [ ] **Step 5: Run route tests — must pass**
 
 Run: `source .venv/bin/activate && pytest tests/unit/test_distributed_decode_step.py -v`
-Expected: PASS (all). The route tests use the real ShardManager singleton override; no auth header needed because `verify_api_key` on TestClient defaults to loopback-trusted (confirm: if a 401 appears, set `FUSION_MLX_API_KEY` empty or add the `Authorization` header per the existing distributed tests — but the existing `test_distributed_pipeline.py` does not hit routes, so follow the auth convention in `tests/unit/test_cors_*` if needed).
+Expected: PASS (all). The route tests use the real ShardManager singleton override; no auth header needed because `verify_api_key` on TestClient defaults to loopback-trusted (confirm: if a 401 appears, clear `auth.api_key` in settings.json or add the `Authorization` header per the existing distributed tests — but the existing `test_distributed_pipeline.py` does not hit routes, so follow the auth convention in `tests/unit/test_cors_*` if needed).
 
 - [ ] **Step 6: Commit**
 

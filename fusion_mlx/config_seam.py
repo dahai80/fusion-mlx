@@ -4,8 +4,14 @@
 # "fusion-mlx[core]"`, same pattern as fusion-agent-studio's `identity`
 # extra). When absent — a standalone PyPI install — a minimal stdlib
 # fallback with IDENTICAL precedence keeps slim installs booting (#805).
-# Nothing else in fusion_mlx may read FUSION_MLX_API_KEY or settings.json
+# Nothing else in fusion_mlx may read the env transport or settings.json
 # auth.api_key directly; route through this seam.
+#
+# #1492: the operator-facing key convention is abolished — docs/config
+# templates present ONLY `--api-key` and settings.json `auth.api_key`.
+# The env var below is INTERNAL transport (share/sidecar anti-argv-leak,
+# start.sh export into the server process); never document it or wire it
+# as an operator-facing source.
 
 import json
 import logging
@@ -31,8 +37,9 @@ def env_api_key() -> str:
 
 
 def api_key(explicit: str | None = None) -> str:
-    # Precedence (config-conventions §1):
-    #   explicit  >  FUSION_MLX_API_KEY env  >  settings.json auth.api_key
+    # Precedence (config-conventions §1, env tier demoted to internal
+    # transport by #1492):
+    #   explicit  >  internal env transport  >  settings.json auth.api_key
     # Never raises: settings read failures warn and degrade to "" so boot
     # and CLI paths stay alive.
     if explicit:

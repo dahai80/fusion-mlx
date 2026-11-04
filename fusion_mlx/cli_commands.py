@@ -1471,7 +1471,8 @@ def chat_command(args):
     from fusion_mlx._tempfile_safe import managed_tempfile_path
 
     # Client-side auth: same SSOT priority the server enforces
-    # (CLI --api-key > FUSION_MLX_API_KEY env > settings.json auth.api_key),
+    # (CLI --api-key > settings.json auth.api_key; the env tier is internal
+    # sidecar transport only, #1492),
     # resolved via config_seam / fusion_core.config (#1439).
     # Without this, a REPL against a key-protected server 401s on turn one.
     from .config_seam import api_key as seam_api_key

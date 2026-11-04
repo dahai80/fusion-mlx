@@ -1,3 +1,12 @@
+## [0.10.46] - 2026-11-04 — loopback-only iron law + env-key convention abolished (#1492)
+
+### Changed
+- **Loopback-only binding enforced as an invariant (#1492)**: `ServerConfig.__post_init__` raises `LoopbackBindError` for any non-loopback `host` (wildcard `0.0.0.0`/`""`, LAN IPs, unresolvable hostnames). `_run_uvicorn` re-checks at the last chokepoint before uvicorn for every CLI serve path, `serve_command` refuses before any preflight/download work, and `--listen-fd` verifies the inherited fd is loopback-bound. UDS (`--host unix:/path`) and loopback binds unaffected. The admin settings API and dashboard reject/omit the public-bind option. Error message names fusion-gateway (`:11432`) as the sanctioned sharing path.
+- **`FUSION_MLX_API_KEY` operator convention abolished (#1492)**: docs, README/README_CN, CLI help, error hints, agent profile templates, and start.sh no longer present the env var as an operator-facing key source — configure `settings.json auth.api_key` or `--api-key`. The env read remains as INTERNAL sidecar transport (share/sidecar anti-argv-leak) only; never document it.
+
+### Fixed
+- `start.sh` no longer honors `FUSION_MLX_API_KEY` as an operator input (settings.json is the single operator-facing key source).
+
 ## [0.10.45] - 2026-11-03
 
 ### Fixed

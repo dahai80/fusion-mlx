@@ -271,7 +271,8 @@ class TestUpdateGlobalSettingsRestartResponse:
 
         request = MagicMock()
         request.model_fields_set = {"host", "log_level"}
-        request.host = "0.0.0.0"
+        # #1492 iron law: host writes are loopback-only now.
+        request.host = "127.0.0.1"
         request.port = None
         request.log_level = "info"
         request.sse_keepalive_mode = None
