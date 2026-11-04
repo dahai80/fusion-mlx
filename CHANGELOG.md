@@ -1,3 +1,8 @@
+## [0.10.48] - 2026-11-04 — one monitoring row per engine (#1495)
+
+### Fixed
+- **Monitoring showed a phantom duplicate model after the alias-split fix (#1495)**: boot registers the served model under the flattened cache-key spelling plus a repo-id alias entry sharing one engine, and `get_status()` / `/api/ps` listed one row per entry — the metrics page still showed two rows (one with a 0 size) for a single engine. Both now report one row per engine instance with a truthful `loaded_count`.
+
 ## [0.10.47] - 2026-11-04 — one live engine per model across id spellings (#1495)
 
 ### Fixed
