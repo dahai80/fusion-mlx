@@ -1,3 +1,8 @@
+## [0.10.47] - 2026-11-04 — one live engine per model across id spellings (#1495)
+
+### Fixed
+- **Duplicate engine residency when a model is addressed by two id spellings (#1495)**: unloading one spelling (`repo-id` vs flattened cache key) left the stopped engine attached to sibling alias entries, so the next request on the other spelling reloaded under the alias key and both spellings carried separate live engines (~3 GB duplicated VRAM per occurrence; visible as two rows for the same snapshot in `/api/ps` and the metrics UI). `_detach_engine` now clears engine references on all sibling entries sharing the stopped engine object, and `_resolve_hf_repo_id` redirects to a live sibling entry with the same realpath `model_path` instead of building a second engine. LoRA adapter keys are excluded from the redirect.
+
 ## [0.10.46] - 2026-11-04 — loopback-only iron law + env-key convention abolished (#1492)
 
 ### Changed
