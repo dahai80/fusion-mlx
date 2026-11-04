@@ -4489,20 +4489,19 @@ class EnginePool:
         Returns:
             Dictionary with pool status information
         """
-        return {
-            "final_ceiling": self._current_ceiling(),
-            "current_model_memory": self._current_model_memory,
-            "model_count": len(self._entries),
-            "loaded_count": sum(
-                1 for e in self._entries.values() if e.engine is not None
-            ),
-            "load_seconds_per_gb_estimate": self._load_seconds_per_gb_ema,
-            "load_time_observations": self._load_time_observations,
-            "ttl": {
-                "global_idle_timeout_seconds": self._global_idle_timeout_seconds(),
-                "suppress_ttl": self._suppress_ttl,
-            },
-            "models": [
+        # Alias entries (repo-id vs flattened cache-key spelling) share one
+        # engine object. Report one row per engine, not one per alias, or
+        # monitoring shows a phantom duplicate model.
+        seen_engine_ids: set[int] = set()
+        models_status = []
+        loaded_count = 0
+        for mid, e in sorted(self._entries.items()):
+            if e.engine is not None:
+                if id(e.engine) in seen_engine_ids:
+                    continue
+                seen_engine_ids.add(id(e.engine))
+                loaded_count += 1
+            models_status.append(
                 {
                     "id": mid,
                     "model_path": e.model_path,
@@ -4530,8 +4529,19 @@ class EnginePool:
                     ),
                     "memory_plan": self._model_memory_plan_dict(e),
                 }
-                for mid, e in sorted(self._entries.items())
-            ],
+            )
+        return {
+            "final_ceiling": self._current_ceiling(),
+            "current_model_memory": self._current_model_memory,
+            "model_count": len(self._entries),
+            "loaded_count": loaded_count,
+            "load_seconds_per_gb_estimate": self._load_seconds_per_gb_ema,
+            "load_time_observations": self._load_time_observations,
+            "ttl": {
+                "global_idle_timeout_seconds": self._global_idle_timeout_seconds(),
+                "suppress_ttl": self._suppress_ttl,
+            },
+            "models": models_status,
         }
 
     async def check_ttl_expirations(

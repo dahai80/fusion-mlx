@@ -774,8 +774,18 @@ async def api_ps(
     except Exception:
         loaded = []
     models = []
+    seen_engines: set[int] = set()
     for mid in loaded:
         entry = _pool.get_entry(mid) if hasattr(_pool, "get_entry") else None
+        # One engine object may be registered under several id spellings
+        # (repo-id alias vs flattened cache key). List it once per engine,
+        # not once per alias, or ps/metrics show a phantom duplicate row.
+        engine_obj = getattr(entry, "engine", None)
+        if engine_obj is not None:
+            engine_key = id(engine_obj)
+            if engine_key in seen_engines:
+                continue
+            seen_engines.add(engine_key)
         size = (entry.last_observed_size or entry.estimated_size) if entry else 0
         models.append(
             {
