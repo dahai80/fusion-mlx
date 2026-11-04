@@ -164,9 +164,7 @@ def test_model_dir_non_loopback_host_refused(stub_model_dir_deps, monkeypatch):
     from fusion_mlx.config import LoopbackBindError
 
     with pytest.raises(LoopbackBindError):
-        cli_serve_mod._serve_from_model_dir(
-            _make_args(host="0.0.0.0", port=12345)
-        )
+        cli_serve_mod._serve_from_model_dir(_make_args(host="0.0.0.0", port=12345))
 
 
 def test_model_dir_explicit_host_kept_verbatim(stub_model_dir_deps, monkeypatch):
