@@ -323,8 +323,10 @@ without runtime quantization. Two format quirks required loader fixes (#948):
 Use it like any other H3 model id (no `quantize=` needed — already 4bit):
 
 ```bash
+# Loopback bind is unauthenticated by default; if auth.api_key is set in
+# settings.json, pass it as the bearer.
 curl -s http://127.0.0.1:11434/v1/videos/generate \
-  -H "Authorization: Bearer $FUSION_MLX_API_KEY" \
+  -H "Authorization: Bearer <api-key>" \
   -H "Content-Type: application/json" \
   -d '{"model":"models--ddalcu--MiniMax-H3-FL2VA-MLX-Serve-4bit",
        "prompt":"a cat playing piano","num_frames":9,

@@ -3,6 +3,7 @@
 Merged from fusion-mlx model_settings + Rapid-MLX SchedulerConfig.
 """
 
+import ipaddress
 import json
 import logging
 import os
@@ -13,6 +14,51 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+class LoopbackBindError(RuntimeError):
+    # #1492 iron law: raised when a non-loopback bind is requested.
+    pass
+
+
+_LOOPBACK_LITERAL_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_loopback_bind(host: str | None) -> bool:
+    # #1492 iron law: fusion-mlx binds loopback forever. UDS mode
+    # ("unix:/path") never opens a TCP port and is always allowed; an
+    # empty host (wildcard-bind alias) and any non-loopback address or
+    # unresolvable hostname fail closed. Only literal names are accepted
+    # — no DNS resolution at config time (deterministic + no network).
+    h = (host or "").strip()
+    if host is None:
+        # None = "no host override" (listen-fd / caller-defaults paths);
+        # those bind via the default loopback config or a checked fd.
+        return True
+    if not h:
+        return False
+    if h.lower().startswith("unix:"):
+        return True
+    if h.lower() in _LOOPBACK_LITERAL_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def enforce_loopback_bind(host: str | None) -> None:
+    # Fail-closed invariant check for every bind site (ServerConfig,
+    # _run_uvicorn, serve preflight). External/LAN access must go through
+    # fusion-gateway (:11432) — docs/gateway-sole-entry.md.
+    if _is_loopback_bind(host):
+        return
+    raise LoopbackBindError(
+        f"Refusing to bind non-loopback host {host!r}: fusion-mlx is "
+        "loopback-only by design (iron law, #1492) and has no standalone "
+        "auth boundary. Share inference via fusion-gateway (:11432) — see "
+        "docs/gateway-sole-entry.md."
+    )
 
 
 class MemoryTier(Enum):
@@ -432,6 +478,9 @@ class ServerConfig:
     force_text: bool = False
 
     def __post_init__(self) -> None:
+        # #1492 iron law: refuse a non-loopback bind at construction time so
+        # every programmatic path fails before any model load or bind.
+        enforce_loopback_bind(self.host)
         if self.model_dir is None:
             self.model_dir = str(Path.home() / ".fusion-mlx" / "models")
         if self.settings_dir is None:

@@ -205,6 +205,8 @@ def _spawn_serve(
         *extra_args,
     ]
     env = dict(os.environ)
+    # Internal transport only (#1492): the bearer must never land in argv
+    # (ps-visible). Not an operator-facing key convention.
     env["FUSION_MLX_API_KEY"] = api_key
     env["FUSION_MLX_WATCHDOG_PPID"] = str(os.getpid())
     log_fp = log_path.open("ab", buffering=0)

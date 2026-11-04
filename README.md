@@ -1485,20 +1485,23 @@ CORS is opt-in via environment variables. With no `FUSION_MLX_CORS_*` env set, t
 - **Credentials are now opt-in (default `false`).** `#641` auto-enabled credentials on any explicit origin (`allow_credentials=bool(origins)`). If you relied on cookies with an explicit origin allowlist, set `FUSION_MLX_CORS_ALLOW_CREDENTIALS=true`.
 - **Env-path headers are narrowed.** If you serve origins via `FUSION_MLX_CORS_ALLOW_ORIGINS` and your browser client sends custom headers, allowlist them with `FUSION_MLX_CORS_ALLOW_HEADERS`. The `--cors-origins` CLI flag path is unchanged (still `*`).
 
+### Loopback-only iron law (#1492)
+
+fusion-mlx binds loopback **forever**. The engine has no standalone auth boundary by design — it listens on `127.0.0.1` only, and all external / LAN access must go through [fusion-gateway](docs/gateway-sole-entry.md) (`:11432`), which owns authentication, metering, and routing. A non-loopback `--host` (e.g. `0.0.0.0`) is refused at startup with an error pointing at the gateway path; the admin settings API rejects it too.
+
 ### API key precedence (#632 / #636)
 
 The effective API key is resolved once at startup with a fixed priority, and synced to every read path (the `verify_api_key` middleware, the admin auth, and the config singleton) so they agree:
 
-**CLI `--api-key`  >  `FUSION_MLX_API_KEY` env  >  `settings.json` `auth.api_key`**
+**CLI `--api-key`  >  `settings.json` `auth.api_key`**
 
-- `--api-key <X>` on the command line wins over both env and `settings.json`.
-- `FUSION_MLX_API_KEY` wins over `settings.json`.
+- `--api-key <X>` on the command line wins.
 - `settings.json` `auth.api_key` is the fallback for bare `serve` launches.
 - If none are set, anonymous access is governed by `FUSION_ALLOW_ANONYMOUS` (rejected by default).
 
 This applies to **every serve path**: single-model (`serve <model>`), audio (`serve kokoro`), and `serve --model-dir <dir>` / `serve --base-path <dir>`. #636 fixed the `--model-dir` / `--base-path` path, which previously dropped `--api-key` and fell back to `settings.json`, so `/v1/*` rejected the CLI key with `401 Invalid API key` while enforcing the `settings.json` key.
 
-`start.sh` resolves the key from `FUSION_MLX_API_KEY` (env) then `settings.json`, passes it as `--api-key`, and exports `FUSION_MLX_API_KEY` into the server process — so the env path also catches it for `--model-dir` launches.
+`start.sh` resolves the key from `settings.json` and passes it as `--api-key`.
 
 ### Strict auth mode (#1381)
 
@@ -1509,7 +1512,7 @@ This applies to **every serve path**: single-model (`serve <model>`), audio (`se
 By default the API key is stored in `~/.fusion-mlx/settings.json` (mode `0o600`). For macOS deployments that prefer the Keychain over plaintext on disk, set `FUSION_KEYCHAIN=on`:
 
 - The key is read from / written to the macOS Keychain (service `fusion-mlx.api-key`, account `fusion-mlx`) via the shipped `security` CLI — no extra dependency.
-- Read priority becomes **CLI `--api-key` > `FUSION_MLX_API_KEY` env > Keychain > `settings.json` `auth.api_key`**.
+- Read priority becomes **CLI `--api-key` > Keychain > `settings.json` `auth.api_key`**.
 - On startup, if a plaintext `api_key` exists in `settings.json` but the Keychain is empty, it is migrated into the Keychain and the plaintext field is cleared from disk.
 - Admin settings writes route to the Keychain and leave the on-disk `api_key` field empty.
 - On non-macOS, or if the `security` CLI is absent, every call fails visibly (logged) and the plaintext `settings.json` path is used unchanged. Default off.

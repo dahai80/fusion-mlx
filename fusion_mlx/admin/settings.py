@@ -153,6 +153,21 @@ def _write_settings_json(data: dict) -> None:
     os.chmod(path, 0o600)
 
 
+def _validate_loopback_host(host: str) -> None:
+    # #1492 iron law: the admin settings API must not be able to persist a
+    # non-loopback bind either — loopback-only is a boot invariant, so the
+    # config write path rejects it with the same actionable message.
+    from ..config import _is_loopback_bind
+
+    if not _is_loopback_bind(host):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Refusing to save non-loopback host {host!r}: fusion-mlx "
+            "is loopback-only by design (iron law, #1492). Share inference "
+            "via fusion-gateway (:11432) — see docs/gateway-sole-entry.md.",
+        )
+
+
 def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
     """Save global settings to settings.json when rich GlobalSettings is unavailable.
 
@@ -164,6 +179,7 @@ def _save_global_settings_fallback(request: GlobalSettingsRequest) -> dict:
 
     # Server settings
     if request.host is not None:
+        _validate_loopback_host(request.host)
         sj.setdefault("server", {})["host"] = request.host
     if request.port is not None:
         sj.setdefault("server", {})["port"] = request.port
@@ -1040,6 +1056,7 @@ async def update_global_settings(
 
     # Apply server settings
     if request.host is not None:
+        _validate_loopback_host(request.host)
         global_settings.server.host = request.host
     if request.port is not None:
         global_settings.server.port = request.port

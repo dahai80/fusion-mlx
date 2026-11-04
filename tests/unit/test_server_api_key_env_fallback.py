@@ -302,9 +302,10 @@ def test_env_only_spawn_keeps_bearer_out_of_ps_and_enforces_auth():
 # ---------------------------------------------------------------------------
 
 
-def test_cli_help_advertises_env_fallback():
-    """``rapid-mlx serve --help`` must document the env-var so
-    downstream wrappers know the safer form exists."""
+def test_cli_help_does_not_advertise_env_fallback():
+    """#1492: the operator-facing key convention is abolished — help
+    documents ONLY settings.json auth.api_key; the env transport is
+    internal sidecar plumbing and must not be advertised."""
     result = subprocess.run(  # noqa: S603 — controlled test argv
         [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
         capture_output=True,
@@ -312,17 +313,17 @@ def test_cli_help_advertises_env_fallback():
         timeout=30,
     )
     assert result.returncode == 0
-    assert "FUSION_MLX_API_KEY" in result.stdout, (
-        "--api-key help text must advertise the env-var fallback. "
-        "Found:\n" + result.stdout[:2000]
+    assert "FUSION_MLX_API_KEY" not in result.stdout, (
+        "--api-key help text must not advertise the env convention "
+        "(abolished by #1492). Found:\n" + result.stdout[:2000]
     )
+    assert "settings.json" in result.stdout
 
 
-def test_server_help_advertises_env_fallback():
-    """Parity check: ``python -m vllm_mlx.server`` (the standalone
-    entry the rapid-desktop sidecar invokes) must also advertise the
-    env fallback. Pre-fix only ``vllm_mlx.cli`` did, which is the
-    docs/code mismatch that forced the shim to argv-pass the bearer."""
+def test_server_help_does_not_advertise_env_fallback():
+    """Parity check: ``python -m fusion_mlx.server`` (the standalone
+    entry the rapid-desktop sidecar invokes) must likewise document
+    only the settings.json fallback (#1492)."""
     result = subprocess.run(  # noqa: S603 — controlled test argv
         [sys.executable, "-m", "fusion_mlx.server", "--help"],
         capture_output=True,
@@ -331,9 +332,8 @@ def test_server_help_advertises_env_fallback():
     )
     combined = (result.stdout or "") + (result.stderr or "")
     assert "--api-key" in combined
-    assert "FUSION_MLX_API_KEY" in combined, (
-        "server entry --help must advertise the env fallback. "
-        "Pre-fix it only said 'if not set, no auth required', which "
-        "left downstream wrappers no choice but to put the bearer "
-        "on argv. Got:\n" + combined[:2000]
+    assert "FUSION_MLX_API_KEY" not in combined, (
+        "server entry --help must not advertise the env convention "
+        "(abolished by #1492). Got:\n" + combined[:2000]
     )
+    assert "settings.json" in combined

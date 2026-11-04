@@ -129,6 +129,12 @@ def serve_command(args):
     import os
     import sys
 
+    # #1492 iron law: refuse a non-loopback bind FIRST — before version
+    # checks, alias resolution, or any model download work.
+    from ..config import enforce_loopback_bind
+
+    enforce_loopback_bind(getattr(args, "host", None))
+
     # AWSD Phase A: --mtp-chain-k → env for the MTP hot-loop. The env is
     # read at batch_generator import time (apply_mlx_lm_mtp_patch, called
     # during load_model below), so it must be stamped before load_model.

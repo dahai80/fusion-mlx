@@ -567,8 +567,8 @@ def enforce_strict_auth(configured_key: str | None, cli_value: bool = False) -> 
     if not configured_key:
         raise RuntimeError(
             "strict auth (#1381) requires an API key, and none is configured. "
-            "Set FUSION_MLX_API_KEY, pass --api-key, or put auth.api_key in "
-            "~/.fusion-mlx/settings.json. Refusing to start rather than serve "
+            "Pass --api-key or put auth.api_key in ~/.fusion-mlx/settings.json. "
+            "Refusing to start rather than serve "
             "anonymous requests."
         )
     logger.info(

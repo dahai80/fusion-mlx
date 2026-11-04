@@ -88,7 +88,7 @@ import os, time, json, statistics
 import httpx
 
 BASE = "http://127.0.0.1:11434"
-KEY  = os.environ["FUSION_MLX_API_KEY"]
+KEY  = json.load(open(os.path.expanduser("~/.fusion-mlx/settings.json"))).get("auth", {}).get("api_key", "")
 MODEL = "Qwen3.5-9B-4bit"
 
 SIMPLE = [{"role":"system","content":"只输出JSON。"},

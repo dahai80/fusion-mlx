@@ -220,17 +220,11 @@ Examples:
         type=str,
         default="127.0.0.1",
         help=(
-            "Host to bind (default: 127.0.0.1, loopback-only). Pass "
-            '0.0.0.0 (or "") to expose the server on every '
-            "interface (LAN reachable) — only do this once the "
-            "bearer-auth posture has been reviewed. The wildcard "
-            "bind also widens the PortSweep collision window: macOS "
-            "lets a wildcard listener coexist with a more-specific "
-            "(127.0.0.1) listener on the same port, so a second "
-            "server may start and silently shadow the first on the "
-            "loopback path. The pre-flight bind check below probes "
-            "127.0.0.1 explicitly whenever --host is a wildcard "
-            "alias to keep that bypass closed."
+            "Host to bind (default: 127.0.0.1). Loopback-only by design "
+            "(#1492 iron law): a non-loopback host is refused at startup — "
+            "share inference via fusion-gateway (:11432), see "
+            "docs/gateway-sole-entry.md. `--host unix:/path` listens on a "
+            "Unix domain socket instead of TCP."
         ),
     )
     serve_parser.add_argument("--port", type=int, default=11434, help="Port to bind")
@@ -835,18 +829,19 @@ Examples:
         help="Path to MCP configuration file (JSON/YAML) for tool integration",
     )
     # Security options
-    # ``--api-key`` accepts an inline value OR falls back to the
-    # ``FUSION_MLX_API_KEY`` env var. ``fusion-mlx share`` uses the env-var
-    # form so the bearer key never lands in argv (visible to ``ps`` for
-    # any local user). Inline value still works for backwards-compat
-    # with existing scripts; if both are set, the inline value wins.
+    # ``--api-key`` accepts an inline value OR falls back to settings.json
+    # auth.api_key (via _boot_api_key, which also admits the internal
+    # sidecar env transport so a bearer never lands in argv/ps — that
+    # path is internal plumbing, NOT an operator convention, #1492).
+    # Inline value still works for backwards-compat with existing
+    # scripts; if both are set, the inline value wins.
     serve_parser.add_argument(
         "--api-key",
         type=str,
         default=None,
         help=(
-            "API key for authentication (if not set, falls back to the "
-            "FUSION_MLX_API_KEY env var; if neither, no auth required)"
+            "API key for authentication (if not set, falls back to "
+            "settings.json auth.api_key; if neither, no auth required)"
         ),
     )
     serve_parser.add_argument(
@@ -854,8 +849,8 @@ Examples:
         action="store_true",
         default=False,
         help=(
-            "Refuse to start unless an API key is configured (--api-key, "
-            "FUSION_MLX_API_KEY, or settings.json auth.api_key), and reject "
+            "Refuse to start unless an API key is configured (--api-key or "
+            "settings.json auth.api_key), and reject "
             "FUSION_ALLOW_ANONYMOUS. For gateway-fronted deployments where "
             ":11434 must never serve anonymous requests (#1381). Also "
             "FUSION_MLX_STRICT_AUTH=1 / settings.json auth.strict."
@@ -1515,7 +1510,7 @@ Examples:
     cuda_node_parser.add_argument(
         "--api-key",
         default=None,
-        help="API key gating inference routes (also FUSION_MLX_API_KEY). "
+        help="API key gating inference routes. "
         "REQUIRED when --host is non-loopback (CL-2 #811 audit 0906).",
     )
     cuda_node_parser.add_argument(
@@ -1703,7 +1698,7 @@ Examples:
         type=str,
         default=None,
         help="API key for a key-protected server (falls back to "
-        "FUSION_MLX_API_KEY env or settings.json auth.api_key)",
+        "settings.json auth.api_key)",
     )
     chat_parser.add_argument(
         "--response-timeout",

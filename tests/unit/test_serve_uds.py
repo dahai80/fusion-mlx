@@ -409,10 +409,10 @@ def test_serve_command_resets_stale_bind_fields_with_uds(
     )
 
     # Third call: back to TCP. Prior UDS must clear.
-    port_b = _free_tcp_port("0.0.0.0")
-    cli.serve_command(_minimal_serve_ns(host="0.0.0.0", port=port_b))
+    port_b = _free_tcp_port()
+    cli.serve_command(_minimal_serve_ns(host="127.0.0.1", port=port_b))
     assert (cfg.bind_host, cfg.bind_port, cfg.bind_listen_fd, cfg.bind_uds) == (
-        "localhost",
+        "127.0.0.1",
         port_b,
         None,
         None,

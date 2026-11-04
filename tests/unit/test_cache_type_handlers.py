@@ -406,6 +406,12 @@ class TestMiniMaxM3CacheHandlers:
     def test_restored_single_caches_merge_and_extract_for_batch_requests(self):
         mx = pytest.importorskip("mlx.core")
         language = pytest.importorskip("mlx_vlm.models.minimax_m3_vl.language")
+        if not isinstance(language, types.ModuleType):
+            # Slim install: tests/conftest.py substitutes a MagicMock for
+            # the missing mlx_vlm package, which importorskip cannot detect
+            # — guard here or the test runs against mock attributes and
+            # fails instead of skipping.
+            pytest.skip("real mlx_vlm not installed (conftest mock active)")
         handler = MiniMaxM3KVCacheHandler()
 
         restored = []

@@ -11,8 +11,8 @@ cowork v0.5.20 pattern so gateway #232 dynamic proxy can resolve it:
 - manifest declares upstream (:11471) + api_key_env (FUSION_MLX_WEB_API_KEY)
 - FUSION_MLX_WEB_API_KEY gates API-prefix paths on this bridge (unset =
   open, loopback posture, same as cowork). Forwarded requests attach the
-  engine key (FUSION_MLX_API_KEY env, else settings.json auth.api_key via
-  the same resolution the engine uses) so the embedded UI ships no secret.
+  engine key (resolved the same way the engine resolves its own key via
+  config_seam) so the embedded UI ships no secret.
 - FUSION_SHELL_GATEWAY_URL + FUSION_GATEWAY_ADMIN_KEY enable registration
   (run_shell_registry); unconfigured = skipped (default OFF).
 """

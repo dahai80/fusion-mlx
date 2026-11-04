@@ -476,11 +476,10 @@ def test_serve_command_resets_stale_bind_fields_between_invocations(
 
     # Third call: back to host/port. The prior fd must be cleared.
     captured.clear()
-    port_b = _free_tcp_port("0.0.0.0")
-    cli.serve_command(_minimal_serve_ns(host="0.0.0.0", port=port_b))
-    # ``host_display`` rewrites 0.0.0.0 → "localhost" for the banner.
+    port_b = _free_tcp_port()
+    cli.serve_command(_minimal_serve_ns(host="127.0.0.1", port=port_b))
     assert (cfg.bind_host, cfg.bind_port, cfg.bind_listen_fd) == (
-        "localhost",
+        "127.0.0.1",
         port_b,
         None,
     )

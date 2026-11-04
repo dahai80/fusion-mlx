@@ -30,7 +30,7 @@ Image gen needs vendored wheel: `pip install -e ".[image]" --find-links packagin
 ./start.sh tune
 ```
 From monorepo root the same script is `~/claude-home/fusion-mlx/start.sh`.
-API key + port + HF mirror resolved from `~/.fusion-mlx/settings.json` (env vars `FUSION_MLX_API_KEY`, `FUSION_HOST`, `HF_MIRROR` override). Default mirror `https://hf-mirror.com`. Model cache `~/.fusion-mlx/models`.
+API key + port + HF mirror resolved from `~/.fusion-mlx/settings.json` (env vars `FUSION_HOST`, `HF_MIRROR` override; `FUSION_MLX_API_KEY` is internal sidecar transport only — operators configure `settings.json auth.api_key`, #1492). Default mirror `https://hf-mirror.com`. Model cache `~/.fusion-mlx/models`.
 
 ## CLI entry points
 
