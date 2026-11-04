@@ -1542,6 +1542,12 @@ class EnginePool:
         for mid, other in self._entries.items():
             if mid == model_id or other.engine is None:
                 continue
+            # Never treat derived LoRA adapter entries as siblings: they
+            # share the base model_path on purpose, and redirecting base
+            # requests at them would serve un-adapted weights and misroute
+            # lease accounting.
+            if "::lora::" in mid or getattr(other, "adapter_path", None):
+                continue
             if not self._engine_is_running(other.engine):
                 continue
             other_path = getattr(other, "model_path", "") or ""
