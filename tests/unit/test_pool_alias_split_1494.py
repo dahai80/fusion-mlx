@@ -111,3 +111,40 @@ class TestAliasRefClearOnUnload:
             pool._entries[slash].engine = other_eng
             await pool._detach_engine(slug)
             assert pool._entries[slash].engine is other_eng
+
+
+class TestGetStatusAliasDedupe:
+    def _full_pool(self, tmpdir):
+        pool, slug, slash = _two_spelling_pool(tmpdir)
+        eng = _live_engine()
+        pool._entries[slug].engine = eng
+        pool._entries[slash].engine = eng
+        pool._current_model_memory = 0
+        return pool, slug, slash
+
+    def _minimal_pool_attrs(self, pool):
+        pool._current_ceiling = lambda: 0
+        pool._load_seconds_per_gb_ema = 0.0
+        pool._load_time_observations = 0
+        pool._global_idle_timeout_seconds = lambda: None
+        pool._suppress_ttl = False
+        pool._resolve_effective_ttl = lambda mid: None
+        pool._model_memory_plan_dict = lambda e: {}
+
+    def test_status_lists_alias_spellings_once(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pool, slug, slash = self._full_pool(tmpdir)
+            self._minimal_pool_attrs(pool)
+            status = pool.get_status()
+            ids = [m["id"] for m in status["models"]]
+            assert ids == [slug]
+            assert status["loaded_count"] == 1
+
+    def test_status_keeps_distinct_engines(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pool, slug, slash = self._full_pool(tmpdir)
+            self._minimal_pool_attrs(pool)
+            pool._entries[slash].engine = _live_engine()
+            status = pool.get_status()
+            assert len(status["models"]) == 2
+            assert status["loaded_count"] == 2
