@@ -1472,6 +1472,13 @@ class EnginePool:
         if not model_id:
             return model_id
         if model_id in self._entries:
+            # One model_path must own exactly one live engine: when this
+            # spelling's entry lost its engine (unloaded/stopped) while a
+            # sibling spelling of the same weights still runs, redirect so a
+            # second engine is never built for the same snapshot.
+            sibling = self._live_sibling_entry(model_id)
+            if sibling is not None:
+                return sibling
             return model_id
         resolved = self._case_insensitive_entry_match(model_id)
         if resolved is not None:
@@ -1512,6 +1519,46 @@ class EnginePool:
                 )
                 return by_path
         return model_id
+
+    def _live_sibling_entry(self, model_id: str) -> str | None:
+        if "::lora::" in model_id:
+            return None
+        entry = self._entries.get(model_id)
+        if entry is None:
+            return None
+        # Redirect only when this entry is not live itself (never-loaded or
+        # stopped) while a sibling spelling of the same weights runs. Note
+        # _engine_is_running(None) is True by design (no liveness surface),
+        # so engine presence must be checked explicitly on both sides.
+        if entry.engine is not None and self._engine_is_running(entry.engine):
+            return None
+        target = getattr(entry, "model_path", "") or ""
+        if not target:
+            return None
+        try:
+            want = os.path.realpath(os.path.expanduser(target))
+        except OSError:
+            return None
+        for mid, other in self._entries.items():
+            if mid == model_id or other.engine is None:
+                continue
+            if not self._engine_is_running(other.engine):
+                continue
+            other_path = getattr(other, "model_path", "") or ""
+            if not other_path:
+                continue
+            try:
+                if os.path.realpath(os.path.expanduser(other_path)) != want:
+                    continue
+            except OSError:
+                continue
+            logger.info(
+                "resolve_hf_repo_id: %s -> %s (live sibling engine on same model_path)",
+                model_id,
+                mid,
+            )
+            return mid
+        return None
 
     def _match_entry_by_model_path(self, path: str) -> str | None:
         target = os.path.realpath(os.path.expanduser(path))
@@ -2786,7 +2833,29 @@ class EnginePool:
             logger.warning(
                 "inplace_swap: released held swap lock for %s on unload", model_id
             )
+        engine_being_detached = entry.engine
         entry.engine = None
+        # Alias entries (registered under an alternate spelling of the same
+        # model, e.g. repo-id vs flattened cache-key) share this engine
+        # object. Leaving the stopped engine attached to them made get_engine
+        # see "attached but not running" (#1409) and reload under the alias
+        # key — permanently splitting one model into two live engines.
+        cleared_alias_refs: list[str] = []
+        for mid, other in self._entries.items():
+            if mid == model_id or other.engine is None:
+                continue
+            if other.engine is engine_being_detached:
+                other.engine = None
+                other.last_access = 0.0
+                other.loaded_at = 0.0
+                cleared_alias_refs.append(mid)
+        if cleared_alias_refs:
+            logger.info(
+                "unload: cleared alias engine ref(s) sharing stopped engine "
+                "of %s: %s",
+                model_id,
+                cleared_alias_refs,
+            )
         # #1409: a teardown cancelled between stop() and this line leaves a
         # stopped engine attached to the entry; get_engine's liveness gate
         # detects that and detaches + reloads instead of serving it.
