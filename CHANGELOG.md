@@ -1,3 +1,9 @@
+## [0.10.49] - 2026-11-05 — fresh-boot empty model dir + stop port verification (#1498, #1499)
+
+### Fixed
+- **Fresh machine first boot failed when `~/.fusion-mlx/models` did not exist (#1498)**: `discover_models()` raised on the missing directory, so a brand-new install could not start at all. A missing model directory is now a valid boot state — the directory is created and discovery returns an empty set (log line points at `fusion-mlx pull`). An uncreatable directory still fails loudly with the underlying `OSError` context.
+- **`start.sh stop` reported "stopped gracefully" while a leftover listener still held the port (#1499)**: `do_stop` killed only the pidfile PID, so a detached or supervisor-respawned child could keep `:11434` bound after stop. The stop path now verifies the TCP port is actually free — leftover fusion/python listeners get TERM then KILL over 5 rounds, foreign listeners are reported and left untouched, and the script exits non-zero if the port stays held. The "stopped gracefully" line is only printed after the port is verified free.
+
 ## [0.10.48] - 2026-11-04 — one monitoring row per engine (#1495)
 
 ### Fixed
