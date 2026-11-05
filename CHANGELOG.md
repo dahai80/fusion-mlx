@@ -1,3 +1,8 @@
+## [0.10.50] - 2026-11-05 — stop clean-path exit fix (#1501)
+
+### Fixed
+- **`start.sh stop` exited 1 on the clean path and skipped the watchdog reap (#1501)**: regression from #1499 — `lsof` exits 1 when no listener matches, and under `set -o pipefail` that failed the sweep assignment, so `set -e` aborted `do_stop` right after the graceful kill, before `Server stopped gracefully` and before `_stop_watchdog_parent`. A `--watchdog` parent was then left free to relaunch the server the operator just stopped. All three lsof-in-assignment sweep pipelines now neutralize the status, and the `[[ -z ]] && break` (same trap when leftovers exist) is an `if` statement.
+
 ## [0.10.49] - 2026-11-05 — fresh-boot empty model dir + stop port verification (#1498, #1499)
 
 ### Fixed
