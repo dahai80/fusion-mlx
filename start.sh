@@ -585,7 +585,6 @@ do_stop() {
     local waited=0
     while (( waited < 45 )); do
         if ! kill -0 "${pid}" 2>/dev/null; then
-            log_info "Server stopped gracefully"
             break
         fi
         sleep 1
@@ -599,6 +598,44 @@ do_stop() {
         sleep 1
         log_info "Server force-stopped"
     fi
+
+    # #1499: the ps/pidfile PID can be a wrapper while the real listener is
+    # a detached child (parent 1). "Stopped" must mean NOBODY holds the
+    # port — sweep remaining fusion/python listeners until the port is free,
+    # then report leftovers loudly instead of claiming graceful success.
+    if ! is_uds; then
+        local leftover="" lpid="" rounds=0
+        while (( rounds < 5 )); do
+            leftover=$(lsof -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
+            [[ -z "${leftover// /}" ]] && break
+            for lpid in ${leftover}; do
+                # Never kill a foreign service that grabbed the port.
+                if ps -p "${lpid}" -o command= 2>/dev/null | /usr/bin/grep -qiE "fusion-mlx|python"; then
+                    log_warn "Port ${PORT} still held by leftover fusion PID ${lpid} — stopping it"
+                    kill -TERM "${lpid}" 2>/dev/null || true
+                else
+                    log_warn "Port ${PORT} held by foreign PID ${lpid} — leaving it alone"
+                fi
+            done
+            sleep 2
+            leftover=$(lsof -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
+            for lpid in ${leftover}; do
+                if ps -p "${lpid}" -o command= 2>/dev/null | /usr/bin/grep -qiE "fusion-mlx|python"; then
+                    log_warn "Force killing leftover listener PID ${lpid}"
+                    kill -KILL "${lpid}" 2>/dev/null || true
+                fi
+            done
+            sleep 1
+            (( rounds += 1 ))
+        done
+        leftover=$(lsof -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
+        if [[ -n "${leftover// /}" ]]; then
+            log_error "Port ${PORT} still held after stop by PID(s): ${leftover} — manual cleanup required"
+            return 1
+        fi
+    fi
+
+    log_info "Server stopped gracefully"
 
     # Reap the watchdog parent so it does not immediately relaunch the
     # serve child we just stopped (#810 P0). Must run AFTER the child is

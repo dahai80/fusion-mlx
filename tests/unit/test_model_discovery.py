@@ -1,4 +1,6 @@
 import json
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -423,6 +425,23 @@ class TestDiscoverModels:
     def test_discover_models_returns_dict(self, tmp_path):
         result = discover_models(tmp_path)
         assert isinstance(result, dict)
+
+    def test_missing_model_dir_created_empty_1498(self, tmp_path):
+        # #1498: first boot on a fresh machine — absent model dir must boot
+        # empty (dir created), not fail startup.
+        missing = tmp_path / "fresh" / "models"
+        result = discover_models(missing)
+        assert result == {}
+        assert missing.is_dir()
+
+    def test_missing_model_dir_uncreatable_raises_1498(self):
+        # Path under a "file" parent cannot become a directory — must fail
+        # loudly instead of silently returning empty.
+        with tempfile.TemporaryDirectory() as tmp:
+            blocker = Path(tmp) / "blocker"
+            blocker.write_text("not a dir")
+            with pytest.raises(ValueError, match="cannot be created"):
+                discover_models(blocker / "models")
 
 
 class TestUnsupportedModels:

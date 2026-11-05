@@ -2014,6 +2014,23 @@ def discover_models(model_dir: Path) -> dict[str, DiscoveredModel]:
     """
     access_error = model_directory_access_error(model_dir)
     if access_error is not None:
+        if "does not exist" in access_error:
+            # #1498: a fresh machine has no model directory at all. Zero
+            # models is a valid boot state — create the directory and boot
+            # with an empty discovery set instead of failing startup.
+            try:
+                model_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise ValueError(
+                    f"Model directory does not exist and cannot be created: "
+                    f"{model_dir} ({type(e).__name__}: {e})"
+                ) from e
+            logger.info(
+                "Model directory %s does not exist — created empty; "
+                "starting with no models (download via `fusion-mlx pull <model>`)",
+                model_dir,
+            )
+            return {}
         if "not readable" in access_error:
             logger.warning("Skipping directory %s: %s", model_dir, access_error)
             return {}
