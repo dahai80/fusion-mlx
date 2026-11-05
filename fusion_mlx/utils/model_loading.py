@@ -286,6 +286,20 @@ def maybe_apply_pre_load_patches(
         if apply_glm_moe_dsa_patch():
             logger.info("GLM MoE DSA pre-load patch applied for %s", model_name)
 
+    if model_type == "qwen3_5":
+        # LSA arms only when the model settings carry lsa_enabled; the map is
+        # validated here so a bad --lsa-map fails the boot, not the first decode
+        _lsa_enabled = bool(
+            model_settings is not None and getattr(model_settings, "lsa_enabled", False)
+        )
+        if _lsa_enabled:
+            from ..patches import qwen35_lsa
+
+            qwen35_lsa.activate(getattr(model_settings, "lsa_map_path", None))
+            from ..patches.qwen35_lsa import apply_qwen35_lsa_patch
+
+            apply_qwen35_lsa_patch()
+
     # step3p7: register mlx_lm.models.step3p7 when upstream lacks it. The
     # config may carry model_type="step3p7" at the top level or nested under
     # text_config (step3p7-on-step3p5 architecture).
