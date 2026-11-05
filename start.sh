@@ -606,8 +606,13 @@ do_stop() {
     if ! is_uds; then
         local leftover="" lpid="" rounds=0
         while (( rounds < 5 )); do
-            leftover=$(lsof -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
-            [[ -z "${leftover// /}" ]] && break
+            # #1501: lsof exits 1 when nothing matches; under pipefail that
+            # fails the assignment and set -e aborts the clean path. An empty
+            # sweep result is a success value, so neutralize the status.
+            leftover=$(lsof -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ' || true)
+            if [[ -z "${leftover// /}" ]]; then
+                break
+            fi
             for lpid in ${leftover}; do
                 # Never kill a foreign service that grabbed the port.
                 if ps -p "${lpid}" -o command= 2>/dev/null | /usr/bin/grep -qiE "fusion-mlx|python"; then
@@ -618,7 +623,7 @@ do_stop() {
                 fi
             done
             sleep 2
-            leftover=$(lsof -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
+            leftover=$(lsof -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ' || true)
             for lpid in ${leftover}; do
                 if ps -p "${lpid}" -o command= 2>/dev/null | /usr/bin/grep -qiE "fusion-mlx|python"; then
                     log_warn "Force killing leftover listener PID ${lpid}"
@@ -628,7 +633,7 @@ do_stop() {
             sleep 1
             (( rounds += 1 ))
         done
-        leftover=$(lsof -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ')
+        leftover=$(lsof -iTCP:"${PORT}" -sTCP:LISTEN -t 2>/dev/null | tr '\n' ' ' || true)
         if [[ -n "${leftover// /}" ]]; then
             log_error "Port ${PORT} still held after stop by PID(s): ${leftover} — manual cleanup required"
             return 1
