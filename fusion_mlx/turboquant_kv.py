@@ -104,6 +104,41 @@ def auto_select_bits(head_dim: int) -> int:
     return 3 if head_dim >= 96 else 4
 
 
+def _gather_dequantize(cache: TurboQuantKVCache, picked: "mx.array"):
+    # Dequantize only the picked rows, reading straight from the packed
+    # quantized state. A full fp16 dequantized copy of the cache costs
+    # ~4 GB per layer at 1M tokens (K+V, 4 kv heads x 256 dim, fp16) -
+    # unusable on the 1M path and a per-step copy burden at any length.
+    # Both k8v4 codecs are MSE codecs, whose state carries the time axis
+    # on axis 2 (norms [B,H,T], indices [B,H,T,G]) - a take_along_axis
+    # gather per component gives exactly the full dequantize's rows.
+    from mlx_vlm.turboquant import TurboQuantMSEState
+
+    keys_state, values_state = cache.state
+    if keys_state is None or values_state is None:
+        return None
+    if not isinstance(keys_state, TurboQuantMSEState) or not isinstance(
+        values_state, TurboQuantMSEState
+    ):
+        return None
+    idx = picked.astype(mx.int32)
+    keys = cache.key_codec.dequantize(
+        TurboQuantMSEState(
+            mx.take_along_axis(keys_state.norms, idx.reshape(1, 1, -1), axis=2),
+            mx.take_along_axis(keys_state.indices, idx.reshape(1, 1, -1, 1), axis=2),
+        )
+    )
+    values = cache.value_codec.dequantize(
+        TurboQuantMSEState(
+            mx.take_along_axis(values_state.norms, idx.reshape(1, 1, -1), axis=2),
+            mx.take_along_axis(
+                values_state.indices, idx.reshape(1, 1, -1, 1), axis=2
+            ),
+        )
+    )
+    return keys.astype(mx.float16), values.astype(mx.float16)
+
+
 class K8V4TurboQuantKVCache(TurboQuantKVCache):
     """k8v4 mode: keys at 8 bits, values at `bits` (4).
 
@@ -126,6 +161,9 @@ class K8V4TurboQuantKVCache(TurboQuantKVCache):
             self.value_codec = _build_codec(
                 values, self.bits, mode="mse", seed=self.seed + 1
             )
+
+    def gather_dequantize(self, picked: "mx.array"):
+        return _gather_dequantize(self, picked)
 
 
 def make_turboquant_kv_cache(
@@ -401,6 +439,12 @@ class BatchTurboQuantKVCache(TurboQuantKVCache):
         )
 
     # prefill_attention and dequantize inherited from TurboQuantKVCache
+
+    def gather_dequantize(self, picked: "mx.array"):
+        # LSA decode gathers picked rows from the packed state (B=1 only;
+        # batch decode uses the dense path). Same contract as
+        # K8V4TurboQuantKVCache.gather_dequantize.
+        return _gather_dequantize(self, picked)
 
     # ---- batch operations --------------------------------------------------
 

@@ -1105,3 +1105,33 @@ def test_turboquant_convert_k8v4_mode_sets_key_codec_8bit():
     assert isinstance(converted[0], TurboQuantKVCache)
     assert converted[0].key_codec.bits == 8
     assert converted[0].value_codec.bits == 4
+
+
+def test_k8v4_gather_dequantize_matches_full_dequantize():
+    # the 1M-token path cannot hold a full fp16 dequantized copy of the KV
+    # cache (4 GB per layer at 1M tokens, 16 full-attention layers). Decode
+    # must gather the picked rows straight from the packed quantized state
+    # and dequantize only those; rows must match the full dequantize.
+    pytest.importorskip("mlx_vlm")
+    from fusion_mlx.turboquant_kv import make_turboquant_kv_cache
+
+    layer = KVCache()
+    keys = mx.random.normal((1, 2, 40, 32))
+    values = mx.random.normal((1, 2, 40, 32))
+    layer.update_and_fetch(keys, values)
+    layer.update_and_fetch(
+        mx.random.normal((1, 2, 8, 32)), mx.random.normal((1, 2, 8, 32))
+    )
+    tq = make_turboquant_kv_cache(4.0, "k8v4", source=layer)
+
+    picked = mx.array([0, 5, 39, 47], dtype=mx.int32)
+    gk, gv = tq.gather_dequantize(picked)
+    fk, fv = tq.dequantize()
+    assert gk.shape == (1, 2, 4, 32)
+    assert gv.shape == (1, 2, 4, 32)
+    # gather returns fp16 (attention dtype); full dequantize returns fp32
+    fk16, fv16 = fk.astype(mx.float16), fv.astype(mx.float16)
+    rel_k = float(mx.abs(gk - fk16[..., picked, :]).max() / mx.abs(fk16).max())
+    rel_v = float(mx.abs(gv - fv16[..., picked, :]).max() / mx.abs(fv16).max())
+    assert rel_k < 1e-5, f"gathered keys diverge from full dequantize ({rel_k})"
+    assert rel_v < 1e-5, f"gathered values diverge from full dequantize ({rel_v})"

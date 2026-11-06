@@ -396,18 +396,18 @@ def test_decode_runs_on_turboquant_cache():
     assert int(mx.abs(step).sum().item()) > 0
 
 
-def test_turboquant_decode_reuses_dequantized_rows():
-    """The full per-step dequantize measured ~4x decode slowdown at 16k.
-    After the rebuild-time dequantize, each step must grow the cached fp16
-    rows with the step's own pre-quantization keys/values instead of
-    dequantizing the whole cache again (one dequant call per request)."""
+def test_turboquant_decode_gathers_picked_rows_only():
+    # a full fp16 dequantized copy of the KV cache costs ~4 GB per layer at
+    # 1M tokens, so the wrapper must never hold one: the rebuild feeds the
+    # index from chunked dequantizes, and every decode step dequantizes only
+    # the picked rows via gather_dequantize. A full cache.dequantize() call
+    # after the rebuild is a regression.
     from mlx_lm.models.cache import KVCache
 
     from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
     from fusion_mlx.patches.qwen35_lsa.selection import LsaSelectionConfig
 
     pytest.importorskip("mlx_vlm")
-    from mlx_vlm.turboquant import TurboQuantKVCache
 
     from fusion_mlx.turboquant_kv import make_turboquant_kv_cache
 
@@ -423,21 +423,28 @@ def test_turboquant_decode_reuses_dequantized_rows():
     )
     tq = make_turboquant_kv_cache(4.0, "k8v4", source=cache)
 
-    calls = 0
-    original = tq.dequantize
+    def forbidden_full_dequantize(*args, **kwargs):
+        raise AssertionError("full cache.dequantize() called during decode")
 
-    def counting():
-        nonlocal calls
-        calls += 1
-        return original()
+    tq.dequantize = forbidden_full_dequantize
+    gathered = []
+    original_gather = tq.gather_dequantize
 
-    tq.dequantize = counting
+    def counting_gather(picked):
+        gathered.append(int(picked.shape[0]))
+        return original_gather(picked)
+
+    tq.gather_dequantize = counting_gather
     for i in range(4):
         out = wrapper(
             mx.random.normal((1, 1, HIDDEN), key=mx.random.key(6 + i)),
             mask=None, cache=tq,
         )
         assert out.shape == (1, 1, HIDDEN)
-    assert calls == 1
-    assert wrapper._dequant_rows[2] == 52
-    assert wrapper._dequant_rows[0].shape[2] >= 52
+    assert len(gathered) == 4
+    # gathered slot count is the read width (buckets + sink + window + tail),
+    # not bounded by cache rows; the real invariant is that picked positions
+    # stay inside the cache (the wrapper clamps -1 padding to row 0)
+    assert all(0 < n < 4096 for n in gathered), f"unexpected gather widths: {gathered}"
+    assert wrapper.selector.index.key_count == 48
+    assert wrapper._tq_indexed
