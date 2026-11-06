@@ -138,6 +138,7 @@ class LsaLayerSelector:
 
     def select(self, pre_rope_q: mx.array, position: int) -> mx.array:
         # One decode step: [B, Hq, 1, dh] at sequence position -> selected key indices
+        position = int(position)
         if self.index.key_count == 0:
             window_start = max(0, position + 1 - self.config.window_size)
             return mx.arange(window_start, position + 1, dtype=mx.int32)

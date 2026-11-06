@@ -205,3 +205,30 @@ def test_post_load_transforms_noop_without_lsa(tmp_path):
     from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
 
     assert not isinstance(model.language_model.model.layers[3].self_attn, LsaAttention)
+
+
+def test_lsa_disables_auto_turboquant(monkeypatch, caplog):
+    import logging
+
+    from fusion_mlx.config import SchedulerConfig
+    from fusion_mlx.engines.batched import BatchedEngine
+    from fusion_mlx.model_settings import ModelSettings
+
+    engine = BatchedEngine(
+        model_name="dummy",
+        scheduler_config=SchedulerConfig(
+            lsa_enabled=True, lsa_map_path="m.safetensors"
+        ),
+        model_settings=ModelSettings(),
+    )
+    with caplog.at_level(logging.INFO):
+        assert engine._turboquant_should_enable() is False
+        assert engine._turboquant_kv_will_enable() is False
+    assert any("LSA owns the full-attention" in r.message for r in caplog.records)
+
+    plain = BatchedEngine(
+        model_name="dummy",
+        scheduler_config=SchedulerConfig(),
+        model_settings=ModelSettings(),
+    )
+    assert plain._turboquant_should_enable() is True

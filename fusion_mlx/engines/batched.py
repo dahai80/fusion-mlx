@@ -259,11 +259,42 @@ class BatchedEngine(BaseEngine):
         # _memory_tier) are both set in __init__.
         if self._model_settings is None:
             return False
+        if bool(getattr(self._scheduler_config, "lsa_enabled", False)):
+            return False
         enabled = getattr(self._model_settings, "turboquant_kv_enabled", None)
         if enabled is None:
             # Auto-enable, except the balanced-tier claude场景 opt-out.
             return getattr(self, "_memory_tier", None) != "balanced"
         return bool(enabled)
+
+    def _turboquant_should_enable(self) -> bool:
+        # Decision for the post-load TurboQuant KV block. No explicit
+        # setting auto-enables for eligible models, with two stand-downs:
+        # the balanced memory tier (claude scenario) and LSA, which reads
+        # raw fp16 keys out of the cache for selection — TurboQuant would
+        # quantize the very rows the window gathers. The serve-level
+        # explicit-flag conflict is refused in serve_command; this gate
+        # also catches auto-enabled TQ.
+        if self._model_settings is None:
+            return False
+        tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", None)
+        tq_explicit = tq_enabled is not None
+        if not tq_explicit:
+            tq_enabled = True
+        # AtomCode: claude scenario disables TurboQuant KV cache explicitly
+        # (balanced tier trades memory for speed; dequant costs 10-15% on
+        # long-context tool-heavy traffic).
+        if not tq_explicit and getattr(self, "_memory_tier", None) == "balanced":
+            tq_enabled = False
+            logger.info(
+                "TurboQuant KV cache disabled for claude场景 (memory-tier=balanced, M5 Max 128GB 用显存换速度)"
+            )
+        if tq_enabled and bool(getattr(self._scheduler_config, "lsa_enabled", False)):
+            tq_enabled = False
+            logger.info(
+                "TurboQuant KV cache disabled: LSA owns the full-attention decode path"
+            )
+        return tq_enabled
 
     def _overlay_scheduler_lsa(self):
         # The LSA serve flags ride SchedulerConfig (MTP channel pattern);
@@ -525,21 +556,7 @@ class BatchedEngine(BaseEngine):
         # reads become a significant fraction of total step traffic.
         tq_explicit = False
         if self._model_settings is not None:
-            tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", None)
-            if tq_enabled is not None:
-                tq_explicit = True
-            else:
-                # No explicit setting → auto-enable for eligible models
-                tq_enabled = True
-            # AtomCode 专题优化: claude 场景显式禁 TurboQuant KV cache (2026-07-19)
-            # TurboQuant 4-bit KV cache 每步推理需反量化, 长上下文含大 system prompt + 工具定义
-            # 反量化开销占推理耗 10-15%. M5 Max 128GB 充裕, 用显存换速度更优
-            # 判定 claude 场景: model_settings 显式 turboquant_kv_enabled=False 或 ServerConfig.memory.tier=balanced
-            if not tq_explicit and getattr(self, "_memory_tier", None) == "balanced":
-                tq_enabled = False
-                logger.info(
-                    "TurboQuant KV cache disabled for claude场景 (memory-tier=balanced, M5 Max 128GB 用显存换速度)"
-                )
+            tq_enabled = self._turboquant_should_enable()
             if tq_enabled:
                 tq_bits = float(
                     getattr(self._model_settings, "turboquant_kv_bits", 4) or 4

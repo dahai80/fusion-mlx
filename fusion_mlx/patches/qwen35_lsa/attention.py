@@ -67,7 +67,9 @@ class LsaAttention(nn.Module):
         values = values.reshape(B, L, num_kv_heads, -1).transpose(0, 2, 1, 3)
 
         if cache is not None:
-            offset = cache.offset
+            # scheduler cache offsets can surface as 0-d arrays; the selector
+            # and mx.arange need a plain int position
+            offset = int(cache.offset)
             queries = attn.rope(queries, offset=offset)
             keys = attn.rope(keys, offset=offset)
         else:
