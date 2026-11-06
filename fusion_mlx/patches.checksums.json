@@ -54,7 +54,7 @@
   "patches/mlx_vlm_qwen_vl_repeat.py": "1fe4675b8557c42d14d139fcad5a5eaaf405f63773181653110f733bf6db6570",
   "patches/qwen35_lsa/__init__.py": "7bccc702215c3e0b2a6b20ec5bb42f82983d90570956117e758a14a945b83f0d",
   "patches/qwen35_lsa/attention.py": "0008e8b9c9d0156bb230215b508ad73cb392a0882b878c2108b686622dd866ed",
-  "patches/qwen35_lsa/selection.py": "76cdecc0563c12ad67df09c0801d8338f7ba4babc7ad579eede9f5cc8419856d",
+  "patches/qwen35_lsa/selection.py": "703af8bfcb44082bb269d4089a49817c7a996621142d34efaa22351a7d663112",
   "patches/qwen3_6_nested_visual.py": "adcec0b56bd3808694a302386206c5f8dafb59a0af55ec29d8344953f56c631d",
   "patches/registry.py": "676ba46d2f37c44b9234d7629c7b7191ed84784121ad2a6216a0a0138dc44717",
   "patches/specprefill.py": "9e1f62b88ca7a30aae2cad4a1db40ae9aa1c1e15300596d6fa9231783b71dcfe",
