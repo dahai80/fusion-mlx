@@ -1,0 +1,86 @@
+# XcodeGen project spec — source of truth for FusionMLX.xcodeproj (#1508).
+#
+# The checked-in project.pbxproj is a GENERATED artifact: run
+# `xcodegen generate` after editing this file (or after adding sources —
+# XcodeGen globs re-scan on every generate). build.sh regenerates
+# automatically when xcodegen is installed and this file is newer than
+# the pbxproj.
+#
+# Settings mirror the pre-migration hand-maintained pbxproj (#1504 era):
+# Swift 6, macOS 15+, app.fusion-mlx, explicit Info.plist + entitlements.
+
+name: FusionMLX
+packages:
+    MarkdownUI:
+        url: https://github.com/gonzalezreal/swift-markdown-ui
+        from: 2.4.0
+options:
+    bundleIdPrefix: app
+    createIntermediateGroups: true
+    deploymentTarget:
+        macOS: "15.0"
+    groupSortPosition: top
+
+settings:
+    base:
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "15.0"
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: NO
+
+targets:
+    FusionMLX:
+        type: application
+        platform: macOS
+        dependencies:
+            - package: MarkdownUI
+        sources:
+            - path: Sources
+            # Explicit resource list: keeps AppIcon.icon (compiled separately
+            # by build.sh via actool) and whichllm_bridge.py (dev-only helper,
+            # not shipped) out of the bundle.
+            - path: Resources/Assets.xcassets
+              buildPhase: resources
+            - path: Resources/Localizable.xcstrings
+              buildPhase: resources
+        settings:
+            base:
+                PRODUCT_BUNDLE_IDENTIFIER: app.fusion-mlx
+                PRODUCT_NAME: $(TARGET_NAME)
+                GENERATE_INFOPLIST_FILE: NO
+                INFOPLIST_FILE: Resources/Info.plist
+                CODE_SIGN_ENTITLEMENTS: Resources/FusionMLX.entitlements
+                CODE_SIGN_STYLE: Automatic
+                ENABLE_TESTABILITY: YES
+        scheme:
+            testTargets:
+                - FusionTests
+            gatherCoverageData: false
+
+    FusionTests:
+        type: bundle.unit-test
+        platform: macOS
+        sources:
+            - path: Tests/FusionTests
+        dependencies:
+            - target: FusionMLX
+        settings:
+            base:
+                GENERATE_INFOPLIST_FILE: YES
+                PRODUCT_NAME: $(TARGET_NAME)
+                TEST_HOST: $(BUILT_PRODUCTS_DIR)/FusionMLX.app/Contents/MacOS/FusionMLX
+                BUNDLE_LOADER: $(TEST_HOST)
+
+schemes:
+    FusionMLX:
+        build:
+            targets:
+                FusionMLX: all
+                FusionTests: [test]
+        run:
+            config: Debug
+        test:
+            config: Debug
+            targets:
+                - FusionTests
