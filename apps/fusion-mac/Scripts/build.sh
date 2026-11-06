@@ -351,6 +351,37 @@ APP_VERSION=$(grep -oE '__version__[[:space:]]*=[[:space:]]*"[^"]+"' "$VERSION_F
 BUILD_NUMBER=$(git -C "$REPO_ROOT" rev-list --count HEAD 2>/dev/null || echo 1)
 log "Bundle version: $APP_VERSION (build $BUILD_NUMBER) — from fusion_mlx/_version.py"
 
+# --- Project generation guard (#1508) --------------------------------------
+#
+# project.yml is the source of truth; FusionMLX.xcodeproj/project.pbxproj is
+# generated. If xcodegen is available and project.yml is newer than the
+# pbxproj, regenerate so a stale file list can never wedge the build. When
+# xcodegen is absent, build from the committed pbxproj — but fail loudly if
+# any source file on disk is missing from it (the #1504 failure mode: 10
+# orphaned Swift files made the app unbuildable for 3.5 months).
+GENERATED_PBXPROJ="$PROJECT_DIR/FusionMLX.xcodeproj/project.pbxproj"
+if command -v xcodegen >/dev/null 2>&1; then
+    if [[ "$PROJECT_DIR/project.yml" -nt "$GENERATED_PBXPROJ" ]]; then
+        log "project.yml newer than pbxproj — running xcodegen generate"
+        (cd "$PROJECT_DIR" && xcodegen generate) \
+            || die "xcodegen generate failed"
+    fi
+fi
+_orphan_check() {
+    local missing=0 f rel
+    while IFS= read -r f; do
+        rel="${f#"$PROJECT_DIR"/}"
+        if ! grep -q "$(basename "$f")" "$GENERATED_PBXPROJ"; then
+            warn "ORPHAN SOURCE (in Sources/ but not in project): $rel"
+            missing=$((missing + 1))
+        fi
+    done < <(find "$PROJECT_DIR/Sources" -name "*.swift")
+    if [ "$missing" -gt 0 ]; then
+        die "$missing orphaned source file(s) — install xcodegen or add them to project.yml"
+    fi
+}
+_orphan_check
+
 # --- xcodebuild -----------------------------------------------------------
 
 log "Building FusionMLX ($CONFIG)…"
