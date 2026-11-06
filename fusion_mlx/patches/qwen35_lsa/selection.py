@@ -13,6 +13,7 @@ them into the index wholesale.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 
 import mlx.core as mx
@@ -21,6 +22,10 @@ from fusion_lsa.core.reference import read
 from fusion_lsa.index.incremental import IncrementalBucketIndex
 
 logger = logging.getLogger(__name__)
+
+_SELECT_LOG = bool(os.environ.get("LSA_SELECT_LOG"))
+_PROBE_LO = int(os.environ.get("LSA_PROBE_LO", -1))
+_PROBE_HI = int(os.environ.get("LSA_PROBE_HI", -1))
 
 
 @dataclass(frozen=True)
@@ -70,6 +75,16 @@ class LsaLayerSelector:
             config.pool_size, config.bucket_size, config.bucket_cap, config.window_size
         )
         self._tail: list[mx.array] = []
+        self._tail_rows = 0
+
+    def reset(self) -> None:
+        # Drop all indexed state: a new request must never score its queries
+        # against a previous request's keys (stale rows shift every slot and
+        # push the needle's bucket outside the visible range)
+        self.index = IncrementalBucketIndex(
+            self.config.pool_size, self.config.bucket_size, self.config.bucket_cap, self.config.window_size
+        )
+        self._tail = []
         self._tail_rows = 0
 
     def _position_free(self, heads: mx.array) -> mx.array:
@@ -156,6 +171,23 @@ class LsaLayerSelector:
         picked = selected[0]
         kept_count = int((picked >= 0).sum().item())
         picked = picked[:kept_count]
+        if _SELECT_LOG:
+            probe = -1
+            if _PROBE_LO >= 0 and kept_count:
+                probe = int(
+                    ((picked >= _PROBE_LO) & (picked <= _PROBE_HI)).sum().item()
+                )
+            logger.info(
+                "LSA select pos=%d key_count=%d blocks=%d tail=%d picked=%d min=%d max=%d probe=%d",
+                position,
+                self.index.key_count,
+                self.index.block_count,
+                self._tail_rows,
+                kept_count,
+                int(picked.min().item()) if kept_count else -1,
+                int(picked.max().item()) if kept_count else -1,
+                probe,
+            )
         if self._tail_rows and position >= self.index.key_count:
             tail = mx.arange(self.index.key_count, position + 1, dtype=mx.int32)
             picked = _dedupe_sorted(mx.concatenate([picked, tail]))

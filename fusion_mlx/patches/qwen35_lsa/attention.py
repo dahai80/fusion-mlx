@@ -46,6 +46,8 @@ class LsaAttention(nn.Module):
         self.attn = attn
         self.selector = selector
         self.last_picked: mx.array | None = None
+        self._state_cache = None
+        self._pending_rebuild = False
 
     def __call__(
         self,
@@ -72,6 +74,14 @@ class LsaAttention(nn.Module):
             offset = int(cache.offset)
             queries = attn.rope(queries, offset=offset)
             keys = attn.rope(keys, offset=offset)
+            if cache is not self._state_cache:
+                # new request: never score against a previous request's keys
+                self.selector.reset()
+                self._state_cache = cache
+                # a radix cache hit restores rows without running prefill
+                # through this layer, so the index may be missing the
+                # restored prefix - rebuild from the cache at first decode
+                self._pending_rebuild = True
         else:
             offset = 0
             queries = attn.rope(queries)
@@ -94,6 +104,18 @@ class LsaAttention(nn.Module):
                 output.transpose(0, 2, 1, 3).reshape(B, L, -1) * mx.sigmoid(gate)
             )
 
+        if self._pending_rebuild:
+            # RoPE touches only the first rotary_dim dims and the index reads
+            # the remaining free dims, so the cache's post-rope keys are valid
+            # index input; rebuild covers prefix rows a radix cache hit
+            # restored without prefill passing through this layer
+            self._pending_rebuild = False
+            cached = getattr(cache, "keys", None) if cache is not None else None
+            # KVCache.keys is a preallocated buffer padded with zero rows
+            # beyond offset - only the first offset rows are real keys
+            if cached is not None and offset > 0 and cached.shape[2] >= offset:
+                self.selector.reset()
+                self.selector.append_keys(cached[..., :offset, :])
         self.selector.append_keys(keys)
         picked = self.selector.select(queries, offset)
         self.last_picked = picked

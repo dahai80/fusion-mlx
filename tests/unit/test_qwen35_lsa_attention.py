@@ -176,3 +176,51 @@ def test_batch_decode_falls_back_to_dense():
     )
     assert got.shape == (2, 1, HIDDEN)
     assert wrapper.last_picked is None
+
+
+def test_new_request_resets_selector_index():
+    from mlx_lm.models.cache import KVCache
+
+    from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
+    from fusion_mlx.patches.qwen35_lsa.selection import LsaSelectionConfig
+
+    attn = _make_attn()
+    small = LsaSelectionConfig(
+        pool_size=2, bucket_size=4, bucket_cap=8, top_p=8, top_k=32, sink_size=2, window_size=16
+    )
+    wrapper = LsaAttention(attn, _make_selector(small))
+
+    cache_a = KVCache()
+    wrapper(mx.random.normal((1, 32, HIDDEN), key=mx.random.key(9)), mask=None, cache=cache_a)
+    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(10)), mask=None, cache=cache_a)
+    assert wrapper.selector.index.key_count == 32
+
+    cache_b = KVCache()
+    wrapper(mx.random.normal((1, 16, HIDDEN), key=mx.random.key(11)), mask=None, cache=cache_b)
+    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(12)), mask=None, cache=cache_b)
+    assert wrapper.selector.index.key_count == 16
+
+
+def test_radix_cache_hit_rebuilds_index_from_cache():
+    from mlx_lm.models.cache import KVCache
+
+    from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
+    from fusion_mlx.patches.qwen35_lsa.selection import LsaSelectionConfig
+
+    attn = _make_attn()
+    small = LsaSelectionConfig(
+        pool_size=2, bucket_size=4, bucket_cap=8, top_p=8, top_k=32, sink_size=2, window_size=16
+    )
+    wrapper = LsaAttention(attn, _make_selector(small))
+
+    cache_a = KVCache()
+    wrapper(mx.random.normal((1, 16, HIDDEN), key=mx.random.key(13)), mask=None, cache=cache_a)
+
+    cache_b = KVCache()
+    restored_k = mx.random.normal((1, KV_HEADS, 32, HEAD_DIM), key=mx.random.key(14))
+    restored_v = mx.random.normal((1, KV_HEADS, 32, HEAD_DIM), key=mx.random.key(15))
+    cache_b.update_and_fetch(restored_k, restored_v)
+    assert cache_b.offset == 32
+
+    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(16)), mask=None, cache=cache_b)
+    assert wrapper.selector.index.key_count == 32
