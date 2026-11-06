@@ -58,7 +58,20 @@ _GUARDED_PREFIXES = (
 # must not be pre-checked — otherwise the pre-check 401s the very endpoint
 # that sets the initial key (request=None means the loopback exemption in
 # _anonymous_access_allowed cannot fire), leaving CLI as the only path.
-_EXCLUDED_PATHS = frozenset({"/v1/audio/transcriptions", "/admin/api/setup-api-key"})
+#
+# /admin/api/login: same trap (the configured-key chicken-and-egg). With a
+# key configured the pre-check 401s the login POST itself, so no client
+# (macOS app, admin web UI) can ever obtain the session cookie. The login
+# route enforces its own auth (E-32 rate limit + verify_api_key) and only
+# ever consumes a small JSON body — no buffering risk.
+_EXCLUDED_PATHS = frozenset(
+    {
+        "/v1/audio/transcriptions",
+        "/admin/api/setup-api-key",
+        "/admin/api/login",
+        "/admin/auto-login",
+    }
+)
 
 
 def _path_is_guarded(path: str | None) -> bool:
@@ -79,6 +92,39 @@ def _extract_headers(scope: dict[str, Any]) -> dict[str, str]:
     return headers
 
 
+def _admin_session_or_skip_ok(scope: dict[str, Any], headers: dict[str, str]) -> bool:
+    # Admin routes authenticate via the fusionmlx_admin_session cookie set by
+    # POST /admin/api/login — the header-only pre-check cannot see it, so a
+    # logged-in admin would still get 401 on every body-bearing /admin/ write
+    # (save settings, model download). Mirror require_admin here: a valid
+    # session cookie passes, and with skip_api_key_verification ON a loopback
+    # request passes unauthenticated (same relaxation require_admin grants).
+    try:
+        from ..admin.auth import (
+            SESSION_COOKIE_NAME,
+            _is_skip_api_key_verification,
+            verify_session,
+        )
+        from ..admin.helpers import _get_global_settings
+    except Exception as e:
+        logger.warning("admin session pre-check unavailable: %s", e)
+        return False
+    if _is_skip_api_key_verification(_get_global_settings()):
+        client = scope.get("client") or {}
+        host = (
+            client.get("host", "")
+            if isinstance(client, dict)
+            else (client[0] if isinstance(client, (tuple, list)) and client else "")
+        )
+        if host in ("127.0.0.1", "::1", "localhost"):
+            return True
+    for part in headers.get("cookie", "").split(";"):
+        name, _, value = part.strip().partition("=")
+        if name == SESSION_COOKIE_NAME and value and verify_session(value):
+            return True
+    return False
+
+
 def _auth_passes_precheck(scope: dict[str, Any]) -> bool:
     """Header-only auth check. True if request should proceed to body buffering."""
     import secrets
@@ -95,6 +141,9 @@ def _auth_passes_precheck(scope: dict[str, Any]) -> bool:
     x_api_key = headers.get("x-api-key")
     provided = [k for k in (bearer, x_api_key) if k]
     if not provided:
+        path = scope.get("path") or ""
+        if path.startswith("/admin/") and _admin_session_or_skip_ok(scope, headers):
+            return True
         return False
     return all(secrets.compare_digest(k, configured_key) for k in provided)
 
