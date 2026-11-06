@@ -34,7 +34,7 @@ struct MigrationAnalysis: Decodable, Sendable {
 
 struct MigrationTaskInfo: Decodable, Sendable {
     let migrationId: String
-    let task: [String: AnyCodable]?
+    let task: [String: MigrationAnyValue]?
 
     enum CodingKeys: String, CodingKey {
         case migrationId = "migration_id"
@@ -86,9 +86,10 @@ struct CodegenResult: Decodable, Sendable {
     }
 }
 
-/// Type-erasing Decodable for nested JSON dicts
-struct AnyCodable: Decodable, Sendable {
-    let value: Any
+/// Type-erasing Decodable for nested JSON dicts. Named to avoid clashing
+/// with ProfileDTO.AnyCodable (different unwrapping semantics).
+struct MigrationAnyValue: Decodable, Sendable {
+    let value: any Sendable
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
@@ -96,8 +97,8 @@ struct AnyCodable: Decodable, Sendable {
         else if let doubleVal = try? container.decode(Double.self) { value = doubleVal }
         else if let stringVal = try? container.decode(String.self) { value = stringVal }
         else if let boolVal = try? container.decode(Bool.self) { value = boolVal }
-        else if let arrayVal = try? container.decode([AnyCodable].self) { value = arrayVal.map { $0.value } }
-        else if let dictVal = try? container.decode([String: AnyCodable].self) { value = dictVal.mapValues { $0.value } }
+        else if let arrayVal = try? container.decode([MigrationAnyValue].self) { value = arrayVal.map { $0.value } }
+        else if let dictVal = try? container.decode([String: MigrationAnyValue].self) { value = dictVal.mapValues { $0.value } }
         else { value = NSNull() }
     }
 }
@@ -117,7 +118,7 @@ extension FusionClient {
         return MigrationTaskInfo(migrationId: resp.migrationId, task: resp.task)
     }
 
-    func migrateDownloadStatus(migrationId: String) async throws -> [String: AnyCodable]? {
+    func migrateDownloadStatus(migrationId: String) async throws -> [String: MigrationAnyValue]? {
         let resp: StatusResponse = try await get(AdminAPI.migrateDownloadStatus(migrationId))
         return resp.task
     }
@@ -161,7 +162,7 @@ private struct AnalyzeResponse: Decodable {
 private struct DownloadResponse: Decodable {
     let success: Bool
     let migrationId: String
-    let task: [String: AnyCodable]?
+    let task: [String: MigrationAnyValue]?
 
     enum CodingKeys: String, CodingKey {
         case success
@@ -172,7 +173,7 @@ private struct DownloadResponse: Decodable {
 
 private struct StatusResponse: Decodable {
     let success: Bool
-    let task: [String: AnyCodable]?
+    let task: [String: MigrationAnyValue]?
 }
 
 private struct ConvertResponse: Decodable {

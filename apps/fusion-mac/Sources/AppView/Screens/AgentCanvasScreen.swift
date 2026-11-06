@@ -149,6 +149,6 @@ private extension AppSection {
 
 #Preview {
     AgentCanvasScreen()
-        .environment(AppServices(config: AppConfig()))
+        .environment(AppServices())
         .frame(width: 900, height: 600)
 }

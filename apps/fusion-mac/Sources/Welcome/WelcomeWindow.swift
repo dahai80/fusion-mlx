@@ -13,6 +13,7 @@
 
 import AppKit
 import SwiftUI
+import os
 
 // MARK: - Window controller
 
@@ -139,6 +140,35 @@ final class WelcomeViewModel: ObservableObject {
     @Published var modelSource: String = "huggingface"
     /// Use case: agent | coding | chat
     @Published var useCase: String = "agent"
+
+    // MARK: Hardware detection + recommendation (whichllm bridge)
+    /// Detected hardware. Seeded with a ProcessInfo quick-detect so the
+    /// wizard shows something immediately; the whichllm bridge refines it.
+    @Published var hardwareInfo: HardwareInfoDTO = HardwareInfoDTO.quickDetect()
+    /// Model recommendations for the detected hardware + use case.
+    @Published var recommendations: [ModelRecommendationDTO] = []
+    @Published var selectedModelIndex: Int = 0
+    @Published var recommendError: String?
+    @Published var isRecommending: Bool = false
+
+    func beginHardwareDetection() {
+        step = .hardwareDetect
+        hardwareInfo = HardwareInfoDTO.quickDetect()
+        Logger(subsystem: "com.fusion.studio", category: "welcome").info("Hardware detection started (quickDetect: \(self.hardwareInfo.cpu, privacy: .public))")
+    }
+
+    func beginRecommendation() {
+        step = .recommend
+        Logger(subsystem: "com.fusion.studio", category: "welcome").info("Recommendation step entered (\(self.recommendations.count) cached rows)")
+    }
+
+    func backToSetup() {
+        step = .setup
+    }
+
+    func backToHardwareDetect() {
+        step = .hardwareDetect
+    }
 
     // MARK: Editable recommendation fields
     @Published var editMaxContext: Int = 65536

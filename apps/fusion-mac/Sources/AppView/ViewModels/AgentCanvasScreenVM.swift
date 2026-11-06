@@ -23,11 +23,11 @@ final class AgentCanvasScreenVM {
     func loadGraphs(client: FusionClient) {
         Task {
             do {
-                let data = try await client.get("/admin/api/canvas/graphs")
-                let decoder = JSONDecoder()
-                if let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                    self.graphs = json.map { CanvasGraphInfo(from: $0) }
-                }
+                // Fields are heterogeneous; decode through AnyCodable and
+                // unwrap into [String: Any] for CanvasGraphInfo(from:).
+                let raw = try await client.get("/admin/api/canvas/graphs") as [[String: AnyCodable]]
+                let json = raw.map { $0.mapValues { $0.value } }
+                self.graphs = json.map { CanvasGraphInfo(from: $0) }
             } catch {
                 lastError = error.fusionDescription
             }

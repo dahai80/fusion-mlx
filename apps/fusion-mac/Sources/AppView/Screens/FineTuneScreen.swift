@@ -112,7 +112,7 @@ private struct ConfigSection: View {
                     .controlSize(.small)
                     .fileImporter(
                         isPresented: $showDatasetPicker,
-                        allowedContentTypes: [.jsonl, .json, .directory],
+                        allowedContentTypes: [.json, .directory],
                         allowsMultipleSelection: false
                     ) { result in
                         switch result {
@@ -235,7 +235,7 @@ private struct AdvancedConfigSection: View {
                 }
             }
             Row(label: "Learning Rate") {
-                TextField("", value: $config.learning_rate, format: .scientific)
+                TextField("", value: $config.learning_rate, format: .number.notation(.scientific))
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 120)
             }
