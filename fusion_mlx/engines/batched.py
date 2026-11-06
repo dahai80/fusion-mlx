@@ -259,13 +259,24 @@ class BatchedEngine(BaseEngine):
         # _memory_tier) are both set in __init__.
         if self._model_settings is None:
             return False
-        if bool(getattr(self._scheduler_config, "lsa_enabled", False)):
-            return False
-        enabled = getattr(self._model_settings, "turboquant_kv_enabled", None)
-        if enabled is None:
+        tq_explicit = getattr(self._model_settings, "turboquant_kv_enabled", None)
+        enabled = True if tq_explicit is None else bool(tq_explicit)
+        if not tq_explicit and getattr(self, "_memory_tier", None) == "balanced":
             # Auto-enable, except the balanced-tier claude场景 opt-out.
-            return getattr(self, "_memory_tier", None) != "balanced"
-        return bool(enabled)
+            return False
+        if enabled and bool(getattr(self._scheduler_config, "lsa_enabled", False)):
+            # Coexistence needs explicit k8v4 (8-bit keys); auto-enable
+            # would run 4-bit keys and degrade the LSA selection index
+            if not (tq_explicit and self._effective_turboquant_mode() == "k8v4"):
+                return False
+        return enabled
+
+    def _effective_turboquant_mode(self) -> str:
+        return (
+            getattr(self._scheduler_config, "kv_cache_turboquant_mode", None)
+            or getattr(self._model_settings, "kv_cache_turboquant_mode", None)
+            or "v4"
+        )
 
     def _turboquant_should_enable(self) -> bool:
         # Decision for the post-load TurboQuant KV block. No explicit
@@ -290,10 +301,20 @@ class BatchedEngine(BaseEngine):
                 "TurboQuant KV cache disabled for claude场景 (memory-tier=balanced, M5 Max 128GB 用显存换速度)"
             )
         if tq_enabled and bool(getattr(self._scheduler_config, "lsa_enabled", False)):
-            tq_enabled = False
-            logger.info(
-                "TurboQuant KV cache disabled: LSA owns the full-attention decode path"
-            )
+            # Coexistence with LSA requires explicitly requested k8v4 mode:
+            # the selection index rebuilds from dequantized rows and needs
+            # 8-bit keys (probe: top-64 agreement 0.99 at 8 bits, 0.83-0.91
+            # at 4 bits). Auto-enabled TQ runs 4-bit keys and stands down.
+            if tq_explicit and self._effective_turboquant_mode() == "k8v4":
+                logger.info(
+                    "TurboQuant k8v4 + LSA coexistence enabled (8-bit keys)"
+                )
+            else:
+                tq_enabled = False
+                logger.info(
+                    "TurboQuant KV cache disabled: LSA needs explicit k8v4 mode; "
+                    "auto-enable would quantize keys at 4 bits"
+                )
         return tq_enabled
 
     def _overlay_scheduler_lsa(self):
@@ -577,8 +598,8 @@ class BatchedEngine(BaseEngine):
                 self._engine.engine.scheduler._turboquant_kv_mode = tq_mode
                 if tq_mode == "k8v4":
                     logger.info(
-                        "TurboQuant K8V4 mode requested — live KV cache uses V4 "
-                        "(mlx_vlm); K8V4 applies to prefix cache storage only."
+                        "TurboQuant K8V4 mode: keys quantized at 8 bits, values "
+                        "at 4 bits (live KV cache, via K8V4TurboQuantKVCache)"
                     )
                 # Apply the TurboQuant attention patch so mlx_lm's SDPA routes
                 # to the cache's quantized kernels. Without this, update_and_fetch

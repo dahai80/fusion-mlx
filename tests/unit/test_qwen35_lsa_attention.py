@@ -348,3 +348,49 @@ def test_in_place_extend_and_filter_arms_rebuild():
     )
     seq_rows = int(mx.reshape(cache.offset, (-1,))[0])
     assert wrapper.selector.index.key_count == (seq_rows // 16) * 16
+
+
+def test_decode_runs_on_turboquant_cache():
+    """Serving composition: the scheduler converts the prefilled KVCache to
+    TurboQuant after prefill. The object swap must re-arm the selector, the
+    index rebuild must read dequantized rows (the quantized state proxy is
+    not a key array), and the decode gather must attend over dequantized
+    keys/values. k8v4: 8-bit keys keep top-k agreement at ~0.99 (probe)."""
+    from mlx_lm.models.cache import KVCache
+
+    from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
+    from fusion_mlx.patches.qwen35_lsa.selection import LsaSelectionConfig
+
+    pytest.importorskip("mlx_vlm")
+    from fusion_mlx.turboquant_kv import make_turboquant_kv_cache
+
+    small = LsaSelectionConfig(
+        pool_size=2,
+        bucket_size=4,
+        bucket_cap=8,
+        top_p=8,
+        top_k=32,
+        sink_size=2,
+        window_size=16,
+    )
+    attn = _make_attn()
+    wrapper = LsaAttention(attn, _make_selector(small))
+    cache = KVCache()
+    wrapper(
+        mx.random.normal((1, 48, HIDDEN), key=mx.random.key(5)), mask=None, cache=cache
+    )
+
+    tq = make_turboquant_kv_cache(4.0, "k8v4", source=cache)
+    step = wrapper(
+        mx.random.normal((1, 1, HIDDEN), key=mx.random.key(6)), mask=None, cache=tq
+    )
+    assert step.shape == (1, 1, HIDDEN)
+    assert wrapper.selector.index.key_count == 48
+
+    step = wrapper(
+        mx.random.normal((1, 1, HIDDEN), key=mx.random.key(7)), mask=None, cache=tq
+    )
+    assert step.shape == (1, 1, HIDDEN)
+    # 49 indexed rows close three 16-row pages; the fourth closes at 64
+    assert wrapper.selector.index.key_count == 48
+    assert int(mx.abs(step).sum().item()) > 0

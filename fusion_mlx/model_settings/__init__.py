@@ -155,11 +155,9 @@ class ModelSettings:
             raise ValueError(
                 "lsa_enabled requires lsa_map_path; the LSA path needs a projection map"
             )
-        if self.lsa_enabled and self.turboquant_kv_enabled:
-            raise ValueError(
-                "lsa_enabled and turboquant_kv_enabled cannot both be True; "
-                "TurboQuant patches the attention path LSA replaces"
-            )
+        # lsa_enabled + turboquant_kv_enabled is allowed: the LSA decode path
+        # rebuilds its selection index from dequantized TurboQuant rows, and
+        # the serve command gates the combination to k8v4 mode (8-bit keys).
         if self.vlm_mtp_enabled:
             conflicts = [
                 ("dflash_enabled", self.dflash_enabled),

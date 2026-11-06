@@ -61,10 +61,17 @@ class LsaAttention(nn.Module):
         # Detect a new request or a reshaped batch without relying on object
         # identity alone: mlx_lm joins and leaves batches via in-place
         # extend/filter, which keeps the cache object but changes its batch
-        # width or shrinks its rows - either invalidates the selection index
+        # width or shrinks its rows - either invalidates the selection index.
+        # A TurboQuant cache stores packed quantized states with no array
+        # shape to read - sentinel -1 values leave identity as the only
+        # signal there (single-stream requests never reshape in place).
+        dequant = getattr(cache, "dequantize", None)
         cached = getattr(cache, "keys", None)
-        width = int(cached.shape[0]) if cached is not None else 0
-        rows = int(cached.shape[2]) if cached is not None else 0
+        if dequant is not None:
+            width, rows = -1, -1
+        else:
+            width = int(cached.shape[0]) if cached is not None else 0
+            rows = int(cached.shape[2]) if cached is not None else 0
         if (
             cache is not self._state_cache
             or width != self._state_width
@@ -122,22 +129,40 @@ class LsaAttention(nn.Module):
             )
 
         offset = int(cache.offset) if cache is not None else 0
+        dequant = getattr(cache, "dequantize", None) if cache is not None else None
         if self._pending_rebuild:
             # RoPE touches only the first rotary_dim dims and the index reads
             # the remaining free dims, so the cache's post-rope keys are valid
             # index input; rebuild covers prefix rows a radix cache hit
             # restored without prefill passing through this layer
             self._pending_rebuild = False
-            cached = getattr(cache, "keys", None) if cache is not None else None
-            # KVCache.keys is a preallocated buffer padded with zero rows
-            # beyond offset - only the first offset rows are real keys
-            if cached is not None and offset > 0 and cached.shape[2] >= offset:
-                self.selector.reset()
-                self.selector.append_keys(cached[..., :offset, :])
+            if offset > 0:
+                if dequant is not None:
+                    # TurboQuant stores packed quantized states; the index
+                    # needs dequantized rows (8-bit keys keep top-k agreement
+                    # at ~0.99 per the TQ KV probe)
+                    keys_fp, _ = dequant()
+                    self.selector.reset()
+                    self.selector.append_keys(keys_fp.astype(keys.dtype)[..., :offset, :])
+                else:
+                    cached = getattr(cache, "keys", None)
+                    # KVCache.keys is a preallocated buffer padded with zero
+                    # rows beyond offset - only the first offset rows are real
+                    if cached is not None and cached.shape[2] >= offset:
+                        self.selector.reset()
+                        self.selector.append_keys(cached[..., :offset, :])
         self.selector.append_keys(keys)
         picked = self.selector.select(queries, offset)
         self.last_picked = picked
-        keys, values = cache.update_and_fetch(keys, values)
+        if dequant is not None:
+            # the quantized state returned by update_and_fetch cannot be
+            # gathered along time - dequantize once and attend in fp16
+            cache.update_and_fetch(keys, values)
+            keys_fp, values_fp = dequant()
+            keys = keys_fp.astype(keys.dtype)
+            values = values_fp.astype(values.dtype)
+        else:
+            keys, values = cache.update_and_fetch(keys, values)
         idx = picked.astype(mx.int32).reshape(1, 1, -1, 1)
         keys_sel = mx.take_along_axis(keys, idx, axis=2)
         values_sel = mx.take_along_axis(values, idx, axis=2)

@@ -108,8 +108,10 @@ def test_settings_require_map_when_enabled():
         ModelSettings(lsa_enabled=True)
 
 
-def test_settings_conflict_with_turboquant():
-    with pytest.raises(ValueError):
-        ModelSettings(
-            lsa_enabled=True, lsa_map_path="m.safetensors", turboquant_kv_enabled=True
-        )
+def test_settings_allow_lsa_with_turboquant():
+    # coexistence is allowed at the settings level; the serve command gates
+    # it to k8v4 mode (8-bit keys) and the engine gates auto-enable off
+    settings = ModelSettings(
+        lsa_enabled=True, lsa_map_path="m.safetensors", turboquant_kv_enabled=True
+    )
+    assert settings.lsa_enabled and settings.turboquant_kv_enabled

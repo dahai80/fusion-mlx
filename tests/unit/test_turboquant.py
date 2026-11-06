@@ -1074,3 +1074,34 @@ def test_batch_masked_decode_is_accurate():
     assert (
         rel < 0.05
     ), f"B>1 masked decode inaccurate (err {rel:.1%}) — RHT fix missing from pinned mlx-vlm?"
+
+
+def test_turboquant_convert_k8v4_mode_sets_key_codec_8bit():
+    """k8v4 mode must reach the codec: K quantized at 8 bits, V at 4.
+    The mode was previously read for logging only and both codecs silently
+    ran at `bits` (4-bit keys) — the LSA selection index cannot tolerate
+    4-bit keys (probe: top-64 agreement 0.83-0.91 vs 0.99 at 8 bits)."""
+    from types import SimpleNamespace
+
+    from mlx_lm.models.cache import KVCache
+
+    from fusion_mlx.scheduler import Scheduler
+
+    layer = KVCache()
+    layer.update_and_fetch(
+        mx.random.normal((1, 2, 8, 32)),
+        mx.random.normal((1, 2, 8, 32)),
+    )
+    mx.eval(layer.state)
+
+    ns = SimpleNamespace(
+        _turboquant_kv_bits=4.0,
+        _turboquant_skip_last=False,
+        _turboquant_kv_mode="k8v4",
+    )
+    converted = [layer]
+    Scheduler._apply_turboquant_kv_convert(ns, converted)
+
+    assert isinstance(converted[0], TurboQuantKVCache)
+    assert converted[0].key_codec.bits == 8
+    assert converted[0].value_codec.bits == 4

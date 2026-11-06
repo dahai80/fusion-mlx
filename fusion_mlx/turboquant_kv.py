@@ -63,7 +63,9 @@ __all__ = [
     "TurboQuantConfig",
     "TurboQuantKVCache",
     "BatchTurboQuantKVCache",
+    "K8V4TurboQuantKVCache",
     "auto_select_bits",
+    "make_turboquant_kv_cache",
     "turboquant_enabled",
 ]
 
@@ -102,6 +104,47 @@ def auto_select_bits(head_dim: int) -> int:
     return 3 if head_dim >= 96 else 4
 
 
+class K8V4TurboQuantKVCache(TurboQuantKVCache):
+    """k8v4 mode: keys at 8 bits, values at `bits` (4).
+
+    The pinned mlx_vlm TurboQuantKVCache carries a single bits knob and
+    quantizes keys and values at the same width. 8-bit keys matter for
+    LSA serving: the selection index reads key rows, and the TQ KV probe
+    measured top-64 agreement 0.99 at 8-bit keys vs 0.83-0.91 at 4-bit.
+    """
+
+    def __init__(self, bits: float = 4, key_bits: int = 8, seed: int = 0):
+        super().__init__(bits=bits, seed=seed)
+        self.key_bits = key_bits
+
+    def _ensure_codecs(self, keys: mx.array, values: mx.array):
+        if self.key_codec is None:
+            self.key_codec = _build_codec(
+                keys, self.key_bits, mode="mse", seed=self.seed
+            )
+        if self.value_codec is None:
+            self.value_codec = _build_codec(
+                values, self.bits, mode="mse", seed=self.seed + 1
+            )
+
+
+def make_turboquant_kv_cache(
+    bits: float, mode: str = "v4", seed: int = 0, source=None
+) -> TurboQuantKVCache:
+    # source: an existing cache whose fp16 state is quantized into the new
+    # cache (same contract as TurboQuantKVCache.from_cache)
+    cache = (
+        K8V4TurboQuantKVCache(bits=bits, seed=seed)
+        if mode == "k8v4"
+        else TurboQuantKVCache(bits=bits, seed=seed)
+    )
+    if source is not None:
+        keys, values = source.state
+        if keys is not None:
+            cache.update_and_fetch(keys, values)
+    return cache
+
+
 # ---------------------------------------------------------------------------
 # Codec rebuild for SSD cache reconstruction
 # ---------------------------------------------------------------------------
@@ -136,7 +179,10 @@ def _rebuild_codecs(tq_cache: TurboQuantKVCache, key_state, value_state) -> None
     bits = tq_cache.bits
     seed = tq_cache.seed
     fractional = not math.isclose(bits, round(bits), abs_tol=1e-6)
-    key_bits = int(math.floor(bits) if fractional else bits)
+    key_bits = getattr(tq_cache, "key_bits", None)
+    if key_bits is None:
+        key_bits = math.floor(bits) if fractional else bits
+    key_bits = int(key_bits)
     val_bits = int(math.ceil(bits) if fractional else bits)
 
     head_dim = _infer_head_dim(key_state, key_bits)
