@@ -13,6 +13,16 @@
 		1DDDDDDDDDDDDDDDDDDDDDD4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1CCCCCCCCCCCCCCCCCCCCCC6 /* Assets.xcassets */; };
 		1DDDDDDDDDDDDDDDDDDDDDD5 /* PythonRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CCCCCCCCCCCCCCCCCCCCCC8 /* PythonRuntime.swift */; };
 		1DDDDDDDDDDDDDDDDDDDDDD6 /* ServerProcess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CCCCCCCCCCCCCCCCCCCCCC9 /* ServerProcess.swift */; };
+		E5B000000000000000000001 /* AgentCanvasScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C000000000000000000001 /* AgentCanvasScreen.swift */; };
+		E5B000000000000000000002 /* AgentCanvasScreenVM.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C000000000000000000002 /* AgentCanvasScreenVM.swift */; };
+		E5B000000000000000000003 /* FineTuneDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C000000000000000000003 /* FineTuneDTO.swift */; };
+		E5B000000000000000000004 /* FineTuneScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C000000000000000000004 /* FineTuneScreen.swift */; };
+		E5B000000000000000000005 /* FineTuneScreenVM.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C000000000000000000005 /* FineTuneScreenVM.swift */; };
+		E5B000000000000000000006 /* MigrationClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C000000000000000000006 /* MigrationClient.swift */; };
+		E5B000000000000000000007 /* MigrationWizardScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C000000000000000000007 /* MigrationWizardScreen.swift */; };
+		E5B000000000000000000008 /* MigrationWizardVM.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C000000000000000000008 /* MigrationWizardVM.swift */; };
+		E5B000000000000000000009 /* StatsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C000000000000000000009 /* StatsStore.swift */; };
+		E5B00000000000000000000A /* WelcomeHardwareDTO.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5C00000000000000000000A /* WelcomeHardwareDTO.swift */; };
 		2BB000000000000000000001 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CC000000000000000000001 /* Theme.swift */; };
 		2BB000000000000000000002 /* Squircle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CC000000000000000000002 /* Squircle.swift */; };
 		2BB000000000000000000003 /* Glass.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CC000000000000000000003 /* Glass.swift */; };
@@ -150,6 +160,16 @@
 		1CCCCCCCCCCCCCCCCCCCCCC7 /* FusionMLX.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FusionMLX.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1CCCCCCCCCCCCCCCCCCCCCC8 /* PythonRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PythonRuntime.swift; sourceTree = "<group>"; };
 		1CCCCCCCCCCCCCCCCCCCCCC9 /* ServerProcess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerProcess.swift; sourceTree = "<group>"; };
+		E5C000000000000000000001 /* AgentCanvasScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCanvasScreen.swift; sourceTree = "<group>"; };
+		E5C000000000000000000002 /* AgentCanvasScreenVM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCanvasScreenVM.swift; sourceTree = "<group>"; };
+		E5C000000000000000000003 /* FineTuneDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FineTuneDTO.swift; sourceTree = "<group>"; };
+		E5C000000000000000000004 /* FineTuneScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FineTuneScreen.swift; sourceTree = "<group>"; };
+		E5C000000000000000000005 /* FineTuneScreenVM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FineTuneScreenVM.swift; sourceTree = "<group>"; };
+		E5C000000000000000000006 /* MigrationClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationClient.swift; sourceTree = "<group>"; };
+		E5C000000000000000000007 /* MigrationWizardScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationWizardScreen.swift; sourceTree = "<group>"; };
+		E5C000000000000000000008 /* MigrationWizardVM.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MigrationWizardVM.swift; sourceTree = "<group>"; };
+		E5C000000000000000000009 /* StatsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsStore.swift; sourceTree = "<group>"; };
+		E5C00000000000000000000A /* WelcomeHardwareDTO.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeHardwareDTO.swift; sourceTree = "<group>"; };
 		2CC000000000000000000001 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		2CC000000000000000000002 /* Squircle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Squircle.swift; sourceTree = "<group>"; };
 		2CC000000000000000000003 /* Glass.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Glass.swift; sourceTree = "<group>"; };
@@ -579,6 +599,7 @@
 				1CCCCCCCCCCCCCCCCCCCCCC3 /* MenubarController.swift */,
 				3CC000000000000000000002 /* MenubarStatsPoller.swift */,
 				3CC000000000000000000003 /* MenubarVisibilityWatcher.swift */,
+				E5C000000000000000000009 /* StatsStore.swift */,
 			);
 			path = Menubar;
 			sourceTree = "<group>";
@@ -686,6 +707,9 @@
 				6CC00000000000000000000F /* NetworkScreen.swift */,
 				6CC000000000000000000010 /* PerformanceScreen.swift */,
 				DCC000000000000000000102 /* ModelCardSheet.swift */,
+				E5C000000000000000000001 /* AgentCanvasScreen.swift */,
+				E5C000000000000000000004 /* FineTuneScreen.swift */,
+				E5C000000000000000000007 /* MigrationWizardScreen.swift */,
 			);
 			path = Screens;
 			sourceTree = "<group>";
@@ -695,6 +719,7 @@
 			children = (
 				7CC000000000000000000002 /* FusionClient.swift */,
 				7CC000000000000000000003 /* Endpoints.swift */,
+				E5C000000000000000000006 /* MigrationClient.swift */,
 				7EE000000000000000000002 /* DTO */,
 			);
 			path = Net;
@@ -710,6 +735,8 @@
 				8CC000000000000000000001 /* ModelsDTO.swift */,
 				8CC000000000000000000002 /* ProfileDTO.swift */,
 				8CC000000000000000000003 /* HFTaskDTO.swift */,
+				E5C000000000000000000003 /* FineTuneDTO.swift */,
+				E5C00000000000000000000A /* WelcomeHardwareDTO.swift */,
 				8CC00000000000000000000A /* MSTaskDTO.swift */,
 				9CC000000000000000000001 /* SubKeyDTO.swift */,
 				9CC000000000000000000002 /* OQDTO.swift */,
@@ -1469,6 +1496,9 @@
 				AAD9D52A2FE284BF00FAEA05 /* AccuracyBenchScreenVM.swift */,
 				AAD9D52C2FE284D100FAEA05 /* NetworkScreenVM.swift */,
 				AAD9D52E2FE284E200FAEA05 /* PerformanceScreenVM.swift */,
+				E5C000000000000000000002 /* AgentCanvasScreenVM.swift */,
+				E5C000000000000000000005 /* FineTuneScreenVM.swift */,
+				E5C000000000000000000008 /* MigrationWizardVM.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -1723,6 +1753,16 @@
 				ABB000000000000000000001 /* WelcomeWindow.swift in Sources */,
 				BBB000000000000000000004 /* AppUpdater.swift in Sources */,
 				BBB000000000000000000005 /* ReleasesChecker.swift in Sources */,
+				E5B000000000000000000001 /* AgentCanvasScreen.swift in Sources */,
+				E5B000000000000000000002 /* AgentCanvasScreenVM.swift in Sources */,
+				E5B000000000000000000003 /* FineTuneDTO.swift in Sources */,
+				E5B000000000000000000004 /* FineTuneScreen.swift in Sources */,
+				E5B000000000000000000005 /* FineTuneScreenVM.swift in Sources */,
+				E5B000000000000000000006 /* MigrationClient.swift in Sources */,
+				E5B000000000000000000007 /* MigrationWizardScreen.swift in Sources */,
+				E5B000000000000000000008 /* MigrationWizardVM.swift in Sources */,
+				E5B000000000000000000009 /* StatsStore.swift in Sources */,
+				E5B00000000000000000000A /* WelcomeHardwareDTO.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1903,7 +1943,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.5.1;
+				MARKETING_VERSION = 0.10.50;
 				PRODUCT_BUNDLE_IDENTIFIER = "app.fusion-mlx";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1929,7 +1969,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.5.1;
+				MARKETING_VERSION = 0.10.50;
 				PRODUCT_BUNDLE_IDENTIFIER = "app.fusion-mlx";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

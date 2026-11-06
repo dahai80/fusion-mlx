@@ -4,6 +4,7 @@
 // User instruction: "开始做，注意设计方案需要有GUI的设计和落地方案，提交给macos app"
 
 import SwiftUI
+import os
 
 @MainActor
 @Observable

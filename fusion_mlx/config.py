@@ -170,6 +170,12 @@ class SchedulerConfig:
     mtp_sidecar: str | None = None
     mtp_model_type: str | None = None
 
+    # LSA (latent sparse attention) decode for qwen3_5 full-attention
+    # layers. CLI --enable-lsa / --lsa-map; the BatchedEngine overlays
+    # these onto ModelSettings before the pre-load patch dispatch.
+    lsa_enabled: bool = False
+    lsa_map_path: str | None = None
+
     # SuffixDecoding
     enable_suffix_decoding: bool = False
     suffix_max_draft: int = 8

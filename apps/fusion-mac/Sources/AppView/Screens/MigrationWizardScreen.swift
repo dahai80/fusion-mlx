@@ -79,7 +79,7 @@ struct MigrationWizardScreen: View {
 
     private var sourceStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader("Model Source", icon: "square.and.arrow.down")
+            SectionHeader("Model Source")
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -109,7 +109,7 @@ struct MigrationWizardScreen: View {
 
     private var analyzeStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader("Architecture Analysis", icon: "magnifyingglass")
+            SectionHeader("Architecture Analysis")
             if let analysis = vm.analysis {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
@@ -159,7 +159,7 @@ struct MigrationWizardScreen: View {
 
     private var downloadStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader("Weight Download", icon: "icloud.and.arrow.down")
+            SectionHeader("Weight Download")
             if vm.completedSteps.contains(.download) {
                 GroupBox {
                     HStack {
@@ -180,7 +180,7 @@ struct MigrationWizardScreen: View {
 
     private var convertStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader("Weight Conversion", icon: "arrow.triangle.2.circlepath")
+            SectionHeader("Weight Conversion")
             if let result = vm.convertResult {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
@@ -206,7 +206,7 @@ struct MigrationWizardScreen: View {
 
     private var codegenStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader("Code Generation", icon: "chevron.left.forwardslash.chevron.right")
+            SectionHeader("Code Generation")
             if let result = vm.codegenResult {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
@@ -227,7 +227,7 @@ struct MigrationWizardScreen: View {
 
     private var quantizeStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader("Quantization", icon: "sparkles")
+            SectionHeader("Quantization")
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -267,7 +267,7 @@ struct MigrationWizardScreen: View {
 
     private var validateStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionHeader("Validation & Registration", icon: "checkmark.shield")
+            SectionHeader("Validation & Registration")
             if let result = vm.validationResult {
                 GroupBox {
                     VStack(alignment: .leading, spacing: 8) {
@@ -374,30 +374,6 @@ struct MigrationWizardScreen: View {
             vm.advance()
         case .validate:
             let _ = await vm.runValidate(client: client)
-        }
-    }
-}
-
-// MARK: - Section Header Helper
-
-private struct SectionHeader: View {
-    let title: String
-    let icon: String
-    @Environment(\.fusionTheme) private var theme
-
-    init(_ title: String, icon: String) {
-        self.title = title
-        self.icon = icon
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(theme.accent)
-            Text(title)
-                .font(.fusionText(15, weight: .semibold))
-                .foregroundStyle(theme.text)
         }
     }
 }

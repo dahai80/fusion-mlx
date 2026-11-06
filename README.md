@@ -573,6 +573,30 @@ The macOS app offers a mode toggle between:
 
 **Recommended**: `mixed_3_4` or `quant2_all` for best quality/speed tradeoff. **Conservative**: `mixed_4_6` or `mxfp4` when quality is priority. **Aggressive**: `mixed_2_4` or `quant2` when maximizing speed on constrained memory.
 
+## Latent Sparse Attention (LSA) Serving
+
+Long-context sparse decoding for `qwen3_5` full-attention layers (P2, validated on
+Qwen3.8-27B). At serve time the adapter wraps every full-attention layer named in a
+distilled projection map: single-stream decode scores bucket centroids over an
+incremental index, expands the top-p buckets to top-k keys, and runs SDPA over the
+selected keys plus the sink and the sliding window — the full KV cache is still
+maintained, so the scheduler surface is unchanged. Prefill and batched decode stay on
+the dense path; the selection index is rebuilt from the cache at the first decode step
+of each request, which also covers radix cache hits.
+
+```bash
+fusion-mlx serve models/qwen38-27b \
+    --enable-lsa --lsa-map models/maps/qwen38_27b__long-16k-1M-heavy-key-and-query-d2048.safetensors \
+    --kv-cache-dtype bf16 --text-only
+```
+
+Constraints: the KV cache must stay bf16/fp16 (a quantized `--kv-cache-dtype` or
+`--kv-cache-turboquant` is refused at boot — the selection index reads raw keys);
+`--enable-lsa` without `--lsa-map` fails at boot. Measured on M5 Max bf16: 32k NIAH
+exact-match with decode ~8.3 tok/s vs ~5.9 tok/s full attention; 128k (~107k tokens)
+exact-match within the memory budget. Diagnostics: set `LSA_SELECT_LOG=1` (optionally
+`LSA_PROBE_LO`/`LSA_PROBE_HI`) to log per-step selection state.
+
 ## API Compatibility
 
 | API | Endpoints | Status |

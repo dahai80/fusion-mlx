@@ -100,6 +100,9 @@ class ModelSettings:
 
     mtp_enabled: bool = False
 
+    lsa_enabled: bool = False
+    lsa_map_path: str | None = None
+
     vlm_mtp_enabled: bool = False
     vlm_mtp_draft_model: str | None = None
     vlm_mtp_draft_block_size: int | None = None
@@ -147,6 +150,15 @@ class ModelSettings:
             raise ValueError(
                 "mtp_enabled and turboquant_kv_enabled cannot both be True; "
                 "TurboQuant patches the attention path that MTP relies on"
+            )
+        if self.lsa_enabled and not self.lsa_map_path:
+            raise ValueError(
+                "lsa_enabled requires lsa_map_path; the LSA path needs a projection map"
+            )
+        if self.lsa_enabled and self.turboquant_kv_enabled:
+            raise ValueError(
+                "lsa_enabled and turboquant_kv_enabled cannot both be True; "
+                "TurboQuant patches the attention path LSA replaces"
             )
         if self.vlm_mtp_enabled:
             conflicts = [

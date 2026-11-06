@@ -217,9 +217,25 @@ def _build_local_wheels():
     return wheel_map
 
 
+def _vendored_wheel_map(reqs, wheel_map):
+    # Vendored wheels shipped in packaging/_wheels/ but not built from a git
+    # URL in pyproject (e.g. mflux-fusion fork) must also be referenced as
+    # file:// URIs — venvstacks lock cannot resolve them from any registry.
+    vendored = {}
+    req_names = {_normalize(r) for r in reqs}
+    if WHEELS_DIR.exists():
+        for whl in WHEELS_DIR.glob("*.whl"):
+            name = whl.stem.split("-")[0].replace("_", "-").lower()
+            if name in req_names and name not in wheel_map:
+                vendored[name] = whl.resolve().as_uri()
+                print(f"    + {name} -> {whl.name} (vendored)")
+    return vendored
+
+
 def prepare_venvstacks_toml(out_path):
     wheel_map = _build_local_wheels()
     reqs = _merge_requirements()
+    wheel_map.update(_vendored_wheel_map(reqs, wheel_map))
     lines = []
     emitted = set()
     for req in reqs:

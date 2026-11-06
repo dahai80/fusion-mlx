@@ -10,8 +10,10 @@ struct FineTuneJobDTO: Codable, Identifiable, Sendable {
     let model_id: String
     let dataset: String
     let config: FineTuneConfigDTO
-    let status: String
-    let progress: FineTuneProgressDTO
+    // status/progress are var: SSE handler mutates the local copy before
+    // writing the job back into the jobs array (FineTuneScreenVM).
+    var status: String
+    var progress: FineTuneProgressDTO
     let created_at: Double
     let started_at: Double?
     let finished_at: Double?

@@ -129,6 +129,32 @@ def serve_command(args):
     import os
     import sys
 
+    # LSA + TurboQuant both rewrite the attention/KV path in incompatible
+    # ways; refusing here beats a confusing ModelSettings ValueError at
+    # engine start.
+    if getattr(args, "enable_lsa", False) and getattr(
+        args, "kv_cache_turboquant", None
+    ):
+        sys.stderr.write(
+            "\n  --enable-lsa conflicts with --kv-cache-turboquant: LSA owns the\n"
+            "  full-attention decode path and requires unquantized KV in its\n"
+            "  selection window. Pick one.\n\n"
+        )
+        raise SystemExit(2)
+
+    # a quantized KV dtype stores per-layer quantized tensors, so the
+    # selection index cannot rebuild from cache.keys - refuse at boot
+    # instead of an AttributeError at the first decode step
+    if getattr(args, "enable_lsa", False):
+        kv_dtype = str(getattr(args, "kv_cache_dtype", None) or "").lower()
+        if kv_dtype in ("int4", "int8", "8bit", "4bit", "quantized"):
+            sys.stderr.write(
+                f"\n  --enable-lsa conflicts with --kv-cache-dtype {kv_dtype}: the\n"
+                "  selection index rebuilds from raw cache keys, so the KV cache\n"
+                "  must stay bf16/fp16. Drop the quantized dtype.\n\n"
+            )
+            raise SystemExit(2)
+
     # #1492 iron law: refuse a non-loopback bind FIRST — before version
     # checks, alias resolution, or any model download work.
     from ..config import enforce_loopback_bind
@@ -572,6 +598,9 @@ def serve_command(args):
         mtp_num_draft_tokens=args.mtp_num_draft_tokens,
         mtp_optimistic=args.mtp_optimistic,
         mtp_sidecar=getattr(args, "mtp_sidecar", None),
+        # LSA (latent sparse attention) decode for qwen3_5 checkpoints
+        lsa_enabled=getattr(args, "enable_lsa", False),
+        lsa_map_path=getattr(args, "lsa_map_path", None),
         # R15-P1 #302/#313: --spec-decode {none,mtp,dflash}. Plumb the
         # raw choice through; the boot-time eligibility check below
         # validates that ``mtp`` was only passed for a config.json with

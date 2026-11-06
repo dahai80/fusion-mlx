@@ -47,6 +47,7 @@ def ensure_all_registered() -> None:
         "mlx_vlm_qwen_vl_repeat",
         "qwen3_6_nested_visual",
         "minimax_m3_sparse_attention",
+        "qwen35_lsa",
     ):
         try:
             importlib.import_module(f"fusion_mlx.patches.{name}")

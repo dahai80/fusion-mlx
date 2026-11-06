@@ -1255,3 +1255,6 @@ def _add_round3_stubs():
 
 
 _add_round3_stubs()
+
+# LSA test helpers live in a plain module beside the tests; make it importable.
+sys.path.insert(0, str(Path(__file__).parent))

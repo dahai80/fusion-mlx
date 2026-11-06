@@ -573,6 +573,9 @@ final class FusionClient: ObservableObject {
                             let jsonStr = String(line.dropFirst(6))
                             if let data = jsonStr.data(using: .utf8),
                                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                                // Freshly deserialized per-iteration value; never
+                                // aliased across isolation domains — safe to send.
+                                nonisolated(unsafe) let obj = obj
                                 continuation.yield(obj)
                             }
                         } else if line.hasPrefix(": ") {

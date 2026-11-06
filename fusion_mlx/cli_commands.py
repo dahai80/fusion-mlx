@@ -61,6 +61,7 @@ _SERVE_VALUE_FLAGS = frozenset(
         "--listen-fd",
         "--log-level",
         "--lora-path",
+        "--lsa-map",
         "--max-cache-blocks",
         "--max-concurrent-requests",
         "--max-num-seqs",
