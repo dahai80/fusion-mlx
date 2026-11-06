@@ -559,7 +559,22 @@ class BatchTurboQuantKVCache(TurboQuantKVCache):
         )
         end = padding + total
 
-        tq = TurboQuantKVCache(bits=self.bits, seed=self.seed)
+        # Preserve the concrete subclass: BatchGenerator.extract_cache
+        # stores the extracted cache per request, and a base-class return
+        # made k8v4 blocks carry "TurboQuantKVCache" metadata, mismatching
+        # the K8V4 expected signature on every later prefix-cache lookup.
+        # merge() propagates key_bits, so the batch wrapper itself may be
+        # the base class while carrying K8V4 per-layer caches.
+        is_k8v4 = isinstance(self, K8V4TurboQuantKVCache) or (
+            type(self) is BatchTurboQuantKVCache
+            and getattr(self, "key_bits", None) == 8
+        )
+        if is_k8v4:
+            tq = K8V4TurboQuantKVCache(
+                bits=self.bits, key_bits=getattr(self, "key_bits", 8), seed=self.seed
+            )
+        else:
+            tq = TurboQuantKVCache(bits=self.bits, seed=self.seed)
         if self.keys is not None:
             ks = _slice_state_range(self.keys, padding, end)
             vs = _slice_state_range(self.values, padding, end)
@@ -585,6 +600,16 @@ class BatchTurboQuantKVCache(TurboQuantKVCache):
         padding = [max_length - l for l in lengths]
 
         batch = cls(padding, bits=bits, seed=seed)
+        # Carry the k8v4 marker: any K8V4 source makes the batch K8V4, so
+        # extract(idx) can rebuild the right per-request subclass.
+        batch.key_bits = getattr(
+            next(
+                (c for c in caches if isinstance(c, K8V4TurboQuantKVCache)),
+                batch,
+            ),
+            "key_bits",
+            4,
+        )
 
         for c in caches:
             if c.key_codec is not None:

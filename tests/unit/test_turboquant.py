@@ -1135,3 +1135,29 @@ def test_k8v4_gather_dequantize_matches_full_dequantize():
     rel_v = float(mx.abs(gv - fv16[..., picked, :]).max() / mx.abs(fv16).max())
     assert rel_k < 1e-5, f"gathered keys diverge from full dequantize ({rel_k})"
     assert rel_v < 1e-5, f"gathered values diverge from full dequantize ({rel_v})"
+
+
+def test_batch_extract_preserves_k8v4_subclass():
+    # BatchGenerator.extract_cache calls extract(idx) at request
+    # completion; returning the base class dropped the k8v4 subclass so
+    # stored SSD blocks carried "TurboQuantKVCache" metadata and every
+    # prefix-cache lookup mismatched the K8V4 expected signature
+    import mlx.core as mx
+
+    from fusion_mlx.turboquant_kv import (
+        BatchTurboQuantKVCache,
+        K8V4TurboQuantKVCache,
+    )
+
+    caches = []
+    for _ in range(2):
+        c = K8V4TurboQuantKVCache(bits=4)
+        c.update_and_fetch(
+            mx.random.normal((1, 2, 16, 64)), mx.random.normal((1, 2, 16, 64))
+        )
+        caches.append(c)
+    batch = BatchTurboQuantKVCache.merge(caches)
+
+    single = batch.extract(0)
+    assert isinstance(single, K8V4TurboQuantKVCache)
+    assert single.key_codec is not None
