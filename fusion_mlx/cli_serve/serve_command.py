@@ -147,8 +147,12 @@ def serve_command(args):
 
     # a quantized KV dtype stores per-layer quantized tensors, so the
     # selection index cannot rebuild from cache.keys - refuse at boot
-    # instead of an AttributeError at the first decode step
-    if getattr(args, "enable_lsa", False):
+    # instead of an AttributeError at the first decode step. With
+    # --kv-cache-turboquant the dtype path is skipped entirely (TurboQuant
+    # owns the KV cache), so the default int4 is not a conflict there.
+    if getattr(args, "enable_lsa", False) and not getattr(
+        args, "kv_cache_turboquant", None
+    ):
         kv_dtype = str(getattr(args, "kv_cache_dtype", None) or "").lower()
         if kv_dtype in ("int4", "int8", "8bit", "4bit", "quantized"):
             sys.stderr.write(
