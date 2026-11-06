@@ -1,3 +1,12 @@
+## [0.10.52] - 2026-11-06 — admin 401 fix + XcodeGen migration + /v1/models default marker (#1509, #1510, #1512)
+
+### Fixed
+- **Admin UI 401 chicken-and-egg (#1509)**: two stacked bugs blocked all admin authentication (macOS app, web admin) once an API key was configured. `AuthPrecheckMiddleware` 401'd `POST /admin/api/login` itself — the header-only pre-check cannot see a body-carried key, and it did not honor the session cookie on post-login admin writes (login + auto-login now excluded; cookie + loopback-skip relaxation honored). Session cookies were also set `Secure` over plain http, which URLSession/Safari store but never send back — `_cookie_secure()` now flags Secure only for real https or `X-Forwarded-Proto: https`. Verified end-to-end on prod (login 200, cookie write 200, wrong-key/forged-cookie/no-key 401).
+- **`/v1/models` default-model marker (#1512, #1511)**: the resolved default arrives as an HF repo id while catalog ids use flattened cache-key form — exact-equality matching never hit, `default_for_chat` stayed `None` everywhere, and downstream consumers degraded to first-entry order (agent-studio silently ran a 0.6B model for all seat agents). Matching now normalizes both sides (`/` → `--`), and the response gains a top-level `default` field (catalog id when listed, else the raw resolved id).
+
+### Added
+- **XcodeGen project generation (#1510, #1508)**: `apps/fusion-mac/project.yml` is now the source of truth for the macOS app project; the pbxproj becomes a generated artifact. `build.sh` auto-regenerates when the spec is newer and fails the build on orphaned Swift sources — the #1504 missing-sources failure mode is now structurally impossible. MarkdownUI SPM dependency declared; `package_dmg.sh` mount-point parsing fixed for suffixed volumes (tab-separated hdiutil output).
+
 ## [0.10.51] - 2026-11-06 — #1505 restart forensics + macOS app build restoration (#1504, #1506)
 
 ### Fixed
