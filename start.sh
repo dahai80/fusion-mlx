@@ -363,7 +363,7 @@ _parse_start_args() {
             --dflash2-block-size|--dflash2-draft-bits|--dspark-draft-quant-bits|\
             --mtp-num-draft-tokens|--spec-decode|--specprefill-draft-model|\
             --draft-model|--served-model-name|--cloud-model|--embedding-model|\
-            --kv-cache-dtype)
+            --kv-cache-dtype|--lsa-map)
                 if [[ -z "${2:-}" || "${2}" == --* ]]; then
                     log_error "$1 requires a value"
                     exit 1
@@ -372,7 +372,7 @@ _parse_start_args() {
                 shift 2
                 ;;
             # boolean spec-decode flags (no value)
-            --enable-dflash|--enable-dflash2|--enable-dspark|--enable-mtp|\
+            --enable-dflash|--enable-dflash2|--enable-dspark|--enable-mtp|--enable-lsa|\
             --no-spec-decode|--force-spec-decode|--mtp-optimistic|--mtp-sidecar|\
             --suffix-decoding|--disable-prefix-cache)
                 extra+=("$1")

@@ -421,6 +421,25 @@ Examples:
             "Qwen3 thinking variants)."
         ),
     )
+    # LSA (latent sparse attention) decode for qwen3_5 checkpoints
+    # (Qwen3.8 family). --lsa-map is the distilled d-lsa projection map
+    # (safetensors, validated fail-loud at boot); conflicts with
+    # --kv-cache-turboquant (enforced in serve_command).
+    serve_parser.add_argument(
+        "--enable-lsa",
+        action="store_true",
+        default=False,
+        help="Enable LSA sparse decode for qwen3_5 full-attention layers "
+        "(top-p bucket selection + sink + window). Requires --lsa-map.",
+    )
+    serve_parser.add_argument(
+        "--lsa-map",
+        dest="lsa_map_path",
+        type=str,
+        default=None,
+        help="Path to the LSA projection map (safetensors) distilled for "
+        "this checkpoint. Required when --enable-lsa is set.",
+    )
     # TurboQuant KV cache compression (experimental, R15 Phase 4).
     #
     # Accepts an optional mode value:

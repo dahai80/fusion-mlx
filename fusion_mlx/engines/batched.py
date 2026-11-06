@@ -265,6 +265,28 @@ class BatchedEngine(BaseEngine):
             return getattr(self, "_memory_tier", None) != "balanced"
         return bool(enabled)
 
+    def _overlay_scheduler_lsa(self):
+        # The LSA serve flags ride SchedulerConfig (MTP channel pattern);
+        # the pre-load dispatch reads them off ModelSettings. Overlay the
+        # scheduler values onto a copy so serve flags win over settings.json
+        # and a settings-only deployment is untouched.
+        scheduler = self._scheduler_config
+        enabled = bool(getattr(scheduler, "lsa_enabled", False))
+        if not enabled and self._model_settings is None:
+            return None
+        if not enabled:
+            return self._model_settings
+        import dataclasses
+
+        from ..model_settings import ModelSettings
+
+        settings = self._model_settings or ModelSettings()
+        return dataclasses.replace(
+            settings,
+            lsa_enabled=True,
+            lsa_map_path=getattr(scheduler, "lsa_map_path", None),
+        )
+
     async def start(self) -> None:
         if self._loaded:
             return
@@ -280,7 +302,7 @@ class BatchedEngine(BaseEngine):
 
         maybe_apply_pre_load_patches(
             self._model_name,
-            model_settings=self._model_settings,
+            model_settings=self._overlay_scheduler_lsa(),
             for_vlm=False,
         )
 
