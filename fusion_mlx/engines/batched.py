@@ -622,10 +622,17 @@ class BatchedEngine(BaseEngine):
 
                         from ..patches.qwen35_lsa.budget import arm_lsa_memory_budget
 
-                        arm_lsa_memory_budget(
+                        _budget = arm_lsa_memory_budget(
                             self._engine.engine.scheduler,
                             weights_bytes=_mx.metal.get_active_memory(),
                         )
+                        # Expose the budget-derived context to the API
+                        # hard preflight (enforce_context_length) so long
+                        # LSA requests are not rejected at the tokenizer's
+                        # native max_position_embeddings.
+                        _lsa_ctx = int((_budget or {}).get("max_context_tokens") or 0)
+                        if _lsa_ctx > 0:
+                            self._lsa_max_context_tokens = _lsa_ctx
                     except Exception as e:
                         logger.warning(
                             "LSA memory budget arm failed (%s) - prefill guard "
