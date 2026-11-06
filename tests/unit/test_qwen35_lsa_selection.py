@@ -5,8 +5,15 @@ from __future__ import annotations
 
 import mlx.core as mx
 import numpy as np
-from fusion_lsa.core.index_space import LearnedProjection
-from fusion_lsa.core.reference import build_buckets, read
+import pytest
+
+# fusion-lsa is a sibling monorepo package (pip install -e ~/fusion/fusion-lsa),
+# not a fusion-mlx dependency — CI runners don't have it. Skip instead of
+# erroring at collection; these tests run on dev machines with it installed.
+pytest.importorskip("fusion_lsa")
+
+from fusion_lsa.core.index_space import LearnedProjection  # noqa: E402
+from fusion_lsa.core.reference import build_buckets, read  # noqa: E402
 
 
 def _unit(rows: mx.array) -> mx.array:
@@ -87,9 +94,9 @@ def test_selection_matches_batch_oracle():
     for row in range(want_rows.shape[0]):
         want_set = set(int(x) for x in want_rows[row] if x >= 0)
         got_set = set(int(x) for x in got_rows[row] if x >= 0)
-        assert want_set == got_set, (
-            f"position {positions[row].item()}: {len(want_set)} vs {len(got_set)}"
-        )
+        assert (
+            want_set == got_set
+        ), f"position {positions[row].item()}: {len(want_set)} vs {len(got_set)}"
 
 
 def test_midpage_tail_always_selected():
@@ -109,9 +116,9 @@ def test_midpage_tail_always_selected():
             if x >= 0
         )
         tail = set(range(512, position + 1))
-        assert tail <= picked, (
-            f"position {position}: {len(tail - picked)} tail keys missing"
-        )
+        assert (
+            tail <= picked
+        ), f"position {position}: {len(tail - picked)} tail keys missing"
 
 
 def test_small_config_page_semantics():
@@ -123,9 +130,9 @@ def test_small_config_page_semantics():
     selector.append_keys(k[:, :, :128])
     assert selector.index.key_count == 128
     selector.append_keys(k[:, :, 128:])
-    assert selector.index.key_count == 192, (
-        "64 more keys close a page, 8 stay in the tail"
-    )
+    assert (
+        selector.index.key_count == 192
+    ), "64 more keys close a page, 8 stay in the tail"
     assert selector._tail_rows == 8
     picked = set(
         int(x) for x in np.array(selector.select(q[:, :, 199:200], 199)) if x >= 0

@@ -82,7 +82,10 @@ class LsaLayerSelector:
         # against a previous request's keys (stale rows shift every slot and
         # push the needle's bucket outside the visible range)
         self.index = IncrementalBucketIndex(
-            self.config.pool_size, self.config.bucket_size, self.config.bucket_cap, self.config.window_size
+            self.config.pool_size,
+            self.config.bucket_size,
+            self.config.bucket_cap,
+            self.config.window_size,
         )
         self._tail = []
         self._tail_rows = 0

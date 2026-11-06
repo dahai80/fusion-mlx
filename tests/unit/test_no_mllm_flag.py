@@ -162,6 +162,9 @@ NON_ROUTING_FLAGS_ALLOWLIST: frozenset[str] = frozenset(
         "--enable-dflash",
         "--enable-dflash2",
         "--enable-dspark",
+        # Latent Sparse Attention opt-in (post-load transform). Eligibility
+        # is gated by model support, not auto-routing; a pure feature knob.
+        "--enable-lsa",
         # Task #292: ``--enable-audio`` is a route-mounting UX knob, not a
         # binary auto-detection. The audio-mode boot path auto-mounts
         # ``/v1/audio/*`` from the registry hit; this flag is the

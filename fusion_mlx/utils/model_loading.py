@@ -174,17 +174,23 @@ def _apply_lsa_wrap(model: Any, model_settings: Any) -> Any:
         )
     layers = _qwen35_layers(model)
     if not layers:
-        raise ValueError("lsa_enabled could not locate the decoder layer list on the model")
+        raise ValueError(
+            "lsa_enabled could not locate the decoder layer list on the model"
+        )
     text_config = getattr(getattr(model, "args", None), "text_config", None) or {}
     head_dim = int(text_config.get("head_dim", 0))
     kv_heads = int(text_config.get("num_key_value_heads", 0))
     if head_dim <= 0 or kv_heads <= 0:
-        raise ValueError("lsa_enabled requires head_dim and num_key_value_heads in text_config")
+        raise ValueError(
+            "lsa_enabled requires head_dim and num_key_value_heads in text_config"
+        )
     rotary_dim = int(head_dim * float(text_config.get("partial_rotary_factor", 0.25)))
     latent_dim = kv_heads * (head_dim - rotary_dim)
     from fusion_lsa.convert.map_converter import LsaMap
 
-    lsa_map = LsaMap(map_path, "qwen38_27b", num_layers=len(layers), latent_dim=latent_dim)
+    lsa_map = LsaMap(
+        map_path, "qwen38_27b", num_layers=len(layers), latent_dim=latent_dim
+    )
     from ..patches.qwen35_lsa.attention import wrap_lsa_layers
 
     wrap_lsa_layers(layers, lsa_map, rotary_dim, kv_heads)

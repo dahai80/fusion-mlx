@@ -5,8 +5,15 @@ from __future__ import annotations
 
 import mlx.core as mx
 import numpy as np
-from fusion_lsa.core.index_space import LearnedProjection
-from safetensors.numpy import save_file
+import pytest
+
+# fusion-lsa is a sibling monorepo package (pip install -e ~/fusion/fusion-lsa),
+# not a fusion-mlx dependency — CI runners don't have it. Skip instead of
+# erroring at collection; these tests run on dev machines with it installed.
+pytest.importorskip("fusion_lsa")
+
+from fusion_lsa.core.index_space import LearnedProjection  # noqa: E402
+from safetensors.numpy import save_file  # noqa: E402
 
 LATENT = 48
 ROTARY = 8
@@ -97,7 +104,9 @@ def test_prefill_then_decode_runs_and_builds_index():
     assert cache.offset == 48
     # the index is deferred to the first single-stream decode step, which
     # rebuilds it from the cache instead of appending during prefill
-    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(6)), mask=None, cache=cache)
+    wrapper(
+        mx.random.normal((1, 1, HIDDEN), key=mx.random.key(6)), mask=None, cache=cache
+    )
     assert wrapper.selector.index.key_count == 48
 
     for i in range(3):
@@ -189,18 +198,40 @@ def test_new_request_resets_selector_index():
 
     attn = _make_attn()
     small = LsaSelectionConfig(
-        pool_size=2, bucket_size=4, bucket_cap=8, top_p=8, top_k=32, sink_size=2, window_size=16
+        pool_size=2,
+        bucket_size=4,
+        bucket_cap=8,
+        top_p=8,
+        top_k=32,
+        sink_size=2,
+        window_size=16,
     )
     wrapper = LsaAttention(attn, _make_selector(small))
 
     cache_a = KVCache()
-    wrapper(mx.random.normal((1, 32, HIDDEN), key=mx.random.key(9)), mask=None, cache=cache_a)
-    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(10)), mask=None, cache=cache_a)
+    wrapper(
+        mx.random.normal((1, 32, HIDDEN), key=mx.random.key(9)),
+        mask=None,
+        cache=cache_a,
+    )
+    wrapper(
+        mx.random.normal((1, 1, HIDDEN), key=mx.random.key(10)),
+        mask=None,
+        cache=cache_a,
+    )
     assert wrapper.selector.index.key_count == 32
 
     cache_b = KVCache()
-    wrapper(mx.random.normal((1, 16, HIDDEN), key=mx.random.key(11)), mask=None, cache=cache_b)
-    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(12)), mask=None, cache=cache_b)
+    wrapper(
+        mx.random.normal((1, 16, HIDDEN), key=mx.random.key(11)),
+        mask=None,
+        cache=cache_b,
+    )
+    wrapper(
+        mx.random.normal((1, 1, HIDDEN), key=mx.random.key(12)),
+        mask=None,
+        cache=cache_b,
+    )
     assert wrapper.selector.index.key_count == 16
 
 
@@ -212,12 +243,22 @@ def test_radix_cache_hit_rebuilds_index_from_cache():
 
     attn = _make_attn()
     small = LsaSelectionConfig(
-        pool_size=2, bucket_size=4, bucket_cap=8, top_p=8, top_k=32, sink_size=2, window_size=16
+        pool_size=2,
+        bucket_size=4,
+        bucket_cap=8,
+        top_p=8,
+        top_k=32,
+        sink_size=2,
+        window_size=16,
     )
     wrapper = LsaAttention(attn, _make_selector(small))
 
     cache_a = KVCache()
-    wrapper(mx.random.normal((1, 16, HIDDEN), key=mx.random.key(13)), mask=None, cache=cache_a)
+    wrapper(
+        mx.random.normal((1, 16, HIDDEN), key=mx.random.key(13)),
+        mask=None,
+        cache=cache_a,
+    )
 
     cache_b = KVCache()
     restored_k = mx.random.normal((1, KV_HEADS, 32, HEAD_DIM), key=mx.random.key(14))
@@ -225,7 +266,11 @@ def test_radix_cache_hit_rebuilds_index_from_cache():
     cache_b.update_and_fetch(restored_k, restored_v)
     assert cache_b.offset == 32
 
-    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(16)), mask=None, cache=cache_b)
+    wrapper(
+        mx.random.normal((1, 1, HIDDEN), key=mx.random.key(16)),
+        mask=None,
+        cache=cache_b,
+    )
     assert wrapper.selector.index.key_count == 32
 
 
@@ -263,13 +308,23 @@ def test_in_place_extend_and_filter_arms_rebuild():
 
     attn = _make_attn()
     small = LsaSelectionConfig(
-        pool_size=2, bucket_size=4, bucket_cap=8, top_p=8, top_k=32, sink_size=2, window_size=16
+        pool_size=2,
+        bucket_size=4,
+        bucket_cap=8,
+        top_p=8,
+        top_k=32,
+        sink_size=2,
+        window_size=16,
     )
     wrapper = LsaAttention(attn, _make_selector(small))
 
     cache = BatchKVCache(left_padding=[0])
-    wrapper(mx.random.normal((1, 16, HIDDEN), key=mx.random.key(31)), mask=None, cache=cache)
-    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(32)), mask=None, cache=cache)
+    wrapper(
+        mx.random.normal((1, 16, HIDDEN), key=mx.random.key(31)), mask=None, cache=cache
+    )
+    wrapper(
+        mx.random.normal((1, 1, HIDDEN), key=mx.random.key(32)), mask=None, cache=cache
+    )
     assert wrapper.selector.index.key_count == 16
 
     # a second request joins the batch in place: same object, width 1 -> 2
@@ -279,13 +334,17 @@ def test_in_place_extend_and_filter_arms_rebuild():
         mx.random.normal((1, KV_HEADS, 4, HEAD_DIM), key=mx.random.key(34)),
     )
     cache.extend(other)
-    wrapper(mx.random.normal((2, 1, HIDDEN), key=mx.random.key(35)), mask=None, cache=cache)
+    wrapper(
+        mx.random.normal((2, 1, HIDDEN), key=mx.random.key(35)), mask=None, cache=cache
+    )
     assert wrapper._pending_rebuild is True
 
     # batch filters back to one sequence: rows regress, the decode step
     # must re-arm and consume a rebuild over the filtered cache
     wrapper._pending_rebuild = False
     cache.filter(mx.array([0]))
-    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(36)), mask=None, cache=cache)
+    wrapper(
+        mx.random.normal((1, 1, HIDDEN), key=mx.random.key(36)), mask=None, cache=cache
+    )
     seq_rows = int(mx.reshape(cache.offset, (-1,))[0])
     assert wrapper.selector.index.key_count == (seq_rows // 16) * 16
