@@ -394,3 +394,50 @@ def test_decode_runs_on_turboquant_cache():
     # 49 indexed rows close three 16-row pages; the fourth closes at 64
     assert wrapper.selector.index.key_count == 48
     assert int(mx.abs(step).sum().item()) > 0
+
+
+def test_turboquant_decode_reuses_dequantized_rows():
+    """The full per-step dequantize measured ~4x decode slowdown at 16k.
+    After the rebuild-time dequantize, each step must grow the cached fp16
+    rows with the step's own pre-quantization keys/values instead of
+    dequantizing the whole cache again (one dequant call per request)."""
+    from mlx_lm.models.cache import KVCache
+
+    from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
+    from fusion_mlx.patches.qwen35_lsa.selection import LsaSelectionConfig
+
+    pytest.importorskip("mlx_vlm")
+    from mlx_vlm.turboquant import TurboQuantKVCache
+
+    from fusion_mlx.turboquant_kv import make_turboquant_kv_cache
+
+    small = LsaSelectionConfig(
+        pool_size=2, bucket_size=4, bucket_cap=8, top_p=8, top_k=32,
+        sink_size=2, window_size=16,
+    )
+    attn = _make_attn()
+    wrapper = LsaAttention(attn, _make_selector(small))
+    cache = KVCache()
+    wrapper(
+        mx.random.normal((1, 48, HIDDEN), key=mx.random.key(5)), mask=None, cache=cache
+    )
+    tq = make_turboquant_kv_cache(4.0, "k8v4", source=cache)
+
+    calls = 0
+    original = tq.dequantize
+
+    def counting():
+        nonlocal calls
+        calls += 1
+        return original()
+
+    tq.dequantize = counting
+    for i in range(4):
+        out = wrapper(
+            mx.random.normal((1, 1, HIDDEN), key=mx.random.key(6 + i)),
+            mask=None, cache=tq,
+        )
+        assert out.shape == (1, 1, HIDDEN)
+    assert calls == 1
+    assert wrapper._dequant_rows[2] == 52
+    assert wrapper._dequant_rows[0].shape[2] >= 52

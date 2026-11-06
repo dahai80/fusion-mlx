@@ -45,18 +45,6 @@ class LsaSelectionConfig:
             )
 
 
-def _dedupe_sorted(values: mx.array) -> mx.array:
-    # sorted int32 values with duplicates dropped; this MLX has no unique/compress,
-    # so kept elements scatter into their compacted slots (duplicates overwrite
-    # themselves with the same value)
-    ordered = mx.sort(values)
-    keep = mx.concatenate([mx.array([True]), ordered[1:] != ordered[:-1]])
-    kept = int(keep.sum().item())
-    slot = mx.cumsum(keep.astype(mx.int32)) - 1
-    out = mx.full((kept,), -1, dtype=ordered.dtype)
-    return mx.put_along_axis(out[None, :], slot[None, :], ordered[None, :], axis=1)[0]
-
-
 class LsaLayerSelector:
     # One full-attention layer's selection state: the learned projections, the
     # page-boundary bucket index, and the not-yet-closed tail rows.
@@ -172,10 +160,10 @@ class LsaLayerSelector:
             self.config.window_size,
         )
         picked = selected[0]
-        kept_count = int((picked >= 0).sum().item())
-        picked = picked[:kept_count]
         if _SELECT_LOG:
+            kept_count = int((picked >= 0).sum().item())
             probe = -1
+            valid = picked[picked >= 0]
             if _PROBE_LO >= 0 and kept_count:
                 probe = int(
                     ((picked >= _PROBE_LO) & (picked <= _PROBE_HI)).sum().item()
@@ -187,11 +175,16 @@ class LsaLayerSelector:
                 self.index.block_count,
                 self._tail_rows,
                 kept_count,
-                int(picked.min().item()) if kept_count else -1,
-                int(picked.max().item()) if kept_count else -1,
+                int(valid.min().item()) if kept_count else -1,
+                int(valid.max().item()) if kept_count else -1,
                 probe,
             )
         if self._tail_rows and position >= self.index.key_count:
+            # read's picks sit inside closed pages and the tail is everything
+            # past them - disjoint, so no dedupe needed. Duplicate rows would
+            # not change the softmax anyway (weights split evenly). No
+            # kept_count .item() slice either: the caller masks -1 padding
+            # instead, which keeps decode free of GPU syncs.
             tail = mx.arange(self.index.key_count, position + 1, dtype=mx.int32)
-            picked = _dedupe_sorted(mx.concatenate([picked, tail]))
+            picked = mx.concatenate([picked, tail])
         return picked
