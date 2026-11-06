@@ -800,6 +800,22 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
     # above may have already cleared under pressure; this is the
     # unconditional non-pressure-path clear.
     is_final = state.tokens_remaining.shape[1] == 0
+    # Long-prefill memory curve: the 1M-token run aborted at the hard
+    # tier (424k tokens, 114.1 GB) with ~45 GB unaccounted for. This
+    # per-chunk curve separates MLX active (live arrays), MLX cache
+    # (freed-but-cached buffers) and kernel phys_footprint so the
+    # dominant superlinear term can be identified instead of guessed.
+    if (state.total_length - 1) > 65536:
+        logger.info(
+            "[memcheck:chunk] rid=%s processed=%d/%d active=%.2fGB "
+            "cache=%.2fGB phys=%.2fGB",
+            state.request.request_id,
+            state.tokens_processed,
+            state.total_length - 1,
+            mx.get_active_memory() / 1024**3,
+            mx.get_cache_memory() / 1024**3,
+            get_phys_footprint() / 1024**3,
+        )
     _sync_and_clear_cache(self._stream)
     self._last_mlx_active_memory_bytes = int(mx.get_active_memory())
     return is_final
