@@ -670,7 +670,7 @@ class BlockAwarePrefixCache(CacheManager):
                         "class_name", layer_state.get("cache_type", "KVCache")
                     )
                     if layer_state.get("class_name", "")
-                    in ("TurboQuantKVCache", "BatchTurboQuantKVCache")
+                    in ("TurboQuantKVCache", "BatchTurboQuantKVCache", "K8V4TurboQuantKVCache")
                     else layer_state.get("cache_type", "KVCache")
                 )
                 for layer_state in cache_data
@@ -1183,7 +1183,7 @@ class BlockAwarePrefixCache(CacheManager):
 
                 handler = CacheTypeRegistry.get_handler_by_class_name(cache_type_name)
 
-                if cache_type_name in ("TurboQuantKVCache", "BatchTurboQuantKVCache"):
+                if cache_type_name in ("TurboQuantKVCache", "BatchTurboQuantKVCache", "K8V4TurboQuantKVCache"):
                     # TurboQuant v2: NamedTuple state from mlx-vlm
                     from ..turboquant_kv import _slice_state_range, _state_length
 
@@ -2329,7 +2329,7 @@ class BlockAwarePrefixCache(CacheManager):
                     continue
 
                 # === TurboQuantKVCache: concat NamedTuple states, reconstruct ===
-                if cache_type_name in ("TurboQuantKVCache", "BatchTurboQuantKVCache"):
+                if cache_type_name in ("TurboQuantKVCache", "BatchTurboQuantKVCache", "K8V4TurboQuantKVCache"):
                     from ..turboquant_kv import (
                         _concat_state,
                         _rebuild_codecs,
@@ -2350,6 +2350,31 @@ class BlockAwarePrefixCache(CacheManager):
                             value_states.append(vs)
                     if not key_states:
                         logger.debug(f"TQ layer {layer_idx}: no block data")
+                        return None
+                    # Blocks written under different TQ codecs (v4 4-bit
+                    # keys vs k8v4 8-bit keys) carry different packed
+                    # widths; concatenating them crashes with a shape
+                    # mismatch. Refuse the restore instead - the request
+                    # falls back to a full recompute.
+                    def _tq_state_sig(s):
+                        if hasattr(s, "_state"):
+                            s = s._state
+                        if hasattr(s, "indices"):
+                            return ("tq", tuple(s.indices.shape))
+                        if hasattr(s, "shape"):
+                            return ("raw", tuple(s.shape))
+                        return ("other",)
+
+                    key_sigs = {_tq_state_sig(s) for s in key_states}
+                    val_sigs = {_tq_state_sig(s) for s in value_states}
+                    if len(key_sigs) > 1 or len(val_sigs) > 1:
+                        logger.warning(
+                            "TQ layer %d: mixed packed-state widths %s/%s "
+                            "across blocks - refusing restore",
+                            layer_idx,
+                            sorted(key_sigs),
+                            sorted(val_sigs),
+                        )
                         return None
                     # Concatenate along token dimension
                     cat_ks = key_states[0]

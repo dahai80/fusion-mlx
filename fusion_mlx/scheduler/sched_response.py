@@ -338,8 +338,9 @@ def _process_batch_responses(
                         if extracted_cache:
                             request._extracted_cache = extracted_cache
                             request._model_cache_config = model_cache_config
-                            logger.debug(
+                            logger.info(
                                 f"Extracted {len(extracted_cache)} layer states "
+                                f"from {len(raw_cache)} live caches "
                                 f"for request {request_id}"
                             )
                     else:
