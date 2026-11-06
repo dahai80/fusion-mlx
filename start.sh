@@ -495,8 +495,12 @@ do_start() {
         # #1176 Bug 4: rotate the previous log instead of truncating.
         # Truncation destroyed the crash trace before diagnosis. Keep the
         # last restart's log as server.log.prev for post-mortem.
+        # #1505: keep timestamped copies too — a double restart overwrites
+        # .prev and destroys the only evidence of a mid-run crash.
         if [[ -f "${LOG_DIR}/server.log" ]]; then
             mv "${LOG_DIR}/server.log" "${LOG_DIR}/server.log.prev"
+            cp "${LOG_DIR}/server.log.prev" \
+               "${LOG_DIR}/server.log.$(date +%Y%m%d-%H%M%S).prev"
         fi
         fusion-mlx serve \
             ${model_or_dir} \
@@ -920,8 +924,11 @@ _run_with_watchdog() {
         fi
         # Redirect to server.log (same tty-detach fix as do_start, #501).
         # #1176 Bug 4: rotate previous log instead of truncating.
+        # #1505: timestamped copy survives double-restart overwrites.
         if [[ -f "${LOG_DIR}/server.log" ]]; then
             mv "${LOG_DIR}/server.log" "${LOG_DIR}/server.log.prev"
+            cp "${LOG_DIR}/server.log.prev" \
+               "${LOG_DIR}/server.log.$(date +%Y%m%d-%H%M%S).prev"
         fi
         fusion-mlx serve \
             ${model_or_dir} \

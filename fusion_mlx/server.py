@@ -17,6 +17,7 @@ Wires together all API routes:
 import asyncio
 import logging
 import threading
+import time
 import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -237,6 +238,9 @@ class _ServerState(dict):
 
 
 _server_state = _ServerState()
+# #1505: module import happens at process start (pre-serve), so this is a
+# serviceable process-start timestamp for /health restart detection.
+_server_state["started_at"] = time.time()
 _server_instance: "Server | None" = None
 # AS-7 (#0907 audit): serialize read-modify-write on mutable _server_state
 # fields (notably api_key setup) so two concurrent admin requests cannot

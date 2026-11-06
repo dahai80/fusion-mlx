@@ -51,6 +51,10 @@ async def health():
         loaded_models = pool.get_loaded_model_ids()
     ready = pool is not None and not preloading and not draining
     status = "draining" if draining else ("preloading" if preloading else "healthy")
+    # #1505: process start time lets eval harnesses tell an engine restart
+    # (pid/started_at changed) from a transient network blip without
+    # scraping logs.
+    started_at = _server_state.get("started_at")
     return {
         "status": status,
         "ready": ready,
@@ -59,6 +63,7 @@ async def health():
         "version": __version__,
         "instance_id": get_instance_id(),
         "draining": draining,
+        "started_at": started_at,
     }
 
 

@@ -397,7 +397,11 @@ class NGramSpecState:
         return stats
 
 
+_snapshot_last_log = 0.0
+
+
 def _snapshot_non_trimmable(prompt_cache: list) -> list | None:
+    global _snapshot_last_log
     try:
         from mlx_lm.models.cache import ArraysCache
     except Exception:
@@ -410,10 +414,17 @@ def _snapshot_non_trimmable(prompt_cache: list) -> list | None:
         if non_trimmable:
             snapshots.append((i, copy.deepcopy(c)))
     if snapshots:
-        logger.debug(
-            "ngram_spec: snapshotted %d non-trimmable cache(s) for rollback",
-            len(snapshots),
-        )
+        # High-acceptance hybrid-GDN sessions snapshot nearly every spec
+        # step (~30 lines/s at DEBUG), which floods server.log onto the
+        # event loop's synchronous logging path (#1505). Throttle to one
+        # line per minute; the count is stable for a given model.
+        now = time.monotonic()
+        if now - _snapshot_last_log >= 60.0:
+            _snapshot_last_log = now
+            logger.debug(
+                "ngram_spec: snapshotted %d non-trimmable cache(s) for rollback",
+                len(snapshots),
+            )
     return snapshots if snapshots else None
 
 
