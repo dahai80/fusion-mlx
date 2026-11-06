@@ -1,3 +1,15 @@
+## [0.10.51] - 2026-11-06 — #1505 restart forensics + macOS app build restoration (#1504, #1506)
+
+### Fixed
+- **`ngram_spec` snapshot DEBUG flood throttled (#1505)**: hybrid-GDN sessions with high acceptance emitted one "snapshotted N non-trimmable cache(s)" DEBUG line per spec step (~30 lines/s) on the event loop's synchronous logging path — the same wedge shape as the /metrics scraper flood (#1314). Now throttled to once per 60s.
+- **`/health` reports `started_at` (#1505)**: process-start epoch lets eval harnesses distinguish an engine restart (pid/started_at changed) from a transient network blip without scraping logs.
+- **`start.sh` keeps timestamped log copies (#1505)**: `server.log.<ts>.prev` survives double-restart overwrites; a repeat restart no longer destroys the only crash evidence (root cause of the lost 07:00-07:19 window in the #1505 investigation).
+- **macOS companion app restored to compilable + packaged (#1504)**: 10 orphaned Swift sources re-registered in project.pbxproj (app had been unbuildable since Jul 25), 12 compile errors fixed, 194 app tests green. `packaging/build.py` now maps vendored wheels (mflux-fusion) to file:// URIs so venvstacks lock works without registry lookups. `--lsa-map` registered in `ps` value flags; `--enable-lsa` in the non-routing flag allowlist.
+
+### Investigation notes (#1505)
+- The 08:22 "engine restart" was a whole-machine reboot (kern.boottime 08:21:59) + supervisor auto-start — not an engine defect.
+- fusion-tray SIGKILL at launch (codesigning Launch Constraint Violation) filed as fusion-supervisor#108.
+
 ## [0.10.50] - 2026-11-05 — stop clean-path exit fix (#1501)
 
 ### Fixed
