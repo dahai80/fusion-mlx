@@ -951,7 +951,7 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                             _shape_probe.append(
                                 (_i, type(_c).__name__, [tuple(a.shape) for a in _c.cache[:2]])
                             )
-                    logger.info(
+                    logger.debug(
                         "PREFIX-PREP restored shapes %s: %s",
                         request.request_id[:8],
                         _shape_probe[:4],

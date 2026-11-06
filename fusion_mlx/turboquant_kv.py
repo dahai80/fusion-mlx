@@ -230,6 +230,27 @@ def _rebuild_codecs(tq_cache: TurboQuantKVCache, key_state, value_state) -> None
     tq_cache.value_codec = _build_codec(dummy, val_bits, mode="mse", seed=seed + 1)
 
 
+def rebuild_dequantized_kv(
+    cache_type_name: str, key_state, value_state, bits: float, seed: int
+):
+    """Rebuild TQ codecs for a stored packed state and dequantize to fp16.
+
+    The cache class must match how the state was packed: k8v4 keys are
+    stored at 8 bits, so rebuilding through the plain TurboQuantKVCache
+    (whose _rebuild_codecs falls back to `bits` for the key width)
+    infers head_dim at 2x and dequantizes keys at the wrong width.
+    """
+    if cache_type_name == "K8V4TurboQuantKVCache":
+        tq = K8V4TurboQuantKVCache(bits=bits, seed=seed)
+    else:
+        tq = TurboQuantKVCache(bits=bits, seed=seed)
+    tq.keys = key_state
+    tq.values = value_state
+    tq.offset = _state_length(key_state)
+    _rebuild_codecs(tq, key_state, value_state)
+    return tq.dequantize()
+
+
 def _concat_state_token_axis(states):
     """Concatenate TurboQuant states along token axis with a low-churn fast path."""
     if not states:

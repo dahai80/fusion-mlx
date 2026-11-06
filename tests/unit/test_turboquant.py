@@ -1161,3 +1161,52 @@ def test_batch_extract_preserves_k8v4_subclass():
     single = batch.extract(0)
     assert isinstance(single, K8V4TurboQuantKVCache)
     assert single.key_codec is not None
+
+
+def test_k8v4_block_restore_dequantizes_to_true_head_dim():
+    # SSD restore path: stored k8v4 key state is packed at 8 bits
+    # (indices width = head_dim * 8 / 32). Rebuilding codecs with the
+    # plain TurboQuantKVCache (no key_bits) inferred head_dim from the
+    # 4-bit formula and dequantized keys at 2x width, crashing the live
+    # prefill append with a concatenate shape mismatch (512 vs 256).
+    import mlx.core as mx
+
+    from fusion_mlx.turboquant_kv import (
+        K8V4TurboQuantKVCache,
+        rebuild_dequantized_kv,
+    )
+
+    src = K8V4TurboQuantKVCache(bits=4, seed=42)
+    keys = mx.random.normal((1, 4, 64, 256))
+    values = mx.random.normal((1, 4, 64, 256))
+    src.update_and_fetch(keys, values)
+    ks, vs = src.state
+
+    dk, dv = rebuild_dequantized_kv(
+        "K8V4TurboQuantKVCache", ks, vs, bits=4.0, seed=42
+    )
+    assert dk.shape == keys.shape, f"keys {dk.shape} != {keys.shape}"
+    assert dv.shape == values.shape, f"values {dv.shape} != {values.shape}"
+    rel = float(mx.abs(dk - keys).max() / mx.abs(keys).max())
+    assert rel < 0.2, f"dequantized keys diverge from source ({rel})"
+
+
+def test_v4_block_restore_dequantizes_to_true_head_dim():
+    # v4 blocks (4-bit keys, no key_bits) keep the bits-based inference.
+    import mlx.core as mx
+
+    from fusion_mlx.turboquant_kv import (
+        TurboQuantKVCache,
+        rebuild_dequantized_kv,
+    )
+
+    src = TurboQuantKVCache(bits=4, seed=42)
+    keys = mx.random.normal((1, 4, 64, 256))
+    values = mx.random.normal((1, 4, 64, 256))
+    src.update_and_fetch(keys, values)
+    ks, vs = src.state
+
+    dk, dv = rebuild_dequantized_kv(
+        "TurboQuantKVCache", ks, vs, bits=4.0, seed=42
+    )
+    assert dk.shape == keys.shape, f"keys {dk.shape} != {keys.shape}"

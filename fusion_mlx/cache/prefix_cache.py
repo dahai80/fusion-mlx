@@ -2330,11 +2330,7 @@ class BlockAwarePrefixCache(CacheManager):
 
                 # === TurboQuantKVCache: concat NamedTuple states, reconstruct ===
                 if cache_type_name in ("TurboQuantKVCache", "BatchTurboQuantKVCache", "K8V4TurboQuantKVCache"):
-                    from ..turboquant_kv import (
-                        _concat_state,
-                        _rebuild_codecs,
-                        _state_length,
-                    )
+                    from ..turboquant_kv import _concat_state
 
                     key_states, value_states = [], []
                     for block_data in all_block_data:
@@ -2385,7 +2381,8 @@ class BlockAwarePrefixCache(CacheManager):
                         cat_vs = _concat_state(cat_vs, s)
                     try:
                         from mlx_lm.models.cache import KVCache
-                        from mlx_vlm.turboquant import TurboQuantKVCache
+
+                        from ..turboquant_kv import rebuild_dequantized_kv
 
                         tq_bits = 4.0
                         tq_seed = 0
@@ -2399,12 +2396,12 @@ class BlockAwarePrefixCache(CacheManager):
                             tq_seed = int(ms[2])
                         # Dequantize back to fp16 KVCache for merge compatibility.
                         # TQ will be re-applied at decode start (lazy quantization).
-                        tq = TurboQuantKVCache(bits=tq_bits, seed=tq_seed)
-                        tq.keys = cat_ks
-                        tq.values = cat_vs
-                        tq.offset = _state_length(cat_ks)
-                        _rebuild_codecs(tq, cat_ks, cat_vs)
-                        keys, values = tq.dequantize()
+                        # The class must match the stored packing: k8v4 keys
+                        # are 8-bit, a plain TurboQuantKVCache would rebuild
+                        # codecs at 4-bit and dequantize keys at 2x width.
+                        keys, values = rebuild_dequantized_kv(
+                            cache_type_name, cat_ks, cat_vs, tq_bits, tq_seed
+                        )
                         cache = KVCache()
                         cache.keys = keys
                         cache.values = values
