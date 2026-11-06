@@ -142,6 +142,19 @@ def serve_command(args):
         )
         raise SystemExit(2)
 
+    # a quantized KV dtype stores per-layer quantized tensors, so the
+    # selection index cannot rebuild from cache.keys - refuse at boot
+    # instead of an AttributeError at the first decode step
+    if getattr(args, "enable_lsa", False):
+        kv_dtype = str(getattr(args, "kv_cache_dtype", None) or "").lower()
+        if kv_dtype in ("int4", "int8", "8bit", "4bit", "quantized"):
+            sys.stderr.write(
+                f"\n  --enable-lsa conflicts with --kv-cache-dtype {kv_dtype}: the\n"
+                "  selection index rebuilds from raw cache keys, so the KV cache\n"
+                "  must stay bf16/fp16. Drop the quantized dtype.\n\n"
+            )
+            raise SystemExit(2)
+
     # #1492 iron law: refuse a non-loopback bind FIRST — before version
     # checks, alias resolution, or any model download work.
     from ..config import enforce_loopback_bind

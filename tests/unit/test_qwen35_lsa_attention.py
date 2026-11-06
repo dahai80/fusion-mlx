@@ -95,13 +95,16 @@ def test_prefill_then_decode_runs_and_builds_index():
     out = wrapper(prefill, mask=None, cache=cache)
     assert out.shape == (1, 48, HIDDEN)
     assert cache.offset == 48
-    assert wrapper.selector.index.key_count > 0
+    # the index is deferred to the first single-stream decode step, which
+    # rebuilds it from the cache instead of appending during prefill
+    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(6)), mask=None, cache=cache)
+    assert wrapper.selector.index.key_count == 48
 
-    for _ in range(3):
-        step = mx.random.normal((1, 1, HIDDEN), key=mx.random.key(6))
+    for i in range(3):
+        step = mx.random.normal((1, 1, HIDDEN), key=mx.random.key(7 + i))
         out = wrapper(step, mask=None, cache=cache)
         assert out.shape == (1, 1, HIDDEN)
-    assert cache.offset == 51
+    assert cache.offset == 52
     assert int(mx.abs(out).sum().item()) > 0
 
 
@@ -224,3 +227,65 @@ def test_radix_cache_hit_rebuilds_index_from_cache():
 
     wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(16)), mask=None, cache=cache_b)
     assert wrapper.selector.index.key_count == 32
+
+
+def test_batched_cache_offset_array_runs_dense():
+    from mlx_lm.models.cache import BatchKVCache
+
+    from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
+
+    attn = _make_attn()
+    wrapper = LsaAttention(attn, _make_selector())
+
+    cache = BatchKVCache(left_padding=[0])
+    k1 = mx.random.normal((1, KV_HEADS, 4, HEAD_DIM), key=mx.random.key(21))
+    v1 = mx.random.normal((1, KV_HEADS, 4, HEAD_DIM), key=mx.random.key(22))
+    cache.update_and_fetch(k1, v1)
+    k2 = mx.random.normal((1, KV_HEADS, 6, HEAD_DIM), key=mx.random.key(23))
+    v2 = mx.random.normal((1, KV_HEADS, 6, HEAD_DIM), key=mx.random.key(24))
+    other = BatchKVCache(left_padding=[0])
+    other.update_and_fetch(k2, v2)
+    cache.extend(other)
+    assert int(mx.reshape(cache.offset, (-1,)).shape[0]) == 2
+
+    # two concurrent sequences: dense path must run, not crash on the
+    # [B]-shaped offset array
+    x = mx.random.normal((2, 1, HIDDEN), key=mx.random.key(25))
+    out = wrapper(x, mask=None, cache=cache)
+    assert out.shape == (2, 1, HIDDEN)
+
+
+def test_in_place_extend_and_filter_arms_rebuild():
+    from mlx_lm.models.cache import BatchKVCache
+
+    from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
+    from fusion_mlx.patches.qwen35_lsa.selection import LsaSelectionConfig
+
+    attn = _make_attn()
+    small = LsaSelectionConfig(
+        pool_size=2, bucket_size=4, bucket_cap=8, top_p=8, top_k=32, sink_size=2, window_size=16
+    )
+    wrapper = LsaAttention(attn, _make_selector(small))
+
+    cache = BatchKVCache(left_padding=[0])
+    wrapper(mx.random.normal((1, 16, HIDDEN), key=mx.random.key(31)), mask=None, cache=cache)
+    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(32)), mask=None, cache=cache)
+    assert wrapper.selector.index.key_count == 16
+
+    # a second request joins the batch in place: same object, width 1 -> 2
+    other = BatchKVCache(left_padding=[0])
+    other.update_and_fetch(
+        mx.random.normal((1, KV_HEADS, 4, HEAD_DIM), key=mx.random.key(33)),
+        mx.random.normal((1, KV_HEADS, 4, HEAD_DIM), key=mx.random.key(34)),
+    )
+    cache.extend(other)
+    wrapper(mx.random.normal((2, 1, HIDDEN), key=mx.random.key(35)), mask=None, cache=cache)
+    assert wrapper._pending_rebuild is True
+
+    # batch filters back to one sequence: rows regress, the decode step
+    # must re-arm and consume a rebuild over the filtered cache
+    wrapper._pending_rebuild = False
+    cache.filter(mx.array([0]))
+    wrapper(mx.random.normal((1, 1, HIDDEN), key=mx.random.key(36)), mask=None, cache=cache)
+    seq_rows = int(mx.reshape(cache.offset, (-1,))[0])
+    assert wrapper.selector.index.key_count == (seq_rows // 16) * 16

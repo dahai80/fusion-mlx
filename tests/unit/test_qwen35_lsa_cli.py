@@ -232,3 +232,27 @@ def test_lsa_disables_auto_turboquant(monkeypatch, caplog):
         model_settings=ModelSettings(),
     )
     assert plain._turboquant_should_enable() is True
+
+
+def test_serve_command_rejects_lsa_with_quantized_kv_dtype(monkeypatch, capsys):
+    import sys
+
+    from fusion_mlx import cli as cli_mod
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fusion-mlx",
+            "serve",
+            "--enable-lsa",
+            "--lsa-map",
+            "/tmp/m.safetensors",
+            "--kv-cache-dtype",
+            "int4",
+            "mlx-community/Qwen3.5-9B-4bit",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        cli_mod.main()
+    assert "kv-cache-dtype" in capsys.readouterr().err.lower()

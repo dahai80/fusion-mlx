@@ -1,16 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 """LSA attention wrapper for qwen3_5 full-attention layers.
 
-Wraps a loaded ``Qwen3NextAttention`` instance: prefill runs the dense path
-unchanged while feeding pre-RoPE keys into the layer's incremental bucket
-index; decode (L == 1) replaces the dense SDPA with centroid-scored selection
-(top-p buckets expanded to top-k + sink + window) gathered from the cache and
-attended with the same scaled dot product. The full KV cache is still
-maintained every step - the cache surface the scheduler introspects stays
-intact; pruning stored rows is a later, separate change.
+Wraps a loaded ``Qwen3NextAttention`` instance: prefill and batched decode
+run the dense path unchanged; single-stream decode (L == 1, B == 1) replaces
+the dense SDPA with centroid-scored selection (top-p buckets expanded to
+top-k + sink + window) gathered from the cache and attended with the same
+scaled dot product. The selection index is rebuilt from the cache at the
+first decode step of each request - RoPE only rotates the leading dims, so
+the cache's post-RoPE keys are valid index input - which also covers radix
+cache hits whose restored rows never pass through prefill. The full KV cache
+is still maintained every step - the cache surface the scheduler introspects
+stays intact; pruning stored rows is a later, separate change.
 
 Batch decode (B > 1) cannot share one per-layer selection, so it falls back
-to the dense path with a warning until per-sequence selection lands.
+to the dense path until per-sequence selection lands. Cache state is
+re-armed per request and on batch reshape: mlx_lm joins and leaves batches
+via in-place extend/filter, so object identity alone cannot detect the
+transition.
 """
 
 from __future__ import annotations
@@ -48,6 +54,27 @@ class LsaAttention(nn.Module):
         self.last_picked: mx.array | None = None
         self._state_cache = None
         self._pending_rebuild = False
+        self._state_width = 0
+        self._state_rows = 0
+
+    def _observe_cache(self, cache) -> None:
+        # Detect a new request or a reshaped batch without relying on object
+        # identity alone: mlx_lm joins and leaves batches via in-place
+        # extend/filter, which keeps the cache object but changes its batch
+        # width or shrinks its rows - either invalidates the selection index
+        cached = getattr(cache, "keys", None)
+        width = int(cached.shape[0]) if cached is not None else 0
+        rows = int(cached.shape[2]) if cached is not None else 0
+        if (
+            cache is not self._state_cache
+            or width != self._state_width
+            or rows < self._state_rows
+        ):
+            self.selector.reset()
+            self._state_cache = cache
+            self._pending_rebuild = True
+        self._state_width = width
+        self._state_rows = rows
 
     def __call__(
         self,
@@ -69,29 +96,19 @@ class LsaAttention(nn.Module):
         values = values.reshape(B, L, num_kv_heads, -1).transpose(0, 2, 1, 3)
 
         if cache is not None:
-            # scheduler cache offsets can surface as 0-d arrays; the selector
-            # and mx.arange need a plain int position
-            offset = int(cache.offset)
-            queries = attn.rope(queries, offset=offset)
-            keys = attn.rope(keys, offset=offset)
-            if cache is not self._state_cache:
-                # new request: never score against a previous request's keys
-                self.selector.reset()
-                self._state_cache = cache
-                # a radix cache hit restores rows without running prefill
-                # through this layer, so the index may be missing the
-                # restored prefix - rebuild from the cache at first decode
-                self._pending_rebuild = True
+            # RoPE accepts per-sequence offset arrays; BatchKVCache.offset is
+            # a [B] array, so pass it through untouched like the stock layer
+            queries = attn.rope(queries, offset=cache.offset)
+            keys = attn.rope(keys, offset=cache.offset)
+            self._observe_cache(cache)
         else:
-            offset = 0
             queries = attn.rope(queries)
             keys = attn.rope(keys)
 
         if L > 1 or B > 1:
-            # prefill (any L) and batched decode: dense path, keys still feed
-            # the index so a later single-stream decode reads them
-            if L > 1:
-                self.selector.append_keys(keys)
+            # prefill (any L) and batched decode: dense path. The selection
+            # index is rebuilt from the cache at the first single-stream
+            # decode step, so prefill does no selector work here
             keys, values = (
                 cache.update_and_fetch(keys, values)
                 if cache is not None
@@ -104,6 +121,7 @@ class LsaAttention(nn.Module):
                 output.transpose(0, 2, 1, 3).reshape(B, L, -1) * mx.sigmoid(gate)
             )
 
+        offset = int(cache.offset) if cache is not None else 0
         if self._pending_rebuild:
             # RoPE touches only the first rotary_dim dims and the index reads
             # the remaining free dims, so the cache's post-rope keys are valid
