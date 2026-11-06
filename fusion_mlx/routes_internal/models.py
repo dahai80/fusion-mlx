@@ -139,6 +139,19 @@ def _build_model_info(model_id: str) -> SimpleNamespace:
     )
 
 
+def _matches_default(model_id: str, default_model: str | None) -> bool:
+    # #1511: catalog ids and the resolved default can spell the same model
+    # differently (HF repo id "mlx-community/Qwen3.5-4B" vs flattened cache
+    # key "mlx-community--Qwen3.5-4B"). Compare on the pool's normalized
+    # repo-key form; exact equality alone left default_for_chat None on
+    # every entry.
+    if not default_model or not model_id:
+        return False
+    want = default_model.strip().lower().replace("/", "--")
+    key = model_id.strip().lower().replace("/", "--")
+    return key == want
+
+
 def _entry_payload(
     model_id,
     tool,
@@ -199,7 +212,7 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
                     reasoning,
                     modality,
                     caps,
-                    default_for_chat=(entry.model_name == default_model),
+                    default_for_chat=_matches_default(entry.model_name, default_model),
                 )
             )
     elif cfg.model_name:
@@ -218,7 +231,7 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
                 reasoning,
                 modality,
                 caps,
-                default_for_chat=(cfg.model_name == default_model),
+                default_for_chat=_matches_default(cfg.model_name, default_model),
             )
         )
         if cfg.model_alias:
@@ -233,7 +246,7 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
                     reasoning,
                     alias_modality,
                     caps,
-                    default_for_chat=(cfg.model_alias == default_model),
+                    default_for_chat=_matches_default(cfg.model_alias, default_model),
                 )
             )
     # H-13: surface the boot-locked embedding model so discovery clients
@@ -286,7 +299,7 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
                         caps,
                         loaded=is_loaded,
                         state="loaded" if is_loaded else "registered",
-                        default_for_chat=(model_id == default_model),
+                        default_for_chat=_matches_default(model_id, default_model),
                     )
                 )
                 listed_ids.add(model_id)
@@ -295,7 +308,20 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
                 "routes_internal.models: pool enumeration failed", exc_info=True
             )
     logger.info("routes_internal.models: /v1/models listed %d entries", len(data))
-    return {"object": "list", "data": data}
+    # #1511: top-level default — catalog id when the resolved default matches
+    # a listed entry (normalized, see _matches_default), else the raw
+    # resolved id so consumers still see the engine's configured default.
+    default_catalog_id = None
+    if default_model:
+        for entry in data:
+            if _matches_default(entry["id"], default_model):
+                default_catalog_id = entry["id"]
+                break
+    return {
+        "object": "list",
+        "data": data,
+        "default": default_catalog_id or default_model,
+    }
 
 
 @router.get("/v1/models/{model_id}")
