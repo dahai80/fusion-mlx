@@ -315,3 +315,27 @@ def test_lsa_with_explicit_k8v4_enables_turboquant():
     )
     assert flagged._turboquant_should_enable() is True
     assert flagged._turboquant_kv_will_enable() is True
+
+
+def test_effective_turboquant_mode_prefers_scheduler_config():
+    # the settings push used to read model_settings only, so the CLI
+    # --kv-cache-turboquant k8v4 flag (scheduler_config) served v4 (4-bit
+    # keys) while the boot log claimed k8v4
+    from fusion_mlx.engines.batched import BatchedEngine
+
+    engine = BatchedEngine.__new__(BatchedEngine)
+    engine._scheduler_config = SchedulerConfig(
+        kv_cache_turboquant_mode="k8v4"
+    )
+    engine._model_settings = ModelSettings()
+    assert engine._effective_turboquant_mode() == "k8v4"
+
+    engine._scheduler_config = SchedulerConfig()
+    engine._model_settings = ModelSettings(
+        turboquant_kv_enabled=True, turboquant_kv_bits=8
+    )
+    assert engine._effective_turboquant_mode() == "v4"
+
+    engine._scheduler_config = SchedulerConfig()
+    engine._model_settings = ModelSettings()
+    assert engine._effective_turboquant_mode() == "v4"

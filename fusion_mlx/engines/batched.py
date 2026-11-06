@@ -593,9 +593,11 @@ class BatchedEngine(BaseEngine):
                 self._engine.engine.scheduler._turboquant_skip_last = getattr(
                     self._model_settings, "turboquant_skip_last", True
                 )
-                tq_mode = getattr(
-                    self._model_settings, "kv_cache_turboquant_mode", None
-                ) or getattr(self._engine.engine.scheduler, "_turboquant_kv_mode", "v4")
+                # Same precedence as the coexistence gate: scheduler_config
+                # (CLI flag) first, then model_settings. Reading only
+                # model_settings here made the CLI --kv-cache-turboquant k8v4
+                # flag serve v4 (4-bit keys) while the boot log claimed k8v4.
+                tq_mode = self._effective_turboquant_mode()
                 if tq_mode not in ("v4", "k8v4"):
                     logger.warning(
                         "TurboQuant mode %r not in ('v4', 'k8v4'), defaulting to v4",
@@ -608,6 +610,28 @@ class BatchedEngine(BaseEngine):
                         "TurboQuant K8V4 mode: keys quantized at 8 bits, values "
                         "at 4 bits (live KV cache, via K8V4TurboQuantKVCache)"
                     )
+                if tq_mode == "k8v4" and bool(
+                    getattr(self._scheduler_config, "lsa_enabled", False)
+                ):
+                    # P3 #4 hard gate: arm the prefill memory guard with a
+                    # TQ-accurate KV estimate and the doc ceiling (unified
+                    # memory x 0.85). The monitor's fp16 formula would
+                    # overestimate the packed k8v4 KV ~12x.
+                    try:
+                        import mlx.core as _mx
+
+                        from ..patches.qwen35_lsa.budget import arm_lsa_memory_budget
+
+                        arm_lsa_memory_budget(
+                            self._engine.engine.scheduler,
+                            weights_bytes=_mx.metal.get_active_memory(),
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "LSA memory budget arm failed (%s) - prefill guard "
+                            "stays at its default state",
+                            e,
+                        )
                 # Apply the TurboQuant attention patch so mlx_lm's SDPA routes
                 # to the cache's quantized kernels. Without this, update_and_fetch
                 # returns _QuantizedStateProxy objects that the stock
