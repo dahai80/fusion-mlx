@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: Apache-2.0
+"""LSA attention wrapper for qwen3_5 full-attention layers.
+
+Wraps a loaded ``Qwen3NextAttention`` instance: prefill runs the dense path
+unchanged while feeding pre-RoPE keys into the layer's incremental bucket
+index; decode (L == 1) replaces the dense SDPA with centroid-scored selection
+(top-p buckets expanded to top-k + sink + window) gathered from the cache and
+attended with the same scaled dot product. The full KV cache is still
+maintained every step - the cache surface the scheduler introspects stays
+intact; pruning stored rows is a later, separate change.
+
+Batch decode (B > 1) cannot share one per-layer selection, so it falls back
+to the dense path with a warning until per-sequence selection lands.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import mlx.core as mx
+import mlx.nn as nn
+from fusion_lsa.core.index_space import LearnedProjection
+from mlx_lm.models.base import scaled_dot_product_attention
+
+from .selection import LsaLayerSelector, LsaSelectionConfig
+
+logger = logging.getLogger(__name__)
+
+
+def build_selector(
+    projection: LearnedProjection,
+    config: LsaSelectionConfig | None,
+    rotary_dim: int,
+    kv_heads: int,
+) -> LsaLayerSelector:
+    return LsaLayerSelector(
+        projection, config or LsaSelectionConfig(), rotary_dim, kv_heads
+    )
+
+
+class LsaAttention(nn.Module):
+    # Drop-in replacement for one full-attention layer's module: owns the
+    # original attention (all weights) and the layer's selection state.
+    def __init__(self, attn: nn.Module, selector: LsaLayerSelector):
+        super().__init__()
+        self.attn = attn
+        self.selector = selector
+        self.last_picked: mx.array | None = None
+
+    def __call__(
+        self,
+        x: mx.array,
+        mask=None,
+        cache=None,
+    ) -> mx.array:
+        attn = self.attn
+        B, L, _ = x.shape
+        num_heads = attn.num_attention_heads
+        num_kv_heads = attn.num_key_value_heads
+
+        q_proj_output = attn.q_proj(x)
+        queries, gate = mx.split(q_proj_output.reshape(B, L, num_heads, -1), 2, axis=-1)
+        gate = gate.reshape(B, L, -1)
+        keys, values = attn.k_proj(x), attn.v_proj(x)
+        queries = attn.q_norm(queries).transpose(0, 2, 1, 3)
+        keys = attn.k_norm(keys.reshape(B, L, num_kv_heads, -1)).transpose(0, 2, 1, 3)
+        values = values.reshape(B, L, num_kv_heads, -1).transpose(0, 2, 1, 3)
+
+        if cache is not None:
+            offset = cache.offset
+            queries = attn.rope(queries, offset=offset)
+            keys = attn.rope(keys, offset=offset)
+        else:
+            offset = 0
+            queries = attn.rope(queries)
+            keys = attn.rope(keys)
+
+        if L > 1 or B > 1:
+            # prefill (any L) and batched decode: dense path, keys still feed
+            # the index so a later single-stream decode reads them
+            if L > 1:
+                self.selector.append_keys(keys)
+            keys, values = (
+                cache.update_and_fetch(keys, values)
+                if cache is not None
+                else (keys, values)
+            )
+            output = scaled_dot_product_attention(
+                queries, keys, values, cache, attn.scale, mask
+            )
+            return attn.o_proj(
+                output.transpose(0, 2, 1, 3).reshape(B, L, -1) * mx.sigmoid(gate)
+            )
+
+        self.selector.append_keys(keys)
+        picked = self.selector.select(queries, offset)
+        self.last_picked = picked
+        keys, values = cache.update_and_fetch(keys, values)
+        idx = picked.astype(mx.int32).reshape(1, 1, -1, 1)
+        keys_sel = mx.take_along_axis(keys, idx, axis=2)
+        values_sel = mx.take_along_axis(values, idx, axis=2)
+        output = scaled_dot_product_attention(
+            queries, keys_sel, values_sel, None, attn.scale, None
+        )
+        output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
+        return attn.o_proj(output * mx.sigmoid(gate))
+
+
+def wrap_lsa_layers(
+    layers: list,
+    lsa_map,
+    rotary_dim: int,
+    kv_heads: int,
+    config: LsaSelectionConfig | None = None,
+) -> list[int]:
+    # Wrap every full-attention layer named in the map (layer index = position
+    # in the layer list); returns the wrapped indices for the armed log.
+    wrapped: list[int] = []
+    for index, layer in enumerate(layers):
+        if index not in lsa_map.layers or not hasattr(layer, "self_attn"):
+            continue
+        roles = lsa_map.projections[index]
+        projection = LearnedProjection(
+            roles["query_projection"], roles["key_projection"]
+        )
+        selector = build_selector(projection, config, rotary_dim, kv_heads)
+        layer.self_attn = LsaAttention(layer.self_attn, selector)
+        wrapped.append(index)
+    if wrapped:
+        logger.info("LSA wrapped %d full-attention layers: %s", len(wrapped), wrapped)
+    else:
+        logger.warning(
+            "LSA armed but no layer matched the map - dense serving continues"
+        )
+    return wrapped
