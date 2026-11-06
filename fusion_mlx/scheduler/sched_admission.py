@@ -942,6 +942,22 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                     _reconstruct_s,
                     int(original_tokens / _reconstruct_s) if _reconstruct_s > 0 else 0,
                 )
+                try:
+                    _shape_probe = []
+                    for _i, _c in enumerate(reconstructed or []):
+                        if hasattr(_c, "keys") and getattr(_c, "keys", None) is not None:
+                            _shape_probe.append((_i, type(_c).__name__, tuple(_c.keys.shape)))
+                        elif hasattr(_c, "cache") and getattr(_c, "cache", None):
+                            _shape_probe.append(
+                                (_i, type(_c).__name__, [tuple(a.shape) for a in _c.cache[:2]])
+                            )
+                    logger.info(
+                        "PREFIX-PREP restored shapes %s: %s",
+                        request.request_id[:8],
+                        _shape_probe[:4],
+                    )
+                except Exception as _e:
+                    logger.debug("restored shape probe failed: %s", _e)
             # #1299: a kv_resume hook seed (disconnect checkpoint) competes
             # with the paged block table — keep whichever covers more
             # tokens. A losing reconstruct must release its block refs.
