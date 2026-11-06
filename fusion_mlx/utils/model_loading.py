@@ -154,6 +154,43 @@ def _checkpoint_has_mtp_weights(model_path: str | Path) -> bool:
     return False
 
 
+def _qwen35_layers(model: Any) -> list | None:
+    # Layer list of a loaded qwen3_5 model: the ForConditionalGeneration
+    # wrapper nests them at language_model.model.layers; a text-only load
+    # nests them at model.layers.
+    holder = getattr(model, "language_model", None) or model
+    inner = getattr(holder, "model", None)
+    layers = getattr(inner, "layers", None)
+    return layers if isinstance(layers, list) else None
+
+
+def _apply_lsa_wrap(model: Any, model_settings: Any) -> Any:
+    map_path = getattr(model_settings, "lsa_map_path", None)
+    if not map_path:
+        raise ValueError("lsa_enabled without lsa_map_path - the LSA path needs a map")
+    if getattr(model, "model_type", "") != "qwen3_5":
+        raise ValueError(
+            f"lsa_enabled targets model_type qwen3_5, got {getattr(model, 'model_type', None)!r}"
+        )
+    layers = _qwen35_layers(model)
+    if not layers:
+        raise ValueError("lsa_enabled could not locate the decoder layer list on the model")
+    text_config = getattr(getattr(model, "args", None), "text_config", None) or {}
+    head_dim = int(text_config.get("head_dim", 0))
+    kv_heads = int(text_config.get("num_key_value_heads", 0))
+    if head_dim <= 0 or kv_heads <= 0:
+        raise ValueError("lsa_enabled requires head_dim and num_key_value_heads in text_config")
+    rotary_dim = int(head_dim * float(text_config.get("partial_rotary_factor", 0.25)))
+    latent_dim = kv_heads * (head_dim - rotary_dim)
+    from fusion_lsa.convert.map_converter import LsaMap
+
+    lsa_map = LsaMap(map_path, "qwen38_27b", num_layers=len(layers), latent_dim=latent_dim)
+    from ..patches.qwen35_lsa.attention import wrap_lsa_layers
+
+    wrap_lsa_layers(layers, lsa_map, rotary_dim, kv_heads)
+    return model
+
+
 def apply_post_load_transforms(model: Any, model_settings: Any | None = None) -> Any:
     # Centralized post-load transform entry point. Dispatches per-setting
     # transforms that mutate the loaded model in-place. Returns the model
@@ -177,6 +214,11 @@ def apply_post_load_transforms(model: Any, model_settings: Any | None = None) ->
         model = apply_fusion_takeover(model, model_settings)
     except Exception as e:
         logger.warning("fusion takeover dispatch failed: %s", e)
+    # LSA (latent sparse attention) for qwen3_5 checkpoints. Fail-loud on
+    # purpose: a bad map or a shape mismatch must stop the boot here, not
+    # degrade into a silently wrong decode path.
+    if getattr(model_settings, "lsa_enabled", False):
+        model = _apply_lsa_wrap(model, model_settings)
     # Phase C #4: W4A8 activation-int8 linear conversion. Replaces nn.Linear
     # and nn.QuantizedLinear with W4A8Linear (int8 activation path). Runs
     # after fusion_takeover so takeover-tagged layers are skipped by the

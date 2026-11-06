@@ -335,7 +335,7 @@ class BatchedEngine(BaseEngine):
             # None/absent is a no-op.
             from ..utils.model_loading import apply_post_load_transforms
 
-            model = apply_post_load_transforms(model, self._model_settings)
+            model = apply_post_load_transforms(model, self._overlay_scheduler_lsa())
             elapsed = time.monotonic() - start
             self._model_load_duration = elapsed
             # Estimate model size from loaded weights

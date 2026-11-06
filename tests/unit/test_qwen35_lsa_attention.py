@@ -65,7 +65,7 @@ def _write_map(tmp_path, layers=(0,)):
         tensors,
         path,
         metadata={
-            "model_arch": "qwen38_27b_test",
+            "model_arch": "qwen38_27b",
             "indexer_layers": ",".join(str(l) for l in layers),
             "latent_dim": str(LATENT),
             "index_dim": "8",
@@ -150,7 +150,7 @@ def test_wrap_only_mapped_full_attention_layers(tmp_path):
     map_path = _write_map(tmp_path, layers=(1,))
     from fusion_lsa.convert.map_converter import LsaMap
 
-    lsa_map = LsaMap(map_path, "qwen38_27b_test", num_layers=0, latent_dim=LATENT)
+    lsa_map = LsaMap(map_path, "qwen38_27b", num_layers=0, latent_dim=LATENT)
 
     class _Layer:
         def __init__(self, full):

@@ -140,3 +140,68 @@ def test_start_sh_whitelists_lsa_flags():
     script = Path(__file__).resolve().parents[2].joinpath("start.sh").read_text()
     assert "--enable-lsa" in script
     assert "--lsa-map" in script
+
+
+def _fake_qwen35_model():
+    from lsa_attention_support import make_attn
+
+    class _Layer:
+        def __init__(self, full):
+            if full:
+                self.self_attn = make_attn()
+
+    class _TextModel:
+        def __init__(self):
+            self.layers = [_Layer(i % 4 == 3) for i in range(16)]
+
+    class _LanguageModel:
+        def __init__(self):
+            self.model = _TextModel()
+
+    class _Args:
+        text_config = {
+            "hidden_size": 64,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "head_dim": 32,
+            "partial_rotary_factor": 0.25,
+            "full_attention_interval": 4,
+        }
+
+    class _Model:
+        def __init__(self):
+            self.args = _Args()
+            self.model_type = "qwen3_5"
+            self.language_model = _LanguageModel()
+
+    return _Model()
+
+
+def test_post_load_transforms_wraps_qwen35_layers(tmp_path):
+    from lsa_attention_support import write_map
+
+    map_path = write_map(tmp_path, layers=(3, 7))
+    from fusion_mlx.model_settings import ModelSettings
+    from fusion_mlx.utils.model_loading import apply_post_load_transforms
+
+    model = _fake_qwen35_model()
+    settings = ModelSettings(lsa_enabled=True, lsa_map_path=map_path)
+    out = apply_post_load_transforms(model, settings)
+    assert out is model
+    from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
+
+    assert isinstance(model.language_model.model.layers[3].self_attn, LsaAttention)
+    assert isinstance(model.language_model.model.layers[7].self_attn, LsaAttention)
+    assert not isinstance(model.language_model.model.layers[11].self_attn, LsaAttention)
+
+
+def test_post_load_transforms_noop_without_lsa(tmp_path):
+    from fusion_mlx.model_settings import ModelSettings
+    from fusion_mlx.utils.model_loading import apply_post_load_transforms
+
+    model = _fake_qwen35_model()
+    out = apply_post_load_transforms(model, ModelSettings())
+    assert out is model
+    from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
+
+    assert not isinstance(model.language_model.model.layers[3].self_attn, LsaAttention)
