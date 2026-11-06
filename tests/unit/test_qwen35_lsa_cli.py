@@ -301,3 +301,17 @@ def test_lsa_with_explicit_k8v4_enables_turboquant():
     )
     assert v4._turboquant_should_enable() is False
     assert v4._turboquant_kv_will_enable() is False
+
+    # the CLI flag is operator-explicit and wins over a settings-file False
+    flagged = BatchedEngine(
+        model_name="dummy",
+        scheduler_config=SchedulerConfig(
+            lsa_enabled=True,
+            lsa_map_path="m.safetensors",
+            kv_cache_turboquant=True,
+            kv_cache_turboquant_mode="k8v4",
+        ),
+        model_settings=ModelSettings(turboquant_kv_enabled=False),
+    )
+    assert flagged._turboquant_should_enable() is True
+    assert flagged._turboquant_kv_will_enable() is True

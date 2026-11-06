@@ -252,6 +252,15 @@ class BatchedEngine(BaseEngine):
             return preprocess_harmony_messages(messages)
         return messages
 
+    def _turboquant_explicit(self) -> bool | None:
+        # Operator-explicit TurboQuant request: the --kv-cache-turboquant
+        # CLI flag (SchedulerConfig) wins over a settings-file False, same
+        # precedence serve_command applies when resolving the mode default.
+        # None = no explicit choice; the memory tier decides.
+        if bool(getattr(self._scheduler_config, "kv_cache_turboquant", False)):
+            return True
+        return getattr(self._model_settings, "turboquant_kv_enabled", None)
+
     def _turboquant_kv_will_enable(self) -> bool:
         # Mirror of the enable decision in start()'s post-load TurboQuant
         # block, computed before the model loads so the attention patch can
@@ -259,15 +268,15 @@ class BatchedEngine(BaseEngine):
         # _memory_tier) are both set in __init__.
         if self._model_settings is None:
             return False
-        tq_explicit = getattr(self._model_settings, "turboquant_kv_enabled", None)
-        enabled = True if tq_explicit is None else bool(tq_explicit)
-        if not tq_explicit and getattr(self, "_memory_tier", None) == "balanced":
+        explicit = self._turboquant_explicit()
+        enabled = True if explicit is None else explicit
+        if explicit is None and getattr(self, "_memory_tier", None) == "balanced":
             # Auto-enable, except the balanced-tier claude场景 opt-out.
             return False
         if enabled and bool(getattr(self._scheduler_config, "lsa_enabled", False)):
             # Coexistence needs explicit k8v4 (8-bit keys); auto-enable
             # would run 4-bit keys and degrade the LSA selection index
-            if not (tq_explicit and self._effective_turboquant_mode() == "k8v4"):
+            if not (explicit is not None and self._effective_turboquant_mode() == "k8v4"):
                 return False
         return enabled
 
@@ -288,10 +297,8 @@ class BatchedEngine(BaseEngine):
         # also catches auto-enabled TQ.
         if self._model_settings is None:
             return False
-        tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", None)
-        tq_explicit = tq_enabled is not None
-        if not tq_explicit:
-            tq_enabled = True
+        tq_explicit = self._turboquant_explicit()
+        tq_enabled = True if tq_explicit is None else tq_explicit
         # AtomCode: claude scenario disables TurboQuant KV cache explicitly
         # (balanced tier trades memory for speed; dequant costs 10-15% on
         # long-context tool-heavy traffic).
