@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from pathlib import Path
 
@@ -10,6 +11,10 @@ import pytest
 
 from fusion_mlx.config import SchedulerConfig
 from fusion_mlx.model_settings import ModelSettings
+
+# The post-load transform path imports the sibling fusion-lsa package
+# (pip install -e ~/fusion/fusion-lsa), which CI runners don't have.
+_fusion_lsa_missing = importlib.util.find_spec("fusion_lsa") is None
 
 
 def test_scheduler_config_carries_lsa_fields():
@@ -177,6 +182,9 @@ def _fake_qwen35_model():
     return _Model()
 
 
+@pytest.mark.skipif(
+    _fusion_lsa_missing, reason="fusion-lsa sibling package not installed"
+)
 def test_post_load_transforms_wraps_qwen35_layers(tmp_path):
     from lsa_attention_support import write_map
 
@@ -195,6 +203,9 @@ def test_post_load_transforms_wraps_qwen35_layers(tmp_path):
     assert not isinstance(model.language_model.model.layers[11].self_attn, LsaAttention)
 
 
+@pytest.mark.skipif(
+    _fusion_lsa_missing, reason="fusion-lsa sibling package not installed"
+)
 def test_post_load_transforms_noop_without_lsa(tmp_path):
     from fusion_mlx.model_settings import ModelSettings
     from fusion_mlx.utils.model_loading import apply_post_load_transforms
