@@ -48,6 +48,7 @@ def _log_prefill_route(route: str, total_tokens: int, L: int, key_chunk) -> None
         key_chunk,
     )
 
+
 _TQ_TYPES: tuple | None = None
 _TQ_TYPES_TRIED = False
 
@@ -159,7 +160,10 @@ def apply_turboquant_attention_patch() -> bool:
             if result is not None:
                 try:
                     _log_prefill_route(
-                        "fast", _state_length(getattr(keys, "_state", keys)), queries.shape[2], None
+                        "fast",
+                        _state_length(getattr(keys, "_state", keys)),
+                        queries.shape[2],
+                        None,
                     )
                 except Exception:
                     pass
@@ -179,7 +183,12 @@ def apply_turboquant_attention_patch() -> bool:
                 try:
                     real_cache.prefill_query_block_size = _LONG_PREFILL_QUERY_BLOCK_SIZE
                     real_cache.prefill_key_chunk_size = _LONG_PREFILL_KEY_CHUNK_SIZE
-                    _log_prefill_route("quantized", total_tokens, queries.shape[2], _LONG_PREFILL_KEY_CHUNK_SIZE)
+                    _log_prefill_route(
+                        "quantized",
+                        total_tokens,
+                        queries.shape[2],
+                        _LONG_PREFILL_KEY_CHUNK_SIZE,
+                    )
                     return real_cache.quantized_attention(
                         queries,
                         keys_state=keys,
