@@ -817,13 +817,14 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
     # per-chunk curve separates MLX active (live arrays), MLX cache
     # (freed-but-cached buffers) and kernel phys_footprint so the
     # dominant superlinear term can be identified instead of guessed.
-    if (state.total_length - 1) > 65536:
+    if (state.base_size + state.total_length - 1) > 65536:
         logger.info(
-            "[memcheck:chunk] rid=%s processed=%d/%d active=%.2fGB "
+            "[memcheck:chunk] rid=%s processed=%d/%d ctx=%d active=%.2fGB "
             "peak=%.2fGB cache=%.2fGB phys=%.2fGB",
             state.request.request_id,
-            state.tokens_processed,
-            state.total_length - 1,
+            state.base_size + state.tokens_processed,
+            state.base_size + state.total_length - 1,
+            state.base_size + state.total_length - 1,
             mx.get_active_memory() / 1024**3,
             mx.get_peak_memory() / 1024**3,
             mx.get_cache_memory() / 1024**3,
