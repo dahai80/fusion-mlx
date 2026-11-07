@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/eagle3-feasibility
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "EAGLE-3 Feasibility Assessment for fusion-mlx", en: "EAGLE-3 Feasibility Assessment for fusion-mlx" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/eagle3-feasibility.md
+---
+
 # EAGLE-3 Feasibility Assessment for fusion-mlx
 
 ## Summary

@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/contributing
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "贡献指南", en: "Contributing to fusion-mlx" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - CONTRIBUTING.md
+---
+
 # Contributing to fusion-mlx
 
 fusion-mlx is currently a single-maintainer project. Contributions of

@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/gdn-mtp-verification
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "GDN MTP 验证记录", en: "GDN hybrid spec-decode verification — CORRECTED (2026-10-23)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - GDN_MTP_VERIFICATION.md
+---
+
 # GDN hybrid spec-decode verification — CORRECTED (2026-10-23)
 
 Branch `research/gdn-spec-verify`. **This file supersedes the first version

@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/release
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "发布流程", en: "Release Process" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - RELEASE.md
+---
+
 # Release Process
 
 This document fixes the fusion-mlx release flow so it is repeatable and

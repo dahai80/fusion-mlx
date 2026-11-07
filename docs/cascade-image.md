@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/cascade-image
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Stable Cascade Image Generation (MLX)", en: "Stable Cascade Image Generation (MLX)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/cascade-image.md
+---
+
 # Stable Cascade Image Generation (MLX)
 
 Native MLX port of **Stable Cascade** (Würstchen 3-stage) txt2img for

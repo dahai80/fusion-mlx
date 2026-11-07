@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/lock-inventory
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Lock inventory + global ordering (issue #1190)", en: "Lock inventory + global ordering (issue #1190)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/LOCK_INVENTORY.md
+---
+
 # Lock inventory + global ordering (issue #1190)
 
 PRD opti-1014 F5/E7, deep-bug H2 (deadlock prevention). Status: landed with

@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/tier-budget-load-paths
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Tier Budget Enforcement on Model-Load Paths (#1194)", en: "Tier Budget Enforcement on Model-Load Paths (#1194)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/tier-budget-load-paths.md
+---
+
 # Tier Budget Enforcement on Model-Load Paths (#1194)
 
 ## Single choke point

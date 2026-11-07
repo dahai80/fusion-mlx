@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/benchmark-spec-388
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "基准测试规范 388", en: "Speculative Decoding Benchmark — Issue #388" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - BENCHMARK_SPEC_388.md
+---
+
 # Speculative Decoding Benchmark — Issue #388
 
 <!-- Standalone report doc (no code imports). References scripts/bench_spec_decode_388.py

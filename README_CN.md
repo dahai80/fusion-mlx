@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/readme
+product: fusion-mlx
+class: core
+entry: service
+doc_type: readme
+title: { zh: "fusion-mlx 总览（中文）", en: "fusion-mlx" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - README.md
+---
+
 <div align="center">
 
 # fusion-mlx
@@ -57,7 +73,7 @@ Ollama / vLLM 的直接替代 -- 基于 MLX 原生运行在 Metal 上
 - **MCP 工具支持** - 通过 API 列出、发现和执行 MCP 工具
 - **Admin 管理面板** - 模型管理、在线对话、HuggingFace 下载、在线量化
 - **macOS 原生应用** - SwiftUI 菜单栏、自动更新、基准测试、模型管理、**硬件感知设置向导**
-- **SkyReels-V3 视频生成** - 最强开源视频生成模型纯 MLX 移植，R2V/V2V/A2V 三大分支全部真实权重端到端跑通，M5 Max 专属 dFlash 注意力 + NF4 量化，19B 模型 720P 常驻内存 ≤ 14GB
+- **SkyReels-V3 视频生成** - 开源视频生成模型 SkyReels-V3 的纯 MLX 移植，R2V/V2V/A2V 三大分支全部真实权重端到端跑通，M5 Max 专属 dFlash 注意力 + NF4 量化，19B 模型 720P 常驻内存 ≤ 14GB
 - **PyTorch -> MLX 全模型转换器** - `convert_skyreels_v3.py` 一键转换 SkyReels-V3 三分支 (DiT + T5 + VAE + CLIP + audio) PyTorch 权重到 MLX safetensors，支持 bfloat16/float16/float32 + NF4 量化，分 shard 增量写盘避统一内存冲高
 
 ### 高级特性推荐
@@ -380,7 +396,7 @@ Apple M5 Max (128 GB RAM, 40 GPU 核心)，MLX 0.32.0.dev - 2026-07-04。
   Steel 风格的 tiled/threadgroup 优化 kernel。已建立跟进 issue。
 - 阶段 3 共享池在 cap 耗尽时以 `503` 拒绝；LRU 驱逐（释放最久未用请求的 block）
   暂缓。已建立跟进 issue。
-- 通过 `BatchedEngine` 的真正并发批量解码（B>1）尚未端到端打通：
+- 通过 `BatchedEngine` 的真正并发批量解码（B>1）尚未端到端跑通：
   `FusionPagedRequestCache.merge`（B=N 堆叠）已有单测，但
   `model_settings` -> `FusionConfig.from_model_settings` 对
   `fusion_paged_pool="on"` 的 plumbing 尚未接入引擎。顺序逐请求提交为已验证路径。
@@ -656,12 +672,12 @@ DSpark = DeepSeek DeepSpec 块级投机解码, 针对纯文本 Qwen3 系列. 与
 - [API Reference](docs/api-reference.md) - 所有端点及请求/响应示例（英文）
 - [Architecture](docs/architecture.md) - EnginePool、Scheduler（25 模块）、Cache 层、SmartRouter（英文）
 - [CLI Reference](docs/cli-reference.md) - 所有命令和参数（英文）
-- [Configuration](docs/configuration.md) - 内存分级、调度器设置、TurboQuant、别名、执行器线程池（英文）
+- [Configuration](docs/config-reference.md) - 内存分级、调度器设置、TurboQuant、别名、执行器线程池（英文）
 - [Speculative Decoding](docs/speculative-decoding.md) - Suffix/DFlash/DSpark/MTP/VLM-MTP 五种投机解码方法、选型指南、auto-router（英文）
 - [Video Input](docs/video-input.md) - VLM 视频输入：`video_url` API、帧抽取、Qwen 原生视频路径、限制（英文）
-- [FR Differentiation](docs/FR_DIFFERENTIATION.md) - fusion-mlx 在投机解码/TurboQuant/调度方面差异化能力的核实分析（英文）
+- [FR Differentiation](#whichllm-integration) - fusion-mlx 在投机解码/TurboQuant/调度方面差异化能力的核实分析（英文）
 - [架构详解](docs/architecture_CN.md) - 架构文档中文版
-- [配置指南](docs/configuration_CN.md) - 配置文档中文版
+- [配置指南](docs/config-reference_CN.md) - 配置文档中文版
 
 ## 镜像源配置
 

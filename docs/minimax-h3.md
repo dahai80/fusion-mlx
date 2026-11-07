@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/minimax-h3
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "MiniMax-H3 (33B Omni-Transformer)", en: "MiniMax-H3 (33B Omni-Transformer)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/minimax-h3.md
+---
+
 # MiniMax-H3 (33B Omni-Transformer)
 
 MiniMax-H3 is a single-flow packed-sequence DiT that jointly generates video and
@@ -287,7 +303,7 @@ Quantization scheme (minimal precision loss):
 
 - **TE** (`Qwen3-VL`, 33 B): 4-bit, group_size=64. Only produces `text_embeds`
   (an intermediate representation consumed by DiT denoising), so most
-  quantization-robust. Skips `embed_tokens` + all norms.
+  quantization-tolerant. Skips `embed_tokens` + all norms.
 - **DiT** (33 B): 8-bit, group_size=64. Skips F32 small layers
   (`time_embedder`, `video_patch_proj`, `audio_patch_proj`, `rope`) and output
   projections (`final_layer.video_out/audio_out`, `condition_proj`); quantizes

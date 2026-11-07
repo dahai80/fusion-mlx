@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/dflash2-deep-opt-0919
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "DFlash2 深度优化分析 (0919)", en: "DFlash2 深度优化分析 (0919)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/dflash2-deep-opt-0919.md
+---
+
 # DFlash2 深度优化分析 (0919)
 
 ## 问题

@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/api-reference
+product: fusion-mlx
+class: core
+entry: service
+doc_type: api-reference
+title: { zh: "API 参考", en: "API Reference" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/api-reference.md
+---
+
 # API Reference
 
 fusion-mlx exposes OpenAI-compatible, Anthropic-compatible, audio, image, MCP, and OpenClaw Agent endpoints plus a full admin panel.

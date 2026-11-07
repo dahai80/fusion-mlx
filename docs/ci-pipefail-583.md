@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/ci-pipefail-583
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "CI pipefail + 38 masked test failures (#583)", en: "CI pipefail + 38 masked test failures (#583)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/ci-pipefail-583.md
+---
+
 # CI pipefail + 38 masked test failures (#583)
 
 PR #595 · closes issue #583 · base `main` · branch `fix/ci-pipefail-masked-failures-583`

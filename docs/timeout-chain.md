@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/timeout-chain
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Timeout chain (issue #1191)", en: "Timeout chain (issue #1191)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/timeout-chain.md
+---
+
 # Timeout chain (issue #1191)
 
 ## Architecture invariant: mx.eval is not interruptible

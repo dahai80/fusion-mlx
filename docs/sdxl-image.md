@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/sdxl-image
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "SDXL Image Generation (MLX)", en: "SDXL Image Generation (MLX)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/sdxl-image.md
+---
+
 # SDXL Image Generation (MLX)
 
 Native MLX port of **Stable Diffusion XL** (SDXL 1.0 base) txt2img for

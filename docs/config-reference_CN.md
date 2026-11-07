@@ -1,6 +1,22 @@
+---
+doc_id: fusion-mlx/config-reference
+product: fusion-mlx
+class: core
+entry: service
+doc_type: config-reference
+title: { zh: "配置参考（中文）", en: "配置指南" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/config-reference.md
+---
+
 # 配置指南
 
-[English](configuration.md) | 中文
+[English](config-reference.md) | 中文
 
 fusion-mlx 通过 CLI 参数和 `ServerConfig` 数据类进行配置。所有设置项定义在 `fusion_mlx/config.py` 中。
 

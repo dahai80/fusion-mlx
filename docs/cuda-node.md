@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/cuda-node
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Windows CUDA Backend Node (#365)", en: "Windows CUDA Backend Node (#365)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/cuda-node.md
+---
+
 # Windows CUDA Backend Node (#365)
 
 Fusion-mlx's native engine is Apple-Silicon MLX. For heavy LLM inference

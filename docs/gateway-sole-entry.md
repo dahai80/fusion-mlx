@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/gateway-sole-entry
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Gateway as Sole Entry", en: "Gateway as Sole Entry" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/gateway-sole-entry.md
+---
+
 # Gateway as Sole Entry
 
 Deployment recipe for running fusion-mlx as a gateway-internal backend: every

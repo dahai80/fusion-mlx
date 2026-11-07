@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/vlm-gui-agent
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "VLM Serving for GUI Agents (#795)", en: "VLM Serving for GUI Agents (#795)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/vlm-gui-agent.md
+---
+
 # VLM Serving for GUI Agents (#795)
 
 GUI agents (computer-use, browser automation, UI grounding) drive a vision-language model in a tight perception→action loop: every step the agent sends the current screenshot plus a short instruction and expects the next action (click, type, scroll) back within ~100 ms to feel interactive. This doc gives the recommended fusion-mlx setup to hit that target on Apple Silicon.
@@ -6,8 +22,8 @@ GUI agents (computer-use, browser automation, UI grounding) drive a vision-langu
 
 Three already-shipped capabilities make sub-100 ms VLM turns achievable:
 
-1. **Prefix KV-cache reuse across requests (#798)** — the system prompt, agent instructions, and recent screenshot-history prefix is identical across turns. `BlockAwarePrefixCache` (default) caches that prefix at block granularity (256 tokens) so only the *new* screenshot + new instruction is prefilled each turn. The shared prefix is paid once, reused every subsequent turn. See [Configuration → Prefix Cache](configuration.md#prefix-cache).
-2. **Concurrent Fast+Slow residency (#796)** — keep a small fast VLM resident alongside a larger reasoning model; route GUI-grounding turns to the fast model. Pin both so neither is evicted. See [Configuration → Concurrent Multi-Model Serving](configuration.md#concurrent-multi-model-serving-796).
+1. **Prefix KV-cache reuse across requests (#798)** — the system prompt, agent instructions, and recent screenshot-history prefix is identical across turns. `BlockAwarePrefixCache` (default) caches that prefix at block granularity (256 tokens) so only the *new* screenshot + new instruction is prefilled each turn. The shared prefix is paid once, reused every subsequent turn. See [Configuration → Prefix Cache](config-reference.md#prefix-cache).
+2. **Concurrent Fast+Slow residency (#796)** — keep a small fast VLM resident alongside a larger reasoning model; route GUI-grounding turns to the fast model. Pin both so neither is evicted. See [Configuration → Concurrent Multi-Model Serving](config-reference.md#concurrent-multi-model-serving-796).
 3. **TurboQuant 4-bit KV cache** — compresses the V-only KV cache ~4×, shrinking per-turn memory traffic. On by default.
 
 ## Recommended setup
