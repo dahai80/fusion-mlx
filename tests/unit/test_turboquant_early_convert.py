@@ -6,7 +6,6 @@
 import types
 
 import mlx.core as mx
-import pytest
 from mlx_lm.models.cache import KVCache
 
 from fusion_mlx.scheduler.sched_batch import _maybe_early_tq_convert

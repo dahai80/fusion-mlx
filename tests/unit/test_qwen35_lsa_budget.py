@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from fusion_mlx.memory_monitor import MemoryMonitor
 from fusion_mlx.patches.qwen35_lsa.budget import (
     arm_lsa_memory_budget,
