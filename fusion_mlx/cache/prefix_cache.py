@@ -670,7 +670,11 @@ class BlockAwarePrefixCache(CacheManager):
                         "class_name", layer_state.get("cache_type", "KVCache")
                     )
                     if layer_state.get("class_name", "")
-                    in ("TurboQuantKVCache", "BatchTurboQuantKVCache", "K8V4TurboQuantKVCache")
+                    in (
+                        "TurboQuantKVCache",
+                        "BatchTurboQuantKVCache",
+                        "K8V4TurboQuantKVCache",
+                    )
                     else layer_state.get("cache_type", "KVCache")
                 )
                 for layer_state in cache_data
@@ -1183,7 +1187,11 @@ class BlockAwarePrefixCache(CacheManager):
 
                 handler = CacheTypeRegistry.get_handler_by_class_name(cache_type_name)
 
-                if cache_type_name in ("TurboQuantKVCache", "BatchTurboQuantKVCache", "K8V4TurboQuantKVCache"):
+                if cache_type_name in (
+                    "TurboQuantKVCache",
+                    "BatchTurboQuantKVCache",
+                    "K8V4TurboQuantKVCache",
+                ):
                     # TurboQuant v2: NamedTuple state from mlx-vlm
                     from ..turboquant_kv import _slice_state_range, _state_length
 
@@ -2329,7 +2337,11 @@ class BlockAwarePrefixCache(CacheManager):
                     continue
 
                 # === TurboQuantKVCache: concat NamedTuple states, reconstruct ===
-                if cache_type_name in ("TurboQuantKVCache", "BatchTurboQuantKVCache", "K8V4TurboQuantKVCache"):
+                if cache_type_name in (
+                    "TurboQuantKVCache",
+                    "BatchTurboQuantKVCache",
+                    "K8V4TurboQuantKVCache",
+                ):
                     from ..turboquant_kv import _concat_state
 
                     key_states, value_states = [], []
@@ -2347,6 +2359,7 @@ class BlockAwarePrefixCache(CacheManager):
                     if not key_states:
                         logger.debug(f"TQ layer {layer_idx}: no block data")
                         return None
+
                     # Blocks written under different TQ codecs (v4 4-bit
                     # keys vs k8v4 8-bit keys) carry different packed
                     # widths; concatenating them crashes with a shape

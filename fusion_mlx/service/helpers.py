@@ -1440,9 +1440,7 @@ def get_model_max_context(engine) -> int:
     # ceiling (unified memory vs packed KV bytes/token). Without this
     # override the tokenizer's native cap rejects every long LSA request
     # with a 400 before prefill.
-    lsa_max_context = _maybe_int(
-        getattr(engine, "_lsa_max_context_tokens", 0) or 0
-    )
+    lsa_max_context = _maybe_int(getattr(engine, "_lsa_max_context_tokens", 0) or 0)
     if lsa_max_context is not None:
         return lsa_max_context
 

@@ -1182,9 +1182,7 @@ def test_k8v4_block_restore_dequantizes_to_true_head_dim():
     src.update_and_fetch(keys, values)
     ks, vs = src.state
 
-    dk, dv = rebuild_dequantized_kv(
-        "K8V4TurboQuantKVCache", ks, vs, bits=4.0, seed=42
-    )
+    dk, dv = rebuild_dequantized_kv("K8V4TurboQuantKVCache", ks, vs, bits=4.0, seed=42)
     assert dk.shape == keys.shape, f"keys {dk.shape} != {keys.shape}"
     assert dv.shape == values.shape, f"values {dv.shape} != {values.shape}"
     rel = float(mx.abs(dk - keys).max() / mx.abs(keys).max())
@@ -1206,7 +1204,5 @@ def test_v4_block_restore_dequantizes_to_true_head_dim():
     src.update_and_fetch(keys, values)
     ks, vs = src.state
 
-    dk, dv = rebuild_dequantized_kv(
-        "TurboQuantKVCache", ks, vs, bits=4.0, seed=42
-    )
+    dk, dv = rebuild_dequantized_kv("TurboQuantKVCache", ks, vs, bits=4.0, seed=42)
     assert dk.shape == keys.shape, f"keys {dk.shape} != {keys.shape}"

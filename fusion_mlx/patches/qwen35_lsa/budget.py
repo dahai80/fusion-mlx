@@ -121,9 +121,7 @@ def arm_lsa_memory_budget(scheduler, weights_bytes: int = 0) -> dict | None:
                 type(_model).__name__,
                 hasattr(_model, "config"),
                 hasattr(_model, "args"),
-                sorted(vars(_args).keys())[:12]
-                if _args is not None
-                else None,
+                sorted(vars(_args).keys())[:12] if _args is not None else None,
             )
             logger.warning(
                 "LSA memory budget not armed: no monitor model info and no "

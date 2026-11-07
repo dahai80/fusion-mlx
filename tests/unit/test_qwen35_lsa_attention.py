@@ -412,8 +412,13 @@ def test_turboquant_decode_gathers_picked_rows_only():
     from fusion_mlx.turboquant_kv import make_turboquant_kv_cache
 
     small = LsaSelectionConfig(
-        pool_size=2, bucket_size=4, bucket_cap=8, top_p=8, top_k=32,
-        sink_size=2, window_size=16,
+        pool_size=2,
+        bucket_size=4,
+        bucket_cap=8,
+        top_p=8,
+        top_k=32,
+        sink_size=2,
+        window_size=16,
     )
     attn = _make_attn()
     wrapper = LsaAttention(attn, _make_selector(small))
@@ -438,7 +443,8 @@ def test_turboquant_decode_gathers_picked_rows_only():
     for i in range(4):
         out = wrapper(
             mx.random.normal((1, 1, HIDDEN), key=mx.random.key(6 + i)),
-            mask=None, cache=tq,
+            mask=None,
+            cache=tq,
         )
         assert out.shape == (1, 1, HIDDEN)
     assert len(gathered) == 4

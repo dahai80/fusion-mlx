@@ -945,11 +945,20 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
                 try:
                     _shape_probe = []
                     for _i, _c in enumerate(reconstructed or []):
-                        if hasattr(_c, "keys") and getattr(_c, "keys", None) is not None:
-                            _shape_probe.append((_i, type(_c).__name__, tuple(_c.keys.shape)))
+                        if (
+                            hasattr(_c, "keys")
+                            and getattr(_c, "keys", None) is not None
+                        ):
+                            _shape_probe.append(
+                                (_i, type(_c).__name__, tuple(_c.keys.shape))
+                            )
                         elif hasattr(_c, "cache") and getattr(_c, "cache", None):
                             _shape_probe.append(
-                                (_i, type(_c).__name__, [tuple(a.shape) for a in _c.cache[:2]])
+                                (
+                                    _i,
+                                    type(_c).__name__,
+                                    [tuple(a.shape) for a in _c.cache[:2]],
+                                )
                             )
                     logger.debug(
                         "PREFIX-PREP restored shapes %s: %s",
