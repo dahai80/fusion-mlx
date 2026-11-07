@@ -820,14 +820,16 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
     if (state.total_length - 1) > 65536:
         logger.info(
             "[memcheck:chunk] rid=%s processed=%d/%d active=%.2fGB "
-            "cache=%.2fGB phys=%.2fGB",
+            "peak=%.2fGB cache=%.2fGB phys=%.2fGB",
             state.request.request_id,
             state.tokens_processed,
             state.total_length - 1,
             mx.get_active_memory() / 1024**3,
+            mx.get_peak_memory() / 1024**3,
             mx.get_cache_memory() / 1024**3,
             get_phys_footprint() / 1024**3,
         )
+        mx.reset_peak_memory()
     _sync_and_clear_cache(self._stream)
     self._last_mlx_active_memory_bytes = int(mx.get_active_memory())
     return is_final
