@@ -104,7 +104,16 @@ def _is_hybrid_model(model: Any) -> bool:
         if args is None:
             return False
         mt = getattr(args, "model_type", "") or ""
-        if mt in ("qwen3_5", "qwen3_8", "qwen3_next", "gpt_oss", "gpt_oss_text"):
+        if mt in (
+            "qwen3_5",
+            "qwen3_5_text",
+            "qwen3_8",
+            "qwen3_8_text",
+            "qwen3_next",
+            "qwen3_next_text",
+            "gpt_oss",
+            "gpt_oss_text",
+        ):
             return True
         tc = getattr(args, "text_config", None)
         if isinstance(tc, dict):

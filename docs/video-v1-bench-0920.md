@@ -9,7 +9,7 @@ audience: engineer
 status: draft
 version: 0.10.52
 updated: 2026-11-07
-owner: @dahai
+owner: "@dahai"
 source_of_truth:
   - docs/video-v1-bench-0920.md
 ---

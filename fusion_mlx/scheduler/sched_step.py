@@ -618,6 +618,7 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     and processes the response. This path is ~2ms faster than the full
     step() for a typical 90ms decode step.
     """
+    _pure_step_t0 = time.perf_counter()
     bg = self.batch_generator
     # Router-driven per-request spec decision (#431 Step 2). Decided once at
     # the first pure-decode step; fixed for the request lifetime. mtp runs
@@ -704,6 +705,16 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     finally:
         self.model._fusion_mlx_mtp_suppressed = False
     self._last_decode_dt = time.perf_counter() - _decode_t0
+    # TEMP diagnosis (#1204): split forward time vs scheduler time.
+    if self._step_counter % 50 == 0:
+        _step_dt = time.perf_counter() - _pure_step_t0
+        logger.info(
+            "step(%d): diag decode_dt=%.1fms step_dt=%.1fms sched_overhead=%.1fms",
+            self._step_counter,
+            self._last_decode_dt * 1000,
+            _step_dt * 1000,
+            (_step_dt - self._last_decode_dt) * 1000,
+        )
     # #contention-pool: steady-state decode also runs through this fast path,
     # so mark it too — otherwise a sibling engine decoding here is invisible
     # to the registry and the contention gate fires on pool interleave.

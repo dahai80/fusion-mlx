@@ -123,13 +123,51 @@ class DFlash2InTargetDrafter:
         for c in self._draft_cache:
             c.offset = target_offset
 
-    def get_hidden(self, model) -> mx.array:
-        if self._last_hidden is not None:
-            return self._last_hidden
+    def sync_draft_cache(self, target_pos: int, seq_len: int) -> None:
+        """Position draft caches so the next propose chunk is rope-aligned.
+
+        Mirrors standalone dflash: cache offset must always equal
+        (absolute position one past the newest buffered token). Before a
+        push of `seq_len` context tokens ending at target_pos - 1, the
+        offset must be target_pos - seq_len. Overshoot from previous
+        rejected steps is trimmed from the newest end (same semantics as
+        standalone dflash _trim_recent_cache after each propose).
+        """
+        if self._draft_cache is None:
+            self.reset()
+        desired = int(target_pos) - int(seq_len)
+        actual = int(self._draft_cache[0].offset)
+        if actual > desired:
+            from dflash.model_mlx import _trim_recent_cache
+
+            _trim_recent_cache(self._draft_cache, actual - desired)
+        for c in self._draft_cache:
+            c.offset = desired
+
+    def get_hidden(self, model):
+        """Build propose context hidden: last verify hidden + current step.
+
+        The current step's target forward (regular 1-token decode, or the
+        accepted-replay after rollback) provides the newest token hidden.
+        Concatenating with the stored verify hidden reproduces the
+        standalone dflash chunk ([last verified tokens..., newest token]).
+        Returns None when fewer than 2 context tokens are available — a
+        1-token hidden would crash RotatingKVCache._update_in_place
+        (new_size = max_size - offset goes negative) and carries no
+        useful context for the drafter.
+        """
+        current = None
         hs = getattr(model, "_hidden_states", None)
-        if not hs or any(h is None for h in hs):
-            return mx.zeros((1, 1, self.draft.config.hidden_size * len(self.layer_ids)))
-        hidden = mx.concatenate(hs, axis=-1)
+        if hs and all(h is not None for h in hs):
+            current = mx.concatenate(hs, axis=-1)
+        if self._last_hidden is not None and current is not None:
+            hidden = mx.concatenate([self._last_hidden, current], axis=1)
+        elif self._last_hidden is not None:
+            hidden = self._last_hidden
+        else:
+            hidden = current
+        if hidden is None or int(hidden.shape[1]) < 2:
+            return None
         if self._hidden_limit is not None:
             hidden = hidden[:, -self._hidden_limit :]
         return hidden

@@ -9,7 +9,7 @@ audience: operator
 status: draft
 version: 0.10.52
 updated: 2026-11-07
-owner: @dahai
+owner: "@dahai"
 source_of_truth:
   - README.md
   - start.sh

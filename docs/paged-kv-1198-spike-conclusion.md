@@ -9,7 +9,7 @@ audience: engineer
 status: draft
 version: 0.10.52
 updated: 2026-11-07
-owner: @dahai
+owner: "@dahai"
 source_of_truth:
   - docs/paged-kv-1198-spike-conclusion.md
 ---
