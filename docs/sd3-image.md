@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/sd3-image
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "SD3-Medium Image Generation (MLX)", en: "SD3-Medium Image Generation (MLX)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/sd3-image.md
+---
+
 # SD3-Medium Image Generation (MLX)
 
 Native MLX port of **Stable Diffusion 3 Medium** txt2img for fusion-mlx.

@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/changelog
+product: fusion-mlx
+class: core
+entry: service
+doc_type: changelog
+title: { zh: "变更日志", en: "Changelog" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - CHANGELOG.md
+---
+
 ## [0.10.52] - 2026-11-06 — admin 401 fix + XcodeGen migration + /v1/models default marker (#1509, #1510, #1512)
 
 ### Fixed
@@ -495,7 +511,7 @@
   port had silently dropped several recovery paths that the original
   implementation (omlx lineage) still had. All 230 tests now pass and the
   file is unquarantined:
-  - **Gemma 4 robust fallback** (`api/tool_calling/gemma4.py`): ported the
+  - **Gemma 4 hardened fallback** (`api/tool_calling/gemma4.py`): ported the
     hardened args parser — `<|"|>` string delimiter, linear-time span
     scanner with length/depth DoS bounds, single-pass transcoder with
     legacy key-anchored fallback, and the parenthesized
@@ -3969,7 +3985,7 @@ output bridges — no torch at runtime, offline weight conversion only.
   thread still runs. The enforcer throttles the repeated warning (first
   poll, then every 60th) and escalates to ERROR after 300 stuck polls
   with the `FUSION_IMAGE_SUBPROCESS=1` hint.
-- **Issue #899 follow-up: logging deduplication, faulthandler, robust
+- **Issue #899 follow-up: logging deduplication, faulthandler, graceful
   stop** — `configure_file_logging()` is now idempotent so repeated
   `Server()` instantiations in unit tests no longer add 4-5 duplicate
   file handlers to `~/.fusion-mlx/logs/server.log`. `serve` installs

@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/hang-diagnosis
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Hang diagnosis playbook (issue #1188)", en: "Hang diagnosis playbook (issue #1188)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/hang-diagnosis.md
+---
+
 # Hang diagnosis playbook (issue #1188)
 
 Concurrent LLM + Diffusion workloads intermittently wedge the process

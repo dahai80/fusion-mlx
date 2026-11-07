@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/config-reference
+product: fusion-mlx
+class: core
+entry: service
+doc_type: config-reference
+title: { zh: "配置参考", en: "Configuration" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/config-reference.md
+---
+
 # Configuration
 
 fusion-mlx is configured through CLI flags and the `ServerConfig` dataclass. All settings live in `fusion_mlx/config.py`.

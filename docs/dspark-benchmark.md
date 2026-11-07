@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/dspark-benchmark
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "DSpark Integration & Benchmark Report", en: "DSpark Integration & Benchmark Report" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/dspark-benchmark.md
+---
+
 # DSpark Integration & Benchmark Report
 
 Adapting DeepSeek's open-source **DSpark** (DeepSpec block speculative decoder)

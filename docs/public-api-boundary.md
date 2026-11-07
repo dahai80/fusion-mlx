@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/public-api-boundary
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "公开 API 稳定层与 import guard", en: "公开 API 稳定层与 import guard" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/public-api-boundary.md
+---
+
 # 公开 API 稳定层与 import guard
 
 > 关联 issue: #613（建稳定层 `public_api.py`）, #620（补全 `__all__`）,

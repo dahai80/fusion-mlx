@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/cli-reference
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "CLI 参考", en: "CLI Reference" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/cli-reference.md
+---
+
 # CLI Reference
 
 fusion-mlx provides the `fusion-mlx` CLI entry point.

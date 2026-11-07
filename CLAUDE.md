@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/claude
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "仓库工程规则", en: "CLAUDE.md" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - CLAUDE.md
+---
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.

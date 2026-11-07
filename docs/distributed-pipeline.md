@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/distributed-pipeline
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Distributed Pipeline Parallelism (#621)", en: "Distributed Pipeline Parallelism (#621)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/distributed-pipeline.md
+---
+
 # Distributed Pipeline Parallelism (#621)
 
 First-version surface for fusion-multi-node **Pipeline Parallelism**: split a

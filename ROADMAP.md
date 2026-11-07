@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/roadmap
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "路线图", en: "Roadmap" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - ROADMAP.md
+---
+
 # Roadmap
 
 > Last updated 2026-08-08 (v0.8.12). Drives from the catch-up plan at
@@ -76,7 +92,7 @@ These are landed today and unmatched by llama.cpp / rapid-mlx / oMLX:
 ## Supported models (live matrix)
 
 Status: ✅ **Tested** (has a fusion alias, covered by the test suite) ·
-🟡 **Custom patch** (runs via vendored `fusion_mlx/patches/` — cutting-edge
+🟡 **Custom patch** (runs via vendored `fusion_mlx/patches/` — custom
 arch, may carry caveats) · 🟦 **Upstream** (supported by mlx-lm 0.31.3 /
 mlx-vlm 0.5.0, runs but no fusion alias — not individually tested by us) ·
 ❌ **No** (GGUF rejected with a clear error; or arch not in upstream/vendored).

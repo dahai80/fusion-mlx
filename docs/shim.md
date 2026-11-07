@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/shim
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Shim Enhancement Layer", en: "Shim Enhancement Layer" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/shim.md
+---
+
 # Shim Enhancement Layer
 
 ## Overview

@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/lora-inplace-swap
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "In-place LoRA Swap (#389)", en: "In-place LoRA Swap (#389)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/lora-inplace-swap.md
+---
+
 # In-place LoRA Swap (#389)
 
 By default, fusion-mlx serves each LoRA adapter as a **separate derived engine**:

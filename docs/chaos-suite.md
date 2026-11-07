@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/chaos-suite
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Chaos fault-injection suite (#1195)", en: "Chaos fault-injection suite (#1195)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/chaos-suite.md
+---
+
 # Chaos fault-injection suite (#1195)
 
 `tests/chaos/` validates detection + recovery for every failure mode the
