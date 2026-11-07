@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/ltx2-5
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "LTX-2.5 Video Generation (MLX)", en: "LTX-2.5 Video Generation (MLX)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/ltx2-5.md
+---
+
 # LTX-2.5 Video Generation (MLX)
 
 Native MLX port of **LTX-2.5** (22B distilled/dev audio-video DiT) for

@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/ane-spike-report
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "PR-D7: ANE Spike Report — Apple Neural Engine Direct-Integration Feasibility", en: "PR-D7: ANE Spike Report — Apple Neural Engine Direct-Integration Feasibility" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/ane-spike-report.md
+---
+
 # PR-D7: ANE Spike Report — Apple Neural Engine Direct-Integration Feasibility
 
 > Date: 2026-09-12

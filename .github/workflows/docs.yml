@@ -1,0 +1,22 @@
+name: docs
+
+on:
+  pull_request:
+    paths:
+      - "**.md"
+      - "ci/validate_docs.py"
+      - ".github/workflows/docs.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate docs contract
+        run: |
+          python3 ci/validate_docs.py --root . --product fusion-mlx \
+            --class core --entry service \
+            --skip-dirs ".git,node_modules,.venv,dist,build,templates,guidelines,packaging,tests,benchmarks,web,fusion_mlx,apps,homebrew-tap,mlx-gui,superpowers,bench-1414"

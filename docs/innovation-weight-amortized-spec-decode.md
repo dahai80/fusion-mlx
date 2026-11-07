@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/innovation-weight-amortized-spec-decode
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "突破统一内存带宽墙：权重摊销推测解码框架 (AWSD)", en: "突破统一内存带宽墙：权重摊销推测解码框架 (AWSD)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/innovation-weight-amortized-spec-decode.md
+---
+
 # 突破统一内存带宽墙：权重摊销推测解码框架 (AWSD)
 
 > 一份面向 fusion-mlx 的深度优化路线与创新论文

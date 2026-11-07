@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/paged-kv-1198-spike-conclusion
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "#1198 Spike Conclusion — Paged KV dynamic block management (Exit B)", en: "#1198 Spike Conclusion — Paged KV dynamic block management (Exit B)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/paged-kv-1198-spike-conclusion.md
+---
+
 # #1198 Spike Conclusion — Paged KV dynamic block management (Exit B)
 
 Time-boxed 2-day spike, per issue DoD. Verdict: **Exit B (re-plan)** — the

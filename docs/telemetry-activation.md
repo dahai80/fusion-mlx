@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/telemetry-activation
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Telemetry Activation Funnel", en: "Telemetry Activation Funnel" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/telemetry-activation.md
+---
+
 # Telemetry Activation Funnel
 
 > **Status:** Dark — activation emit calls ship behind the consent gate

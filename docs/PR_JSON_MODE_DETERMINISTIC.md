@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/pr-json-mode-deterministic
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "PR 需求：`response_format=json_object` + `enable_thinking=false` 必须确定性地产出纯 JSON（无 thinking）", en: "PR 需求：`response_format=json_object` + `enable_thinking=false` 必须确定性地产出纯 JSON（无 thinking）" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/PR_JSON_MODE_DETERMINISTIC.md
+---
+
 # PR 需求：`response_format=json_object` + `enable_thinking=false` 必须确定性地产出纯 JSON（无 thinking）
 
 > 本 PR 由需求方提出，目标结果与验收标准已写明，待实现方在此分支上补代码。

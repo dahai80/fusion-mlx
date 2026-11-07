@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/architecture
+product: fusion-mlx
+class: core
+entry: service
+doc_type: architecture
+title: { zh: "架构详解", en: "Architecture" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/architecture.md
+---
+
 # Architecture
 
 fusion-mlx is a multi-modal inference server built on Apple MLX. It serves LLM, VLM, audio, and image generation models through OpenAI- and Anthropic-compatible APIs.

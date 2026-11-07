@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/readme
+product: fusion-mlx
+class: core
+entry: service
+doc_type: readme
+title: { zh: "fusion-mlx 总览", en: "fusion-mlx" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - README.md
+---
+
 <div align="center">
 
 # fusion-mlx
@@ -634,7 +650,7 @@ is shared with Fusion-Model-Hub, which validates provenance without importing ML
 on a default/empty secret:
 
 ```bash
-export FMH_WATERMARK_SECRET="<high-entropy-secret>"
+export FMH_WATERMARK_SECRET=CHANGE_ME
 ```
 
 **Embed** — writes a watermarked copy to `output_path` (must be under
@@ -1485,7 +1501,7 @@ and returns the pass-rate reward plus diagnostic capture:
 ```
 
 - **Isolation.** The combined `{code}\n{tests}` module is run under `python -m unittest -v solution` inside a macOS `sandbox-exec` deny-by-default profile: network denied (no exfil/C2), home tree read-only (no `~/.ssh`, no dotfile tampering), only the per-run work dir writable, and **process-fork denied** so a poisoned completion (`import os; os.system(...)`, `subprocess.run`, `os.fork`) cannot spawn a sibling process. The interpreter itself runs; further forks are refused.
-- **Reward.** `reward = passed / total` parsed from the unittest verbose output. `Ran N tests` gives the total; `... ok` markers give the passed count (robust to the word "FAIL" in an assertion body). A collection error (no summary line) yields `total=0` → `reward=0.0`.
+- **Reward.** `reward = passed / total` parsed from the unittest verbose output. `Ran N tests` gives the total; `... ok` markers give the passed count (not confused by the word "FAIL" in an assertion body). A collection error (no summary line) yields `total=0` → `reward=0.0`.
 - **Timeout.** `timeout` (seconds, default `30`, must be positive) is the only wall-clock backstop against infinite loops — `unittest` itself has no time cap. A timeout returns `timed_out: true`, `reward: 0.0`, `error: "timed out after Ns"`.
 - **Fail-visible gate.** The endpoint is OFF by default. Set `FUSION_CODE_SANDBOX=on` to enable; unset it returns `503` (not a silent `200 reward 0.0`, which would read as "code ran, scored 0"). On a non-macOS host or a macOS host without `sandbox-exec`, the runner refuses to execute unsandboxed and returns a `503` with a `sandbox-exec not found` message. Missing/invalid body → `400`; runner exception → `500`.
 - **Why here, not the trainer.** Keeping the isolation primitive in fusion-mlx means one hardened surface for all training clients (the trainer, the CLI, future tooling) instead of N per-trainer sandboxes drifting apart. The trainer sends `{code, tests}` over HTTP and gets a reward number back — it never touches untrusted code directly.
@@ -2375,10 +2391,10 @@ Phase-2 hardening (PR #609), all real-model verified on Eagle3 + Llama-3.1-8B:
 - [API Reference](docs/api-reference.md) - All endpoints with request/response examples
 - [Architecture](docs/architecture.md) - EnginePool, Scheduler (25 modules), Cache layers, SmartRouter
 - [CLI Reference](docs/cli-reference.md) - All commands and flags
-- [Configuration](docs/configuration.md) - Memory tiers, scheduler settings, TurboQuant, aliases, executor pools
+- [Configuration](docs/config-reference.md) - Memory tiers, scheduler settings, TurboQuant, aliases, executor pools
 - [Speculative Decoding](docs/speculative-decoding.md) - Suffix/DFlash/DSpark/MTP/VLM-MTP methods, selection guide, auto-router
 - [Video Input](docs/video-input.md) - VLM video support: `video_url` API, frame extraction, Qwen native path, limits
-- [FR Differentiation](docs/FR_DIFFERENTIATION.md) - Verified analysis of fusion-mlx's spec-decode/TurboQuant/scheduling differentiation
+- [FR Differentiation](#whichllm-integration) - Verified analysis of fusion-mlx's spec-decode/TurboQuant/scheduling differentiation
 
 ## whichllm Integration
 

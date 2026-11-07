@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/speculative-decoding
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Speculative Decoding", en: "Speculative Decoding" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/speculative-decoding.md
+---
+
 # Speculative Decoding
 
 fusion-mlx ships **five speculative-decoding algorithms** — SuffixDecoding,
@@ -134,7 +150,7 @@ Text-only serve path only — the VLM serve path blocks MTP
 
 ### Per-model config
 
-In per-model settings (`docs/configuration.md` → Per-Model Settings):
+In per-model settings (`docs/config-reference.md` → Per-Model Settings):
 
 ```python
 {
@@ -386,7 +402,7 @@ remain usable from the admin panel, tests, and per-model settings.
   ~29.8 tok/s (single) and ~36 tok/s (concurrent) on Qwen3.6-27B were
   measured with spec decode enabled against a hybrid model — the output was
   incoherent and the speed was not real. Coherent ceiling for that model is
-  ~18.5 tok/s. See `docs/configuration.md` and the README Performance note.
+  ~18.5 tok/s. See `docs/config-reference.md` and the README Performance note.
 - **`mtp` requires a converted checkpoint.** Passing `--spec-decode mtp`
   against an unconverted checkpoint fails at boot (loud, not silent). Convert
   via the PR #990 `sanitize()` path that preserves `mtp.*` weights.
@@ -548,4 +564,4 @@ Memory: target + draft in-place load (~15 GB target + ~3.7 GB draft); M5 Max
 - `tests/unit/test_spec_auto_router.py` — full decision-table coverage
 - `tests/unit/test_dflash2_*.py` — DFlash2 bridge + integration tests
 - `docs/cli-reference.md` — `serve` flags, including all spec-decode toggles
-- `docs/configuration.md` — per-model spec settings
+- `docs/config-reference.md` — per-model spec settings

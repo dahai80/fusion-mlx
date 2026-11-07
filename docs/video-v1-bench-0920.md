@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/video-v1-bench-0920
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "PRD v1 Video Base Layer — Bench Report (2026-09-20)", en: "PRD v1 Video Base Layer — Bench Report (2026-09-20)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/video-v1-bench-0920.md
+---
+
 # PRD v1 Video Base Layer — Bench Report (2026-09-20)
 
 Real-model verification on M5 Max / MLX 0.32.0 / fusion-mlx 0.10.5.

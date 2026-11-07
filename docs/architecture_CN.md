@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/architecture
+product: fusion-mlx
+class: core
+entry: service
+doc_type: architecture
+title: { zh: "架构详解（中文）", en: "架构详解" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/architecture.md
+---
+
 # 架构详解
 
 [English](architecture.md) | 中文

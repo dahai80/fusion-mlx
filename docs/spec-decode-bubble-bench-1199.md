@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/spec-decode-bubble-bench-1199
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Spec-decode CPU↔GPU bubble-fraction bench (#1199)", en: "Spec-decode CPU↔GPU bubble-fraction bench (#1199)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/spec-decode-bubble-bench-1199.md
+---
+
 # Spec-decode CPU↔GPU bubble-fraction bench (#1199)
 
 Gate: implement the composite-MSL zero-CPU verification loop only if

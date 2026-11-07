@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/nvfp4-weight-reader
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "NVFP4 Weight Reader (#179)", en: "NVFP4 Weight Reader (#179)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/nvfp4-weight-reader.md
+---
+
 # NVFP4 Weight Reader (#179)
 
 Software dequantizer that lets FusionMLX load NVIDIA **NVFP4** weight

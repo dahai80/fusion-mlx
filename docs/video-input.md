@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/video-input
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Video Input", en: "Video Input" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/video-input.md
+---
+
 # Video Input
 
 Fusion-MLX's VLM engine (`VLMBatchedEngine`) accepts video as a first-class

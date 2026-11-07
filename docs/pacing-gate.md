@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/pacing-gate
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Submission pacing gate (#1197)", en: "Submission pacing gate (#1197)" }
+audience: engineer
+status: draft
+version: 0.10.52
+updated: 2026-11-07
+owner: @dahai
+source_of_truth:
+  - docs/pacing-gate.md
+---
+
 # Submission pacing gate (#1197)
 
 Per PRD `architecture/fusion-mlx-opti-prd-1014.md` F4/§6.1 (redefined): a
