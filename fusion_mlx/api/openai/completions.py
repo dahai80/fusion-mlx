@@ -285,6 +285,21 @@ async def list_models(
     except Exception:
         default_model = None
 
+    # #1511: catalog ids and the resolved default can spell the same model
+    # differently (HF repo id "mlx-community/Qwen3.5-4B" vs flattened cache
+    # key "mlx-community--Qwen3.5-4B"). Exact equality never matched, so
+    # default_for_chat stayed None on every entry and downstream default
+    # discovery degraded to first-entry order (agent-studio picked a 0.6B).
+    # Match on the pool's normalized repo-key form instead.
+    default_catalog_id: str | None = None
+    if default_model:
+        want = default_model.strip().lower().replace("/", "--")
+        for mid in model_ids:
+            key = mid.strip().lower().replace("/", "--")
+            if key == want:
+                default_catalog_id = mid
+                break
+
     models = [
         ModelInfo(
             id=mid,
@@ -294,7 +309,9 @@ async def list_models(
             modality=_resolve_modality(mid),
             capabilities=_resolve_capabilities(mid),
             languages=_resolve_languages(mid),
-            default_for_chat=True if (default_model and mid == default_model) else None,
+            default_for_chat=(
+                True if (default_catalog_id and mid == default_catalog_id) else None
+            ),
             context_length=_resolve_context_length(mid),
         )
         for mid in model_ids
@@ -314,4 +331,7 @@ async def list_models(
             )
         )
 
-    return ModelsResponse(data=models)
+    # #1511: top-level default — catalog id when the default matches a
+    # listed model, else the raw resolved id so consumers can still see
+    # what the engine would resolve "default" to.
+    return ModelsResponse(data=models, default=default_catalog_id or default_model)

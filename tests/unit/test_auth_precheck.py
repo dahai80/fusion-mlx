@@ -147,7 +147,98 @@ async def test_other_admin_path_still_prechecked_when_no_key(monkeypatch):
         sent.append(msg)
 
     mw = AuthPrecheckMiddleware(app)
+    scope = _scope(path="/admin/api/server-info", method="POST")
+    await mw(scope, receive, send)
+    assert not called
+    assert sent and sent[0]["status"] == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_login_excluded_from_precheck(monkeypatch):
+    # Login chicken-and-egg: with a key configured, the pre-check 401s the
+    # POST /admin/api/login body itself, so no client can ever obtain the
+    # session cookie. The login route enforces its own auth (E-32 rate
+    # limit + verify_api_key) — it must not be pre-checked.
+    monkeypatch.setattr(
+        "fusion_mlx.middleware.auth_precheck._get_configured_api_key",
+        lambda: "sk-test",
+    )
+    called = False
+
+    async def app(scope, receive, send):
+        nonlocal called
+        called = True
+
+    async def receive():
+        raise AssertionError("body must not be read on pass-through")
+
+    mw = AuthPrecheckMiddleware(app)
     scope = _scope(path="/admin/api/login", method="POST")
+    await mw(scope, receive, None)
+    assert called
+
+
+@pytest.mark.asyncio
+async def test_admin_write_with_valid_session_cookie_passes(monkeypatch):
+    # After POST /admin/api/login the client holds only the session cookie —
+    # no Authorization header. The header-only pre-check must honor the
+    # cookie for body-bearing /admin/ writes, else every post-login admin
+    # request (save settings, model download) 401s before require_admin runs.
+    from fusion_mlx.admin import auth as admin_auth
+
+    monkeypatch.setattr(
+        "fusion_mlx.middleware.auth_precheck._get_configured_api_key",
+        lambda: "sk-test",
+    )
+    token = admin_auth.create_session_token()
+    called = False
+
+    async def app(scope, receive, send):
+        nonlocal called
+        called = True
+
+    async def receive():
+        raise AssertionError("body must not be read on pass-through")
+
+    mw = AuthPrecheckMiddleware(app)
+    scope = _scope(path="/admin/api/global-settings", method="POST")
+    scope["headers"] = [
+        (b"content-length", b"4"),
+        (b"cookie", f"fusionmlx_admin_session={token}".encode("latin-1")),
+    ]
+    try:
+        await mw(scope, receive, None)
+    finally:
+        admin_auth._active_sessions.pop(token, None)
+    assert called
+
+
+@pytest.mark.asyncio
+async def test_admin_write_with_forged_session_cookie_rejected(monkeypatch):
+    monkeypatch.setattr(
+        "fusion_mlx.middleware.auth_precheck._get_configured_api_key",
+        lambda: "sk-test",
+    )
+    called = False
+
+    async def app(scope, receive, send):
+        nonlocal called
+        called = True
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    mw = AuthPrecheckMiddleware(app)
+    scope = _scope(path="/admin/api/global-settings", method="POST")
+    scope["headers"] = [
+        (b"content-length", b"4"),
+        (b"cookie", b"fusionmlx_admin_session=forged-token"),
+    ]
     await mw(scope, receive, send)
     assert not called
     assert sent and sent[0]["status"] == 401

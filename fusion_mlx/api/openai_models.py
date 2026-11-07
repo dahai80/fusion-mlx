@@ -762,6 +762,11 @@ class ModelsResponse(BaseModel):
 
     object: str = "list"
     data: list[ModelInfo]
+    # #1511: the engine's resolved default chat model (same value
+    # resolve_model("default") lands on), surfaced top-level so consumers
+    # don't have to scan entries for default_for_chat. Catalog-entry id form
+    # when the default matches a listed model, else the raw resolved id.
+    default: str | None = None
 
 
 # =============================================================================

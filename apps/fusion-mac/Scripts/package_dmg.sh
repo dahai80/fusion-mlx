@@ -147,8 +147,11 @@ hdiutil create \
     "$DMG_RW" >/dev/null
 
 # Mount and customize window
+# hdiutil output is tab-separated; a stale mount (crashed prior run) makes
+# the volume mount as "/Volumes/FusionMLX 2" etc, so whitespace awk $NF
+# grabs the trailing number instead of the path. Split on tabs.
 MOUNT_DIR=$(hdiutil attach "$DMG_RW" -readwrite -nobrowse | \
-            grep "/Volumes/FusionMLX" | awk '{print $NF}')
+            grep "/Volumes/FusionMLX" | awk -F'\t' '{print $NF}')
 
 # Set window size, icon positions via AppleScript
 osascript <<APPLESCRIPT >/dev/null 2>&1 || warn "AppleScript window layout failed (non-fatal)"

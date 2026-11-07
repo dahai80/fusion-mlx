@@ -1,4 +1,4 @@
-## [0.10.52] - 2026-11-07 — LSA serving: TurboQuant k8v4 coexistence, memory-budget gate, early prefill conversion (#1513)
+## [0.10.53] - 2026-11-07 — LSA serving: TurboQuant k8v4 coexistence, memory-budget gate, early prefill conversion (#1513)
 
 ### Added
 - **TurboQuant k8v4 + LSA serving coexistence (#1513)**: `--kv-cache-turboquant k8v4` quantizes keys to 8 bits / values to 4 bits while LSA serving stays enabled — the selection index rebuilds from dequantized rows (top-64 agreement 0.99 at 8-bit keys; 4-bit keys measured 0.83-0.91 and are refused for LSA). `K8V4TurboQuantKVCache` carries the dual-width codecs; merge/extract and the SSD prefix-cache store/restore preserve the k8v4 packed states, and repeat requests hit `cached_tokens` with full accuracy. The mode now resolves through `_effective_turboquant_mode()` (CLI wins over the settings file; previously `--kv-cache-turboquant k8v4` silently served 4-bit v4 keys).
@@ -8,6 +8,27 @@
 ### Fixed
 - **Long LSA requests rejected with 400 before prefill (#1513)**: `enforce_context_length` resolved the model context via getattr-only probing; checkpoints exposing `model.args` as a plain dict (Qwen3.8-27B) fell through to the tokenizer cap (262144). `get_model_max_context` now reads dict configs and prefers the budget-derived LSA context.
 - **k8v4 prefix-cache restore crashed with a concatenate shape mismatch (#1513)**: the SSD restore rebuilt codecs through the base TurboQuant class, inferring head_dim at 4 bits from the 8-bit packed width and dequantizing keys at 2x width. `rebuild_dequantized_kv` picks the codec width from the stored layer type.
+
+## [0.10.52] - 2026-11-06 — admin 401 fix + XcodeGen migration + /v1/models default marker (#1509, #1510, #1512)
+
+### Fixed
+- **Admin UI 401 chicken-and-egg (#1509)**: two stacked bugs blocked all admin authentication (macOS app, web admin) once an API key was configured. `AuthPrecheckMiddleware` 401'd `POST /admin/api/login` itself — the header-only pre-check cannot see a body-carried key, and it did not honor the session cookie on post-login admin writes (login + auto-login now excluded; cookie + loopback-skip relaxation honored). Session cookies were also set `Secure` over plain http, which URLSession/Safari store but never send back — `_cookie_secure()` now flags Secure only for real https or `X-Forwarded-Proto: https`. Verified end-to-end on prod (login 200, cookie write 200, wrong-key/forged-cookie/no-key 401).
+- **`/v1/models` default-model marker (#1512, #1511)**: the resolved default arrives as an HF repo id while catalog ids use flattened cache-key form — exact-equality matching never hit, `default_for_chat` stayed `None` everywhere, and downstream consumers degraded to first-entry order (agent-studio silently ran a 0.6B model for all seat agents). Matching now normalizes both sides (`/` → `--`), and the response gains a top-level `default` field (catalog id when listed, else the raw resolved id).
+
+### Added
+- **XcodeGen project generation (#1510, #1508)**: `apps/fusion-mac/project.yml` is now the source of truth for the macOS app project; the pbxproj becomes a generated artifact. `build.sh` auto-regenerates when the spec is newer and fails the build on orphaned Swift sources — the #1504 missing-sources failure mode is now structurally impossible. MarkdownUI SPM dependency declared; `package_dmg.sh` mount-point parsing fixed for suffixed volumes (tab-separated hdiutil output).
+
+## [0.10.51] - 2026-11-06 — #1505 restart forensics + macOS app build restoration (#1504, #1506)
+
+### Fixed
+- **`ngram_spec` snapshot DEBUG flood throttled (#1505)**: hybrid-GDN sessions with high acceptance emitted one "snapshotted N non-trimmable cache(s)" DEBUG line per spec step (~30 lines/s) on the event loop's synchronous logging path — the same wedge shape as the /metrics scraper flood (#1314). Now throttled to once per 60s.
+- **`/health` reports `started_at` (#1505)**: process-start epoch lets eval harnesses distinguish an engine restart (pid/started_at changed) from a transient network blip without scraping logs.
+- **`start.sh` keeps timestamped log copies (#1505)**: `server.log.<ts>.prev` survives double-restart overwrites; a repeat restart no longer destroys the only crash evidence (root cause of the lost 07:00-07:19 window in the #1505 investigation).
+- **macOS companion app restored to compilable + packaged (#1504)**: 10 orphaned Swift sources re-registered in project.pbxproj (app had been unbuildable since Jul 25), 12 compile errors fixed, 194 app tests green. `packaging/build.py` now maps vendored wheels (mflux-fusion) to file:// URIs so venvstacks lock works without registry lookups. `--lsa-map` registered in `ps` value flags; `--enable-lsa` in the non-routing flag allowlist.
+
+### Investigation notes (#1505)
+- The 08:22 "engine restart" was a whole-machine reboot (kern.boottime 08:21:59) + supervisor auto-start — not an engine defect.
+- fusion-tray SIGKILL at launch (codesigning Launch Constraint Violation) filed as fusion-supervisor#108.
 
 ## [0.10.50] - 2026-11-05 — stop clean-path exit fix (#1501)
 

@@ -235,9 +235,7 @@ def test_lsa_disables_auto_turboquant(monkeypatch, caplog):
     with caplog.at_level(logging.INFO):
         assert engine._turboquant_should_enable() is False
         assert engine._turboquant_kv_will_enable() is False
-    assert any(
-        "LSA needs explicit k8v4 mode" in r.message for r in caplog.records
-    )
+    assert any("LSA needs explicit k8v4 mode" in r.message for r in caplog.records)
 
     plain = BatchedEngine(
         model_name="dummy",
@@ -324,9 +322,7 @@ def test_effective_turboquant_mode_prefers_scheduler_config():
     from fusion_mlx.engines.batched import BatchedEngine
 
     engine = BatchedEngine.__new__(BatchedEngine)
-    engine._scheduler_config = SchedulerConfig(
-        kv_cache_turboquant_mode="k8v4"
-    )
+    engine._scheduler_config = SchedulerConfig(kv_cache_turboquant_mode="k8v4")
     engine._model_settings = ModelSettings()
     assert engine._effective_turboquant_mode() == "k8v4"
 

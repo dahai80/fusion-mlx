@@ -225,5 +225,69 @@ class TestRoutesInternalMarksDefault:
         assert "default_for_chat" not in payload
 
 
+class TestSlugFormDefaultMatching1511:
+    """#1511: resolved default is an HF repo id, catalog ids are flattened
+    cache keys ("/" → "--"). Exact equality never matched, so
+    default_for_chat stayed None everywhere and consumers (agent-studio)
+    degraded to first-entry order and picked a 0.6B model."""
+
+    def test_slug_form_default_marked(self):
+        pool = _make_pool(["mlx-community--Qwen3.5-4B-MLX-4bit", "FLUX.1-dev"])
+        with patch(
+            "fusion_mlx._cli_base.resolve_default_chat_model",
+            return_value="mlx-community/Qwen3.5-4B-MLX-4bit",
+        ):
+            client = _client(pool)
+            resp = client.get("/v1/models")
+        assert resp.status_code == 200
+        body = resp.json()
+        by_id = {m["id"]: m for m in body["data"]}
+        assert (
+            by_id["mlx-community--Qwen3.5-4B-MLX-4bit"].get("default_for_chat") is True
+        )
+        assert by_id["FLUX.1-dev"].get("default_for_chat") is None
+
+    def test_top_level_default_is_catalog_id(self):
+        pool = _make_pool(["mlx-community--Qwen3.5-4B-MLX-4bit"])
+        with patch(
+            "fusion_mlx._cli_base.resolve_default_chat_model",
+            return_value="mlx-community/Qwen3.5-4B-MLX-4bit",
+        ):
+            client = _client(pool)
+            resp = client.get("/v1/models")
+        assert resp.json()["default"] == "mlx-community--Qwen3.5-4B-MLX-4bit"
+
+    def test_top_level_default_raw_when_unmatched(self):
+        # Default resolves to a model not in the catalog — still surface the
+        # resolved id so consumers see the engine's configuration.
+        pool = _make_pool(["Qwen3-8B-4bit"])
+        with patch(
+            "fusion_mlx._cli_base.resolve_default_chat_model",
+            return_value="Some-Other-Model",
+        ):
+            client = _client(pool)
+            resp = client.get("/v1/models")
+        assert resp.json()["default"] == "Some-Other-Model"
+
+    def test_top_level_default_none_when_undecidable(self):
+        pool = _make_pool(["Qwen3-8B-4bit"])
+        with patch(
+            "fusion_mlx._cli_base.resolve_default_chat_model", return_value=None
+        ):
+            client = _client(pool)
+            resp = client.get("/v1/models")
+        assert resp.json()["default"] is None
+
+    def test_internal_route_matches_slug_form(self):
+        from fusion_mlx.routes_internal.models import _matches_default
+
+        assert _matches_default(
+            "mlx-community--Qwen3.5-4B-MLX-4bit",
+            "mlx-community/Qwen3.5-4B-MLX-4bit",
+        )
+        assert not _matches_default("Qwen3-8B-4bit", "Some-Other-Model")
+        assert not _matches_default("Qwen3-8B-4bit", None)
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

@@ -37,6 +37,19 @@ from .models import (
 
 _router = APIRouter()
 
+
+def _cookie_secure(request: Request) -> bool:
+    # Session cookies must only be marked Secure when the connection actually
+    # is HTTPS. The server is designed for http://127.0.0.1 — a Secure cookie
+    # set over plain http is stored by URLSession/Safari but never sent back,
+    # so every post-login admin request 401s. Real https or a TLS-terminating
+    # reverse proxy (X-Forwarded-Proto: https) keeps the Secure flag.
+    if request.url.scheme == "https":
+        return True
+    proto = request.headers.get("x-forwarded-proto", "")
+    return proto.split(",")[0].strip().lower() == "https"
+
+
 # =============================================================================
 # Authentication API Routes
 # =============================================================================
@@ -94,7 +107,7 @@ async def login(
         key="fusionmlx_admin_session",
         value=token,
         httponly=True,
-        secure=True,
+        secure=_cookie_secure(fastapi_request),
         samesite="lax",
         max_age=cookie_max_age,
     )
@@ -229,7 +242,7 @@ async def setup_api_key(
         key="fusionmlx_admin_session",
         value=token,
         httponly=True,
-        secure=True,
+        secure=_cookie_secure(fastapi_request),
         samesite="lax",
         max_age=86400,  # 24 hours
     )
@@ -287,7 +300,7 @@ async def auto_login(fastapi_request: Request, redirect: str = "/admin/dashboard
         key="fusionmlx_admin_session",
         value=token,
         httponly=True,
-        secure=True,
+        secure=_cookie_secure(fastapi_request),
         samesite="lax",
         max_age=86400,
     )
@@ -330,7 +343,7 @@ async def auto_login_get(
         key="fusionmlx_admin_session",
         value=token,
         httponly=True,
-        secure=True,
+        secure=_cookie_secure(fastapi_request),
         samesite="lax",
         max_age=86400,
     )

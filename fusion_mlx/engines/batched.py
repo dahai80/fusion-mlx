@@ -276,7 +276,9 @@ class BatchedEngine(BaseEngine):
         if enabled and bool(getattr(self._scheduler_config, "lsa_enabled", False)):
             # Coexistence needs explicit k8v4 (8-bit keys); auto-enable
             # would run 4-bit keys and degrade the LSA selection index
-            if not (explicit is not None and self._effective_turboquant_mode() == "k8v4"):
+            if not (
+                explicit is not None and self._effective_turboquant_mode() == "k8v4"
+            ):
                 return False
         return enabled
 
@@ -320,9 +322,7 @@ class BatchedEngine(BaseEngine):
             # 8-bit keys (probe: top-64 agreement 0.99 at 8 bits, 0.83-0.91
             # at 4 bits). Auto-enabled TQ runs 4-bit keys and stands down.
             if tq_explicit and self._effective_turboquant_mode() == "k8v4":
-                logger.info(
-                    "TurboQuant k8v4 + LSA coexistence enabled (8-bit keys)"
-                )
+                logger.info("TurboQuant k8v4 + LSA coexistence enabled (8-bit keys)")
             else:
                 tq_enabled = False
                 logger.info(
