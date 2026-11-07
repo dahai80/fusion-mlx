@@ -339,3 +339,30 @@ def test_effective_turboquant_mode_prefers_scheduler_config():
     engine._scheduler_config = SchedulerConfig()
     engine._model_settings = ModelSettings()
     assert engine._effective_turboquant_mode() == "v4"
+
+
+def test_turboquant_auto_note_false_for_explicit_request():
+    # the post-load block used to hardcode tq_explicit=False, so explicit
+    # --kv-cache-turboquant k8v4 boots logged "auto-enabled (4-bit)"
+    from fusion_mlx.engines.batched import BatchedEngine
+
+    engine = BatchedEngine.__new__(BatchedEngine)
+    engine._scheduler_config = SchedulerConfig(
+        kv_cache_turboquant=True, kv_cache_turboquant_mode="k8v4"
+    )
+    engine._model_settings = ModelSettings()
+    assert engine._turboquant_auto_note() is False
+
+    engine = BatchedEngine.__new__(BatchedEngine)
+    engine._scheduler_config = SchedulerConfig()
+    engine._model_settings = ModelSettings(turboquant_kv_enabled=True)
+    assert engine._turboquant_auto_note() is False
+
+
+def test_turboquant_auto_note_true_without_explicit_choice():
+    from fusion_mlx.engines.batched import BatchedEngine
+
+    engine = BatchedEngine.__new__(BatchedEngine)
+    engine._scheduler_config = SchedulerConfig()
+    engine._model_settings = ModelSettings()
+    assert engine._turboquant_auto_note() is True

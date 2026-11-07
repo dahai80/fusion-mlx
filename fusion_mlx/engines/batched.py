@@ -280,6 +280,13 @@ class BatchedEngine(BaseEngine):
                 return False
         return enabled
 
+    def _turboquant_auto_note(self) -> bool:
+        # True only when TQ is coming on with no operator choice at all
+        # (no --kv-cache-turboquant flag, no settings-file override); the
+        # post-load block used to hardcode this False, so explicit k8v4
+        # boots logged the "auto-enabled (4-bit)" note.
+        return self._turboquant_explicit() is None
+
     def _effective_turboquant_mode(self) -> str:
         return (
             getattr(self._scheduler_config, "kv_cache_turboquant_mode", None)
@@ -582,7 +589,6 @@ class BatchedEngine(BaseEngine):
         # ~4× for the KV portion.  On memory-bound models like Qwen3.6-27B
         # this gives a measurable advantage at 8K+ context lengths where KV
         # reads become a significant fraction of total step traffic.
-        tq_explicit = False
         if self._model_settings is not None:
             tq_enabled = self._turboquant_should_enable()
             if tq_enabled:
@@ -661,7 +667,7 @@ class BatchedEngine(BaseEngine):
                         e,
                         exc_info=True,
                     )
-                if not tq_explicit:
+                if self._turboquant_auto_note():
                     logger.info(
                         "TurboQuant KV cache auto-enabled (4-bit) — no explicit "
                         "model_settings override found; eligible model defaults to "
