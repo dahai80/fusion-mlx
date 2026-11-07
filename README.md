@@ -622,7 +622,11 @@ Constraints: `--enable-lsa` + `--kv-cache-turboquant` requires k8v4 mode (4-bit 
 are refused for LSA serving); `--enable-lsa` without `--lsa-map` fails at boot.
 RULER single-needle accuracy (needle at end of context) on Qwen3.8-27B: 4k and 32k
 2/2 HIT with cross-request prefix reuse (32k wall 132 s fresh vs 56 s restored);
-128k HIT on a fresh request. Diagnostics: set `LSA_SELECT_LOG=1` (optionally
+128k HIT on a fresh request. Same-session A/B at 32k (Qwen3.8-27B, needle at
+end of context, 3/3 HIT both arms): LSA+k8v4 decodes at ~1.5 tok/s vs ~6.8
+tok/s full-attention fp16 KV — the sparse decode path trades ~4.6x decode
+throughput for the packed KV footprint; prefill-side memory is the payoff at
+128k+. Diagnostics: set `LSA_SELECT_LOG=1` (optionally
 `LSA_PROBE_LO`/`LSA_PROBE_HI`) to log per-step selection state.
 
 ## API Compatibility
