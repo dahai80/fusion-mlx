@@ -591,7 +591,7 @@ The macOS app offers a mode toggle between:
 
 ## Latent Sparse Attention (LSA) Serving
 
-Long-context sparse decoding for `qwen3_5` full-attention layers (P2, validated on
+Long-context sparse decoding for `qwen3_5` full-attention layers (P2/P3, validated on
 Qwen3.8-27B). At serve time the adapter wraps every full-attention layer named in a
 distilled projection map: single-stream decode scores bucket centroids over an
 incremental index, expands the top-p buckets to top-k keys, and runs SDPA over the
@@ -603,14 +603,30 @@ of each request, which also covers radix cache hits.
 ```bash
 fusion-mlx serve models/qwen38-27b \
     --enable-lsa --lsa-map models/maps/qwen38_27b__long-16k-1M-heavy-key-and-query-d2048.safetensors \
-    --kv-cache-dtype bf16 --text-only
+    --kv-cache-turboquant k8v4 --text-only
 ```
 
-Constraints: the KV cache must stay bf16/fp16 (a quantized `--kv-cache-dtype` or
-`--kv-cache-turboquant` is refused at boot — the selection index reads raw keys);
-`--enable-lsa` without `--lsa-map` fails at boot. Measured on M5 Max bf16: 32k NIAH
-exact-match with decode ~8.3 tok/s vs ~5.9 tok/s full attention; 128k (~107k tokens)
-exact-match within the memory budget. Diagnostics: set `LSA_SELECT_LOG=1` (optionally
+TurboQuant k8v4 coexistence (#1513): with `--kv-cache-turboquant k8v4` the KV cache is
+quantized to 8-bit keys / 4-bit values after the first prefill chunk — every later
+chunk quantizes on append and prefill attention runs the quantized fast path, so the
+cache grows at the packed rate (~24.8 kB/token on this model) instead of fp16's
+64 kB/token. The LSA selection index is rebuilt from dequantized rows (8-bit keys keep
+top-64 agreement at 0.99; 4-bit keys measured 0.83-0.91 and are refused for LSA).
+SSD prefix-cache blocks store the packed states and restore across requests (16k
+repeat requests hit `cached_tokens` with full accuracy). A memory-budget gate arms the
+prefill guard with the TQ-accurate bytes/token and a unified-memory x 0.85 ceiling, and
+the API context preflight uses the budget-derived context instead of the tokenizer
+cap. fp16 LSA (no TurboQuant) remains supported with `--kv-cache-dtype bf16`.
+
+Constraints: `--enable-lsa` + `--kv-cache-turboquant` requires k8v4 mode (4-bit keys
+are refused for LSA serving); `--enable-lsa` without `--lsa-map` fails at boot.
+RULER single-needle accuracy (needle at end of context) on Qwen3.8-27B: 4k and 32k
+2/2 HIT with cross-request prefix reuse (32k wall 132 s fresh vs 56 s restored);
+128k HIT on a fresh request. Same-session A/B at 32k (Qwen3.8-27B, needle at
+end of context, 3/3 HIT both arms): LSA+k8v4 decodes at ~1.5 tok/s vs ~6.8
+tok/s full-attention fp16 KV — the sparse decode path trades ~4.6x decode
+throughput for the packed KV footprint; prefill-side memory is the payoff at
+128k+. Diagnostics: set `LSA_SELECT_LOG=1` (optionally
 `LSA_PROBE_LO`/`LSA_PROBE_HI`) to log per-step selection state.
 
 ## API Compatibility

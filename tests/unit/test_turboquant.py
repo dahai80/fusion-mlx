@@ -1074,3 +1074,135 @@ def test_batch_masked_decode_is_accurate():
     assert (
         rel < 0.05
     ), f"B>1 masked decode inaccurate (err {rel:.1%}) — RHT fix missing from pinned mlx-vlm?"
+
+
+def test_turboquant_convert_k8v4_mode_sets_key_codec_8bit():
+    """k8v4 mode must reach the codec: K quantized at 8 bits, V at 4.
+    The mode was previously read for logging only and both codecs silently
+    ran at `bits` (4-bit keys) — the LSA selection index cannot tolerate
+    4-bit keys (probe: top-64 agreement 0.83-0.91 vs 0.99 at 8 bits)."""
+    from types import SimpleNamespace
+
+    from mlx_lm.models.cache import KVCache
+
+    from fusion_mlx.scheduler import Scheduler
+
+    layer = KVCache()
+    layer.update_and_fetch(
+        mx.random.normal((1, 2, 8, 32)),
+        mx.random.normal((1, 2, 8, 32)),
+    )
+    mx.eval(layer.state)
+
+    ns = SimpleNamespace(
+        _turboquant_kv_bits=4.0,
+        _turboquant_skip_last=False,
+        _turboquant_kv_mode="k8v4",
+    )
+    converted = [layer]
+    Scheduler._apply_turboquant_kv_convert(ns, converted)
+
+    assert isinstance(converted[0], TurboQuantKVCache)
+    assert converted[0].key_codec.bits == 8
+    assert converted[0].value_codec.bits == 4
+
+
+def test_k8v4_gather_dequantize_matches_full_dequantize():
+    # the 1M-token path cannot hold a full fp16 dequantized copy of the KV
+    # cache (4 GB per layer at 1M tokens, 16 full-attention layers). Decode
+    # must gather the picked rows straight from the packed quantized state
+    # and dequantize only those; rows must match the full dequantize.
+    pytest.importorskip("mlx_vlm")
+    from fusion_mlx.turboquant_kv import make_turboquant_kv_cache
+
+    layer = KVCache()
+    keys = mx.random.normal((1, 2, 40, 32))
+    values = mx.random.normal((1, 2, 40, 32))
+    layer.update_and_fetch(keys, values)
+    layer.update_and_fetch(
+        mx.random.normal((1, 2, 8, 32)), mx.random.normal((1, 2, 8, 32))
+    )
+    tq = make_turboquant_kv_cache(4.0, "k8v4", source=layer)
+
+    picked = mx.array([0, 5, 39, 47], dtype=mx.int32)
+    gk, gv = tq.gather_dequantize(picked)
+    fk, fv = tq.dequantize()
+    assert gk.shape == (1, 2, 4, 32)
+    assert gv.shape == (1, 2, 4, 32)
+    # gather returns fp16 (attention dtype); full dequantize returns fp32
+    fk16, fv16 = fk.astype(mx.float16), fv.astype(mx.float16)
+    rel_k = float(mx.abs(gk - fk16[..., picked, :]).max() / mx.abs(fk16).max())
+    rel_v = float(mx.abs(gv - fv16[..., picked, :]).max() / mx.abs(fv16).max())
+    assert rel_k < 1e-5, f"gathered keys diverge from full dequantize ({rel_k})"
+    assert rel_v < 1e-5, f"gathered values diverge from full dequantize ({rel_v})"
+
+
+def test_batch_extract_preserves_k8v4_subclass():
+    # BatchGenerator.extract_cache calls extract(idx) at request
+    # completion; returning the base class dropped the k8v4 subclass so
+    # stored SSD blocks carried "TurboQuantKVCache" metadata and every
+    # prefix-cache lookup mismatched the K8V4 expected signature
+    import mlx.core as mx
+
+    from fusion_mlx.turboquant_kv import (
+        BatchTurboQuantKVCache,
+        K8V4TurboQuantKVCache,
+    )
+
+    caches = []
+    for _ in range(2):
+        c = K8V4TurboQuantKVCache(bits=4)
+        c.update_and_fetch(
+            mx.random.normal((1, 2, 16, 64)), mx.random.normal((1, 2, 16, 64))
+        )
+        caches.append(c)
+    batch = BatchTurboQuantKVCache.merge(caches)
+
+    single = batch.extract(0)
+    assert isinstance(single, K8V4TurboQuantKVCache)
+    assert single.key_codec is not None
+
+
+def test_k8v4_block_restore_dequantizes_to_true_head_dim():
+    # SSD restore path: stored k8v4 key state is packed at 8 bits
+    # (indices width = head_dim * 8 / 32). Rebuilding codecs with the
+    # plain TurboQuantKVCache (no key_bits) inferred head_dim from the
+    # 4-bit formula and dequantized keys at 2x width, crashing the live
+    # prefill append with a concatenate shape mismatch (512 vs 256).
+    import mlx.core as mx
+
+    from fusion_mlx.turboquant_kv import (
+        K8V4TurboQuantKVCache,
+        rebuild_dequantized_kv,
+    )
+
+    src = K8V4TurboQuantKVCache(bits=4, seed=42)
+    keys = mx.random.normal((1, 4, 64, 256))
+    values = mx.random.normal((1, 4, 64, 256))
+    src.update_and_fetch(keys, values)
+    ks, vs = src.state
+
+    dk, dv = rebuild_dequantized_kv("K8V4TurboQuantKVCache", ks, vs, bits=4.0, seed=42)
+    assert dk.shape == keys.shape, f"keys {dk.shape} != {keys.shape}"
+    assert dv.shape == values.shape, f"values {dv.shape} != {values.shape}"
+    rel = float(mx.abs(dk - keys).max() / mx.abs(keys).max())
+    assert rel < 0.2, f"dequantized keys diverge from source ({rel})"
+
+
+def test_v4_block_restore_dequantizes_to_true_head_dim():
+    # v4 blocks (4-bit keys, no key_bits) keep the bits-based inference.
+    import mlx.core as mx
+
+    from fusion_mlx.turboquant_kv import (
+        TurboQuantKVCache,
+        rebuild_dequantized_kv,
+    )
+
+    src = TurboQuantKVCache(bits=4, seed=42)
+    keys = mx.random.normal((1, 4, 64, 256))
+    values = mx.random.normal((1, 4, 64, 256))
+    src.update_and_fetch(keys, values)
+    ks, vs = src.state
+
+    dk, dv = rebuild_dequantized_kv("TurboQuantKVCache", ks, vs, bits=4.0, seed=42)
+    assert dk.shape == keys.shape, f"keys {dk.shape} != {keys.shape}"

@@ -232,15 +232,17 @@ fusion-mlx convert mlx-community/Qwen3.5-9B --quant-bits 8 --upload-repo me/my-r
 
 ## LSA 稀疏注意力长上下文（qwen3_5）
 
-针对 `qwen3_5` 全注意力层的长上下文稀疏解码（P2，Qwen3.8-27B 实测验证）。serve 时适配器按蒸馏投影 map 包裹每个全注意力层：单流 decode 用增量索引做质心打分，top-p 桶展开为 top-k keys，对选中 keys + sink + 滑窗执行 SDPA —— 完整 KV cache 照常维护，调度器可见面不变。prefill 与批量 decode 走稠密路径；每个请求首个 decode 步从 cache 重建选择索引，同时覆盖 radix cache 命中场景。
+针对 `qwen3_5` 全注意力层的长上下文稀疏解码（P2/P3，Qwen3.8-27B 实测验证）。serve 时适配器按蒸馏投影 map 包裹每个全注意力层：单流 decode 用增量索引做质心打分，top-p 桶展开为 top-k keys，对选中 keys + sink + 滑窗执行 SDPA —— 完整 KV cache 照常维护，调度器可见面不变。prefill 与批量 decode 走稠密路径；每个请求首个 decode 步从 cache 重建选择索引，同时覆盖 radix cache 命中场景。
 
 ```bash
 fusion-mlx serve models/qwen38-27b \
     --enable-lsa --lsa-map models/maps/qwen38_27b__long-16k-1M-heavy-key-and-query-d2048.safetensors \
-    --kv-cache-dtype bf16 --text-only
+    --kv-cache-turboquant k8v4 --text-only
 ```
 
-约束：KV cache 必须保持 bf16/fp16（量化 `--kv-cache-dtype` 或 `--kv-cache-turboquant` 启动即拒绝——选择索引读取原始 keys）；`--enable-lsa` 不带 `--lsa-map` 启动失败。M5 Max bf16 实测：32k NIAH 精确命中，decode ~8.3 tok/s（full attention ~5.9）；128k（约 10.7 万 tokens）在内存预算内精确命中。诊断：`LSA_SELECT_LOG=1`（可选 `LSA_PROBE_LO`/`LSA_PROBE_HI`）输出逐步选择状态。
+TurboQuant k8v4 共存（#1513）：`--kv-cache-turboquant k8v4` 下 KV cache 在首个 prefill chunk 后量化为 8-bit keys / 4-bit values —— 后续 chunk 追加即量化，prefill 注意力走量化快路径，cache 按打包速率增长（本模型约 24.8 kB/token，fp16 为 64 kB/token）。LSA 选择索引从反量化行重建（8-bit keys top-64 一致率 0.99；4-bit keys 实测 0.83-0.91，LSA 服务拒绝使用）。SSD prefix-cache 块存储打包状态并可跨请求恢复（16k 重复请求命中 `cached_tokens` 且精度无损）。内存预算门用 TQ 精确 bytes/token 预布 prefill 守卫（上限 = 统一内存 x 0.85），API 上下文预检采用预算推导的上下文而非 tokenizer 上限。fp16 LSA（不带 TurboQuant）继续以 `--kv-cache-dtype bf16` 支持。
+
+约束：`--enable-lsa` + `--kv-cache-turboquant` 要求 k8v4 模式（4-bit keys 对 LSA 服务启动即拒绝）；`--enable-lsa` 不带 `--lsa-map` 启动失败。Qwen3.8-27B RULER 单针精度（针位于上下文末尾）：4k 与 32k 均 2/2 命中且跨请求前缀复用生效（32k 墙钟 132 s 全新 vs 56 s 恢复）；128k 全新请求命中。同机同时段 A/B（32k，针位于上下文末尾，两臂各 3/3 命中）：LSA+k8v4 解码约 1.5 tok/s，全注意力 fp16 KV 约 6.8 tok/s —— 稀疏解码路径以约 4.6 倍解码吞吐换取打包 KV 内存占用；其收益在 128k+ 的 prefill 内存侧。诊断：`LSA_SELECT_LOG=1`（可选 `LSA_PROBE_LO`/`LSA_PROBE_HI`）输出逐步选择状态。
 
 ## API 兼容性
 

@@ -129,23 +129,30 @@ def serve_command(args):
     import os
     import sys
 
-    # LSA + TurboQuant both rewrite the attention/KV path in incompatible
-    # ways; refusing here beats a confusing ModelSettings ValueError at
-    # engine start.
-    if getattr(args, "enable_lsa", False) and getattr(
-        args, "kv_cache_turboquant", None
-    ):
-        sys.stderr.write(
-            "\n  --enable-lsa conflicts with --kv-cache-turboquant: LSA owns the\n"
-            "  full-attention decode path and requires unquantized KV in its\n"
-            "  selection window. Pick one.\n\n"
-        )
-        raise SystemExit(2)
+    # LSA + TurboQuant coexist in k8v4 mode: the selection index rebuilds
+    # from dequantized cache rows, and 8-bit keys keep top-k agreement at
+    # ~0.99 (TQ KV probe) while 4-bit keys measured 0.83-0.91. Any other
+    # mode quantizes keys at 4 bits - refuse rather than serve a silently
+    # degraded selection index.
+    if getattr(args, "enable_lsa", False):
+        tq_mode = getattr(args, "kv_cache_turboquant", None)
+        if tq_mode and tq_mode != "k8v4":
+            sys.stderr.write(
+                "\n  --enable-lsa with --kv-cache-turboquant requires mode k8v4\n"
+                "  (8-bit keys): the selection index rebuilds from dequantized\n"
+                "  key rows and 4-bit keys break top-k agreement. Restart with\n"
+                "  --kv-cache-turboquant k8v4 or drop one of the two flags.\n\n"
+            )
+            raise SystemExit(2)
 
     # a quantized KV dtype stores per-layer quantized tensors, so the
     # selection index cannot rebuild from cache.keys - refuse at boot
-    # instead of an AttributeError at the first decode step
-    if getattr(args, "enable_lsa", False):
+    # instead of an AttributeError at the first decode step. With
+    # --kv-cache-turboquant the dtype path is skipped entirely (TurboQuant
+    # owns the KV cache), so the default int4 is not a conflict there.
+    if getattr(args, "enable_lsa", False) and not getattr(
+        args, "kv_cache_turboquant", None
+    ):
         kv_dtype = str(getattr(args, "kv_cache_dtype", None) or "").lower()
         if kv_dtype in ("int4", "int8", "8bit", "4bit", "quantized"):
             sys.stderr.write(

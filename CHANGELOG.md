@@ -14,6 +14,17 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.53] - 2026-11-07 — LSA serving: TurboQuant k8v4 coexistence, memory-budget gate, early prefill conversion (#1513)
+
+### Added
+- **TurboQuant k8v4 + LSA serving coexistence (#1513)**: `--kv-cache-turboquant k8v4` quantizes keys to 8 bits / values to 4 bits while LSA serving stays enabled — the selection index rebuilds from dequantized rows (top-64 agreement 0.99 at 8-bit keys; 4-bit keys measured 0.83-0.91 and are refused for LSA). `K8V4TurboQuantKVCache` carries the dual-width codecs; merge/extract and the SSD prefix-cache store/restore preserve the k8v4 packed states, and repeat requests hit `cached_tokens` with full accuracy. The mode now resolves through `_effective_turboquant_mode()` (CLI wins over the settings file; previously `--kv-cache-turboquant k8v4` silently served 4-bit v4 keys).
+- **Early TurboQuant conversion for chunked prefill (#1513)**: the KV cache quantizes after the first prefill chunk instead of the post-prefill epilogue — prefill active memory grows at the packed ~24.8 kB/token instead of fp16's 64 kB/token (a 1.096M-token prefill held a flat 75.4 GB where the old path aborted at 424k tokens on the hard memory tier), and prefill attention runs the quantized `prefill_attention` fast path (~4.6x faster than fp16 in the linear phase). The #1423 outlier gate probes the first-chunk sample; a negative decision is final and the prefill stays fp16.
+- **LSA memory-budget hard gate (#1513)**: `arm_lsa_memory_budget` arms the prefill memory guard with TQ-accurate KV bytes/token (24832 B/token on Qwen3.8-27B) and a unified-memory x 0.85 ceiling, extracting model dims from `model.config`/`model.args` (dict or namespace, nested `text_config`) at engine-setup time. Live boot logs the armed ceiling and max context; 4k/16k needle runs show zero false rejections.
+
+### Fixed
+- **Long LSA requests rejected with 400 before prefill (#1513)**: `enforce_context_length` resolved the model context via getattr-only probing; checkpoints exposing `model.args` as a plain dict (Qwen3.8-27B) fell through to the tokenizer cap (262144). `get_model_max_context` now reads dict configs and prefers the budget-derived LSA context.
+- **k8v4 prefix-cache restore crashed with a concatenate shape mismatch (#1513)**: the SSD restore rebuilt codecs through the base TurboQuant class, inferring head_dim at 4 bits from the 8-bit packed width and dequantizing keys at 2x width. `rebuild_dequantized_kv` picks the codec width from the stored layer type.
+
 ## [0.10.52] - 2026-11-06 — admin 401 fix + XcodeGen migration + /v1/models default marker (#1509, #1510, #1512)
 
 ### Fixed

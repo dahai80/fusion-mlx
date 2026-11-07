@@ -17,7 +17,37 @@ _PATCHED = False
 _ORIGINAL_SDPA = None
 _LONG_PREFILL_QUANTIZED_THRESHOLD = 8192
 _LONG_PREFILL_QUERY_BLOCK_SIZE = 256
-_LONG_PREFILL_KEY_CHUNK_SIZE = 16384
+# 16384 halved to 8192: the 1M prefill run showed ~28 GB in-flight
+# attention transients over the 75 GB live set at deep context, tripping
+# the soft watermark (102 GB) for 10 consecutive enforcer polls -> busy
+# eviction at 986k. Per-iteration score buffers scale with the key chunk;
+# the vendored quantized_attention loop evals each chunk (online softmax),
+# so a smaller chunk trades eval round-trips for a lower peak.
+_LONG_PREFILL_KEY_CHUNK_SIZE = 8192
+
+# Deep-context route visibility: the 1M prefill abort was caused by
+# transients whose source route had to be inferred. Log which prefill
+# route runs (throttled) once the context is deep enough to matter.
+_ROUTE_LOG_TOKEN_THRESHOLD = 65536
+_ROUTE_LOG_EVERY = 64
+_route_log_count = 0
+
+
+def _log_prefill_route(route: str, total_tokens: int, L: int, key_chunk) -> None:
+    global _route_log_count
+    if total_tokens < _ROUTE_LOG_TOKEN_THRESHOLD:
+        return
+    _route_log_count += 1
+    if _route_log_count % _ROUTE_LOG_EVERY != 1:
+        return
+    logger.info(
+        "[tq-prefill-route] route=%s L=%d T=%d key_chunk=%s",
+        route,
+        L,
+        total_tokens,
+        key_chunk,
+    )
+
 
 _TQ_TYPES: tuple | None = None
 _TQ_TYPES_TRIED = False
@@ -128,6 +158,15 @@ def apply_turboquant_attention_patch() -> bool:
                 mask=mask,
             )
             if result is not None:
+                try:
+                    _log_prefill_route(
+                        "fast",
+                        _state_length(getattr(keys, "_state", keys)),
+                        queries.shape[2],
+                        None,
+                    )
+                except Exception:
+                    pass
                 return result
             keys_state = getattr(keys, "_state", keys)
             try:
@@ -144,6 +183,12 @@ def apply_turboquant_attention_patch() -> bool:
                 try:
                     real_cache.prefill_query_block_size = _LONG_PREFILL_QUERY_BLOCK_SIZE
                     real_cache.prefill_key_chunk_size = _LONG_PREFILL_KEY_CHUNK_SIZE
+                    _log_prefill_route(
+                        "quantized",
+                        total_tokens,
+                        queries.shape[2],
+                        _LONG_PREFILL_KEY_CHUNK_SIZE,
+                    )
                     return real_cache.quantized_attention(
                         queries,
                         keys_state=keys,
@@ -162,6 +207,7 @@ def apply_turboquant_attention_patch() -> bool:
                         real_cache.prefill_query_block_size = old_query_block_size
                     if old_key_chunk_size is not None:
                         real_cache.prefill_key_chunk_size = old_key_chunk_size
+            _log_prefill_route("dequant_sdpa", total_tokens, queries.shape[2], None)
             dequantized_keys, dequantized_values = real_cache.dequantize()
             return mx.fast.scaled_dot_product_attention(
                 queries,

@@ -1435,17 +1435,32 @@ def get_model_max_context(engine) -> int:
             return None
         return ivalue
 
+    # LSA serving extends the effective context past the model's native
+    # max_position_embeddings: the memory-budget gate computed the real
+    # ceiling (unified memory vs packed KV bytes/token). Without this
+    # override the tokenizer's native cap rejects every long LSA request
+    # with a 400 before prefill.
+    lsa_max_context = _maybe_int(getattr(engine, "_lsa_max_context_tokens", 0) or 0)
+    if lsa_max_context is not None:
+        return lsa_max_context
+
     model = getattr(engine, "_model", None) or getattr(engine, "model", None)
 
     if model is not None:
         args = getattr(model, "args", None)
         if args is not None:
             direct = _maybe_int(getattr(args, "max_position_embeddings", None))
+            if direct is None and isinstance(args, dict):
+                direct = _maybe_int(args.get("max_position_embeddings"))
             if direct is not None:
                 return direct
             text_cfg = getattr(args, "text_config", None)
+            if text_cfg is None and isinstance(args, dict):
+                text_cfg = args.get("text_config")
             if text_cfg is not None:
                 nested = _maybe_int(getattr(text_cfg, "max_position_embeddings", None))
+                if nested is None and isinstance(text_cfg, dict):
+                    nested = _maybe_int(text_cfg.get("max_position_embeddings"))
                 if nested is not None:
                     return nested
         config = getattr(model, "config", None)

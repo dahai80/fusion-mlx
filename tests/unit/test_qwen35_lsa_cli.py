@@ -235,7 +235,7 @@ def test_lsa_disables_auto_turboquant(monkeypatch, caplog):
     with caplog.at_level(logging.INFO):
         assert engine._turboquant_should_enable() is False
         assert engine._turboquant_kv_will_enable() is False
-    assert any("LSA owns the full-attention" in r.message for r in caplog.records)
+    assert any("LSA needs explicit k8v4 mode" in r.message for r in caplog.records)
 
     plain = BatchedEngine(
         model_name="dummy",
@@ -267,3 +267,98 @@ def test_serve_command_rejects_lsa_with_quantized_kv_dtype(monkeypatch, capsys):
     with pytest.raises(SystemExit):
         cli_mod.main()
     assert "kv-cache-dtype" in capsys.readouterr().err.lower()
+
+
+def test_lsa_with_explicit_k8v4_enables_turboquant():
+    # coexistence: explicit k8v4 keeps 8-bit keys, so the TQ selection
+    # index rebuild reads dequantized rows at probe-validated quality
+    from fusion_mlx.config import SchedulerConfig
+    from fusion_mlx.engines.batched import BatchedEngine
+    from fusion_mlx.model_settings import ModelSettings
+
+    engine = BatchedEngine(
+        model_name="dummy",
+        scheduler_config=SchedulerConfig(
+            lsa_enabled=True,
+            lsa_map_path="m.safetensors",
+            kv_cache_turboquant_mode="k8v4",
+        ),
+        model_settings=ModelSettings(turboquant_kv_enabled=True),
+    )
+    assert engine._turboquant_should_enable() is True
+    assert engine._turboquant_kv_will_enable() is True
+
+    v4 = BatchedEngine(
+        model_name="dummy",
+        scheduler_config=SchedulerConfig(
+            lsa_enabled=True,
+            lsa_map_path="m.safetensors",
+            kv_cache_turboquant_mode="v4",
+        ),
+        model_settings=ModelSettings(turboquant_kv_enabled=True),
+    )
+    assert v4._turboquant_should_enable() is False
+    assert v4._turboquant_kv_will_enable() is False
+
+    # the CLI flag is operator-explicit and wins over a settings-file False
+    flagged = BatchedEngine(
+        model_name="dummy",
+        scheduler_config=SchedulerConfig(
+            lsa_enabled=True,
+            lsa_map_path="m.safetensors",
+            kv_cache_turboquant=True,
+            kv_cache_turboquant_mode="k8v4",
+        ),
+        model_settings=ModelSettings(turboquant_kv_enabled=False),
+    )
+    assert flagged._turboquant_should_enable() is True
+    assert flagged._turboquant_kv_will_enable() is True
+
+
+def test_effective_turboquant_mode_prefers_scheduler_config():
+    # the settings push used to read model_settings only, so the CLI
+    # --kv-cache-turboquant k8v4 flag (scheduler_config) served v4 (4-bit
+    # keys) while the boot log claimed k8v4
+    from fusion_mlx.engines.batched import BatchedEngine
+
+    engine = BatchedEngine.__new__(BatchedEngine)
+    engine._scheduler_config = SchedulerConfig(kv_cache_turboquant_mode="k8v4")
+    engine._model_settings = ModelSettings()
+    assert engine._effective_turboquant_mode() == "k8v4"
+
+    engine._scheduler_config = SchedulerConfig()
+    engine._model_settings = ModelSettings(
+        turboquant_kv_enabled=True, turboquant_kv_bits=8
+    )
+    assert engine._effective_turboquant_mode() == "v4"
+
+    engine._scheduler_config = SchedulerConfig()
+    engine._model_settings = ModelSettings()
+    assert engine._effective_turboquant_mode() == "v4"
+
+
+def test_turboquant_auto_note_false_for_explicit_request():
+    # the post-load block used to hardcode tq_explicit=False, so explicit
+    # --kv-cache-turboquant k8v4 boots logged "auto-enabled (4-bit)"
+    from fusion_mlx.engines.batched import BatchedEngine
+
+    engine = BatchedEngine.__new__(BatchedEngine)
+    engine._scheduler_config = SchedulerConfig(
+        kv_cache_turboquant=True, kv_cache_turboquant_mode="k8v4"
+    )
+    engine._model_settings = ModelSettings()
+    assert engine._turboquant_auto_note() is False
+
+    engine = BatchedEngine.__new__(BatchedEngine)
+    engine._scheduler_config = SchedulerConfig()
+    engine._model_settings = ModelSettings(turboquant_kv_enabled=True)
+    assert engine._turboquant_auto_note() is False
+
+
+def test_turboquant_auto_note_true_without_explicit_choice():
+    from fusion_mlx.engines.batched import BatchedEngine
+
+    engine = BatchedEngine.__new__(BatchedEngine)
+    engine._scheduler_config = SchedulerConfig()
+    engine._model_settings = ModelSettings()
+    assert engine._turboquant_auto_note() is True

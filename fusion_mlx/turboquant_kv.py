@@ -63,7 +63,9 @@ __all__ = [
     "TurboQuantConfig",
     "TurboQuantKVCache",
     "BatchTurboQuantKVCache",
+    "K8V4TurboQuantKVCache",
     "auto_select_bits",
+    "make_turboquant_kv_cache",
     "turboquant_enabled",
 ]
 
@@ -102,6 +104,83 @@ def auto_select_bits(head_dim: int) -> int:
     return 3 if head_dim >= 96 else 4
 
 
+def _gather_dequantize(cache: TurboQuantKVCache, picked: mx.array):
+    # Dequantize only the picked rows, reading straight from the packed
+    # quantized state. A full fp16 dequantized copy of the cache costs
+    # ~4 GB per layer at 1M tokens (K+V, 4 kv heads x 256 dim, fp16) -
+    # unusable on the 1M path and a per-step copy burden at any length.
+    # Both k8v4 codecs are MSE codecs, whose state carries the time axis
+    # on axis 2 (norms [B,H,T], indices [B,H,T,G]) - a take_along_axis
+    # gather per component gives exactly the full dequantize's rows.
+    from mlx_vlm.turboquant import TurboQuantMSEState
+
+    keys_state, values_state = cache.state
+    if keys_state is None or values_state is None:
+        return None
+    if not isinstance(keys_state, TurboQuantMSEState) or not isinstance(
+        values_state, TurboQuantMSEState
+    ):
+        return None
+    idx = picked.astype(mx.int32)
+    keys = cache.key_codec.dequantize(
+        TurboQuantMSEState(
+            mx.take_along_axis(keys_state.norms, idx.reshape(1, 1, -1), axis=2),
+            mx.take_along_axis(keys_state.indices, idx.reshape(1, 1, -1, 1), axis=2),
+        )
+    )
+    values = cache.value_codec.dequantize(
+        TurboQuantMSEState(
+            mx.take_along_axis(values_state.norms, idx.reshape(1, 1, -1), axis=2),
+            mx.take_along_axis(values_state.indices, idx.reshape(1, 1, -1, 1), axis=2),
+        )
+    )
+    return keys.astype(mx.float16), values.astype(mx.float16)
+
+
+class K8V4TurboQuantKVCache(TurboQuantKVCache):
+    """k8v4 mode: keys at 8 bits, values at `bits` (4).
+
+    The pinned mlx_vlm TurboQuantKVCache carries a single bits knob and
+    quantizes keys and values at the same width. 8-bit keys matter for
+    LSA serving: the selection index reads key rows, and the TQ KV probe
+    measured top-64 agreement 0.99 at 8-bit keys vs 0.83-0.91 at 4-bit.
+    """
+
+    def __init__(self, bits: float = 4, key_bits: int = 8, seed: int = 0):
+        super().__init__(bits=bits, seed=seed)
+        self.key_bits = key_bits
+
+    def _ensure_codecs(self, keys: mx.array, values: mx.array):
+        if self.key_codec is None:
+            self.key_codec = _build_codec(
+                keys, self.key_bits, mode="mse", seed=self.seed
+            )
+        if self.value_codec is None:
+            self.value_codec = _build_codec(
+                values, self.bits, mode="mse", seed=self.seed + 1
+            )
+
+    def gather_dequantize(self, picked: mx.array):
+        return _gather_dequantize(self, picked)
+
+
+def make_turboquant_kv_cache(
+    bits: float, mode: str = "v4", seed: int = 0, source=None
+) -> TurboQuantKVCache:
+    # source: an existing cache whose fp16 state is quantized into the new
+    # cache (same contract as TurboQuantKVCache.from_cache)
+    cache = (
+        K8V4TurboQuantKVCache(bits=bits, seed=seed)
+        if mode == "k8v4"
+        else TurboQuantKVCache(bits=bits, seed=seed)
+    )
+    if source is not None:
+        keys, values = source.state
+        if keys is not None:
+            cache.update_and_fetch(keys, values)
+    return cache
+
+
 # ---------------------------------------------------------------------------
 # Codec rebuild for SSD cache reconstruction
 # ---------------------------------------------------------------------------
@@ -136,7 +215,10 @@ def _rebuild_codecs(tq_cache: TurboQuantKVCache, key_state, value_state) -> None
     bits = tq_cache.bits
     seed = tq_cache.seed
     fractional = not math.isclose(bits, round(bits), abs_tol=1e-6)
-    key_bits = int(math.floor(bits) if fractional else bits)
+    key_bits = getattr(tq_cache, "key_bits", None)
+    if key_bits is None:
+        key_bits = math.floor(bits) if fractional else bits
+    key_bits = int(key_bits)
     val_bits = int(math.ceil(bits) if fractional else bits)
 
     head_dim = _infer_head_dim(key_state, key_bits)
@@ -144,6 +226,27 @@ def _rebuild_codecs(tq_cache: TurboQuantKVCache, key_state, value_state) -> None
     dummy = mx.zeros((1, 1, 1, head_dim))
     tq_cache.key_codec = _build_codec(dummy, key_bits, mode="mse", seed=seed)
     tq_cache.value_codec = _build_codec(dummy, val_bits, mode="mse", seed=seed + 1)
+
+
+def rebuild_dequantized_kv(
+    cache_type_name: str, key_state, value_state, bits: float, seed: int
+):
+    """Rebuild TQ codecs for a stored packed state and dequantize to fp16.
+
+    The cache class must match how the state was packed: k8v4 keys are
+    stored at 8 bits, so rebuilding through the plain TurboQuantKVCache
+    (whose _rebuild_codecs falls back to `bits` for the key width)
+    infers head_dim at 2x and dequantizes keys at the wrong width.
+    """
+    if cache_type_name == "K8V4TurboQuantKVCache":
+        tq = K8V4TurboQuantKVCache(bits=bits, seed=seed)
+    else:
+        tq = TurboQuantKVCache(bits=bits, seed=seed)
+    tq.keys = key_state
+    tq.values = value_state
+    tq.offset = _state_length(key_state)
+    _rebuild_codecs(tq, key_state, value_state)
+    return tq.dequantize()
 
 
 def _concat_state_token_axis(states):
@@ -356,6 +459,12 @@ class BatchTurboQuantKVCache(TurboQuantKVCache):
 
     # prefill_attention and dequantize inherited from TurboQuantKVCache
 
+    def gather_dequantize(self, picked: mx.array):
+        # LSA decode gathers picked rows from the packed state (B=1 only;
+        # batch decode uses the dense path). Same contract as
+        # K8V4TurboQuantKVCache.gather_dequantize.
+        return _gather_dequantize(self, picked)
+
     # ---- batch operations --------------------------------------------------
 
     def _ensure_array_offset(self):
@@ -469,7 +578,22 @@ class BatchTurboQuantKVCache(TurboQuantKVCache):
         )
         end = padding + total
 
-        tq = TurboQuantKVCache(bits=self.bits, seed=self.seed)
+        # Preserve the concrete subclass: BatchGenerator.extract_cache
+        # stores the extracted cache per request, and a base-class return
+        # made k8v4 blocks carry "TurboQuantKVCache" metadata, mismatching
+        # the K8V4 expected signature on every later prefix-cache lookup.
+        # merge() propagates key_bits, so the batch wrapper itself may be
+        # the base class while carrying K8V4 per-layer caches.
+        is_k8v4 = isinstance(self, K8V4TurboQuantKVCache) or (
+            type(self) is BatchTurboQuantKVCache
+            and getattr(self, "key_bits", None) == 8
+        )
+        if is_k8v4:
+            tq = K8V4TurboQuantKVCache(
+                bits=self.bits, key_bits=getattr(self, "key_bits", 8), seed=self.seed
+            )
+        else:
+            tq = TurboQuantKVCache(bits=self.bits, seed=self.seed)
         if self.keys is not None:
             ks = _slice_state_range(self.keys, padding, end)
             vs = _slice_state_range(self.values, padding, end)
@@ -495,6 +619,16 @@ class BatchTurboQuantKVCache(TurboQuantKVCache):
         padding = [max_length - l for l in lengths]
 
         batch = cls(padding, bits=bits, seed=seed)
+        # Carry the k8v4 marker: any K8V4 source makes the batch K8V4, so
+        # extract(idx) can rebuild the right per-request subclass.
+        batch.key_bits = getattr(
+            next(
+                (c for c in caches if isinstance(c, K8V4TurboQuantKVCache)),
+                batch,
+            ),
+            "key_bits",
+            4,
+        )
 
         for c in caches:
             if c.key_codec is not None:

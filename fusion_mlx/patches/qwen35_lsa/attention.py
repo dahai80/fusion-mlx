@@ -47,6 +47,8 @@ def build_selector(
 class LsaAttention(nn.Module):
     # Drop-in replacement for one full-attention layer's module: owns the
     # original attention (all weights) and the layer's selection state.
+    _TQ_REBUILD_CHUNK = 4096
+
     def __init__(self, attn: nn.Module, selector: LsaLayerSelector):
         super().__init__()
         self.attn = attn
@@ -56,15 +58,23 @@ class LsaAttention(nn.Module):
         self._pending_rebuild = False
         self._state_width = 0
         self._state_rows = 0
+        self._tq_indexed = False
 
     def _observe_cache(self, cache) -> None:
         # Detect a new request or a reshaped batch without relying on object
         # identity alone: mlx_lm joins and leaves batches via in-place
         # extend/filter, which keeps the cache object but changes its batch
-        # width or shrinks its rows - either invalidates the selection index
+        # width or shrinks its rows - either invalidates the selection index.
+        # A TurboQuant cache stores packed quantized states with no array
+        # shape to read - sentinel -1 values leave identity as the only
+        # signal there (single-stream requests never reshape in place).
+        dequant = getattr(cache, "dequantize", None)
         cached = getattr(cache, "keys", None)
-        width = int(cached.shape[0]) if cached is not None else 0
-        rows = int(cached.shape[2]) if cached is not None else 0
+        if dequant is not None:
+            width, rows = -1, -1
+        else:
+            width = int(cached.shape[0]) if cached is not None else 0
+            rows = int(cached.shape[2]) if cached is not None else 0
         if (
             cache is not self._state_cache
             or width != self._state_width
@@ -122,27 +132,66 @@ class LsaAttention(nn.Module):
             )
 
         offset = int(cache.offset) if cache is not None else 0
-        if self._pending_rebuild:
+        dequant = getattr(cache, "dequantize", None) if cache is not None else None
+        if self._pending_rebuild or (dequant is not None and not self._tq_indexed):
             # RoPE touches only the first rotary_dim dims and the index reads
             # the remaining free dims, so the cache's post-rope keys are valid
             # index input; rebuild covers prefix rows a radix cache hit
             # restored without prefill passing through this layer
             self._pending_rebuild = False
-            cached = getattr(cache, "keys", None) if cache is not None else None
-            # KVCache.keys is a preallocated buffer padded with zero rows
-            # beyond offset - only the first offset rows are real keys
-            if cached is not None and offset > 0 and cached.shape[2] >= offset:
-                self.selector.reset()
-                self.selector.append_keys(cached[..., :offset, :])
+            if offset > 0:
+                if dequant is not None:
+                    # TurboQuant stores packed quantized states; the index
+                    # needs dequantized rows (8-bit keys keep top-k agreement
+                    # at ~0.99 per the TQ KV probe). Dequantize in chunks -
+                    # a whole-history fp16 copy costs ~4 GB per layer at 1M
+                    # tokens, so rows feed the index and are discarded.
+                    self._tq_indexed = True
+                    self.selector.reset()
+                    from mlx_vlm.turboquant import _slice_state_range
+
+                    for start in range(0, offset, self._TQ_REBUILD_CHUNK):
+                        end = min(start + self._TQ_REBUILD_CHUNK, offset)
+                        state = _slice_state_range(cache.state[0], start, end)
+                        chunk = cache.key_codec.dequantize(state)
+                        self.selector.append_keys(chunk.astype(keys.dtype))
+                else:
+                    cached = getattr(cache, "keys", None)
+                    # KVCache.keys is a preallocated buffer padded with zero
+                    # rows beyond offset - only the first offset rows are real
+                    if cached is not None and cached.shape[2] >= offset:
+                        self.selector.reset()
+                        self.selector.append_keys(cached[..., :offset, :])
+            elif dequant is not None:
+                self._tq_indexed = True
         self.selector.append_keys(keys)
         picked = self.selector.select(queries, offset)
         self.last_picked = picked
-        keys, values = cache.update_and_fetch(keys, values)
-        idx = picked.astype(mx.int32).reshape(1, 1, -1, 1)
-        keys_sel = mx.take_along_axis(keys, idx, axis=2)
-        values_sel = mx.take_along_axis(values, idx, axis=2)
+        if dequant is not None:
+            # the quantized state returned by update_and_fetch cannot be
+            # gathered along time, so decode gathers the picked rows straight
+            # from the packed quantized state and dequantizes only those
+            cache.update_and_fetch(keys, values)
+            keys_sel, values_sel = None, None
+        else:
+            keys, values = cache.update_and_fetch(keys, values)
+        if dequant is not None:
+            # read pads unused slots with -1; clamp them to row 0 and mask
+            # them out of the softmax instead of syncing on a slice
+            valid = picked >= 0
+            idx = mx.where(valid, picked, 0).astype(mx.int32)
+            keys_sel, values_sel = cache.gather_dequantize(idx)
+            attn_mask = (valid.astype(queries.dtype) - 1.0) * 1e9
+        else:
+            # read pads unused slots with -1; clamp them to row 0 and mask
+            # them out of the softmax instead of syncing on a kept_count slice
+            valid = picked >= 0
+            idx = mx.where(valid, picked, 0).astype(mx.int32).reshape(1, 1, -1, 1)
+            keys_sel = mx.take_along_axis(keys, idx, axis=2)
+            values_sel = mx.take_along_axis(values, idx, axis=2)
+            attn_mask = (valid.astype(queries.dtype) - 1.0) * 1e9
         output = scaled_dot_product_attention(
-            queries, keys_sel, values_sel, None, attn.scale, None
+            queries, keys_sel, values_sel, None, attn.scale, attn_mask
         )
         output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return attn.o_proj(output * mx.sigmoid(gate))

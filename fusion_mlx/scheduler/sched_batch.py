@@ -700,6 +700,18 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
     )
     state.tokens_processed += n
 
+    # Early TurboQuant conversion: quantize after the FIRST chunk instead
+    # of the post-prefill epilogue. During prefill the KV cache is plain
+    # fp16 (64 kB/token on Qwen3.8-27B), so a 1M-token prefill held 64 GB
+    # of fp16 KV and aborted at the hard memory tier at ~424k tokens; the
+    # packed 24.8 kB/token TQ state only applied to decode. Converting
+    # the first-chunk history (2048 tokens, ~8 MB/layer) and letting every
+    # later chunk quantize on append caps prefill KV at the packed size.
+    # Runs BEFORE the boundary snapshot so all blocks of one request are
+    # stored with the same (post-conversion) layer signature - mixed fp16
+    # and packed blocks of one layer are refused at restore.
+    _maybe_early_tq_convert(self, state)
+
     # Boundary snapshot
     if state.boundary_enabled:
         total_tokens = state.base_size + state.tokens_processed
@@ -800,9 +812,88 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
     # above may have already cleared under pressure; this is the
     # unconditional non-pressure-path clear.
     is_final = state.tokens_remaining.shape[1] == 0
+    # Long-prefill memory curve: the 1M-token run aborted at the hard
+    # tier (424k tokens, 114.1 GB) with ~45 GB unaccounted for. This
+    # per-chunk curve separates MLX active (live arrays), MLX cache
+    # (freed-but-cached buffers) and kernel phys_footprint so the
+    # dominant superlinear term can be identified instead of guessed.
+    if (state.base_size + state.total_length - 1) > 65536:
+        logger.info(
+            "[memcheck:chunk] rid=%s processed=%d/%d ctx=%d active=%.2fGB "
+            "peak=%.2fGB cache=%.2fGB phys=%.2fGB",
+            state.request.request_id,
+            state.base_size + state.tokens_processed,
+            state.base_size + state.total_length - 1,
+            state.base_size + state.total_length - 1,
+            mx.get_active_memory() / 1024**3,
+            mx.get_peak_memory() / 1024**3,
+            mx.get_cache_memory() / 1024**3,
+            get_phys_footprint() / 1024**3,
+        )
+        mx.reset_peak_memory()
     _sync_and_clear_cache(self._stream)
     self._last_mlx_active_memory_bytes = int(mx.get_active_memory())
     return is_final
+
+
+def _maybe_early_tq_convert(self, state: _PrefillState) -> None:
+    """Quantize the KV cache after the FIRST chunked-prefill chunk.
+
+    See the call site in _step_prefill_chunk for the memory rationale.
+    Once per request: the flag on the state guards repeats, and a
+    negative decision (outlier gate, no TQ bits) is final so the rest
+    of the prefill keeps fp16 without re-probing every chunk.
+    """
+    if getattr(state, "_tq_early_converted", False):
+        return
+    if getattr(self, "_turboquant_kv_bits", None) is None:
+        return
+    if not state.cache or not self._turboquant_eligible(state.cache):
+        return
+    from mlx_lm.models.cache import KVCache
+
+    convertible = any(
+        isinstance(c, KVCache)
+        or (hasattr(c, "caches") and any(isinstance(x, KVCache) for x in c.caches))
+        for c in state.cache
+    )
+    if not convertible:
+        # Nothing fp16 left to convert (restored TQ layers, already
+        # quantized, or a pure ArraysCache model) - final decision.
+        state._tq_early_converted = True
+        return
+    state._tq_early_converted = True
+    try:
+        from . import sched_cache as _sched_cache_mod
+        from .sched_token import _turboquant_kv_outlier_layers
+
+        _sched_cache_mod._materialize_cache_storage(state.cache)
+        _sync_and_clear_cache(self._stream)
+        # Outlier gate on the first-chunk sample instead of the full
+        # history: extreme KV key outliers are a per-layer property of
+        # the model, and 2048 tokens are statistically representative.
+        # Cancelling here leaves the whole prefill fp16 (old behavior).
+        if _turboquant_kv_outlier_layers(self, state.cache):
+            logger.warning(
+                "TurboQuant: early conversion skipped for %s - outlier key "
+                "states detected on the first chunk; prefill stays fp16",
+                state.request.request_id,
+            )
+            return
+        self._apply_turboquant_kv_convert(state.cache)
+        logger.info(
+            "TurboQuant: early conversion applied after first chunk for %s "
+            "(%d cache layers)",
+            state.request.request_id,
+            len(state.cache),
+        )
+    except Exception as e:
+        logger.warning(
+            "TurboQuant: early conversion failed for %s (%s) - prefill "
+            "continues fp16, epilogue will retry",
+            state.request.request_id,
+            e,
+        )
 
 
 def _emit_final_boundary_if_needed(self, state: _PrefillState) -> None:

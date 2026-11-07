@@ -474,14 +474,16 @@ def _apply_turboquant_kv_empty(self, prompt_cache: list[Any]) -> None:
     Skips the last KVCache layer if turboquant_skip_last is set.
     """
     from mlx_lm.models.cache import CacheList, KVCache
-    from mlx_vlm.turboquant import TurboQuantKVCache
 
     # Ensure TurboQuantKVCache.merge monkey-patch is applied before creating
     # instances — the patch is normally applied on import of
     # fusion_mlx.turboquant_kv, but this function imports TurboQuantKVCache
     # directly from mlx_vlm, so the patch may not have fired yet. Without it,
     # _merge_caches() raises "does not yet support batching with history".
-    from ..turboquant_kv import _apply_turboquant_merge_patch  # noqa: F401
+    from ..turboquant_kv import (  # noqa: F401
+        _apply_turboquant_merge_patch,
+        make_turboquant_kv_cache,
+    )
 
     _apply_turboquant_merge_patch()
 
@@ -500,13 +502,13 @@ def _apply_turboquant_kv_empty(self, prompt_cache: list[Any]) -> None:
         if isinstance(cache_obj, KVCache):
             if i == last_kv_idx:
                 continue
-            prompt_cache[i] = TurboQuantKVCache(bits=bits)
+            prompt_cache[i] = make_turboquant_kv_cache(bits, mode)
             converted += 1
         elif isinstance(cache_obj, CacheList):
             new_caches = []
             for c in cache_obj.caches:
                 if isinstance(c, KVCache):
-                    new_caches.append(TurboQuantKVCache(bits=bits))
+                    new_caches.append(make_turboquant_kv_cache(bits, mode))
                     converted += 1
                 else:
                     new_caches.append(c)
@@ -582,9 +584,11 @@ def _apply_turboquant_kv_convert(self, prompt_cache: list[Any]) -> None:
     Uses from_cache() to quantize the existing KV data.
     """
     from mlx_lm.models.cache import CacheList, KVCache
-    from mlx_vlm.turboquant import TurboQuantKVCache
 
-    from ..turboquant_kv import _apply_turboquant_merge_patch  # noqa: F401
+    from ..turboquant_kv import (  # noqa: F401
+        _apply_turboquant_merge_patch,
+        make_turboquant_kv_cache,
+    )
 
     _apply_turboquant_merge_patch()
 
@@ -613,13 +617,13 @@ def _apply_turboquant_kv_convert(self, prompt_cache: list[Any]) -> None:
         if isinstance(cache_obj, KVCache):
             if i == last_kv_idx:
                 continue
-            prompt_cache[i] = TurboQuantKVCache.from_cache(cache_obj, bits=bits)
+            prompt_cache[i] = make_turboquant_kv_cache(bits, mode, source=cache_obj)
             converted += 1
         elif isinstance(cache_obj, CacheList):
             new_caches = []
             for c in cache_obj.caches:
                 if isinstance(c, KVCache):
-                    new_caches.append(TurboQuantKVCache.from_cache(c, bits=bits))
+                    new_caches.append(make_turboquant_kv_cache(bits, mode, source=c))
                     converted += 1
                 else:
                     new_caches.append(c)

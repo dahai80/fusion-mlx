@@ -670,7 +670,11 @@ class BlockAwarePrefixCache(CacheManager):
                         "class_name", layer_state.get("cache_type", "KVCache")
                     )
                     if layer_state.get("class_name", "")
-                    in ("TurboQuantKVCache", "BatchTurboQuantKVCache")
+                    in (
+                        "TurboQuantKVCache",
+                        "BatchTurboQuantKVCache",
+                        "K8V4TurboQuantKVCache",
+                    )
                     else layer_state.get("cache_type", "KVCache")
                 )
                 for layer_state in cache_data
@@ -1183,7 +1187,11 @@ class BlockAwarePrefixCache(CacheManager):
 
                 handler = CacheTypeRegistry.get_handler_by_class_name(cache_type_name)
 
-                if cache_type_name in ("TurboQuantKVCache", "BatchTurboQuantKVCache"):
+                if cache_type_name in (
+                    "TurboQuantKVCache",
+                    "BatchTurboQuantKVCache",
+                    "K8V4TurboQuantKVCache",
+                ):
                     # TurboQuant v2: NamedTuple state from mlx-vlm
                     from ..turboquant_kv import _slice_state_range, _state_length
 
@@ -2329,12 +2337,12 @@ class BlockAwarePrefixCache(CacheManager):
                     continue
 
                 # === TurboQuantKVCache: concat NamedTuple states, reconstruct ===
-                if cache_type_name in ("TurboQuantKVCache", "BatchTurboQuantKVCache"):
-                    from ..turboquant_kv import (
-                        _concat_state,
-                        _rebuild_codecs,
-                        _state_length,
-                    )
+                if cache_type_name in (
+                    "TurboQuantKVCache",
+                    "BatchTurboQuantKVCache",
+                    "K8V4TurboQuantKVCache",
+                ):
+                    from ..turboquant_kv import _concat_state
 
                     key_states, value_states = [], []
                     for block_data in all_block_data:
@@ -2351,6 +2359,32 @@ class BlockAwarePrefixCache(CacheManager):
                     if not key_states:
                         logger.debug(f"TQ layer {layer_idx}: no block data")
                         return None
+
+                    # Blocks written under different TQ codecs (v4 4-bit
+                    # keys vs k8v4 8-bit keys) carry different packed
+                    # widths; concatenating them crashes with a shape
+                    # mismatch. Refuse the restore instead - the request
+                    # falls back to a full recompute.
+                    def _tq_state_sig(s):
+                        if hasattr(s, "_state"):
+                            s = s._state
+                        if hasattr(s, "indices"):
+                            return ("tq", tuple(s.indices.shape))
+                        if hasattr(s, "shape"):
+                            return ("raw", tuple(s.shape))
+                        return ("other",)
+
+                    key_sigs = {_tq_state_sig(s) for s in key_states}
+                    val_sigs = {_tq_state_sig(s) for s in value_states}
+                    if len(key_sigs) > 1 or len(val_sigs) > 1:
+                        logger.warning(
+                            "TQ layer %d: mixed packed-state widths %s/%s "
+                            "across blocks - refusing restore",
+                            layer_idx,
+                            sorted(key_sigs),
+                            sorted(val_sigs),
+                        )
+                        return None
                     # Concatenate along token dimension
                     cat_ks = key_states[0]
                     for s in key_states[1:]:
@@ -2360,7 +2394,8 @@ class BlockAwarePrefixCache(CacheManager):
                         cat_vs = _concat_state(cat_vs, s)
                     try:
                         from mlx_lm.models.cache import KVCache
-                        from mlx_vlm.turboquant import TurboQuantKVCache
+
+                        from ..turboquant_kv import rebuild_dequantized_kv
 
                         tq_bits = 4.0
                         tq_seed = 0
@@ -2374,12 +2409,12 @@ class BlockAwarePrefixCache(CacheManager):
                             tq_seed = int(ms[2])
                         # Dequantize back to fp16 KVCache for merge compatibility.
                         # TQ will be re-applied at decode start (lazy quantization).
-                        tq = TurboQuantKVCache(bits=tq_bits, seed=tq_seed)
-                        tq.keys = cat_ks
-                        tq.values = cat_vs
-                        tq.offset = _state_length(cat_ks)
-                        _rebuild_codecs(tq, cat_ks, cat_vs)
-                        keys, values = tq.dequantize()
+                        # The class must match the stored packing: k8v4 keys
+                        # are 8-bit, a plain TurboQuantKVCache would rebuild
+                        # codecs at 4-bit and dequantize keys at 2x width.
+                        keys, values = rebuild_dequantized_kv(
+                            cache_type_name, cat_ks, cat_vs, tq_bits, tq_seed
+                        )
                         cache = KVCache()
                         cache.keys = keys
                         cache.values = values
