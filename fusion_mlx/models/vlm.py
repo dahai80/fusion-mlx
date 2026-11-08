@@ -218,6 +218,11 @@ class VLMModelAdapter(nn.Module):
                     self._vlm_model._set_position_state(input_ids)
                 result = self._language_model(input_ids, cache=cache, **kwargs)
 
+        # MTP speculative decode calls with return_hidden=True and needs the
+        # full LanguageModelOutput (logits + hidden_states); stripping to
+        # bare logits there makes _call_backbone see an unexpected shape.
+        if kwargs.get("return_hidden", False):
+            return result
         return result.logits if hasattr(result, "logits") else result
 
     def _forward_with_embeddings(
