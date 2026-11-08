@@ -830,6 +830,29 @@ def _step_prefill_chunk(self, state: _PrefillState) -> bool:
             mx.get_cache_memory() / 1024**3,
             get_phys_footprint() / 1024**3,
         )
+        # Metal buffer-count exhaustion (resource limit ~500k live buffers)
+        # killed 1M decode before the first token even with healthy bytes
+        # (108GB/128GB phys). MLX exposes no buffer count, so count live
+        # mx.array objects via gc - env-gated because the walk is O(heap).
+        if os.environ.get("HSA_COUNT_MX_ARRAYS") == "1":
+            import gc as _gc
+
+            from mlx.core import array as _mx_array
+
+            _n = 0
+            _bytes = 0
+            for _o in _gc.get_objects():
+                if isinstance(_o, _mx_array):
+                    _n += 1
+                    _b = getattr(_o, "nbytes", 0)
+                    if isinstance(_b, int):
+                        _bytes += _b
+            logger.info(
+                "[memcheck:arrays] rid=%s live_arrays=%d live_bytes=%.2fGB",
+                state.request.request_id,
+                _n,
+                _bytes / 1024**3,
+            )
         mx.reset_peak_memory()
     _sync_and_clear_cache(self._stream)
     self._last_mlx_active_memory_bytes = int(mx.get_active_memory())
