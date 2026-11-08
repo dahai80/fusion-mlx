@@ -88,7 +88,9 @@ class TestV1ModelsContextLength:
             resp = client.get("/v1/models")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert len(data) == 1
+        # #1518: the built-in replay-dev card is appended after pool ids.
+        assert len(data) == 2
+        assert data[0]["id"] == "Qwen3-8B-4bit"
         assert data[0]["context_length"] == 40960
 
     def test_from_engine_fallback(self):

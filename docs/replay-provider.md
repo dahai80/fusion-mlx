@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/replay-provider
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Replay 提供者", en: "Replay Provider" }
+audience: engineer
+status: draft
+version: 0.10.55
+updated: 2026-11-08
+owner: @dahai
+source_of_truth:
+  - docs/replay-provider.md
+---
+
 # Replay provider (`replay-dev`)
 
 Deterministic, zero-GPU model for pipeline E2E structural runs (#1518).
