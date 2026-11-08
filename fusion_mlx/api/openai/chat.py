@@ -622,6 +622,16 @@ async def chat_completions(
     if is_markitdown_model(request.model):
         return await _create_markitdown_chat_completion(request)
 
+    # #1518: deterministic replay provider — zero-GPU, never reaches the
+    # executor or pool. Must sit before the executor health gate.
+    from ..replay import is_replay_model
+
+    if is_replay_model(request.model):
+        from .replay import _create_replay_chat_completion
+
+        logger.info("Replay /chat: deterministic reply (no engine dispatch)")
+        return await _create_replay_chat_completion(request)
+
     # #226 IDOR scope: bind recorded session stats to the authenticated caller.
     principal = request_principal(http_request)
     # #1169: fast-fail if the LLM executor was poisoned by the G2 watchdog

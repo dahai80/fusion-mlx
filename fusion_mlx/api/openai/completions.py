@@ -262,8 +262,22 @@ async def list_models(
     _auth: bool = Depends(verify_api_key),
 ) -> ModelsResponse:
     """List available models."""
+
+    def _replay_card() -> ModelInfo:
+        # #1518: deterministic replay provider — always listed, test-tier
+        # so chat-default pickers never select it in production paths.
+        return ModelInfo(
+            id=REPLAY_MODEL_ID,
+            object="model",
+            created=int(time.time()),
+            owned_by="system",
+            capabilities={"tier": "test"},
+        )
+
+    from ..replay import REPLAY_MODEL_ID
+
     if _common._pool is None:
-        return ModelsResponse(data=[])
+        return ModelsResponse(data=[_replay_card()])
 
     try:
         model_ids = (
@@ -330,6 +344,9 @@ async def list_models(
                 owned_by="system",
             )
         )
+
+    # #1518: replay card on the pooled path too.
+    models.append(_replay_card())
 
     # #1511: top-level default — catalog id when the default matches a
     # listed model, else the raw resolved id so consumers can still see

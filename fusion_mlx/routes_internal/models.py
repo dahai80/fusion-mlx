@@ -308,6 +308,13 @@ async def list_models(_auth: bool = Depends(verify_api_key)):
                 "routes_internal.models: pool enumeration failed", exc_info=True
             )
     logger.info("routes_internal.models: /v1/models listed %d entries", len(data))
+    # #1518: deterministic replay provider — test-tier card so consumers
+    # can pin structural E2E seats to it; chat-default matching never
+    # selects it (replay-dev is not in the alias/registry config).
+    from ..api.replay import REPLAY_MODEL_ID
+
+    if REPLAY_MODEL_ID not in {entry["id"] for entry in data}:
+        data.append(_entry_payload(REPLAY_MODEL_ID, None, None, "text", ["test"]))
     # #1511: top-level default — catalog id when the resolved default matches
     # a listed entry (normalized, see _matches_default), else the raw
     # resolved id so consumers still see the engine's configured default.
