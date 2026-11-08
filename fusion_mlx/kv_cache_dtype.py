@@ -91,6 +91,37 @@ _SLIDING_WINDOW_MODEL_TYPES: frozenset[str] = frozenset(
     }
 )
 
+# Hybrid GDN (linear-attention + full-attention) families — #1517.
+# Measured regression on Qwen3.8-27B-4bit (M5 Max 128G, mlx-lm 0.31.3):
+# KV8 decode 12.2 vs KV16 27.7 tok/s at 2K ctx; 9.8 vs 23.7 at 8K. The
+# mlx-lm quantized-SDPA path (two quantized_matmul + explicit softmax)
+# pays dequant overhead every step, and a hybrid GDN model's KV cache
+# (64 KiB/token) is small next to the ~15 GB weight stream — so the
+# bandwidth win never materializes while the dequant tax is paid on the
+# full-attention layers. KV8 peak memory did not drop either (20.7 vs
+# 18.8 GiB at 32K). Forced bf16 until a fused single-pass dequant
+# attention kernel lands (evidence: benchmarks/reports/m5max_kv_gateA_*
+# on exp/m5max-kv-baseline-11645).
+_HYBRID_GDN_PATTERNS: tuple[str, ...] = (
+    "qwen3.5",
+    "qwen3_5",
+    "qwen3.8",
+    "qwen3_8",
+    "qwen3-next",
+    "qwen3_next",
+)
+
+_HYBRID_GDN_MODEL_TYPES: frozenset[str] = frozenset(
+    {
+        "qwen3_5",
+        "qwen3_8",
+        "qwen3_next",
+        "qwen3_5_text",
+        "qwen3_8_text",
+        "qwen3_next_text",
+    }
+)
+
 
 @dataclass(frozen=True)
 class KVCacheDtypeDecision:
@@ -195,6 +226,29 @@ def _is_mla(
     return name_hit
 
 
+def _is_hybrid_gdn(
+    *,
+    model_name: str,
+    hf_path: str | None,
+    hf_config: dict[str, Any] | None,
+    alias_metadata: dict[str, Any] | None,
+) -> bool:
+    """Return True when the model is a hybrid GDN (linear + full attention)
+    architecture (Qwen3.5/3.8/next family). Detection order mirrors the
+    sliding-window checker: alias metadata → HF ``model_type`` → name
+    substring."""
+    if alias_metadata is not None and alias_metadata.get("hybrid_gdn"):
+        return True
+
+    if hf_config is not None:
+        model_type = hf_config.get("model_type")
+        if isinstance(model_type, str) and model_type in _HYBRID_GDN_MODEL_TYPES:
+            return True
+
+    needle = f"{model_name or ''} {hf_path or ''}".lower()
+    return any(pat in needle for pat in _HYBRID_GDN_PATTERNS)
+
+
 def resolve_kv_cache_dtype(
     requested: str,
     *,
@@ -294,6 +348,25 @@ def resolve_kv_cache_dtype(
                 f"MLA architecture detected (K projection already "
                 f"compressed via q_lora_rank/kv_lora_rank); falling back "
                 f"from {requested} to bf16 to avoid compounding error"
+            )
+            return KVCacheDtypeDecision(
+                dtype="bf16",
+                reason=reason,
+                downgraded=True,
+                requested=requested,
+            )
+
+        if _is_hybrid_gdn(
+            model_name=model_name or "",
+            hf_path=hf_path,
+            hf_config=hf_config,
+            alias_metadata=alias_metadata,
+        ):
+            reason = (
+                f"hybrid GDN attention detected (quantized-SDPA dequant "
+                f"overhead outweighs the bandwidth win on a small KV "
+                f"cache; measured 2x decode regression on Qwen3.8-27B, "
+                f"#1517); falling back from {requested} to bf16"
             )
             return KVCacheDtypeDecision(
                 dtype="bf16",
