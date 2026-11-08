@@ -1291,16 +1291,31 @@ def dflash2_spec_step(
 
     current_offset = int(current_offset)
 
-    first_step = drafter._last_hidden is None
-    # Clear stale verify hidden — the regular step's forward refreshed
-    # model._hidden_states to the current 1-token position. Without this,
-    # get_hidden returns the 5-token hidden from the previous verify
-    # forward, causing the draft to propose with wrong context.
-    drafter._last_hidden = None
-    if first_step:
-        drafter.align_draft_cache(current_offset)
-
+    # Build propose context hidden: stored verify hidden (previous spec
+    # step) + the current step's forward hidden (1-token regular decode,
+    # or the accepted-replay after rollback). Mirrors standalone dflash,
+    # which proposes from the previous verify forward's hidden. Do NOT
+    # clear _last_hidden here — clearing it left only the 1-token decode
+    # hidden, which both crashes RotatingKVCache (negative
+    # max_size - offset in _update_in_place) and strips the drafter of
+    # all context beyond its cache history.
     hidden = drafter.get_hidden(inner_model)
+    if hidden is None or int(hidden.shape[1]) < 2:
+        # Bootstrap: before the first verify there is no stored hidden and
+        # only the 1-token regular decode hidden. Seed _last_hidden with it
+        # so the next step has a 2-token context; until then skip (regular
+        # decode already emitted this step's token).
+        if drafter._last_hidden is None:
+            _hs = getattr(inner_model, "_hidden_states", None)
+            if _hs and all(h is not None for h in _hs):
+                drafter._last_hidden = mx.concatenate(_hs, axis=-1)
+        return []
+
+    # Rope-align draft caches so the pushed chunk ends at
+    # current_offset - 1 (the newest token). Replaces the old
+    # first-step-only align_draft_cache, which drifted by len(hidden)
+    # every step.
+    drafter.sync_draft_cache(current_offset, int(hidden.shape[1]))
 
     try:
         with mx.stream(scheduler._stream):
@@ -1364,6 +1379,13 @@ def dflash2_spec_step(
         if trim_count > 0:
             _trim_trimmable(prompt_cache, trim_count)
     _rollback_ms = (time.perf_counter() - _rb0) * 1000
+
+    # Store the verify/accepted-replay hidden for the NEXT propose. On the
+    # hybrid path the accepted-replay forward has just refreshed
+    # _hidden_states to the accepted region only — exactly the context the
+    # next chunk needs. Without this the next step falls back to the
+    # 1-token regular decode hidden and the drafter goes context-blind.
+    drafter.store_verify_hidden(inner_model)
 
     # Draft cache: after propose the draft advanced by block_size. Trim
     # to match the target's post-step offset (current_offset + n_accepted).

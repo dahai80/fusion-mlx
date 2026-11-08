@@ -741,24 +741,42 @@ class VLMBatchedEngine(BaseEngine):
             from ..speculative.dflash2 import load_runtime as load_dflash2_runtime
             from ..speculative.dflash2.presets import resolve_preset
 
+            # VLMBatchedEngine has no `_model` attribute; the preset detector
+            # needs the loaded language model (adapter wraps it as
+            # `_language_model`). Same target the drafter binds to below.
+            _sched = self._engine.engine.scheduler
+            _preset_model = (
+                getattr(_sched.model, "_language_model", None) or _sched.model
+            )
             _preset = resolve_preset(
                 self._model_name,
-                self._model,
+                _preset_model,
                 (
                     getattr(self._model_settings, "quant_bits", None)
                     if self._model_settings
                     else None
                 ),
             )
-            block_size = (
-                (
+            # Hybrid preset forces its own block_size (replay-on-rejection
+            # economics); the scheduler_config default (5) must not override
+            # it via the `or` chain. Mirrors batched.py.
+            _hybrid_preset = getattr(_preset, "hybrid", False)
+            if _hybrid_preset:
+                block_size = (
                     getattr(self._model_settings, "dflash2_block_size", None)
                     if self._model_settings
                     else None
+                ) or _preset.block_size
+            else:
+                block_size = (
+                    (
+                        getattr(self._model_settings, "dflash2_block_size", None)
+                        if self._model_settings
+                        else None
+                    )
+                    or getattr(self._scheduler_config, "dflash2_block_size", 0)
+                    or _preset.block_size
                 )
-                or getattr(self._scheduler_config, "dflash2_block_size", 0)
-                or _preset.block_size
-            )
             draft_bits = (
                 getattr(self._model_settings, "dflash2_draft_bits", None)
                 if self._model_settings
