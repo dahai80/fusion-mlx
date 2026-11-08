@@ -128,7 +128,8 @@ def test_no_pool_single_model_unchanged():
     with _mounted(model_name=raw_id, pool=None) as client:
         body = client.get("/v1/models").json()
     ids = [e["id"] for e in body["data"]]
-    assert ids == [raw_id]
+    # #1518: the built-in replay-dev card trails the served model.
+    assert ids == [raw_id, "replay-dev"]
     entry = _by_id(body, raw_id)
     assert entry["loaded"] is True
     assert entry["state"] == "loaded"

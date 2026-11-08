@@ -14,6 +14,11 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.55] - 2026-11-08 — deterministic replay provider for pipeline E2E (#1518)
+
+### Added
+- **`replay-dev` free deterministic replay model (#1518)**: a built-in zero-GPU pseudo-model for structural E2E runs — requests never touch the engine pool, executor, or GPU. Echo mode replies with the verbatim last user message; when the last user message contains the `[REPLAY_JSON]` marker the reply is a canned schema-shaped JSON object. Streaming (single-delta SSE) and non-streaming shapes supported, token usage always zero. `/v1/models` lists it with `capabilities: {"tier": "test"}` and `owned_by: "system"` so chat-default pickers never select it in production paths (the default resolver reads the alias/registry config where replay-dev is not registered). Reachable through fusion-gateway with no extra configuration. Seat-pinning guide: `docs/replay-provider.md`.
+
 ## [0.10.54] - 2026-11-08 — hybrid GDN KV-cache dtype default forced to bf16 (#1517)
 
 ### Fixed
