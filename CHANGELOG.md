@@ -14,6 +14,11 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.54] - 2026-11-08 — hybrid GDN KV-cache dtype default forced to bf16 (#1517)
+
+### Fixed
+- **`kv-cache-dtype` default int4 was a measured regression on hybrid GDN models (#1517)**: on Qwen3.8-27B-4bit (model_type `qwen3_5`, linear + full attention mix) the mlx-lm quantized-SDPA path pays dequant overhead on every step while the KV cache (64 KiB/token) is tiny next to the ~15 GB weight stream — KV8 decode ran 12.2 vs KV16 27.7 tok/s at 2K ctx (9.8 vs 23.7 at 8K), and peak memory did not drop either. Any serve deployment that did not pass `--kv-cache-dtype` explicitly silently ran the slow path. The Qwen3.5/3.8/next hybrid family is now safelisted to bf16 (alias metadata `hybrid_gdn`, HF `model_type` incl. `_text` inner variants, or name-pattern hit); explicit operator dtypes other than the default are still honored, and `--reasoning` still wins. Revisit only if a fused single-pass dequant attention kernel lands.
+
 ## [0.10.53] - 2026-11-07 — LSA serving: TurboQuant k8v4 coexistence, memory-budget gate, early prefill conversion (#1513)
 
 ### Added

@@ -199,6 +199,66 @@ def test_mla_rank_pair_with_name_hit_downgrades():
 
 
 # ---------------------------------------------------------------------------
+# Hybrid GDN safelist (#1517)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name", ["Qwen3.8-27B-4bit", "qwen3_8-27b", "z-lab/Qwen3.5-9B", "qwen3-next-80b"]
+)
+def test_hybrid_gdn_name_downgrades_int4_to_bf16(name):
+    d = resolve_kv_cache_dtype("int4", model_name=name)
+    assert d.dtype == "bf16"
+    assert d.downgraded is True
+    assert d.requested == "int4"
+
+
+@pytest.mark.parametrize(
+    "mt",
+    ["qwen3_5", "qwen3_8", "qwen3_next", "qwen3_5_text", "qwen3_8_text"],
+)
+def test_hybrid_gdn_hf_config_model_type_downgrades(mt):
+    d = resolve_kv_cache_dtype("int4", model_name="anon", hf_config={"model_type": mt})
+    assert d.dtype == "bf16"
+    assert d.downgraded is True
+
+
+def test_hybrid_gdn_alias_metadata_overrides():
+    d = resolve_kv_cache_dtype(
+        "int4", model_name="anon-no-name-hit", alias_metadata={"hybrid_gdn": True}
+    )
+    assert d.dtype == "bf16"
+    assert d.downgraded is True
+
+
+def test_hybrid_gdn_hf_path_triggers():
+    d = resolve_kv_cache_dtype(
+        "int4", model_name="anon", hf_path="mlx-community/Qwen3.8-27B-MLX-4bit"
+    )
+    assert d.dtype == "bf16"
+    assert d.downgraded is True
+
+
+def test_plain_qwen3_not_downgraded():
+    # Dense Qwen3 (no dot/underscore-5/8/next family marker) keeps int4.
+    d = resolve_kv_cache_dtype("int4", model_name="qwen3-8b")
+    assert d.dtype == "int4"
+    assert d.downgraded is False
+
+
+def test_hybrid_gdn_explicit_bf16_not_marked_downgraded():
+    d = resolve_kv_cache_dtype("bf16", model_name="Qwen3.8-27B-4bit")
+    assert d.dtype == "bf16"
+    assert d.downgraded is False
+
+
+def test_reasoning_wins_over_hybrid_gdn():
+    d = resolve_kv_cache_dtype("int4", reasoning=True, model_name="Qwen3.8-27B-4bit")
+    assert d.dtype == "int8"
+    assert d.downgraded is True
+
+
+# ---------------------------------------------------------------------------
 # log_kv_cache_decision — smoke (must not raise, must populate msg)
 # ---------------------------------------------------------------------------
 
