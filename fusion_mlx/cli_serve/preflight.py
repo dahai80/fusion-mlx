@@ -162,7 +162,14 @@ def _gather_kv_cache_dtype_inputs(model_name: str) -> tuple[dict | None, dict | 
 
         hf_path = (alias_meta or {}).get("hf_path") or model_name
         if hf_path:
-            cached = _cache_lookup(repo_id=hf_path, filename="config.json")
+            if _os.path.isdir(hf_path):
+                # Local model directory (e.g. a side-loaded checkpoint):
+                # try_to_load_from_cache only knows the HF hub cache
+                # layout and would return None for a plain path.
+                local_cfg = _os.path.join(hf_path, "config.json")
+                cached = local_cfg if _os.path.exists(local_cfg) else None
+            else:
+                cached = _cache_lookup(repo_id=hf_path, filename="config.json")
             if cached and _os.path.exists(cached):
                 with open(cached) as fh:
                     hf_cfg = _json.load(fh)
