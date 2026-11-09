@@ -519,12 +519,21 @@ do_start() {
     log_info "Server PID: ${serve_pid}"
 
     # With preload, increase health timeout (models can take 10-30s each)
-    local health_timeout=120
-    if [[ -n "${preload_models}" ]]; then
-        local model_count
-        model_count=$(echo "${preload_models}" | tr ',' '\n' | wc -l | tr -d ' ')
-        health_timeout=$(( 120 + model_count * 60 ))
-        log_info "Extended health timeout to ${health_timeout}s for ${model_count} preload models"
+    # #1524: operator override for the readiness deadline. On oversubscribed
+    # hosts process init + model load can exceed the default long before the
+    # server is slow — R-16 then kills a boot that was seconds from ready.
+    local health_timeout
+    if [[ -n "${FUSION_MLX_START_READY_TIMEOUT:-}" ]]; then
+        health_timeout="${FUSION_MLX_START_READY_TIMEOUT}"
+        log_info "Readiness timeout overridden to ${health_timeout}s (FUSION_MLX_START_READY_TIMEOUT)"
+    else
+        health_timeout=120
+        if [[ -n "${preload_models}" ]]; then
+            local model_count
+            model_count=$(echo "${preload_models}" | tr ',' '\n' | wc -l | tr -d ' ')
+            health_timeout=$(( 120 + model_count * 60 ))
+            log_info "Extended health timeout to ${health_timeout}s for ${model_count} preload models"
+        fi
     fi
 
     if wait_healthy "${health_timeout}"; then
