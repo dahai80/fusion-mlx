@@ -7,12 +7,17 @@ doc_type: changelog
 title: { zh: "变更日志", en: "Changelog" }
 audience: engineer
 status: draft
-version: 0.10.56
+version: 0.10.57
 updated: 2026-11-09
 owner: @dahai
 source_of_truth:
   - CHANGELOG.md
 ---
+
+## [0.10.57] - 2026-11-09 — start.sh readiness timeout override (#1524)
+
+### Fixed
+- **start.sh killed boots that were seconds from readiness on oversubscribed hosts (#1524, PR #1525)**: the readiness deadline was hardcoded at 120 s. Under heavy system load (measured: load 200 on 18 cores, 6.5/8 GB swap) process init alone took ~114 s and model load degraded 4 s -> 32 s, so the deadline expired and the R-16 half-init cleanup killed freshly launched serve children — in the worst observed case in the same second `Application startup complete` logged. `FUSION_MLX_START_READY_TIMEOUT` now overrides the deadline (unset keeps the current 120 s + 60 s per preload model behavior), and the effective timeout is logged at start.
 
 ## [0.10.56] - 2026-11-09 — native MTP speculative decode repaired on the mlx-vlm path (#1522)
 
