@@ -7,12 +7,18 @@ doc_type: changelog
 title: { zh: "变更日志", en: "Changelog" }
 audience: engineer
 status: draft
-version: 0.10.52
-updated: 2026-11-07
+version: 0.10.56
+updated: 2026-11-09
 owner: @dahai
 source_of_truth:
   - CHANGELOG.md
 ---
+
+## [0.10.56] - 2026-11-09 — native MTP speculative decode repaired on the mlx-vlm path (#1522)
+
+### Fixed
+- **Native MTP speculative decode broken on the mlx-vlm (VLM) path (#1522)**: three seams between the VLM adapter and the `mlx_vlm_mtp` patch stack broke the chain-of-K draft cycle — (1) `VLMModelAdapter._forward` stripped `LanguageModelOutput` to bare logits unconditionally, so MTP calls made with `return_hidden=True` saw an unexpected shape (the full logits + hidden_states output is now passed through when `return_hidden` is set); (2) the patched `mtp_forward` in both `qwen35_vlm_runtime` and `qwen35_moe_vlm_runtime` did not accept `return_hidden`, dropping the post-norm hidden handoff the next draft cycle needs (both now return `(logits, mtp_out)` — same convention as the mlx-lm text-side MTP cycle); and (3) serve preflight failed to resolve `config.json` for side-loaded local checkpoints (plain directory paths are now read directly instead of the HF hub cache lookup), so MTP gating ran against the wrong model capabilities.
+- **Vendor checksum manifest regenerated** after the `mlx_vlm_mtp` patch changes (`patches.checksums.json`).
 
 ## [0.10.55] - 2026-11-08 — deterministic replay provider for pipeline E2E (#1518)
 
