@@ -1067,7 +1067,7 @@ do_doctor() {
 }
 
 # ── Web module bridge (#1276) ───────────────────────────────────────
-WEB_PORT="${FUSION_MLX_WEB_PORT:-11471}"
+WEB_PORT="${FUSION_MLX_WEB_PORT:-11513}"
 web_pid() {
     lsof -tiTCP:"${WEB_PORT}" -sTCP:LISTEN -t 2>/dev/null | head -1
 }

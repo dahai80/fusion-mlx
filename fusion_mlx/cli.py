@@ -1832,13 +1832,13 @@ Examples:
     # + shell gateway registration. Lives in admin/webserve.py.
     web_serve_parser = subparsers.add_parser(
         "web-serve",
-        help="Serve the web monitor UI (web/dist) + engine API proxy on :11471",
+        help="Serve the web monitor UI (web/dist) + engine API proxy on :11513",
     )
     web_serve_parser.add_argument(
         "--port",
         type=int,
-        default=11471,
-        help="Port for the web module bridge (default: 11471)",
+        default=11513,
+        help="Port for the web module bridge (default: 11513; worktree override, main repo keeps 11471)",
     )
     web_serve_parser.add_argument(
         "--host",
