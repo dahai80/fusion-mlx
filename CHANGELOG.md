@@ -7,12 +7,17 @@ doc_type: changelog
 title: { zh: "变更日志", en: "Changelog" }
 audience: engineer
 status: draft
-version: 0.10.57
-updated: 2026-11-09
+version: 0.10.58
+updated: 2026-11-10
 owner: @dahai
 source_of_truth:
   - CHANGELOG.md
 ---
+
+## [0.10.58] - 2026-11-10 — scoped-key routes accept admin session cookie (#1527)
+
+### Fixed
+- **macOS app got HTTP 401 on model load/list/unload while downloads worked (#1527, PR #1526)**: routes guarded by `verify_scoped_api_key` accepted only Bearer/x-api-key headers, but the app (FusionClient) authenticates by logging in once and sending the `fusionmlx_admin_session` cookie — it never attaches an Authorization header. Downloads worked because `require_admin` honors the cookie. `verify_scoped_api_key` now falls back to a valid admin session check, same policy as `require_admin`. Covered by `tests/unit/test_scoped_session_auth_1526.py` (cookie grants admin role; missing/invalid cookie still 401).
 
 ## [0.10.57] - 2026-11-09 — start.sh readiness timeout override (#1524)
 
