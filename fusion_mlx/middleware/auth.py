@@ -397,6 +397,22 @@ async def verify_scoped_api_key(
     bearer_key = credentials.credentials if credentials is not None else None
     api_key = bearer_key or request.headers.get("x-api-key")
     if not api_key:
+        # #1526: the macOS app (FusionClient) authenticates by logging in
+        # once and sending the admin session cookie — it never attaches an
+        # Authorization header. Routes guarded by verify_scoped_api_key
+        # (/admin/api/models/{id}/load|unload, /admin/api/models) rejected
+        # every such request with 401 even though the session was valid
+        # (downloads worked because require_admin DOES honor the cookie).
+        # Accept a valid admin session here, same policy as require_admin.
+        try:
+            from ..admin.auth import verify_session_from_request
+
+            if verify_session_from_request(request):
+                return "admin"
+        except HTTPException:
+            raise
+        except Exception:
+            logger.debug("admin session check unavailable", exc_info=True)
         raise HTTPException(status_code=401, detail="API key required")
     role = _extract_scoped_role(api_key)
     if role is not None:
