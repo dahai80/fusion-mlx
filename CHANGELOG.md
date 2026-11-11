@@ -14,6 +14,16 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.59] - 2026-11-11 — per-request speculative draft width + acceptance counters over REST (#1528)
+
+### Added
+- **Per-request speculative draft width on the OpenAI chat/completions API (#1528, PR #1529)**: request bodies accept an optional `speculative: {"draft_tokens": 1-4}` field that overrides the server-default native MTP chain width for that request. The override is honored on the single-request pure-decode path (bench sweeps are serial); batched traffic falls back to the server default since the chain-K verify round is batch-uniform. The field is echoed back on the response (`speculative` on both ChatCompletionResponse and CompletionResponse) so the caller can tell an applied request from one that fell back — effect is verifiable via the new acceptance counters below. Out-of-range values (0, 5, negative) are rejected at parse time by pydantic validation.
+- **Speculative-decode acceptance counters over REST (#1528)**: the vendored native MTP patch now accumulates `verifies` / `drafted` / `accepted` / `full_accepts` per server process. Exposed at two surfaces: `/v1/metrics` emits `fusion_mlx_spec_decode_{accepted_total,drafted_total,accept_rate,acceptance_length}` (labeled `strategy="mtp_native"`, `acceptance_length = accepted/verifies + 1`), and `/stats` returns `spec_decode.mtp_native` with the same snapshot. Counters are per process lifetime, reset on restart.
+
+### Fixed
+- **qwen35 tier-prefill tests skip when the fusion-lsa/hsa sibling packages are absent** (CI rest2 shard collection error — these deps live in sibling repos, not in CI requirements).
+- **`ps` command PID matching no longer substring-matches runtime counters** (e.g. uptime `498444h26m` falsely containing a PID).
+
 ## [0.10.58] - 2026-11-10 — scoped-key routes accept admin session cookie (#1527)
 
 ### Fixed
