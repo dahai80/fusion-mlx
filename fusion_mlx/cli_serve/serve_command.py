@@ -609,6 +609,7 @@ def serve_command(args):
         lsa_enabled=getattr(args, "enable_lsa", False),
         lsa_map_path=getattr(args, "lsa_map_path", None),
         tier_weights_path=getattr(args, "tier_weights_path", None),
+        tier_latent_clamp=getattr(args, "tier_latent_clamp", None),
         # R15-P1 #302/#313: --spec-decode {none,mtp,dflash}. Plumb the
         # raw choice through; the boot-time eligibility check below
         # validates that ``mtp`` was only passed for a config.json with

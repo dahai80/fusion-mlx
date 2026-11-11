@@ -179,6 +179,7 @@ class SchedulerConfig:
     # full-attention layer prefill beyond the tier threshold runs the
     # three-tier kernel (window + landmarks + learned block-mean latent).
     tier_weights_path: str | None = None
+    tier_latent_clamp: float | None = None
 
     # SuffixDecoding
     enable_suffix_decoding: bool = False

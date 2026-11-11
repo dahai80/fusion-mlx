@@ -80,6 +80,7 @@ class LsaAttention(nn.Module):
             tc.block_size,
             w_q_lat,
             w_k_lat,
+            latent_clamp=tc.latent_clamp,
             q_offset=int(keys.shape[2]) - queries.shape[2],
         )
         output = out.astype(queries.dtype).transpose(1, 0, 2).reshape(1, queries.shape[2], -1)

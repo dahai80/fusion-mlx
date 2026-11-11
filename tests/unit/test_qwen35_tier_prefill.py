@@ -83,3 +83,20 @@ def test_tier_threshold_gate():
     tier_armed = lambda total: total > TIER_THRESHOLD
     assert not tier_armed(4096)
     assert tier_armed(4097)
+
+
+def test_tier_prefill_passes_latent_clamp():
+    # latent_clamp set on the config must reach the kernel: clamped output
+    # differs from the unclamped one when latent logits exceed the clamp.
+    rng = np.random.default_rng(7)
+    Hq, Hkv, D, L, T = 4, 2, 8, 6, 64
+    w_q = rng.standard_normal((Hq * D, 16)).astype(np.float16)
+    w_k = rng.standard_normal((Hkv * D, 16)).astype(np.float16)
+    weights = {3: (mx.array(w_q), mx.array(w_k))}
+    plain = TierConfig(8, 16, 16, weights)
+    clamped = TierConfig(8, 16, 16, weights, 0.5)
+    wrapper, queries, gate, keys, values, attn = _make_attention(plain, L, T, Hq, Hkv, D)
+    unclamped = wrapper._tier_prefill(queries, gate, keys, values, attn)
+    wrapper.tier = clamped
+    clamped_out = wrapper._tier_prefill(queries, gate, keys, values, attn)
+    assert not np.allclose(np.array(unclamped), np.array(clamped_out))

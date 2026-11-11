@@ -198,7 +198,11 @@ def _apply_lsa_wrap(model: Any, model_settings: Any) -> Any:
     if tier_path:
         from ..patches.qwen35_lsa.tier import load_tier_config
 
-        tier_config = load_tier_config(tier_path, num_layers=len(layers))
+        tier_config = load_tier_config(
+            tier_path,
+            num_layers=len(layers),
+            latent_clamp=getattr(model_settings, "tier_latent_clamp", None),
+        )
     wrap_lsa_layers(layers, lsa_map, rotary_dim, kv_heads, tier_config=tier_config)
     return model
 

@@ -449,6 +449,14 @@ Examples:
         "When set with --enable-lsa, full-attention layer prefill above the "
         "tier threshold runs the three-tier kernel instead of dense SDPA.",
     )
+    serve_parser.add_argument(
+        "--tier-latent-clamp",
+        dest="tier_latent_clamp",
+        type=float,
+        default=None,
+        help="Clamp on three-tier latent logits. Counteracts latent-collapse "
+        "extrapolation on long-context prefill; None disables clamping.",
+    )
     # TurboQuant KV cache compression (experimental, R15 Phase 4).
     #
     # Accepts an optional mode value:

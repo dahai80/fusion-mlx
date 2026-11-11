@@ -32,9 +32,12 @@ class TierConfig:
     latent_dim: int
     # layer index in the decoder layer list -> (w_q_lat, w_k_lat) as mx arrays
     weights: dict[int, tuple[mx.array, mx.array]]
+    # Clamp on the latent logits; counteracts the latent-collapse
+    # extrapolation failure (§4.3) that makes long-context prefill flaky.
+    latent_clamp: float | None = None
 
 
-def load_tier_config(path: str, num_layers: int) -> TierConfig:
+def load_tier_config(path: str, num_layers: int, latent_clamp: float | None = None) -> TierConfig:
     # Fail-loud at boot: a bad path or a layer mismatch must stop the serve,
     # not degrade to dense prefill silently mid-flight.
     from safetensors import safe_open
@@ -61,9 +64,9 @@ def load_tier_config(path: str, num_layers: int) -> TierConfig:
             weights[index] = tuple(w.astype(mx.float16) for w in weights[index])
     if not weights:
         raise ValueError(f"tier weights {path} carries no layer projections")
-    config = TierConfig(window, block_size, latent_dim, weights)
+    config = TierConfig(window, block_size, latent_dim, weights, latent_clamp)
     logger.info(
-        "tier prefill armed: %d layers, window=%d block=%d latent=%d threshold=%d (%s)",
-        len(weights), window, block_size, latent_dim, TIER_THRESHOLD, path,
+        "tier prefill armed: %d layers, window=%d block=%d latent=%d threshold=%d clamp=%s (%s)",
+        len(weights), window, block_size, latent_dim, TIER_THRESHOLD, latent_clamp, path,
     )
     return config
