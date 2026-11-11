@@ -52,6 +52,18 @@ def _run_scan(monkeypatch, procs, server_info):
     return "\n".join(printed)
 
 
+def _pids_in(blob):
+    """PID column values from the scan table.
+
+    Column-token match, not substring: the table embeds runtime counters
+    (uptime h/m/s etc.) whose digits can coincidentally contain a PID
+    substring ("498444h26m" contains "444"), which made the old
+    ``"444" not in blob`` assertion flake on long test sessions.
+    """
+    rows = [line.split() for line in blob.splitlines() if line.split()]
+    return {row[0] for row in rows if row}
+
+
 def test_merged_cmdline_detected(monkeypatch):
     """setproctitle-style merged single-string argv is detected."""
 
@@ -81,10 +93,11 @@ def test_merged_cmdline_detected(monkeypatch):
     ]
 
     blob = _run_scan(monkeypatch, procs, server_info={})
-    assert "111" in blob, f"renamed server PID 111 not detected: {blob!r}"
-    assert "222" in blob, f"original server PID 222 not detected: {blob!r}"
-    assert "333" not in blob, "chat process should not match"
-    assert "444" not in blob, "caffeinate wrapper should not match"
+    pids = _pids_in(blob)
+    assert "111" in pids, f"renamed server PID 111 not detected: {blob!r}"
+    assert "222" in pids, f"original server PID 222 not detected: {blob!r}"
+    assert "333" not in pids, "chat process should not match"
+    assert "444" not in pids, "caffeinate wrapper should not match"
 
 
 def test_bare_title_enriched_from_server_json(monkeypatch):
@@ -116,7 +129,7 @@ def test_bare_title_enriched_from_server_json(monkeypatch):
     assert (
         "/Users/x/.fusion-mlx/models" in blob
     ), f"model from server.json missing: {blob!r}"
-    assert "666" not in blob, "unrelated python process should not match"
+    assert "666" not in _pids_in(blob), "unrelated python process should not match"
 
 
 def test_bare_title_stale_server_json_not_used(monkeypatch):
@@ -134,4 +147,6 @@ def test_bare_title_stale_server_json_not_used(monkeypatch):
         server_info={"pid": 12345, "host": "127.0.0.1", "port": 9999},
     )
     assert "777" in blob, f"bare-title server PID 777 not detected: {blob!r}"
-    assert "9999" not in blob, "stale server.json port must not be shown"
+    stale_row = [line for line in blob.splitlines() if line.split()]
+    stale_tokens = {tok for line in stale_row for tok in line.split()}
+    assert "9999" not in stale_tokens, "stale server.json port must not be shown"

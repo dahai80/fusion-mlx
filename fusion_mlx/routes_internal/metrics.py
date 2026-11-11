@@ -1223,6 +1223,58 @@ def _render_spec_decode_metrics() -> list[str]:
             )
         except Exception:
             logger.debug("mtp spec-decode metrics render error", exc_info=True)
+        try:
+            # #1528: native MTP (vendored mlx_lm_mtp patch) singleton-path
+            # counters. acceptance_length = accepted/verifies + 1 is the
+            # secondary metric fusion-bench sweeps on.
+            from ..patches.mlx_lm_mtp.batch_generator import (
+                snapshot_native_mtp_stats as _mtp_native_snap,
+            )
+
+            snap = _mtp_native_snap()
+            verifies = int(snap.get("verifies", 0))
+            accepted = int(snap.get("accepted", 0))
+            drafted = int(snap.get("drafted", 0))
+            if verifies > 0:
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_spec_decode_accepted_total",
+                        "counter",
+                        _HELP,
+                        accepted,
+                        {"strategy": "mtp_native"},
+                    )
+                )
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_spec_decode_drafted_total",
+                        "counter",
+                        "Speculative-decoding draft tokens proposed (cumulative).",
+                        drafted,
+                        {"strategy": "mtp_native"},
+                    )
+                )
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_spec_decode_accept_rate",
+                        "gauge",
+                        _RATE_HELP,
+                        round(accepted / drafted, 6) if drafted else 0.0,
+                        {"strategy": "mtp_native"},
+                    )
+                )
+                lines.extend(
+                    _fmt_metric(
+                        "fusion_mlx_spec_decode_acceptance_length",
+                        "gauge",
+                        "Average tokens committed per verify cycle "
+                        "(accepted/verifies + 1).",
+                        round(accepted / verifies + 1, 4),
+                        {"strategy": "mtp_native"},
+                    )
+                )
+        except Exception:
+            logger.debug("mtp_native spec-decode metrics render error", exc_info=True)
     except Exception:
         logger.debug("spec-decode metrics render error", exc_info=True)
     return lines

@@ -103,6 +103,29 @@ _CHAIN_K = _resolve_chain_k()
 if _CHAIN_K >= 2:
     logger.info("[mtp.chain] AWSD Phase A chain-of-K enabled, K=%d", _CHAIN_K)
 
+# #1528: process-global native-MTP acceptance counters, incremented per
+# verify cycle (singleton path — the path a bench tuner exercises). Surfaced
+# via snapshot_native_mtp_stats() on /stats and /metrics as strategy
+# "mtp_native": acceptance_length = accepted/verifies + 1.
+_NATIVE_MTP_STATS = {
+    "verifies": 0,
+    "drafted": 0,
+    "accepted": 0,
+    "full_accepts": 0,
+}
+
+
+def _record_mtp_cycle(n_drafted: int, n_accepted: int) -> None:
+    _NATIVE_MTP_STATS["verifies"] += 1
+    _NATIVE_MTP_STATS["drafted"] += n_drafted
+    _NATIVE_MTP_STATS["accepted"] += n_accepted
+    if n_accepted >= n_drafted:
+        _NATIVE_MTP_STATS["full_accepts"] += 1
+
+
+def snapshot_native_mtp_stats() -> dict:
+    return dict(_NATIVE_MTP_STATS)
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -1302,7 +1325,14 @@ def _post_init_mtp(gen_batch: Any) -> None:
     mtp_cache = gen_batch.model.make_mtp_cache()
     hidden_at_main = hidden[:, -1:, :]  # (1, 1, H)
     next_ids = next_main_tok.reshape(1, 1)
-    chain_k = _CHAIN_K
+    # #1528: per-request draft width. The scheduler sets
+    # model._fusion_mlx_mtp_chain_k on the pure-decode path (single request
+    # only); absent/unset falls back to the launch-time default.
+    _req_k = getattr(gen_batch.model, "_fusion_mlx_mtp_chain_k", None)
+    if _req_k:
+        chain_k = max(1, min(4, int(_req_k)))
+    else:
+        chain_k = _CHAIN_K
     mtp_result = gen_batch.model.mtp_forward(
         hidden_at_main,
         next_ids,
@@ -1643,6 +1673,7 @@ def _run_verify_cycle_k1(gen_batch: Any, state: _MtpState) -> None:
     hidden_at_draft = hidden[:, 1:2, :]
 
     state.stats.cycles += 1
+    _record_mtp_cycle(1, 1 if accept else 0)
     if accept:
         state.stats.accepts += 1
         # --- cache cleanup (timed) ---
@@ -1858,6 +1889,7 @@ def _run_verify_cycle_chain(gen_batch: Any, state: _MtpState) -> None:
     state.stats.sample_ms += (time.perf_counter() - t0) * 1000
 
     state.stats.cycles += 1
+    _record_mtp_cycle(K, r)
     state.stats.accept_depth.append(r)
 
     if r == K:

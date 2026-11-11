@@ -1642,6 +1642,27 @@ class Server:
         async def stats(is_admin: bool = Depends(require_admin)):
             pool_status = self.pool.get_status() if self.pool else {}
             metrics = get_server_metrics().to_dict()
+            # #1528: native MTP acceptance counters (single-request path).
+            # acceptance_length = accepted/verifies + 1; zeros until the
+            # first MTP verify cycle has run.
+            try:
+                from .patches.mlx_lm_mtp.batch_generator import (
+                    snapshot_native_mtp_stats as _mtp_snap,
+                )
+
+                snap = _mtp_snap()
+                verifies = snap.get("verifies", 0)
+                accepted = snap.get("accepted", 0)
+                metrics["spec_decode"] = {
+                    "mtp_native": {
+                        **snap,
+                        "acceptance_length": (
+                            round(accepted / verifies + 1, 4) if verifies else 0.0
+                        ),
+                    },
+                }
+            except Exception:
+                logger.debug("stats: mtp_native snapshot failed", exc_info=True)
             return {**pool_status, **metrics}
 
         # Issue #104: base-binding runtime info (version/Metal/quant/GPU) for

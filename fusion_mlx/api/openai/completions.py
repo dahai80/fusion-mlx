@@ -81,6 +81,8 @@ def _chat_dict_to_completion_dict(chat_dict: dict, model: str) -> dict:
     }
     if chat_dict.get("usage"):
         out["usage"] = chat_dict["usage"]
+    if chat_dict.get("speculative"):
+        out["speculative"] = chat_dict["speculative"]
     return out
 
 
@@ -217,6 +219,7 @@ async def completions(
             top_p=request.top_p,
             stream=request.stream,
             stop=request.stop,
+            speculative=request.speculative,
         )
         if request.stream:
             sr = await _stream_chat(chat_req, _skip_cap_check=True, principal=principal)

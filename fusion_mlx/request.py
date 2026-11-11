@@ -71,6 +71,12 @@ class SamplingParams:
     compiled_grammar: Any = None
     seed: int | None = None
 
+    # #1528: per-request speculative draft width (native MTP chain-K).
+    # 1-4 = override the server default for this request (honored on the
+    # single-request pure-decode path; batched traffic falls back to the
+    # server default). None = server default.
+    spec_draft_tokens: int | None = None
+
     # Audit 1019 L5: SpecPrefill state lives on ``Request`` only. The dead
     # copies that used to sit here duplicated ``Request.specprefill_system_end``
     # and the per-request ``_specprefill_*`` attributes set by
