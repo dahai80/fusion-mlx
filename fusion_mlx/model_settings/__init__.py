@@ -102,6 +102,8 @@ class ModelSettings:
 
     lsa_enabled: bool = False
     lsa_map_path: str | None = None
+    # HSA M3: three-tier prefill weights (None = tier path disabled, dense prefill)
+    tier_weights_path: str | None = None
 
     vlm_mtp_enabled: bool = False
     vlm_mtp_draft_model: str | None = None
