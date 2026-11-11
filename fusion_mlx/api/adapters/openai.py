@@ -186,6 +186,9 @@ class OpenAIAdapter(BaseAdapter):
                 time_to_first_token=response.time_to_first_token,
                 generation_tokens_per_second=response.generation_tokens_per_second,
             ),
+            # #1528: echo the accepted per-request speculative override so
+            # benchmark tooling can distinguish applied from ignored.
+            speculative=getattr(request, "speculative", None),
         )
 
     def format_stream_chunk(

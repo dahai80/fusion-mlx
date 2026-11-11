@@ -463,6 +463,10 @@ def _build_sampling_params(
         stop_token_ids=getattr(req, "stop_token_ids", None),
         logprobs=bool(req.logprobs),
         top_logprobs=req.top_logprobs,
+        # #1528: per-request speculative override; None = server default.
+        spec_draft_tokens=(
+            req.speculative.draft_tokens if req.speculative is not None else None
+        ),
     )
 
 

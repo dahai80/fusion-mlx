@@ -351,6 +351,8 @@ class BatchedEngine(BaseEngine):
             settings,
             lsa_enabled=True,
             lsa_map_path=getattr(scheduler, "lsa_map_path", None),
+            tier_weights_path=getattr(scheduler, "tier_weights_path", None),
+            tier_latent_clamp=getattr(scheduler, "tier_latent_clamp", None),
         )
 
     async def start(self) -> None:

@@ -29,6 +29,7 @@ from fusion_lsa.core.index_space import LearnedProjection
 from mlx_lm.models.base import scaled_dot_product_attention
 
 from .selection import LsaLayerSelector, LsaSelectionConfig
+from .tier import TIER_THRESHOLD, TierConfig
 
 logger = logging.getLogger(__name__)
 
@@ -49,16 +50,51 @@ class LsaAttention(nn.Module):
     # original attention (all weights) and the layer's selection state.
     _TQ_REBUILD_CHUNK = 4096
 
-    def __init__(self, attn: nn.Module, selector: LsaLayerSelector):
+    def __init__(
+        self,
+        attn: nn.Module,
+        selector: LsaLayerSelector,
+        tier: TierConfig | None = None,
+        layer_index: int = -1,
+    ):
         super().__init__()
         self.attn = attn
         self.selector = selector
+        self.tier = tier
+        self.layer_index = layer_index
         self.last_picked: mx.array | None = None
         self._state_cache = None
         self._pending_rebuild = False
         self._state_width = 0
         self._state_rows = 0
         self._tq_indexed = False
+
+    def _tier_prefill(self, queries, gate, keys, values, attn) -> mx.array:
+        # Three-tier attention over the whole history for this chunk's query
+        # rows (HSA Pivot A prefill path). queries (1, Hq, L, D) post-RoPE;
+        # keys/values (1, Hkv, T, Dv) full history post-update. Decode keeps
+        # using the LSA selector - the cache still holds every row.
+        from hsa.attention.three_tier_mlx import three_tier_attention_fast_mlx
+
+        tc = self.tier
+        w_q_lat, w_k_lat = tc.weights[self.layer_index]
+        out = three_tier_attention_fast_mlx(
+            queries[0].transpose(1, 0, 2),
+            keys[0].transpose(1, 0, 2),
+            values[0].transpose(1, 0, 2),
+            tc.window,
+            tc.block_size,
+            w_q_lat,
+            w_k_lat,
+            latent_clamp=tc.latent_clamp,
+            q_offset=int(keys.shape[2]) - queries.shape[2],
+        )
+        output = (
+            out.astype(queries.dtype)
+            .transpose(1, 0, 2)
+            .reshape(1, queries.shape[2], -1)
+        )
+        return attn.o_proj(output * mx.sigmoid(gate))
 
     def _observe_cache(self, cache) -> None:
         # Detect a new request or a reshaped batch without relying on object
@@ -116,14 +152,23 @@ class LsaAttention(nn.Module):
             keys = attn.rope(keys)
 
         if L > 1 or B > 1:
-            # prefill (any L) and batched decode: dense path. The selection
-            # index is rebuilt from the cache at the first single-stream
-            # decode step, so prefill does no selector work here
+            # prefill (any L) and batched decode: dense path, except
+            # single-stream prefill above the tier threshold, which runs the
+            # three-tier kernel. The selection index is rebuilt from the cache
+            # at the first single-stream decode step, so prefill does no
+            # selector work here
             keys, values = (
                 cache.update_and_fetch(keys, values)
                 if cache is not None
                 else (keys, values)
             )
+            if (
+                B == 1
+                and self.tier is not None
+                and cache is not None
+                and int(cache.offset) > TIER_THRESHOLD
+            ):
+                return self._tier_prefill(queries, gate, keys, values, attn)
             output = scaled_dot_product_attention(
                 queries, keys, values, cache, attn.scale, mask
             )
@@ -203,10 +248,12 @@ def wrap_lsa_layers(
     rotary_dim: int,
     kv_heads: int,
     config: LsaSelectionConfig | None = None,
+    tier_config: TierConfig | None = None,
 ) -> list[int]:
     # Wrap every full-attention layer named in the map (layer index = position
     # in the layer list); returns the wrapped indices for the armed log.
     wrapped: list[int] = []
+    tier_wrapped: list[int] = []
     for index, layer in enumerate(layers):
         if index not in lsa_map.layers or not hasattr(layer, "self_attn"):
             continue
@@ -215,8 +262,22 @@ def wrap_lsa_layers(
             roles["query_projection"], roles["key_projection"]
         )
         selector = build_selector(projection, config, rotary_dim, kv_heads)
-        layer.self_attn = LsaAttention(layer.self_attn, selector)
+        layer_tier = None
+        if tier_config is not None and index in tier_config.weights:
+            layer_tier = tier_config
+            tier_wrapped.append(index)
+        layer.self_attn = LsaAttention(layer.self_attn, selector, layer_tier, index)
         wrapped.append(index)
+    if wrapped:
+        logger.info("LSA wrapped %d full-attention layers: %s", len(wrapped), wrapped)
+    else:
+        logger.warning(
+            "LSA armed but no layer matched the map - dense serving continues"
+        )
+    if tier_wrapped:
+        logger.info(
+            "tier prefill wrapped %d layers: %s", len(tier_wrapped), tier_wrapped
+        )
     if wrapped:
         logger.info("LSA wrapped %d full-attention layers: %s", len(wrapped), wrapped)
     else:

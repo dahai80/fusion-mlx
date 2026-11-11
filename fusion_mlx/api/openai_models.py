@@ -301,6 +301,17 @@ class StreamOptions(BaseModel):
     include_usage: bool = False
 
 
+class SpeculativeParams(BaseModel):
+    """#1528: per-request speculative decoding overrides.
+
+    draft_tokens = native MTP chain-K (1-4). Declared so the field is not
+    swallowed by extra='allow' + reported as ignored; out-of-range values
+    are rejected with 422 instead of being silently dropped.
+    """
+
+    draft_tokens: int = Field(ge=1, le=4)
+
+
 class ChatCompletionRequest(BaseModel):
     """Request for chat completion.
 
@@ -371,6 +382,8 @@ class ChatCompletionRequest(BaseModel):
     specprefill_threshold: int | None = None
     # Seed for reproducible generation (best-effort)
     seed: int | None = None
+    # #1528: per-request speculative decoding override (native MTP chain-K).
+    speculative: SpeculativeParams | None = None
     # Logprobs: return log probabilities of output tokens (OpenAI-compatible).
     logprobs: bool | None = None
     top_logprobs: int | None = None
@@ -601,6 +614,10 @@ class ChatCompletionResponse(BaseModel):
     model: str
     choices: list[ChatCompletionChoice]
     usage: Usage = Field(default_factory=Usage)
+    # #1528: echo of the accepted per-request speculative override. Absent
+    # when the request sent no speculative field. Verification of the
+    # actual effect is via the spec-decode counters on /stats and /metrics.
+    speculative: SpeculativeParams | None = None
 
 
 # =============================================================================
@@ -639,6 +656,8 @@ class CompletionRequest(BaseModel):
     dry_penalty_last_n: int | None = Field(None, ge=-1, le=8192)
     # Seed for reproducible generation (best-effort)
     seed: int | None = None
+    # #1528: per-request speculative decoding override (native MTP chain-K).
+    speculative: SpeculativeParams | None = None
     # OpenAI FIM (fill-in-the-middle) suffix. Declared so Pydantic stops
     # silently dropping it; rejected with 400 in the /v1/completions route
     # when non-empty since no MLX engine implements FIM yet (silently
@@ -735,6 +754,8 @@ class CompletionResponse(BaseModel):
     model: str
     choices: list[CompletionChoice]
     usage: Usage = Field(default_factory=Usage)
+    # #1528: echo of the accepted per-request speculative override.
+    speculative: SpeculativeParams | None = None
 
 
 # =============================================================================

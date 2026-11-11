@@ -657,6 +657,21 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
 
     suppress_mtp = request._active_spec_method not in (METHOD_MTP, "")
     self.model._fusion_mlx_mtp_suppressed = suppress_mtp
+    # #1528: per-request speculative draft width. Applied on the
+    # single-request pure-decode path only — the chain-K verify round is
+    # singleton-owned, so a batched mix of widths falls back to the server
+    # default. Cleared in the finally below (same lifetime as suppression).
+    override_k = getattr(request.sampling_params, "spec_draft_tokens", None)
+    self.model._fusion_mlx_mtp_chain_k = (
+        max(1, min(4, int(override_k))) if override_k else None
+    )
+    if override_k:
+        logger.info(
+            "step(%d): per-request spec override draft_tokens=%s for %s",
+            self._step_counter,
+            override_k,
+            request.request_id[:8],
+        )
     # Time the regular decode forward. bg._next() syncs internally (tolist
     # in the patched step), so this is real GPU time, not dispatch time.
     # Consumed by ngram_spec dynamic break-even (T_verify / T_decode).
@@ -703,6 +718,7 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
         raise
     finally:
         self.model._fusion_mlx_mtp_suppressed = False
+        self.model._fusion_mlx_mtp_chain_k = None
     self._last_decode_dt = time.perf_counter() - _decode_t0
     # #contention-pool: steady-state decode also runs through this fast path,
     # so mark it too — otherwise a sibling engine decoding here is invisible
