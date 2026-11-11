@@ -13,7 +13,11 @@ Public surface:
 
 from .accept_counter import MTPAcceptCounter, get_global_counter
 from .cache_patch import patch_arrays_cache_rollback_state
-from .detect import MTPEligibility, detect_mtp_eligibility
+from .detect import (
+    MTPEligibility,
+    _detect_mtp_eligibility_verbose,
+    detect_mtp_eligibility,
+)
 from .dispatch import dispatch_mtp_inject, dispatch_mtp_validate
 from .draft_k_controller_v2 import DepthController, get_or_create_controller
 from .generator import mtp_generate_step

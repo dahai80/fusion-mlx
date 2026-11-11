@@ -808,7 +808,7 @@ def serve_command(args):
     if getattr(args, "spec_decode", "none") == "mtp":
         from fusion_mlx.speculative.mtp import (
             MTPEligibility,
-            detect_mtp_eligibility,
+            _detect_mtp_eligibility_verbose,
         )
 
         # ``_gather_kv_cache_dtype_inputs`` already reads
@@ -818,18 +818,24 @@ def serve_command(args):
             hf_cfg_eligibility, _ = _gather_kv_cache_dtype_inputs(args.model)
         except Exception:  # pragma: no cover — best-effort
             hf_cfg_eligibility = None
-        eligibility = detect_mtp_eligibility(hf_cfg_eligibility)
-        if eligibility is MTPEligibility.NONE:
+        eligibility = _detect_mtp_eligibility_verbose(hf_cfg_eligibility)
+        if eligibility.eligibility is MTPEligibility.NONE:
+            # #1530: the fixed "re-convert from HF" message blamed
+            # checkpoint conversion even when the real cause was a missing
+            # or unreadable config.json (e.g. dangling symlinks after a
+            # cache cleanup). The verbose detector already knows why —
+            # surface its reason and the inspected path.
             print(
-                "error: --spec-decode mtp requires a Qwen3.5 / Qwen3.6 "
-                "checkpoint with mtp_num_hidden_layers >= 1 in "
-                "config.json. The loaded model does not qualify "
-                "(re-convert from HF with mlx-lm PR #990's sanitize() "
-                "path to preserve mtp.* weights).",
+                "error: --spec-decode mtp: model "
+                f"{args.model!r} does not qualify ({eligibility.reason}). "
+                "For a Qwen3.5/3.6 checkpoint this requires "
+                "mtp_num_hidden_layers >= 1 in a readable config.json; "
+                "check that the path exists and config.json is intact "
+                "(a dangling symlink reports the same way).",
                 file=sys.stderr,
             )
             sys.exit(2)
-        print(f"Spec-decode: mtp ({eligibility.value})")
+        print(f"Spec-decode: mtp ({eligibility.eligibility.value})")
 
     # Reconcile scheduler_config.mtp_model_type against MTP eligibility so the
     # BatchedEngine dispatch gate sees the vetted target type. Runs for both
@@ -942,9 +948,9 @@ def serve_command(args):
         _profile = resolve_profile(_alias_name)
         # The eligibility check at top of serve_command guarantees this
         # passes — assert to be defensive against future refactors.
-        assert (
-            _profile is not None and _profile.supports_dflash
-        ), f"DFlash profile invariant violated for {_alias_name!r}"
+        assert _profile is not None and _profile.supports_dflash, (
+            f"DFlash profile invariant violated for {_alias_name!r}"
+        )
         # ``--dflash-drafter-path`` override stays valid through both
         # ``--enable-dflash`` and the ``--spec-decode dflash`` redirect
         # path (#318): an operator-supplied path wins over the profile
