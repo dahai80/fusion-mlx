@@ -8,7 +8,11 @@ mx = pytest.importorskip("mlx.core")
 nn = pytest.importorskip("mlx.nn")
 
 from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
-from fusion_mlx.patches.qwen35_lsa.tier import TIER_THRESHOLD, TierConfig, load_tier_config
+from fusion_mlx.patches.qwen35_lsa.tier import (
+    TIER_THRESHOLD,
+    TierConfig,
+    load_tier_config,
+)
 
 WEIGHTS = "/Users/dahai/.fusion-mlx/adapters/tier-weights-ckpt8000.safetensors"
 
