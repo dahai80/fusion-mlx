@@ -6,6 +6,9 @@ import pytest
 
 mx = pytest.importorskip("mlx.core")
 nn = pytest.importorskip("mlx.nn")
+# LSA deps live in sibling repos, not in CI requirements — skip there.
+pytest.importorskip("fusion_lsa")
+pytest.importorskip("hsa")
 
 from fusion_mlx.patches.qwen35_lsa.attention import LsaAttention
 from fusion_mlx.patches.qwen35_lsa.tier import (
