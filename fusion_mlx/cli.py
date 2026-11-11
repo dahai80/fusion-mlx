@@ -440,6 +440,15 @@ Examples:
         help="Path to the LSA projection map (safetensors) distilled for "
         "this checkpoint. Required when --enable-lsa is set.",
     )
+    serve_parser.add_argument(
+        "--tier-weights",
+        dest="tier_weights_path",
+        type=str,
+        default=None,
+        help="Path to trained three-tier prefill weights (safetensors). "
+        "When set with --enable-lsa, full-attention layer prefill above the "
+        "tier threshold runs the three-tier kernel instead of dense SDPA.",
+    )
     # TurboQuant KV cache compression (experimental, R15 Phase 4).
     #
     # Accepts an optional mode value:
