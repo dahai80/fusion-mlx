@@ -126,6 +126,7 @@ def _record_mtp_cycle(n_drafted: int, n_accepted: int) -> None:
 def snapshot_native_mtp_stats() -> dict:
     return dict(_NATIVE_MTP_STATS)
 
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------

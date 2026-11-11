@@ -37,7 +37,9 @@ class TierConfig:
     latent_clamp: float | None = None
 
 
-def load_tier_config(path: str, num_layers: int, latent_clamp: float | None = None) -> TierConfig:
+def load_tier_config(
+    path: str, num_layers: int, latent_clamp: float | None = None
+) -> TierConfig:
     # Fail-loud at boot: a bad path or a layer mismatch must stop the serve,
     # not degrade to dense prefill silently mid-flight.
     from safetensors import safe_open
@@ -46,7 +48,9 @@ def load_tier_config(path: str, num_layers: int, latent_clamp: float | None = No
         metadata = handle.metadata() or {}
         for field in ("window", "block_size", "latent_dim", "tier_layers"):
             if field not in metadata:
-                raise ValueError(f"tier weights {path} is missing metadata field {field}")
+                raise ValueError(
+                    f"tier weights {path} is missing metadata field {field}"
+                )
         window = int(metadata["window"])
         block_size = int(metadata["block_size"])
         latent_dim = int(metadata["latent_dim"])
@@ -67,6 +71,12 @@ def load_tier_config(path: str, num_layers: int, latent_clamp: float | None = No
     config = TierConfig(window, block_size, latent_dim, weights, latent_clamp)
     logger.info(
         "tier prefill armed: %d layers, window=%d block=%d latent=%d threshold=%d clamp=%s (%s)",
-        len(weights), window, block_size, latent_dim, TIER_THRESHOLD, latent_clamp, path,
+        len(weights),
+        window,
+        block_size,
+        latent_dim,
+        TIER_THRESHOLD,
+        latent_clamp,
+        path,
     )
     return config

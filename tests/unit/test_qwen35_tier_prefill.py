@@ -22,7 +22,24 @@ def test_load_tier_config_real_weights():
     assert config.window == 512
     assert config.block_size == 2048
     assert config.latent_dim == 2048
-    assert sorted(config.weights.keys()) == [3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43, 47, 51, 55, 59, 63]
+    assert sorted(config.weights.keys()) == [
+        3,
+        7,
+        11,
+        15,
+        19,
+        23,
+        27,
+        31,
+        35,
+        39,
+        43,
+        47,
+        51,
+        55,
+        59,
+        63,
+    ]
     w_q, w_k = config.weights[3]
     assert w_q.shape == (6144, 2048)
     assert w_k.shape == (1024, 2048)
@@ -77,7 +94,9 @@ def test_tier_prefill_matches_kernel_directly():
         tier.weights[3][1],
         q_offset=T - L,
     )
-    direct = direct.astype(queries.dtype).transpose(1, 0, 2).reshape(L, -1) * mx.sigmoid(gate[0])
+    direct = direct.astype(queries.dtype).transpose(1, 0, 2).reshape(
+        L, -1
+    ) * mx.sigmoid(gate[0])
     np.testing.assert_allclose(np.array(got[0]), np.array(direct), atol=1e-3, rtol=1e-3)
 
 
@@ -99,7 +118,9 @@ def test_tier_prefill_passes_latent_clamp():
     weights = {3: (mx.array(w_q), mx.array(w_k))}
     plain = TierConfig(8, 16, 16, weights)
     clamped = TierConfig(8, 16, 16, weights, 0.5)
-    wrapper, queries, gate, keys, values, attn = _make_attention(plain, L, T, Hq, Hkv, D)
+    wrapper, queries, gate, keys, values, attn = _make_attention(
+        plain, L, T, Hq, Hkv, D
+    )
     unclamped = wrapper._tier_prefill(queries, gate, keys, values, attn)
     wrapper.tier = clamped
     clamped_out = wrapper._tier_prefill(queries, gate, keys, values, attn)

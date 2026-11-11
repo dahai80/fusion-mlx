@@ -29,7 +29,7 @@ from fusion_lsa.core.index_space import LearnedProjection
 from mlx_lm.models.base import scaled_dot_product_attention
 
 from .selection import LsaLayerSelector, LsaSelectionConfig
-from .tier import TierConfig, TIER_THRESHOLD
+from .tier import TIER_THRESHOLD, TierConfig
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,13 @@ class LsaAttention(nn.Module):
     # original attention (all weights) and the layer's selection state.
     _TQ_REBUILD_CHUNK = 4096
 
-    def __init__(self, attn: nn.Module, selector: LsaLayerSelector, tier: TierConfig | None = None, layer_index: int = -1):
+    def __init__(
+        self,
+        attn: nn.Module,
+        selector: LsaLayerSelector,
+        tier: TierConfig | None = None,
+        layer_index: int = -1,
+    ):
         super().__init__()
         self.attn = attn
         self.selector = selector
@@ -83,7 +89,11 @@ class LsaAttention(nn.Module):
             latent_clamp=tc.latent_clamp,
             q_offset=int(keys.shape[2]) - queries.shape[2],
         )
-        output = out.astype(queries.dtype).transpose(1, 0, 2).reshape(1, queries.shape[2], -1)
+        output = (
+            out.astype(queries.dtype)
+            .transpose(1, 0, 2)
+            .reshape(1, queries.shape[2], -1)
+        )
         return attn.o_proj(output * mx.sigmoid(gate))
 
     def _observe_cache(self, cache) -> None:
@@ -265,7 +275,9 @@ def wrap_lsa_layers(
             "LSA armed but no layer matched the map - dense serving continues"
         )
     if tier_wrapped:
-        logger.info("tier prefill wrapped %d layers: %s", len(tier_wrapped), tier_wrapped)
+        logger.info(
+            "tier prefill wrapped %d layers: %s", len(tier_wrapped), tier_wrapped
+        )
     if wrapped:
         logger.info("LSA wrapped %d full-attention layers: %s", len(wrapped), wrapped)
     else:
