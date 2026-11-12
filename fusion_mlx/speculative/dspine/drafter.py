@@ -119,8 +119,11 @@ class DSpineDrafter:
         return list(cfg.target_layer_ids)
 
     def reset_cache(self) -> None:
+        # Draft KV caches are per-request state; the RefinementTail's serial
+        # tables are bound to the loaded model and must survive resets
+        # (nulling _tail left build_tail() returning None →
+        # 'NoneType' object has no attribute 'greedy' on the next round).
         self._caches = None
-        self._tail = None
 
     def make_caches(self) -> list[KVCache]:
         self._caches = self.draft.make_cache()

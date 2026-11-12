@@ -195,6 +195,16 @@ _SPEC_ROUTING_TABLE: list[SpecRouteEntry] = [
         methods=(METHOD_NGRAM,),
         constraints=(),
     ),
+    # DSpine: parallel drafter over target intermediate-layer hiddens
+    # (#1549). Loaded only when --dspine-drafter-path is set and the
+    # eligibility gates passed, so the not_moe constraint here mostly
+    # documents intent; greedy (T=0) requests only — the dispatch step
+    # skips sampled requests.
+    SpecRouteEntry(
+        family="qwen3",
+        methods=(METHOD_DSPINE,),
+        constraints=("not_moe",),
+    ),
     SpecRouteEntry(
         family="qwen3",
         methods=(METHOD_MTP,),

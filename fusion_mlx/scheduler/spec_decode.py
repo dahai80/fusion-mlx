@@ -1569,6 +1569,12 @@ def dspine_spec_step(
     # Anchor row: the regular step's captured hidden for its input token X.
     regular_row = _dspine_concat_captured(capture.get_captured(), layer_ids, 1)
     if regular_row is None:
+        if dspine_state.total_spec_steps == 0:
+            logger.debug(
+                "dspine_spec: no regular-step capture rows (layers=%s captured=%s)",
+                layer_ids,
+                sorted(capture.get_captured().keys()),
+            )
         return []
 
     # Bootstrap: first spec round of the request — seed the window with the
@@ -1610,6 +1616,14 @@ def dspine_spec_step(
     K = len(draft_tokens)
     if K == 0:
         return []
+
+    if dspine_state.total_spec_steps == 0:
+        logger.info(
+            "dspine_spec: first draft round K=%d window=%d anchor=%d",
+            K,
+            int(dspine_state._window.shape[1]),
+            current_token,
+        )
 
     sampled_from_regular = None
     if gen._next_tokens is not None:

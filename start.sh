@@ -360,6 +360,7 @@ _parse_start_args() {
                 ;;
             # spec-decode / model flags that take a value
             --dflash-drafter-path|--dflash2-drafter-path|--dspark-drafter-path|\
+            --dspine-drafter-path|--dspine-block-size|\
             --dflash2-block-size|--dflash2-draft-bits|--dspark-draft-quant-bits|\
             --mtp-num-draft-tokens|--spec-decode|--specprefill-draft-model|\
             --draft-model|--served-model-name|--cloud-model|--embedding-model|\
