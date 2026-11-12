@@ -50,6 +50,10 @@ class DPOConfig:
     # admission budget. Same semantics as FineTuneConfig.
     gradient_checkpointing: bool = False
     memory_limit_gb: float = 0.0  # admission-gate budget; 0 = auto
+    # #1564: save a numbered policy checkpoint every N steps (0 = only the
+    # final adapters.safetensors, the pre-#1564 behavior). Same convention
+    # as the SFT path: NNNNNNN_adapters.safetensors under the adapter dir.
+    save_every: int = 0
     # #1472: keep ONE reference model resident for the whole job instead of
     # the per-pair load-and-evict (2 full loads per pair: chosen + rejected).
     # On a large base the repeated same-size allocations churn the Metal

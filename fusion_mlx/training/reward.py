@@ -41,6 +41,10 @@ class RewardConfig:
     lora_dropout: float = 0.0
     max_seq_length: int = 1024
     seed: int = 0
+    # #1565: admission-gate budget forwarded to the training memory
+    # preflight; 0 = auto (60%-of-physical default). Same semantics as
+    # FineTuneConfig.memory_limit_gb.
+    memory_limit_gb: float = 0.0
 
     def to_dict(self):
         return {k: getattr(self, k) for k in self.__dataclass_fields__}
