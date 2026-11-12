@@ -138,6 +138,18 @@ def serve_command(args):
     import os
     import sys
 
+    # #1582: decode throughput under a busy event-loop thread. The uvicorn
+    # loop and the llm executor thread contend for the GIL at the default
+    # 5 ms switch interval; measured decode_b1 drops 151 -> ~114 tok/s
+    # (~25%) with the loop thread only doing light per-token work. A finer
+    # switch interval lets the executor thread's short Python segments get
+    # scheduled promptly: 0.2 ms recovers to ~147 tok/s under a synthetic
+    # GIL hog and leaves single-threaded decode unchanged. Override or
+    # disable (0 = keep CPython default) via FUSION_MLX_SWITCH_INTERVAL_S.
+    _si = float(os.environ.get("FUSION_MLX_SWITCH_INTERVAL_S", "0.0002") or 0)
+    if _si > 0:
+        sys.setswitchinterval(_si)
+
     # LSA + TurboQuant coexist in k8v4 mode: the selection index rebuilds
     # from dequantized cache rows, and 8-bit keys keep top-k agreement at
     # ~0.99 (TQ KV probe) while 4-bit keys measured 0.83-0.91. Any other
