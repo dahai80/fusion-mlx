@@ -499,3 +499,54 @@ class TestAbandonCooldown:
         # suffix was never abandoned -> still selectable (it is the fallback
         # here anyway; assert the router did not exclude everything).
         assert select_active_method(100, loaded, router=router) == METHOD_NGRAM
+
+
+class TestPromptShapeHashes:
+    def test_text_prompt_returns_two_16_hex_digests(self):
+        from fusion_mlx.speculative.auto_router import prompt_shape_hashes
+
+        out = prompt_shape_hashes("hello world")
+        assert set(out) == {"prompt_hash", "prompt_head_hash"}
+        assert all(len(v) == 16 for v in out.values())
+
+    def test_same_template_head_matches_despite_different_body(self):
+        from fusion_mlx.speculative.auto_router import prompt_shape_hashes
+
+        # Head window is the first 1024 chars: a template skeleton LONGER
+        # than the window yields equal head hashes even when the retrieved
+        # body (and thus the full prompt) differs.
+        head = "<|im_start|>system\nYou are a RAG assistant.<|im_end|>\n" * 40
+        assert len(head) > 1024
+        a = prompt_shape_hashes(head + "retrieved doc A" * 200)
+        b = prompt_shape_hashes(head + "retrieved doc B" * 200)
+        assert a["prompt_head_hash"] == b["prompt_head_hash"]
+        assert a["prompt_hash"] != b["prompt_hash"]
+
+    def test_token_id_prompt_is_deterministic_and_window_exact(self):
+        from fusion_mlx.speculative.auto_router import prompt_shape_hashes
+
+        out = prompt_shape_hashes([1, 2, 3, 4, 5])
+        assert set(out) == {"prompt_hash", "prompt_head_hash"}
+        assert prompt_shape_hashes([1, 2, 3, 4, 5])["prompt_hash"] == out["prompt_hash"]
+        # Head window is exact: identical first-256 prefixes hash equal;
+        # a body that diverges INSIDE the window does not.
+        h1 = prompt_shape_hashes(list(range(256)) + [999])
+        h2 = prompt_shape_hashes(list(range(256)) + [998])
+        assert h1["prompt_head_hash"] == h2["prompt_head_hash"]
+        assert h1["prompt_hash"] != h2["prompt_hash"]
+
+    def test_empty_and_none_yield_empty_dict(self):
+        from fusion_mlx.speculative.auto_router import prompt_shape_hashes
+
+        assert prompt_shape_hashes(None) == {}
+        assert prompt_shape_hashes("") == {}
+        assert prompt_shape_hashes([]) == {}
+
+    def test_head_only_covers_first_256_ids(self):
+        from fusion_mlx.speculative.auto_router import prompt_shape_hashes
+
+        # Content beyond id 256 must not affect the head hash.
+        a = prompt_shape_hashes(list(range(300)))
+        prefix = prompt_shape_hashes(list(range(256)))
+        assert a["prompt_head_hash"] == prefix["prompt_head_hash"]
+        assert a["prompt_hash"] != prefix["prompt_hash"]
