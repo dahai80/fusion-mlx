@@ -518,6 +518,14 @@ def __init__(
     # n-gram spec dynamic break-even (T_verify / T_decode). Set in
     # _step_pure_decode; None until the first decode step.
     self._last_decode_dt: float | None = None
+    # P1-3 profiling baseline (catch-up plan): aggregated pure-decode step
+    # wall time. Exposed via get_ssd_cache_stats()["step_profile"] and
+    # rendered as fusion_mlx_sched_decode_* on /metrics. The engine-floor
+    # comparison script lives at benchmarks/scheduler_overhead_profile.py.
+    self._step_profile: dict[str, float] = {
+        "decode_steps": 0,
+        "decode_wall_s": 0.0,
+    }
     self._contention_cv_threshold: float = 0.15
     # Best (lowest) rolling window mean seen so far. Contention is only
     # credible as a multiple of this baseline — CV alone trips on ordinary

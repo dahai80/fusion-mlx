@@ -831,20 +831,60 @@ def _render_prefix_cache_metrics() -> list[str]:
                 engine = getattr(entry, "engine", None)
                 if engine is None:
                     continue
-                sched = getattr(engine, "scheduler", None)
-                if sched is None:
-                    sched = getattr(getattr(engine, "_engine", None), "scheduler", None)
+                # Resolve through the pool's own helper: batched engines
+                # nest the scheduler at engine._engine.engine.scheduler.
+                try:
+                    from ..pool.engine_pool import EnginePool
+
+                    sched = EnginePool._resolve_scheduler_from_engine(engine)
+                except Exception:
+                    sched = getattr(engine, "scheduler", None)
                 if sched is None:
                     continue
                 get_cache_stats = getattr(sched, "get_ssd_cache_stats", None)
                 if not callable(get_cache_stats):
                     continue
                 cstats = get_cache_stats() or {}
+                labels = {"engine": str(_mid)}
+                # P1-3 profiling baseline: aggregated pure-decode step wall
+                # time (see scheduler _step_profile). Rendered independently
+                # of prefix_cache presence — every engine with a scheduler
+                # reports decode steps even without a block-aware cache.
+                prof = cstats.get("step_profile")
+                if isinstance(prof, dict) and prof.get("decode_steps"):
+                    steps = int(prof["decode_steps"])
+                    wall = float(prof.get("decode_wall_s", 0.0))
+                    lines.extend(
+                        _fmt_metric(
+                            "fusion_mlx_sched_decode_steps_total",
+                            "counter",
+                            "Pure-decode scheduler steps.",
+                            steps,
+                            labels,
+                        )
+                    )
+                    lines.extend(
+                        _fmt_metric(
+                            "fusion_mlx_sched_decode_wall_seconds",
+                            "counter",
+                            "Total pure-decode step wall time.",
+                            wall,
+                            labels,
+                        )
+                    )
+                    lines.extend(
+                        _fmt_metric(
+                            "fusion_mlx_sched_decode_wall_ms_avg",
+                            "gauge",
+                            "Mean pure-decode step wall time in ms.",
+                            wall / steps * 1000.0,
+                            labels,
+                        )
+                    )
                 pc = cstats.get("prefix_cache")
                 if not isinstance(pc, dict):
                     continue
                 seen += 1
-                labels = {"engine": str(_mid)}
                 lines.extend(
                     _fmt_metric(
                         "fusion_mlx_prefix_cache_hits_total",
@@ -967,7 +1007,9 @@ def _render_prefix_cache_metrics() -> list[str]:
             if seen:
                 logger.debug("prefix cache metrics rendered for %d engine(s)", seen)
     except Exception:
-        logger.debug("prefix cache metrics render error", exc_info=True)
+        # Fail visibly: a dead prefix-cache renderer must not be silent at
+        # the default INFO level (this hid a structurally dead renderer).
+        logger.warning("prefix cache metrics render error", exc_info=True)
     return lines
 
 

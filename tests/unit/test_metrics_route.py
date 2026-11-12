@@ -554,3 +554,42 @@ def test_metrics_output_parses_cleanly_when_engine_missing(metrics_client, monke
     assert "fusion_mlx_build_info" in by_name
     assert "fusion_mlx_response_format_strict" in by_name
     assert "fusion_mlx_response_format_strict_violations" in by_name
+
+
+# ---------------------------------------------------------------------------
+# P1-3: scheduler decode-step profile rendering (independent of prefix_cache)
+# ---------------------------------------------------------------------------
+
+
+def test_sched_decode_profile_renders_without_prefix_cache(metrics_client, monkeypatch):
+    """step_profile renders even when the engine has no block-aware cache.
+
+    Regression: the render used to `continue` on missing prefix_cache before
+    reaching step_profile, so default-config engines never exposed
+    fusion_mlx_sched_decode_*.
+    """
+    sched = SimpleNamespace(
+        get_ssd_cache_stats=lambda: {
+            "step_profile": {"decode_steps": 100, "decode_wall_s": 0.75},
+        }
+    )
+    _set_pool(monkeypatch, _fake_pool({"m1": _entry(_stub_engine(scheduler=sched))}))
+    body = metrics_client.client.get("/metrics").text
+
+    assert "fusion_mlx_sched_decode_steps_total{engine=\"m1\"} 100" in body
+    assert "fusion_mlx_sched_decode_wall_seconds{engine=\"m1\"} 0.75" in body
+    assert "fusion_mlx_sched_decode_wall_ms_avg{engine=\"m1\"} 7.5" in body
+    assert "fusion_mlx_prefix_cache_hits_total" not in body
+
+
+def test_sched_decode_profile_absent_when_no_steps(metrics_client, monkeypatch):
+    """Zero decode steps renders nothing (avoids divide-by-zero gauge)."""
+    sched = SimpleNamespace(
+        get_ssd_cache_stats=lambda: {
+            "step_profile": {"decode_steps": 0, "decode_wall_s": 0.0},
+        }
+    )
+    _set_pool(monkeypatch, _fake_pool({"m1": _entry(_stub_engine(scheduler=sched))}))
+    body = metrics_client.client.get("/metrics").text
+
+    assert "fusion_mlx_sched_decode" not in body
