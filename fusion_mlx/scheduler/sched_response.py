@@ -501,7 +501,10 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
         # router saw at route time, plus per-request spec accept stats.
         # Appends to the same spec-route jsonl; all failures non-fatal.
         try:
-            from ..speculative.auto_router import append_spec_request_end
+            from ..speculative.auto_router import (
+                append_spec_request_end,
+                prompt_shape_hashes,
+            )
 
             record = {
                 "request_id": request_id,
@@ -511,6 +514,8 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                 "output_tokens": len(getattr(request, "output_token_ids", None) or []),
                 "status": getattr(request, "status", None),
             }
+            # PIC sizing telemetry: prompt-reuse shape digests (full + head).
+            record.update(prompt_shape_hashes(getattr(request, "prompt", None)))
             dspine_state = getattr(self, "_dspine_spec_state", None)
             if dspine_state is not None:
                 record.update(dspine_state.pop_request_stats(request_id))

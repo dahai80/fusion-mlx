@@ -34,11 +34,14 @@ Decision order (see ``decide``):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import time
+from array import array
 from dataclasses import dataclass, field
+from hashlib import sha1 as _sha1
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -103,6 +106,32 @@ def append_spec_request_end(record: dict) -> None:
     (disable switch, size cap, I/O errors never break inference).
     """
     _append_spec_route_decision({"event": "request_end", **record})
+
+
+def prompt_shape_hashes(prompt: str | list[int] | None) -> dict:
+    # PIC sizing telemetry (r6-pic-segment-index-sizing-1112): deterministic
+    # prompt-shape digests for reuse-pattern analysis. No raw content leaves
+    # the process — only truncated SHA-1 digests. prompt_hash identifies
+    # exact-repeat traffic; prompt_head_hash covers the first 256 token ids
+    # (or 1024 chars of a text prompt) so requests sharing a template
+    # skeleton (RAG system + instructions) cluster under one sig even when
+    # the retrieved middle content differs. Failures are non-fatal and
+    # yield an empty dict.
+    try:
+        if isinstance(prompt, list) and prompt:
+            head_ids = prompt[:256]
+            full = _sha1(array("q", prompt).tobytes()).hexdigest()[:16]
+            head = _sha1(array("q", head_ids).tobytes()).hexdigest()[:16]
+            return {"prompt_hash": full, "prompt_head_hash": head}
+        if isinstance(prompt, str) and prompt:
+            encoded = prompt.encode("utf-8", "ignore")
+            return {
+                "prompt_hash": hashlib.sha1(encoded).hexdigest()[:16],
+                "prompt_head_hash": hashlib.sha1(encoded[:1024]).hexdigest()[:16],
+            }
+    except Exception as e:
+        logger.debug("prompt_shape_hashes failed (non-fatal): %s", e)
+    return {}
 
 
 METHOD_DSPARK = "dspark"
