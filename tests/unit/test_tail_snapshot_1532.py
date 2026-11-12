@@ -342,8 +342,9 @@ class TestPendingFlushWindow:
                 raise RuntimeError("extract failed")
 
             assert (
-                store.save_prefix(tail_hash, tail_tc, _full_cache(tail_tc), _boom,
-                                  _MODEL_NAME)
+                store.save_prefix(
+                    tail_hash, tail_tc, _full_cache(tail_tc), _boom, _MODEL_NAME
+                )
                 is False
             )
             assert (tail_hash, tail_tc) not in store._prefix_pending
