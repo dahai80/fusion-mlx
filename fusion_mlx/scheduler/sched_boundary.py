@@ -273,6 +273,199 @@ def _maybe_capture_boundary_snapshot(self, request: Request, uid: int) -> None:
     )
 
 
+def _maybe_capture_tail_snapshot(
+    self,
+    request: Request,
+    prompt_cache: list[Any],
+    token_count: int,
+) -> None:
+    """Persist a full-state tail snapshot for non-block-aligned prompts (#1532).
+
+    Both single-request prefill paths leave the last prompt token for
+    insert(), so at prefill completion ``prompt_cache`` holds state valid at
+    exactly ``token_count == prompt_len - 1`` — the canonical generation
+    kickoff state. For hybrid models the paged cache only persists full
+    2048-token blocks, so up to 2047 trailing tokens were discarded and
+    re-prefilled on every repeat request. Snapshot the tail here, keyed by a
+    domain-separated tail hash of the prompt prefix, so the next identical
+    (or prefix-sharing) request can warm-start at prompt_len - 1.
+
+    Gated to stateful non-sliceable models (hybrid ArraysCache) where the
+    waste is block_size-sized; sliceable-only models run block_size=64 and
+    a full-state snapshot per request would cost more than the re-prefill.
+    """
+    if self.block_aware_cache is None or self._boundary_snapshot_store is None:
+        return
+    if not getattr(self.config, "boundary_prefix_persist", False):
+        return
+
+    prompt_ids = request.prompt_token_ids
+    if not prompt_ids or request.vlm_extra_keys_for_cache:
+        return
+    prompt_len = len(prompt_ids)
+    if token_count != prompt_len - 1 or prompt_len < 2:
+        return
+
+    block_size = self.config.paged_cache_block_size
+    if block_size <= 0 or prompt_len % block_size == 0:
+        return
+
+    if not self._cache_list_needs_boundary_snapshot(prompt_cache):
+        return
+
+    _model_sig = getattr(self, "_model_cache_sig", "") or self.config.model_name
+    keyed = self._boundary_snapshot_store.compute_tail_prefix_hash(
+        prompt_ids[:token_count], block_size, _model_sig
+    )
+    if keyed is None:
+        return
+    tail_hash, tc = keyed
+    saved = self._boundary_snapshot_store.save_prefix(
+        tail_hash,
+        tc,
+        prompt_cache,
+        self._extract_cache_states,
+        self.config.model_name,
+    )
+    if saved:
+        logger.info(
+            "Tail snapshot persisted for %s at %d tokens "
+            "(prompt_len=%d, block_size=%d)",
+            request.request_id,
+            tc,
+            prompt_len,
+            block_size,
+        )
+
+
+def _build_cache_from_full_states(
+    self,
+    extracted: list[dict[str, Any]],
+    token_count: int,
+) -> list[Any] | None:
+    """Build live cache objects from a full extracted-state snapshot.
+
+    Unlike the block-chain reconstruct path (which merges per-block states
+    and rejects placeholder partial matches), a tail snapshot holds the
+    complete state of every layer at exactly ``token_count`` tokens, so
+    each layer rebuilds directly from its own state dict.
+    """
+    if not extracted:
+        return None
+    if not HAS_CACHE_TYPE_HANDLERS or CacheTypeRegistry is None:
+        return None
+
+    caches: list[Any] = []
+    for layer_idx, layer_state in enumerate(extracted):
+        class_name = layer_state.get("class_name", "")
+        cache_type_name = layer_state.get("cache_type", class_name)
+        meta = layer_state.get("meta_state", ())
+        state = layer_state.get("state", ())
+        try:
+            handler = CacheTypeRegistry.get_handler_by_class_name(class_name)
+        except Exception:
+            logger.debug(
+                "Tail rebuild layer %d: no handler for %s",
+                layer_idx,
+                class_name,
+            )
+            return None
+        try:
+            if handler.supports_block_slicing:
+                axis_names = [info.name for info in handler.get_state_axis_info()]
+                state_dict = dict(zip(axis_names, state))
+                cache = handler.reconstruct_cache(state_dict, meta)
+            elif class_name in ("RotatingKVCache", "BatchRotatingKVCache"):
+                cache = handler.reconstruct_cache(
+                    {"keys": state[0], "values": state[1], "meta_state": meta},
+                    meta,
+                )
+            else:
+                cache = handler.reconstruct_cache(
+                    {"states": list(state)},
+                    meta,
+                    token_count=token_count,
+                )
+        except Exception as e:
+            logger.debug(
+                "Tail rebuild layer %d (%s) failed: %s", layer_idx, class_name, e
+            )
+            return None
+        if cache is None:
+            return None
+        caches.append(cache)
+
+    return caches if len(caches) == len(extracted) else None
+
+
+def _try_tail_snapshot_warm_start(self, request: Request) -> bool:
+    """Warm-start a repeat request from a #1532 tail snapshot.
+
+    On success the request starts prefill with cache state at
+    ``prompt_len - 1`` and ``remaining_tokens = prompt[-1:]`` — the same
+    shape the single-request prefill paths produce after processing
+    ``tokens[:-1]``. Returns False (no side effects) when no snapshot
+    matches or the rebuild fails.
+    """
+    if (
+        not getattr(self.config, "boundary_prefix_persist", False)
+        or self._boundary_snapshot_store is None
+        or self.block_aware_cache is None
+        or not request.prompt_token_ids
+        or request.vlm_extra_keys_for_cache
+    ):
+        return False
+
+    prompt_ids = request.prompt_token_ids
+    prompt_len = len(prompt_ids)
+    block_size = self.config.paged_cache_block_size
+    if block_size <= 0 or prompt_len < 2 or prompt_len % block_size == 0:
+        return False
+
+    tc = prompt_len - 1
+    _model_sig = getattr(self, "_model_cache_sig", "") or self.config.model_name
+    keyed = self._boundary_snapshot_store.compute_tail_prefix_hash(
+        prompt_ids[:tc], block_size, _model_sig
+    )
+    if keyed is None:
+        return False
+    tail_hash, tail_tc = keyed
+    if not self._boundary_snapshot_store.has_prefix(tail_hash, tail_tc):
+        return False
+
+    loaded = self._boundary_snapshot_store.load_prefix(tail_hash, tail_tc)
+    if not loaded:
+        logger.debug(
+            "Tail snapshot hit for %s at %d tokens but load failed; "
+            "falling back to block-chain prefill",
+            request.request_id,
+            tc,
+        )
+        return False
+
+    caches = _build_cache_from_full_states(self, loaded, tc)
+    if not caches:
+        logger.debug(
+            "Tail snapshot for %s could not be rebuilt into cache objects; "
+            "falling back to block-chain prefill",
+            request.request_id,
+        )
+        return False
+
+    request.prompt_cache = caches
+    request.block_table = None
+    request.cached_tokens = tc
+    request.shared_prefix_blocks = 0
+    request.remaining_tokens = prompt_ids[tc:]
+    logger.info(
+        "Tail snapshot warm-start for %s: %d tokens recovered, " "%d tokens remaining",
+        request.request_id,
+        tc,
+        len(request.remaining_tokens),
+    )
+    return True
+
+
 def _try_prefix_snapshot_warm_start(self, request: Request) -> bool:
     # Cross-restart read-hook for issue #257: on a paged-cache miss, look up
     # the prompt prefix in the prefix-snapshot store and, on a hit,
