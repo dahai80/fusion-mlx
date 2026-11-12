@@ -94,6 +94,17 @@ def _append_spec_route_decision(decision: dict) -> None:
         logger.debug("spec-route log: append failed (non-fatal): %s", e)
 
 
+def append_spec_request_end(record: dict) -> None:
+    """Append a request-end shape record to the same spec-route jsonl.
+
+    #1549 follow-up (shape telemetry): realized request shape — output
+    length vs the max_tokens the router saw at route time, plus the spec
+    method that actually served the request. Same guards as route records
+    (disable switch, size cap, I/O errors never break inference).
+    """
+    _append_spec_route_decision({"event": "request_end", **record})
+
+
 METHOD_DSPARK = "dspark"
 METHOD_DSPINE = "dspine"
 METHOD_DFLY = "dfly"
@@ -259,6 +270,7 @@ class RouteSignals:
     """
 
     prompt_token_count: int
+    max_tokens: int | None = None
     has_mtp: bool = False
     recent_accept_rate: float | None = None
     current_method: str | None = None
@@ -294,11 +306,13 @@ class SpecAutoRouter:
         # signal had to be added six times, and every copy could drift.
         _append_spec_route_decision(
             {
+                "event": "route",
                 "method": method,
                 "reason": reason,
                 "candidates": sorted(candidates),
                 "model_family": signals.model_family,
                 "prompt_tokens": signals.prompt_token_count,
+                "max_tokens": signals.max_tokens,
                 "accept_rate": rate,
                 "kv_pressure": getattr(signals, "kv_pressure", None),
             }

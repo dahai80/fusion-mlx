@@ -474,6 +474,28 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
             )
             continue
 
+        # Shape telemetry (#1549 follow-up): realized request shape per
+        # finished request — output length vs the max_tokens the spec
+        # router saw at route time, plus per-request spec accept stats.
+        # Appends to the same spec-route jsonl; all failures non-fatal.
+        try:
+            from ..speculative.auto_router import append_spec_request_end
+
+            record = {
+                "request_id": request_id,
+                "method": getattr(request, "_active_spec_method", None),
+                "prompt_tokens": getattr(request, "num_prompt_tokens", None),
+                "max_tokens": getattr(request, "max_tokens", None),
+                "output_tokens": len(getattr(request, "output_token_ids", None) or []),
+                "status": getattr(request, "status", None),
+            }
+            dspine_state = getattr(self, "_dspine_spec_state", None)
+            if dspine_state is not None:
+                record.update(dspine_state.pop_request_stats(request_id))
+            append_spec_request_end(record)
+        except Exception as e:
+            logger.debug("spec-route request_end log failed (non-fatal): %s", e)
+
         self._free_paged_pool_cache(request)
 
         # Store cache for future reuse (G2-async): submit to background

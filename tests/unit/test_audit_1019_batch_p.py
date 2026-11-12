@@ -232,15 +232,47 @@ class TestSpecRouteDecisionRecords:
         assert router.decide(signals) == auto_router.METHOD_DFLASH
         assert records == [
             {
+                "event": "route",
                 "method": auto_router.METHOD_DFLASH,
                 "reason": "long_doc threshold",
                 "candidates": sorted(auto_router.DEFAULT_AVAILABLE),
                 "model_family": None,
                 "prompt_tokens": 9000,
+                "max_tokens": None,
                 "accept_rate": None,
                 "kv_pressure": None,
             }
         ]
+
+    def test_route_record_carries_max_tokens(self, monkeypatch):
+        auto_router, records = self._capture(monkeypatch)
+        router = auto_router.SpecAutoRouter()
+        signals = auto_router.RouteSignals(
+            prompt_token_count=9000, max_tokens=2048
+        )
+        assert router.decide(signals) == auto_router.METHOD_DFLASH
+        assert records[0]["max_tokens"] == 2048
+        assert records[0]["event"] == "route"
+
+    def test_request_end_record_shape(self, monkeypatch):
+        auto_router, records = self._capture(monkeypatch)
+        auto_router.append_spec_request_end(
+            {
+                "request_id": "r1",
+                "method": auto_router.METHOD_DSPINE,
+                "prompt_tokens": 35,
+                "max_tokens": 256,
+                "output_tokens": 139,
+                "status": "finished",
+                "spec_draft_proposed": 208,
+                "spec_draft_accepted": 121,
+            }
+        )
+        rec = records[0]
+        assert rec["event"] == "request_end"
+        assert rec["method"] == auto_router.METHOD_DSPINE
+        assert rec["spec_draft_accepted"] == 121
+        assert "ts" not in rec  # ts added by the real appender, not here
 
     def test_ngram_fallback_records_reason(self, monkeypatch):
         auto_router, records = self._capture(monkeypatch)

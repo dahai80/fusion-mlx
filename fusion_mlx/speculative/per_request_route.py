@@ -62,6 +62,7 @@ def select_active_method(
     prompt_token_count: int,
     loaded: dict[str, bool],
     *,
+    max_tokens: int | None = None,
     recent_accept_rate: float | None = None,
     current_method: str | None = None,
     has_mtp: bool = False,
@@ -78,6 +79,7 @@ def select_active_method(
         return None
     signals = RouteSignals(
         prompt_token_count=prompt_token_count,
+        max_tokens=max_tokens,
         has_mtp=has_mtp and METHOD_MTP in available,
         recent_accept_rate=recent_accept_rate,
         current_method=current_method if current_method in available else None,

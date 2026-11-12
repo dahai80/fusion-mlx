@@ -278,3 +278,59 @@ class TestDecideSpecMethod:
         sched = self._sched()
         request = SimpleNamespace(num_prompt_tokens=100)
         assert _decide_spec_method(sched, request) == ""
+
+
+class TestMaxTokensSignal:
+    def test_select_active_method_passes_max_tokens_to_router(self, monkeypatch):
+        from fusion_mlx.speculative import auto_router
+        from fusion_mlx.speculative.per_request_route import (
+            select_active_method as _sam,
+        )
+
+        seen = {}
+        real_decide = auto_router.SpecAutoRouter.decide
+
+        def spy(self, signals):
+            seen["max_tokens"] = signals.max_tokens
+            return real_decide(self, signals)
+
+        monkeypatch.setattr(auto_router.SpecAutoRouter, "decide", spy)
+        _sam(9000, loaded_methods(dflash2=True), max_tokens=512)
+        assert seen["max_tokens"] == 512
+
+    def test_dspine_state_pop_request_stats(self):
+        from fusion_mlx.scheduler.spec_decode import DSpineSpecState
+        from fusion_mlx.speculative.dspine.runtime import DSpineRuntime
+
+        class _Drafter:
+            def reset_cache(self):
+                pass
+
+        st = DSpineSpecState(
+            DSpineRuntime(drafter=_Drafter(), draft_repo="x", block_size=16)
+        )
+        st.on_new_request("r1")
+        st.record_result(3, 16)
+        st.record_result(2, 16)
+        assert st.pop_request_stats("r1") == {
+            "spec_draft_proposed": 32,
+            "spec_draft_accepted": 5,
+        }
+        # Counters reset after pop; totals stay cumulative.
+        assert st.pop_request_stats("r1") == {}
+        assert st.total_draft_proposed == 32 and st.total_draft_accepted == 5
+
+    def test_pop_request_stats_wrong_request_empty(self):
+        from fusion_mlx.scheduler.spec_decode import DSpineSpecState
+        from fusion_mlx.speculative.dspine.runtime import DSpineRuntime
+
+        class _Drafter:
+            def reset_cache(self):
+                pass
+
+        st = DSpineSpecState(
+            DSpineRuntime(drafter=_Drafter(), draft_repo="x", block_size=16)
+        )
+        st.on_new_request("r1")
+        st.record_result(3, 16)
+        assert st.pop_request_stats("r-other") == {}

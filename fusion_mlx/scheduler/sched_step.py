@@ -883,6 +883,7 @@ def _decide_spec_method(self, request) -> str:
     method = select_active_method(
         request.num_prompt_tokens,
         loaded,
+        max_tokens=getattr(request, "max_tokens", None),
         has_mtp=loaded["mtp"],
         model_family=model_family,
         is_recurrent=is_recurrent,
