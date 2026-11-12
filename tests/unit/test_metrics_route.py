@@ -576,9 +576,9 @@ def test_sched_decode_profile_renders_without_prefix_cache(metrics_client, monke
     _set_pool(monkeypatch, _fake_pool({"m1": _entry(_stub_engine(scheduler=sched))}))
     body = metrics_client.client.get("/metrics").text
 
-    assert "fusion_mlx_sched_decode_steps_total{engine=\"m1\"} 100" in body
-    assert "fusion_mlx_sched_decode_wall_seconds{engine=\"m1\"} 0.75" in body
-    assert "fusion_mlx_sched_decode_wall_ms_avg{engine=\"m1\"} 7.5" in body
+    assert 'fusion_mlx_sched_decode_steps_total{engine="m1"} 100' in body
+    assert 'fusion_mlx_sched_decode_wall_seconds{engine="m1"} 0.75' in body
+    assert 'fusion_mlx_sched_decode_wall_ms_avg{engine="m1"} 7.5' in body
     assert "fusion_mlx_prefix_cache_hits_total" not in body
 
 

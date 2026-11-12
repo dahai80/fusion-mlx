@@ -98,7 +98,9 @@ def apply_fused_divisive_norm(model: nn.Module) -> nn.Module:
         else:
             setattr(parent, key, new)
         n += 1
-        logger.info("apply_fused_divisive_norm: %s -> FusedDivisiveNorm(%d)", name, channels)
+        logger.info(
+            "apply_fused_divisive_norm: %s -> FusedDivisiveNorm(%d)", name, channels
+        )
     if n == 0:
         logger.debug(
             "apply_fused_divisive_norm: no GDN submodules found in model "

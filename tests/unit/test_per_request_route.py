@@ -462,8 +462,7 @@ class TestAbandonCooldown:
         # 2 cooldown ticks consumed by 2 fresh selections -> mtp allowed again.
         assert select_active_method(100, loaded, router=router) == METHOD_NGRAM
         assert (
-            select_active_method(100, loaded, router=router, has_mtp=True)
-            == METHOD_MTP
+            select_active_method(100, loaded, router=router, has_mtp=True) == METHOD_MTP
         )
 
     def test_cooldown_disabled_reselects_immediately(self):
@@ -482,8 +481,7 @@ class TestAbandonCooldown:
             recent_accept_rate=0.05,
         )
         assert (
-            select_active_method(100, loaded, router=router, has_mtp=True)
-            == METHOD_MTP
+            select_active_method(100, loaded, router=router, has_mtp=True) == METHOD_MTP
         )
 
     def test_cooldown_only_affects_abandoned_method(self):
