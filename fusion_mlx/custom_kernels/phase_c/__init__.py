@@ -104,7 +104,7 @@ def w4a8_fused_matmul(
     )
 
 
-from .fused_gdn import FusedGDN, apply_fused_gdn
+from .fused_divisive_norm import FusedDivisiveNorm, apply_fused_divisive_norm
 from .fusion_decision import (
     FusionPattern,
     FusionPlan,
@@ -140,8 +140,8 @@ __all__ = [
     "QUANT_FORMAT_REGISTRY",
     "w4a8_tiled_matmul",
     "NVFP4FusedLinear",
-    "FusedGDN",
-    "apply_fused_gdn",
+    "FusedDivisiveNorm",
+    "apply_fused_divisive_norm",
     "OpDescriptor",
     "FusionPattern",
     "FusionPlan",

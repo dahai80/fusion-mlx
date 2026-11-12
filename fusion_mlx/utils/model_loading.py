@@ -26,7 +26,7 @@ def _nvfp4_dequant_requested(model_settings: Any | None) -> bool:
     return os.environ.get("FUSION_MLX_NVFP4_DEQUANT", "") == "1"
 
 
-def _fused_gdn_requested(model_settings: Any | None) -> bool:
+def _fused_divisive_norm_requested(model_settings: Any | None) -> bool:
     if model_settings is not None and getattr(
         model_settings, "fused_gdn_enabled", False
     ):
@@ -256,11 +256,11 @@ def apply_post_load_transforms(model: Any, model_settings: Any | None = None) ->
     # GDN today; the converter is a no-op scan unless a module declares
     # _is_gdn. Logged at debug so the "no GDN found" message is visible
     # only when an operator explicitly opts in.
-    if _fused_gdn_requested(model_settings):
+    if _fused_divisive_norm_requested(model_settings):
         try:
-            from ..custom_kernels.phase_c import apply_fused_gdn
+            from ..custom_kernels.phase_c import apply_fused_divisive_norm
 
-            model = apply_fused_gdn(model)
+            model = apply_fused_divisive_norm(model)
         except Exception as e:
             logger.warning("post-load fused GDN conversion failed: %s", e)
     # Phase C #4: NVFP4 load-time dequant. Flattens the model parameter tree
