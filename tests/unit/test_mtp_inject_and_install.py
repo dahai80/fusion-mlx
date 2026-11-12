@@ -104,7 +104,9 @@ def test_inject_mtp_support_bails_out_on_unresolvable_model(caplog):
     build an MTP module."""
     from fusion_mlx.speculative.mtp.qwen3_5_inject import inject_mtp_support
 
-    with caplog.at_level(logging.WARNING, logger="fusion_mlx.speculative.mtp.qwen3_5_inject"):
+    with caplog.at_level(
+        logging.WARNING, logger="fusion_mlx.speculative.mtp.qwen3_5_inject"
+    ):
         result = inject_mtp_support(SimpleNamespace())
     assert result is False
     assert "skipping MTP injection" in caplog.text

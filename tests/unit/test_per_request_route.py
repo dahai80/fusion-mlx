@@ -342,7 +342,10 @@ class TestShortOutputGate:
             select_active_method as _sam,
         )
 
-        assert _sam(100, loaded_methods(dspine=True, suffix=True), max_tokens=16) == METHOD_NGRAM
+        assert (
+            _sam(100, loaded_methods(dspine=True, suffix=True), max_tokens=16)
+            == METHOD_NGRAM
+        )
 
     def test_short_output_disables_spec_without_suffix(self):
         from fusion_mlx.speculative.per_request_route import (

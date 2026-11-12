@@ -881,7 +881,7 @@ def _decide_spec_method(self, request) -> str:
     ):
         pass
     feedback = getattr(self, "_last_spec_feedback", None)
-    fb_method, fb_rate = (feedback if feedback else (None, None))
+    fb_method, fb_rate = feedback if feedback else (None, None)
     method = select_active_method(
         request.num_prompt_tokens,
         loaded,
