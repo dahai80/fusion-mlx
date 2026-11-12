@@ -927,7 +927,12 @@ class BatchedEngine(BaseEngine):
                     else bool(getattr(_mcfg, "moe", False))
                 )
                 is_moe = bool(_moe)
-                elig = check(family, is_moe=is_moe, draft_path=dspine_path, alias=self._model_name)
+                elig = check(
+                    family,
+                    is_moe=is_moe,
+                    draft_path=dspine_path,
+                    alias=self._model_name,
+                )
                 if not elig.eligible:
                     logger.info(
                         "DSpine not eligible for %s: %s",
@@ -942,7 +947,10 @@ class BatchedEngine(BaseEngine):
                         lambda: load_dspine_runtime(
                             dspine_path,
                             self._engine.engine.scheduler.model,
-                            block_size=getattr(scheduler_config, "dspine_block_size", 16) or 16,
+                            block_size=getattr(
+                                scheduler_config, "dspine_block_size", 16
+                            )
+                            or 16,
                         ),
                     )
                     self._engine.engine.scheduler._dspine_runtime = dspine_rt
