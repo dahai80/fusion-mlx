@@ -7,12 +7,21 @@ doc_type: changelog
 title: { zh: "变更日志", en: "Changelog" }
 audience: engineer
 status: draft
-version: 0.10.61
+version: 0.10.62
 updated: 2026-11-12
 owner: @dahai
 source_of_truth:
   - CHANGELOG.md
 ---
+
+## [0.10.62] - 2026-11-12 — Spark-TTS voice cloning unblocked, CI efficiency retrofit
+
+### Added
+- **Spark-TTS voice cloning unblocked (#1523, PR #1556)**: `mlx-audio` bump 0.5.3 -> 0.6.5 picks up upstream Neywa-Labs/mlx-audio#1140, which fixes the clone-mode failure (LLM emitted `<|im_end|>` as the very first token, then `feat_decoder` crashed on a 1-token semantic sequence). Verified by real clone E2E on the new pin: reference wav in, 4.18s audible output (peak 0.608, rms 0.084), no immediate EOS. The R11-B-F6 pin-guard test now parses the specifier with `packaging` and asserts the broken 0.4.4 release stays excluded, so future bumps no longer trip it. `FUSION_MLX_AGENT_TEST_API_KEY` (agent harness client credential, #1538) added to the routing env allowlist.
+- **Speculative router acceptance feedback + telemetry (PRs #1553/#1555/#1557/#1558)**: request-shape telemetry for spec-route decisions, output-length gate + acceptance feedback wired into the spec router across eagle/ddtree/suffix paths, and MTP acceptance feedback via a global counter delta.
+
+### Changed
+- **CI efficiency retrofit (#1550, PR #1554)**: `cache: pip` on the lint and security jobs' setup-python (warm cache verified: "Cache hit for restore-key" on the second run); new `changes` job (dorny/paths-filter) gates the four heavy jobs (test 7-shard matrix, test-versions, chaos, eval) on code paths — docs-only PRs skip ~70+ macOS runner-minutes while required checks still report (job-level conditional, skipped = success; verified with an empty-commit PR where all heavy jobs reported skipped and lint/security still ran). Also reformats files merged unformatted via #1555/#1557/#1558.
 
 ## [0.10.61] - 2026-11-12 — cross-restart prefix persistence, agent compat matrix, spec-route benchmark, DSpine drafter
 
