@@ -176,6 +176,13 @@ BASIC_TOOLS = [
 ]
 
 
+def _auth_headers() -> dict:
+    # Servers with auth enabled (settings.json auth.api_key) reject keyless
+    # requests with 401; the harness authenticates via env when present.
+    api_key = os.environ.get("FUSION_MLX_AGENT_TEST_API_KEY", "")
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
 def _api_call(
     base_url: str,
     model_id: str,
@@ -199,6 +206,7 @@ def _api_call(
     resp = httpx.post(
         f"{base_url}/chat/completions",
         json=payload,
+        headers=_auth_headers(),
         timeout=timeout,
     )
     resp.raise_for_status()
@@ -384,7 +392,7 @@ def _test_no_tool_leak(base_url: str, model_id: str) -> TestResult:
             [{"role": "user", "content": "Use the terminal to run 'echo test'"}],
             tools=BASIC_TOOLS,
         )
-        content = r["choices"][0]["message"].get("content", "")
+        content = r["choices"][0]["message"].get("content") or ""
         leaks = []
         for marker in ["<tool_call>", "<function=", "<|im_end|>", "<|tool_call|>"]:
             if marker in content:
@@ -480,7 +488,11 @@ def _test_streaming_tool_call(base_url: str, model_id: str) -> TestResult:
             "stream": True,
         }
         with httpx.stream(
-            "POST", f"{base_url}/chat/completions", json=payload, timeout=60
+            "POST",
+            f"{base_url}/chat/completions",
+            json=payload,
+            headers=_auth_headers(),
+            timeout=60,
         ) as resp:
             tool_chunks = []
             finish_reason = None
@@ -533,7 +545,7 @@ def _test_no_tool_needed(base_url: str, model_id: str) -> TestResult:
             [{"role": "user", "content": "What is the capital of France?"}],
             tools=BASIC_TOOLS,
         )
-        content = r["choices"][0]["message"].get("content", "")
+        content = r["choices"][0]["message"].get("content") or ""
         if "paris" in content.lower():
             return TestResult(
                 "no_tool_needed", TestStatus.PASS, duration_ms=(time.time() - t0) * 1000
@@ -566,7 +578,7 @@ def _test_stress_no_leak(base_url: str, model_id: str, rounds: int = 5) -> TestR
                 tools=BASIC_TOOLS,
                 temperature=0.8,
             )
-            content = r["choices"][0]["message"].get("content", "")
+            content = r["choices"][0]["message"].get("content") or ""
             if "<tool_call>" in content or "<function=" in content:
                 leaked += 1
         if leaked:
@@ -606,7 +618,11 @@ def _test_streaming_basic(base_url: str, model_id: str) -> TestResult:
         chunks = 0
         content = ""
         with httpx.stream(
-            "POST", f"{base_url}/chat/completions", json=payload, timeout=30
+            "POST",
+            f"{base_url}/chat/completions",
+            json=payload,
+            headers=_auth_headers(),
+            timeout=30,
         ) as resp:
             for line in resp.iter_lines():
                 if not line.startswith("data: "):
