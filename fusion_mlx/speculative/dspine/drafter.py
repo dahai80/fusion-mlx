@@ -189,12 +189,16 @@ class DSpineDrafter:
         rows = out[0, 1:]
         if self._tail is None:
             self.build_tail(target_hidden)
+        # filter_probs treats top_k as a hard rank cutoff: 0 (mlx-lm's
+        # "disabled") would zero the whole keep mask and produce NaN q rows.
+        # 0 means "no cutoff" here — use the full candidate width.
+        top_k_eff = int(top_k) if int(top_k) > 0 else int(self._tail.k)
         tokens, q_rows, _cand = self._tail.sampled(
             rows,
             stash,
             anchor_token,
             inv_temp=inv_temp,
-            top_k=top_k,
+            top_k=top_k_eff,
             top_p=top_p,
             min_p=min_p,
             uniforms=uniforms,

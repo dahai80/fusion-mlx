@@ -382,6 +382,7 @@ def _run_spec_verify_sampled(
         uniforms=accept_uniforms,
         uniform_final=final_uniform,
     )
+    mx.eval(target_probs, q_full)
     verified = (
         [int(x) for x in emitted.tolist()]
         if hasattr(emitted, "tolist")
@@ -1534,7 +1535,7 @@ def dflash2_spec_step(
 
 
 # --- DSpine (#1549): parallel-drafter spec decode over target intermediate
-# --- layer hiddens. Greedy-only (T=0 requests); T>0 requests skip.
+# --- layer hiddens. T>0 requests run the sampled rejection-verify path (P2-2).
 
 DSPINE_SPEC_WARMUP_STEPS = 2
 DSPINE_SPEC_LOG_INTERVAL = 50
@@ -1672,8 +1673,14 @@ def dspine_spec_step(
     # T>0 runs the sampled rejection-verify path (P2-2): draft via the
     # sampled refinement tail, verify via t0_verify's capped-chain
     # rejection sampler. Only a missing p_0 row (below) forces the
-    # greedy-only skip.
-    temperature = getattr(request, "temperature", 0.0) or 0.0
+    # greedy-only skip. Sampling params live on request.sampling_params —
+    # reading them off the request itself always yielded the defaults and
+    # silently ran the greedy path for sampled requests.
+    _sp = getattr(request, "sampling_params", None)
+    temperature = float(getattr(_sp, "temperature", 0.0) or 0.0)
+    top_k = int(getattr(_sp, "top_k", 0) or 0)
+    top_p = float(getattr(_sp, "top_p", 1.0) or 1.0)
+    min_p = float(getattr(_sp, "min_p", 0.0) or 0.0)
     sampled_path = temperature > 1e-6
 
     bg = scheduler.batch_generator
@@ -1754,9 +1761,9 @@ def dspine_spec_step(
                     current_token,
                     dspine_state._caches,
                     inv_temp=1.0 / temperature,
-                    top_k=int(getattr(request, "top_k", 0) or 0),
-                    top_p=float(getattr(request, "top_p", 1.0) or 1.0),
-                    min_p=float(getattr(request, "min_p", 0.0) or 0.0),
+                    top_k=top_k,
+                    top_p=top_p,
+                    min_p=min_p,
                     uniforms=draft_uniforms,
                 )
             else:
@@ -1822,9 +1829,9 @@ def dspine_spec_step(
                 p0_logprobs,
                 prompt_cache,
                 inv_temp=1.0 / temperature,
-                top_k=int(getattr(request, "top_k", 0) or 0),
-                top_p=float(getattr(request, "top_p", 1.0) or 1.0),
-                min_p=float(getattr(request, "min_p", 0.0) or 0.0),
+                top_k=top_k,
+                top_p=top_p,
+                min_p=min_p,
                 accept_uniforms=accept_uniforms,
                 final_uniform=final_uniform,
             )
@@ -1869,6 +1876,18 @@ def dspine_spec_step(
     dspine_state._window = window
 
     dspine_state.record_result(n_accepted, K)
+
+    if __import__("os").environ.get("DSPINE_SPEC_DEBUG_ROUNDS"):
+        _cache = dspine_state._caches[0] if dspine_state._caches else None
+        logger.info(
+            "dspine_round_dbg: step=%d acc=%d/%d win=%d cache_off=%s anchor=%d",
+            dspine_state.total_spec_steps,
+            n_accepted,
+            K,
+            int(window.shape[1]),
+            int(_cache.offset) if _cache is not None else -1,
+            current_token,
+        )
 
     if dspine_state.total_spec_steps % DSPINE_SPEC_LOG_INTERVAL == 1:
         stats = dspine_state.get_stats()
