@@ -474,6 +474,28 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
             )
             continue
 
+        # P1-5 (catch-up G6): request.completed event for webhooks/SSE.
+        # Best-effort — notification failures must never break cleanup.
+        try:
+            from ..notifications import get_notifier
+
+            _start = getattr(request, "start_time", None)
+            get_notifier().emit(
+                "request.completed",
+                {
+                    "request_id": request_id,
+                    "model": getattr(request, "model", None),
+                    "prompt_tokens": getattr(request, "num_prompt_tokens", None),
+                    "output_tokens": len(
+                        getattr(request, "output_token_ids", None) or []
+                    ),
+                    "wall_s": (time.time() - _start) if _start else None,
+                    "status": getattr(request, "status", None),
+                },
+            )
+        except Exception:
+            logger.debug("request.completed event emit failed", exc_info=True)
+
         # Shape telemetry (#1549 follow-up): realized request shape per
         # finished request — output length vs the max_tokens the spec
         # router saw at route time, plus per-request spec accept stats.
@@ -842,6 +864,31 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
         target = self._step_counter + self._DEFERRED_CLEAR_DELAY
         if self._deferred_clear_at is None or target > self._deferred_clear_at:
             self._deferred_clear_at = target
+
+        # P1-5 (catch-up G6): batch composition changed — emit throttled
+        # batch.status so webhook/SSE consumers track queue depth without
+        # polling. Best-effort, 1/s max.
+        _emit_batch_status(self)
+
+
+def _emit_batch_status(self) -> None:
+    now = time.monotonic()
+    last = getattr(self, "_last_batch_status_emit", 0.0)
+    if now - last < 1.0:
+        return
+    try:
+        from ..notifications import get_notifier
+
+        self._last_batch_status_emit = now
+        get_notifier().emit(
+            "batch.status",
+            {
+                "running": len(self.running),
+                "queued": len(self.waiting),
+            },
+        )
+    except Exception:
+        logger.debug("batch.status event emit failed", exc_info=True)
 
 
 def _is_cache_corruption_error(self, error: Exception) -> bool:

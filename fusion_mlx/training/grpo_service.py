@@ -460,6 +460,23 @@ class GRPOService:
         if self._loop and self._loop.is_running():
             asyncio.ensure_future(_do(), loop=self._loop)
 
+        # P1-5 (catch-up G6): training.status event. Best-effort — the
+        # notifier only logs failures, never raises into the trainer.
+        try:
+            from ..notifications import get_notifier
+
+            get_notifier().emit(
+                "training.status",
+                {
+                    "job_id": getattr(job, "job_id", None),
+                    "status": getattr(job, "status", None),
+                    "step": getattr(job, "current_step", None),
+                    "loss": getattr(job, "last_loss", None),
+                },
+            )
+        except Exception:
+            logger.debug("training.status event emit failed", exc_info=True)
+
     # =========================================================================
     # Persistence
     # =========================================================================

@@ -939,6 +939,30 @@ Examples:
         default=0,
         help="Rate limit requests per minute per client (0 = disabled)",
     )
+    # P1-5 (catch-up G6): event webhooks + SSE.
+    serve_parser.add_argument(
+        "--webhook-url",
+        type=str,
+        action="append",
+        default=None,
+        metavar="URL",
+        help=(
+            "Event webhook POST target (repeatable). Receives JSON event "
+            "bodies signed with HMAC-SHA256 in X-Fusion-Signature"
+        ),
+    )
+    serve_parser.add_argument(
+        "--webhook-secret",
+        type=str,
+        default="",
+        help="HMAC-SHA256 secret for webhook event signatures",
+    )
+    serve_parser.add_argument(
+        "--webhook-timeout",
+        type=float,
+        default=3.0,
+        help="Webhook POST timeout in seconds (default: 3.0)",
+    )
     # Hard cap on per-request body size — DoS defense.
     # See ``fusion_mlx/middleware/body_size.py`` for the rationale (pre-fix:
     # a 10 MB body silently ran a ~60 s full prefill on a 27B alias before

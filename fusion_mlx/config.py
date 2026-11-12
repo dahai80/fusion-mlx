@@ -389,6 +389,13 @@ class ServerConfig:
     # third-party cloud without explicit operator consent.
     cloud_fallback_consent: bool = False
 
+    # P1-5 (catch-up G6): event webhooks. POST targets receive JSON event
+    # bodies signed with HMAC-SHA256 in X-Fusion-Signature. Failures only
+    # log; delivery is best-effort.
+    webhook_urls: list[str] = field(default_factory=list)
+    webhook_secret: str = ""
+    webhook_timeout_s: float = 3.0
+
     # --- Rapid-MLX runtime state fields ---
     engine: Any = None
     model_name: str | None = None
