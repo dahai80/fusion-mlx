@@ -141,6 +141,8 @@ class NGramSpecState:
         self.total_spec_steps = 0
         self.total_draft_proposed = 0
         self.total_draft_accepted = 0
+        self._req_draft_proposed = 0
+        self._req_draft_accepted = 0
         self._last_request_id = None
         self._recent_rates = []
         self._paused = False
@@ -221,6 +223,8 @@ class NGramSpecState:
             self._d1_rates.clear()
             self._probe_counter = 0
             self._probing = False
+            self._req_draft_proposed = 0
+            self._req_draft_accepted = 0
 
     def cleanup_request(self, request_id: str):
         # #1038 abort path: the scheduler warns when a present spec state has
@@ -317,6 +321,8 @@ class NGramSpecState:
         self.total_spec_steps += 1
         self.total_draft_proposed += n_total
         self.total_draft_accepted += n_accepted
+        self._req_draft_proposed += n_total
+        self._req_draft_accepted += n_accepted
         self.predictor.record_accepted(n_accepted)
 
         if n_total > 0:
@@ -394,6 +400,22 @@ class NGramSpecState:
             "paused": self._paused,
         }
         stats["ngram"] = self.predictor.get_stats()
+        return stats
+
+    def pop_request_stats(self, request_id: str) -> dict:
+        """Per-request draft accept totals for the request-end telemetry
+        record; resets the counters (total_* fields stay cumulative).
+        Returns {} when the request never speculated (no record noise)."""
+        if self._last_request_id != request_id:
+            return {}
+        if not self._req_draft_proposed and not self._req_draft_accepted:
+            return {}
+        stats = {
+            "spec_draft_proposed": self._req_draft_proposed,
+            "spec_draft_accepted": self._req_draft_accepted,
+        }
+        self._req_draft_proposed = 0
+        self._req_draft_accepted = 0
         return stats
 
 

@@ -1015,10 +1015,7 @@ def _try_spec_decode(
         result = dspark_spec_step(self, output, current_token, request_id)
         if result:
             return result
-    elif (
-        method == METHOD_DSPINE
-        and getattr(self, "_dspine_runtime", None) is not None
-    ):
+    elif method == METHOD_DSPINE and getattr(self, "_dspine_runtime", None) is not None:
         from .spec_decode import dspine_spec_step
 
         result = dspine_spec_step(self, output, current_token, request_id)
