@@ -722,13 +722,22 @@ class TestMlxAudioVersionPin:
         spec = mlx_audio_specs[0]
         # 0.4.4 broke istftnet.SineGen (broadcast_shapes regression) AND
         # kitten_tts forward pass. Accept any pin that does not resolve to
-        # 0.4.4: the legacy ``<0.4.4`` / ``==0.4.3``, or ``==0.5.3`` which
-        # fixes both bugs (G-7 #0912 audit).
-        excludes_broken = "<0.4.4" in spec or "==0.4.3" in spec or "==0.5.3" in spec
+        # 0.4.4: the legacy ``<0.4.4`` / ``==0.4.3``, or later fixed pins
+        # (``==0.5.3`` G-7 #0912 audit; ``==0.6.5`` #1523 Spark voice-clone
+        # fix). Parse the specifier with packaging so future pin bumps
+        # pass automatically as long as 0.4.4 stays excluded.
+        import re
+
+        from packaging.specifiers import SpecifierSet
+        from packaging.version import Version
+
+        specifier = re.sub(r"\[[^\]]*\]", "", spec).strip()
+        specifier = re.sub(r"^[A-Za-z0-9._-]+", "", specifier).strip()
+        excludes_broken = Version("0.4.4") not in SpecifierSet(specifier)
         assert excludes_broken, (
             f"R11-B-F6 regression: mlx-audio must exclude 0.4.4 to avoid "
-            f"the istftnet SineGen broadcast_shapes regression. Accept "
-            f"``<0.4.4``, ``==0.4.3``, or ``==0.5.3``. Current pin: {spec!r}"
+            f"the istftnet SineGen broadcast_shapes regression. Current "
+            f"pin: {spec!r}"
         )
 
 

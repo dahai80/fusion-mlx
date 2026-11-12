@@ -144,6 +144,10 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # Test/integration helpers — server URL for integration suites,
         # not consulted at runtime by the engine.
         "FUSION_MLX_BASE_URL",
+        # #1538: API key for the agent compatibility harness. Read by the
+        # harness CLIENT (agents/testing.py) to authenticate against an
+        # auth-enabled server; never consulted by the engine or config.
+        "FUSION_MLX_AGENT_TEST_API_KEY",
         # #1220: override the directory the web/ monitor SPA is served from
         # (packaging + tests). Static asset hosting, never engine routing.
         "FUSION_MLX_WEB_DIST",
