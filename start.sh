@@ -375,7 +375,7 @@ _parse_start_args() {
             # boolean spec-decode flags (no value)
             --enable-dflash|--enable-dflash2|--enable-dspark|--enable-mtp|--enable-lsa|\
             --no-spec-decode|--force-spec-decode|--mtp-optimistic|--mtp-sidecar|\
-            --suffix-decoding|--disable-prefix-cache)
+            --suffix-decoding|--disable-prefix-cache|--kv-cache-turboquant)
                 extra+=("$1")
                 shift
                 ;;
