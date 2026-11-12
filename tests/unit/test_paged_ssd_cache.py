@@ -3790,7 +3790,10 @@ class TestLayerSignatureSweep:
         assert mgr._expected_layer_cache_types is None
 
     def test_sweep_drops_blocks_with_stale_signature(self, tmp_path: Path):
-        stock = ["ArraysCache", "ArraysCache", "ArraysCache", "KVCache"]
+        # P1-4: TurboQuantKVCache canonicalizes to KVCache, so a plain
+        # KVCache block is NO LONGER stale for a TQ-expecting manager;
+        # the stale block here uses a genuinely different type.
+        stock = ["ArraysCache", "ArraysCache", "ArraysCache", "RotatingKVCache"]
         turbo = [
             "ArraysCache",
             "ArraysCache",
@@ -3901,6 +3904,50 @@ class TestLayerSignatureSweep:
 
         assert mgr._is_compatible_block(meta) is True
 
+    def test_startup_compat_canonicalizes_turboquant_to_kvcache(
+        self, tmp_path: Path
+    ):
+        # P1-4 / #1575: a TQ cold-tier block saved before the canonical
+        # collapse carries a raw TurboQuantKVCache signature; the live
+        # manager expects plain KVCache. Recomputing both sides under the
+        # current canonicalization must accept it.
+        expected = ["KVCache"]
+        stored = ["TurboQuantKVCache"]
+        mgr = self._make_manager(tmp_path, expected_layer_cache_types=expected)
+        meta = self._make_meta(
+            block_hash=b"ae" * 10,
+            model_name="test-model",
+            layer_cache_types=stored,
+            num_layers=40,
+        )
+        meta.cache_signature = _cache_compat_signature(
+            model_name="test-model",
+            num_layers=40,
+            block_size=2048,
+            layer_cache_types=stored,
+        )
+
+        assert mgr._is_compatible_block(meta) is True
+
+    def test_startup_compat_rejects_genuine_type_drift(self, tmp_path: Path):
+        expected = ["KVCache"]
+        stored = ["RotatingKVCache"]
+        mgr = self._make_manager(tmp_path, expected_layer_cache_types=expected)
+        meta = self._make_meta(
+            block_hash=b"af" * 10,
+            model_name="test-model",
+            layer_cache_types=stored,
+            num_layers=40,
+        )
+        meta.cache_signature = _cache_compat_signature(
+            model_name="test-model",
+            num_layers=40,
+            block_size=2048,
+            layer_cache_types=stored,
+        )
+
+        assert mgr._is_compatible_block(meta) is False
+
     def test_set_expected_layer_signature_replaces_existing(self, tmp_path: Path):
         mgr = self._make_manager(
             tmp_path,
@@ -3908,12 +3955,24 @@ class TestLayerSignatureSweep:
         )
         mgr._signature_sweep_completed = True
 
-        changed = mgr.set_expected_layer_signature(["ArraysCache", "TurboQuantKVCache"])
+        # P1-4: TQ collapses to KVCache, so this is a canonical noop now;
+        # a genuinely different type still triggers the re-sweep.
+        changed_noop = mgr.set_expected_layer_signature(
+            ["ArraysCache", "TurboQuantKVCache"]
+        )
+        assert changed_noop is False
+        assert mgr._expected_layer_cache_types == [
+            "ArraysCache",
+            "TurboQuantKVCache",
+        ]
+
+        mgr._signature_sweep_completed = True
+        changed = mgr.set_expected_layer_signature(["ArraysCache", "RotatingKVCache"])
 
         assert changed is True
         assert mgr._expected_layer_cache_types == [
             "ArraysCache",
-            "TurboQuantKVCache",
+            "RotatingKVCache",
         ]
         assert mgr._signature_sweep_completed is False
 
@@ -3954,7 +4013,7 @@ class TestLayerSignatureSweep:
 
     def test_sweep_leaves_other_models_alone(self, tmp_path: Path):
         turbo = ["ArraysCache", "TurboQuantKVCache"]
-        stock = ["ArraysCache", "KVCache"]
+        stock = ["ArraysCache", "RotatingKVCache"]
         mgr = self._make_manager(
             tmp_path, model_name="model-A", expected_layer_cache_types=turbo
         )
@@ -4036,7 +4095,7 @@ class TestLayerSignatureSweep:
             self._make_meta(
                 block_hash=b"ff" * 10,
                 model_name="model-A",
-                layer_cache_types=["ArraysCache", "KVCache"],
+                layer_cache_types=["ArraysCache", "RotatingKVCache"],
                 num_layers=2,
             )
         )
