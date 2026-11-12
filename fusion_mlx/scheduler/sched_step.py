@@ -213,6 +213,11 @@ def step(self) -> SchedulerOutput:
             else:
                 responses = []
             _decode_dt = time.perf_counter() - _decode_t0
+            if not _step_had_prefill:
+                _prof = getattr(self, "_step_profile", None)
+                if _prof is not None:
+                    _prof["decode_steps"] += 1
+                    _prof["decode_wall_s"] += _decode_dt
             # #contention-pool: register this engine as decoding so sibling
             # pool engines' detectors treat our interleave as in-process,
             # not external GPU contention.
@@ -720,6 +725,10 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
         self.model._fusion_mlx_mtp_suppressed = False
         self.model._fusion_mlx_mtp_chain_k = None
     self._last_decode_dt = time.perf_counter() - _decode_t0
+    _prof = getattr(self, "_step_profile", None)
+    if _prof is not None:
+        _prof["decode_steps"] += 1
+        _prof["decode_wall_s"] += self._last_decode_dt
     # #contention-pool: steady-state decode also runs through this fast path,
     # so mark it too — otherwise a sibling engine decoding here is invisible
     # to the registry and the contention gate fires on pool interleave.

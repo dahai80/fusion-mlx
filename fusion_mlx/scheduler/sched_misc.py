@@ -706,6 +706,10 @@ def get_ssd_cache_stats(self) -> dict[str, Any] | None:
     """Get paged SSD + prefix cache observability statistics."""
     stats = {}
 
+    prof = getattr(self, "_step_profile", None)
+    if prof is not None:
+        stats["step_profile"] = dict(prof)
+
     if self.paged_ssd_cache_manager is not None:
         stats["ssd_cache"] = self.paged_ssd_cache_manager.get_stats()
 
