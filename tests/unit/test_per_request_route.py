@@ -422,3 +422,82 @@ class TestEagleAndNgramRequestStats:
             "spec_draft_accepted": 2,
         }
         assert st.pop_request_stats("r1") == {}
+
+
+class TestAbandonCooldown:
+    def test_abandoned_method_skipped_on_next_fresh_selection(self):
+        loaded = loaded_methods(suffix=True, mtp=True)
+        router = SpecAutoRouter(
+            long_doc_threshold=4096, abandon_accept=0.20, keep_accept=0.40
+        )
+        # First request runs mtp with terrible acceptance -> abandoned.
+        first = select_active_method(
+            100,
+            loaded,
+            router=router,
+            current_method=METHOD_MTP,
+            recent_accept_rate=0.05,
+        )
+        assert first == METHOD_NGRAM
+        # Next request has no current method (cur=None after abandon) and no
+        # rate yet: without cooldown has_mtp would re-select mtp immediately.
+        second = select_active_method(100, loaded, router=router)
+        assert second == METHOD_NGRAM
+
+    def test_cooldown_expires_after_n_requests(self):
+        loaded = loaded_methods(suffix=True, mtp=True)
+        router = SpecAutoRouter(
+            long_doc_threshold=4096,
+            abandon_accept=0.20,
+            keep_accept=0.40,
+            abandon_cooldown=2,
+        )
+        select_active_method(
+            100,
+            loaded,
+            router=router,
+            current_method=METHOD_MTP,
+            recent_accept_rate=0.05,
+        )
+        # 2 cooldown ticks consumed by 2 fresh selections -> mtp allowed again.
+        assert select_active_method(100, loaded, router=router) == METHOD_NGRAM
+        assert (
+            select_active_method(100, loaded, router=router, has_mtp=True)
+            == METHOD_MTP
+        )
+
+    def test_cooldown_disabled_reselects_immediately(self):
+        loaded = loaded_methods(suffix=True, mtp=True)
+        router = SpecAutoRouter(
+            long_doc_threshold=4096,
+            abandon_accept=0.20,
+            keep_accept=0.40,
+            abandon_cooldown=0,
+        )
+        select_active_method(
+            100,
+            loaded,
+            router=router,
+            current_method=METHOD_MTP,
+            recent_accept_rate=0.05,
+        )
+        assert (
+            select_active_method(100, loaded, router=router, has_mtp=True)
+            == METHOD_MTP
+        )
+
+    def test_cooldown_only_affects_abandoned_method(self):
+        loaded = loaded_methods(suffix=True, mtp=True)
+        router = SpecAutoRouter(
+            long_doc_threshold=4096, abandon_accept=0.20, keep_accept=0.40
+        )
+        select_active_method(
+            100,
+            loaded,
+            router=router,
+            current_method=METHOD_MTP,
+            recent_accept_rate=0.05,
+        )
+        # suffix was never abandoned -> still selectable (it is the fallback
+        # here anyway; assert the router did not exclude everything).
+        assert select_active_method(100, loaded, router=router) == METHOD_NGRAM

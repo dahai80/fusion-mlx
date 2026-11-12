@@ -294,6 +294,7 @@ class SpecAutoRouter:
     abandon_accept: float = 0.20
     keep_accept: float = 0.40
     min_output_tokens: int = 32
+    abandon_cooldown: int = 8
 
     def _record(
         self,
@@ -326,6 +327,22 @@ class SpecAutoRouter:
         rate = signals.recent_accept_rate
         excluded: set[str] = set()
 
+        # Abandon cooldown: once a method is abandoned for low acceptance,
+        # skip it for the next N routing decisions. Without this the router
+        # oscillates: abandon(mtp) -> cur=None -> has_mtp re-selects mtp ->
+        # bad request -> abandon(mtp) ... — every other request pays the
+        # draft warmup on a method we already measured as failing
+        # (production: 2,713 mtp requests at 0.05 acceptance).
+        cooldowns = getattr(self, "_abandon_cooldowns", None)
+        if cooldowns is None:
+            cooldowns = self._abandon_cooldowns = {}
+        if self.abandon_cooldown > 0 and cooldowns:
+            for m in list(cooldowns):
+                cooldowns[m] -= 1
+                if cooldowns[m] <= 0:
+                    del cooldowns[m]
+            excluded.update(cooldowns)
+
         # Output-length gate (#1549 follow-up): draft warmup (2 steps) plus
         # the first 16-token draft round never amortize on very short
         # outputs. 4-bit targets make this worse (quantized AR is fast
@@ -343,12 +360,16 @@ class SpecAutoRouter:
 
         if cur is not None and rate is not None and rate < self.abandon_accept:
             excluded.add(cur)
+            if self.abandon_cooldown > 0:
+                cooldowns[signals.current_method] = self.abandon_cooldown
             cur = None
             logger.info(
-                "spec-route: abandoning %s (acceptance %.1f%% < %.1f%%)",
+                "spec-route: abandoning %s (acceptance %.1f%% < %.1f%%, "
+                "cooldown %d requests)",
                 signals.current_method,
                 rate * 100,
                 self.abandon_accept * 100,
+                self.abandon_cooldown,
             )
 
         if (
