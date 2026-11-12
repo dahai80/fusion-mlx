@@ -306,5 +306,51 @@ class TestWarmStart:
             store.shutdown()
 
 
+class TestPendingFlushWindow:
+    """#1543: has_prefix must cover the async write flush window."""
+
+    def test_has_prefix_accounts_for_pending_write(self, tmp_path):
+        store = BoundarySnapshotSSDStore(base_dir=tmp_path, prefix_persist=True)
+        try:
+            tail_hash, tail_tc = _tail_keyed(_PROMPT_LEN - 1)
+            assert store.has_prefix(tail_hash, tail_tc) is False
+            assert store.save_prefix(
+                tail_hash,
+                tail_tc,
+                _full_cache(tail_tc),
+                _extract_fn,
+                _MODEL_NAME,
+            )
+            # Immediately after enqueue (writer may not have flushed yet):
+            # the bounded wait must report the snapshot as present.
+            assert store.has_prefix(tail_hash, tail_tc) is True
+            # A different token_count for the same hash is still a miss.
+            assert store.has_prefix(tail_hash, tail_tc - 1) is False
+            # Unknown hash never blocks the wait window.
+            t0 = time.monotonic()
+            assert store.has_prefix(b"\x00" * 16, tail_tc) is False
+            assert time.monotonic() - t0 < 0.5
+        finally:
+            store.shutdown()
+
+    def test_failed_write_clears_pending(self, tmp_path):
+        store = BoundarySnapshotSSDStore(base_dir=tmp_path, prefix_persist=True)
+        try:
+            tail_hash, tail_tc = _tail_keyed(_PROMPT_LEN - 1)
+
+            def _boom(_snapshot_cache):
+                raise RuntimeError("extract failed")
+
+            assert (
+                store.save_prefix(tail_hash, tail_tc, _full_cache(tail_tc), _boom,
+                                  _MODEL_NAME)
+                is False
+            )
+            assert (tail_hash, tail_tc) not in store._prefix_pending
+            assert store.has_prefix(tail_hash, tail_tc) is False
+        finally:
+            store.shutdown()
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

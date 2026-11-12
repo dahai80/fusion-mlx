@@ -415,12 +415,28 @@ def add_request(self, request: Request) -> None:
                                 f"{len(request.remaining_tokens)} tokens remaining, cache reconstructed"
                             )
                     else:
-                        # Reconstruction failed, treat as cache miss
+                        # Reconstruction failed, treat as cache miss. Fall back
+                        # to snapshot warm-start (mirrors the fetch-miss branch
+                        # below): a failed block reconstruction must not discard
+                        # a persisted tail/prefix snapshot that can still cover
+                        # the prompt (issue #1543 follow-up).
                         if self.paged_cache_manager is not None:
                             self.paged_cache_manager.delete_block_table(
                                 request.request_id
                             )
-                        request.remaining_tokens = request.prompt_token_ids
+                        request.block_table = None
+                        request.cached_tokens = 0
+                        request.shared_prefix_blocks = 0
+                        if (
+                            not self._try_tail_snapshot_warm_start(request)
+                            and not self._try_prefix_snapshot_warm_start(request)
+                            and not (
+                                getattr(request, "kv_resume_seeded", False)
+                                and request.prompt_cache is not None
+                                and request.cached_tokens > 0
+                            )
+                        ):
+                            request.remaining_tokens = request.prompt_token_ids
                         logger.debug(
                             f"Request {request.request_id}: paged cache reconstruction failed, "
                             "released shared blocks"

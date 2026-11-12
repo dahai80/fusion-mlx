@@ -48,6 +48,12 @@ _MAX_PENDING_WRITES_CAP = 512
 
 _SOFT_LIMIT_PCT = 0.80
 
+# #1543: how long has_prefix waits for an async prefix write to flush before
+# answering miss. Covers the immediate-repeat window only; a real miss pays
+# at most this much latency once.
+_PENDING_FLUSH_WAIT_S = 2.0
+_PENDING_FLUSH_POLL_S = 0.05
+
 _PREFIX_DEFAULT_MAX_BYTES = 20 * 1024 * 1024 * 1024
 
 # Live store instances per base_dir, mirroring PagedSSDCacheManager's
@@ -212,6 +218,10 @@ class BoundarySnapshotSSDStore:
         )
         self._prefix_index: dict[bytes, _PrefixEntry] = {}
         self._prefix_lock = threading.Lock()
+        # #1543: snapshots enqueued but not yet flushed. has_prefix waits a
+        # bounded window for these so an immediate repeat does not miss
+        # warm-start while the async writer is still in flight.
+        self._prefix_pending: set[tuple[bytes, int]] = set()
         self._prefix_total_bytes = 0
         self._prefix_stats = {
             "writes": 0,
@@ -779,6 +789,8 @@ class BoundarySnapshotSSDStore:
                     token_count,
                 )
                 return False
+            with self._prefix_lock:
+                self._prefix_pending.add((prefix_hash, token_count))
             return True
         except Exception as e:
             logger.debug("Failed to save prefix snapshot: %s", e)
@@ -787,9 +799,19 @@ class BoundarySnapshotSSDStore:
     def has_prefix(self, prefix_hash: bytes, token_count: int) -> bool:
         if not self._prefix_persist or not prefix_hash:
             return False
-        with self._prefix_lock:
-            entry = self._prefix_index.get(prefix_hash)
-            return entry is not None and entry.token_count == token_count
+        # #1543: the tail snapshot save is async. A repeat that lands inside
+        # the flush window would otherwise miss warm-start and pay a full
+        # tail re-prefill. Wait a bounded time for the pending write instead.
+        deadline = time.monotonic() + _PENDING_FLUSH_WAIT_S
+        while True:
+            with self._prefix_lock:
+                entry = self._prefix_index.get(prefix_hash)
+                if entry is not None:
+                    return entry.token_count == token_count
+                pending = (prefix_hash, token_count) in self._prefix_pending
+            if not pending or time.monotonic() >= deadline:
+                return False
+            time.sleep(_PENDING_FLUSH_POLL_S)
 
     def find_prefix_snapshot(
         self,
@@ -1018,6 +1040,9 @@ class BoundarySnapshotSSDStore:
                     # silently. Log it (best-effort cleanup, not fatal) so a
                     # permissions/disk error is visible, not invisible.
                     logger.debug("prefix snapshot temp cleanup unlink failed: %s", e)
+        finally:
+            with self._prefix_lock:
+                self._prefix_pending.discard((prefix_hash, token_count))
 
     def _enforce_prefix_cap(self) -> None:
         """LRU-evict prefix snapshots until under the disk cap.
