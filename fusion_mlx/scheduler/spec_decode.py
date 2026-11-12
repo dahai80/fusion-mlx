@@ -61,6 +61,8 @@ class SpecDecodeState:
         self.total_spec_steps = 0
         self.total_draft_proposed = 0
         self.total_draft_accepted = 0
+        self._req_draft_proposed = 0
+        self._req_draft_accepted = 0
         self._last_request_id = None
         self._recent_accepted = []
         self._spec_paused = False
@@ -86,6 +88,8 @@ class SpecDecodeState:
             self._spec_paused = False
             self._recent_accepted.clear()
             self._paused_steps = 0
+            self._req_draft_proposed = 0
+            self._req_draft_accepted = 0
             self._probe_records.clear()
 
     def add_token(self, token: int):
@@ -121,6 +125,8 @@ class SpecDecodeState:
         self.total_spec_steps += 1
         self.total_draft_proposed += n_total
         self.total_draft_accepted += n_accepted
+        self._req_draft_proposed += n_total
+        self._req_draft_accepted += n_accepted
         if self.draft_model:
             self.draft_model.record_accepted(n_accepted)
 
@@ -193,6 +199,22 @@ class SpecDecodeState:
         }
         if self.draft_model:
             stats["draft_model"] = self.draft_model.get_stats()
+        return stats
+
+    def pop_request_stats(self, request_id: str) -> dict:
+        """Per-request draft accept totals for the request-end telemetry
+        record; resets the counters (total_* fields stay cumulative).
+        Returns {} when the request never speculated (no record noise)."""
+        if self._last_request_id != request_id:
+            return {}
+        if not self._req_draft_proposed and not self._req_draft_accepted:
+            return {}
+        stats = {
+            "spec_draft_proposed": self._req_draft_proposed,
+            "spec_draft_accepted": self._req_draft_accepted,
+        }
+        self._req_draft_proposed = 0
+        self._req_draft_accepted = 0
         return stats
 
 

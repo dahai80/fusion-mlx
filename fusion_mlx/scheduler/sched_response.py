@@ -492,6 +492,20 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
             dspine_state = getattr(self, "_dspine_spec_state", None)
             if dspine_state is not None:
                 record.update(dspine_state.pop_request_stats(request_id))
+            if not record.get("spec_draft_proposed"):
+                # eagle3/ddtree and suffix paths carry their own per-request
+                # counters; the first state that has stats for this request
+                # wins (methods are mutually exclusive per request).
+                for alt in (
+                    getattr(self, "_spec_decode_state", None),
+                    getattr(self, "_ngram_spec_state", None),
+                ):
+                    if alt is None:
+                        continue
+                    stats = alt.pop_request_stats(request_id)
+                    if stats:
+                        record.update(stats)
+                        break
             append_spec_request_end(record)
             # Acceptance feedback loop: feed the finished request's spec
             # accept rate back into the next route decision (abandon <0.20,
