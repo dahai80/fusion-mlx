@@ -159,7 +159,7 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **9 engine types** - LLM, VLM, Embedding, Reranker, STT, TTS, STS, ImageGen (Flux 2), VideoGen (LTX-2, Wan2, SkyReels-V3)
 - **OpenAI + Anthropic API** - one server, two API flavors, fully compatible
 - **Continuous batching** - vLLM-style scheduler with chunked prefill, preemption, priority queues
-- **Speculative decoding** - SuffixDecoding, DFlash, DSpark, MTP, VLM MTP, Eagle3 (2–5× faster generation)
+- **Speculative decoding** - SuffixDecoding, DFlash, DSpark, MTP, VLM MTP, Eagle3 (2–5× faster generation). Published production routing benchmark: 45.7k real routing decisions over 61 days with per-strategy acceptance rates — [docs/benchmarks/spec-route-benchmark.md](docs/benchmarks/spec-route-benchmark.md)
 - **TurboQuant KV** - 4-bit KV cache quantization, 4× less memory traffic
 - **40+ quant formats** - GGUF (Q2_K -> Q8_0), Imatrix (IQ1_M -> IQ4_XS), TurboQuant (TQ1_0/TQ2_0), MLX (mxfp4/mxfp8/6bit/4bit/8bit/F16/BF16/F32)
 - **Paged KV cache** - SSD cold layer, block-aware prefix caching with COW sharing
