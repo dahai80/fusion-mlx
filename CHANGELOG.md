@@ -7,12 +7,27 @@ doc_type: changelog
 title: { zh: "变更日志", en: "Changelog" }
 audience: engineer
 status: draft
-version: 0.10.60
+version: 0.10.61
 updated: 2026-11-12
 owner: @dahai
 source_of_truth:
   - CHANGELOG.md
 ---
+
+## [0.10.61] - 2026-11-12 — cross-restart prefix persistence, agent compat matrix, spec-route benchmark, DSpine drafter
+
+### Added
+- **`boundary_prefix_persist` exposed via settings.json (#1537, PR #1541)**: cross-restart prefix snapshot persistence (block-chain + tail snapshots) is now configurable in the `cache` section of `~/.fusion-mlx/settings.json` (`boundary_prefix_persist`, `boundary_prefix_max_bytes`) in both cache-section loaders, instead of env-only. Prod-verified: 4.4k-token prompt, TTFT 28ms after restart vs 0.7s cold. Documented in `docs/config-reference.md`.
+- **Agent compatibility matrix published (#1538)**: `docs/agent-compatibility.md` — 10 agent profiles measured on production (79 PASS / 0 FAIL / 9 SKIP). The agent harness now authenticates via `FUSION_MLX_AGENT_TEST_API_KEY` (auth-enabled servers returned 401, masking streaming tests as failures) and tolerates `message.content = None` from thinking models in the leak checks; `tests/unit/test_agent_harness_auth.py` covers both.
+- **Production speculative-routing benchmark (#1539)**: `docs/benchmarks/spec-route-benchmark.md` + anonymized dataset (45,753 routing decisions over 61 days). Headlines: ddtree 44.5% mean acceptance, suffix 25.3% (stable 8 weeks), native MTP 5% (below the 20% abandon threshold — the router self-corrects away from it).
+- **DSpine parallel-drafter speculative decode for Qwen3 targets (#1549, PR #1551)**: vendored Tencent DSpine core (Apache-2.0) with `--dspine-drafter-path`/`--dspine-block-size`; Qwen3-8B serve e2e geomean ~2.5x vs autoregressive (short chat 1.49x, math 4.28x, coding 2.56x). Greedy T=0 only.
+
+### Fixed
+- **Prefix-index hit path reuses the persisted terminal partial block (#1532, PR #1542)** — repeats one token past a stored prompt-end state no longer re-prefill up to block_size−1 tokens (measured: cached 8192 of 9629 → full reuse, including cross-restart via SSD lazy restore).
+- **ArraysCache prefill chunk size aligned to block size (#1532, PR #1545)** — every stored block carries real state, so chunked prefill stores are block-complete.
+- **Async prefix-snapshot flush window covered + warm-start no longer poisons the block store (PR #1547)**.
+- **9 stale DFlash spec-decode tests repaired + upward-rewind cache no-op fix (PR #1552)**.
+- **black 26.10.1 reformat for files touched by #1542/#1545 (PR #1546)** — CI lint was red on main from the unpinned-black drift.
 
 ## [0.10.60] - 2026-11-12 — tail snapshot reuse kills repeat-prompt re-prefill on hybrid models (#1532)
 
