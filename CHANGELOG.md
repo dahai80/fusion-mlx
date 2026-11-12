@@ -7,12 +7,17 @@ doc_type: changelog
 title: { zh: "变更日志", en: "Changelog" }
 audience: engineer
 status: draft
-version: 0.10.58
-updated: 2026-11-10
+version: 0.10.60
+updated: 2026-11-12
 owner: @dahai
 source_of_truth:
   - CHANGELOG.md
 ---
+
+## [0.10.60] - 2026-11-12 — tail snapshot reuse kills repeat-prompt re-prefill on hybrid models (#1532)
+
+### Added
+- **Tail snapshot for non-block-aligned prompts on hybrid models (#1532, PR #1535)**: hybrid (ArraysCache/GDN) models force paged `block_size=2048`, so the block-aware prefix store discards up to 2047 trailing tokens per prompt and every repeat request re-prefills the tail. After a single-request prefill completes — both paths process `tokens[:-1]` and leave the cache at the canonical generation-kickoff state `prompt_len - 1` — the scheduler now persists that full kickoff state as a tail snapshot via the existing boundary-snapshot SSD store, keyed by a domain-separated tail hash (block chain + `"tail"` + tail tokens + model name). On a repeat request whose full-prompt block-chain hit leaves `cached_tokens < prompt_len - 1` (or on a block-chain miss), admission warm-starts from the tail snapshot: cache objects are rebuilt directly from saved full states via the cache-type handlers (bypassing the block chain, which floors to full blocks), `cached_tokens = prompt_len - 1`, and only the final token remains to be prefilled. Gated to stateful non-sliceable caches (`_cache_list_needs_boundary_snapshot`), non-aligned prompts, VLM-free, existing `boundary_prefix_persist` config — batched traffic and block-aligned prompts unchanged. Covered by `tests/unit/test_tail_snapshot_1532.py` (20 tests: hash determinism/domain separation, capture gating, states-to-cache rebuild, warm-start field assignment).
 
 ## [0.10.59] - 2026-11-11 — per-request speculative draft width + acceptance counters over REST (#1528)
 
