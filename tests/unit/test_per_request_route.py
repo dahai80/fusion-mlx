@@ -383,3 +383,39 @@ class TestShortOutputGate:
         assert router.decide(signals) == auto_router.METHOD_NGRAM
         assert records[0]["reason"] == "short_output floor"
         assert records[0]["method"] == auto_router.METHOD_NGRAM
+
+
+class TestEagleAndNgramRequestStats:
+    def test_spec_decode_state_pop_request_stats(self):
+        from fusion_mlx.scheduler.spec_decode import SpecDecodeState
+
+        st = SpecDecodeState()
+        st.on_new_request("r1", [])
+        st.record_accepted(4, 8)
+        st.record_accepted(2, 8)
+        assert st.pop_request_stats("r1") == {
+            "spec_draft_proposed": 16,
+            "spec_draft_accepted": 6,
+        }
+        assert st.pop_request_stats("r1") == {}
+        assert st.total_draft_proposed == 16 and st.total_draft_accepted == 6
+
+    def test_spec_decode_state_pop_wrong_request_empty(self):
+        from fusion_mlx.scheduler.spec_decode import SpecDecodeState
+
+        st = SpecDecodeState()
+        st.on_new_request("r1", [])
+        st.record_accepted(1, 8)
+        assert st.pop_request_stats("other") == {}
+
+    def test_ngram_state_pop_request_stats(self):
+        from fusion_mlx.scheduler.ngram_spec import NGramSpecState
+
+        st = NGramSpecState()
+        st.on_new_request("r1")
+        st.record_result(2, 4)
+        assert st.pop_request_stats("r1") == {
+            "spec_draft_proposed": 4,
+            "spec_draft_accepted": 2,
+        }
+        assert st.pop_request_stats("r1") == {}
