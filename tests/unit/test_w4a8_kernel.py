@@ -3,7 +3,7 @@
 
 Small-tensor only — no real model load. Verifies quantize_activation_int8
 round-trip, w4a8_tiled_matmul vs reference, W4A8Linear vs nn.Linear,
-convert_to_w4a8 count, NVFP4 dequant, and FusedGDN forward shape.
+convert_to_w4a8 count, NVFP4 dequant, and FusedDivisiveNorm forward shape.
 """
 
 import pytest
@@ -185,10 +185,10 @@ def test_dequant_nvfp4_weights_noop_on_fp16():
         assert weights[k] is before[k], f"nvfp4 mutated non-NVFP4 key {k}"
 
 
-def test_fused_gdn_forward_shape_diagonal():
-    from fusion_mlx.custom_kernels.phase_c import FusedGDN
+def test_fused_divisive_norm_forward_shape_diagonal():
+    from fusion_mlx.custom_kernels.phase_c import FusedDivisiveNorm
 
-    gdn = FusedGDN(channels=8, diagonal=True)
+    gdn = FusedDivisiveNorm(channels=8, diagonal=True)
     x = mx.random.normal((2, 8), dtype=mx.float16)
     out = gdn(x)
     assert out.shape == (2, 8)
@@ -197,17 +197,17 @@ def test_fused_gdn_forward_shape_diagonal():
     assert not mx.isnan(out).any()
 
 
-def test_fused_gdn_channel_first():
-    from fusion_mlx.custom_kernels.phase_c import FusedGDN
+def test_fused_divisive_norm_channel_first():
+    from fusion_mlx.custom_kernels.phase_c import FusedDivisiveNorm
 
-    gdn = FusedGDN(channels=4, diagonal=True)
+    gdn = FusedDivisiveNorm(channels=4, diagonal=True)
     x = mx.random.normal((4, 2, 2), dtype=mx.float16)
     out = gdn(x)
     assert out.shape == (4, 2, 2)
 
 
-def test_apply_fused_gdn_noop_no_gdn_modules():
-    from fusion_mlx.custom_kernels.phase_c import apply_fused_gdn
+def test_apply_fused_divisive_norm_noop_no_gdn_modules():
+    from fusion_mlx.custom_kernels.phase_c import apply_fused_divisive_norm
 
     class Model(nn.Module):
         def __init__(self):
@@ -218,5 +218,5 @@ def test_apply_fused_gdn_noop_no_gdn_modules():
             return self.fc(x)
 
     model = Model()
-    out = apply_fused_gdn(model)
+    out = apply_fused_divisive_norm(model)
     assert out is model

@@ -59,7 +59,7 @@ def test_decide_fusion_gdn_non_diagonal():
         OpDescriptor("div"),
     ]
     plan = decide_fusion(ops)
-    assert plan.pattern_name == "fused_gdn"
+    assert plan.pattern_name == "fused_divisive_norm"
 
 
 def test_decide_fusion_gdn_diagonal_skip():
@@ -105,7 +105,7 @@ def test_registered_patterns():
     from fusion_mlx.custom_kernels.phase_c import registered_patterns
 
     names = registered_patterns()
-    assert "fused_gdn" in names
+    assert "fused_divisive_norm" in names
     assert "w4a8_fused_matmul" in names
     assert "glm_moe_ffn_fused" in names
 

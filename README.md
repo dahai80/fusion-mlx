@@ -2694,23 +2694,12 @@ bench.dpdns.org uploads: id 27 (1.97), id 30 (1.96), id 31 (1.88), id 32 (1.88 m
    `pip install -e --no-build-isolation` triggers the CMake build producing `_ext.so`,
    avoiding uncontrollable PyPI wheel build times.
 
-## FlashKDA — Kimi Delta Attention for Apple Silicon
+## Kimi Delta Attention (KDA)
 
-FlashKDA ports the gated linear attention mechanism (KDA) from CUDA SM90+ to
-Apple Silicon via MLX. Core recurrence: `h_t = g_t * h_{t-1} + beta_t * (k_t ⊗ v_t)`,
-`o_t = q_t^T * h_t`. Constraint: K = V = 128.
-
-- **Python reference** — always available, correct, used for validation
-- **Metal kernel** — auto-selected when compiled; uses `simdgroup_matrix` for
-  bf16 outer product and query-state multiply (CHUNK=16, matching CUDA K1/K2)
-
-```python
-from fusion_mlx.custom_kernels.flash_kda import fwd
-
-out, state = fwd(q, k, v, g, beta, scale=1.0, A_log=a_log, dt_bias=dt_bias)
-```
-
-See [custom_kernels/flash_kda/](fusion_mlx/custom_kernels/flash_kda/) for details.
+KDA-architecture models (Kimi Linear) run through mlx-lm's
+`gated_delta_update` Metal kernel (`mlx_lm.models.kimi_linear`). The
+in-repo FlashKDA port was removed: its Metal source was placeholder-only
+(never compiled in this repo) and mlx-lm's kernel is the proven path.
 
 ## Docker
 

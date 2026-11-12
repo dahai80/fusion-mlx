@@ -98,11 +98,11 @@ def _w4a8_matcher(ops: list[OpDescriptor]) -> bool:
 
 def _gdn_materializer(ops: list[OpDescriptor]) -> object | None:
     try:
-        from .fused_gdn import FusedGDN
+        from .fused_divisive_norm import FusedDivisiveNorm
 
-        return FusedGDN
+        return FusedDivisiveNorm
     except Exception as exc:
-        logger.debug("fusion_decision: FusedGDN unavailable: %s", exc)
+        logger.debug("fusion_decision: FusedDivisiveNorm unavailable: %s", exc)
         return None
 
 
@@ -132,7 +132,7 @@ def _w4a8_materializer(ops: list[OpDescriptor]) -> object | None:
 def _register_builtins() -> None:
     register_pattern(
         FusionPattern(
-            name="fused_gdn",
+            name="fused_divisive_norm",
             op_sequence=("square", "matmul", "add", "rsqrt", "div"),
             matcher=_gdn_matcher,
             materializer=_gdn_materializer,
