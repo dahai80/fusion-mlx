@@ -16,6 +16,29 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
+    # #1550 (fusion#2 checklist): docs-only changes skip the heavy jobs.
+    # Job-level conditional (not `paths-ignore`) so the required checks still
+    # report (skipped = success for branch protection) instead of never
+    # appearing. Mirrors the cowork#429/#433 pattern.
+    changes:
+        runs-on: ubuntu-latest
+        outputs:
+            code: ${{ steps.filter.outputs.code }}
+        steps:
+            - uses: actions/checkout@v7
+            - uses: dorny/paths-filter@v3
+              id: filter
+              with:
+                  filters: |
+                      code:
+                          - 'fusion_mlx/**'
+                          - 'tests/**'
+                          - 'scripts/**'
+                          - 'evals/**'
+                          - 'ci/**'
+                          - 'pyproject.toml'
+                          - '.github/workflows/ci.yml'
+
     lint:
         runs-on: ubuntu-latest
         steps:
@@ -27,6 +50,9 @@ jobs:
                   # Running on 3.12 makes py313-formatted files "would reformat"
                   # spuriously. Matches the dev env + the test matrix's 3.13.
                   python-version: "3.13"
+                  # #1550: cache downloaded wheels across runs.
+                  cache: pip
+                  cache-dependency-path: pyproject.toml
             - run: pip install ruff black mypy
             - run: ruff check fusion_mlx/ tests/
             - run: black --check fusion_mlx/ tests/
@@ -38,6 +64,9 @@ jobs:
             - uses: actions/setup-python@v7
               with:
                   python-version: "3.12"
+                  # #1550: cache downloaded wheels across runs.
+                  cache: pip
+                  cache-dependency-path: pyproject.toml
             - name: pip-audit
               run: |
                   pip install pip-audit
@@ -81,6 +110,8 @@ jobs:
             fail-fast: false
             matrix:
                 shard: ["core", "llm", "modal", "infra", "exp", "rest", "rest2"]
+        needs: changes
+        if: needs.changes.outputs.code == 'true'
         runs-on: macos-latest
         steps:
             - uses: actions/checkout@v7
@@ -147,6 +178,8 @@ jobs:
             fail-fast: false
             matrix:
                 python-version: ["3.11", "3.13"]
+        needs: changes
+        if: needs.changes.outputs.code == 'true'
         runs-on: macos-latest
         steps:
             - uses: actions/checkout@v7
@@ -171,6 +204,8 @@ jobs:
         # the Python boundary (never a real GPU/Metal stall — that would
         # hang the runner itself). Time-boxed: every scenario asserts its
         # own detection/recovery bounds; the job timeout is the backstop.
+        needs: changes
+        if: needs.changes.outputs.code == 'true'
         runs-on: macos-latest
         timeout-minutes: 15
         steps:
@@ -200,6 +235,8 @@ jobs:
         # No baseline → ADVISORY (warn, never fail CI). When a baseline file
         # exists (evals/baselines/), regressions beyond threshold become enforce.
         # CI has no running server → gates skip gracefully (advisory contract).
+        needs: changes
+        if: needs.changes.outputs.code == 'true'
         runs-on: macos-latest
         steps:
             - uses: actions/checkout@v7
