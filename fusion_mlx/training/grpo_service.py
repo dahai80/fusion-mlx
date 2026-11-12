@@ -91,6 +91,46 @@ class GRPOService:
     def set_engine_pool(self, pool):
         self._engine_pool = pool
 
+    @staticmethod
+    def _load_policy_weights(model, resume_dir, cfg):
+        # #1564: load resumed policy weights into the freshly built LoRA
+        # tree. Resolves the dir via dpo_service.resolve_resume_file (final
+        # adapters.safetensors or newest numbered checkpoint) and rejects a
+        # rank/layers mismatch loudly — strict=False would otherwise load
+        # nothing and train from fresh LoRA silently (issue #1461 pattern).
+        from .dpo_service import resolve_resume_file
+
+        resume_file = resolve_resume_file(Path(resume_dir))
+        if resume_file is None:
+            raise ValueError(
+                f"init_adapter_path has no adapters.safetensors or numbered "
+                f"checkpoint: {resume_dir} (issue #1564)"
+            )
+        config_file = Path(resume_dir) / "adapter_config.json"
+        if config_file.exists():
+            try:
+                saved = json.loads(config_file.read_text())
+            except (OSError, ValueError) as exc:
+                raise ValueError(
+                    f"init_adapter_path adapter_config.json unreadable: "
+                    f"{config_file} ({exc}) (issue #1564)"
+                ) from exc
+            saved_rank = (saved.get("lora_parameters") or {}).get("rank")
+            if saved_rank is not None and int(saved_rank) != int(cfg.lora_rank):
+                raise ValueError(
+                    f"init_adapter_path adapter rank {saved_rank} != "
+                    f"cfg.lora_rank {cfg.lora_rank} ({resume_dir}) — a "
+                    f"mismatch silently trains from fresh LoRA (issue #1564)"
+                )
+            saved_layers = saved.get("num_layers")
+            if saved_layers is not None and int(saved_layers) != int(cfg.lora_layers):
+                raise ValueError(
+                    f"init_adapter_path adapter num_layers {saved_layers} != "
+                    f"cfg.lora_layers {cfg.lora_layers} ({resume_dir}) "
+                    f"(issue #1564)"
+                )
+        model.load_weights(str(resume_file), strict=False)
+
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
 
@@ -370,6 +410,17 @@ class GRPOService:
             "scale": cfg.lora_alpha,
         }
         linear_to_lora_layers(model, cfg.lora_layers, lora_params, use_dora=False)
+        # #1564: policy resume — load a staged adapter's weights into the
+        # freshly built LoRA tree (strict=False; rank/layers mismatch leaves
+        # weights unloaded silently, so validate against adapter_config.json
+        # first, same convention as dpo_service._chain_adapter_weights).
+        if cfg.init_adapter_path:
+            self._load_policy_weights(model, Path(cfg.init_adapter_path), cfg)
+            logger.info(
+                "GRPO job %s: resumed policy weights from %s (#1564)",
+                job.job_id,
+                cfg.init_adapter_path,
+            )
         # #1463: route hybrid linear-attn (qwen3_5/qwen3_next) forwards
         # through the differentiable ops path — see dpo_service note.
         model.train()
@@ -408,6 +459,14 @@ class GRPOService:
                 "loss": result.loss,
                 "mean_reward": result.mean_reward,
             }
+            # #1564: numbered policy checkpoint — same convention as DPO
+            # (1-based step count, NNNNNNN_adapters.safetensors under the
+            # adapter dir) so an interrupted RL run has a resume point.
+            if cfg.save_every and (it + 1) % cfg.save_every == 0:
+                _ckpt = Path(job.adapter_path) / f"{it + 1:07d}_adapters.safetensors"
+                _ckpt.parent.mkdir(parents=True, exist_ok=True)
+                trainer.save_adapter(str(_ckpt))
+                logger.info("GRPO job %s checkpoint saved: %s", job.job_id, _ckpt)
 
         Path(job.adapter_path).mkdir(parents=True, exist_ok=True)
         trainer.save_adapter(str(Path(job.adapter_path) / "adapters.safetensors"))

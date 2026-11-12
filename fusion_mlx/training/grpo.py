@@ -23,6 +23,17 @@ class GRPOConfig:
     reward_endpoint: str = ""
     temperature: float = 1.0
     seed: int = 0
+    # #1565: admission-gate budget forwarded to the training memory
+    # preflight; 0 = auto (60%-of-physical default). Same semantics as
+    # FineTuneConfig.memory_limit_gb.
+    memory_limit_gb: float = 0.0
+    # #1564: resume pointer to a staged adapter dir (adapters.safetensors
+    # or the latest NNNNNNN_adapters.safetensors numbered checkpoint).
+    # Weights load into the freshly built LoRA layers before the loop.
+    init_adapter_path: str = ""
+    # #1564: save a numbered policy checkpoint every N steps (0 = only the
+    # final adapters.safetensors, the pre-#1564 behavior).
+    save_every: int = 0
     reward_timeout: float = 30.0
 
     def to_dict(self):

@@ -22,6 +22,7 @@ import gc
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -43,6 +44,32 @@ logger = logging.getLogger(__name__)
 # (27B-8bit observed at 203GB, fatal enforcer exit). Auto-enable above this.
 _GRAD_CHECKPOINT_AUTO_THRESHOLD_BYTES = 16 * 1024**3
 
+_CHECKPOINT_RE = re.compile(r"^(\d+)_adapters\.safetensors$")
+
+
+def resolve_resume_file(resume_dir: Path) -> Path | None:
+    """#1564: resolve a resume pointer dir to a concrete weights file.
+
+    Prefers the run's own final ``adapters.safetensors``; falls back to the
+    newest numbered checkpoint (``NNNNNNN_adapters.safetensors``, same
+    convention as the SFT path's mlx_lm trainer saves) so an interrupted
+    run can be resumed mid-flight. Returns None when the dir holds neither.
+    """
+    resume_dir = Path(resume_dir)
+    final = resume_dir / "adapters.safetensors"
+    if final.exists():
+        return final
+    best: tuple[int, Path] | None = None
+    if resume_dir.is_dir():
+        for p in resume_dir.glob("*_adapters.safetensors"):
+            m = _CHECKPOINT_RE.match(p.name)
+            if not m:
+                continue
+            step = int(m.group(1))
+            if best is None or step > best[0]:
+                best = (step, p)
+    return best[1] if best else None
+
 
 def _chain_adapter_weights(model, cfg: DPOConfig):
     # #1461: chaining must NOT go through mlx_utils.load(adapter_path=...) —
@@ -52,11 +79,14 @@ def _chain_adapter_weights(model, cfg: DPOConfig):
     # cfg; load only the weights (same convention as
     # service._resume_adapter_weights, #1182).
     resume_dir = Path(cfg.init_adapter_path)
-    resume_file = resume_dir / "adapters.safetensors"
-    if not resume_file.exists():
+    # #1564: mid-run resume — prefer the run's own final adapters.safetensors,
+    # fall back to the latest numbered checkpoint (an interrupted run has
+    # NNNNNNN_adapters.safetensors but no final file yet).
+    resume_file = resolve_resume_file(resume_dir)
+    if resume_file is None:
         raise ValueError(
-            f"init_adapter_path has no adapters.safetensors: "
-            f"{resume_file} (issue #1461)"
+            f"init_adapter_path has no adapters.safetensors or numbered "
+            f"checkpoint: {resume_dir} (issue #1461/#1564)"
         )
     config_file = resume_dir / "adapter_config.json"
     if config_file.exists():
@@ -236,6 +266,20 @@ def _execute_dpo_core(
                     "n_pairs": len(batch),
                 }
             )
+            # #1564: numbered policy checkpoint — same NNNNNNN_adapters
+            # .safetensors convention as the SFT path (mlx_lm trainer), so
+            # an interrupted RL run has a resume point. Step numbering is
+            # 1-based (it+1 steps completed) to match mlx_lm's `it` counter.
+            if cfg.save_every and (it + 1) % cfg.save_every == 0:
+                _ckpt = Path(adapter_path) / f"{it + 1:07d}_adapters.safetensors"
+                _ckpt.parent.mkdir(parents=True, exist_ok=True)
+                trainer.save_adapter(str(_ckpt))
+                logger.info(
+                    "%s job %s checkpoint saved: %s",
+                    cfg.method.upper(),
+                    job_id,
+                    _ckpt,
+                )
     finally:
         # #1472: free a resident reference model even on step failure —
         # otherwise a failed job leaks ~model-bytes into the engine.
