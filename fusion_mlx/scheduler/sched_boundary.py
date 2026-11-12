@@ -466,6 +466,10 @@ def _try_tail_snapshot_warm_start(self, request: Request) -> bool:
     request.cached_tokens = tc
     request.shared_prefix_blocks = 0
     request.remaining_tokens = prompt_ids[tc:]
+    # Issue #1543 follow-up: a warm-started request skipped prefill, so its
+    # extracted per-block states carry placeholder ArraysCache state. Storing
+    # them would poison the block index for later reconstruct attempts.
+    request.tail_snapshot_warm_started = True
     logger.info(
         "Tail snapshot warm-start for %s: %d tokens recovered, " "%d tokens remaining",
         request.request_id,

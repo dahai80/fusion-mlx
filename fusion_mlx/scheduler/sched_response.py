@@ -485,7 +485,17 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
         # picked up at the next step's _drain_pending_async_removes.
         store_future = None
         if request is not None and request.prompt_token_ids:
-            if self.block_aware_cache is not None:
+            if getattr(request, "tail_snapshot_warm_started", False):
+                # Issue #1543 follow-up: this request was warm-started from a
+                # tail snapshot and never prefilled, so its per-block states
+                # contain placeholder ArraysCache state. Storing them would
+                # poison the block index (later reconstructs reject the whole
+                # hit). The tail snapshot itself is already persisted.
+                logger.debug(
+                    f"Skipping block store for warm-started request {request_id} "
+                    "(placeholder ArraysCache state, tail snapshot already persisted)"
+                )
+            elif self.block_aware_cache is not None:
                 if (
                     hasattr(request, "_extracted_cache")
                     and request._extracted_cache is not None
