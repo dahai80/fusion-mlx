@@ -377,7 +377,7 @@ _parse_start_args() {
             --enable-dflash|--enable-dflash2|--enable-dspark|--enable-mtp|--enable-lsa|\
             --no-spec-decode|--force-spec-decode|--mtp-optimistic|--mtp-sidecar|\
             --suffix-decoding|--disable-prefix-cache|--kv-cache-turboquant|\
-            --paged-ssd-turboquant)
+            --paged-ssd-turboquant|--no-mllm|--text-only)
                 extra+=("$1")
                 shift
                 ;;
