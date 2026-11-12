@@ -95,6 +95,7 @@ def _append_spec_route_decision(decision: dict) -> None:
 
 
 METHOD_DSPARK = "dspark"
+METHOD_DSPINE = "dspine"
 METHOD_DFLY = "dfly"
 DEFAULT_AVAILABLE: frozenset[str] = frozenset(
     {
@@ -105,6 +106,7 @@ DEFAULT_AVAILABLE: frozenset[str] = frozenset(
         METHOD_MTP,
         METHOD_MEDUSA,
         METHOD_DSPARK,
+        METHOD_DSPINE,
         METHOD_DFLY,
     }
 )
@@ -192,6 +194,16 @@ _SPEC_ROUTING_TABLE: list[SpecRouteEntry] = [
         family="qwen3_8",
         methods=(METHOD_NGRAM,),
         constraints=(),
+    ),
+    # DSpine: parallel drafter over target intermediate-layer hiddens
+    # (#1549). Loaded only when --dspine-drafter-path is set and the
+    # eligibility gates passed, so the not_moe constraint here mostly
+    # documents intent; greedy (T=0) requests only — the dispatch step
+    # skips sampled requests.
+    SpecRouteEntry(
+        family="qwen3",
+        methods=(METHOD_DSPINE,),
+        constraints=("not_moe",),
     ),
     SpecRouteEntry(
         family="qwen3",

@@ -21,6 +21,7 @@ from .auto_router import (
     METHOD_DFLASH,
     METHOD_DFLASH2,
     METHOD_DSPARK,
+    METHOD_DSPINE,
     METHOD_EAGLE3,
     METHOD_MEDUSA,
     METHOD_MTP,
@@ -41,6 +42,7 @@ def loaded_methods(
     dflash: bool = False,
     dflash2: bool = False,
     dspark: bool = False,
+    dspine: bool = False,
     mtp: bool = False,
     medusa: bool = False,
 ) -> dict[str, bool]:
@@ -50,6 +52,7 @@ def loaded_methods(
         METHOD_DFLASH: dflash,
         METHOD_DFLASH2: dflash2,
         METHOD_DSPARK: dspark,
+        METHOD_DSPINE: dspine,
         METHOD_MTP: mtp,
         METHOD_MEDUSA: medusa,
     }

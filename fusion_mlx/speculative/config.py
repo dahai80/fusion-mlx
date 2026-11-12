@@ -60,6 +60,13 @@ _ALLOWED_KEYS: dict[str, set[str]] = {
         "target_layer_ids",
         "enable_hidden_correction",
     },
+    "dspine": {
+        "method",
+        "model",
+        "num_speculative_tokens",
+        "block_size",
+        "target_layer_ids",
+    },
 }
 
 

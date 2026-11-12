@@ -129,3 +129,12 @@ register_spec_decoder(
         aliases=("dfly-hy3", "hy3-dfly"),
     )
 )
+
+register_spec_decoder(
+    SpecDecoderPlugin(
+        method="dspine",
+        description="DSpine block-parallel drafter (Tencent arXiv:2609.36173, Qwen3 full-attention)",
+        config_enabled=True,
+        aliases=("dspine-b16", "parallel-drafter"),
+    )
+)

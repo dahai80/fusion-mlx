@@ -402,6 +402,8 @@ def _serve_from_model_dir(args):
         dflash2_block_size=getattr(args, "dflash2_block_size", 5) or 5,
         dflash2_draft_bits=getattr(args, "dflash2_draft_bits", 4),
         dspark_drafter_path=getattr(args, "dspark_drafter_path", "") or "",
+        dspine_drafter_path=getattr(args, "dspine_drafter_path", "") or "",
+        dspine_block_size=getattr(args, "dspine_block_size", 16) or 16,
         dspark_draft_quant_bits=getattr(args, "dspark_draft_quant_bits", 8),
         enable_suffix_decoding=getattr(args, "suffix_decoding", False),
         suffix_max_draft=getattr(args, "suffix_max_draft", 0),

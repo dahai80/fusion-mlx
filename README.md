@@ -169,6 +169,7 @@ Key optimizations: quant2/quant2_128/quant2_flat ultra-aggressive 2-bit quantiza
 - **4-tier memory enforcer** - safe / balanced / aggressive / custom hard limits with deadlock-free eviction
 - **Multi-model concurrency** - EnginePool with LRU eviction, pinning, and TTL
 - **MCP tool support** - list, discover, and execute MCP tools via API; `fusion-plugin-server` (stdio) is auto-discovered on PATH only when `mcp.auto_discover` is enabled in `settings.json`
+- **Agent compatibility harness** - 10 first-class agent profiles (Codex, OpenCode, Qwen Code, Kilo Code, Hermes, Aider, LangChain, PydanticAI, SmolAgents, OpenHands) with an in-tree integration test suite; published compatibility matrix: 79 PASS / 0 FAIL on production. See [docs/agent-compatibility.md](docs/agent-compatibility.md)
 - **LoRA / DORA fine-tuning** - train adapters on Apple Silicon via mlx_lm; job queue, SSE progress, adapter management
 - **Admin web panel** - model management, live chat, HuggingFace downloads, online quantization
 - **macOS native app** - SwiftUI with menu bar, auto-update, benchmark, fine-tune, model management, **hardware-aware setup wizard**

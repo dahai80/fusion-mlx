@@ -6,6 +6,7 @@ from fusion_mlx.speculative.auto_router import (
     METHOD_DFLASH,
     METHOD_DFLASH2,
     METHOD_DSPARK,
+    METHOD_DSPINE,
     METHOD_EAGLE3,
     METHOD_MEDUSA,
     METHOD_MTP,
@@ -157,6 +158,7 @@ class TestLoadedMethods:
             METHOD_DFLASH: False,
             METHOD_DFLASH2: False,
             METHOD_DSPARK: False,
+            METHOD_DSPINE: False,
             METHOD_MTP: False,
             METHOD_MEDUSA: False,
         }
@@ -194,6 +196,7 @@ class TestSchedulerLoadedAssembly:
             METHOD_DFLASH: False,
             METHOD_DFLASH2: False,
             METHOD_DSPARK: False,
+            METHOD_DSPINE: False,
             METHOD_MTP: False,
             METHOD_MEDUSA: False,
         }

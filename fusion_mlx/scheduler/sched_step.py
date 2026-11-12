@@ -844,6 +844,7 @@ def _loaded_spec_methods(self) -> dict[str, bool]:
         dflash=self._dflash_runtime is not None,
         dflash2=getattr(self, "_dflash2_runtime", None) is not None,
         dspark=self._dspark_runtime is not None,
+        dspine=getattr(self, "_dspine_runtime", None) is not None,
         mtp=bool(getattr(self.model, "_fusion_mlx_mtp_decode_enabled", False)),
         medusa=medusa_loaded,
     )
@@ -947,6 +948,7 @@ def _try_spec_decode(
         METHOD_DFLASH,
         METHOD_DFLASH2,
         METHOD_DSPARK,
+        METHOD_DSPINE,
         METHOD_EAGLE3,
         METHOD_MEDUSA,
         METHOD_NGRAM,
@@ -1006,6 +1008,15 @@ def _try_spec_decode(
         from .spec_decode import dspark_spec_step
 
         result = dspark_spec_step(self, output, current_token, request_id)
+        if result:
+            return result
+    elif (
+        method == METHOD_DSPINE
+        and getattr(self, "_dspine_runtime", None) is not None
+    ):
+        from .spec_decode import dspine_spec_step
+
+        result = dspine_spec_step(self, output, current_token, request_id)
         if result:
             return result
     # METHOD_MTP (handled inside bg._next) and "" (no method) fall through.

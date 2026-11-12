@@ -629,6 +629,8 @@ def serve_command(args):
         # DFlash2 (block-diffusion spec decode, z-lab dflash pkg, Qwen3.8).
         # In-place load via BatchedEngine (no forked server, unlike dflash v1).
         dflash2_drafter_path=getattr(args, "dflash2_drafter_path", "") or "",
+        dspine_drafter_path=getattr(args, "dspine_drafter_path", "") or "",
+        dspine_block_size=getattr(args, "dspine_block_size", 16) or 16,
         dflash2_block_size=getattr(args, "dflash2_block_size", 5) or 5,
         dflash2_draft_bits=getattr(args, "dflash2_draft_bits", 4),
         # SuffixDecoding
