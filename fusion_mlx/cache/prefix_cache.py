@@ -517,6 +517,39 @@ class BlockAwarePrefixCache(CacheManager):
                         request_id,
                     )
                 else:
+                    # #1532 follow-up: the index only keys block-chunk-aligned
+                    # chain hashes, so the terminal partial block persisted by
+                    # store_cache (a prompt-end snapshot at N-1 vs a request at
+                    # N) can never index-match. Extend the hit with the same
+                    # hash-verified partial match get_computed_blocks applies
+                    # on the hash-map path.
+                    if block_table.block_ids:
+                        last_block = self.paged_cache.allocated_blocks.get(
+                            block_table.block_ids[-1]
+                        )
+                        parent_hash = last_block.block_hash if last_block else None
+                        if parent_hash is not None:
+                            ext_len, ext_block = (
+                                self.paged_cache.try_claim_terminal_partial(
+                                    tokens,
+                                    live_prefix_len,
+                                    parent_hash,
+                                    extra_keys=extra_keys,
+                                    extra_key_token_start=extra_key_token_start,
+                                    extra_key_ranges=extra_key_ranges,
+                                )
+                            )
+                            if ext_block is not None:
+                                block_table.block_ids.append(ext_block.block_id)
+                                block_table.num_tokens += ext_len
+                                live_prefix_len += ext_len
+                                logger.debug(
+                                    "Prefix index hit extended with terminal "
+                                    "partial for %s: +%d tokens (total %d)",
+                                    request_id,
+                                    ext_len,
+                                    live_prefix_len,
+                                )
                     remaining = tokens[live_prefix_len:]
                     # #1354 H3: the index match wins, so hand back the
                     # hash-map claims taken above — otherwise those blocks
@@ -717,8 +750,7 @@ class BlockAwarePrefixCache(CacheManager):
         if trailing_partial_tokens > 0:
             self._partial_tokens_persisted += trailing_partial_tokens
             logger.debug(
-                "Persisting trailing partial block for %s: %s token(s) "
-                "(block_size=%s)",
+                "Persisting trailing partial block for %s: %s token(s) (block_size=%s)",
                 request_id,
                 trailing_partial_tokens,
                 self.block_size,

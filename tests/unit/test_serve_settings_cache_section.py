@@ -33,6 +33,8 @@ def test_applies_full_cache_section(tmp_path):
             "paged_ssd_cache_dir": "/tmp/ssd-test",
             "initial_cache_blocks": 384,
             "ssd_cache_max_size": "500GB",
+            "boundary_prefix_persist": True,
+            "boundary_prefix_max_bytes": "8GB",
         },
     )
     cfg = SchedulerConfig()
@@ -42,6 +44,8 @@ def test_applies_full_cache_section(tmp_path):
     assert cfg.hot_cache_only is False
     assert cfg.initial_cache_blocks == 384
     assert cfg.paged_ssd_cache_max_size == 500 * 1000**3
+    assert cfg.boundary_prefix_persist is True
+    assert cfg.boundary_prefix_max_bytes == 8 * 1000**3
 
 
 def test_missing_file_is_noop(tmp_path):
