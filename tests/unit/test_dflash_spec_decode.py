@@ -40,7 +40,7 @@ mx = pytest.importorskip("mlx.core")
 
 def test_detect_eligibility_qwen3_5_ready_with_registered_alias():
     """Qwen3.5 + registered alias → READY."""
-    from fusion_mlx.spec_decode.dflash import (
+    from fusion_mlx.speculative.dflash import (
         DFlashEligibility,
         clear_drafter_registry_for_tests,
         detect_dflash_eligibility,
@@ -60,7 +60,7 @@ def test_detect_eligibility_qwen3_5_ready_with_registered_alias():
 
 def test_detect_eligibility_qwen3_5_moe_ready():
     """Qwen3.5 MoE follows the same allowlist."""
-    from fusion_mlx.spec_decode.dflash import (
+    from fusion_mlx.speculative.dflash import (
         DFlashEligibility,
         clear_drafter_registry_for_tests,
         detect_dflash_eligibility,
@@ -82,7 +82,7 @@ def test_detect_eligibility_qwen3_5_moe_ready():
 
 def test_detect_eligibility_non_qwen_models_rejected():
     """Llama / Mistral / Qwen3 / Qwen3-Next MUST NOT match DFlash."""
-    from fusion_mlx.spec_decode.dflash import (
+    from fusion_mlx.speculative.dflash import (
         DFlashEligibility,
         detect_dflash_eligibility,
     )
@@ -112,7 +112,7 @@ def test_detect_eligibility_missing_drafter_rejected():
     The CLI surfaces an actionable error pointing the user at
     :func:`register_dflash_drafter` or ``--dflash-drafter-path``.
     """
-    from fusion_mlx.spec_decode.dflash import (
+    from fusion_mlx.speculative.dflash import (
         DFlashEligibility,
         clear_drafter_registry_for_tests,
         detect_dflash_eligibility,
@@ -134,7 +134,7 @@ def test_detect_eligibility_cli_override_beats_missing_registry_binding():
     The CLI override is the operator's escape hatch for experimenting
     with custom drafters without editing the side-registry.
     """
-    from fusion_mlx.spec_decode.dflash import (
+    from fusion_mlx.speculative.dflash import (
         DFlashEligibility,
         clear_drafter_registry_for_tests,
         detect_dflash_eligibility,
@@ -158,7 +158,7 @@ def test_detect_eligibility_default_registry_seeded():
     ``_DEFAULT_REGISTRY`` would silently disable DFlash for every
     production alias.
     """
-    from fusion_mlx.spec_decode.dflash import (
+    from fusion_mlx.speculative.dflash import (
         DFlashEligibility,
         clear_drafter_registry_for_tests,
         detect_dflash_eligibility,
@@ -174,7 +174,7 @@ def test_detect_eligibility_default_registry_seeded():
 
 def test_detect_eligibility_handles_none_or_non_dict_config():
     """None / list / string config returns NONE rather than crashing."""
-    from fusion_mlx.spec_decode.dflash import (
+    from fusion_mlx.speculative.dflash import (
         DFlashEligibility,
         detect_dflash_eligibility,
     )
@@ -199,7 +199,7 @@ def test_detect_eligibility_aliases_json_closed_keys_unaffected():
     here protects future contributors from accidentally back-porting
     detection state into the alias profile.
     """
-    from fusion_mlx.spec_decode.dflash import (
+    from fusion_mlx.speculative.dflash import (
         DFlashEligibility,
         detect_dflash_eligibility,
     )
@@ -217,7 +217,7 @@ def test_detect_eligibility_aliases_json_closed_keys_unaffected():
 
 
 def test_drafter_registry_returns_none_for_unbound_alias():
-    from fusion_mlx.spec_decode.dflash import (
+    from fusion_mlx.speculative.dflash import (
         clear_drafter_registry_for_tests,
         get_dflash_drafter_path,
     )
@@ -227,7 +227,7 @@ def test_drafter_registry_returns_none_for_unbound_alias():
 
 
 def test_drafter_registry_returns_path_for_bound_alias():
-    from fusion_mlx.spec_decode.dflash import (
+    from fusion_mlx.speculative.dflash import (
         clear_drafter_registry_for_tests,
         get_dflash_drafter_path,
         register_dflash_drafter,
@@ -246,7 +246,7 @@ def test_drafter_registry_overwrite_logs_warning(caplog):
     + overwrites (last-wins)."""
     import logging
 
-    from fusion_mlx.spec_decode.dflash import (
+    from fusion_mlx.speculative.dflash import (
         clear_drafter_registry_for_tests,
         get_dflash_drafter_path,
         register_dflash_drafter,
@@ -264,7 +264,7 @@ def test_drafter_registry_overwrite_logs_warning(caplog):
 
 
 def test_drafter_registry_rejects_empty_inputs():
-    from fusion_mlx.spec_decode.dflash import register_dflash_drafter
+    from fusion_mlx.speculative.dflash import register_dflash_drafter
 
     with pytest.raises(ValueError, match="alias"):
         register_dflash_drafter("", "z-lab/something")
@@ -278,7 +278,7 @@ def test_drafter_registry_rejects_empty_inputs():
 
 
 def test_accept_counter_starts_zero_and_snapshot_consistent():
-    from fusion_mlx.spec_decode.dflash.accept_counter import DFlashAcceptCounter
+    from fusion_mlx.speculative.dflash.accept_counter import DFlashAcceptCounter
 
     c = DFlashAcceptCounter()
     snap = c.snapshot()
@@ -292,7 +292,7 @@ def test_accept_counter_starts_zero_and_snapshot_consistent():
 def test_accept_counter_tracks_partial_accepts():
     """DFlash partial accepts: 3 attempts, 2 accepts with 7 and 4
     tokens_saved respectively. accept_ratio = 2/3; tokens_saved = 11."""
-    from fusion_mlx.spec_decode.dflash.accept_counter import DFlashAcceptCounter
+    from fusion_mlx.speculative.dflash.accept_counter import DFlashAcceptCounter
 
     c = DFlashAcceptCounter()
     c.record_attempt()
@@ -313,7 +313,7 @@ def test_accept_counter_concurrent_writes_safe():
     """Lock guarantees: 4 writers × 250 iters → exact counts."""
     import threading
 
-    from fusion_mlx.spec_decode.dflash.accept_counter import DFlashAcceptCounter
+    from fusion_mlx.speculative.dflash.accept_counter import DFlashAcceptCounter
 
     c = DFlashAcceptCounter()
     n_writers = 4
@@ -336,7 +336,7 @@ def test_accept_counter_concurrent_writes_safe():
 
 
 def test_accept_counter_rejects_negative_tokens_saved():
-    from fusion_mlx.spec_decode.dflash.accept_counter import DFlashAcceptCounter
+    from fusion_mlx.speculative.dflash.accept_counter import DFlashAcceptCounter
 
     c = DFlashAcceptCounter()
     with pytest.raises(ValueError, match="non-negative"):
@@ -344,7 +344,7 @@ def test_accept_counter_rejects_negative_tokens_saved():
 
 
 def test_global_counter_is_singleton():
-    from fusion_mlx.spec_decode.dflash.accept_counter import get_global_counter
+    from fusion_mlx.speculative.dflash.accept_counter import get_global_counter
 
     a = get_global_counter()
     b = get_global_counter()
@@ -358,7 +358,7 @@ def test_global_counter_is_singleton():
 
 def test_decide_accepted_prefix_full_match():
     """Every position matches → accepted_len == block_size; sentinel bonus."""
-    from fusion_mlx.spec_decode.dflash.verifier import _decide_accepted_prefix
+    from fusion_mlx.speculative.dflash.verifier import _decide_accepted_prefix
 
     verify = [10, 11, 12, 13]
     draft = [10, 11, 12, 13]
@@ -369,7 +369,7 @@ def test_decide_accepted_prefix_full_match():
 
 def test_decide_accepted_prefix_all_reject():
     """Position 0 diverges → accepted_len == 0; bonus is verify[0]."""
-    from fusion_mlx.spec_decode.dflash.verifier import _decide_accepted_prefix
+    from fusion_mlx.speculative.dflash.verifier import _decide_accepted_prefix
 
     verify = [99, 11, 12, 13]
     draft = [10, 11, 12, 13]
@@ -380,7 +380,7 @@ def test_decide_accepted_prefix_all_reject():
 
 def test_decide_accepted_prefix_partial_at_k():
     """Block accepts a prefix of length k; bonus is verify[k]."""
-    from fusion_mlx.spec_decode.dflash.verifier import _decide_accepted_prefix
+    from fusion_mlx.speculative.dflash.verifier import _decide_accepted_prefix
 
     verify = [10, 11, 999, 13]
     draft = [10, 11, 12, 13]
@@ -390,7 +390,7 @@ def test_decide_accepted_prefix_partial_at_k():
 
 
 def test_decide_accepted_prefix_length_mismatch_raises():
-    from fusion_mlx.spec_decode.dflash.verifier import _decide_accepted_prefix
+    from fusion_mlx.speculative.dflash.verifier import _decide_accepted_prefix
 
     with pytest.raises(ValueError, match="length"):
         _decide_accepted_prefix([1, 2, 3], [1, 2])
@@ -399,7 +399,7 @@ def test_decide_accepted_prefix_length_mismatch_raises():
 def test_argmax_per_position_returns_uint32():
     """The verifier compares against uint32 drafter tokens; the
     argmax cast must match to avoid signed/unsigned mismatch surprises."""
-    from fusion_mlx.spec_decode.dflash.verifier import _argmax_per_position
+    from fusion_mlx.speculative.dflash.verifier import _argmax_per_position
 
     logits = mx.array([[[0.1, 0.9], [0.7, 0.3]]])  # shape (1, 2, 2)
     am = _argmax_per_position(logits)
@@ -410,7 +410,7 @@ def test_argmax_per_position_returns_uint32():
 
 
 def test_argmax_per_position_rejects_non_3d():
-    from fusion_mlx.spec_decode.dflash.verifier import _argmax_per_position
+    from fusion_mlx.speculative.dflash.verifier import _argmax_per_position
 
     with pytest.raises(ValueError, match="3-D"):
         _argmax_per_position(mx.array([0.1, 0.9]))
@@ -486,7 +486,7 @@ class _ScriptedTinyTargetModel:
 def test_verify_block_full_accept_returns_block_was_full():
     """All 4 positions match → accepted_tokens == draft; block_was_full=True;
     bonus_token is the post-block prediction."""
-    from fusion_mlx.spec_decode.dflash.verifier import verify_block
+    from fusion_mlx.speculative.dflash.verifier import verify_block
 
     # Script: position 0 predicts draft[0]=10, ..., position 3 predicts
     # draft[3]=13, position 4 predicts post-block bonus = 42.
@@ -512,7 +512,7 @@ def test_verify_block_full_accept_returns_block_was_full():
 
 def test_verify_block_all_reject_emits_corrective_only():
     """Position 0 diverges → accepted_len=0; bonus is verify[0]."""
-    from fusion_mlx.spec_decode.dflash.verifier import verify_block
+    from fusion_mlx.speculative.dflash.verifier import verify_block
 
     # Position 0 predicts 99 (not draft 10) → reject at 0.
     scripted = [99, 11, 12, 13, 14]
@@ -537,7 +537,7 @@ def test_verify_block_all_reject_emits_corrective_only():
 
 def test_verify_block_partial_accept_at_k_equals_2():
     """Positions 0,1 match; position 2 diverges → accepted_len=2."""
-    from fusion_mlx.spec_decode.dflash.verifier import verify_block
+    from fusion_mlx.speculative.dflash.verifier import verify_block
 
     scripted = [10, 11, 77, 13, 14]
     model = _ScriptedTinyTargetModel(scripted)
@@ -561,7 +561,7 @@ def test_verify_block_partial_accept_at_k_equals_2():
 
 def test_verify_block_rewinds_cache_offset_on_partial_accept():
     """Real KVCache: partial accept must rewind offset to the accepted end."""
-    from fusion_mlx.spec_decode.dflash.verifier import _rewind_cache_to
+    from fusion_mlx.speculative.dflash.verifier import _rewind_cache_to
     from mlx_lm.models.cache import KVCache
 
     cache = KVCache()
@@ -585,7 +585,7 @@ def test_verify_block_rewinds_cache_offset_on_partial_accept():
 def test_verify_block_rejects_non_finite_temperature():
     """NaN / Inf temperature must fail loud — Pydantic `Field(ge=)` does
     not reject NaN."""
-    from fusion_mlx.spec_decode.dflash.verifier import verify_block
+    from fusion_mlx.speculative.dflash.verifier import verify_block
 
     model = _ScriptedTinyTargetModel([0])
     draft = mx.array([1], dtype=mx.uint32)
@@ -619,7 +619,7 @@ def test_verify_block_position_id_contract_matches_block_size():
     the scripted model is consumed for exactly 17 positions
     (block_size + 1 = 17).
     """
-    from fusion_mlx.spec_decode.dflash.verifier import verify_block
+    from fusion_mlx.speculative.dflash.verifier import verify_block
 
     block_size = 16
     # Scripted target predicts: position 0 → draft[0], ..., position 15
@@ -649,7 +649,7 @@ def test_verify_block_position_id_contract_matches_block_size():
 
 
 def test_stub_drafter_emits_scripted_blocks_in_order():
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
 
     drafter = StubBlockDiffusionDrafter(
         scripted_blocks=[[1, 2, 3, 4], [5, 6, 7, 8]],
@@ -663,7 +663,7 @@ def test_stub_drafter_emits_scripted_blocks_in_order():
 
 
 def test_stub_drafter_reset_restarts_cursor():
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
 
     drafter = StubBlockDiffusionDrafter(scripted_blocks=[[1, 2], [3, 4]], block_size=2)
     drafter.draft_block(mx.array([0], dtype=mx.uint32), 0)
@@ -673,7 +673,7 @@ def test_stub_drafter_reset_restarts_cursor():
 
 
 def test_stub_drafter_raises_on_script_exhaustion():
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
 
     drafter = StubBlockDiffusionDrafter(scripted_blocks=[[1, 2]], block_size=2)
     drafter.draft_block(mx.array([0], dtype=mx.uint32), 0)
@@ -682,7 +682,7 @@ def test_stub_drafter_raises_on_script_exhaustion():
 
 
 def test_stub_drafter_rejects_bad_block_size():
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
 
     with pytest.raises(ValueError, match="block_size"):
         StubBlockDiffusionDrafter(scripted_blocks=[[1, 2]], block_size=0)
@@ -714,9 +714,9 @@ def _make_generator_target(scripted_outputs: list[int]):
 def test_generator_full_block_accept_emits_all_drafted_tokens():
     """Drafter emits block matching the verifier; expect prefill primary
     + 4 drafted + 1 bonus tokens."""
-    from fusion_mlx.spec_decode.dflash.accept_counter import DFlashAcceptCounter
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
-    from fusion_mlx.spec_decode.dflash.generator import dflash_generate_step
+    from fusion_mlx.speculative.dflash.accept_counter import DFlashAcceptCounter
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.generator import dflash_generate_step
 
     # Prefill consumes 1 token (prompt len = 1 → model called with S=1).
     # Primary token = prefill_script[-1] = 7.
@@ -759,9 +759,9 @@ def test_generator_partial_accept_at_k_emits_only_accepted_prefix_plus_correctiv
     """Drafter draft=[10,11,12,13]; verifier accepts [10,11], diverges to 77
     at position 2. Generator yields: prefill primary 7, accepted (10,11),
     corrective 77."""
-    from fusion_mlx.spec_decode.dflash.accept_counter import DFlashAcceptCounter
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
-    from fusion_mlx.spec_decode.dflash.generator import dflash_generate_step
+    from fusion_mlx.speculative.dflash.accept_counter import DFlashAcceptCounter
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.generator import dflash_generate_step
 
     # Prefill emits 7. Block 1: position 0 → 10 (match), position 1 → 11
     # (match), position 2 → 77 (mismatch), position 3 → don't care.
@@ -797,9 +797,9 @@ def test_generator_partial_accept_at_k_emits_only_accepted_prefix_plus_correctiv
 
 def test_generator_all_reject_falls_back_to_corrective_token():
     """Drafter wrong at position 0; verifier emits its argmax only."""
-    from fusion_mlx.spec_decode.dflash.accept_counter import DFlashAcceptCounter
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
-    from fusion_mlx.spec_decode.dflash.generator import dflash_generate_step
+    from fusion_mlx.speculative.dflash.accept_counter import DFlashAcceptCounter
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.generator import dflash_generate_step
 
     # Prefill emits 7. Position 0 → 99 (mismatch with draft 10).
     # Bonus token = 99 (corrective).
@@ -831,8 +831,8 @@ def test_generator_all_reject_falls_back_to_corrective_token():
 
 
 def test_generator_rejects_temp_above_zero():
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
-    from fusion_mlx.spec_decode.dflash.generator import dflash_generate_step
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.generator import dflash_generate_step
 
     model = _make_generator_target([7, 0, 0, 0, 0, 0])
     drafter = StubBlockDiffusionDrafter(scripted_blocks=[[1, 2, 3, 4]], block_size=4)
@@ -851,8 +851,8 @@ def test_generator_rejects_temp_above_zero():
 
 
 def test_generator_rejects_block_size_mismatch_with_drafter():
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
-    from fusion_mlx.spec_decode.dflash.generator import dflash_generate_step
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.generator import dflash_generate_step
 
     model = _make_generator_target([7, 0, 0, 0])
     drafter = StubBlockDiffusionDrafter(scripted_blocks=[[1, 2]], block_size=2)
@@ -891,8 +891,8 @@ def _ungenerated_baseline(scripted_outputs: list[int], max_tokens: int) -> list[
 def test_lossless_all_accept_matches_baseline_byte_for_byte():
     """When the drafter is psychic (matches every verify argmax), the
     emitted sequence equals the no-spec-decode baseline."""
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
-    from fusion_mlx.spec_decode.dflash.generator import dflash_generate_step
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.generator import dflash_generate_step
 
     # Scripted target: prefill prim=7, block emits 10,11,12,13 then
     # post-block bonus 14.
@@ -921,8 +921,8 @@ def test_lossless_all_reject_matches_baseline_byte_for_byte():
     emitted sequence STILL matches the no-spec-decode baseline (just
     slower). The corrective verify pred at the divergence IS the
     baseline token at that position."""
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
-    from fusion_mlx.spec_decode.dflash.generator import dflash_generate_step
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.generator import dflash_generate_step
 
     # Scripted target: prefill=7, then verify positions emit
     # baseline tokens 99, 100, 101, 102 at positions 0..3 of block 1,
@@ -961,8 +961,8 @@ def test_lossless_mid_block_reject_matches_baseline_byte_for_byte():
     12 but verifier emits 77). DFlash emits prefill primary, two
     accepted drafted tokens, then the corrective 77 — IDENTICAL to
     the baseline which emits the same four tokens by argmax."""
-    from fusion_mlx.spec_decode.dflash.drafter import StubBlockDiffusionDrafter
-    from fusion_mlx.spec_decode.dflash.generator import dflash_generate_step
+    from fusion_mlx.speculative.dflash.drafter import StubBlockDiffusionDrafter
+    from fusion_mlx.speculative.dflash.generator import dflash_generate_step
 
     scripted = [7, 10, 11, 77, 13, 14]
     baseline_tokens = _ungenerated_baseline(scripted, max_tokens=4)
@@ -1065,7 +1065,7 @@ def test_scheduler_config_dflash_round_trip():
 def test_metrics_renders_dflash_counters_zero_at_cold_start():
     """Before any DFlash generation runs, the five DFlash series MUST be
     present with value 0/16 (block_size gauge starts at the default)."""
-    from fusion_mlx.spec_decode.dflash.accept_counter import (
+    from fusion_mlx.speculative.dflash.accept_counter import (
         reset_global_counter_for_tests,
     )
 
@@ -1095,7 +1095,7 @@ def test_metrics_renders_dflash_counters_zero_at_cold_start():
 
 def test_metrics_renders_post_acceptance_dflash_counters():
     """4 attempts / 3 accepts / 27 tokens_saved → metric reflects state."""
-    from fusion_mlx.spec_decode.dflash.accept_counter import (
+    from fusion_mlx.speculative.dflash.accept_counter import (
         get_global_counter,
         reset_global_counter_for_tests,
     )

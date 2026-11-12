@@ -95,6 +95,7 @@ def _append_spec_route_decision(decision: dict) -> None:
 
 
 METHOD_DSPARK = "dspark"
+METHOD_DSPINE = "dspine"
 METHOD_DFLY = "dfly"
 DEFAULT_AVAILABLE: frozenset[str] = frozenset(
     {
@@ -105,6 +106,7 @@ DEFAULT_AVAILABLE: frozenset[str] = frozenset(
         METHOD_MTP,
         METHOD_MEDUSA,
         METHOD_DSPARK,
+        METHOD_DSPINE,
         METHOD_DFLY,
     }
 )

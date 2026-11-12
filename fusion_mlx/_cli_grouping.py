@@ -75,6 +75,7 @@ _SERVE_CATEGORIES: dict[str, str] = {
     "dflash_drafter_path": "Speculative decode",
     "dflash2_drafter_path": "Speculative decode",
     "dspark_drafter_path": "Speculative decode",
+    "dspine_drafter_path": "Speculative decode",
     "dspark_draft_quant_bits": "Speculative decode",
     # Sampling
     "default_max_tokens": "Sampling",

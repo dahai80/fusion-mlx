@@ -43,6 +43,8 @@ _SERVE_VALUE_FLAGS = frozenset(
         "--dflash2-drafter-path",
         "--dspark-draft-quant-bits",
         "--dspark-drafter-path",
+        "--dspine-block-size",
+        "--dspine-drafter-path",
         "--default-frequency-penalty",
         "--default-min-p",
         "--default-presence-penalty",

@@ -205,6 +205,8 @@ class SchedulerConfig:
     dflash2_draft_bits: int = 4
     dspark_drafter_path: str = ""
     dspark_draft_quant_bits: int = 8
+    dspine_drafter_path: str = ""
+    dspine_block_size: int = 16
     kv_cache_dtype: str = "bf16"
     kv_disk_checkpoint_interval: int = 256
     kv_cache_turboquant_mode: str = "v4"

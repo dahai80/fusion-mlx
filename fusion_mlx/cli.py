@@ -774,6 +774,26 @@ Examples:
         help="Path to the converted MLX DSpark draft directory (produced by "
         "dspark-metal-convert). Required when --enable-dspark is set.",
     )
+    # DSpine — Tencent parallel-drafter spec decode over target intermediate
+    # layer hiddens (#1549). Qwen3-family dense targets only; greedy (T=0)
+    # requests. Draft checkpoint: tencent/Qwen3-8B-DSpine-b16.
+    serve_parser.add_argument(
+        "--dspine-drafter-path",
+        dest="dspine_drafter_path",
+        default="",
+        help="Local path to the DSpine draft checkpoint (e.g. "
+        "tencent/Qwen3-8B-DSpine-b16). Enables DSpine parallel-drafter "
+        "speculative decoding for Qwen3 dense targets; greedy requests "
+        "only.",
+    )
+    serve_parser.add_argument(
+        "--dspine-block-size",
+        dest="dspine_block_size",
+        type=int,
+        default=16,
+        help="DSpine draft block size — candidates per draft round "
+        "(default 16, matching the -b16 checkpoints).",
+    )
     # Boot-time LoRA adapter (Phase B LoRA slice 1). Applies a PEFT LoRA
     # adapter at model load via mlx_lm.load(adapter_path=...). Single-model
     # ``serve --model`` path only; multi-model ``--model-dir`` per-model LoRA

@@ -1430,3 +1430,272 @@ def dflash2_spec_step(
         gen.tokens[0].append(accepted_drafts[-1])
 
     return outputs
+
+
+# --- DSpine (#1549): parallel-drafter spec decode over target intermediate
+# --- layer hiddens. Greedy-only (T=0 requests); T>0 requests skip.
+
+DSPINE_SPEC_WARMUP_STEPS = 2
+DSPINE_SPEC_LOG_INTERVAL = 50
+
+
+class DSpineSpecState:
+    """Per-scheduler DSpine speculative decode state.
+
+    Holds the per-request draft KV caches and the pending hidden window
+    (target hidden rows for committed tokens, oldest first, concat of the
+    configured target layers along the last axis). The window mirrors the
+    reference DSpine loop: round R+1 drafts from rows
+    [anchor_h, D1_h..D_a_h] where anchor = the token the previous round's
+    regular step consumed and D1..D_a are the drafts accepted in round R.
+    """
+
+    def __init__(self, runtime):
+        self.runtime = runtime
+        self.steps_since_start = 0
+        self.total_spec_steps = 0
+        self.total_draft_proposed = 0
+        self.total_draft_accepted = 0
+        self._last_request_id = None
+        self._caches = None
+        self._window = None
+
+    def on_new_request(self, request_id: str):
+        if self._last_request_id != request_id:
+            self._last_request_id = request_id
+            self.steps_since_start = 0
+            self._caches = None
+            self._window = None
+            drafter = getattr(self.runtime, "drafter", None)
+            if drafter is not None:
+                drafter.reset_cache()
+
+    def add_token(self, token: int):
+        self.steps_since_start += 1
+
+    def should_speculate(self) -> bool:
+        return self.steps_since_start >= DSPINE_SPEC_WARMUP_STEPS
+
+    def record_result(self, n_accepted: int, n_total: int):
+        self.total_spec_steps += 1
+        self.total_draft_proposed += n_total
+        self.total_draft_accepted += n_accepted
+        self.runtime.record_accept(n_accepted / n_total if n_total else None)
+
+    def get_stats(self) -> dict:
+        rate = (
+            self.total_draft_accepted / self.total_draft_proposed
+            if self.total_draft_proposed > 0
+            else 0.0
+        )
+        return {
+            "spec_steps": self.total_spec_steps,
+            "draft_proposed": self.total_draft_proposed,
+            "draft_accepted": self.total_draft_accepted,
+            "acceptance_rate": rate,
+            "block_size": self.runtime.block_size,
+        }
+
+
+def _dspine_concat_captured(captured: dict, layer_ids: list[int], take_rows: int):
+    """Concat captured per-layer hiddens [1,K,H] -> [1,take_rows,concat]."""
+    if not captured:
+        return None
+    states = []
+    for lid in layer_ids:
+        s = captured.get(lid)
+        if s is None or int(s.shape[1]) < take_rows:
+            return None
+        states.append(s[:, :take_rows, :])
+    return mx.concatenate(states, axis=-1)
+
+
+def dspine_spec_step(
+    scheduler,
+    output,
+    current_token: int,
+    request_id: str,
+) -> list[RequestOutput]:
+    """DSpine spec step after a regular decode step.
+
+    Window/bookkeeping layout (reference: dspine generate loop):
+      - The regular step consumed token X and sampled current_token; the
+        capture store holds X's hidden row ([1,1,concat]).
+      - Draft round: draft(window, [current_token + masks], caches).
+      - Verify feeds [D1..DK] to the target (cache already past X);
+        capture rows become D1_h..DK_h.
+      - Next window = [X_h] + D1_h..D_a_h (a = accepted drafts).
+    """
+    dspine_state = getattr(scheduler, "_dspine_spec_state", None)
+    if dspine_state is None:
+        dspine_runtime = getattr(scheduler, "_dspine_runtime", None)
+        if dspine_runtime is None:
+            return []
+        dspine_state = DSpineSpecState(dspine_runtime)
+        scheduler._dspine_spec_state = dspine_state
+
+    request = scheduler.running.get(request_id)
+    if request is None:
+        return []
+
+    if dspine_state._last_request_id != request_id:
+        dspine_state.on_new_request(request_id)
+
+    dspine_state.add_token(current_token)
+
+    if not dspine_state.should_speculate():
+        return []
+
+    # DSpine tail + verify are greedy-only; sampled requests must keep the
+    # AR distribution, so spec decode is skipped entirely for them.
+    temperature = getattr(request, "temperature", 0.0) or 0.0
+    if temperature > 0:
+        return []
+
+    bg = scheduler.batch_generator
+    if bg is None:
+        return []
+    gen = bg._generation_batch
+    if gen is None:
+        return []
+
+    prompt_cache = gen.prompt_cache
+    model = gen.model
+    runtime = dspine_state.runtime
+    drafter = runtime.drafter
+    capture = runtime.capture
+    layer_ids = drafter.target_layer_ids
+
+    # Anchor row: the regular step's captured hidden for its input token X.
+    regular_row = _dspine_concat_captured(capture.get_captured(), layer_ids, 1)
+    if regular_row is None:
+        return []
+
+    # Bootstrap: first spec round of the request — seed the window with the
+    # prefill capture (last prefill chunk's hidden rows, eagle3-style).
+    # Chunked prefill means this may cover only the prompt tail; the draft
+    # cache accumulates rows from there on. Documented limitation (#1549).
+    if dspine_state._window is None:
+        prefill_states = []
+        pc = capture.get_prefill_captured()
+        for lid in layer_ids:
+            s = pc.get(lid)
+            if s is None:
+                prefill_states = []
+                break
+            prefill_states.append(s)
+        if prefill_states:
+            min_sl = min(int(s.shape[1]) for s in prefill_states)
+            dspine_state._window = mx.concatenate(
+                [s[:, -min_sl:, :] for s in prefill_states], axis=-1
+            )
+        capture.clear_prefill_captured()
+        if dspine_state._window is None:
+            dspine_state._window = regular_row
+
+    if dspine_state._caches is None:
+        dspine_state._caches = drafter.make_caches()
+
+    try:
+        with mx.stream(scheduler._stream):
+            draft_tokens = drafter.draft_block(
+                dspine_state._window, current_token, dspine_state._caches
+            )
+    except (IndexError, RuntimeError, ValueError, TypeError) as e:
+        logger.warning(
+            "dspine_spec: draft_block failed: %s (type=%s)", e, type(e).__name__
+        )
+        return []
+
+    K = len(draft_tokens)
+    if K == 0:
+        return []
+
+    sampled_from_regular = None
+    if gen._next_tokens is not None:
+        try:
+            sampled_from_regular = int(gen._next_tokens.item())
+        except Exception:
+            pass
+
+    # D1 gate: draft[0] must match the regular step's sampled prediction.
+    if sampled_from_regular is not None and draft_tokens[0] != sampled_from_regular:
+        dspine_state.record_result(0, K)
+        # Verify forward never ran; capture still holds the regular row.
+        dspine_state._window = regular_row
+        return []
+
+    non_trimmable_snapshots = _snapshot_non_trimmable_caches(prompt_cache)
+
+    with mx.stream(scheduler._stream):
+        t0 = time.perf_counter()
+        verified, n_accepted, cache_tokens_processed = _run_spec_verify(
+            model,
+            current_token,
+            draft_tokens,
+            prompt_cache,
+            sampled_from_regular=sampled_from_regular,
+        )
+    dt = time.perf_counter() - t0
+
+    # Cache rollback for rejected tokens (mirrors dflash_spec_step).
+    if cache_tokens_processed > 0 and n_accepted < K:
+        n_rejected = cache_tokens_processed - n_accepted
+        if non_trimmable_snapshots is not None:
+            _restore_non_trimmable_caches(prompt_cache, non_trimmable_snapshots)
+            if n_accepted > 0:
+                replay = mx.array(draft_tokens[:n_accepted], dtype=mx.uint32)
+                with mx.stream(scheduler._stream):
+                    replay_logits = model(replay[None], cache=prompt_cache)
+                    mx.eval(replay_logits)
+            trim_count = cache_tokens_processed
+        else:
+            trim_count = n_rejected
+        if trim_count > 0:
+            _trim_trimmable(prompt_cache, trim_count)
+
+    # Next hidden window: [X_h] + D1_h..D_a_h. On the accepted-replay path
+    # the capture holds exactly the a accepted rows; on the pure-verify path
+    # it holds all K rows and we slice. Rows beyond a belong to rejected
+    # drafts and must never enter the window.
+    a = min(n_accepted, len(verified) - 1)
+    window = None
+    if a > 0:
+        verify_rows = _dspine_concat_captured(capture.get_captured(), layer_ids, a)
+        if verify_rows is not None:
+            window = mx.concatenate([regular_row, verify_rows], axis=1)
+    if window is None:
+        window = regular_row
+    dspine_state._window = window
+
+    dspine_state.record_result(n_accepted, K)
+
+    if dspine_state.total_spec_steps % DSPINE_SPEC_LOG_INTERVAL == 1:
+        stats = dspine_state.get_stats()
+        logger.info(
+            "dspine_spec: step=%d, block=%d, accepted=%d/%d (%.1f%%), "
+            "verify=%.1fms, rate=%.1f%%, window=%d",
+            dspine_state.total_spec_steps,
+            runtime.block_size,
+            n_accepted,
+            K,
+            100.0 * n_accepted / K if K else 0,
+            dt * 1000,
+            stats["acceptance_rate"] * 100,
+            int(window.shape[1]),
+        )
+
+    if not verified:
+        return []
+
+    # verified = [D1..D_a, bonus]. Emit accepted drafts; bonus becomes the
+    # next feed token (mirrors dflash2 emission override).
+    bonus = verified[-1]
+    accepted_drafts = verified[:-1]
+
+    outputs = _emit_spec_tokens(scheduler, request_id, accepted_drafts)
+    gen._next_tokens = mx.array([bonus], dtype=mx.uint32)
+    if gen.tokens and len(gen.tokens) > 0 and accepted_drafts:
+        gen.tokens[0].append(accepted_drafts[-1])
+
+    return outputs

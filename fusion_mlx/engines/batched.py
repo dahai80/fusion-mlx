@@ -905,6 +905,58 @@ class BatchedEngine(BaseEngine):
                     "DSpark drafter load failed for %s: %s", self._model_name, e
                 )
 
+        # DSpine parallel-drafter speculative decode (#1549)
+        dspine_path = (
+            getattr(self._model_settings, "dspine_drafter_path", None)
+            if self._model_settings
+            else None
+        ) or getattr(scheduler_config, "dspine_drafter_path", "")
+        if dspine_path:
+            try:
+                from ..model_auto_config import _detect_family_from_path
+                from ..speculative.dspine import check
+                from ..speculative.dspine.runtime import (
+                    load_runtime as load_dspine_runtime,
+                )
+
+                family = _detect_family_from_path(self._model_name)
+                _mcfg = getattr(self._model, "config", None)
+                _moe = (
+                    _mcfg.get("moe", False)
+                    if isinstance(_mcfg, dict)
+                    else bool(getattr(_mcfg, "moe", False))
+                )
+                is_moe = bool(_moe)
+                elig = check(family, is_moe=is_moe, draft_path=dspine_path, alias=self._model_name)
+                if not elig.eligible:
+                    logger.info(
+                        "DSpine not eligible for %s: %s",
+                        self._model_name,
+                        getattr(elig, "reason", ""),
+                    )
+                else:
+                    dspine_rt = await loop.run_in_executor(
+                        # Same single-worker executor as the scheduler steps
+                        # (#411 pattern, see DSpark note above).
+                        self._model_load_executor,
+                        lambda: load_dspine_runtime(
+                            dspine_path,
+                            self._engine.engine.scheduler.model,
+                            block_size=getattr(scheduler_config, "dspine_block_size", 16) or 16,
+                        ),
+                    )
+                    self._engine.engine.scheduler._dspine_runtime = dspine_rt
+                    logger.info(
+                        "DSpine spec-decode enabled for %s (draft=%s, block_size=%d)",
+                        self._model_name,
+                        dspine_path,
+                        dspine_rt.block_size,
+                    )
+            except Exception as e:
+                logger.error(
+                    "DSpine drafter load failed for %s: %s", self._model_name, e
+                )
+
         self._loaded = True
         from ..scheduler.helpers import register_llm_engine
 

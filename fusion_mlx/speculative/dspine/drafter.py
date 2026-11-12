@@ -22,12 +22,11 @@ from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
-from mlx.utils import tree_flatten
 from mlx_lm.models.cache import KVCache
 
 from .bridge import build_serial_tables
-from .config import DraftConfig, load_draft_config
-from .model import DSpineDraftModel, _load_weights
+from .config import DraftConfig
+from .model import DSpineDraftModel, load_draft
 from .propose import RefinementTail
 from .target import HeadAccess, _find_embed
 
@@ -73,25 +72,13 @@ class DSpineDrafter:
             raise ValueError("DSpineDrafter.load requires the target model")
 
         root = Path(self.model_path)
-        cfg = load_draft_config(root)
+        # Production loader: strict name/shape checks + bridge prepare()
+        # (packed_weight/codebook lazy init lives in prepare(); building
+        # serial tables before it raised "code-bridge weights were not
+        # prepared").
+        draft, cfg = load_draft(root)
         if self._target_layer_ids:
             cfg.target_layer_ids = tuple(self._target_layer_ids)
-        draft = DSpineDraftModel(cfg)
-        weights = _load_weights(root)
-        expected = dict(tree_flatten(draft.parameters()))
-        cleaned: dict[str, mx.array] = {}
-        for name, tensor in weights.items():
-            short = name.removeprefix("model.")
-            if short in ("draft_block_causal_version", "last_write_refine_version"):
-                continue
-            cleaned[short] = tensor
-        missing = sorted(set(expected) - set(cleaned))
-        extra = sorted(set(cleaned) - set(expected))
-        if missing or extra:
-            raise ValueError(
-                f"DSpine draft weight mismatch: missing={missing} extra={extra}"
-            )
-        draft.load_weights(list(cleaned.items()))
         draft.bind(self.target_model)
         draft.set_block_size(self.block_size)
 
@@ -112,9 +99,9 @@ class DSpineDrafter:
         self._draft = draft
         self._loaded = True
         logger.info(
-            "DSpineDrafter: loaded %d tensors, layers=%s vocab=%d, "
+            "DSpineDrafter: loaded (%d params), layers=%s vocab=%d, "
             "serial tables in %.1fs",
-            len(cleaned),
+            draft_model_num_parameters(draft),
             cfg.target_layer_ids,
             cfg.vocab_size,
             time.perf_counter() - t0,
@@ -172,9 +159,7 @@ class DSpineDrafter:
 def _find_lm_head(model: Any):
     if hasattr(model, "lm_head"):
         return model.lm_head
-    if hasattr(model, "language_model") and hasattr(
-        model.language_model, "lm_head"
-    ):
+    if hasattr(model, "language_model") and hasattr(model.language_model, "lm_head"):
         return model.language_model.lm_head
     if hasattr(model, "model") and hasattr(model.model, "lm_head"):
         return model.model.lm_head
@@ -182,4 +167,6 @@ def _find_lm_head(model: Any):
 
 
 def draft_model_num_parameters(draft: DSpineDraftModel) -> int:
+    from mlx.utils import tree_flatten
+
     return sum(p.size for _, p in tree_flatten(draft.parameters()))
