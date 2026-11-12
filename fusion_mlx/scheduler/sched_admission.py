@@ -41,8 +41,7 @@ def _model_has_stateful_non_sliceable_cache(self) -> bool:
         try:
             cache_list = list(make_cache())
             flag = any(
-                self._cache_tree_has_stateful_non_sliceable(c)
-                for c in cache_list
+                self._cache_tree_has_stateful_non_sliceable(c) for c in cache_list
             )
         except Exception as exc:
             logger.debug("stateful-cache probe failed: %s", exc)
