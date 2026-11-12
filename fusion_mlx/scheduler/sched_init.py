@@ -310,6 +310,10 @@ def __init__(
     # Multiple snapshots per request to support per-block ArraysCache state storage.
     # Values are None when offloaded to SSD via _boundary_snapshot_store.
     self._boundary_cache_snapshots: dict[str, dict[int, Any]] = {}
+    # #1532: token counts of prompt-end (N-1) snapshots per request. Decode
+    # captures hold prompt+generation state and must never be chosen over
+    # the prompt-end tail state when storing the prefix cache.
+    self._boundary_prompt_end_tcs: dict[str, set[int]] = {}
     # Lazy detection flag: True/False once determined, None before first check.
     self._boundary_snapshot_required: bool | None = None
     # SSD store for offloading boundary snapshots (initialized in _init_tiered_cache).

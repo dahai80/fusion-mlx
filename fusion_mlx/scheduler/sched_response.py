@@ -698,6 +698,7 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
         # dict pop is safe — the async store worker holds its own
         # reference to the snapshot dict via _BoundarySnapshotProvider.
         self._boundary_cache_snapshots.pop(request_id, None)
+        self._boundary_prompt_end_tcs.pop(request_id, None)
         # cleanup_request rmtree's the on-disk snapshot directory and
         # races the worker's boundary_snapshot_store.load() calls. If
         # an async store_future is in flight, defer cleanup until the
@@ -773,6 +774,7 @@ def _recover_from_cache_error(self) -> None:
     self.batch_generator = None
     self._current_sampler_params = None
     self._boundary_cache_snapshots.clear()
+    self._boundary_prompt_end_tcs.clear()
     if self._boundary_snapshot_store is not None:
         self._boundary_snapshot_store.cleanup_all()
     self._boundary_snapshot_required = None

@@ -337,6 +337,22 @@ def _do_external_prefill(
             and emitted_boundaries.get(request.request_id, -1) < total_tokens
         ):
             self._emit_prefill_boundary_snapshot(request, prompt_cache, total_tokens)
+        elif (
+            # #1532: prompt-end snapshot at N-1 (see _emit_final_boundary_if_needed
+            # for rationale). The cache here holds exactly the prompt-prefix state
+            # a repeated identical prompt reuses for its trailing partial block.
+            total_tokens % block_size != 0
+            and total_tokens > 0
+            and processed_tokens > 0
+            and emitted_boundaries.get(request.request_id, -1) < total_tokens
+        ):
+            self._emit_prefill_boundary_snapshot(
+                request,
+                prompt_cache,
+                total_tokens,
+                require_aligned=False,
+                prompt_end=True,
+            )
 
     _sync_and_clear_cache(self._stream)
 
@@ -908,6 +924,27 @@ def _emit_final_boundary_if_needed(self, state: _PrefillState) -> None:
         and state.emitted_boundaries.get(rid, -1) < total_tokens
     ):
         self._emit_prefill_boundary_snapshot(state.request, state.cache, total_tokens)
+    elif (
+        # #1532: prompt-end snapshot at N-1. Chunked prefill stops one token
+        # short of the prompt end (the last token is fed at generation
+        # kickoff), so the cache here holds exactly the prompt-prefix state a
+        # repeated identical prompt needs: block-chain match to the last full
+        # block + this tail, leaving the final token to prefill. Without it
+        # the trailing partial block (up to block_size-1 tokens, 2047 for
+        # hybrid models) is re-prefilled on every repeat. Skip when nothing
+        # was prefilled in this state (exact/prefix hit reused the tail).
+        total_tokens % state.block_size != 0
+        and total_tokens > 0
+        and state.tokens_processed > 0
+        and state.emitted_boundaries.get(rid, -1) < total_tokens
+    ):
+        self._emit_prefill_boundary_snapshot(
+            state.request,
+            state.cache,
+            total_tokens,
+            require_aligned=False,
+            prompt_end=True,
+        )
 
 
 def _insert_prefilled_request(

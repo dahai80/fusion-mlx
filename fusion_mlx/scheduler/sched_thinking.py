@@ -83,6 +83,8 @@ def _emit_prefill_boundary_snapshot(
     request: "Request",
     prompt_cache: list[Any],
     total_tokens: int,
+    require_aligned: bool = True,
+    prompt_end: bool = False,
 ) -> None:
     """Capture boundary snapshot from individual (non-batch) cache.
 
@@ -108,6 +110,8 @@ def _emit_prefill_boundary_snapshot(
         request.request_id,
         snapshot_cache,
         total_tokens,
+        require_aligned=require_aligned,
+        prompt_end=prompt_end,
     )
 
 

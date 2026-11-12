@@ -56,6 +56,8 @@ def _on_prefill_boundary_snapshot(
     request_id: str,
     snapshot_cache: list[Any],
     token_count: int,
+    require_aligned: bool = True,
+    prompt_end: bool = False,
 ) -> None:
     """Record boundary snapshots captured during prefill processing.
 
@@ -69,7 +71,9 @@ def _on_prefill_boundary_snapshot(
         return
 
     block_size = self.config.paged_cache_block_size
-    if block_size <= 0 or token_count <= 0 or token_count % block_size != 0:
+    if block_size <= 0 or token_count <= 0:
+        return
+    if require_aligned and token_count % block_size != 0:
         return
 
     if not self._cache_list_needs_boundary_snapshot(snapshot_cache):
@@ -77,6 +81,11 @@ def _on_prefill_boundary_snapshot(
 
     if request_id not in self._boundary_cache_snapshots:
         self._boundary_cache_snapshots[request_id] = {}
+
+    # #1532: track prompt-end snapshots so the store override prefers them
+    # over decode-phase captures (which hold prompt+generation state).
+    if prompt_end:
+        self._boundary_prompt_end_tcs.setdefault(request_id, set()).add(token_count)
 
     # Skip if we already have a snapshot at this token count
     if token_count in self._boundary_cache_snapshots[request_id]:
@@ -401,22 +410,34 @@ def _get_boundary_store_override(
     total_tokens = len(full_token_sequence)
     block_size = self.config.paged_cache_block_size
 
-    # Find all valid boundary-aligned snapshot token counts
-    valid_counts = sorted(
-        tc for tc in snapshots if 0 < tc <= total_tokens and tc % block_size == 0
-    )
+    # Find all valid snapshot token counts. #1532: snapshot tcs are no longer
+    # required to be block-aligned — the prompt-end snapshot at N-1 is the
+    # tail state a repeated identical prompt reuses, and it is almost never
+    # block-aligned. Snapshots are only recorded by the prefill/decode
+    # capture paths, so every entry is a real cache state.
+    valid_counts = sorted(tc for tc in snapshots if 0 < tc <= total_tokens)
     if not valid_counts:
         return None
 
     # Find the latest snapshot that leaves trailing partial tokens
     # (or equals total if it's block-aligned).
-    latest_tc = valid_counts[-1]
+    # #1532: prefer the prompt-end (N-1) snapshot — decode-phase captures
+    # hold prompt+generation state and would poison the stored tail with
+    # tokens absent from a repeated prompt.
+    prompt_end_tcs = self._boundary_prompt_end_tcs.get(request_id) or set()
+    usable_prompt_end = sorted(
+        tc for tc in prompt_end_tcs if tc in snapshots and tc < total_tokens
+    )
+    if usable_prompt_end:
+        latest_tc = usable_prompt_end[-1]
+    else:
+        latest_tc = valid_counts[-1]
     if latest_tc < total_tokens:
         # Trailing partial tokens exist — use this snapshot for truncation
         pass
-    elif latest_tc == total_tokens and total_tokens % block_size == 0:
-        # Exactly block-aligned — no truncation needed but we still
-        # provide intermediate snapshots for per-block storage.
+    elif latest_tc == total_tokens:
+        # Exact match — no truncation needed but we still provide
+        # intermediate snapshots for per-block storage.
         latest_tc = total_tokens
     else:
         return None
