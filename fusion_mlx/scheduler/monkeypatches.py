@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 import time
 from collections import OrderedDict
@@ -218,8 +219,14 @@ _default_generation_stream = generation_stream
 # ---------------------------------------------------------------------------
 _original_generation_batch_step = GenerationBatch._step
 
+# P2-1 stage profile (env-gated; off by default, zero cost otherwise).
+_STAGE_PROF_ON = os.environ.get("FUSION_SCHED_STAGE_PROFILE") == "1"
+
 
 def _optimized_generation_batch_step(self):
+    _prof_on = _STAGE_PROF_ON
+    if _prof_on:
+        _t0 = time.perf_counter()
     self._current_tokens = self._next_tokens
     self._current_logprobs = self._next_logprobs
     inputs = self._current_tokens
@@ -238,8 +245,15 @@ def _optimized_generation_batch_step(self):
     _realign_generation_batch_rows(self)
 
     # Forward pass
+    if _prof_on:
+        _tm = time.perf_counter()
     logits = model(inputs[:, None], cache=self.prompt_cache)
     logits = logits[:, -1, :]
+    if _prof_on:
+        _gb_pre = getattr(model, "_fusion_stage_prof", None)
+        if _gb_pre is not None:
+            _gb_pre.setdefault("model", 0.0)
+            _gb_pre["model"] += time.perf_counter() - _tm
 
     # Logits processors (per-row, cannot be batched)
     has_logits_processors = bool(self.logits_processors) and any(self.logits_processors)
@@ -323,6 +337,16 @@ def _optimized_generation_batch_step(self):
     if token_context:
         eval_targets.extend(token_context)
     mx.async_eval(*eval_targets)
+    if _prof_on:
+        _t1 = time.perf_counter()
+        _gb = getattr(model, "_fusion_stage_prof", None)
+        if _gb is None:
+            _gb = model._fusion_stage_prof = {
+                "n": 0,
+                "build": 0.0,
+                "tolist": 0.0,
+                "rest": 0.0,
+            }
 
     # Drain deferred token-append from prior step (overlapped with
     # the forward pass above). First call has no deferred data.
@@ -336,6 +360,15 @@ def _optimized_generation_batch_step(self):
     # This blocks until async_eval completes, but the GPU was
     # computing sampled+inputs in parallel so the stall is shorter.
     input_list = inputs.tolist()
+    if _prof_on:
+        _t2 = time.perf_counter()
+        _gb["build"] += _t1 - _t0
+        _gb["tolist"] += _t2 - _t1
+        _gb["n"] += 1
+        if _gb["n"] % 256 == 0:
+            n = _gb["n"]
+            _m = {k: round(v / n * 1000.0, 3) for k, v in _gb.items() if k != "n"}
+            logger.info("gb_step_profile: n=%d ms/step %s", n, _m)
     # Stash for next-step drain. Capture the live token lists now
     # so filter() between steps doesn't invalidate our reference.
     self._deferred_input_list = input_list

@@ -2967,6 +2967,21 @@ class TestSchedulerSSDLayerSignature:
                 num_layers=2,
                 model_name="test-model",
                 block_size=4,
+                layer_cache_types=["RotatingKVCache", "KVCache"],
+            )
+            # #1576: TurboQuant wrappers fold to KVCache in signature
+            # comparison, so a KVCache-layout block must survive a TQ live
+            # signature (pre-restart TQ blocks restore to fp16 KV layout).
+            compat = PagedSSDBlockMetadata(
+                block_hash=b"compat".ljust(32, b"\0"),
+                file_path=tmp_path / "compat.safetensors",
+                file_size=1024,
+                token_count=4,
+                created_at=0.0,
+                last_access=0.0,
+                num_layers=2,
+                model_name="test-model",
+                block_size=4,
                 layer_cache_types=["KVCache", "KVCache"],
             )
             fresh = PagedSSDBlockMetadata(
@@ -2982,6 +2997,7 @@ class TestSchedulerSSDLayerSignature:
                 layer_cache_types=["TurboQuantKVCache", "KVCache"],
             )
             manager._index.add(stale)
+            manager._index.add(compat)
             manager._index.add(fresh)
 
             scheduler._turboquant_kv_bits = 4.0
@@ -2992,6 +3008,7 @@ class TestSchedulerSSDLayerSignature:
             assert layer_cache_types == ["TurboQuantKVCache", "KVCache"]
             assert manager._expected_layer_cache_types == layer_cache_types
             assert manager._index.get(stale.block_hash) is None
+            assert manager._index.get(compat.block_hash) is not None
             assert manager._index.get(fresh.block_hash) is not None
         finally:
             scheduler.shutdown()

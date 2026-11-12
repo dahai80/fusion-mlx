@@ -15,11 +15,15 @@ import concurrent.futures
 import gc
 import logging
 import math
+import os
 import time
 
 import mlx.core as mx
 
 logger = logging.getLogger(__name__)
+
+# P2-1 stage profile (env-gated; off by default, zero cost otherwise).
+_STAGE_PROF_ON = os.environ.get("FUSION_SCHED_STAGE_PROFILE") == "1"
 from typing import Any
 
 from ..request import Request, RequestOutput, RequestStatus
@@ -624,6 +628,21 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     step() for a typical 90ms decode step.
     """
     bg = self.batch_generator
+    # P2-1 stage profile: env-gated per-stage wall accumulation. Off by
+    # default (FUSION_SCHED_STAGE_PROFILE=1); zero cost otherwise.
+    if _STAGE_PROF_ON and getattr(self, "_stage_prof", None) is None:
+        self._stage_prof = {
+            "n": 0,
+            "pre": 0.0,
+            "fwd": 0.0,
+            "proc": 0.0,
+            "spec": 0.0,
+            "cache": 0.0,
+            "total": 0.0,
+        }
+    _stage_prof_on = getattr(self, "_stage_prof", None) is not None
+    _t_stage = time.perf_counter() if _stage_prof_on else 0.0
+    _t_total0 = _t_stage
     # Router-driven per-request spec decision (#431 Step 2). Decided once at
     # the first pure-decode step; fixed for the request lifetime. mtp runs
     # inside bg._next() on its own eligibility, so a non-mtp choice must
@@ -633,6 +652,11 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
     if request._active_spec_method is None:
         request._active_spec_method = self._decide_spec_method(request)
     from ..speculative.auto_router import METHOD_DSPARK, METHOD_MTP
+
+    if _stage_prof_on:
+        _prof_sp = self._stage_prof
+        _prof_sp["pre"] += time.perf_counter() - _t_stage
+        _t_stage = time.perf_counter()
 
     if request._active_spec_method == METHOD_DSPARK:
         # DSpark is self-contained: loads its own target copy and produces
@@ -725,6 +749,10 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
         self.model._fusion_mlx_mtp_suppressed = False
         self.model._fusion_mlx_mtp_chain_k = None
     self._last_decode_dt = time.perf_counter() - _decode_t0
+    if _stage_prof_on:
+        _prof_sp = self._stage_prof
+        _prof_sp["fwd"] += time.perf_counter() - _t_stage
+        _t_stage = time.perf_counter()
     _prof = getattr(self, "_step_profile", None)
     if _prof is not None:
         _prof["decode_steps"] += 1
@@ -739,6 +767,10 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
 
     output.has_work = True
     outputs, finished_ids = self._process_batch_responses(responses)
+    if _stage_prof_on:
+        _prof_sp = self._stage_prof
+        _prof_sp["proc"] += time.perf_counter() - _t_stage
+        _t_stage = time.perf_counter()
     output.outputs.extend(outputs)
     output.finished_request_ids = finished_ids
 
@@ -760,6 +792,10 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
                 logger.info(
                     "step(%d): spec_finished=%s", self._step_counter, finished_ids
                 )
+    if _stage_prof_on:
+        _prof_sp = self._stage_prof
+        _prof_sp["spec"] += time.perf_counter() - _t_stage
+        _t_stage = time.perf_counter()
 
     # Decode-phase cache clear. The MLX buffer pool accumulates freed
     # intermediates (attention scores, MLP activations) that are not
@@ -780,6 +816,24 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
             _sync_and_clear_cache(self._stream)
             self._tokens_since_clear_cache = 0
             self._last_mlx_active_memory_bytes = int(mx.get_active_memory())
+
+    if _stage_prof_on:
+        _prof_sp = self._stage_prof
+        _prof_sp["cache"] += time.perf_counter() - _t_stage
+        _prof_sp["total"] += time.perf_counter() - _t_total0
+        _prof_sp["n"] += 1
+        if _prof_sp["n"] % 128 == 0:
+            n = _prof_sp["n"]
+            _m = {k: round(v / n * 1000.0, 3) for k, v in _prof_sp.items() if k != "n"}
+            # GPU health probe: fixed 1024x1024 matmul, syncs, reports raw
+            # dispatch+exec wall in the server process (clock/pressure check).
+            _pa = mx.zeros((1024, 1024)) + 1
+            _pb = mx.zeros((1024, 1024)) + 1
+            _t_probe = time.perf_counter()
+            _pc = _pa @ _pb
+            mx.eval(_pc)
+            _m["gpu_probe_ms"] = round((time.perf_counter() - _t_probe) * 1000.0, 3)
+            logger.info("sched_stage_profile: n=%d ms/step %s", n, _m)
 
     return output
 
