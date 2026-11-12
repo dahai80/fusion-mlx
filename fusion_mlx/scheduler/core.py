@@ -34,6 +34,10 @@ except ImportError:
     HAS_OUTPUT_PARSER = False
 
 from .sched_admission import *  # noqa: F403
+from .sched_admission import (
+    _drop_terminal_partial_for_stateful,
+    _model_has_stateful_non_sliceable_cache,
+)
 from .sched_batch import *  # noqa: F403
 from .sched_batch import (
     _emit_final_boundary_if_needed,
@@ -216,6 +220,12 @@ class Scheduler:
 
     def _cache_tree_has_stateful_non_sliceable(self, *args, **kwargs):
         return _cache_tree_has_stateful_non_sliceable(self, *args, **kwargs)
+
+    def _model_has_stateful_non_sliceable_cache(self, *args, **kwargs):
+        return _model_has_stateful_non_sliceable_cache(self, *args, **kwargs)
+
+    def _drop_terminal_partial_for_stateful(self, *args, **kwargs):
+        return _drop_terminal_partial_for_stateful(self, *args, **kwargs)
 
     def _get_detokenizer(self, *args, **kwargs):
         return _get_detokenizer(self, *args, **kwargs)

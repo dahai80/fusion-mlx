@@ -153,6 +153,8 @@ class BlockAwarePrefixCache(CacheManager):
         self._tokens_saved = 0
         self._partial_block_skips = 0
         self._partial_tokens_skipped = 0
+        # #1532: trailing partial tokens now persisted instead of skipped
+        self._partial_tokens_persisted = 0
         self._tokens_matched_total = 0
         self._tokens_requested_total = 0
         self._last_partial_tokens_skipped = 0
@@ -698,35 +700,33 @@ class BlockAwarePrefixCache(CacheManager):
             self._last_tokens_to_next_block = 0
             return block_table
 
-        # Allocate only full blocks (skip partial trailing block).
-        # get_computed_blocks() matches full blocks only (floor division),
-        # so partial block data is never used during cache lookup.
-        # Skipping partial blocks also ensures is_last_block points to
-        # the last full block, which is critical for non-sliceable caches
-        # (ArraysCache/RotatingKVCache) that use last-block-only storage.
+        # Persist full blocks plus the trailing partial block (#1532).
+        # get_computed_blocks() matches full blocks and, since #1532, the
+        # terminal partial block (hash-verified tail match), so a repeated
+        # prompt reuses its unaligned tail instead of re-prefilling up to
+        # block_size-1 tokens. The partial block keeps is_last_block
+        # semantics: its extracted data carries the full cache state at the
+        # prompt boundary, which is exactly what non-sliceable caches
+        # (ArraysCache/RotatingKVCache) store per block and what
+        # reconstruct_cache picks for last-block-only layers.
         num_new_blocks = len(new_tokens) // self.block_size
         trailing_partial_tokens = len(new_tokens) % self.block_size
-        self._last_partial_tokens_skipped = trailing_partial_tokens
-        self._last_tokens_to_next_block = (
-            self.block_size - trailing_partial_tokens
-            if trailing_partial_tokens > 0
-            else 0
-        )
+        total_new_blocks = num_new_blocks + (1 if trailing_partial_tokens > 0 else 0)
+        self._last_partial_tokens_skipped = 0
+        self._last_tokens_to_next_block = 0
         if trailing_partial_tokens > 0:
-            self._partial_block_skips += 1
-            self._partial_tokens_skipped += trailing_partial_tokens
+            self._partial_tokens_persisted += trailing_partial_tokens
             logger.debug(
-                "Skipping trailing partial block for %s: %s token(s) not persisted "
-                "(block_size=%s, needs +%s token(s) to fill next block)",
+                "Persisting trailing partial block for %s: %s token(s) "
+                "(block_size=%s)",
                 request_id,
                 trailing_partial_tokens,
                 self.block_size,
-                self._last_tokens_to_next_block,
             )
 
         blocks_saved_to_ssd = 0
 
-        for i in range(num_new_blocks):
+        for i in range(total_new_blocks):
             start_idx = i * self.block_size
             end_idx = min(start_idx + self.block_size, len(new_tokens))
             block_tokens = new_tokens[start_idx:end_idx]
@@ -811,12 +811,18 @@ class BlockAwarePrefixCache(CacheManager):
                 extra_keys=block_extra_keys,
                 model_name=self.paged_cache.model_name,
             )
+            # #1532: record the chain parent on the block. Lazy-restore sets
+            # this; the hot store path never did, which left hot blocks
+            # invisible to parent-based walks (orphan cascade, partial-index
+            # tail match).
+            block.parent_hash = parent_hash
 
-            # Register hash for full blocks (for deduplication)
-            if len(block_tokens) == self.block_size:
-                self.paged_cache.register_block_hash(
-                    block, block_tokens, parent_hash, extra_keys=block_extra_keys
-                )
+            # Register hash for deduplication and lookup — full blocks and,
+            # since #1532, the terminal partial block (its hash chain entry
+            # is what get_computed_blocks' tail match resolves against)
+            self.paged_cache.register_block_hash(
+                block, block_tokens, parent_hash, extra_keys=block_extra_keys
+            )
 
             # Extract tensor slice and save to paged SSD
             if is_tensor_data and HAS_MLX and self.paged_ssd_cache is not None:
@@ -839,7 +845,7 @@ class BlockAwarePrefixCache(CacheManager):
                     cache_start = start_idx
                     cache_end = end_idx
 
-                is_last_block = i == num_new_blocks - 1
+                is_last_block = i == total_new_blocks - 1
 
                 # Look up boundary snapshot BEFORE the continuity check.
                 # Snapshots are self-contained — they carry the full cache

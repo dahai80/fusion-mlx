@@ -29,6 +29,67 @@ from .types import _CacheFreshnessWait, _InflightStoreInfo
 # stream when no per-engine stream is provided.
 
 
+def _model_has_stateful_non_sliceable_cache(self) -> bool:
+    # #1532: the layer-type mix is fixed after model load; probe once and
+    # cache the verdict on the scheduler instance.
+    cached = getattr(self, "_stateful_non_sliceable_model", None)
+    if cached is not None:
+        return cached
+    flag = False
+    make_cache = getattr(self.model, "make_cache", None)
+    if callable(make_cache):
+        try:
+            cache_list = list(make_cache())
+            flag = any(
+                self._cache_tree_has_stateful_non_sliceable(c)
+                for c in cache_list
+            )
+        except Exception as exc:
+            logger.debug("stateful-cache probe failed: %s", exc)
+            flag = False
+    self._stateful_non_sliceable_model = flag
+    return flag
+
+
+def _drop_terminal_partial_for_stateful(self, block_table, prompt_token_ids):
+    # #1532: an exact hit that ends in a terminal partial block leaves a
+    # stateful (non-sliceable) cache nothing to trim from N to N-1, and the
+    # exact-hit fallback would then discard the entire match — worse than
+    # the pre-#1532 behavior of matching full blocks only. Drop the partial
+    # block before reconstruct so the reconstructed state stops at the last
+    # full boundary and the tail (>= 1 token) prefills normally. Sliceable
+    # models keep the partial: _trim_prompt_cache_for_generation handles
+    # the N -> N-1 kickoff.
+    paged = getattr(self, "paged_cache_manager", None)
+    probe = getattr(self, "_model_has_stateful_non_sliceable_cache", None)
+    if (
+        paged is None
+        or not block_table.block_ids
+        or block_table.num_tokens != len(prompt_token_ids)
+        or probe is None
+        or not probe()
+    ):
+        return block_table
+    last_block = paged.allocated_blocks.get(block_table.block_ids[-1])
+    if (
+        last_block is None
+        or not (0 < last_block.token_count < paged.block_size)
+        or block_table.num_tokens - last_block.token_count <= 0
+    ):
+        return block_table
+    block_table.block_ids.pop()
+    block_table.num_tokens -= last_block.token_count
+    paged.decrement_ref(last_block.block_id)
+    logger.debug(
+        "Dropped terminal partial block for %s: stateful cache, %d tokens "
+        "kept, %d-token tail re-prefills",
+        block_table.request_id,
+        block_table.num_tokens,
+        last_block.token_count,
+    )
+    return block_table
+
+
 def _try_cow_donate(self, request: Request) -> bool:
     """CoW concurrent-donation fast path. If a live donor request shares this
     request's prefix chain-hash and its GPU slabs are still resident, adopt
@@ -193,6 +254,11 @@ def add_request(self, request: Request) -> None:
             extra_key_token_start=request.vlm_extra_key_token_start_for_cache,
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
+        if block_table and block_table.num_tokens > 0:
+            # #1532: keep stateful exact hits from regressing (see helper).
+            block_table = _drop_terminal_partial_for_stateful(
+                self, block_table, request.prompt_token_ids
+            )
         if block_table and block_table.num_tokens > 0:
             if _ssd_reconstruct_cap_exceeded(
                 block_table.num_tokens, _SSD_RECONSTRUCT_MAX_TOKENS
@@ -827,6 +893,10 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
             extra_key_ranges=request.vlm_extra_key_ranges_for_cache,
         )
         if block_table and block_table.num_tokens > 0:
+            # #1532: keep stateful exact hits from regressing (see helper).
+            block_table = _drop_terminal_partial_for_stateful(
+                self, block_table, request.prompt_token_ids
+            )
             # #1299: scope the reconstruct skip to relevant (same-conversation)
             # in-flight stores. The old global guard let ANY session's store
             # block reconstruct every turn — full re-prefill (37-110s) despite

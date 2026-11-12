@@ -1192,13 +1192,14 @@ class TestArraysCacheLastBlockOnly:
         assert result is not None
         assert len(result) == 1
 
-    def test_store_cache_skips_partial_blocks(self, mx):
-        """store_cache should only create full blocks, skipping partial trailing tokens.
+    def test_store_cache_persists_partial_tail_block(self, mx):
+        """store_cache persists the trailing partial block (#1532).
 
-        get_computed_blocks() matches full blocks only (floor division), so
-        partial blocks are never matched. Skipping them ensures is_last_block
-        points to the last full block, which is critical for ArraysCache/
-        RotatingKVCache last-block-only storage.
+        Since #1532, get_computed_blocks() also matches a terminal partial
+        block (hash-verified tail match), so the unaligned tail of a repeated
+        prompt is reused instead of re-prefilled. The partial block keeps
+        is_last_block semantics (its data carries the full cache state at the
+        prompt boundary) which is what last-block-only storage relies on.
         """
         block_size = 4
         paged_cache = PagedCacheManager(
@@ -1226,21 +1227,21 @@ class TestArraysCacheLastBlockOnly:
         result = cache.store_cache("req-001", tokens, cache_data)
 
         assert result is not None
-        # Should create exactly 2 blocks (10 // 4 = 2), not 3
-        assert len(result.block_ids) == 2
-        # num_tokens should reflect only full blocks
-        assert result.num_tokens == 8  # 2 blocks * 4 tokens
+        # 2 full blocks + 1 terminal partial block
+        assert len(result.block_ids) == 3
+        # num_tokens covers all stored tokens
+        assert result.num_tokens == 10
 
         stats = cache.get_stats()
-        assert stats.partial_block_skips == 1
-        assert stats.partial_tokens_skipped == 2
-        assert stats.last_partial_tokens_skipped == 2
-        assert stats.last_tokens_to_next_block == 2
+        assert stats.partial_block_skips == 0
+        assert stats.partial_tokens_skipped == 0
+        assert stats.last_partial_tokens_skipped == 0
+        assert stats.last_tokens_to_next_block == 0
 
     def test_store_cache_arrayscache_partial_trailing_uses_last_full_block_state(
         self, mx
     ):
-        """ArraysCache with trailing partial tokens stores only full blocks safely."""
+        """ArraysCache trailing partial block carries the full boundary state (#1532)."""
         from fusion_mlx.cache.hybrid_cache import ModelCacheConfig
 
         block_size = 4
@@ -1283,17 +1284,20 @@ class TestArraysCacheLastBlockOnly:
         )
 
         assert result is not None
-        assert len(result.block_ids) == 1
-        assert result.num_tokens == 4
-        mock_ssd.save_block.assert_called_once()
+        # 1 full block + 1 terminal partial block (state at the prompt boundary)
+        assert len(result.block_ids) == 2
+        assert result.num_tokens == 7
+        assert mock_ssd.save_block.call_count == 2
 
+        # The partial (last) block is stored via the last-block branch: the
+        # ArraysCache state is captured whole at the 7-token boundary.
         saved_data = mock_ssd.save_block.call_args.kwargs["cache_data"]
         saved_conv_state, saved_ssm_state = saved_data[0]
         assert saved_conv_state.shape == conv_state.shape
         assert saved_ssm_state.shape == ssm_state.shape
 
-    def test_store_cache_all_partial_creates_no_blocks(self, mx):
-        """Tokens fewer than block_size should create no blocks."""
+    def test_store_cache_all_partial_creates_one_partial_block(self, mx):
+        """Tokens fewer than block_size store a single terminal partial block (#1532)."""
         block_size = 4
         paged_cache = PagedCacheManager(
             block_size=block_size,
@@ -1307,7 +1311,7 @@ class TestArraysCacheLastBlockOnly:
             paged_cache_manager=paged_cache,
         )
 
-        # 3 tokens < block_size=4 -> 0 full blocks
+        # 3 tokens < block_size=4 -> 0 full blocks + 1 partial block
         tokens = [1, 2, 3]
         cache_data = [
             {
@@ -1320,14 +1324,14 @@ class TestArraysCacheLastBlockOnly:
         result = cache.store_cache("req-001", tokens, cache_data)
 
         assert result is not None
-        assert len(result.block_ids) == 0
-        assert result.num_tokens == 0
+        assert len(result.block_ids) == 1
+        assert result.num_tokens == 3
 
         stats = cache.get_stats()
-        assert stats.partial_block_skips == 1
-        assert stats.partial_tokens_skipped == 3
-        assert stats.last_partial_tokens_skipped == 3
-        assert stats.last_tokens_to_next_block == 1
+        assert stats.partial_block_skips == 0
+        assert stats.partial_tokens_skipped == 0
+        assert stats.last_partial_tokens_skipped == 0
+        assert stats.last_tokens_to_next_block == 0
 
     def test_store_cache_exact_multiple_creates_all_blocks(self, mx):
         """Tokens exactly divisible by block_size should create all blocks."""

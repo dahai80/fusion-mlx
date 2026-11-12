@@ -578,6 +578,13 @@ class PagedCacheManager(CacheManager):
         # Hash-to-block cache for prefix caching
         self.cached_block_hash_to_block = BlockHashToBlockMap()
 
+        # #1532: terminal partial blocks (token_count < block_size) indexed by
+        # chain parent hash so a repeated prompt can reuse its unaligned tail.
+        # Entries are (block_id, block_hash) pairs; liveness and content are
+        # re-verified at lookup (blocks do not store token ids), so stale
+        # entries after free/evict/realloc are harmless and pruned lazily.
+        self._partial_blocks_by_parent: dict[BlockHash | None, list[tuple[int, BlockHash]]] = {}
+
         # Request to block table mapping
         self.request_tables: dict[str, BlockTable] = {}
 
@@ -1171,10 +1178,90 @@ class PagedCacheManager(CacheManager):
                 num_cached_tokens += self.block_size
                 self.stats.hits += 1
 
+            # #1532: terminal partial-block match. store_cache persists the
+            # trailing partial block (token_count < block_size), so a repeated
+            # prompt reuses its unaligned tail instead of re-prefilling up to
+            # block_size-1 tokens on every request. Candidates come from the
+            # partial index by chain parent; content is verified by
+            # recomputing the chain hash over the request's own tokens.
+            if num_cached_tokens < len(token_ids):
+                # The full-block loop may have stopped early on a miss; the
+                # tail match starts at the matched boundary, not at the
+                # arithmetic block count.
+                partial_start = num_cached_tokens
+                best_block: CacheBlock | None = None
+                best_len = 0
+                for block_id, saved_hash in self._partial_candidates_locked(
+                    parent_hash
+                ):
+                    block = self.allocated_blocks.get(block_id)
+                    if (
+                        block is None
+                        or block.block_hash is None
+                        or block.block_hash != saved_hash
+                        or block.parent_hash != parent_hash
+                    ):
+                        continue
+                    tc = block.token_count
+                    if (
+                        tc <= best_len
+                        or tc >= self.block_size
+                        or partial_start + tc > len(token_ids)
+                    ):
+                        continue
+                    block_extra_keys = resolve_block_extra_keys(
+                        partial_start + tc,
+                        extra_keys=extra_keys,
+                        extra_key_token_start=extra_key_token_start,
+                        extra_key_ranges=extra_key_ranges,
+                    )
+                    candidate_hash = compute_block_hash(
+                        parent_hash,
+                        token_ids[partial_start : partial_start + tc],
+                        extra_keys=block_extra_keys,
+                        model_name=self.model_name,
+                    )
+                    if candidate_hash == block.block_hash:
+                        best_block = block
+                        best_len = tc
+                if best_block is not None:
+                    # Same claim protocol as the full-block loop above.
+                    best_block.ref_count += 1
+                    best_block.touch()
+                    if best_block.ref_count == 2:
+                        self.stats.shared_blocks += 1
+                    cached_blocks.append(best_block)
+                    num_cached_tokens += best_len
+                    self.stats.hits += 1
+
         # Lazy restore may have evicted hash entries; flush their
         # invalidation callbacks outside the paged locks (#1269).
         self._flush_content_invalidated()
         return cached_blocks, num_cached_tokens
+
+    def _partial_candidates_locked(
+        self, parent_hash: BlockHash | None
+    ) -> list[tuple[int, BlockHash]]:
+        """Return live (block_id, block_hash) partial entries for a parent.
+
+        Caller must hold the paged locks (same hold as get_computed_blocks).
+        Stale entries — freed, evicted, or block_id reused by other content —
+        are pruned here so the index cannot grow without bound.
+        """
+        entries = self._partial_blocks_by_parent.get(parent_hash)
+        if not entries:
+            return []
+        live: list[tuple[int, BlockHash]] = []
+        for block_id, saved_hash in entries:
+            block = self.allocated_blocks.get(block_id)
+            if block is not None and block.block_hash == saved_hash:
+                live.append((block_id, saved_hash))
+        if len(live) != len(entries):
+            if live:
+                self._partial_blocks_by_parent[parent_hash] = live
+            else:
+                self._partial_blocks_by_parent.pop(parent_hash, None)
+        return live
 
     # =========================================================================
     # Legacy hash methods (for backwards compatibility)
@@ -1244,6 +1331,18 @@ class PagedCacheManager(CacheManager):
             )
             block.block_hash = block_hash
             self.cached_block_hash_to_block.insert(block_hash, block)
+            if 0 < len(tokens) < self.block_size:
+                # #1532: index terminal partial blocks by chain parent for
+                # get_computed_blocks' tail match. Capped lists keep the index
+                # bounded; stale entries are pruned lazily at lookup.
+                entries = self._partial_blocks_by_parent.setdefault(parent_hash, [])
+                entries.append((block.block_id, block_hash))
+                if len(entries) > 8:
+                    del entries[:-8]
+                if len(self._partial_blocks_by_parent) > 4096:
+                    self._partial_blocks_by_parent.pop(
+                        next(iter(self._partial_blocks_by_parent))
+                    )
 
     # =========================================================================
     # Block Table Management
@@ -1674,6 +1773,7 @@ class PagedCacheManager(CacheManager):
                 return False
 
             self.cached_block_hash_to_block.clear()
+            self._partial_blocks_by_parent.clear()
 
             for block in self.blocks:
                 block.reset_hash()
@@ -1714,6 +1814,7 @@ class PagedCacheManager(CacheManager):
             self.free_block_queue = FreeKVCacheBlockQueue(self.blocks)
 
             self.cached_block_hash_to_block.clear()
+            self._partial_blocks_by_parent.clear()
             self.request_tables.clear()
             self.allocated_blocks.clear()
 
