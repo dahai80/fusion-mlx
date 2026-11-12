@@ -81,6 +81,11 @@ class VLMFineTuneConfig:
     text_column: str | None = None
     # Number of data-loader workers (passed to VisionDataset via config).
     num_processes: int = 1
+    # #1567: QLoRA — quantize the frozen language-model base to 4/8-bit
+    # before attaching LoRA (same semantics as FineTuneConfig.quantize_base).
+    # No-op on an already-quantized base; rejected with full_finetune.
+    quantize_base: bool = False
+    quant_bits: int = 4  # 4 | 8 (ignored unless quantize_base)
     # #1186: process isolation (same knobs as text SFT FineTuneConfig).
     execution_mode: str = "process"
     memory_limit_gb: float = 0.0
@@ -115,6 +120,14 @@ class VLMFineTuneConfig:
             raise ValueError(
                 f"memory_limit_gb must be >= 0 (0 = auto), got {self.memory_limit_gb}"
             )
+        # #1567: QLoRA knobs.
+        if self.quantize_base and self.full_finetune:
+            raise ValueError(
+                "quantize_base is incompatible with full_finetune: QLoRA "
+                "quantizes the frozen base; full finetune trains everything"
+            )
+        if self.quantize_base and self.quant_bits not in (4, 8):
+            raise ValueError(f"quant_bits must be 4 or 8, got {self.quant_bits}")
 
 
 @dataclass
@@ -679,6 +692,25 @@ class VLMFineTuneService:
             asyncio.ensure_future(_do(), loop=self._loop)
 
 
+def _quantize_vlm_base(model, quant_bits: int) -> bool:
+    # #1567: quantize the frozen language-model base in place for QLoRA.
+    # Returns True if quantization was applied, False if the base was
+    # already a quantized MLX model (quantize_base is then a no-op, same
+    # semantics as the text path in service.py).
+    import mlx.nn as nn
+
+    already_quant = any(
+        isinstance(m, nn.QuantizedLinear)
+        for _, m in model.language_model.named_modules()
+    )
+    if already_quant:
+        logger.info("VLM QLoRA: base already quantized, skipping quantize step")
+        return False
+    logger.info("VLM QLoRA: quantizing base to %d-bit (group_size=64)", quant_bits)
+    nn.quantize(model.language_model, group_size=64, bits=quant_bits)
+    return True
+
+
 def execute_vlm_training_core(
     cfg: VLMFineTuneConfig,
     model_path: str,
@@ -709,6 +741,13 @@ def execute_vlm_training_core(
     logger.info(f"Loading VLM for training: {model_path}")
     model, processor = vlm_load(model_path)
     processor_config = getattr(processor, "config", None) or {}
+
+    # #1567: QLoRA — quantize the frozen language-model base before the LoRA
+    # wrap. mlx_vlm 0.5.0 handles a quantized base natively (LoRaLayer wraps
+    # QuantizedLinear, find_all_linear_names targets it). Vision tower stays
+    # at full precision — only the frozen LM base is quantized.
+    if cfg.quantize_base and not cfg.full_finetune:
+        _quantize_vlm_base(model, cfg.quant_bits)
 
     # Load dataset via HuggingFace datasets (Hub id or local dir with
     # images + jsonl). mlx_vlm.lora.load_dataset = datasets.load_dataset.
@@ -743,7 +782,11 @@ def execute_vlm_training_core(
     # Save adapter config for reproducibility (mirrors text SFT).
     config_record = {
         "model": model_path,
-        "fine_tune_type": "full" if cfg.full_finetune else "lora",
+        "fine_tune_type": (
+            "full" if cfg.full_finetune else ("qlora" if cfg.quantize_base else "lora")
+        ),
+        "quantize_base": cfg.quantize_base,
+        "quant_bits": cfg.quant_bits if cfg.quantize_base else None,
         "num_layers": cfg.lora_layers,
         "lora_parameters": {
             "rank": cfg.lora_rank,
