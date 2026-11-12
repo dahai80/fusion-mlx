@@ -311,33 +311,13 @@ the tail snapshot for non-block-aligned prompts on hybrid models) to
 server restarts: the index is rebuilt from disk at boot (`Recovered N prefix
 snapshots ...` log line) and repeat prompts warm-start with
 `cached_tokens = prompt_len - 1` (measured: 4.4k-token prompt, TTFT 28ms
-after restart vs 0.7s cold prefill).
-
-Configure in the `cache` section of `~/.fusion-mlx/settings.json` or via env
-(the env var only applies when the field stays at its default):
-
-```json
-{
-  "cache": {
-    "boundary_prefix_persist": true,
-    "boundary_prefix_max_bytes": "20GB"
-  }
-}
-```
-
-```bash
-FUSION_MLX_BOUNDARY_PREFIX_PERSIST=1      # same as boundary_prefix_persist=true
-FUSION_MLX_BOUNDARY_PREFIX_MAX_BYTES=...  # bytes; 0 = store default (20 GiB)
-```
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `cache.boundary_prefix_persist` | `false` | Persist prefix/tail KV snapshots to the SSD store and recover them at startup |
-| `cache.boundary_prefix_max_bytes` | `0` (20 GiB) | LRU cap on persisted snapshot bytes; oldest snapshots are evicted when exceeded |
-
-Default off: writes KV tensors to disk on prefill completion, so it is
-opt-in to keep cold-start workloads and constrained-disk deployments
-untouched.
+after restart vs 0.7s cold prefill). Configure in the `cache` section of
+`~/.fusion-mlx/settings.json` (`boundary_prefix_persist`, default `false`;
+`boundary_prefix_max_bytes`, default `0` = store cap of 20 GiB, LRU-evicted)
+or via env `FUSION_MLX_BOUNDARY_PREFIX_PERSIST=1` (only applies when the
+field stays at its default). Default off: writes KV tensors to disk on
+prefill completion, so it is opt-in to keep cold-start workloads and
+constrained-disk deployments untouched.
 
 ## OpenClaw Sessions
 
