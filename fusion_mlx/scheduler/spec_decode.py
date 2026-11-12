@@ -17,6 +17,7 @@ Token flow:
 import copy
 import logging
 import time
+import zlib
 
 import mlx.core as mx
 
@@ -309,6 +310,84 @@ def _run_spec_verify(
     verified.append(sampled_list[resample_idx])
 
     return verified, n_accepted, K
+
+
+def _run_spec_verify_sampled(
+    model,
+    draft_tokens: list[int],
+    q_rows: mx.array,
+    cand_ids: mx.array,
+    p0_logprobs: mx.array,
+    prompt_cache: list,
+    *,
+    inv_temp: float,
+    top_k: int,
+    top_p: float,
+    min_p: float,
+    accept_uniforms: mx.array,
+    final_uniform: float,
+) -> tuple[list[int], int, int]:
+    """Rejection-sampling verify for the DSpine T>0 path.
+
+    Feeds [D1..DK] to the target (caches past the anchor token), builds
+    K+1 filtered target rows (p_0 from the regular step + K verify rows),
+    and runs the capped-chain rejection sampler (t0_verify). q_rows are
+    the per-position distributions over the K candidate ids the drafts
+    were actually drawn from (serial_sample_chain output); they are
+    scattered to full-vocab rows here. Returns
+    (verified_tokens, n_accepted, cache_tokens_processed) with the same
+    layout contract as _run_spec_verify: verified = accepted drafts +
+    replacement/bonus token.
+    """
+    from ..speculative.dspine.propose import filter_target_probs
+    from ..speculative.dspine.t0_verify import sampled_capped_reject
+
+    K = len(draft_tokens)
+    verify_input = mx.array(draft_tokens, mx.uint32)
+    logits = model(verify_input[None], cache=prompt_cache)
+    logits = logits.squeeze(0)  # [K, vocab]
+    mx.eval(logits)
+
+    # Target rows: p_0 from the regular step's post-processor logprobs
+    # (the row the AR path would sample from), then the K verify-forward
+    # rows. filter_target_probs renormalizes over the kept set, matching
+    # mlx-lm top-p/top-k sampler semantics — the rejection sampler's
+    # emitted marginal then equals plain AR with the same request params.
+    p_rest = mx.softmax(logits.astype(mx.float32) * float(inv_temp), axis=-1)
+    p0 = mx.softmax(
+        mx.asarray(p0_logprobs).reshape(-1).astype(mx.float32) * float(inv_temp)
+    )
+    target_probs = mx.concatenate([p0[None, :], p_rest], axis=0)  # [K+1, V]
+    V = int(target_probs.shape[1])
+    top_k_eff = int(top_k) if int(top_k) > 0 else V
+    target_probs = filter_target_probs(target_probs, top_k_eff, top_p, min_p)
+
+    # Scatter the candidate-space q rows into full-vocab rows: position j
+    # of the chain (draft_tokens[j]) was drawn from q_rows[j] over
+    # cand_ids[j]. Mass outside the candidates is 0, so the residual
+    # (p - q)+ can still resample non-drafted tokens.
+    q_vocab = []
+    for j in range(K):
+        ids_j = cand_ids[j].astype(mx.int32).reshape(-1)
+        one_hot = (mx.arange(V)[None, :] == ids_j[:, None]).astype(mx.float32)
+        q_vocab.append(one_hot.T @ q_rows[j].astype(mx.float32))
+    q_full = mx.stack(q_vocab)  # [K, V]
+
+    cand_chain = mx.array([0] + list(draft_tokens), dtype=mx.int32)
+    accepted, bonus, emitted = sampled_capped_reject(
+        cand_chain,
+        target_probs,
+        q_full,
+        verify_len=K + 1,
+        uniforms=accept_uniforms,
+        uniform_final=final_uniform,
+    )
+    verified = (
+        [int(x) for x in emitted.tolist()]
+        if hasattr(emitted, "tolist")
+        else [int(x) for x in emitted]
+    )
+    return verified, int(accepted), K
 
 
 def spec_decode_step(
@@ -1590,11 +1669,12 @@ def dspine_spec_step(
     if not dspine_state.should_speculate():
         return []
 
-    # DSpine tail + verify are greedy-only; sampled requests must keep the
-    # AR distribution, so spec decode is skipped entirely for them.
+    # T>0 runs the sampled rejection-verify path (P2-2): draft via the
+    # sampled refinement tail, verify via t0_verify's capped-chain
+    # rejection sampler. Only a missing p_0 row (below) forces the
+    # greedy-only skip.
     temperature = getattr(request, "temperature", 0.0) or 0.0
-    if temperature > 0:
-        return []
+    sampled_path = temperature > 1e-6
 
     bg = scheduler.batch_generator
     if bg is None:
@@ -1646,11 +1726,43 @@ def dspine_spec_step(
     if dspine_state._caches is None:
         dspine_state._caches = drafter.make_caches()
 
+    # p_0 row: the regular step's post-processor logprobs at D1's position.
+    # Sampled verify needs it as the target row for D1; without it the
+    # request falls back to the greedy-only skip.
+    p0_logprobs = None
+    if sampled_path:
+        nlp = getattr(gen, "_next_logprobs", None)
+        if nlp:
+            p0_logprobs = nlp[0]
+        else:
+            sampled_path = False
+            logger.debug("dspine_spec: no _next_logprobs row, skipping sampled verify")
+
+    draft_q_rows = None
+    draft_cand = None
     try:
         with mx.stream(scheduler._stream):
-            draft_tokens = drafter.draft_block(
-                dspine_state._window, current_token, dspine_state._caches
-            )
+            if sampled_path:
+                n_draft = max(1, drafter.block_size - 1)
+                step_seed = (
+                    zlib.crc32(request_id.encode()) ^ dspine_state.total_spec_steps
+                ) & 0xFFFFFFFF
+                draft_key = mx.random.key(step_seed)
+                draft_uniforms = mx.random.uniform(0.0, 1.0, (n_draft,), key=draft_key)
+                draft_tokens, draft_q_rows, draft_cand = drafter.draft_block_sampled(
+                    dspine_state._window,
+                    current_token,
+                    dspine_state._caches,
+                    inv_temp=1.0 / temperature,
+                    top_k=int(getattr(request, "top_k", 0) or 0),
+                    top_p=float(getattr(request, "top_p", 1.0) or 1.0),
+                    min_p=float(getattr(request, "min_p", 0.0) or 0.0),
+                    uniforms=draft_uniforms,
+                )
+            else:
+                draft_tokens = drafter.draft_block(
+                    dspine_state._window, current_token, dspine_state._caches
+                )
     except (IndexError, RuntimeError, ValueError, TypeError) as e:
         logger.warning(
             "dspine_spec: draft_block failed: %s (type=%s)", e, type(e).__name__
@@ -1663,21 +1775,28 @@ def dspine_spec_step(
 
     if dspine_state.total_spec_steps == 0:
         logger.info(
-            "dspine_spec: first draft round K=%d window=%d anchor=%d",
+            "dspine_spec: first draft round K=%d window=%d anchor=%d sampled=%s",
             K,
             int(dspine_state._window.shape[1]),
             current_token,
+            sampled_path,
         )
 
     sampled_from_regular = None
-    if gen._next_tokens is not None:
+    if not sampled_path and gen._next_tokens is not None:
         try:
             sampled_from_regular = int(gen._next_tokens.item())
         except Exception:
             pass
 
-    # D1 gate: draft[0] must match the regular step's sampled prediction.
-    if sampled_from_regular is not None and draft_tokens[0] != sampled_from_regular:
+    # D1 gate (greedy path only): draft[0] must match the regular step's
+    # sampled prediction. On the sampled path D1 is accepted
+    # probabilistically inside the rejection sampler against p_0.
+    if (
+        not sampled_path
+        and sampled_from_regular is not None
+        and draft_tokens[0] != sampled_from_regular
+    ):
         dspine_state.record_result(0, K)
         # Verify forward never ran; capture still holds the regular row.
         dspine_state._window = regular_row
@@ -1687,13 +1806,36 @@ def dspine_spec_step(
 
     with mx.stream(scheduler._stream):
         t0 = time.perf_counter()
-        verified, n_accepted, cache_tokens_processed = _run_spec_verify(
-            model,
-            current_token,
-            draft_tokens,
-            prompt_cache,
-            sampled_from_regular=sampled_from_regular,
-        )
+        if sampled_path:
+            verify_key = mx.random.key(step_seed ^ 0x9E3779B9)
+            accept_uniforms = mx.random.uniform(0.0, 1.0, (K,), key=verify_key)
+            final_uniform = float(
+                mx.random.uniform(
+                    0.0, 1.0, (1,), key=mx.random.key(step_seed ^ 0x85EB)
+                ).item()
+            )
+            verified, n_accepted, cache_tokens_processed = _run_spec_verify_sampled(
+                model,
+                draft_tokens,
+                draft_q_rows,
+                draft_cand,
+                p0_logprobs,
+                prompt_cache,
+                inv_temp=1.0 / temperature,
+                top_k=int(getattr(request, "top_k", 0) or 0),
+                top_p=float(getattr(request, "top_p", 1.0) or 1.0),
+                min_p=float(getattr(request, "min_p", 0.0) or 0.0),
+                accept_uniforms=accept_uniforms,
+                final_uniform=final_uniform,
+            )
+        else:
+            verified, n_accepted, cache_tokens_processed = _run_spec_verify(
+                model,
+                current_token,
+                draft_tokens,
+                prompt_cache,
+                sampled_from_regular=sampled_from_regular,
+            )
     dt = time.perf_counter() - t0
 
     # Cache rollback for rejected tokens (mirrors dflash_spec_step).

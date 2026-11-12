@@ -158,6 +158,49 @@ class DSpineDrafter:
         drafts, _cand = self._tail.greedy(rows, stash, anchor_token)
         return [int(x) for x in drafts.tolist()]
 
+    def draft_block_sampled(
+        self,
+        target_hidden: mx.array,
+        anchor_token: int,
+        caches: list[KVCache] | None = None,
+        *,
+        inv_temp: float,
+        top_k: int,
+        top_p: float,
+        min_p: float,
+        uniforms: mx.array,
+    ) -> tuple[list[int], mx.array, mx.array]:
+        """One drafting round with sampled refinement tail (T>0 path).
+
+        Same block forward as draft_block, but the tail samples each row's
+        chain under the request's filters (serial_sample_chain). Returns
+        (draft token ids, q rows [n, vocab] filtered proposal probs,
+        candidates [n, K]). The q rows must be carried to the rejection
+        verify unchanged — they are the distribution the drafts were drawn
+        from, and recomputing them would break the sampler identity.
+        """
+        d = self.draft
+        caches = caches if caches is not None else self._caches
+        block = mx.array(
+            [[anchor_token] + [d.mask_token_id] * (self.block_size - 1)],
+            dtype=mx.int32,
+        )
+        out, stash = d(target_hidden, block, caches)
+        rows = out[0, 1:]
+        if self._tail is None:
+            self.build_tail(target_hidden)
+        tokens, q_rows, _cand = self._tail.sampled(
+            rows,
+            stash,
+            anchor_token,
+            inv_temp=inv_temp,
+            top_k=top_k,
+            top_p=top_p,
+            min_p=min_p,
+            uniforms=uniforms,
+        )
+        return [int(x) for x in tokens.tolist()], q_rows, _cand
+
 
 def _find_lm_head(model: Any):
     if hasattr(model, "lm_head"):
