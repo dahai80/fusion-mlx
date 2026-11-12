@@ -433,13 +433,20 @@ def _serve_from_model_dir(args):
         _ssd_max = _parse_size_to_bytes(cache_sj.get("ssd_cache_max_size"))
         if _ssd_max:
             _sched.paged_ssd_cache_max_size = _ssd_max
+        if "boundary_prefix_persist" in cache_sj:
+            _sched.boundary_prefix_persist = bool(cache_sj["boundary_prefix_persist"])
+        _bp_max = _parse_size_to_bytes(cache_sj.get("boundary_prefix_max_bytes"))
+        if _bp_max:
+            _sched.boundary_prefix_max_bytes = _bp_max
         logger.info(
             "cache settings applied from settings.json: ssd_dir=%s "
-            "hot_cache_max=%s hot_cache_only=%s initial_blocks=%s",
+            "hot_cache_max=%s hot_cache_only=%s initial_blocks=%s "
+            "boundary_prefix_persist=%s",
             _sched.paged_ssd_cache_dir,
             _sched.hot_cache_max_size,
             _sched.hot_cache_only,
             _sched.initial_cache_blocks,
+            _sched.boundary_prefix_persist,
         )
     config.scheduler = _sched
 
