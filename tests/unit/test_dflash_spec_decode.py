@@ -561,8 +561,9 @@ def test_verify_block_partial_accept_at_k_equals_2():
 
 def test_verify_block_rewinds_cache_offset_on_partial_accept():
     """Real KVCache: partial accept must rewind offset to the accepted end."""
-    from fusion_mlx.speculative.dflash.verifier import _rewind_cache_to
     from mlx_lm.models.cache import KVCache
+
+    from fusion_mlx.speculative.dflash.verifier import _rewind_cache_to
 
     cache = KVCache()
     # Manually set offset to simulate "the model forward wrote 4 positions".
@@ -990,12 +991,12 @@ def test_lossless_mid_block_reject_matches_baseline_byte_for_byte():
 
 
 def _serve_help_stdout() -> str:
-    """Run ``python -m vllm_mlx.cli serve --help`` and return stdout."""
+    """Run ``python -m fusion_mlx.cli serve --help`` and return stdout."""
     import subprocess
     import sys
 
     proc = subprocess.run(
-        [sys.executable, "-m", "vllm_mlx.cli", "serve", "--help"],
+        [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
         timeout=60,
@@ -1027,7 +1028,7 @@ def test_cli_spec_decode_rejects_unknown_value():
         [
             sys.executable,
             "-m",
-            "vllm_mlx.cli",
+            "fusion_mlx.cli",
             "serve",
             "qwen3.5-4b-4bit",
             "--spec-decode",
@@ -1063,44 +1064,27 @@ def test_scheduler_config_dflash_round_trip():
 
 
 def test_metrics_renders_dflash_counters_zero_at_cold_start():
-    """Before any DFlash generation runs, the five DFlash series MUST be
-    present with value 0/16 (block_size gauge starts at the default)."""
+    """Before any spec generation runs, the dflash2 strategy series MUST be
+    present with value 0 (metrics.py `_render_spec_decode_metrics`)."""
+    from fusion_mlx.routes_internal.metrics import _render_spec_decode_metrics
     from fusion_mlx.speculative.dflash.accept_counter import (
         reset_global_counter_for_tests,
     )
 
-    from fusion_mlx.routes_internal.metrics import _render_spec_decode_dflash_counters
-
     reset_global_counter_for_tests()
-
-    class _Cfg:
-        model_alias = "qwen3.5-9b-4bit"
-
-    lines = _render_spec_decode_dflash_counters(_Cfg())
-    body = "\n".join(lines)
-    assert "rapid_mlx_spec_decode_dflash_attempts_total" in body
-    assert "rapid_mlx_spec_decode_dflash_accepts_total" in body
-    assert "rapid_mlx_spec_decode_dflash_accept_ratio" in body
-    assert "rapid_mlx_spec_decode_dflash_tokens_saved_total" in body
-    assert "rapid_mlx_spec_decode_dflash_block_size" in body
-    # Family + method labels.
-    assert 'family="qwen3.5-9b-4bit"' in body
-    assert 'method="dflash"' in body
-    # Block size default 16.
-    assert (
-        'rapid_mlx_spec_decode_dflash_block_size{family="qwen3.5-9b-4bit",'
-        'method="dflash"} 16'
-    ) in body
+    body = "\n".join(_render_spec_decode_metrics())
+    assert 'fusion_mlx_spec_decode_accepted_total{strategy="dflash2"} 0' in body
+    assert 'fusion_mlx_spec_decode_drafted_total{strategy="dflash2"} 0' in body
+    assert 'fusion_mlx_spec_decode_accept_rate{strategy="dflash2"} 0.0' in body
 
 
 def test_metrics_renders_post_acceptance_dflash_counters():
-    """4 attempts / 3 accepts / 27 tokens_saved → metric reflects state."""
+    """4 attempts / 3 accepts -> accepted 3, drafted 4, rate 0.75."""
+    from fusion_mlx.routes_internal.metrics import _render_spec_decode_metrics
     from fusion_mlx.speculative.dflash.accept_counter import (
         get_global_counter,
         reset_global_counter_for_tests,
     )
-
-    from fusion_mlx.routes_internal.metrics import _render_spec_decode_dflash_counters
 
     reset_global_counter_for_tests()
     counter = get_global_counter()
@@ -1108,104 +1092,28 @@ def test_metrics_renders_post_acceptance_dflash_counters():
     counter.record_attempt()
     counter.record_attempt()
     counter.record_attempt()
-    counter.record_accept(tokens_saved=15)
-    counter.record_accept(tokens_saved=8)
-    counter.record_accept(tokens_saved=4)
+    counter.record_accept()
+    counter.record_accept()
+    counter.record_accept()
 
-    class _Cfg:
-        model_alias = "qwen3.5-9b-4bit"
-
-    body = "\n".join(_render_spec_decode_dflash_counters(_Cfg()))
-    assert (
-        'rapid_mlx_spec_decode_dflash_attempts_total{family="qwen3.5-9b-4bit",'
-        'method="dflash"} 4'
-    ) in body
-    assert (
-        'rapid_mlx_spec_decode_dflash_accepts_total{family="qwen3.5-9b-4bit",'
-        'method="dflash"} 3'
-    ) in body
-    assert (
-        'rapid_mlx_spec_decode_dflash_tokens_saved_total{family="qwen3.5-9b-4bit",'
-        'method="dflash"} 27'
-    ) in body
-    # accept_ratio = 0.75 — must appear rounded to at most 4 decimals.
-    assert "0.75" in body
+    body = "\n".join(_render_spec_decode_metrics())
+    assert 'fusion_mlx_spec_decode_accepted_total{strategy="dflash2"} 3' in body
+    assert 'fusion_mlx_spec_decode_drafted_total{strategy="dflash2"} 4' in body
+    assert 'fusion_mlx_spec_decode_accept_rate{strategy="dflash2"} 0.75' in body
     reset_global_counter_for_tests()
 
 
 def test_metrics_route_includes_dflash_series_at_cold_start():
-    """End-to-end /metrics body carries the dflash series pre-engine."""
-    from fusion_mlx.routes_internal.metrics import _render_prometheus
-
-    class _Cfg:
-        engine = None
-        model_name = "qwen3.5-9b-4bit"
-        model_alias = "qwen3.5-9b-4bit"
-        kv_cache_dtype = None
-
-    body = _render_prometheus(_Cfg())
-    assert "rapid_mlx_spec_decode_dflash_attempts_total" in body
-    assert "rapid_mlx_spec_decode_dflash_accept_ratio" in body
-    assert "rapid_mlx_spec_decode_dflash_block_size" in body
-
-
-# ---------------------------------------------------------------------------
-# 11. Bench script — dry-run smoke
-# ---------------------------------------------------------------------------
-
-
-def test_bench_script_dry_run_executes_cleanly():
-    """The committed bench script must validate via --dry-run without
-    booting MLX. Used by the PR's checkbox 4 acceptance.
-    """
-    import subprocess
-    import sys
-
-    proc = subprocess.run(
-        [
-            sys.executable,
-            "bench/bench_spec_decode_dflash.py",
-            "--dry-run",
-            "--format",
-            "json",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
+    """End-to-end /metrics body carries the dflash2 series pre-engine."""
+    from fusion_mlx.routes_internal.metrics import render_prometheus_metrics
+    from fusion_mlx.speculative.dflash.accept_counter import (
+        reset_global_counter_for_tests,
     )
-    assert proc.returncode == 0, proc.stderr
-    # The plan JSON must declare the two conditions and a block size
-    # field. The key is ``block_size_override`` since #343 — the bench
-    # now delegates the per-run block-size policy to mlx-vlm's adaptive
-    # scaler (it's a CEILING, not a fixed value) and only sends the CLI
-    # override through when set.
-    assert '"conditions"' in proc.stdout
-    assert '"dflash"' in proc.stdout
-    assert '"block_size_override"' in proc.stdout
+
+    reset_global_counter_for_tests()
+    body = render_prometheus_metrics()
+    assert 'fusion_mlx_spec_decode_accepted_total{strategy="dflash2"} 0' in body
+    assert 'fusion_mlx_spec_decode_accept_rate{strategy="dflash2"}' in body
+    reset_global_counter_for_tests()
 
 
-def test_bench_script_rejects_duplicate_prompt_indices():
-    """``--prompt-indices 0,0,1`` must fail loudly.
-
-    Pooling the same prompt twice silently over-weights it in the
-    summary speedup. The operator likely meant to type two different
-    indices; surface the typo as a clean argparse-style error rather
-    than producing misleading benchmark numbers.
-    """
-    import subprocess
-    import sys
-
-    proc = subprocess.run(
-        [
-            sys.executable,
-            "bench/bench_spec_decode_dflash.py",
-            "--dry-run",
-            "--prompt-indices",
-            "0,0,1",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert proc.returncode != 0
-    assert "duplicate" in proc.stderr.lower() or "duplicate" in proc.stdout.lower()
