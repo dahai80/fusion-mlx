@@ -114,6 +114,13 @@ def _canonicalize_layer_cache_types(
     wrapper_to_canonical = {
         "SizedArraysCache": "ArraysCache",
         "PrefillReadyRotatingKVCache": "RotatingKVCache",
+        # P1-4: TurboQuant cold-tier blocks restore to fp16 KVCache layout
+        # (prefix_cache _canonical_layer_cache_types collapses the same
+        # names); without this the scan rejects every TQ block against a
+        # live KVCache signature and post-restart block hits miss.
+        "TurboQuantKVCache": "KVCache",
+        "BatchTurboQuantKVCache": "KVCache",
+        "K8V4TurboQuantKVCache": "KVCache",
     }
     return [wrapper_to_canonical.get(ct, ct) for ct in layer_cache_types]
 
@@ -528,8 +535,7 @@ def _store_tq_state(
             _store_tq_state(sub, f"{key_prefix}_sub_{m}", tensors_raw, file_metadata)
         return
     raise TypeError(
-        f"Unsupported TurboQuant state element at {key_prefix}: "
-        f"{type(item).__name__}"
+        f"Unsupported TurboQuant state element at {key_prefix}: {type(item).__name__}"
     )
 
 
@@ -556,8 +562,7 @@ def _load_tq_state(key_prefix: str, file_metadata: dict, get_tensor):
         )
     except ImportError as e:
         raise TypeError(
-            f"TurboQuant state class {cls_name} unavailable for SSD "
-            f"reconstruction: {e}"
+            f"TurboQuant state class {cls_name} unavailable for SSD reconstruction: {e}"
         ) from e
     classes = {
         "TurboQuantMSEState": TurboQuantMSEState,
@@ -2451,13 +2456,25 @@ class PagedSSDCacheManager:
         ):
             return False
         if self._expected_layer_cache_types and meta.cache_signature:
+            # Recompute BOTH sides under the current canonicalization
+            # instead of comparing the stored signature verbatim: blocks
+            # saved before a canonicalization change (e.g. P1-4 TQ
+            # collapse) carry stale raw-name signatures and would be
+            # wrongly rejected forever. model/layer/block-size checks
+            # above still guard genuine configuration drift.
             expected_sig = _cache_compat_signature(
                 model_name=self._expected_model_name,
                 num_layers=self._expected_num_layers or meta.num_layers,
                 block_size=expected_block_size or meta.block_size,
                 layer_cache_types=self._expected_layer_cache_types,
             )
-            return meta.cache_signature == expected_sig
+            meta_sig = _cache_compat_signature(
+                model_name=meta.model_name or self._expected_model_name,
+                num_layers=meta.num_layers,
+                block_size=meta.block_size or expected_block_size,
+                layer_cache_types=meta.layer_cache_types,
+            )
+            return meta_sig == expected_sig
         return True
 
     def _get_effective_max_size(self) -> int:
