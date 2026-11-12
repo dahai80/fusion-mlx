@@ -653,6 +653,8 @@ def serve_command(args):
         kv_cache_turboquant=bool(args.kv_cache_turboquant),
         kv_cache_turboquant_bits=args.kv_cache_turboquant_bits,
         kv_cache_turboquant_group_size=args.kv_cache_turboquant_group_size,
+        # P1-4 (catch-up G8): SSD cold-tier TurboQuant compression.
+        paged_ssd_turboquant=bool(getattr(args, "paged_ssd_turboquant", False)),
         # R15-P1 (task #296): disk-backed KV checkpointing at 256-tok
         # boundaries. ``0`` disables; the runtime module guards every
         # hot-path call with ``should_checkpoint`` so the cost when off

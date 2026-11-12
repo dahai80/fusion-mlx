@@ -229,6 +229,10 @@ class SchedulerConfig:
     initial_cache_blocks: int = 256
     # Paged SSD cache (FusionMLX prefix-reuse layer); None = disabled.
     paged_ssd_cache_dir: str | None = None
+    # P1-4 (catch-up G8): compress SSD cold-tier blocks to TurboQuant packed
+    # states before save_block (~3x smaller on disk, E1: restore is faster
+    # than fp16). Restore path is the existing __turboquant_v2__ branch.
+    paged_ssd_turboquant: bool = False
     hot_cache_only: bool = False
     paged_ssd_cache_max_size: int = 100 * 1024 * 1024 * 1024  # 100 GiB
     hot_cache_max_size: int = 0  # bytes; 0 = disabled

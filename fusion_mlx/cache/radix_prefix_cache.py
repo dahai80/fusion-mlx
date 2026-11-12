@@ -59,6 +59,7 @@ class RadixPrefixCache:
         model: Any,
         paged_cache_manager: PagedCacheManager,
         paged_ssd_cache_manager: Any | None = None,
+        paged_ssd_turboquant: bool = False,
     ):
         self.model = model
         self.model_key = id(model)
@@ -75,6 +76,7 @@ class RadixPrefixCache:
             model=model,
             paged_cache_manager=paged_cache_manager,
             paged_ssd_cache_manager=paged_ssd_cache_manager,
+            paged_ssd_turboquant=paged_ssd_turboquant,
         )
         self.paged_ssd_cache = self._kv_cache.paged_ssd_cache
 
