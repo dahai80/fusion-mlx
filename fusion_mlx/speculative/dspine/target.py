@@ -100,8 +100,10 @@ class _LayerHook:
 def _get_layers(model):
     if hasattr(model, "model") and hasattr(model.model, "layers"):
         return model.model.layers
-    if hasattr(model, "language_model") and hasattr(model.language_model, "model") and hasattr(
-        model.language_model.model, "layers"
+    if (
+        hasattr(model, "language_model")
+        and hasattr(model.language_model, "model")
+        and hasattr(model.language_model.model, "layers")
     ):
         return model.language_model.model.layers
     if hasattr(model, "language_model") and hasattr(model.language_model, "layers"):

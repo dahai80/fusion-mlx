@@ -493,6 +493,23 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
             if dspine_state is not None:
                 record.update(dspine_state.pop_request_stats(request_id))
             append_spec_request_end(record)
+            # Acceptance feedback loop: feed the finished request's spec
+            # accept rate back into the next route decision (abandon <0.20,
+            # keep >=0.40 hysteresis in SpecAutoRouter). Only when the
+            # request actually speculated (stats present in record).
+            proposed = record.get("spec_draft_proposed") or 0
+            accepted = record.get("spec_draft_accepted") or 0
+            method = record.get("method")
+            if proposed > 0 and method:
+                self._last_spec_feedback = (
+                    method,
+                    accepted / proposed,
+                )
+            elif method:
+                # Request ran under a spec method but never speculated
+                # (warmup/short-output gate) — no fresh rate; drop stale
+                # feedback so the next decision starts clean.
+                self._last_spec_feedback = None
         except Exception as e:
             logger.debug("spec-route request_end log failed (non-fatal): %s", e)
 

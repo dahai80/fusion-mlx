@@ -880,10 +880,14 @@ def _decide_spec_method(self, request) -> str:
         and self._spec_decode_state.draft_model is not None
     ):
         pass
+    feedback = getattr(self, "_last_spec_feedback", None)
+    fb_method, fb_rate = (feedback if feedback else (None, None))
     method = select_active_method(
         request.num_prompt_tokens,
         loaded,
         max_tokens=getattr(request, "max_tokens", None),
+        recent_accept_rate=fb_rate,
+        current_method=fb_method,
         has_mtp=loaded["mtp"],
         model_family=model_family,
         is_recurrent=is_recurrent,

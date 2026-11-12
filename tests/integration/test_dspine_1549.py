@@ -105,7 +105,7 @@ def test_registry_and_config_parse():
     plugin = get_spec_decoder("dspine")
     assert plugin is not None
     cfg = parse_speculative_config(
-        '{"method": "dspine", "model": "%s", "block_size": 16}' % DRAFT_PATH
+        f'{{"method": "dspine", "model": "{DRAFT_PATH}", "block_size": 16}}'
     )
     assert cfg.method == "dspine"
     assert cfg.raw.get("block_size") == 16

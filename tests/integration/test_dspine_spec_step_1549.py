@@ -69,11 +69,11 @@ def test_spec_state_lifecycle():
 def test_capture_window_alignment_real_weights():
     """Two draft rounds through the real target: window grows by
     [anchor_row] + [accepted rows] each round; drafts stay in-vocab."""
-    from pathlib import Path
+
+    from mlx_lm.models.cache import make_prompt_cache
 
     from fusion_mlx.scheduler.spec_decode import _dspine_concat_captured
     from fusion_mlx.speculative.dspine.runtime import load_runtime
-    from mlx_lm.models.cache import make_prompt_cache
 
     model, tokenizer = _load_target()
     runtime = load_runtime(DRAFT_PATH, model, block_size=16)
@@ -124,9 +124,13 @@ def test_capture_window_alignment_real_weights():
             break
 
     # Next window: [anchor_row] + first `accepted` verify capture rows.
-    anchor_row = _dspine_concat_captured(capture.get_captured(), drafter.target_layer_ids, 1)
+    anchor_row = _dspine_concat_captured(
+        capture.get_captured(), drafter.target_layer_ids, 1
+    )
     assert anchor_row is not None and int(anchor_row.shape[1]) == 1
-    rows = _dspine_concat_captured(capture.get_captured(), drafter.target_layer_ids, accepted)
+    rows = _dspine_concat_captured(
+        capture.get_captured(), drafter.target_layer_ids, accepted
+    )
     assert rows is not None and int(rows.shape[1]) == accepted
     window2 = mx.concatenate([anchor_row, rows], axis=1)
     assert int(window2.shape[1]) == accepted + 1

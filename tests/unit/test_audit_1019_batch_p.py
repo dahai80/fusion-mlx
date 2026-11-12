@@ -247,9 +247,7 @@ class TestSpecRouteDecisionRecords:
     def test_route_record_carries_max_tokens(self, monkeypatch):
         auto_router, records = self._capture(monkeypatch)
         router = auto_router.SpecAutoRouter()
-        signals = auto_router.RouteSignals(
-            prompt_token_count=9000, max_tokens=2048
-        )
+        signals = auto_router.RouteSignals(prompt_token_count=9000, max_tokens=2048)
         assert router.decide(signals) == auto_router.METHOD_DFLASH
         assert records[0]["max_tokens"] == 2048
         assert records[0]["event"] == "route"

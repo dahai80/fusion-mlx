@@ -334,3 +334,52 @@ class TestMaxTokensSignal:
         st.on_new_request("r1")
         st.record_result(3, 16)
         assert st.pop_request_stats("r-other") == {}
+
+
+class TestShortOutputGate:
+    def test_short_output_routes_to_suffix_when_available(self):
+        from fusion_mlx.speculative.per_request_route import (
+            select_active_method as _sam,
+        )
+
+        assert _sam(100, loaded_methods(dspine=True, suffix=True), max_tokens=16) == METHOD_NGRAM
+
+    def test_short_output_disables_spec_without_suffix(self):
+        from fusion_mlx.speculative.per_request_route import (
+            select_active_method as _sam,
+        )
+
+        assert _sam(100, loaded_methods(dspine=True), max_tokens=16) is None
+
+    def test_no_max_tokens_never_gates(self):
+        from fusion_mlx.speculative.per_request_route import (
+            select_active_method as _sam,
+        )
+
+        assert _sam(100, loaded_methods(dspine=True), max_tokens=None) == METHOD_DSPINE
+
+    def test_long_output_not_gated(self):
+        from fusion_mlx.speculative.per_request_route import (
+            select_active_method as _sam,
+        )
+
+        assert _sam(100, loaded_methods(dspine=True), max_tokens=200) == METHOD_DSPINE
+
+    def test_short_output_recorded_with_reason(self, monkeypatch):
+        from fusion_mlx.speculative import auto_router
+
+        records = []
+        monkeypatch.setattr(
+            auto_router,
+            "_append_spec_route_decision",
+            lambda d: records.append(d),
+        )
+        router = auto_router.SpecAutoRouter()
+        signals = auto_router.RouteSignals(
+            prompt_token_count=100,
+            max_tokens=8,
+            available=frozenset({auto_router.METHOD_DSPINE, auto_router.METHOD_NGRAM}),
+        )
+        assert router.decide(signals) == auto_router.METHOD_NGRAM
+        assert records[0]["reason"] == "short_output floor"
+        assert records[0]["method"] == auto_router.METHOD_NGRAM

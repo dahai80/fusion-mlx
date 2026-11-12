@@ -101,9 +101,9 @@ class DraftAttention(nn.Module):
         ctx_keys = self.k_norm(
             ctx_keys.reshape(B, S, self.n_kv_heads, self.head_dim)
         ).transpose(0, 2, 1, 3)
-        ctx_values = ctx_values.reshape(
-            B, S, self.n_kv_heads, self.head_dim
-        ).transpose(0, 2, 1, 3)
+        ctx_values = ctx_values.reshape(B, S, self.n_kv_heads, self.head_dim).transpose(
+            0, 2, 1, 3
+        )
         return rope(ctx_keys, offset=offset), ctx_values
 
     def append_context(self, x_ctx, rope, cache: KVCache) -> None:
@@ -123,9 +123,7 @@ class DraftDecoderLayer(nn.Module):
         super().__init__()
         self.self_attn = DraftAttention(cfg)
         self.mlp = MLP(int(cfg.hidden_size), int(cfg.intermediate_size))
-        self.input_layernorm = nn.RMSNorm(
-            int(cfg.hidden_size), eps=cfg.rms_norm_eps
-        )
+        self.input_layernorm = nn.RMSNorm(int(cfg.hidden_size), eps=cfg.rms_norm_eps)
         self.post_attention_layernorm = nn.RMSNorm(
             int(cfg.hidden_size), eps=cfg.rms_norm_eps
         )
@@ -280,6 +278,7 @@ def quantize_draft(
     The bridge's codebook, read/write projections and norms stay in BF16 because
     the refinement tail depends on their exact rounding.
     """
+
     def predicate(path: str, module: nn.Module):
         if path.startswith("selected_prefix_bridge"):
             return False

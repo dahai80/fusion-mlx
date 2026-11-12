@@ -1115,5 +1115,3 @@ def test_metrics_route_includes_dflash_series_at_cold_start():
     assert 'fusion_mlx_spec_decode_accepted_total{strategy="dflash2"} 0' in body
     assert 'fusion_mlx_spec_decode_accept_rate{strategy="dflash2"}' in body
     reset_global_counter_for_tests()
-
-
