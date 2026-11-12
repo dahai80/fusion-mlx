@@ -692,6 +692,36 @@ class BoundarySnapshotSSDStore:
             hashes.append(parent)
         return hashes
 
+    @staticmethod
+    def compute_tail_prefix_hash(
+        token_ids,
+        block_size: int,
+        model_name: str,
+    ) -> tuple[bytes, int] | None:
+        """Domain-separated hash for a NON-block-aligned tail snapshot (#1532).
+
+        Chain-hashes the full-block prefix exactly like
+        compute_prefix_chain_hashes, then folds in the trailing tokens under
+        a ``b"tail"`` domain separator so a tail key can never collide with
+        a block-boundary key. Returns (hash, token_count) where token_count
+        is len(token_ids) — the caller snapshots state valid at exactly this
+        many tokens. Returns None for empty input.
+        """
+        if not token_ids or block_size <= 0:
+            return None
+        chain = BoundarySnapshotSSDStore.compute_prefix_chain_hashes(
+            token_ids, block_size, model_name
+        )
+        parent = chain[-1] if chain else b""
+        tail_start = (len(token_ids) // block_size) * block_size
+        tail = token_ids[tail_start:]
+        h = hashlib.sha256()
+        h.update(parent)
+        h.update(b"tail")
+        h.update(struct.pack(f"<{len(tail)}i", *tail))
+        h.update(model_name.encode("utf-8"))
+        return h.digest(), len(token_ids)
+
     def _prefix_file_path(self, prefix_hash: bytes, token_count: int) -> Path:
         hex_hash = prefix_hash.hex()
         return self._prefix_dir / hex_hash[:2] / f"{hex_hash}_{token_count}.safetensors"

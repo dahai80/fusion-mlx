@@ -330,6 +330,19 @@ def add_request(self, request: Request) -> None:
                         request.remaining_tokens = request.prompt_token_ids[
                             block_table.num_tokens :
                         ]
+                        # #1532: a tail snapshot may cover tokens beyond the
+                        # block chain (up to prompt_len - 1). When it does,
+                        # it supersedes the block reconstruction — release
+                        # the shared block table and adopt the snapshot.
+                        if (
+                            request.cached_tokens < len(request.prompt_token_ids) - 1
+                            and self._try_tail_snapshot_warm_start(request)
+                            and self.paged_cache_manager is not None
+                        ):
+                            self.paged_cache_manager.delete_block_table(
+                                request.request_id
+                            )
+                            request.block_table = None
                         # For exact prefix hits we need cache state at (N-1) and the
                         # last prompt token as input to produce the first decode logit.
                         # Reusing cache state at N and feeding the last token again
@@ -1135,11 +1148,17 @@ def _prepare_prefix_cache_for_request(self, request: Request) -> None:
         else:
             # Cross-restart prefix persistence (#257): try to warm-start from
             # a persisted prefix snapshot before falling back to a full prefill.
+            # #1532: the exact-repeat tail snapshot is tried first — it
+            # recovers up to block_size-1 extra tokens the chain cannot.
             # #1299: a hook seed survives a fetch miss too.
-            if not self._try_prefix_snapshot_warm_start(request) and not (
-                getattr(request, "kv_resume_seeded", False)
-                and request.prompt_cache is not None
-                and request.cached_tokens > 0
+            if (
+                not self._try_tail_snapshot_warm_start(request)
+                and not self._try_prefix_snapshot_warm_start(request)
+                and not (
+                    getattr(request, "kv_resume_seeded", False)
+                    and request.prompt_cache is not None
+                    and request.cached_tokens > 0
+                )
             ):
                 request.remaining_tokens = request.prompt_token_ids
     else:

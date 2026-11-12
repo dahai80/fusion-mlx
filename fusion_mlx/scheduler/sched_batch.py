@@ -354,6 +354,14 @@ def _do_external_prefill(
                 prompt_end=True,
             )
 
+    # #1532: the loop processed tokens[:-1], so prompt_cache now holds the
+    # canonical kickoff state at prompt_len - 1 — persist it as a tail
+    # snapshot for repeat requests (hybrid models discard up to 2047 tail
+    # tokens in the block store).
+    self._maybe_capture_tail_snapshot(
+        request, prompt_cache, base_size + processed_tokens
+    )
+
     _sync_and_clear_cache(self._stream)
 
     # Restore _rope_deltas after cached VLM prefill (for decode capture)
@@ -914,6 +922,12 @@ def _maybe_early_tq_convert(self, state: _PrefillState) -> None:
 
 def _emit_final_boundary_if_needed(self, state: _PrefillState) -> None:
     """Emit a final boundary snapshot if the prefill landed on a boundary."""
+    # #1532: chunked prefill leaves the last token for insert(), so
+    # state.cache holds the kickoff state at prompt_len - 1 regardless of
+    # boundary alignment — persist the tail snapshot before returning.
+    self._maybe_capture_tail_snapshot(
+        state.request, state.cache, state.base_size + state.tokens_processed
+    )
     if not state.boundary_enabled:
         return
     total_tokens = state.base_size + state.tokens_processed
