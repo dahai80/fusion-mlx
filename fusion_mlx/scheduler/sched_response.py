@@ -506,9 +506,7 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                     if stats:
                         record.update(stats)
                         break
-            if record.get("method") == "mtp" and not record.get(
-                "spec_draft_proposed"
-            ):
+            if record.get("method") == "mtp" and not record.get("spec_draft_proposed"):
                 # MTP counts accepts inside the vendored batch generator
                 # (global thread-safe counter, round-level). Per-request
                 # stats come from a cumulative-counter delta; correct for
