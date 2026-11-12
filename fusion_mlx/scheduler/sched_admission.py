@@ -215,7 +215,7 @@ def add_request(self, request: Request) -> None:
         if request.remaining_tokens is None:
             request.remaining_tokens = request.prompt_token_ids[request.cached_tokens :]
         logger.info(
-            "Resume hit for %s: using seeded KV (%d cached tokens, " "%d remaining)",
+            "Resume hit for %s: using seeded KV (%d cached tokens, %d remaining)",
             request.request_id,
             request.cached_tokens,
             len(request.remaining_tokens),
@@ -480,6 +480,11 @@ def add_request(self, request: Request) -> None:
     logger.debug(
         f"Added request {request.request_id} with {request.num_prompt_tokens} prompt tokens"
     )
+
+    # P1-5 (catch-up G6): queue depth changed — throttled batch.status.
+    from .sched_response import _emit_batch_status
+
+    _emit_batch_status(self)
 
 
 def set_specprefill_draft_model(

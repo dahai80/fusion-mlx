@@ -288,6 +288,17 @@ def _serve_from_model_dir(args):
     configure_rate_limiter(args.rate_limit, enabled=args.rate_limit > 0)
 
     config = ServerConfig(host=host, port=port, model_dir=args.model_dir)
+    # P1-5 (catch-up G6): event webhook targets from CLI args.
+    _webhook_urls = getattr(args, "webhook_url", None) or []
+    if _webhook_urls:
+        config.webhook_urls = list(_webhook_urls)
+        logger.info("Event webhooks configured: %d target(s)", len(_webhook_urls))
+    _webhook_secret = getattr(args, "webhook_secret", "") or ""
+    if _webhook_secret:
+        config.webhook_secret = _webhook_secret
+    _webhook_timeout = getattr(args, "webhook_timeout", None)
+    if _webhook_timeout is not None:
+        config.webhook_timeout_s = float(_webhook_timeout)
     # R-7: profile gate — --profile flag > settings.json profile field > hardware auto-detect.
     # _serve_from_model_dir bypasses _stage_server_config, so replicate the
     # settings.json fallback here too — otherwise start.sh (which runs
@@ -777,6 +788,21 @@ def _stage_server_config(args, server, logger):
     server._strict_auth = server._resolve_strict_auth(
         getattr(args, "strict_auth", False)
     )
+
+    # P1-5 (catch-up G6): event webhook targets. Stage onto the global
+    # config singleton — the single-model serve path constructs Server()
+    # without an explicit config, so the singleton is what _create_app
+    # falls back to when instance fields are empty.
+    _webhook_urls = getattr(args, "webhook_url", None) or []
+    if _webhook_urls:
+        _get_config().webhook_urls = list(_webhook_urls)
+        logger.info("Event webhooks configured: %d target(s)", len(_webhook_urls))
+    _webhook_secret = getattr(args, "webhook_secret", "") or ""
+    if _webhook_secret:
+        _get_config().webhook_secret = _webhook_secret
+    _webhook_timeout = getattr(args, "webhook_timeout", None)
+    if _webhook_timeout is not None:
+        _get_config().webhook_timeout_s = float(_webhook_timeout)
 
     # Body-size cap
     _max_body_arg = getattr(args, "max_request_bytes", None)

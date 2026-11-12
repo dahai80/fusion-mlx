@@ -364,7 +364,8 @@ _parse_start_args() {
             --dflash2-block-size|--dflash2-draft-bits|--dspark-draft-quant-bits|\
             --mtp-num-draft-tokens|--spec-decode|--specprefill-draft-model|\
             --draft-model|--served-model-name|--cloud-model|--embedding-model|\
-            --kv-cache-dtype|--lsa-map)
+            --kv-cache-dtype|--lsa-map|\
+            --webhook-url|--webhook-secret|--webhook-timeout)
                 if [[ -z "${2:-}" || "${2}" == --* ]]; then
                     log_error "$1 requires a value"
                     exit 1

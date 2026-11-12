@@ -15,6 +15,7 @@ Wires together all API routes:
 """
 
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -27,6 +28,7 @@ import mlx.core as mx
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import StreamingResponse
 
 from ._version import __version__
 from .admin.auth import require_admin
@@ -1516,6 +1518,32 @@ class Server:
         # Unified exception handlers (OpenAI/Anthropic envelope shapes)
         install_exception_handlers(app)
 
+        # P1-5 (catch-up G6): event notification hub — SSE subscribers +
+        # webhook POST targets from ServerConfig. No-op when no webhooks
+        # are configured and nobody subscribes.
+        from .config import get_config
+        from .notifications import configure_notifier
+
+        # Webhook fields may be staged onto the global config singleton
+        # (single-model serve path) instead of the instance config; fall
+        # back to the singleton when the instance carries none.
+        _cfg_urls = (
+            getattr(self.config, "webhook_urls", None) or get_config().webhook_urls
+        )
+        _notifier = configure_notifier(
+            webhook_urls=_cfg_urls,
+            webhook_secret=getattr(self.config, "webhook_secret", "") or "",
+            webhook_timeout_s=float(
+                getattr(self.config, "webhook_timeout_s", 3.0) or 3.0
+            ),
+        )
+        app.state.notifier = _notifier
+        if _notifier.webhook_urls:
+            logger.info(
+                "Event webhooks configured: %d target(s)",
+                len(_notifier.webhook_urls),
+            )
+
         # R-7: profile-gated route registration. Each route maps to the
         # modality it requires; disabled modalities' routes are NOT mounted
         # (unreachable = no attack surface). Routes with modality=None always
@@ -1612,6 +1640,44 @@ class Server:
             n = len(status.get("models", [])) if isinstance(status, dict) else 0
             logger.debug("GET /v1/models/status -> %d models", n)
             return status
+
+        # P1-5 (catch-up G6): server-sent events stream for server events
+        # (request.completed / batch.status / training.status). Same auth
+        # contract as the other /v1 routes.
+        @app.get("/v1/events")
+        async def events_stream(is_admin: bool = Depends(require_admin)):
+            from .notifications import get_notifier
+
+            notifier = get_notifier()
+            queue = notifier.subscribe()
+
+            async def gen():
+                try:
+                    yield ": connected\n\n"
+                    while True:
+                        try:
+                            event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                        except TimeoutError:
+                            yield ": keepalive\n\n"
+                            continue
+                        data = json.dumps(event.get("data", {}))
+                        yield (
+                            f"event: {event.get('type', 'message')}\ndata: {data}\n\n"
+                        )
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    notifier.unsubscribe(queue)
+
+            return StreamingResponse(
+                gen(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         # Register GUI compatibility router (discovery, settings, manager, admin UI)
         # A4: lazy import — gui_compat pulls in mlx_vlm/mlx_embeddings at module
