@@ -1708,25 +1708,33 @@ def dspine_spec_step(
             )
         return []
 
-    # Bootstrap: first spec round of the request — seed the window with the
-    # prefill capture (last prefill chunk's hidden rows, eagle3-style).
-    # Chunked prefill means this may cover only the prompt tail; the draft
-    # cache accumulates rows from there on. Documented limitation (#1549).
+    # Bootstrap: first spec round of the request. The eagle3-style
+    # prefill-capture seed (window = last prefill chunk's hidden rows) is
+    # DISABLED by default: measured on Qwen3-8B-4bit + DSpine-b16 it cuts
+    # draft acceptance roughly in half on every request after the first
+    # (window=68 poisoned trace ~20% per-round vs window=1 clean ~35-100%,
+    # T=0 math 91 vs 157 tok/s; the captured rows misalign with the draft
+    # cache's rope offsets once prefix-cache/partial prefill forwards
+    # replace the full prefill). A window of just the regular row lets the
+    # draft KV cache build clean context from decode rows — acceptance
+    # climbs to 15/15 within a few rounds. Opt back in with
+    # FUSION_DSPINE_PREFILL_BOOTSTRAP=1.
     if dspine_state._window is None:
-        prefill_states = []
-        pc = capture.get_prefill_captured()
-        for lid in layer_ids:
-            s = pc.get(lid)
-            if s is None:
-                prefill_states = []
-                break
-            prefill_states.append(s)
-        if prefill_states:
-            min_sl = min(int(s.shape[1]) for s in prefill_states)
-            dspine_state._window = mx.concatenate(
-                [s[:, -min_sl:, :] for s in prefill_states], axis=-1
-            )
-        capture.clear_prefill_captured()
+        if __import__("os").environ.get("FUSION_DSPINE_PREFILL_BOOTSTRAP") == "1":
+            prefill_states = []
+            pc = capture.get_prefill_captured()
+            for lid in layer_ids:
+                s = pc.get(lid)
+                if s is None:
+                    prefill_states = []
+                    break
+                prefill_states.append(s)
+            if prefill_states:
+                min_sl = min(int(s.shape[1]) for s in prefill_states)
+                dspine_state._window = mx.concatenate(
+                    [s[:, -min_sl:, :] for s in prefill_states], axis=-1
+                )
+            capture.clear_prefill_captured()
         if dspine_state._window is None:
             dspine_state._window = regular_row
 
