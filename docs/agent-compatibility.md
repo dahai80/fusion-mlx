@@ -1,9 +1,22 @@
+---
+doc_id: fusion-mlx/docs/agent-compatibility
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "Agent 兼容性矩阵", en: "Agent Compatibility Matrix" }
+audience: engineer
+status: draft
+version: 0.10.60
+updated: 2026-11-12
+owner: @dahai
+source_of_truth:
+  - docs/agent-compatibility.md
+---
+
 # Agent Compatibility Matrix
 
-doc_id: fusion-mlx/docs/agent-compatibility
-status: published
-updated: 2026-11-12
-harness: `fusion_mlx/agents/testing.py` — run via `fusion-mlx agents <name> --test`
+Harness: `fusion_mlx/agents/testing.py` — run via `fusion-mlx agents <name> --test`
 
 ## Summary
 
