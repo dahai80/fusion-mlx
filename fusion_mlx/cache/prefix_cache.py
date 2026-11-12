@@ -117,6 +117,7 @@ class BlockAwarePrefixCache(CacheManager):
         model: Any,
         paged_cache_manager: PagedCacheManager,
         paged_ssd_cache_manager: PagedSSDCacheManager | None = None,
+        paged_ssd_turboquant: bool = False,
     ):
         """
         Initialize block-aware prefix cache.
@@ -125,11 +126,15 @@ class BlockAwarePrefixCache(CacheManager):
             model: The MLX model (used for identification)
             paged_cache_manager: The PagedCacheManager instance for block management
             paged_ssd_cache_manager: The PagedSSDCacheManager for SSD storage (required for paged SSD-only mode)
+            paged_ssd_turboquant: Compress SSD cold-tier blocks to TurboQuant
+                packed states before save_block (P1-4). Restore uses the
+                existing __turboquant_v2__ branch.
         """
         self.model = model
         self.model_key = id(model)
         self.paged_cache = paged_cache_manager
         self.paged_ssd_cache = paged_ssd_cache_manager
+        self.paged_ssd_turboquant = paged_ssd_turboquant
         self.block_size = paged_cache_manager.block_size
 
         # Expected number of layers for cache validation
@@ -368,20 +373,35 @@ class BlockAwarePrefixCache(CacheManager):
         SizedArraysCache and PrefillReadyRotatingKVCache are restored
         wrappers that have the same tensor layout as their canonical
         counterparts, so they can be collapsed for signature comparison.
-        TurboQuantKVCache stores packed 4-bit tensors and MUST NOT be
-        collapsed to KVCache (fp16) — that would silently mix
-        incompatible cache blocks. #1236: the SSD manager's
-        _expected_layer_cache_types is updated when TurboQuant conversion
-        is applied to the live cache (sched_token), so stored TQ blocks
-        match the expected signature without collapsing types here.
+        TurboQuant cache types are ALSO collapsed to KVCache: both the
+        cold-tier compression (P1-4) and the restore path dequantize
+        packed states back to fp16 KVCache before any merge, so the
+        restored block has exactly KVCache layout. Packing-width safety
+        is enforced separately by the TQ restore branch (_tq_state_sig
+        refuses mixed widths). #1236's original concern — silently
+        mixing a stored TQ block into a live fp16 cache — no longer
+        applies to the signature check because the TQ restore branch
+        always dequantizes; collapsing here is what lets cold-TQ blocks
+        match a live fp16 model signature at all.
         """
         if layer_cache_types is None:
             return None
         wrapper_to_canonical = {
             "SizedArraysCache": "ArraysCache",
             "PrefillReadyRotatingKVCache": "RotatingKVCache",
+            "TurboQuantKVCache": "KVCache",
+            "BatchTurboQuantKVCache": "KVCache",
+            "K8V4TurboQuantKVCache": "KVCache",
         }
         return [wrapper_to_canonical.get(ct, ct) for ct in layer_cache_types]
+
+    @staticmethod
+    def _is_turboquant_type(cache_type: str) -> bool:
+        return cache_type in (
+            "TurboQuantKVCache",
+            "BatchTurboQuantKVCache",
+            "K8V4TurboQuantKVCache",
+        )
 
     def fetch_cache(
         self,
@@ -964,13 +984,46 @@ class BlockAwarePrefixCache(CacheManager):
                     if arrays:
                         mx.eval(*arrays)
 
+                    # P1-4 (catch-up G8): optionally compress this block's
+                    # plain KV layers to TurboQuant packed states before the
+                    # SSD write (~3x smaller on disk; restore dequantizes via
+                    # the existing __turboquant_v2__ branch). Eval the new
+                    # packed arrays in the same one-sync batch spirit.
+                    if self.paged_ssd_turboquant:
+                        from .cold_tq import maybe_quantize_block_kv
+
+                        # Use throwaway names: rebinding layer_cache_types
+                        # here would leak TQ entries into the NEXT block's
+                        # gate (the list is loop-carried).
+                        _tq_data, _tq_types, _tq_meta = (
+                            block_kv_data,
+                            layer_cache_types,
+                            block_meta,
+                        )
+                        _tq = maybe_quantize_block_kv(
+                            _tq_data,
+                            _tq_types,
+                            _tq_meta,
+                            token_count=block.token_count,
+                        )
+                        if _tq is not None:
+                            _tq_data, _tq_types, _tq_meta = _tq
+                        _tq_arrays: list = []
+                        _collect_store_arrays(_tq_data, _tq_arrays)
+                        if _tq_arrays:
+                            mx.eval(*_tq_arrays)
+                        block_kv_data, block_meta = _tq_data, _tq_meta
+                        _saved_types = _tq_types
+                    else:
+                        _saved_types = layer_cache_types
+
                     # Save to paged SSD via PagedSSDCacheManager with cache type info
                     saved = self.paged_ssd_cache.save_block(
                         block_hash=block.block_hash,
                         cache_data=block_kv_data,
                         token_count=block.token_count,
                         model_name=self.paged_cache.model_name,
-                        layer_cache_types=layer_cache_types,
+                        layer_cache_types=_saved_types,
                         layer_meta_states=block_meta,
                     )
                     if saved:
@@ -2034,14 +2087,25 @@ class BlockAwarePrefixCache(CacheManager):
                                     )
                                     break
                     elif block_layer_cache_types is not None:
-                        # Subsequent blocks must have compatible types
+                        # Subsequent blocks must have compatible types.
+                        # Canonical comparison tolerates wrapper renames, but
+                        # P1-4 TQ collapse means canonical equality alone
+                        # would silently merge a TurboQuant block with a raw
+                        # fp16 block; refuse when TQ-ness differs per layer
+                        # (packed marker state cannot concat with raw arrays).
                         canonical_first = self._canonical_layer_cache_types(
                             layer_cache_types
                         )
                         canonical_current = self._canonical_layer_cache_types(
                             block_layer_cache_types
                         )
-                        if canonical_first != canonical_current:
+                        tq_mismatch = len(layer_cache_types) != len(
+                            block_layer_cache_types
+                        ) or any(
+                            self._is_turboquant_type(a) != self._is_turboquant_type(b)
+                            for a, b in zip(layer_cache_types, block_layer_cache_types)
+                        )
+                        if canonical_first != canonical_current or tq_mismatch:
                             logger.info(
                                 f"Block {block_id} layer_cache_types "
                                 f"mismatch: {block_layer_cache_types} "

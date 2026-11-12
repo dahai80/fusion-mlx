@@ -2655,7 +2655,10 @@ class TestTurboQuantFormatMismatchRecovery:
             "model_name": "test-model",
             "num_layers": 1,
             "block_size": 4,
-            "layer_cache_types": ["KVCache"],
+            # P1-4: TurboQuantKVCache canonicalizes to KVCache, so a raw
+            # KVCache block no longer trips the manager signature check;
+            # a genuinely incompatible type still must.
+            "layer_cache_types": ["RotatingKVCache"],
             "layer_meta_states": [(4,)],
         }
         mock_ssd.load_block_with_metadata.return_value = (
@@ -2933,9 +2936,9 @@ class TestPerBlockMetaStates:
         # Block 1: KVCache meta should fall back to shared meta (empty snapshot meta)
         block1_call = mock_ssd.save_block.call_args_list[0]
         block1_meta = block1_call.kwargs["layer_meta_states"]
-        assert block1_meta[0] == (
-            "8",
-        ), f"KVCache should fall back to shared meta, got {block1_meta[0]}"
+        assert block1_meta[0] == ("8",), (
+            f"KVCache should fall back to shared meta, got {block1_meta[0]}"
+        )
 
     def test_store_cache_no_snapshot_uses_shared_meta(self, mx):
         """Blocks without boundary snapshots should use shared meta (existing behavior)."""
@@ -3141,10 +3144,11 @@ class TestCanonicalLayerCacheTypes:
         )
         assert result == ["KVCache", "RotatingKVCache", "RotatingKVCache"]
 
-    def test_turboquant_not_collapsed(self):
+    def test_turboquant_collapsed_to_kvcache(self):
         result = BlockAwarePrefixCache._canonical_layer_cache_types(
             ["ArraysCache", "TurboQuantKVCache", "KVCache"]
         )
-        # TurboQuant must remain distinct from plain KVCache.
-        assert "TurboQuantKVCache" in result
-        assert result != ["ArraysCache", "KVCache", "KVCache"]
+        # P1-4: TurboQuant restores to fp16 KVCache layout, so the
+        # signature check collapses it (supersedes #1236); TQ-vs-raw
+        # mixing within a chain is refused by the TQ-ness check instead.
+        assert result == ["ArraysCache", "KVCache", "KVCache"]

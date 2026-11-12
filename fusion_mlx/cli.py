@@ -493,6 +493,16 @@ Examples:
         default=32,
         help="Group size for TurboQuant V-side quantization (default: 32)",
     )
+    serve_parser.add_argument(
+        "--paged-ssd-turboquant",
+        action="store_true",
+        default=False,
+        help="Compress paged SSD cold-tier blocks to TurboQuant packed states "
+        "before the disk write (~3x smaller on disk; E1 measured restore "
+        "faster than fp16). Restore dequantizes through the existing "
+        "__turboquant_v2__ path. Only affects blocks saved to the SSD "
+        "cold tier while the flag is on.",
+    )
     # R15-P1 (task #296): disk-backed KV checkpointing at 256-tok boundaries.
     # 0 disables the feature entirely (no scheduler-hot-path cost, no
     # ~/.cache/fusion-mlx/kv_checkpoints/ directory creation); the default

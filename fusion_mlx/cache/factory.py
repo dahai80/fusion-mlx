@@ -47,6 +47,8 @@ class CacheConfig:
     max_num_blocks: int = 1024
     initial_blocks: int = 256
     paged_ssd_cache_dir: Path | None = None
+    # P1-4: compress SSD cold-tier blocks to TurboQuant packed states.
+    paged_ssd_turboquant: bool = False
     max_paged_ssd_cache_size: int = 100 * 1024 * 1024 * 1024  # 100GB
     max_kv_cache_memory: int | None = None
     model_name: str = ""
@@ -164,6 +166,7 @@ class CacheFactory:
                 model=model,
                 paged_cache_manager=paged_cache,
                 paged_ssd_cache_manager=paged_ssd_cache,
+                paged_ssd_turboquant=getattr(config, "paged_ssd_turboquant", False),
             )
 
         from .prefix_cache import BlockAwarePrefixCache
@@ -172,6 +175,7 @@ class CacheFactory:
             model=model,
             paged_cache_manager=paged_cache,
             paged_ssd_cache_manager=paged_ssd_cache,
+            paged_ssd_turboquant=getattr(config, "paged_ssd_turboquant", False),
         )
 
     @staticmethod

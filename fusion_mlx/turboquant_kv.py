@@ -9,6 +9,7 @@ continuous-batching scheduler.
 
 from __future__ import annotations
 
+import functools
 import logging
 import math
 from dataclasses import dataclass
@@ -223,9 +224,19 @@ def _rebuild_codecs(tq_cache: TurboQuantKVCache, key_state, value_state) -> None
 
     head_dim = _infer_head_dim(key_state, key_bits)
 
+    # E1/P1-4 lesson: codec construction costs ~11ms per codec (rotation
+    # matrices + codebooks). Rebuilding per (layer, block) during SSD
+    # restore was measured at ~900ms for 5 blocks x 8 KV layers. Codecs
+    # are pure functions of (head_dim, bits, seed) and read-only after
+    # build, so cache them.
+    tq_cache.key_codec = _cached_codec(head_dim, key_bits, seed)
+    tq_cache.value_codec = _cached_codec(head_dim, val_bits, seed + 1)
+
+
+@functools.lru_cache(maxsize=16)
+def _cached_codec(head_dim: int, bits: int, seed: int):
     dummy = mx.zeros((1, 1, 1, head_dim))
-    tq_cache.key_codec = _build_codec(dummy, key_bits, mode="mse", seed=seed)
-    tq_cache.value_codec = _build_codec(dummy, val_bits, mode="mse", seed=seed + 1)
+    return _build_codec(dummy, bits, mode="mse", seed=seed)
 
 
 def rebuild_dequantized_kv(

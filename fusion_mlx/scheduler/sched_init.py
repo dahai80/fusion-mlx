@@ -372,6 +372,7 @@ def __init__(
         import os as _os
 
         _prefix_impl = _os.environ.get("FUSION_MLX_PREFIX_CACHE", "").strip().lower()
+        _ssd_tq = bool(getattr(self.config, "paged_ssd_turboquant", False))
         if _prefix_impl == "radix":
             from ..cache.radix_prefix_cache import RadixPrefixCache
 
@@ -379,12 +380,16 @@ def __init__(
             self.block_aware_cache = RadixPrefixCache(
                 model=model,
                 paged_cache_manager=self.paged_cache_manager,
+                paged_ssd_turboquant=_ssd_tq,
             )
         else:
             self.block_aware_cache = BlockAwarePrefixCache(
                 model=model,
                 paged_cache_manager=self.paged_cache_manager,
+                paged_ssd_turboquant=_ssd_tq,
             )
+        if _ssd_tq:
+            logger.info("paged SSD cold tier: TurboQuant compression enabled")
 
         # Auto-init MemoryMonitor BEFORE _init_tiered_cache so the
         # SSD manager can use model-derived KV bytes-per-token instead
