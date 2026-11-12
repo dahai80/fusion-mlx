@@ -325,3 +325,41 @@ class TestPromptEndBoundarySnapshot:
         )
         scheduler._emit_final_boundary_if_needed(state_reuse)
         assert captured == []
+
+
+class TestChunkClampArraysCache:
+    def _fake_sched(self, prefill_step_size):
+        from types import SimpleNamespace
+
+        fake = SimpleNamespace(
+            config=SimpleNamespace(
+                paged_ssd_cache_dir="/tmp/ssd-test",
+                paged_cache_block_size=64,
+                prefill_step_size=prefill_step_size,
+            ),
+            model=SimpleNamespace(make_cache=lambda: [object()]),
+        )
+        fake._detect_rotating_window_sizes = lambda: None
+        fake._cache_tree_has_arrays_cache = lambda obj: True
+        fake._ARRAYS_CACHE_BLOCK_SIZE = 2048
+        return fake
+
+    def test_enlarge_clamps_prefill_step_size(self):
+        from fusion_mlx.scheduler.sched_cache import (
+            _enlarge_block_size_for_arrays_cache,
+        )
+
+        fake = self._fake_sched(4096)
+        _enlarge_block_size_for_arrays_cache(fake)
+        assert fake.config.paged_cache_block_size == 2048
+        assert fake.config.prefill_step_size == 2048
+
+    def test_enlarge_keeps_smaller_step_size(self):
+        from fusion_mlx.scheduler.sched_cache import (
+            _enlarge_block_size_for_arrays_cache,
+        )
+
+        fake = self._fake_sched(1024)
+        _enlarge_block_size_for_arrays_cache(fake)
+        assert fake.config.paged_cache_block_size == 2048
+        assert fake.config.prefill_step_size == 1024

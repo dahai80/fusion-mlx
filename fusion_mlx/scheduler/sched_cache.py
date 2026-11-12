@@ -467,6 +467,29 @@ def _enlarge_block_size_for_arrays_cache(self) -> None:
     )
     self.config.paged_cache_block_size = target
 
+    # #1532 follow-up: chunked prefill emits boundary snapshots only at chunk
+    # boundaries, and store_cache attaches real per-block ArraysCache state
+    # only at those boundaries — every other block gets a placeholder. A
+    # chunk larger than the block size therefore leaves interior blocks with
+    # placeholder state, and any prefix hit whose last matched block is one
+    # of them is rejected wholesale at reconstruct ("placeholder in last
+    # matched block") — measured as cached_tokens 0 on a shared-template RAG
+    # prompt where the block-level fetch had matched 2048 tokens. Clamp the
+    # prefill chunk (prefill_step_size; the CLI maps chunked_prefill_tokens
+    # onto it with a 4096 default) to the block size so snapshot boundaries
+    # and block boundaries coincide and every stored block carries real
+    # state.
+    step_size = int(getattr(self.config, "prefill_step_size", 0) or 0)
+    if step_size > target:
+        logger.info(
+            "Clamping prefill_step_size=%s to block_size=%s for "
+            "ArraysCache hybrid model (aligns boundary snapshots with "
+            "block boundaries)",
+            step_size,
+            target,
+        )
+        self.config.prefill_step_size = target
+
 
 @staticmethod
 def _cache_tree_has_arrays_cache(cache_obj: Any) -> bool:
