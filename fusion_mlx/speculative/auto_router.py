@@ -293,6 +293,7 @@ class SpecAutoRouter:
     long_doc_threshold: int = 4096
     abandon_accept: float = 0.20
     keep_accept: float = 0.40
+    min_output_tokens: int = 32
 
     def _record(
         self,
@@ -324,6 +325,21 @@ class SpecAutoRouter:
         cur = signals.current_method
         rate = signals.recent_accept_rate
         excluded: set[str] = set()
+
+        # Output-length gate (#1549 follow-up): draft warmup (2 steps) plus
+        # the first 16-token draft round never amortize on very short
+        # outputs. 4-bit targets make this worse (quantized AR is fast
+        # enough that even 256-token open-ended chat loses to plain AR).
+        # Deterministic floor; None max_tokens (unknown) never gates.
+        if (
+            signals.max_tokens is not None
+            and signals.max_tokens < self.min_output_tokens
+        ):
+            if METHOD_NGRAM in avail:
+                self._record(METHOD_NGRAM, "short_output floor", signals, avail, rate)
+                return METHOD_NGRAM
+            self._record("", "short_output floor", signals, avail, rate)
+            return ""
 
         if cur is not None and rate is not None and rate < self.abandon_accept:
             excluded.add(cur)
