@@ -127,7 +127,13 @@ def _rewind_cache_to(cache: list[Any], target_offset: int) -> None:
         # Method 1: offset attribute (mlx-lm KVCache)
         if hasattr(c, "offset"):
             try:
-                if c.offset > target_offset:
+                if c.offset <= target_offset:
+                    # Upward rewind: a no-op. Must NOT fall through to the
+                    # trim() fallback — KVCache.trim(n) shrinks by n (or
+                    # clamps to 0), which corrupted the offset whenever the
+                    # verifier asked for a higher offset than current.
+                    rewound = True
+                else:
                     c.offset = target_offset
                     # Also trim keys/values arrays so stale data beyond
                     # target_offset is not retained. mlx-lm KVCache stores
