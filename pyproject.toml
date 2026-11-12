@@ -106,7 +106,11 @@ audio = [
     #     is present but the Python pkg is not in the [tts] extra).
     #   - misaki[en]: Kokoro text processing (new in 0.5.x; needs num2words
     #     via the [en] extra).
-    "mlx-audio[tts,stt,sts]==0.5.3",
+    # #1523: 0.5.3 -> 0.6.5. 0.6.5 ships upstream Neywa-Labs/mlx-audio#1140
+    # which fixes Spark-TTS voice cloning (LLM emitted <|im_end|> as the
+    # first token in clone mode; verified fixed by real clone E2E on this
+    # pin — 4.18s audible output from a reference wav).
+    "mlx-audio[tts,stt,sts]==0.6.5",
     "phonemizer-fork>=3.3.2",
     "misaki[en]>=0.9.4",
     "espeakng-loader>=0.2.0",
