@@ -285,9 +285,9 @@ class FreeKVCacheBlockQueue:
         if n == 0:
             return []
 
-        assert (
-            self.num_free_blocks >= n
-        ), f"Need {n} blocks, have {self.num_free_blocks}"
+        assert self.num_free_blocks >= n, (
+            f"Need {n} blocks, have {self.num_free_blocks}"
+        )
 
         result = []
         curr = self.fake_head.next_free_block
@@ -583,7 +583,9 @@ class PagedCacheManager(CacheManager):
         # Entries are (block_id, block_hash) pairs; liveness and content are
         # re-verified at lookup (blocks do not store token ids), so stale
         # entries after free/evict/realloc are harmless and pruned lazily.
-        self._partial_blocks_by_parent: dict[BlockHash | None, list[tuple[int, BlockHash]]] = {}
+        self._partial_blocks_by_parent: dict[
+            BlockHash | None, list[tuple[int, BlockHash]]
+        ] = {}
 
         # Request to block table mapping
         self.request_tables: dict[str, BlockTable] = {}
@@ -1239,6 +1241,74 @@ class PagedCacheManager(CacheManager):
         self._flush_content_invalidated()
         return cached_blocks, num_cached_tokens
 
+    def try_claim_terminal_partial(
+        self,
+        token_ids: list[int],
+        matched_len: int,
+        parent_hash: BlockHash | None,
+        extra_keys: tuple[Any, ...] | None = None,
+        extra_key_token_start: int | None = None,
+        extra_key_ranges: list[tuple[int, tuple[Any, ...]]] | None = None,
+    ) -> tuple[int, CacheBlock | None]:
+        # #1532 follow-up: fetch_cache's prefix-index hit path returns full
+        # blocks only — the index keys on block-chunk-aligned chain hashes, so
+        # a request whose tail is one token longer than the stored terminal
+        # partial (e.g. stored prompt-end snapshot at N-1, request at N) can
+        # never index-match it. This extends an index hit with the same
+        # hash-verified terminal partial match that get_computed_blocks
+        # performs on the hash-map path. Caller (fetch_cache) has already
+        # claimed the full blocks; this claims the partial block for the
+        # same request.
+        if not self.enable_caching or self.block_size <= 0:
+            return 0, None
+        if matched_len <= 0 or matched_len >= len(token_ids):
+            return 0, None
+
+        with self._block_table_lock, self._hash_map_lock, self._free_queue_lock:
+            best_block: CacheBlock | None = None
+            best_len = 0
+            for block_id, saved_hash in self._partial_candidates_locked(parent_hash):
+                block = self.allocated_blocks.get(block_id)
+                if (
+                    block is None
+                    or block.block_hash is None
+                    or block.block_hash != saved_hash
+                    or block.parent_hash != parent_hash
+                ):
+                    continue
+                tc = block.token_count
+                if (
+                    tc <= best_len
+                    or tc >= self.block_size
+                    or matched_len + tc > len(token_ids)
+                ):
+                    continue
+                block_extra_keys = resolve_block_extra_keys(
+                    matched_len + tc,
+                    extra_keys=extra_keys,
+                    extra_key_token_start=extra_key_token_start,
+                    extra_key_ranges=extra_key_ranges,
+                )
+                candidate_hash = compute_block_hash(
+                    parent_hash,
+                    token_ids[matched_len : matched_len + tc],
+                    extra_keys=block_extra_keys,
+                    model_name=self.model_name,
+                )
+                if candidate_hash == block.block_hash:
+                    best_block = block
+                    best_len = tc
+            if best_block is None:
+                return 0, None
+            best_block.ref_count += 1
+            best_block.touch()
+            if best_block.ref_count == 2:
+                self.stats.shared_blocks += 1
+            self.stats.hits += 1
+
+        self._flush_content_invalidated()
+        return best_len, best_block
+
     def _partial_candidates_locked(
         self, parent_hash: BlockHash | None
     ) -> list[tuple[int, BlockHash]]:
@@ -1593,7 +1663,7 @@ class PagedCacheManager(CacheManager):
                 purged_orphans += cascaded
         if evicted > 0 or purged_orphans > 0:
             logger.info(
-                "Evicted %d LRU blocks from cache (%d orphaned hash entries " "purged)",
+                "Evicted %d LRU blocks from cache (%d orphaned hash entries purged)",
                 evicted,
                 purged_orphans,
             )

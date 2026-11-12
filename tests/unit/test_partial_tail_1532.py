@@ -117,6 +117,58 @@ class TestPartialTailRoundtrip:
         assert block_table is None
         assert remaining == prompt
 
+    def test_index_hit_extends_partial_when_request_one_token_longer(self, mx):
+        # E2E shape from #1532: store persists the prompt-end state at N-1
+        # (10 tokens), the repeat request arrives at N (11 tokens). The
+        # prefix index only keys block-chunk-aligned chain hashes, so the
+        # last chunk (3 tokens vs stored 2) hash-mismatches and the index
+        # hit stops at the last full block. fetch_cache must still extend
+        # the hit with the stored terminal partial.
+        cache = _make_cache()
+        stored = list(range(10))
+        cache.store_cache("req-a", stored, _kv_cache_data(mx, 10))
+
+        prompt = stored + [99]
+        block_table, remaining = cache.fetch_cache("req-b", prompt)
+        assert block_table is not None
+        assert block_table.num_tokens == 10
+        assert remaining == [99]
+
+    def test_try_claim_terminal_partial_rejects_bad_parent(self, mx):
+        cache = _make_cache()
+        stored = list(range(10))
+        cache.store_cache("req-a", stored, _kv_cache_data(mx, 10))
+
+        prompt = stored + [99]
+        wrong_parent = b"not-a-real-chain-hash"
+        ext_len, ext_block = cache.paged_cache.try_claim_terminal_partial(
+            prompt, 8, wrong_parent
+        )
+        assert ext_len == 0
+        assert ext_block is None
+
+    def test_try_claim_terminal_partial_claims_and_verifies(self, mx):
+        cache = _make_cache()
+        stored = list(range(10))
+        cache.store_cache("req-a", stored, _kv_cache_data(mx, 10))
+
+        prompt = stored + [99]
+        # Derive parent hash the same way store did: chain over full blocks.
+        from fusion_mlx.cache.prefix_cache import compute_block_hash
+
+        parent_hash = compute_block_hash(
+            compute_block_hash(None, prompt[0:4], model_name="test-model"),
+            prompt[4:8],
+            model_name="test-model",
+        )
+        ext_len, ext_block = cache.paged_cache.try_claim_terminal_partial(
+            prompt, 8, parent_hash
+        )
+        assert ext_len == 2
+        assert ext_block is not None
+        assert ext_block.token_count == 2
+        assert ext_block.ref_count >= 1
+
     def test_stateful_exact_hit_is_truncated_by_admission_helper(self, mx):
         """Admission helper drops the terminal partial for stateful models."""
         from fusion_mlx.cache.hybrid_cache import ModelCacheConfig
@@ -164,7 +216,9 @@ class TestPartialTailRoundtrip:
             _drop_terminal_partial_for_stateful,
         )
 
-        kept = _drop_terminal_partial_for_stateful(_FakeAdmission(), block_table, prompt)
+        kept = _drop_terminal_partial_for_stateful(
+            _FakeAdmission(), block_table, prompt
+        )
         assert kept.num_tokens == 4
         assert len(kept.block_ids) == 1
 
@@ -173,10 +227,9 @@ class TestPromptEndBoundarySnapshot:
     """#1532: prompt-end (N-1) snapshot capture and store-override preference."""
 
     def test_override_prefers_prompt_end_snapshot(self, mock_model, mock_tokenizer):
-        from types import SimpleNamespace
 
-        from fusion_mlx.scheduler.core import Scheduler
         from fusion_mlx.config import SchedulerConfig
+        from fusion_mlx.scheduler.core import Scheduler
 
         scheduler = Scheduler(
             model=mock_model,
@@ -192,9 +245,7 @@ class TestPromptEndBoundarySnapshot:
         with patch.object(
             scheduler, "_extract_cache_states", return_value=(extracted, "cfg")
         ):
-            result = scheduler._get_boundary_store_override(
-                "req-pe", list(range(8066))
-            )
+            result = scheduler._get_boundary_store_override("req-pe", list(range(8066)))
         assert result is not None
         token_sequence, cache_to_store, model_config, _provider = result
         assert len(token_sequence) == 8033
@@ -204,8 +255,8 @@ class TestPromptEndBoundarySnapshot:
     def test_on_prefill_boundary_snapshot_records_prompt_end(
         self, mock_model, mock_tokenizer
     ):
-        from fusion_mlx.scheduler.core import Scheduler
         from fusion_mlx.config import SchedulerConfig
+        from fusion_mlx.scheduler.core import Scheduler
 
         scheduler = Scheduler(
             model=mock_model,
@@ -234,8 +285,8 @@ class TestPromptEndBoundarySnapshot:
     ):
         from types import SimpleNamespace
 
-        from fusion_mlx.scheduler.core import Scheduler
         from fusion_mlx.config import SchedulerConfig
+        from fusion_mlx.scheduler.core import Scheduler
 
         scheduler = Scheduler(
             model=mock_model,
