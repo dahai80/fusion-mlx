@@ -506,6 +506,26 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                     if stats:
                         record.update(stats)
                         break
+            if record.get("method") == "mtp" and not record.get(
+                "spec_draft_proposed"
+            ):
+                # MTP counts accepts inside the vendored batch generator
+                # (global thread-safe counter, round-level). Per-request
+                # stats come from a cumulative-counter delta; correct for
+                # the single-stream case the router targets. Concurrent MTP
+                # requests would pool their deltas — acceptable noise for
+                # routing feedback.
+                from ..speculative.mtp.accept_counter import get_global_counter
+
+                snap = get_global_counter().snapshot()
+                prev = getattr(self, "_last_mtp_counter_snap", None)
+                self._last_mtp_counter_snap = snap
+                if prev is not None:
+                    attempts = snap.attempts - prev.attempts
+                    accepts = snap.accepts - prev.accepts
+                    if attempts > 0:
+                        record["spec_draft_proposed"] = attempts
+                        record["spec_draft_accepted"] = accepts
             append_spec_request_end(record)
             # Acceptance feedback loop: feed the finished request's spec
             # accept rate back into the next route decision (abandon <0.20,

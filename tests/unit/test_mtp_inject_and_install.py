@@ -1,36 +1,31 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regression tests for issue #477 — MTP injection + install on VLM/hybrid models.
 
-Two surfaces are pinned here:
+Adapted to the current architecture (the original upstream module
+``patches.qwen3_next_mtp`` never existed in fusion-mlx; the guards moved):
 
-1. ``patches.qwen3_next_mtp._looks_like_vlm_wrapper`` — VLM checkpoints
-   nest the LLM config under ``text_config`` and expose the inner LLM as
-   ``model.language_model``. The outer ``model.args`` lacks LLM fields.
-   ``inject_mtp_support`` must bail out cleanly in this shape rather than
-   patch the outer class and crash on the next forward (codex round-1
-   P1 on #477 — wrapper methods reference ``self.model.embed_tokens`` /
-   ``self.lm_head`` that don't exist on the outer VLM).
+1. ``speculative.mtp.qwen3_5_inject._resolve_inner_text_model`` — VLM
+   checkpoints nest the LLM under ``model.language_model`` (with the outer
+   ``model.args`` carrying vision config). Injection must resolve the inner
+   text model or bail out cleanly rather than patch the outer VLM class and
+   deferred-crash on the next forward (codex round-1 P1 on #477).
 
-2. ``scheduler._install_mtp`` — hybrid Gated-DeltaNet BatchGenerators (e.g.
-   Qwen3.6-35B-A3B) route through their own step flow and lack ``_step``.
-   The installer must log a clear warning and return False rather than
-   crash with AttributeError (which is what shipped in <=0.6.66 and what
-   the user hit in issue #477 with ``--force-spec-decode``).
+2. ``scheduler._install_mtp_vendored`` — gate-miss paths must log a clear
+   warning and return False without touching the generator. The original
+   trigger was a hybrid Gated-DeltaNet BatchGenerator (e.g. Qwen3.6-35B-A3B)
+   routed through ``--force-spec-decode`` crashing with AttributeError
+   (shipped in <=0.6.66, issue #477).
 """
 
 from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
-import pytest
 
 # ----------------------------------------------------------------------
-# _looks_like_vlm_wrapper — gate for VLM detection in inject_mtp_support
+# _resolve_inner_text_model — VLM/text-only resolution in inject_mtp_support
 # ----------------------------------------------------------------------
-
-
 def _llm_args_ns(**overrides):
     """SimpleNamespace shaped like a populated ``ModelArgs``."""
     defaults = {
@@ -46,135 +41,138 @@ def _llm_args_ns(**overrides):
     return SimpleNamespace(**defaults)
 
 
-def test_looks_like_vlm_wrapper_false_for_text_only_model():
-    """Text-only path: ``model.args.hidden_size`` exists → not a VLM,
-    inject_mtp_support proceeds normally."""
-    from fusion_mlx.patches.qwen3_next_mtp import _looks_like_vlm_wrapper
+def test_resolve_inner_text_model_returns_model_for_text_only():
+    """Text-only path: ``model.model`` + ``model.args`` present — the model
+    resolves to itself and injection proceeds normally."""
+    from fusion_mlx.speculative.mtp.qwen3_5_inject import _resolve_inner_text_model
 
-    model = SimpleNamespace(args=_llm_args_ns(hidden_size=4096))
-    assert _looks_like_vlm_wrapper(model) is False
+    model = SimpleNamespace(
+        model=SimpleNamespace(layers=[]), args=_llm_args_ns(hidden_size=4096)
+    )
+    assert _resolve_inner_text_model(model) is model
 
 
-def test_looks_like_vlm_wrapper_true_for_vlm_with_language_model():
-    """VLM checkpoint: outer args lacks hidden_size AND
-    model.language_model is present → bail out so we don't deferred-crash
-    on the next forward. Pins codex round-1 P1 on issue #477."""
-    from fusion_mlx.patches.qwen3_next_mtp import _looks_like_vlm_wrapper
+def test_resolve_inner_text_model_prefers_language_model_for_vlm():
+    """VLM checkpoint: ``model.language_model`` carries the inner text model
+    (outer args hold vision config) — resolution must pick the inner LLM so
+    injection patches the right class. Pins codex round-1 P1 on #477."""
+    from fusion_mlx.speculative.mtp.qwen3_5_inject import _resolve_inner_text_model
 
-    vlm_outer = SimpleNamespace(
-        text_config={"hidden_size": 3584},
-        vision_config={"hidden_size": 1280},
+    inner_lm = SimpleNamespace(
+        model=SimpleNamespace(layers=[]), args=_llm_args_ns(hidden_size=3584)
     )
     model = SimpleNamespace(
-        args=vlm_outer,
-        language_model=SimpleNamespace(args=_llm_args_ns(hidden_size=3584)),
+        args=SimpleNamespace(
+            text_config={"hidden_size": 3584}, vision_config={"hidden_size": 1280}
+        ),
+        language_model=inner_lm,
     )
-    assert _looks_like_vlm_wrapper(model) is True
+    assert _resolve_inner_text_model(model) is inner_lm
 
 
-def test_looks_like_vlm_wrapper_false_when_language_model_is_none():
-    """Defensive — ``language_model`` attr exists but is None (e.g.
-    text-only branch of a multimodal class). Not a usable VLM; let the
-    "no fallback available" warning path fire instead of pretending it's
-    a VLM wrapper."""
-    from fusion_mlx.patches.qwen3_next_mtp import _looks_like_vlm_wrapper
+def test_resolve_inner_text_model_none_when_language_model_is_none():
+    """Defensive — ``language_model`` attr exists but is None (text-only
+    branch of a multimodal class) and there is no usable ``model``:
+    resolution returns None so the inject bail-out fires instead of
+    pretending a text model exists."""
+    from fusion_mlx.speculative.mtp.qwen3_5_inject import _resolve_inner_text_model
 
     model = SimpleNamespace(args=SimpleNamespace(), language_model=None)
-    assert _looks_like_vlm_wrapper(model) is False
+    assert _resolve_inner_text_model(model) is None
 
 
-def test_looks_like_vlm_wrapper_false_when_args_already_has_hidden_size():
-    """Even if ``language_model`` is somehow attached to a text-only
-    model, the populated ``model.args.hidden_size`` short-circuits the
-    check (text-only path always wins)."""
-    from fusion_mlx.patches.qwen3_next_mtp import _looks_like_vlm_wrapper
+def test_resolve_inner_text_model_language_model_wins_when_both_present():
+    """Both shapes present: the inner ``language_model`` wins — injecting
+    MTP onto the outer wrapper class would reference fields only the inner
+    LLM has (``self.model.embed_tokens`` / ``self.lm_head``)."""
+    from fusion_mlx.speculative.mtp.qwen3_5_inject import _resolve_inner_text_model
 
-    model = SimpleNamespace(
-        args=_llm_args_ns(hidden_size=2048),
-        language_model=SimpleNamespace(args=_llm_args_ns(hidden_size=1024)),
+    inner_lm = SimpleNamespace(
+        model=SimpleNamespace(layers=[]), args=_llm_args_ns(hidden_size=1024)
     )
-    assert _looks_like_vlm_wrapper(model) is False
+    model = SimpleNamespace(
+        model=SimpleNamespace(layers=[]),
+        args=_llm_args_ns(hidden_size=2048),
+        language_model=inner_lm,
+    )
+    assert _resolve_inner_text_model(model) is inner_lm
+
+
+def test_inject_mtp_support_bails_out_on_unresolvable_model(caplog):
+    """End-to-end bail-out: a model with neither ``language_model`` nor
+    ``model + args`` must return False, log the skip warning, and never
+    build an MTP module."""
+    from fusion_mlx.speculative.mtp.qwen3_5_inject import inject_mtp_support
+
+    with caplog.at_level(logging.WARNING, logger="fusion_mlx.speculative.mtp.qwen3_5_inject"):
+        result = inject_mtp_support(SimpleNamespace())
+    assert result is False
+    assert "skipping MTP injection" in caplog.text
 
 
 # ----------------------------------------------------------------------
-# _install_mtp guard for hybrid BatchGenerator (issue #477 Issue 2)
+# _install_mtp_vendored gate-miss paths (issue #477 Issue 2 equivalent)
 # ----------------------------------------------------------------------
-
-
-def test_install_mtp_skips_when_batch_gen_lacks_step(caplog):
-    """Hybrid (Gated-DeltaNet) BatchGenerator routes through its own step
-    flow and has no ``_step`` attribute. Before this fix, _install_mtp
-    crashed at ``_orig_step = batch_gen._step`` with AttributeError.
-
-    Contract: return False and log a clear warning, do NOT raise, do NOT
-    patch anything on the generator."""
-    from fusion_mlx.scheduler import _install_mtp
+def test_install_mtp_vendored_skips_without_generation_batch(caplog):
+    """A BatchGenerator without ``_generation_batch`` (mlx-lm version
+    mismatch, or a hybrid generator routing through its own step flow)
+    must return False, log a clear warning, and leave the object untouched
+    — no AttributeError, no partial patching."""
+    from fusion_mlx.scheduler._mtp_vendored import _install_mtp_vendored
 
     class _HybridGen:
-        """Stand-in for the Qwen3.6 hybrid BatchGenerator — no ``_step``,
-        no ``_next``, no ``active_batch`` accessor."""
+        """Stand-in for the Qwen3.6 hybrid BatchGenerator — no
+        ``_generation_batch``, no ``_step``."""
 
     bg = _HybridGen()
     model = SimpleNamespace()
 
-    with caplog.at_level(logging.WARNING, logger="vllm_mlx.scheduler"):
-        result = _install_mtp(bg, model=model, num_draft_tokens=2)
+    with caplog.at_level(logging.WARNING, logger="fusion_mlx.scheduler._mtp_vendored"):
+        result = _install_mtp_vendored(bg, model=model)
 
     assert result is False
-    assert not hasattr(bg, "_step"), "generator must remain untouched — no fields added"
-    assert not hasattr(bg, "_next"), "generator must remain untouched — no fields added"
-
-    # The warning must name the issue so users can find it.
-    combined = "\n".join(r.message for r in caplog.records)
-    assert "_step" in combined
-    assert "#477" in combined, "warning should reference the tracking issue"
+    assert not hasattr(bg, "_step"), "generator must remain untouched"
+    assert "_generation_batch" in caplog.text
 
 
-def test_install_mtp_succeeds_on_compatible_batch_gen():
-    """Pin existing behavior: a BatchGenerator with ``_step`` still gets
-    patched and ``_install_mtp`` returns True. Guards against the guard
-    being too eager and breaking the normal (non-hybrid) path."""
-    from fusion_mlx.scheduler import _install_mtp
+def test_install_mtp_vendored_skips_when_model_lacks_mtp_protocol(caplog):
+    """Generator shape is fine but the model never went through MTP
+    injection (no ``mtp_forward`` / ``make_mtp_cache`` / ``mtp``): install
+    must refuse with the dispatch warning rather than crash later inside
+    the wrapper."""
+    from fusion_mlx.scheduler._mtp_vendored import _install_mtp_vendored
 
-    bg = MagicMock()
-    # Provide the minimum surface _install_mtp needs to install patches:
-    # _step (the entry it monkey-patches) and active_batch (referenced
-    # inside the patched _mtp_step closure during prefill guard — the
-    # closure is never *called* in this test, so a placeholder is fine).
-    orig_step = MagicMock(name="orig_step")
-    bg._step = orig_step
-    bg.active_batch = None
-    model = SimpleNamespace(mtp=SimpleNamespace())
+    gb = SimpleNamespace(_step=lambda: None)
+    bg = SimpleNamespace(_generation_batch=gb)
+    model = SimpleNamespace()  # no mtp protocol attributes
 
-    result = _install_mtp(bg, model=model, num_draft_tokens=1)
+    with caplog.at_level(logging.WARNING, logger="fusion_mlx.scheduler._mtp_vendored"):
+        result = _install_mtp_vendored(bg, model=model)
+
+    assert result is False
+    assert "mtp_forward" in caplog.text
+    assert gb._step.__name__ == "<lambda>", "gb._step must remain unpatched"
+
+
+def test_install_mtp_vendored_installs_on_compatible_gen_and_model():
+    """Pin existing behavior: a generator with ``_generation_batch`` plus a
+    model carrying the MTP protocol gets its ``gb._step`` re-bound to the
+    wrapper and the install returns True — guards against the gate being
+    too eager and breaking the normal (non-hybrid) path."""
+    from fusion_mlx.scheduler._mtp_vendored import _install_mtp_vendored
+
+    orig_step = lambda: None  # noqa: E731
+    gb = SimpleNamespace(_step=orig_step)
+    bg = SimpleNamespace(_generation_batch=gb)
+    model = SimpleNamespace(
+        mtp_forward=lambda *a, **k: None,
+        make_mtp_cache=lambda *a, **k: None,
+        mtp=SimpleNamespace(),
+    )
+
+    result = _install_mtp_vendored(bg, model=model)
 
     assert result is True
-    # _step is now the wrapper closure, NOT the original — a misconfigured
-    # patch that left _step unchanged would still pass a callable check.
-    assert bg._step is not orig_step, "_step was not actually re-bound by _install_mtp"
-    assert callable(bg._step)
-    # _next is also re-bound (the other half of the MTP install).
-    assert callable(bg._next)
-
-
-@pytest.mark.parametrize("optimistic_flag", [True, False])
-def test_install_mtp_hybrid_guard_independent_of_optimistic(caplog, optimistic_flag):
-    """The hybrid guard must trigger regardless of the ``optimistic``
-    flag (and by extension regardless of how ``--force-spec-decode``
-    routes through the scheduler). The in-function guard is a safety-net
-    for any call site that doesn't pre-check ``supports_spec_decode``."""
-    from fusion_mlx.scheduler import _install_mtp
-
-    class _HybridGen:
-        pass
-
-    bg = _HybridGen()
-    with caplog.at_level(logging.WARNING, logger="vllm_mlx.scheduler"):
-        result = _install_mtp(
-            bg,
-            model=SimpleNamespace(),
-            num_draft_tokens=2,
-            optimistic=optimistic_flag,
-        )
-    assert result is False
-    assert not hasattr(bg, "_step")
+    assert gb._step is not orig_step, "gb._step was not re-bound by the installer"
+    assert callable(gb._step)
+    assert bg._mtp_vendored_stats is not None
