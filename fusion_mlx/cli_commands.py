@@ -77,7 +77,6 @@ _SERVE_VALUE_FLAGS = frozenset(
         "--mcp-config",
         "--memory-tier",
         "--model",
-        "--paged-ssd-turboquant",
         "--model-dir",
         "--mtp-chain-k",
         "--mtp-num-draft-tokens",
