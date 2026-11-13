@@ -21,20 +21,48 @@ _RENDERED_CHAT = (
 
 class TestClassifyPrompt:
     def test_code_markers(self):
-        assert classify_prompt("Write a function:\n```python\ndef f(x):\n    return x\n```") == CLASS_CODE
-        assert classify_prompt("import os\nfrom typing import Any\n" + "x" * 30) == CLASS_CODE
+        assert (
+            classify_prompt(
+                "Write a function:\n```python\ndef f(x):\n    return x\n```"
+            )
+            == CLASS_CODE
+        )
+        assert (
+            classify_prompt("import os\nfrom typing import Any\n" + "x" * 30)
+            == CLASS_CODE
+        )
 
     def test_code_hints(self):
-        assert classify_prompt("Please write a python function that merges two lists " * 2) == CLASS_CODE
+        assert (
+            classify_prompt("Please write a python function that merges two lists " * 2)
+            == CLASS_CODE
+        )
 
     def test_math_operators(self):
-        assert classify_prompt("Solve step by step: if 3*x + 7 = 22, what is x? Show work " * 2) == CLASS_MATH
+        assert (
+            classify_prompt(
+                "Solve step by step: if 3*x + 7 = 22, what is x? Show work " * 2
+            )
+            == CLASS_MATH
+        )
 
     def test_math_two_hints(self):
-        assert classify_prompt("Compute the integral and then compute the probability of the outcome " * 2) == CLASS_MATH
+        assert (
+            classify_prompt(
+                "Compute the integral and then compute the probability of the outcome "
+                * 2
+            )
+            == CLASS_MATH
+        )
 
     def test_open_chat(self):
-        assert classify_prompt("Hey, I had a long day at work and just want to chat about movies and music " * 2) == CLASS_CHAT
+        assert (
+            classify_prompt(
+                "Hey, I had a long day at work and just want to chat about movies and music "
+                * 2
+            )
+            == CLASS_CHAT
+        )
 
     def test_short_returns_other(self):
         assert classify_prompt("hi there") == CLASS_OTHER

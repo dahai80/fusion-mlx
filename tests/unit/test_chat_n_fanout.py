@@ -45,15 +45,11 @@ class TestFanOut:
         async def fake_run(request, **kwargs):
             return _resp(20, "sample")
 
-        monkeypatch.setattr(
-            "fusion_mlx.api.openai.chat._run_chat", fake_run
-        )
+        monkeypatch.setattr("fusion_mlx.api.openai.chat._run_chat", fake_run)
         req = ChatCompletionRequest(
             model="m", messages=[{"role": "user", "content": "hi"}], n=4
         )
-        out = asyncio.run(
-            _fan_out_chat_choices(req, principal=None, headers={}, n=4)
-        )
+        out = asyncio.run(_fan_out_chat_choices(req, principal=None, headers={}, n=4))
         body = _body(out)
         assert len(body["choices"]) == 4
         assert [c["index"] for c in body["choices"]] == [0, 1, 2, 3]
@@ -65,15 +61,11 @@ class TestFanOut:
             r.usage.generation_tokens_per_second = 99.0
             return r
 
-        monkeypatch.setattr(
-            "fusion_mlx.api.openai.chat._run_chat", fake_run
-        )
+        monkeypatch.setattr("fusion_mlx.api.openai.chat._run_chat", fake_run)
         req = ChatCompletionRequest(
             model="m", messages=[{"role": "user", "content": "hi"}], n=3
         )
-        out = asyncio.run(
-            _fan_out_chat_choices(req, principal=None, headers={}, n=3)
-        )
+        out = asyncio.run(_fan_out_chat_choices(req, principal=None, headers={}, n=3))
         u = _body(out)["usage"]
         assert u["prompt_tokens"] == 30
         assert u["completion_tokens"] == 90
@@ -88,9 +80,7 @@ class TestFanOut:
             seen.append(request.n)
             return _resp(5, "x")
 
-        monkeypatch.setattr(
-            "fusion_mlx.api.openai.chat._run_chat", fake_run
-        )
+        monkeypatch.setattr("fusion_mlx.api.openai.chat._run_chat", fake_run)
         req = ChatCompletionRequest(
             model="m", messages=[{"role": "user", "content": "hi"}], n=2
         )
@@ -107,16 +97,12 @@ class TestFanOut:
             return _resp(5, "x")
 
         seen_run = [False]
-        monkeypatch.setattr(
-            "fusion_mlx.api.openai.chat._run_chat", fake_run
-        )
+        monkeypatch.setattr("fusion_mlx.api.openai.chat._run_chat", fake_run)
         req = ChatCompletionRequest(
             model="m", messages=[{"role": "user", "content": "hi"}], n=2
         )
         with pytest.raises(Exception):
-            asyncio.run(
-                _fan_out_chat_choices(req, principal=None, headers={}, n=2)
-            )
+            asyncio.run(_fan_out_chat_choices(req, principal=None, headers={}, n=2))
 
     def test_n_field_validated(self):
         with pytest.raises(ValueError):
