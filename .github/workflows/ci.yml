@@ -53,7 +53,10 @@ jobs:
                   # #1550: cache downloaded wheels across runs.
                   cache: pip
                   cache-dependency-path: pyproject.toml
-            - run: pip install ruff black mypy
+            # #1609: pinned lint toolchain. Unpinned installs drifted between local
+            # and CI (black reformat rules changed), producing lint failures on
+            # unchanged files. Bump these together with a tree-wide reformat.
+            - run: pip install ruff==0.17.4 black==26.10.1 mypy==2.3.0
             - run: ruff check fusion_mlx/ tests/
             - run: black --check fusion_mlx/ tests/
 
