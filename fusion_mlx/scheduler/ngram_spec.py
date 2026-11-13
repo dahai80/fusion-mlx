@@ -121,9 +121,7 @@ NGRAM_SPEC_NUM_DRAFT = int(
 # because b1 decode is weight-bandwidth-bound. Diverse text stays at the
 # base K. Verify is exact greedy rejection, so any K preserves output
 # identity (lossless by construction).
-NGRAM_SPEC_K_MAX = int(
-    __import__("os").environ.get("FUSION_NGRAM_SPEC_K_MAX", "16")
-)
+NGRAM_SPEC_K_MAX = int(__import__("os").environ.get("FUSION_NGRAM_SPEC_K_MAX", "16"))
 NGRAM_SPEC_ADAPTIVE_K = (
     __import__("os").environ.get("FUSION_NGRAM_SPEC_ADAPTIVE_K", "1") == "1"
 )
