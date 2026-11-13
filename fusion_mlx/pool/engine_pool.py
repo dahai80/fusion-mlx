@@ -152,6 +152,13 @@ class EngineEntry:
     )
     source_type: str = "local"
     source_repo_id: str | None = None
+    # #1592: set on alias entries created by the single-model boot path
+    # (server._load_single_model registers the operator-visible name under
+    # the SAME engine object as the canonical registry key). Alias entries
+    # exist for request routing only — they must not surface as separate
+    # loaded models in /health, /v1/models stats, or memory-tier rows, or
+    # every per-model metric series doubles.
+    alias_of: str = ""
     engine: (
         BaseEngine
         | EmbeddingEngine
@@ -893,8 +900,17 @@ class EnginePool:
         return list(self._entries.keys())
 
     def get_loaded_model_ids(self) -> list[str]:
-        """Get list of currently loaded model IDs."""
-        return [mid for mid, e in self._entries.items() if e.engine is not None]
+        """Get list of currently loaded model IDs.
+
+        #1592: alias entries (alias_of set) share the canonical entry's
+        engine object — reporting both would list one loaded model twice
+        and double its metric series.
+        """
+        return [
+            mid
+            for mid, e in self._entries.items()
+            if e.engine is not None and not e.alias_of
+        ]
 
     def get_entry(self, model_id: str) -> EngineEntry | None:
         """Get entry for a specific model, or None if not found."""
@@ -1140,6 +1156,10 @@ class EnginePool:
         with self._discover_sync_lock:
             entries = list(self._entries.items())
         for mid, ent in entries:
+            # #1592: alias entries share the canonical entry's engine —
+            # listing them would show a phantom second resident row.
+            if ent.alias_of:
+                continue
             tier = ent.priority_tier or "P0_DYNAMIC"
             bucket = "P0" if tier.startswith("P0") else "P1"
             est_mb = max((ent.actual_size or ent.estimated_size or 0), 0) // (
@@ -2418,6 +2438,7 @@ class EnginePool:
         engine,
         model_path: str = "",
         estimated_size: int = 0,
+        alias_of: str = "",
     ) -> None:
         """Register an externally-created engine in the pool."""
         # #1205: model_path must survive registration — the fine-tune
@@ -2431,6 +2452,7 @@ class EnginePool:
             "batched",
             engine=engine,
             estimated_size=estimated_size,
+            alias_of=alias_of,
         )
 
     def register_audio_engine_entry(
@@ -2455,8 +2477,10 @@ class EnginePool:
         engine_type: str,
         engine=None,
         estimated_size: int = 0,
+        alias_of: str = "",
     ) -> None:
         entry = self._entries.get(model_id)
+        created = False
         if entry is None:
             entry = EngineEntry(
                 model_id=model_id,
@@ -2466,6 +2490,13 @@ class EnginePool:
                 estimated_size=estimated_size,
             )
             self._entries[model_id] = entry
+            created = True
+        # #1592: only freshly created entries can be alias markers. If an
+        # entry already exists (discovery beat the alias registration), it is
+        # a real model in its own right — attaching the engine is fine, but
+        # tagging it alias_of would hide a legit model from reporting.
+        if created and alias_of:
+            entry.alias_of = alias_of
         if engine is not None:
             entry.engine = engine
             entry.last_access = time.time()

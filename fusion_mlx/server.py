@@ -3212,7 +3212,12 @@ class Server:
             # Alias entry: omit estimated_size — the served-name entry already
             # carries the size, and a second entry with the same size would
             # double-count _current_model_memory / tier_resident_bytes.
-            self.pool.register_engine(alias, engine, model_path=model_path)
+            # #1592: mark it alias_of=served so reporting layers (/health
+            # loaded_models, memory tiers, per-model series) count the
+            # resident engine once, under the canonical key.
+            self.pool.register_engine(
+                alias, engine, model_path=model_path, alias_of=served
+            )
         # Track for unload/shutdown (unload_model calls core.stop()).
         self.engine_cores[served] = engine
         logger.info(
