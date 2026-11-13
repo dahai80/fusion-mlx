@@ -3904,9 +3904,7 @@ class TestLayerSignatureSweep:
 
         assert mgr._is_compatible_block(meta) is True
 
-    def test_startup_compat_canonicalizes_turboquant_to_kvcache(
-        self, tmp_path: Path
-    ):
+    def test_startup_compat_canonicalizes_turboquant_to_kvcache(self, tmp_path: Path):
         # P1-4 / #1575: a TQ cold-tier block saved before the canonical
         # collapse carries a raw TurboQuantKVCache signature; the live
         # manager expects plain KVCache. Recomputing both sides under the
