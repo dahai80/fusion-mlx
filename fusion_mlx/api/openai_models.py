@@ -336,6 +336,11 @@ class ChatCompletionRequest(BaseModel):
     top_k: int | None = None
     repetition_penalty: float | None = Field(None, ge=0.0)
     max_tokens: int | None = Field(None, ge=1, le=131072)
+    # OpenAI multi-choice count. Historically undeclared — extra="allow"
+    # parked it in __pydantic_extra__ and the handler silently returned a
+    # single choice for n>1 (GRPO rollout sampled G=1 while the trainer
+    # believed G=4). Declared + honored by fan-out in the chat route.
+    n: int = Field(1, ge=1, le=32)
     stream: bool = False
     stream_options: StreamOptions | None = None
     stop: list[str] | None = None

@@ -97,6 +97,87 @@ def _is_degenerate_agent_turn(request: ChatCompletionRequest, gen: Any) -> bool:
     return len(_post_think_content(gen).strip()) < _DEGENERATE_AGENT_TEXT_MAX_CHARS
 
 
+async def _fan_out_chat_choices(
+    request: ChatCompletionRequest,
+    *,
+    principal: str | None,
+    headers: dict | None,
+    n: int,
+) -> ChatCompletionResponse:
+    """OpenAI n>1: run n independent samplings, merge into one response.
+
+    Historically `n` was silently dropped (undeclared field) and every
+    request returned a single choice — the GRPO rollout path in
+    fusion-trainer sampled G=1 while the trainer believed G=G, quietly
+    zeroing group-relative advantages. Each child is a full independent
+    _run_chat (own slot, own spec/pool handling); usage sums across
+    children. Streaming with n>1 is rejected upstream (fail visibly).
+    """
+    import asyncio
+    import json as _json
+
+    from starlette.responses import JSONResponse as _JSONResponse
+
+    def _as_dict(res: Any) -> dict:
+        if isinstance(res, _JSONResponse):
+            return _json.loads(res.body)
+        return res.model_dump() if hasattr(res, "model_dump") else dict(res)
+
+    child = request.model_copy(update={"n": 1})
+    results = await asyncio.gather(
+        *(
+            _run_chat(copy.deepcopy(child), principal=principal, headers=headers)
+            for _ in range(n)
+        )
+    )
+    dicts = [_as_dict(r) for r in results]
+    failed = [d for d in dicts if "error" in d]
+    if failed:
+        raise HTTPException(
+            500,
+            {
+                "error": {
+                    "message": f"n={n} fan-out: {len(failed)}/{n} children failed",
+                    "type": "api_error",
+                    "code": "chat_generation_failed",
+                }
+            },
+        )
+    merged = dicts[0]
+    all_choices = []
+    for child_res in dicts:
+        for choice in child_res.get("choices", []):
+            choice["index"] = len(all_choices)
+            all_choices.append(choice)
+    merged["choices"] = all_choices
+    if len(dicts) > 1:
+        u = merged.get("usage") or {}
+        u["prompt_tokens"] = sum(d.get("usage", {}).get("prompt_tokens", 0) for d in dicts)
+        u["completion_tokens"] = sum(
+            d.get("usage", {}).get("completion_tokens", 0) for d in dicts
+        )
+        u["total_tokens"] = u["prompt_tokens"] + u["completion_tokens"]
+        # Timing aggregates are per-request; sums are meaningless — drop them.
+        for field_name in (
+            "model_load_duration",
+            "time_to_first_token",
+            "total_time",
+            "prompt_eval_duration",
+            "generation_duration",
+            "prompt_tokens_per_second",
+            "generation_tokens_per_second",
+        ):
+            u[field_name] = None
+        u.pop("prompt_tokens_details", None)
+        merged["usage"] = u
+    logger.info(
+        "OpenAI /chat: n=%s fan-out merged into %s choices",
+        n,
+        len(merged["choices"]),
+    )
+    return _JSONResponse(content=merged)
+
+
 async def _run_chat(
     request: ChatCompletionRequest,
     *,
@@ -659,6 +740,30 @@ async def chat_completions(
         getattr(request, "temperature", 0.7) or 0.7,
         prompt_preview,
     )
+
+    # OpenAI n>1 multi-choice (declared late — see ChatCompletionRequest.n).
+    # Fan-out into n independent samplings before cache/dispatch; streaming
+    # with n>1 is rejected rather than silently degraded to one choice.
+    _n_choices = int(getattr(request, "n", 1) or 1)
+    if _n_choices > 1:
+        if request.stream:
+            raise HTTPException(
+                400,
+                {
+                    "error": {
+                        "message": "n>1 is not supported with stream=true; "
+                        "use stream=false or n=1",
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
+        logger.info("OpenAI /chat: n=%s fan-out dispatch", _n_choices)
+        return await _fan_out_chat_choices(
+            request,
+            principal=principal,
+            headers=dict(http_request.headers),
+            n=_n_choices,
+        )
 
     # Response cache — check before engine dispatch (non-streaming only)
     _cache_status = "MISS"
