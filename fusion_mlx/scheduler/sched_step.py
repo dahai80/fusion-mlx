@@ -609,6 +609,9 @@ def get_stats(self) -> dict[str, Any]:
     # Include cache stats
     if self.block_aware_cache is not None:
         stats["ssd_cache"] = self.block_aware_cache.get_stats()
+    # #1606: metastability guard state + lifetime shed counter.
+    stats["admission_guard"] = self._admission_guard_stats()
+    stats["admission_guard_shed_total"] = self._admission_guard_shed_total
     return stats
 
 

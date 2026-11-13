@@ -403,6 +403,25 @@ def _schedule_waiting(
 
         request = self.waiting.popleft()
 
+        # #1606: prefix-cache metastability guard. While the hit-rate EMA is
+        # below floor and the queue is deep, shed cold-prefix admissions by
+        # rotating them to the back (bounded per-pass scan budget) so warm
+        # requests behind a cold head still admit in this pass. Fail-open
+        # caps (per-request retry, per-episode shed depth) keep the shed
+        # itself from wedging the queue.
+        shed_scan_budget = len(self.waiting)
+        while self._admission_guard_should_shed(request):
+            self.waiting.append(request)
+            if shed_scan_budget <= 0:
+                # Every queued request was shed — nothing admissible this
+                # pass; retry on the next step() as the EMA recovers.
+                request = None
+                break
+            shed_scan_budget -= 1
+            request = self.waiting.popleft()
+        if request is None:
+            break
+
         # Cache freshness deferral: add_request registered a wait when a
         # relevant store_cache was in flight. If it is still unresolved,
         # put the request back and stop admitting so we don't read stale

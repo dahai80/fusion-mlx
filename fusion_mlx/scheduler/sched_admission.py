@@ -608,6 +608,143 @@ def _ssd_reconstruct_cap_exceeded(num_tokens: int, cap: int) -> bool:
     return num_tokens > cap
 
 
+# ── Prefix-cache metastability guard (#1606) ─────────────────────────────
+
+
+def _admission_guard_note_hit_rate(self) -> None:
+    # #1606: fold the current prefix-cache hit ratio into the guard EMA.
+    # Called once per admission decision while the waiting queue drains.
+    # ``hit_rate`` is a cumulative ratio over the cache lifetime, so the
+    # EMA (alpha = admission_guard_ema_alpha) tracks its recent drift: a
+    # sustained cold burst drags it below the floor within ~1/alpha
+    # admissions and recovery takes the same order. No cache, no stats
+    # dict, or a missing/non-numeric hit_rate leaves the EMA untouched
+    # (the guard stays inactive until a real sample arrives).
+    fn = getattr(self.block_aware_cache, "get_stats_dict", None)
+    if not callable(fn):
+        return
+    try:
+        stats = fn()
+    except Exception as exc:
+        logger.debug("Admission guard hit-rate sample failed: %s", exc)
+        return
+    if not isinstance(stats, dict):
+        return
+    raw = stats.get("hit_rate")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return
+    alpha = getattr(self.config, "admission_guard_ema_alpha", 0.1)
+    value = float(raw)
+    if self._admission_guard_ema is None:
+        self._admission_guard_ema = value
+    else:
+        self._admission_guard_ema += alpha * (value - self._admission_guard_ema)
+
+
+def _admission_guard_set_active(self, active: bool) -> None:
+    # Log every state transition (activation and recovery) so the guard is
+    # never a silent throughput change.
+    if active == self._admission_guard_active:
+        return
+    self._admission_guard_active = active
+    self._admission_guard_episode_sheds = 0
+    ema = self._admission_guard_ema
+    floor = getattr(self.config, "admission_guard_hit_rate_floor", 0.3)
+    if active:
+        logger.warning(
+            "Admission guard ACTIVATED: prefix hit-rate EMA %.3f < floor "
+            "%.3f — cold-prefix admissions will be shed while the queue is "
+            "deep (#1606)",
+            ema if ema is not None else -1.0,
+            floor,
+        )
+    else:
+        logger.info(
+            "Admission guard recovered: prefix hit-rate EMA %.3f >= floor "
+            "%.3f — normal admission resumed (#1606)",
+            ema if ema is not None else -1.0,
+            floor,
+        )
+
+
+def _admission_guard_should_shed(self, request: Request) -> bool:
+    # #1606 metastability guard: a burst of cold-prefix admissions evicts
+    # the hot working set (more misses = more evictions = more misses) and
+    # throughput stays collapsed long after the burst ends. While the
+    # hit-rate EMA is below the floor and the queue is deep, shed NEW
+    # cold-prefix admissions (rotate to the back, bounded retry) instead of
+    # letting them drive further evictions.
+    #
+    # Warm definition: a request whose cached prefix was already probed by
+    # add_request (prompt_cache seeded via fetch_cache/CoW/kv_resume, or
+    # cached_tokens > 0) always admits. Requests whose prefix prep was
+    # deferred (in-flight store_cache) carry no warm signal and are treated
+    # as cold — conservative, since shedding only ever delays admission
+    # (bounded retry, fail-open caps), never drops work.
+    cfg = self.config
+    if not getattr(cfg, "admission_guard_enabled", False):
+        return False
+    self._admission_guard_note_hit_rate()
+    if getattr(request, "bypass_admission_guard", False):
+        return False
+    ema = self._admission_guard_ema
+    floor = getattr(cfg, "admission_guard_hit_rate_floor", 0.3)
+    if ema is None or ema >= floor:
+        self._admission_guard_set_active(False)
+        return False
+    self._admission_guard_set_active(True)
+    if len(self.waiting) < getattr(cfg, "admission_guard_queue_depth", 8):
+        return False
+    if request.prompt_cache is not None or request.cached_tokens > 0:
+        return False
+    max_defers = getattr(cfg, "admission_guard_max_defers", 8)
+    defers = getattr(request, "_admission_guard_defers", 0)
+    if defers >= max_defers:
+        logger.warning(
+            "Admission guard fail-open for %s: deferred %d times (cap %d) "
+            "— admitting cold prefix to avoid starvation",
+            request.request_id,
+            defers,
+            max_defers,
+        )
+        return False
+    max_shed = getattr(cfg, "admission_guard_max_shed", 64)
+    if self._admission_guard_episode_sheds >= max_shed:
+        logger.warning(
+            "Admission guard fail-open for %s: episode shed cap %d reached "
+            "— admitting cold prefix so the shed cannot wedge the queue",
+            request.request_id,
+            max_shed,
+        )
+        return False
+    request._admission_guard_defers = defers + 1
+    self._admission_guard_shed_total += 1
+    self._admission_guard_episode_sheds += 1
+    logger.info(
+        "Admission guard shed %s (cold prefix, EMA %.3f < floor %.3f, "
+        "queue depth %d, defer %d/%d, episode sheds %d/%d)",
+        request.request_id,
+        ema,
+        floor,
+        len(self.waiting),
+        defers + 1,
+        max_defers,
+        self._admission_guard_episode_sheds,
+        max_shed,
+    )
+    return True
+
+
+def _admission_guard_stats(self) -> dict[str, Any]:
+    return {
+        "enabled": bool(getattr(self.config, "admission_guard_enabled", False)),
+        "active": self._admission_guard_active,
+        "hit_rate_ema": self._admission_guard_ema,
+        "shed_total": self._admission_guard_shed_total,
+        "episode_sheds": self._admission_guard_episode_sheds,
+    }
+
+
 def _has_unfinished_store_futures(self) -> bool:
     # The dict can retain completed futures until the next drain pass; only
     # an unfinished one can hold the tiered-cache lock against a reconstruct.

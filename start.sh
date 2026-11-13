@@ -311,6 +311,22 @@ preflight() {
         [[ -n "${hal}" ]] && export FUSION_MLX_HEAVY_ADMISSION_LINE="${hal}"
     fi
 
+    # #1606: prefix-cache metastability admission guard. Optional settings.json
+    # block {"admission_guard": {"enabled": true, "hit_rate_floor": 0.3,
+    # "queue_depth": 8}}; env vars win. Absent/true = guard on (default).
+    if [[ -z "${FUSION_MLX_ADMISSION_GUARD:-}" && -f "${SETTINGS:-}" ]]; then
+        ag=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); g=d.get('admission_guard',{}); print('0' if (g.get('enabled') is False if isinstance(g,dict) else False) else '')" 2>/dev/null || echo "")
+        [[ -n "${ag}" ]] && export FUSION_MLX_ADMISSION_GUARD="${ag}"
+    fi
+    if [[ -z "${FUSION_MLX_ADMISSION_GUARD_FLOOR:-}" && -f "${SETTINGS:-}" ]]; then
+        agf=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('admission_guard',{}).get('hit_rate_floor','') if isinstance(d.get('admission_guard'),dict) else '')" 2>/dev/null || echo "")
+        [[ -n "${agf}" ]] && export FUSION_MLX_ADMISSION_GUARD_FLOOR="${agf}"
+    fi
+    if [[ -z "${FUSION_MLX_ADMISSION_GUARD_QUEUE_DEPTH:-}" && -f "${SETTINGS:-}" ]]; then
+        agq=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('admission_guard',{}).get('queue_depth','') if isinstance(d.get('admission_guard'),dict) else '')" 2>/dev/null || echo "")
+        [[ -n "${agq}" ]] && export FUSION_MLX_ADMISSION_GUARD_QUEUE_DEPTH="${agq}"
+    fi
+
     # #398: start.sh is the standalone launcher (loopback, no gateway
     # injecting X-Fusion-Route). Default to route-guard warn-only so
     # local /v1/* calls are not rejected. Gateway deployments inject the
