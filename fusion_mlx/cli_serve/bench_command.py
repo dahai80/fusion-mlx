@@ -66,6 +66,7 @@ def bench_command(args):
     from mlx_lm import load
 
     from ..api.utils import is_mllm_model as _bench_is_mllm_model
+    from ..bench.thermal import ThermalTracker, record_idle
     from ..engine_core import AsyncEngineCore, EngineConfig
     from ..pflash import config_from_args as _pflash_config_from_args
     from ..pflash import resolve_pflash_mode_default as _pflash_resolve_default
@@ -196,6 +197,18 @@ def bench_command(args):
         async with AsyncEngineCore(model, tokenizer, engine_config) as engine:
             await asyncio.sleep(0.1)  # Warm up
 
+            # #1588 thermal protocol: optional pre-run idle + windowed
+            # decode ms/step sampling so the artifact shows thermal drift.
+            core = engine.engine  # EngineCore owns the scheduler
+            thermal = ThermalTracker(
+                lambda: (
+                    (core.scheduler.get_stats() or {}).get("decode_step_time_ms")
+                    if core.scheduler is not None
+                    else None
+                )
+            )
+            thermal.note_idle(await record_idle(getattr(args, "thermal_idle_s", 0.0)))
+
             start_time = time.perf_counter()
 
             # Add all requests
@@ -211,7 +224,9 @@ def bench_command(args):
                         return out
                 return None
 
-            results = await asyncio.gather(*[get_output(r) for r in request_ids])
+            results = await thermal.run_with_sampling(
+                asyncio.gather(*[get_output(r) for r in request_ids])
+            )
 
             total_time = time.perf_counter() - start_time
 
@@ -232,6 +247,9 @@ def bench_command(args):
         print(f"  Total tokens: {total_tokens}")
         print(f"  Tokens/second: {total_completion_tokens / total_time:.2f}")
         print(f"  Throughput: {total_tokens / total_time:.2f} tok/s")
+        # #1588: thermal-state block — never compare a cold run to a
+        # heat-soaked run without this metadata in the artifact.
+        print(thermal.format_summary())
 
     asyncio.run(run_benchmark())
 

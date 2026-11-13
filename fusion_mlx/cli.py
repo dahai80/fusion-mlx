@@ -1333,6 +1333,19 @@ Examples:
     bench_parser.add_argument(
         "--num-prompts", type=int, default=10, help="Number of prompts"
     )
+    # #1588 thermal protocol: pre-run GPU idle window. Default 0 keeps
+    # quick benches quick; comparative runs should pass 600 (10 min) so
+    # cool-vs-heat-soaked numbers are never mixed.
+    bench_parser.add_argument(
+        "--thermal-idle-s",
+        type=float,
+        default=0.0,
+        help=(
+            "GPU idle seconds before the run (thermal protocol, #1588). "
+            "Use 600 for comparative runs; results record idle_before_s "
+            "and per-window decode ms/step drift."
+        ),
+    )
     bench_parser.add_argument(
         "--max-tokens", type=int, default=100, help="Max tokens per prompt"
     )
