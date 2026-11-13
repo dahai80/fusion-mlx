@@ -216,6 +216,7 @@ def bench_command(args):
             # the engine by ~15% versus its own boost window.
             warmup_s = getattr(args, "thermal_warmup_s", 0.0)
             if warmup_s > 0:
+
                 async def _warm_round() -> None:
                     rid = await engine.add_request(warmup_prompt, warmup_params)
                     async for out in engine.stream_outputs(rid, timeout=120):
