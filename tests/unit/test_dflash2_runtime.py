@@ -205,3 +205,26 @@ def test_have_runtime_returns_bool():
     from fusion_mlx.speculative.dflash2 import have_runtime
 
     assert isinstance(have_runtime(), bool)
+
+
+class TestRequestTemperature:
+    def test_reads_sampling_params_not_request_attr(self):
+        from types import SimpleNamespace
+
+        from fusion_mlx.scheduler.spec_decode import _request_temperature
+
+        request = SimpleNamespace(sampling_params=SimpleNamespace(temperature=0.7))
+        assert _request_temperature(request) == 0.7
+
+    def test_zero_temperature_stays_zero(self):
+        from types import SimpleNamespace
+
+        from fusion_mlx.scheduler.spec_decode import _request_temperature
+
+        request = SimpleNamespace(sampling_params=SimpleNamespace(temperature=0.0))
+        assert _request_temperature(request) == 0.0
+
+    def test_missing_params_falls_back_to_zero(self):
+        from fusion_mlx.scheduler.spec_decode import _request_temperature
+
+        assert _request_temperature(object()) == 0.0
