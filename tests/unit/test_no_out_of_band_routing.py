@@ -139,6 +139,33 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         "FUSION_MLX_PACE_AUDIO_BURST",
         "FUSION_MLX_PACE_LAYA_RATE",
         "FUSION_MLX_PACE_LAYA_BURST",
+        # #1587: paged-SSD cache dir override. Storage location knob, not
+        # routing: which model loads or which parser fires never changes.
+        # Read by cli_serve.serve_command only.
+        "FUSION_MLX_SSD_DIR",
+        # Paged-cache block size override. Perf/storage tuning knob, not
+        # routing: it sets SchedulerConfig.paged_cache_block_size_override
+        # and never changes which model loads or which parser fires.
+        # Read by cli_serve.config_resolve only.
+        "FUSION_MLX_PAGED_BLOCK_SIZE",
+        # Documented llama.cpp fallback bridge opt-in (engines/
+        # llama_cpp_backend.py). The bridge is also auto-detected at
+        # runtime; the env var only force-enables it. Engine selection is
+        # a documented deployment choice, not a per-request routing
+        # override — the request pipeline and parser stack are unchanged.
+        "FUSION_MLX_LLAMA_CPP",
+        # Spec-decode prompt-class gate toggle (scheduler/spec_decode.py).
+        # =0 restores ungated behavior; default gating is on. Perf-scope
+        # toggle in the same family as the registered MTP_CHAIN_K.
+        "FUSION_MLX_SPEC_PROMPT_CLASS_GATE",
+        # Admin telemetry request sampling ratio (admin/telemetry_route.py).
+        # Observability volume knob, not routing.
+        "FUSION_MLX_TELEMETRY_REQUEST_SAMPLE",
+        # Gate for parity tests that require a real model download
+        # (engines/_inpaint_denoise.py). Test-infrastructure gate only.
+        "FUSION_MLX_REAL_MODEL_TESTS",
+        # Share-upload credential (share/). Auth material, not routing.
+        "FUSION_MLX_SHARE_KEY",
         "FUSION_MLX_PACE_TRAINING_RATE",
         "FUSION_MLX_PACE_TRAINING_BURST",
         # Test/integration helpers — server URL for integration suites,
