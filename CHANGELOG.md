@@ -7,12 +7,27 @@ doc_type: changelog
 title: { zh: "变更日志", en: "Changelog" }
 audience: engineer
 status: draft
-version: 0.10.62
-updated: 2026-11-12
+version: 0.10.63
+updated: 2026-11-13
 owner: @dahai
 source_of_truth:
   - CHANGELOG.md
 ---
+
+## [0.10.63] - 2026-11-13 — RL resume + VLM QLoRA, TurboQuant SSD cold tier, DSpine T>0 sampled path
+
+### Added
+- **RL resume from numbered checkpoints (#1564, PR #1569)**: DPO/ORPO/GRPO can resume from an interrupted run — `resolve_resume_file()` resolves a checkpoint dir to the final `adapters.safetensors` or the newest `NNNNNNN_adapters.safetensors` (same convention as the SFT path); `DPOConfig`/`GRPOConfig.save_every` writes a numbered policy checkpoint every N steps (0 = final-only, previous behavior); `GRPOConfig.init_adapter_path` loads staged policy weights into the fresh LoRA tree with loud rank/num_layers validation (strict=False alone would silently train from fresh LoRA — the #1461 failure mode).
+- **`memory_limit_gb` on every fine-tune endpoint (#1565, PR #1569)**: `GRPOConfig`/`RewardConfig` gain the field, forwarded to the #1473 training memory preflight already wired in the services. Every endpoint (SFT/VLM/DPO/ORPO/GRPO/Reward) now accepts an explicit admission budget; 0 = auto.
+- **VLM QLoRA (#1567, PR #1584)**: `VLMFineTuneConfig` gains `quantize_base` + `quant_bits` (4|8) — the frozen language-model base is `nn.quantize()`d in place before the LoRA wrap instead of `method="qlora"` silently degrading to plain LoRA. No-op on an already-quantized base; vision tower stays full precision; `quantize_base` + `full_finetune` rejected loudly; `adapter_config.json` records `fine_tune_type: "qlora"`.
+- **TurboQuant compression for the paged SSD cold tier (PR #1571 + #1576 + #1587)**: 4/8-bit compressed blocks at rest with canonicalized types in SSD signature checks, plus `FUSION_MLX_SSD_DIR` env override for the paged-SSD cache dir.
+- **Event webhooks + SSE endpoint (P1-5, #1572)**: server-side event subscription surface for job/lifecycle events.
+- **Telemetry prompt shape digests in `request_end` records (#1581)**.
+
+### Changed
+- **DSpine T>0 sampled rejection-verify scheduler path (#1577)**: offline rejection-sampling core + sampled path reads sampling params and sanitizes them; prefill-capture window bootstrap now default-off (behavior change; `FUSION_DSPINE_PREFILL_BOOTSTRAP=1` re-enables — it halved draft acceptance on every request after the first).
+- **Spec-router abandon cooldown stops oscillation on failing methods (PR #1563)**; scheduler decode-step profile counters + overhead baseline bench (PR #1568); env-gated stage profiling + `start.sh --no-mllm` allowlist (PR #1580).
+- `fused_gdn` renamed to `fused_divisive_norm` (placeholder FlashKDA deleted); `--kv-cache-turboquant` allowed in the `start.sh` arg whitelist (#1561).
 
 ## [0.10.62] - 2026-11-12 — Spark-TTS voice cloning unblocked, CI efficiency retrofit
 
