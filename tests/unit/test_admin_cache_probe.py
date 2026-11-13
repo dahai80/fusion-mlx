@@ -309,10 +309,14 @@ class TestCacheProbeResponseShape:
         "total_tokens",
         "block_size",
         "total_blocks",
+        "blocks_ram",
         "blocks_ssd_hot",
         "blocks_ssd_disk",
         "blocks_cold",
+        "ram_hit_tokens",
         "ssd_hit_tokens",
+        "cached_prefix_tokens",
+        "cache_index",
         "cold_tokens",
     }
 
@@ -342,6 +346,9 @@ class TestCacheProbeResponseShape:
                 admin_stats.probe_cache(_make_request(), is_admin=True)
             )
 
-        assert "blocks_ram" not in result
-        assert "ram_hit_tokens" not in result
+        # #1559: blocks_ram / ram_hit_tokens are live fields now — the
+        # probe walks the RAM radix trie, so they must be present and the
+        # historical dead-field guard no longer applies to them.
+        assert "blocks_ram" in result
+        assert "ram_hit_tokens" in result
         assert "prefix_index_hits" not in result
