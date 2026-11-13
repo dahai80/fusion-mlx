@@ -346,8 +346,8 @@ class TestChunkClampArraysCache:
             _clamp_prefill_step_to_block_size,
         )
 
-        fake._clamp_prefill_step_to_block_size = lambda: _clamp_prefill_step_to_block_size(
-            fake
+        fake._clamp_prefill_step_to_block_size = (
+            lambda: _clamp_prefill_step_to_block_size(fake)
         )
         return fake
 
