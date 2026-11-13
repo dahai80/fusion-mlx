@@ -2003,6 +2003,12 @@ def dspine_spec_step(
     # predictor's history stays contiguous with the token stream.
     if sampled_path:
         if hybrid_prefix:
+            if dspine_state._hybrid.total_hybrid_steps == 0:
+                logger.info(
+                    "dspine hybrid: first hybrid step fired (prefix=%d, chain=%d)",
+                    len(hybrid_prefix),
+                    K,
+                )
             dspine_state._hybrid.record_round(
                 len(hybrid_prefix), K - len(hybrid_prefix), n_accepted
             )
@@ -2024,7 +2030,8 @@ def dspine_spec_step(
         stats = dspine_state.get_stats()
         logger.info(
             "dspine_spec: step=%d, block=%d, accepted=%d/%d (%.1f%%), "
-            "verify=%.1fms, rate=%.1f%%, window=%d",
+            "verify=%.1fms, rate=%.1f%%, window=%d, hybrid=%d/%d "
+            "acc_ngram=%d",
             dspine_state.total_spec_steps,
             runtime.block_size,
             n_accepted,
@@ -2033,6 +2040,9 @@ def dspine_spec_step(
             dt * 1000,
             stats["acceptance_rate"] * 100,
             int(window.shape[1]),
+            stats.get("ngram_prefix_hit", 0),
+            stats.get("spec_steps", 0),
+            stats.get("accepted_from_ngram", 0),
         )
 
     if not verified:
