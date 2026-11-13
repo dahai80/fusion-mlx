@@ -111,8 +111,11 @@ class _LoadPool(_Pool):
     def check_tier_budget(self, tier, size):
         return True, ""
 
-    def register_engine(self, model_id, engine, model_path="", estimated_size=0):
-        self.registered.append((model_id, engine, model_path, estimated_size))
+    def register_engine(
+        self, model_id, engine, model_path="", estimated_size=0, alias_of=""
+    ):
+        # #1592: alias registrations carry alias_of=served.
+        self.registered.append((model_id, engine, model_path, estimated_size, alias_of))
 
 
 class TestSingleModelEngineKind(unittest.TestCase):
