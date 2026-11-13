@@ -1056,4 +1056,6 @@ async def probe_cache(
         result["total_tokens"] - result["cached_prefix_tokens"], 0
     )
     return result
+
+
 router = _router
