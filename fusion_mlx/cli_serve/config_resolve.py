@@ -4,6 +4,7 @@ boot guards, autoconfig parsers, server config staging, startup banner,
 MTP CLI model-type reconciliation."""
 
 import logging
+import os
 import sys
 
 from fusion_mlx._cli_base import (
@@ -34,6 +35,46 @@ def _load_settings_cache_section(settings_dir: str | None) -> dict:
         return {}
     section = data.get("cache")
     return section if isinstance(section, dict) else {}
+
+
+def _resolve_block_size_tier(cache_sj: dict) -> int:
+    """P2-3 block-size tier: explicit user value for paged_cache_block_size.
+
+    Sources (env wins): FUSION_MLX_PAGED_BLOCK_SIZE, then settings.json
+    cache.paged_cache_block_size. Purpose: ArraysCache hybrids auto-enlarge
+    the block to 2048 (sched_cache), which makes every sub-2048 prompt reuse
+    zero blocks (whole-block matching; GDN state is not sliceable). An
+    explicit smaller tier (e.g. 512) trades more boundary snapshots for
+    prefix reuse on short prompts. Returns 0 when unset; invalid values are
+    warned and ignored. The value also feeds
+    SchedulerConfig.paged_cache_block_size_override so the auto-enlarge
+    never overrides a deliberate tier.
+    """
+    raw = os.environ.get("FUSION_MLX_PAGED_BLOCK_SIZE", "").strip()
+    source = "env"
+    if not raw:
+        raw = str(cache_sj.get("paged_cache_block_size") or "").strip()
+        source = "settings"
+    if not raw:
+        return 0
+    try:
+        val = int(float(raw))
+    except ValueError:
+        logger.warning("cache settings: ignoring invalid paged_cache_block_size=%r", raw)
+        return 0
+    if val < 8 or val > 32768:
+        logger.warning(
+            "cache settings: paged_cache_block_size=%s out of range [8, 32768], ignored (%s)",
+            val,
+            source,
+        )
+        return 0
+    logger.info(
+        "cache settings: paged block size tier %s set via %s",
+        val,
+        source,
+    )
+    return val
 
 
 def _parse_size_to_bytes(value) -> int | None:
@@ -451,6 +492,10 @@ def _serve_from_model_dir(args):
         _bp_max = _parse_size_to_bytes(cache_sj.get("boundary_prefix_max_bytes"))
         if _bp_max:
             _sched.boundary_prefix_max_bytes = _bp_max
+        _blk_tier = _resolve_block_size_tier(cache_sj)
+        if _blk_tier > 0:
+            _sched.paged_cache_block_size = _blk_tier
+            _sched.paged_cache_block_size_override = _blk_tier
         logger.info(
             "cache settings applied from settings.json: ssd_dir=%s "
             "hot_cache_max=%s hot_cache_only=%s initial_blocks=%s "

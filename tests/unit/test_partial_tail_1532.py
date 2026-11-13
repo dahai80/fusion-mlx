@@ -342,6 +342,13 @@ class TestChunkClampArraysCache:
         fake._detect_rotating_window_sizes = lambda: None
         fake._cache_tree_has_arrays_cache = lambda obj: True
         fake._ARRAYS_CACHE_BLOCK_SIZE = 2048
+        from fusion_mlx.scheduler.sched_cache import (
+            _clamp_prefill_step_to_block_size,
+        )
+
+        fake._clamp_prefill_step_to_block_size = lambda: _clamp_prefill_step_to_block_size(
+            fake
+        )
         return fake
 
     def test_enlarge_clamps_prefill_step_size(self):
@@ -363,3 +370,78 @@ class TestChunkClampArraysCache:
         _enlarge_block_size_for_arrays_cache(fake)
         assert fake.config.paged_cache_block_size == 2048
         assert fake.config.prefill_step_size == 1024
+
+    def test_user_tier_pins_block_size_and_clamps_chunk(self):
+        # P2-3 downshift: explicit tier (e.g. 512) is never auto-enlarged to
+        # 2048; prefill chunk still clamps down to the tier so boundary
+        # snapshots align with the smaller blocks.
+        from fusion_mlx.scheduler.sched_cache import (
+            _enlarge_block_size_for_arrays_cache,
+        )
+
+        fake = self._fake_sched(4096)
+        fake.config.paged_cache_block_size = 512
+        fake.config.paged_cache_block_size_override = 512
+        _enlarge_block_size_for_arrays_cache(fake)
+        assert fake.config.paged_cache_block_size == 512
+        assert fake.config.prefill_step_size == 512
+
+
+class TestResolveBlockSizeTier:
+    def _settings(self, tmp_path, cache_section):
+        import json
+
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps({"cache": cache_section}), encoding="utf-8")
+        return str(tmp_path)
+
+    def test_env_wins_over_settings(self, tmp_path, monkeypatch):
+        from fusion_mlx.cli_serve.config_resolve import _resolve_block_size_tier
+
+        monkeypatch.setenv("FUSION_MLX_PAGED_BLOCK_SIZE", "512")
+        assert _resolve_block_size_tier({"paged_cache_block_size": 2048}) == 512
+
+    def test_settings_fallback(self, tmp_path, monkeypatch):
+        from fusion_mlx.cli_serve.config_resolve import _resolve_block_size_tier
+
+        monkeypatch.delenv("FUSION_MLX_PAGED_BLOCK_SIZE", raising=False)
+        assert _resolve_block_size_tier({"paged_cache_block_size": 256}) == 256
+
+    def test_unset_returns_zero(self, tmp_path, monkeypatch):
+        from fusion_mlx.cli_serve.config_resolve import _resolve_block_size_tier
+
+        monkeypatch.delenv("FUSION_MLX_PAGED_BLOCK_SIZE", raising=False)
+        assert _resolve_block_size_tier({}) == 0
+
+    def test_invalid_values_ignored(self, tmp_path, monkeypatch):
+        from fusion_mlx.cli_serve.config_resolve import _resolve_block_size_tier
+
+        monkeypatch.setenv("FUSION_MLX_PAGED_BLOCK_SIZE", "abc")
+        assert _resolve_block_size_tier({}) == 0
+        monkeypatch.setenv("FUSION_MLX_PAGED_BLOCK_SIZE", "4")
+        assert _resolve_block_size_tier({}) == 0
+        monkeypatch.setenv("FUSION_MLX_PAGED_BLOCK_SIZE", "100000")
+        assert _resolve_block_size_tier({}) == 0
+
+    def test_env_only_applies_without_settings_section(self, tmp_path, monkeypatch):
+        from fusion_mlx.cli_serve.serve_command import _apply_settings_cache_section
+        from fusion_mlx.config import SchedulerConfig
+
+        monkeypatch.setenv("FUSION_MLX_PAGED_BLOCK_SIZE", "512")
+        empty = tmp_path / "settings.json"
+        empty.write_text("{}", encoding="utf-8")
+        cfg = SchedulerConfig()
+        assert _apply_settings_cache_section(cfg, str(tmp_path)) is True
+        assert cfg.paged_cache_block_size == 512
+        assert cfg.paged_cache_block_size_override == 512
+
+    def test_settings_tier_sets_override(self, tmp_path, monkeypatch):
+        from fusion_mlx.cli_serve.serve_command import _apply_settings_cache_section
+        from fusion_mlx.config import SchedulerConfig
+
+        monkeypatch.delenv("FUSION_MLX_PAGED_BLOCK_SIZE", raising=False)
+        d = self._settings(tmp_path, {"paged_cache_block_size": 512})
+        cfg = SchedulerConfig()
+        assert _apply_settings_cache_section(cfg, d) is True
+        assert cfg.paged_cache_block_size == 512
+        assert cfg.paged_cache_block_size_override == 512

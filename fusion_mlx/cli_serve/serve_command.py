@@ -25,6 +25,7 @@ from .config_resolve import (
     _parse_size_to_bytes,
     _print_profile_banner,
     _print_startup_banner,
+    _resolve_block_size_tier,
     _serve_from_model_dir,
     _stage_server_config,
 )
@@ -53,6 +54,12 @@ def _apply_settings_cache_section(scheduler_config, settings_dir: str | None) ->
         logger.warning("#1288: failed to read settings.json cache section: %s", e)
         return False
     if not cache_sj:
+        # Env-only tier still applies when settings.json has no cache section.
+        _blk_tier = _resolve_block_size_tier({})
+        if _blk_tier > 0:
+            scheduler_config.paged_cache_block_size = _blk_tier
+            scheduler_config.paged_cache_block_size_override = _blk_tier
+            return True
         return False
     _ssd_dir = cache_sj.get("paged_ssd_cache_dir") or cache_sj.get("ssd_cache_dir")
     # Env override wins over settings.json — ops/diagnostics knob to relocate
@@ -81,15 +88,21 @@ def _apply_settings_cache_section(scheduler_config, settings_dir: str | None) ->
     _bp_max = _parse_size_to_bytes(cache_sj.get("boundary_prefix_max_bytes"))
     if _bp_max:
         scheduler_config.boundary_prefix_max_bytes = _bp_max
+    _blk_tier = _resolve_block_size_tier(cache_sj)
+    if _blk_tier > 0:
+        scheduler_config.paged_cache_block_size = _blk_tier
+        scheduler_config.paged_cache_block_size_override = _blk_tier
     logger.info(
         "cache settings applied from settings.json (single-model serve): "
         "ssd_dir=%s hot_cache_max=%s hot_cache_only=%s initial_blocks=%s "
-        "boundary_prefix_persist=%s",
+        "boundary_prefix_persist=%s block_size=%s(block_override=%s)",
         scheduler_config.paged_ssd_cache_dir,
         scheduler_config.hot_cache_max_size,
         scheduler_config.hot_cache_only,
         scheduler_config.initial_cache_blocks,
         scheduler_config.boundary_prefix_persist,
+        scheduler_config.paged_cache_block_size,
+        scheduler_config.paged_cache_block_size_override,
     )
     return True
 

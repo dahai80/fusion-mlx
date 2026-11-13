@@ -159,6 +159,11 @@ class SchedulerConfig:
 
     # Paged cache
     paged_cache_block_size: int = 64
+    # Explicit user block-size tier (env FUSION_MLX_PAGED_BLOCK_SIZE or
+    # settings.json cache.paged_cache_block_size). 0 = unset; when set it
+    # pins the block size and disables the ArraysCache-hybrid auto-enlarge
+    # (#1545 P2-3 downshift: sub-2048 prompts reuse zero 2048-blocks).
+    paged_cache_block_size_override: int = 0
     max_cache_blocks: int = 1000
 
     # MTP (Multi-Token Prediction)
