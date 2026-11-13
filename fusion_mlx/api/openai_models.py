@@ -781,6 +781,9 @@ class ModelInfo(BaseModel):
     context_length: int | None = None
     # #1416: advertised language capability (ISO 639-1). Empty = unknown.
     languages: list[str] = Field(default_factory=list)
+    # #1607: static-catalog output cap (catalog "maxOutputTokens"). None =
+    # unknown / not in catalog; the engine still enforces its own limits.
+    max_output_tokens: int | None = None
 
 
 class ModelsResponse(BaseModel):

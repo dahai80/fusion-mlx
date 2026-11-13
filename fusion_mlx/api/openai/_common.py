@@ -132,6 +132,145 @@ def _resolve_languages(model_id: str) -> list[str]:
         return []
 
 
+# #1607: static model catalog (fusion-models-hub catalog/models/*.json) enriches
+# /v1/models entries with context/output limits and capability metadata. The
+# catalog is a sibling-repo artifact — missing or malformed files degrade to
+# current behavior (warn once per model), never break the listing.
+_MODEL_CATALOG_DIR_ENV = "FUSION_MLX_MODEL_CATALOG_DIR"
+_catalog_cache: dict[str, dict | None] = {}
+_catalog_warned: set[str] = set()
+
+
+def _model_catalog_dir() -> str | None:
+    env_dir = os.environ.get(_MODEL_CATALOG_DIR_ENV)
+    if env_dir:
+        return env_dir
+    # Default: sibling repo checkout ../fusion-models-hub/catalog/models
+    # relative to the fusion-mlx repo root. Absent in site-packages or CI.
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(here)))
+    cand = os.path.join(
+        os.path.dirname(repo_root.rstrip(os.sep)),
+        "fusion-models-hub",
+        "catalog",
+        "models",
+    )
+    return cand if os.path.isdir(cand) else None
+
+
+def _catalog_file_candidates(model_id: str) -> list[str]:
+    # Catalog file names use the flattened form "Qwen--Qwen3-8B.json"; the
+    # pool may report "Qwen/Qwen3-8B" or a "mlx-community--..." cache key.
+    key = model_id.strip().lower().replace("/", "--")
+    cands = [key]
+    if key.startswith("mlx-community--"):
+        cands.append(key[len("mlx-community--") :])
+    return cands
+
+
+def _load_catalog_entry(model_id: str) -> dict | None:
+    if model_id in _catalog_cache:
+        return _catalog_cache[model_id]
+    entry: dict | None = None
+    catalog_dir = _model_catalog_dir()
+    if catalog_dir:
+        for name in _catalog_file_candidates(model_id):
+            path = os.path.join(catalog_dir, f"{name}.json")
+            if not os.path.isfile(path):
+                continue
+            try:
+                with open(path, encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    entry = data
+            except Exception as exc:
+                logger.warning(
+                    "model catalog: failed to parse %s (%s) — ignoring",
+                    path,
+                    type(exc).__name__,
+                )
+            break
+        else:
+            if model_id not in _catalog_warned:
+                _catalog_warned.add(model_id)
+                logger.warning(
+                    "model catalog: no entry for %s in %s — listing without "
+                    "catalog metadata",
+                    model_id,
+                    catalog_dir,
+                )
+    _catalog_cache[model_id] = entry
+    return entry
+
+
+# Catalog capability flags -> ModelInfo.capabilities keys. Flags absent from
+# this map (e.g. reasoning) are passed through under their own name.
+_CATALOG_CAP_MAP = {
+    "functionCall": "tool_calling",
+    "vision": "vision",
+    "embedding": "embedding",
+}
+
+
+def _catalog_enrichment(model_id: str) -> dict:
+    entry = _load_catalog_entry(model_id)
+    if entry is None:
+        return {}
+    out: dict = {}
+    ctx = entry.get("contextWindowTokens")
+    if isinstance(ctx, int) and ctx > 0:
+        out["context_length"] = ctx
+    max_out = entry.get("maxOutputTokens")
+    if isinstance(max_out, int) and max_out > 0:
+        out["max_output_tokens"] = max_out
+    raw_caps = entry.get("capabilities")
+    if isinstance(raw_caps, dict) and raw_caps:
+        caps: dict[str, bool] = {}
+        for flag, value in raw_caps.items():
+            if not isinstance(value, bool):
+                continue
+            key = _CATALOG_CAP_MAP.get(flag, flag)
+            caps[key] = caps.get(key, False) or value
+        if caps:
+            out["capabilities"] = caps
+    modality = entry.get("modality")
+    if isinstance(modality, dict):
+        inputs = modality.get("input")
+        if isinstance(inputs, list):
+            if "image" in inputs:
+                out["modality_input"] = "image"
+            elif "audio" in inputs:
+                out["modality_input"] = "audio"
+    return out
+
+
+def _apply_catalog_enrichment(info) -> None:
+    """Fill missing ModelInfo fields from the static catalog (#1607).
+
+    Runtime-resolved values win; the catalog only fills gaps and ORs its
+    capability flags in so a conservative resolver answer is never downgraded.
+    """
+    extra = _catalog_enrichment(info.id)
+    if not extra:
+        return
+    if info.context_length is None and "context_length" in extra:
+        info.context_length = extra["context_length"]
+    if (
+        getattr(info, "max_output_tokens", None) is None
+        and "max_output_tokens" in extra
+    ):
+        info.max_output_tokens = extra["max_output_tokens"]
+    if extra.get("capabilities"):
+        caps = dict(info.capabilities) if info.capabilities else {}
+        for key, value in extra["capabilities"].items():
+            caps[key] = bool(caps.get(key, False)) or value
+        info.capabilities = caps
+    if getattr(info, "modality", None) in (None, "", "text") and extra.get(
+        "modality_input"
+    ):
+        info.modality = extra["modality_input"]
+
+
 def set_openai_context(pool: EnginePool, req_router: RequestRouter) -> None:
     """Inject engine pool and request router into this module."""
     global _pool, _request_router
