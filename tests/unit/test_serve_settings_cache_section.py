@@ -108,3 +108,30 @@ def test_singleton_scheduler_config_takes_cache_section(tmp_path):
     finally:
         for f in fields(original):
             setattr(original, f.name, getattr(snapshot, f.name))
+
+
+def test_env_override_wins_over_settings_ssd_dir(tmp_path, monkeypatch):
+    # #1582 diagnostics: FUSION_MLX_SSD_DIR relocates/isolates the paged-SSD
+    # store without touching settings.json (used to boot an empty dir and
+    # rule out cache-accumulation slowdowns).
+    d = _write_settings(tmp_path, {"paged_ssd_cache_dir": "/tmp/ssd-from-settings"})
+    monkeypatch.setenv("FUSION_MLX_SSD_DIR", "/tmp/ssd-from-env")
+    cfg = SchedulerConfig()
+    assert _apply_settings_cache_section(cfg, d) is True
+    assert cfg.paged_ssd_cache_dir == "/tmp/ssd-from-env"
+
+
+def test_env_override_applies_when_settings_have_no_ssd_dir(tmp_path, monkeypatch):
+    d = _write_settings(tmp_path, {"hot_cache_max_size": "2GB"})
+    monkeypatch.setenv("FUSION_MLX_SSD_DIR", "/tmp/ssd-env-only")
+    cfg = SchedulerConfig()
+    assert _apply_settings_cache_section(cfg, d) is True
+    assert cfg.paged_ssd_cache_dir == "/tmp/ssd-env-only"
+
+
+def test_no_env_override_keeps_settings_ssd_dir(tmp_path, monkeypatch):
+    monkeypatch.delenv("FUSION_MLX_SSD_DIR", raising=False)
+    d = _write_settings(tmp_path, {"paged_ssd_cache_dir": "/tmp/ssd-keep"})
+    cfg = SchedulerConfig()
+    assert _apply_settings_cache_section(cfg, d) is True
+    assert cfg.paged_ssd_cache_dir == "/tmp/ssd-keep"
