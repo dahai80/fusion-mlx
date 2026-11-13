@@ -1576,6 +1576,12 @@ class DSpineSpecState:
         self._last_request_id = None
         self._caches = None
         self._window = None
+        # N11 hybrid drafting state (n-gram prefix head + DSpine
+        # continuation). Loads its own env config; disabled by default and
+        # a no-op on the pure path (see dspine/hybrid.py).
+        from ..speculative.dspine.hybrid import HybridDraftState
+
+        self._hybrid = HybridDraftState()
 
     def on_new_request(self, request_id: str):
         if self._last_request_id != request_id:
@@ -1585,12 +1591,14 @@ class DSpineSpecState:
             self._req_draft_accepted = 0
             self._caches = None
             self._window = None
+            self._hybrid.reset_request()
             drafter = getattr(self.runtime, "drafter", None)
             if drafter is not None:
                 drafter.reset_cache()
 
     def add_token(self, token: int):
         self.steps_since_start += 1
+        self._hybrid.add_token(token)
 
     def should_speculate(self) -> bool:
         return self.steps_since_start >= DSPINE_SPEC_WARMUP_STEPS
@@ -1631,6 +1639,7 @@ class DSpineSpecState:
             "draft_accepted": self.total_draft_accepted,
             "acceptance_rate": rate,
             "block_size": self.runtime.block_size,
+            **self._hybrid.get_stats(),
         }
 
 
@@ -1829,25 +1838,52 @@ def dspine_spec_step(
 
     draft_q_rows = None
     draft_cand = None
+    # N11 hybrid: on the sampled path, let the hybrid state plan this
+    # step's draft shape. No n-gram hit (or disabled/degraded) returns
+    # ([], block_size - 1) — identical to the pre-N11 pure-DSpine call.
+    hybrid_prefix: list[int] = []
+    n_draft = max(1, drafter.block_size - 1)
+    if sampled_path:
+        from ..speculative.dspine.hybrid import plan_hybrid_step
+
+        hybrid_prefix, n_draft = plan_hybrid_step(
+            dspine_state._hybrid, drafter.block_size
+        )
     try:
         with mx.stream(scheduler._stream):
             if sampled_path:
-                n_draft = max(1, drafter.block_size - 1)
                 step_seed = (
                     zlib.crc32(request_id.encode()) ^ dspine_state.total_spec_steps
                 ) & 0xFFFFFFFF
                 draft_key = mx.random.key(step_seed)
                 draft_uniforms = mx.random.uniform(0.0, 1.0, (n_draft,), key=draft_key)
-                draft_tokens, draft_q_rows, draft_cand = drafter.draft_block_sampled(
-                    dspine_state._window,
-                    current_token,
-                    dspine_state._caches,
-                    inv_temp=1.0 / temperature,
-                    top_k=top_k,
-                    top_p=top_p,
-                    min_p=min_p,
-                    uniforms=draft_uniforms,
-                )
+                if hybrid_prefix:
+                    draft_tokens, draft_q_rows, draft_cand = (
+                        drafter.draft_block_sampled_hybrid(
+                            dspine_state._window,
+                            current_token,
+                            hybrid_prefix,
+                            dspine_state._caches,
+                            inv_temp=1.0 / temperature,
+                            top_k=top_k,
+                            top_p=top_p,
+                            min_p=min_p,
+                            uniforms=draft_uniforms,
+                        )
+                    )
+                else:
+                    draft_tokens, draft_q_rows, draft_cand = (
+                        drafter.draft_block_sampled(
+                            dspine_state._window,
+                            current_token,
+                            dspine_state._caches,
+                            inv_temp=1.0 / temperature,
+                            top_k=top_k,
+                            top_p=top_p,
+                            min_p=min_p,
+                            uniforms=draft_uniforms,
+                        )
+                    )
             else:
                 draft_tokens = drafter.draft_block(
                     dspine_state._window, current_token, dspine_state._caches
@@ -1864,11 +1900,13 @@ def dspine_spec_step(
 
     if dspine_state.total_spec_steps == 0:
         logger.info(
-            "dspine_spec: first draft round K=%d window=%d anchor=%d sampled=%s",
+            "dspine_spec: first draft round K=%d window=%d anchor=%d sampled=%s "
+            "hybrid_prefix=%d",
             K,
             int(dspine_state._window.shape[1]),
             current_token,
             sampled_path,
+            len(hybrid_prefix),
         )
 
     sampled_from_regular = None
@@ -1958,6 +1996,17 @@ def dspine_spec_step(
     dspine_state._window = window
 
     dspine_state.record_result(n_accepted, K)
+
+    # N11 telemetry + n-gram history: record the source split of hybrid
+    # rounds (pure rounds are already covered by draft_proposed/accepted),
+    # and feed the committed tokens (accepted drafts + bonus) so the
+    # predictor's history stays contiguous with the token stream.
+    if sampled_path:
+        if hybrid_prefix:
+            dspine_state._hybrid.record_round(
+                len(hybrid_prefix), K - len(hybrid_prefix), n_accepted
+            )
+        dspine_state._hybrid.add_tokens(verified)
 
     if __import__("os").environ.get("DSPINE_SPEC_DEBUG_ROUNDS"):
         _cache = dspine_state._caches[0] if dspine_state._caches else None

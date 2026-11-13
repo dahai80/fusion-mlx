@@ -205,6 +205,71 @@ class DSpineDrafter:
         )
         return [int(x) for x in tokens.tolist()], q_rows, _cand
 
+    def draft_block_sampled_hybrid(
+        self,
+        target_hidden: mx.array,
+        anchor_token: int,
+        prefix_tokens: list[int],
+        caches: list[KVCache] | None = None,
+        *,
+        inv_temp: float,
+        top_k: int,
+        top_p: float,
+        min_p: float,
+        uniforms: mx.array,
+    ) -> tuple[list[int], list, list]:
+        """One drafting round continuing after an n-gram prefix head (N11).
+
+        Block layout: [anchor, *prefix_tokens, mask * n_suffix]. The prefix
+        tokens are embedded as real tokens, so the suffix masks attend to
+        them inside the draft forward — the drafter continues the chain
+        after the n-gram head. The refinement tail then refines only the
+        suffix rows, with the last prefix token as the first serial sender.
+
+        Returns (draft_tokens, q_rows, cand_ids) aligned per chain position:
+        prefix positions carry point-mass proposal rows (cand=[token],
+        q=[1.0]) and suffix rows come from the sampled tail. The point-mass
+        rows make the mixed chain directly consumable by the sampled
+        rejection verifier — a one-hot q row is the exact proposal
+        distribution of a deterministic source, so rejection sampling stays
+        distribution-preserving (lossless) with zero verifier changes.
+        """
+        d = self.draft
+        if not prefix_tokens:
+            raise ValueError("draft_block_sampled_hybrid requires a non-empty prefix")
+        caches = caches if caches is not None else self._caches
+        n_suffix = int(uniforms.shape[0])
+        if n_suffix < 1:
+            raise ValueError("draft_block_sampled_hybrid needs >= 1 suffix uniform")
+        block = mx.array(
+            [[anchor_token] + list(prefix_tokens) + [d.mask_token_id] * n_suffix],
+            dtype=mx.int32,
+        )
+        out, stash = d(target_hidden, block, caches)
+        rows = out[0, 1:]
+        if self._tail is None:
+            self.build_tail(target_hidden)
+        # Same 0-means-no-cutoff handling as draft_block_sampled.
+        top_k_eff = int(top_k) if int(top_k) > 0 else int(self._tail.k)
+        suffix_tokens, suffix_q_rows, suffix_cand = self._tail.sampled_hybrid(
+            rows,
+            stash,
+            anchor_token,
+            list(prefix_tokens),
+            inv_temp=inv_temp,
+            top_k=top_k_eff,
+            top_p=top_p,
+            min_p=min_p,
+            uniforms=uniforms,
+        )
+        cand_rows = [mx.array([int(t)], dtype=mx.int32) for t in prefix_tokens]
+        q_rows = [mx.array([1.0], dtype=mx.float32) for _ in prefix_tokens]
+        for j in range(suffix_cand.shape[0]):
+            cand_rows.append(suffix_cand[j])
+            q_rows.append(suffix_q_rows[j])
+        draft_tokens = list(prefix_tokens) + [int(x) for x in suffix_tokens.tolist()]
+        return draft_tokens, q_rows, cand_rows
+
 
 def _find_lm_head(model: Any):
     if hasattr(model, "lm_head"):

@@ -170,19 +170,24 @@ class RefinementTail:
         self.prev_w = bridge.prev.weight.astype(mx.float32)
         self.write_w = bridge.feature_write_weights[-1].astype(mx.float32)
 
-    def _split_stash(self, stash: dict, n: int):
+    def _split_stash(self, stash: dict, n: int, start: int = 1):
+        # ``start`` is the stash row index of the first REFINED position's
+        # sender: the row at ``start - 1`` is dropped (it only feeds the
+        # serial chain via tsv token lookups). Default 1 keeps the pure
+        # path's contract (row 0 = anchor). N11 hybrid passes start=p so
+        # rows p+1..n are refined after a p-token given prefix.
         raw = stash["raw"]
         rms = stash["rms"]
         packed = stash["packed"]
-        T = n + 1
+        T = n + start
         if raw.shape[0] != T:
             raise ValueError(
                 f"refinement stash has {raw.shape[0]} rows, expected T={T}"
             )
         return (
-            raw[1:].astype(mx.float32),  # [n,H]
-            rms[1:].astype(mx.float32),  # [n]
-            packed[1:, : self.rank].astype(mx.float32),  # [n,R]
+            raw[start:].astype(mx.float32),  # [n,H]
+            rms[start:].astype(mx.float32),  # [n]
+            packed[start:, : self.rank].astype(mx.float32),  # [n,R]
         )
 
     def candidates(self, rows: mx.array) -> mx.array:
@@ -216,8 +221,19 @@ class RefinementTail:
         self, rows: mx.array, stash: dict, anchor: int
     ) -> tuple[mx.array, mx.array]:
         """Returns (table [n,K,K] fp32, candidates [n,K])."""
+        raw, rms, q = self._split_stash(stash, rows.shape[0])
+        return self._serial_table(rows, raw, rms, q, anchor)
+
+    def _serial_table(
+        self,
+        rows: mx.array,
+        raw: mx.array,
+        rms: mx.array,
+        q: mx.array,
+        anchor: int,
+    ) -> tuple[mx.array, mx.array]:
+        """Serial-table math over pre-split stash parts (N11 hybrid seam)."""
         n = rows.shape[0]
-        raw, rms, q = self._split_stash(stash, n)
         cand = self.candidates(rows)
 
         anchor_arr = mx.full((1, self.k), int(anchor), dtype=mx.int32)
@@ -252,6 +268,51 @@ class RefinementTail:
     ) -> tuple[mx.array, mx.array, mx.array]:
         """Returns (draft token ids [n], q rows [n,K], candidates [n,K])."""
         table, cand = self.sampled_table(rows, stash, anchor)
+        tokens, q_rows = serial_sample_chain(
+            table,
+            cand,
+            inv_temp=inv_temp,
+            top_k=top_k,
+            top_p=top_p,
+            min_p=min_p,
+            uniforms=uniforms,
+        )
+        return tokens, q_rows, cand
+
+    def sampled_hybrid(
+        self,
+        rows: mx.array,
+        stash: dict,
+        anchor: int,
+        prefix_tokens: list[int],
+        *,
+        inv_temp: float,
+        top_k: int,
+        top_p: float,
+        min_p: float,
+        uniforms: mx.array,
+    ) -> tuple[mx.array, mx.array, mx.array]:
+        """Sampled refinement of the rows AFTER a given (non-mask) prefix.
+
+        N11 hybrid drafting: block positions 1..len(prefix_tokens) carried
+        real n-gram tokens instead of masks, so their hidden rows are
+        already conditioned on the prefix through the block forward. Only
+        the suffix rows are refined here, and the serial chain's first
+        sender is the LAST prefix token (exact_sender semantics: the tail
+        reads sender codes from the serial tables, exactly as it does for
+        the anchor in the pure path).
+        """
+        p = len(prefix_tokens)
+        n_total = int(rows.shape[0])
+        if not 0 < p < n_total:
+            raise ValueError(
+                f"sampled_hybrid needs 0 < prefix {p} < draft rows {n_total}"
+            )
+        # Stash rows are [anchor, pos1..posN]; the sender row for the first
+        # refined position is pos p (stash index p), so refined rows start
+        # at stash index p + 1.
+        raw, rms, q = self._split_stash(stash, n_total - p, start=p + 1)
+        table, cand = self._serial_table(rows[p:], raw, rms, q, int(prefix_tokens[-1]))
         tokens, q_rows = serial_sample_chain(
             table,
             cand,
