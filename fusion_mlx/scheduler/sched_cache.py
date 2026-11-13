@@ -432,6 +432,14 @@ def _enlarge_block_size_for_arrays_cache(self) -> None:
     if not self.config.paged_ssd_cache_dir:
         return
 
+    # Explicit user tier (P2-3 downshift knob) pins the block size — the
+    # user's value is a deliberate trade (more boundary snapshots for
+    # sub-2048 prefix reuse), never auto-enlarge it. The chunk clamp still
+    # applies so snapshot boundaries align with the smaller blocks.
+    if int(getattr(self.config, "paged_cache_block_size_override", 0) or 0) > 0:
+        self._clamp_prefill_step_to_block_size()
+        return
+
     # Skip if RotatingKVCache already adjusted block size.
     rotating_sizes = self._detect_rotating_window_sizes()
     if rotating_sizes:
@@ -479,12 +487,23 @@ def _enlarge_block_size_for_arrays_cache(self) -> None:
     # onto it with a 4096 default) to the block size so snapshot boundaries
     # and block boundaries coincide and every stored block carries real
     # state.
+    self._clamp_prefill_step_to_block_size()
+
+
+def _clamp_prefill_step_to_block_size(self) -> None:
+    """Clamp prefill_step_size down to the active block size.
+
+    Boundary snapshots emit only at chunk ends; a chunk larger than the
+    block size leaves interior blocks with placeholder ArraysCache state
+    (#1545). Applies to the auto-enlarged 2048 tier AND to explicit user
+    tiers (P2-3 downshift) where blocks shrink below the chunk default.
+    """
+    target = int(self.config.paged_cache_block_size)
     step_size = int(getattr(self.config, "prefill_step_size", 0) or 0)
     if step_size > target:
         logger.info(
-            "Clamping prefill_step_size=%s to block_size=%s for "
-            "ArraysCache hybrid model (aligns boundary snapshots with "
-            "block boundaries)",
+            "Clamping prefill_step_size=%s to block_size=%s (aligns "
+            "boundary snapshots with block boundaries)",
             step_size,
             target,
         )
