@@ -546,6 +546,11 @@ class ChatCompletionRequest(BaseModel):
     temperature: float | None = Field(None, ge=0.0, le=2.0)
     top_p: float | None = Field(None, ge=0.0, le=1.0)
     max_tokens: int | None = Field(None, ge=1, le=131072)
+    # OpenAI multi-choice count. Historically undeclared — extra="allow"
+    # parked it in __pydantic_extra__ and the handler silently returned a
+    # single choice for n>1 (GRPO rollout sampled G=1 while the trainer
+    # believed G=4). Declared + honored by fan-out in the chat route.
+    n: int = Field(1, ge=1, le=32)
     # OpenAI-canonical token cap since Sept 2024 (preferred over max_tokens for
     # reasoning models; newer SDKs >=1.45 send only this field). Normalized to
     # max_tokens by a model_validator so all downstream code keeps reading the
