@@ -18,6 +18,7 @@ def _expected_default_draft():
     # restores the historical base-K construction.
     return ns.NGRAM_SPEC_K_MAX if ns.NGRAM_SPEC_ADAPTIVE_K else NGRAM_SPEC_NUM_DRAFT
 
+
 logger = logging.getLogger(__name__)
 
 

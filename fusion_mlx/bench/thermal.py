@@ -88,9 +88,7 @@ async def record_warmup(
         await work()
         rounds += 1
     elapsed = time.perf_counter() - t0
-    emit(
-        f"thermal protocol: warmup done ({elapsed:.0f}s, {rounds} work rounds)"
-    )
+    emit(f"thermal protocol: warmup done ({elapsed:.0f}s, {rounds} work rounds)")
     return elapsed
 
 
@@ -202,9 +200,7 @@ class ThermalTracker:
         # ``near_best`` marks a run whose last window sits within 5% of the
         # best observed window — the boost-window signature. Peak-vs-sustained
         # comparisons must only ever match on this flag.
-        out["near_best"] = bool(
-            best > 0 and self._samples[-1] <= best * 1.05
-        )
+        out["near_best"] = bool(best > 0 and self._samples[-1] <= best * 1.05)
         return out
 
     def format_summary(self) -> str:
