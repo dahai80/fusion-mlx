@@ -1,3 +1,19 @@
+---
+doc_id: fusion-mlx/guide/benchmark-thermal-protocol
+product: fusion-mlx
+class: core
+entry: service
+doc_type: guide
+title: { zh: "热感知基准协议 (#1588)", en: "Thermal-aware benchmark protocol (#1588)" }
+audience: engineer
+status: draft
+version: 0.10.63
+updated: 2026-11-13
+owner: @dahai
+source_of_truth:
+  - docs/benchmark-thermal-protocol.md
+---
+
 # Thermal-Aware Benchmark Protocol (#1588)
 
 Apple Silicon throttles **silently** — `pmset` records no warning. Measured
