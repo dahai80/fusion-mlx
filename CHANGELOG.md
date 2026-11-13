@@ -14,6 +14,11 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [Unreleased]
+
+### Added
+- **Thermal-aware benchmark protocol (#1588)**: `fusion_mlx.bench.thermal` ships the protocol primitives — `record_idle()` (pre-run GPU idle with duration logging) and `ThermalTracker` (samples the scheduler's rolling decode ms/step during a run, summarizes `idle_before_s` / `first_window_ms_per_step` / `last_window_ms_per_step` / `drift_ratio`, with a post-run sample so short runs still report a last window). `fusion-mlx bench` gains `--thermal-idle-s` (default 0; 600 recommended for comparative runs) and always prints a thermal-state line in Results. Rationale: Apple Silicon throttles silently (7.2 → 14.5 ms/step over 10 sustained minutes, full recovery after 10 min idle, #1582) — comparative benches mixing cool and heat-soaked runs are invalid. Protocol + measured envelope documented in `docs/benchmark-thermal-protocol.md`.
+
 ## [0.10.63] - 2026-11-13 — RL resume + VLM QLoRA, TurboQuant SSD cold tier, DSpine T>0 sampled path
 
 ### Added
