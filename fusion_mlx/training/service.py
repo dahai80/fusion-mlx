@@ -329,6 +329,13 @@ class FineTuneJob:
     terminal: bool = False
     # #1186: auto_restart attempts consumed by the kill policy.
     attempts: int = 0
+    # #1566: populated on distributed fine-tune jobs only. Keys:
+    #   role: "submitter" (rank 0, owns fan-out and the adapter output)
+    #   rank: int, world_size: int
+    #   hostfile: path to the MLX ring hostfile JSON ("" when world==1)
+    #   nodes: submitter-side copy of [{host, port, dataset}] for status
+    # None = local single-node job (previous behavior, untouched paths).
+    distributed: dict | None = None
     cond: asyncio.Condition = field(default_factory=asyncio.Condition)
 
     def to_dict(self) -> dict:
@@ -346,6 +353,7 @@ class FineTuneJob:
             "adapter_name": self.adapter_name,
             "error": self.error,
             "attempts": self.attempts,
+            "distributed": self.distributed,
         }
 
 
@@ -559,6 +567,45 @@ def _resume_adapter_weights(model, cfg: FineTuneConfig, adapter_path: Path):
     model.load_weights(str(resume_file), strict=False)
     logger.info("Resumed adapter weights from %s (#1182)", cfg.init_adapter_path)
     return model
+
+
+# #1566: MLX distributed env contract (verified against mlx ring backend —
+# 2-rank loopback smoke): MLX_RANK + MLX_WORLD_SIZE + MLX_HOSTFILE, where
+# MLX_HOSTFILE is a PATH to a JSON list-of-lists of "ip:port" per rank.
+_DIST_ENV_KEYS = ("MLX_RANK", "MLX_WORLD_SIZE", "MLX_HOSTFILE")
+
+
+def stage_dist_env(distributed: dict | None) -> dict:
+    """Set MLX_* env for a distributed training child (#1566).
+
+    The training child is spawned via multiprocessing "spawn", which copies
+    os.environ at spawn time — values must be set in the parent before
+    run_training_process starts. Returns the saved previous values for
+    restore_dist_env. Empty dict = no-op for local jobs.
+    """
+    if not distributed:
+        return {}
+    pairs = {
+        "MLX_RANK": str(distributed["rank"]),
+        "MLX_WORLD_SIZE": str(distributed["world_size"]),
+    }
+    hostfile = distributed.get("hostfile") or ""
+    if hostfile:
+        pairs["MLX_HOSTFILE"] = hostfile
+    saved = {}
+    for key, value in pairs.items():
+        saved[key] = os.environ.get(key)
+        os.environ[key] = value
+        logger.info("Distributed fine-tune env: %s=%s", key, value)
+    return saved
+
+
+def restore_dist_env(saved: dict) -> None:
+    for key, value in saved.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 def execute_training_core(
@@ -915,6 +962,8 @@ class FineTuneService:
         dataset: str,
         config: FineTuneConfig | None = None,
         adapter_name: str = "",
+        job_id: str = "",
+        distributed: dict | None = None,
     ) -> FineTuneJob:
         cfg = config or FineTuneConfig()
         adapter_name = adapter_name or f"lora-{uuid.uuid4().hex[:6]}"
@@ -926,7 +975,12 @@ class FineTuneService:
             config=cfg,
             adapter_path=adapter_path,
             adapter_name=adapter_name,
+            distributed=distributed,
         )
+        if job_id:
+            # #1566: distributed workers share the submitter's job id so the
+            # trainer can poll any node and get the same record shape.
+            job.job_id = job_id
         self._jobs[job.job_id] = job
         self._queue.append(job.job_id)
         self._persist_jobs()
@@ -1157,6 +1211,9 @@ class FineTuneService:
             name="train-child-rss-watch",
         )
         watcher.start()
+        # #1566: stage MLX_RANK/WORLD_SIZE/HOSTFILE before the spawn so the
+        # child's mx.distributed.init() joins the job's ring group.
+        saved_env = stage_dist_env(job.distributed)
         try:
             return await asyncio.to_thread(
                 run_training_process,
@@ -1168,6 +1225,7 @@ class FineTuneService:
         finally:
             stop_watch.set()
             watcher.join(timeout=5)
+            restore_dist_env(saved_env)
 
     def _mark_job_completed(self, job: FineTuneJob):
         job.status = JobStatus.COMPLETED
@@ -1479,6 +1537,7 @@ class FineTuneService:
                     adapter_path=item.get("adapter_path", ""),
                     attempts=item.get("attempts", 0),
                     adapter_name=item.get("adapter_name", ""),
+                    distributed=item.get("distributed"),
                     error=item.get("error", ""),
                     terminal=status
                     in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED),
