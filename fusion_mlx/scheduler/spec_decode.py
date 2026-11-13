@@ -1647,6 +1647,45 @@ def _dspine_concat_captured(captured: dict, layer_ids: list[int], take_rows: int
     return mx.concatenate(states, axis=-1)
 
 
+_PROMPT_CLASS_GATE_ENV = "FUSION_MLX_SPEC_PROMPT_CLASS_GATE"
+
+
+def _prompt_class_gate_on() -> bool:
+    import os
+
+    return os.environ.get(_PROMPT_CLASS_GATE_ENV, "1").strip().lower() not in (
+        "0",
+        "false",
+        "off",
+    )
+
+
+_PROMPT_CLASS_GATE_ON = _prompt_class_gate_on()
+
+
+def _classify_request_prompt(request) -> str:
+    # Deterministic classification of the request prompt for the spec gate.
+    # Text prompts classify the LAST USER TURN (the scheduler sees the
+    # rendered chat template — system text and special-token markers like
+    # `<|im_end|>` would poison marker-based classification). Token-id
+    # prompts decode best-effort via the tokenizer captured on the runtime
+    # (fall back to "other" = ungated).
+    from ..speculative.prompt_class import classify_prompt, extract_last_user_turn
+
+    prompt = getattr(request, "prompt", None)
+    if isinstance(prompt, list) and prompt:
+        prompt = None
+    if isinstance(prompt, str) and prompt:
+        prompt = extract_last_user_turn(prompt)
+    return classify_prompt(prompt)
+
+
+def spec_gate_allows(prompt_class: str, temperature: float) -> bool:
+    from ..speculative.prompt_class import spec_gate_allows as _allows
+
+    return _allows(prompt_class, temperature)
+
+
 def dspine_spec_step(
     scheduler,
     output,
@@ -1677,6 +1716,28 @@ def dspine_spec_step(
 
     if dspine_state._last_request_id != request_id:
         dspine_state.on_new_request(request_id)
+        # P2-2 prompt-class gate: classify once per request, then gate
+        # speculation for classes that historically lose (open chat ~15%
+        # acceptance ≈ parity at T>0 — draft overhead cancels the accept
+        # wins). Greedy chat still speculates; math/code/other always do.
+        # FUSION_MLX_SPEC_PROMPT_CLASS_GATE=0 restores ungated behavior.
+        _sp0 = getattr(request, "sampling_params", None)
+        _temp0 = float(getattr(_sp0, "temperature", 0.0) or 0.0)
+        dspine_state.req_prompt_class = _classify_request_prompt(request)
+        if _PROMPT_CLASS_GATE_ON and not spec_gate_allows(
+            dspine_state.req_prompt_class, _temp0
+        ):
+            logger.info(
+                "dspine_spec: prompt class %s gated off speculation for "
+                "request %s (T>0 losing class)",
+                dspine_state.req_prompt_class,
+                request_id,
+            )
+            dspine_state.req_gated = True
+        else:
+            dspine_state.req_gated = False
+    if getattr(dspine_state, "req_gated", False):
+        return []
 
     dspine_state.add_token(current_token)
 
