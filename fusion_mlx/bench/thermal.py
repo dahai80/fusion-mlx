@@ -15,6 +15,15 @@ This module gives bench runners the two protocol primitives:
   within-run throttle drift is visible in the output.
 
 Recommended idle window for comparative runs: 600 s (``THERMAL_IDLE_RECOMMENDED_S``).
+
+Clock-phase extension (2026-11-13, P2-1 follow-up): single-stream decode
+on M5 Max walks a full curve — idle-ramp (6.5-7.0 ms/step) -> narrow boost
+window (5.92-6.07 ms/step, ~30-90 s of GPU work) -> throttle decay ->
+sustained floor (~106 tok/s on the 4B). Point-in-time tok/s numbers taken
+at different phases are not comparable, even with identical idle windows.
+``record_warmup`` standardizes the phase before measurement, and
+``ThermalTracker.summary`` tags the observed phase so peak and sustained
+numbers never get mixed in one comparison table.
 """
 
 from __future__ import annotations
@@ -22,12 +31,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 THERMAL_IDLE_RECOMMENDED_S = 600
+# Phase-tag thresholds on the drift ratio (last / first sample). The
+# measured curves give wide margins: ramp moves >=1.2x within a window,
+# throttle decay >=1.25x, boost/steady stays within a few percent.
+PHASE_RAMP_THRESHOLD = 0.94
+PHASE_THROTTLE_THRESHOLD = 1.08
 
 
 async def record_idle(
@@ -49,6 +63,58 @@ async def record_idle(
     return elapsed
 
 
+async def record_warmup(
+    seconds: float,
+    work: Callable[[], Awaitable[Any]],
+    log: Callable[[str], None] | None = None,
+) -> float:
+    """Run a repeated GPU workload for ``seconds`` before a bench run.
+
+    ``work`` is a short async unit (e.g. one small generation) invoked in
+    a loop until the deadline elapses. This standardizes the clock phase:
+    a bench that starts immediately after idle lands in the ramp phase
+    (141-153 tok/s on the 4B) while the same engine lands at 165-169 in
+    the boost window — the phase, not the engine, decides the number.
+
+    Returns the actual warm-up duration (0 when ``seconds`` <= 0).
+    """
+    if seconds <= 0:
+        return 0.0
+    emit = log or (lambda msg: logger.info(msg))
+    emit(f"thermal protocol: warming up GPU for {seconds:.0f}s before bench run")
+    t0 = time.perf_counter()
+    rounds = 0
+    while time.perf_counter() - t0 < seconds:
+        await work()
+        rounds += 1
+    elapsed = time.perf_counter() - t0
+    emit(
+        f"thermal protocol: warmup done ({elapsed:.0f}s, {rounds} work rounds)"
+    )
+    return elapsed
+
+
+def classify_phase(samples: list[float]) -> str:
+    """Deterministic clock-phase tag from decode ms/step samples.
+
+    ``ramping`` — ms/step still falling (clocks climbing toward boost);
+    ``throttling`` — ms/step rising (thermal decay underway);
+    ``steady`` — flat within thresholds. Fewer than 2 samples -> ``unknown``.
+    """
+    if len(samples) < 2:
+        return "unknown"
+    first = samples[0]
+    last = samples[-1]
+    if first <= 0:
+        return "unknown"
+    drift = last / first
+    if drift <= PHASE_RAMP_THRESHOLD:
+        return "ramping"
+    if drift >= PHASE_THROTTLE_THRESHOLD:
+        return "throttling"
+    return "steady"
+
+
 class ThermalTracker:
     """Samples rolling decode ms/step during a bench run (#1588).
 
@@ -67,10 +133,14 @@ class ThermalTracker:
         self._samples: list[float] = []
         self._sample_times: list[float] = []
         self.idle_before_s: float = 0.0
+        self.warmup_before_s: float = 0.0
         self._task: asyncio.Task | None = None
 
     def note_idle(self, seconds: float) -> None:
         self.idle_before_s = seconds
+
+    def note_warmup(self, seconds: float) -> None:
+        self.warmup_before_s = seconds
 
     def _sample_now(self) -> None:
         try:
@@ -110,27 +180,41 @@ class ThermalTracker:
             self._task = None
 
     def summary(self) -> dict[str, Any]:
-        """Thermal-state block: idle_before_s + first/last window + drift."""
+        """Thermal-state block: idle/warmup metadata + windows + phase tag."""
         out: dict[str, Any] = {
             "idle_before_s": round(self.idle_before_s, 1),
+            "warmup_before_s": round(self.warmup_before_s, 1),
             "first_window_ms_per_step": None,
             "last_window_ms_per_step": None,
             "drift_ratio": None,
+            "phase": "unknown",
+            "near_best": None,
         }
         if not self._samples:
             return out
         out["first_window_ms_per_step"] = round(self._samples[0], 2)
         out["last_window_ms_per_step"] = round(self._samples[-1], 2)
         first = self._samples[0]
+        best = min(self._samples)
         if first > 0:
             out["drift_ratio"] = round(self._samples[-1] / first, 3)
+        out["phase"] = classify_phase(self._samples)
+        # ``near_best`` marks a run whose last window sits within 5% of the
+        # best observed window — the boost-window signature. Peak-vs-sustained
+        # comparisons must only ever match on this flag.
+        out["near_best"] = bool(
+            best > 0 and self._samples[-1] <= best * 1.05
+        )
         return out
 
     def format_summary(self) -> str:
         s = self.summary()
         return (
             f"  Thermal state: idle_before={s['idle_before_s']:.0f}s"
+            f", warmup_before={s['warmup_before_s']:.0f}s"
             f", first_window={s['first_window_ms_per_step']}"
             f" ms/step, last_window={s['last_window_ms_per_step']}"
             f" ms/step, drift_ratio={s['drift_ratio']}"
+            f", phase={s['phase']}"
+            f", near_best={s['near_best']}"
         )

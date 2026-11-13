@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """bench_command — fusion-mlx bench."""
 
+import dataclasses
 import logging
 import sys
 
@@ -66,7 +67,7 @@ def bench_command(args):
     from mlx_lm import load
 
     from ..api.utils import is_mllm_model as _bench_is_mllm_model
-    from ..bench.thermal import ThermalTracker, record_idle
+    from ..bench.thermal import ThermalTracker, record_idle, record_warmup
     from ..engine_core import AsyncEngineCore, EngineConfig
     from ..pflash import config_from_args as _pflash_config_from_args
     from ..pflash import resolve_pflash_mode_default as _pflash_resolve_default
@@ -208,6 +209,24 @@ def bench_command(args):
                 )
             )
             thermal.note_idle(await record_idle(getattr(args, "thermal_idle_s", 0.0)))
+
+            # Clock-phase protocol: standardize the boost window before
+            # measurement. Without this, a cold-start bench samples the
+            # ramp phase (141-153 tok/s class on the 4B) and understates
+            # the engine by ~15% versus its own boost window.
+            warmup_s = getattr(args, "thermal_warmup_s", 0.0)
+            if warmup_s > 0:
+                async def _warm_round() -> None:
+                    rid = await engine.add_request(warmup_prompt, warmup_params)
+                    async for out in engine.stream_outputs(rid, timeout=120):
+                        if out.finished:
+                            return
+
+                warmup_prompt = (
+                    "Count from 1 to 64, one number per line, no extra words."
+                )
+                warmup_params = dataclasses.replace(params, max_tokens=64)
+                thermal.note_warmup(await record_warmup(warmup_s, _warm_round))
 
             start_time = time.perf_counter()
 

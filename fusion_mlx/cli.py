@@ -1347,6 +1347,19 @@ Examples:
         ),
     )
     bench_parser.add_argument(
+        "--thermal-warmup-s",
+        type=float,
+        default=0.0,
+        help=(
+            "Sustained GPU warm-up seconds after idle, before measurement "
+            "(clock-phase protocol). A bench that starts cold lands in the "
+            "ramp phase (141-153 tok/s class) while the same engine peaks "
+            "at 165-169 in the boost window — standardize the phase so "
+            "comparative runs match. Results record warmup_before_s and a "
+            "phase tag (ramping/steady/throttling, near_best flag)."
+        ),
+    )
+    bench_parser.add_argument(
         "--max-tokens", type=int, default=100, help="Max tokens per prompt"
     )
     bench_parser.add_argument(
