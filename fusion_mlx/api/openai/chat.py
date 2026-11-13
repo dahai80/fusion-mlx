@@ -152,7 +152,9 @@ async def _fan_out_chat_choices(
     merged["choices"] = all_choices
     if len(dicts) > 1:
         u = merged.get("usage") or {}
-        u["prompt_tokens"] = sum(d.get("usage", {}).get("prompt_tokens", 0) for d in dicts)
+        u["prompt_tokens"] = sum(
+            d.get("usage", {}).get("prompt_tokens", 0) for d in dicts
+        )
         u["completion_tokens"] = sum(
             d.get("usage", {}).get("completion_tokens", 0) for d in dicts
         )
