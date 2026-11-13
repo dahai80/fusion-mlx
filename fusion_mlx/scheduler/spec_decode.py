@@ -1327,6 +1327,19 @@ class DFlash2SpecState:
         }
 
 
+def _request_temperature(request) -> float:
+    """Temperature for spec-decode gates, read from SamplingParams.
+
+    Request carries sampling_params (dataclass field), NOT a temperature
+    attribute — getattr(request, "temperature", 0.0) always returned the
+    0.0 default, so the dflash2 sampled path saw every request as greedy
+    and T>0 requests were misgated.
+    """
+    params = getattr(request, "sampling_params", None)
+    temperature = getattr(params, "temperature", 0.0)
+    return float(temperature) if temperature else 0.0
+
+
 def dflash2_spec_step(
     scheduler,
     output,
@@ -1384,7 +1397,7 @@ def dflash2_spec_step(
     if drafter is None or not drafter._bound:
         return []
 
-    temperature = getattr(request, "temperature", 0.0) or 0.0
+    temperature = _request_temperature(request)
 
     current_offset = 0
     for c in prompt_cache:
