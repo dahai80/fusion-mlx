@@ -68,7 +68,9 @@ def _apply_settings_cache_section(scheduler_config, settings_dir: str | None) ->
     _ssd_env = os.environ.get("FUSION_MLX_SSD_DIR")
     if _ssd_env:
         _ssd_dir = _ssd_env
-        logger.info("cache settings: ssd_dir overridden by FUSION_MLX_SSD_DIR=%s", _ssd_dir)
+        logger.info(
+            "cache settings: ssd_dir overridden by FUSION_MLX_SSD_DIR=%s", _ssd_dir
+        )
     if _ssd_dir:
         scheduler_config.paged_ssd_cache_dir = str(_ssd_dir)
     _hot = _parse_size_to_bytes(cache_sj.get("hot_cache_max_size"))

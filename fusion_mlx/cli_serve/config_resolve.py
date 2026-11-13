@@ -60,7 +60,9 @@ def _resolve_block_size_tier(cache_sj: dict) -> int:
     try:
         val = int(float(raw))
     except ValueError:
-        logger.warning("cache settings: ignoring invalid paged_cache_block_size=%r", raw)
+        logger.warning(
+            "cache settings: ignoring invalid paged_cache_block_size=%r", raw
+        )
         return 0
     if val < 8 or val > 32768:
         logger.warning(
