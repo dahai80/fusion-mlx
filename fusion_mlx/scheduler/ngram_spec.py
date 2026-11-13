@@ -113,6 +113,30 @@ NGRAM_SPEC_ORDER = int(__import__("os").environ.get("FUSION_NGRAM_SPEC_ORDER", "
 NGRAM_SPEC_NUM_DRAFT = int(
     __import__("os").environ.get("FUSION_NGRAM_SPEC_NUM_DRAFT", "3")
 )
+# Adaptive draft-length ceiling. The suffix drafter is built with this cap
+# and the controller trims proposals to a dynamic K that follows the rolling
+# acceptance: predictable spans (counting, boilerplate, repeated lists)
+# sustain high acceptance and win from longer drafts — more accepted tokens
+# per verify forward, and the verify forward cost grows sublinearly with K
+# because b1 decode is weight-bandwidth-bound. Diverse text stays at the
+# base K. Verify is exact greedy rejection, so any K preserves output
+# identity (lossless by construction).
+NGRAM_SPEC_K_MAX = int(
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_K_MAX", "16")
+)
+NGRAM_SPEC_ADAPTIVE_K = (
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_ADAPTIVE_K", "1") == "1"
+)
+# Rolling-window acceptance thresholds for K up/downshift. Upshift requires
+# strong acceptance (drafts are reliable); downshift keeps a band between
+# the break-even pause and the upshift point so K settles instead of
+# oscillating.
+NGRAM_SPEC_K_UPSHIFT_RATE = float(
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_K_UPSHIFT_RATE", "0.8")
+)
+NGRAM_SPEC_K_DOWNSHIFT_RATE = float(
+    __import__("os").environ.get("FUSION_NGRAM_SPEC_K_DOWNSHIFT_RATE", "0.5")
+)
 
 
 class NGramSpecState:
@@ -137,6 +161,15 @@ class NGramSpecState:
         self._break_even_default = (
             break_even if break_even is not None else NGRAM_SPEC_DEFAULT_BREAK_EVEN
         )
+        # Adaptive K: base K is the historical num_draft; the drafter is
+        # built with the K_MAX ceiling so predict() can propose up to
+        # NGRAM_SPEC_K_MAX tokens and get_drafts() trims to _current_k.
+        # _k_ema tracks the ACTUAL proposals per spec step so the dynamic
+        # break-even stays meaningful as K moves (the configured num_draft
+        # would drift from reality after an upshift).
+        self._base_k = min(NGRAM_SPEC_NUM_DRAFT, self.predictor.num_draft)
+        self._current_k = self._base_k
+        self._k_ema = float(self._base_k)
         self.steps = 0
         self.total_spec_steps = 0
         self.total_draft_proposed = 0
@@ -183,7 +216,12 @@ class NGramSpecState:
         import os
 
         backend = os.environ.get("FUSION_NGRAM_SPEC_PREDICTOR", "suffix")
-        nd = num_draft if num_draft is not None else NGRAM_SPEC_NUM_DRAFT
+        if num_draft is not None:
+            nd = num_draft
+        elif NGRAM_SPEC_ADAPTIVE_K:
+            nd = NGRAM_SPEC_K_MAX
+        else:
+            nd = NGRAM_SPEC_NUM_DRAFT
         if backend == "suffix":
             # order maps to max_suffix_len when explicitly given (config plumbing);
             # otherwise fall back to the suffix module default.
@@ -294,18 +332,25 @@ class NGramSpecState:
         return True
 
     def get_drafts(self) -> list[int]:
-        return self.predictor.predict()
+        drafts = self.predictor.predict()
+        # Adaptive K trims the drafter's proposal to the current dynamic K.
+        # The drafter is built with the K_MAX ceiling; predictable spans
+        # upshift _current_k so a single verify forward carries more tokens.
+        if NGRAM_SPEC_ADAPTIVE_K and len(drafts) > self._current_k:
+            return drafts[: self._current_k]
+        return drafts
 
     def _break_even(self) -> float:
         # Spec wins iff (n_accepted + 1) / V > 1, because the verify forward
         # produces n_accepted matched drafts PLUS one bonus token (the first
         # mismatch or, on full-accept, the extra query). So the break-even is
         # n_accepted > V - 1, and per-step acceptance rate = (V - 1) / K.
-        # K = configured num_draft (the typical verify batch), NOT the
-        # oscillating _last_K (which swings 1/2/4 and makes the threshold
-        # jump between 0.9-cap and 0.15 — pausing spec at 70% acceptance
-        # where it wins, or running at 40% where it loses).
-        K = self.predictor.num_draft
+        # K is the EMA of ACTUAL proposals per spec step (_k_ema): neither
+        # the configured num_draft (stale after an adaptive-K upshift) nor
+        # the oscillating _last_K (which swings 1/2/4 and makes the
+        # threshold jump between 0.9-cap and 0.15 — pausing spec at 70%
+        # acceptance where it wins, or running at 40% where it loses).
+        K = max(1, int(round(self._k_ema)))
         if self._verify_dt_ema is None or self._decode_dt_ema is None:
             return self._break_even_default
         v = self._verify_dt_ema / max(self._decode_dt_ema, 1e-6)
@@ -327,6 +372,7 @@ class NGramSpecState:
 
         if n_total > 0:
             self._last_K = n_total
+            self._k_ema = (1 - self._alpha) * self._k_ema + self._alpha * n_total
         if verify_dt is not None and verify_dt > 0:
             # Discard cold-start verify timings (Metal JIT compile +
             # cache fill). The first _verify_warmup_target samples are
@@ -374,6 +420,10 @@ class NGramSpecState:
             threshold = self._break_even()
             if avg_rate < threshold and not self._paused:
                 self._paused = True
+                # A pause means this workload segment stopped rewarding
+                # speculation; drop K back to base so the resume probe
+                # re-measures at the conservative draft length.
+                self._current_k = self._base_k
                 v_ratio = (self._verify_dt_ema or 0) / max(
                     self._decode_dt_ema or 1e-6, 1e-6
                 )
@@ -385,6 +435,40 @@ class NGramSpecState:
                     v_ratio,
                     self._last_K,
                 )
+            elif NGRAM_SPEC_ADAPTIVE_K and not self._paused:
+                # Adaptive draft length: strong acceptance earns a longer
+                # draft (more tokens per verify forward); mediocre
+                # acceptance in the band between break-even and upshift
+                # walks K back toward base without pausing spec outright.
+                k_ceiling = self.predictor.num_draft
+                if (
+                    avg_rate >= NGRAM_SPEC_K_UPSHIFT_RATE
+                    and self._current_k < k_ceiling
+                ):
+                    new_k = min(k_ceiling, self._current_k * 3)
+                    logger.info(
+                        "ngram_spec: K upshift %d -> %d (avg rate %.0f%%, "
+                        "window %d)",
+                        self._current_k,
+                        new_k,
+                        avg_rate * 100,
+                        len(self._recent_rates),
+                    )
+                    self._current_k = new_k
+                elif (
+                    avg_rate < NGRAM_SPEC_K_DOWNSHIFT_RATE
+                    and self._current_k > self._base_k
+                ):
+                    new_k = max(self._base_k, self._current_k // 2)
+                    logger.info(
+                        "ngram_spec: K downshift %d -> %d (avg rate %.0f%%, "
+                        "window %d)",
+                        self._current_k,
+                        new_k,
+                        avg_rate * 100,
+                        len(self._recent_rates),
+                    )
+                    self._current_k = new_k
 
     def get_stats(self) -> dict:
         rate = (
@@ -398,6 +482,7 @@ class NGramSpecState:
             "draft_accepted": self.total_draft_accepted,
             "acceptance_rate": rate,
             "paused": self._paused,
+            "current_k": self._current_k,
         }
         stats["ngram"] = self.predictor.get_stats()
         return stats

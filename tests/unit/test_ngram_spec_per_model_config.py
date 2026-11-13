@@ -3,6 +3,7 @@
 
 import logging
 
+import fusion_mlx.scheduler.ngram_spec as ns
 from fusion_mlx.scheduler.ngram_spec import (
     NGRAM_SPEC_DEFAULT_BREAK_EVEN,
     NGRAM_SPEC_NUM_DRAFT,
@@ -11,13 +12,19 @@ from fusion_mlx.scheduler.ngram_spec import (
     SuffixDrafterAdapter,
 )
 
+
+def _expected_default_draft():
+    # Adaptive K builds the drafter with the K_MAX ceiling; the kill-switch
+    # restores the historical base-K construction.
+    return ns.NGRAM_SPEC_K_MAX if ns.NGRAM_SPEC_ADAPTIVE_K else NGRAM_SPEC_NUM_DRAFT
+
 logger = logging.getLogger(__name__)
 
 
 def test_default_ctor_uses_suffix_backend():
     state = NGramSpecState()
     assert isinstance(state.predictor, SuffixDrafterAdapter)
-    assert state.predictor.num_draft == NGRAM_SPEC_NUM_DRAFT
+    assert state.predictor.num_draft == _expected_default_draft()
     assert state._break_even_default == NGRAM_SPEC_DEFAULT_BREAK_EVEN
 
 
@@ -25,7 +32,7 @@ def test_ngram_ctor_uses_module_defaults(monkeypatch):
     monkeypatch.setenv("FUSION_NGRAM_SPEC_PREDICTOR", "ngram")
     state = NGramSpecState()
     assert state.predictor.order == NGRAM_SPEC_ORDER
-    assert state.predictor.num_draft == NGRAM_SPEC_NUM_DRAFT
+    assert state.predictor.num_draft == _expected_default_draft()
     assert state._break_even_default == NGRAM_SPEC_DEFAULT_BREAK_EVEN
 
 
@@ -41,7 +48,7 @@ def test_ctor_none_falls_back_to_defaults(monkeypatch):
     monkeypatch.setenv("FUSION_NGRAM_SPEC_PREDICTOR", "ngram")
     state = NGramSpecState(order=None, num_draft=None, break_even=None)
     assert state.predictor.order == NGRAM_SPEC_ORDER
-    assert state.predictor.num_draft == NGRAM_SPEC_NUM_DRAFT
+    assert state.predictor.num_draft == _expected_default_draft()
     assert state._break_even_default == NGRAM_SPEC_DEFAULT_BREAK_EVEN
 
 
