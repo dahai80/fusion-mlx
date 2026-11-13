@@ -564,6 +564,22 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                     method,
                     accepted / proposed,
                 )
+                # #1610: also key the outcome into the per-(method, bucket)
+                # rolling windows so the auto-router can route on the
+                # bucket-local rate instead of the bimodal-blurred scalar.
+                try:
+                    from ..speculative.accept_buckets import get_accept_buckets
+
+                    get_accept_buckets().record(
+                        method,
+                        record.get("output_tokens"),
+                        proposed,
+                        accepted,
+                    )
+                except Exception:
+                    logger.debug(
+                        "spec accept bucket record failed (non-fatal)", exc_info=True
+                    )
             elif method:
                 # Request ran under a spec method but never speculated
                 # (warmup/short-output gate) — no fresh rate; drop stale

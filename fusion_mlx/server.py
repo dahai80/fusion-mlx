@@ -1729,6 +1729,15 @@ class Server:
                 }
             except Exception:
                 logger.debug("stats: mtp_native snapshot failed", exc_info=True)
+            # #1610: bucketed spec-decode acceptance per (method, bucket).
+            try:
+                from .speculative.accept_buckets import get_accept_buckets
+
+                metrics.setdefault("spec_decode", {})[
+                    "accept_buckets"
+                ] = get_accept_buckets().export()
+            except Exception:
+                logger.debug("stats: spec accept buckets export failed", exc_info=True)
             return {**pool_status, **metrics}
 
         # Issue #104: base-binding runtime info (version/Metal/quant/GPU) for
