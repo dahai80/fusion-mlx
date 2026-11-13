@@ -2,6 +2,7 @@
 """serve_command — main boot path for fusion-mlx serve."""
 
 import logging
+import os
 
 from fusion_mlx._cli_base import (
     _port_preflight_or_die,
@@ -54,6 +55,13 @@ def _apply_settings_cache_section(scheduler_config, settings_dir: str | None) ->
     if not cache_sj:
         return False
     _ssd_dir = cache_sj.get("paged_ssd_cache_dir") or cache_sj.get("ssd_cache_dir")
+    # Env override wins over settings.json — ops/diagnostics knob to relocate
+    # or isolate the paged-SSD store without editing the admin panel config
+    # (e.g. boot with an empty dir to test accumulation-related slowdowns).
+    _ssd_env = os.environ.get("FUSION_MLX_SSD_DIR")
+    if _ssd_env:
+        _ssd_dir = _ssd_env
+        logger.info("cache settings: ssd_dir overridden by FUSION_MLX_SSD_DIR=%s", _ssd_dir)
     if _ssd_dir:
         scheduler_config.paged_ssd_cache_dir = str(_ssd_dir)
     _hot = _parse_size_to_bytes(cache_sj.get("hot_cache_max_size"))
