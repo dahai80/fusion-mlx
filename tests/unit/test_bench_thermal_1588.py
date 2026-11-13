@@ -110,3 +110,73 @@ def test_summary_guard_division(first, last):
     s = t.summary()
     if first <= 0:
         assert s["drift_ratio"] is None
+
+
+class TestClockPhase:
+    def test_classify_ramping(self):
+        from fusion_mlx.bench.thermal import classify_phase
+
+        # Clocks climbing: ms/step falls across the window.
+        assert classify_phase([6.9, 6.6, 6.3, 6.0]) == "ramping"
+
+    def test_classify_throttling(self):
+        from fusion_mlx.bench.thermal import classify_phase
+
+        assert classify_phase([6.0, 7.2, 8.6, 9.5]) == "throttling"
+
+    def test_classify_steady(self):
+        from fusion_mlx.bench.thermal import classify_phase
+
+        assert classify_phase([6.0, 6.05, 5.98, 6.02]) == "steady"
+
+    def test_classify_unknown(self):
+        from fusion_mlx.bench.thermal import classify_phase
+
+        assert classify_phase([]) == "unknown"
+        assert classify_phase([6.0]) == "unknown"
+
+    def test_summary_carries_warmup_and_phase(self):
+        from fusion_mlx.bench.thermal import ThermalTracker
+
+        t = ThermalTracker(lambda: None)
+        t.note_idle(600)
+        t.note_warmup(30)
+        for ms in (7.0, 6.5, 6.0, 5.95):
+            t._samples.append(ms)
+        s = t.summary()
+        assert s["idle_before_s"] == 600.0
+        assert s["warmup_before_s"] == 30.0
+        assert s["phase"] == "ramping"
+        assert s["near_best"] is True
+        assert "warmup_before" in t.format_summary()
+        assert "phase=ramping" in t.format_summary()
+
+    def test_near_best_false_when_off_boost(self):
+        from fusion_mlx.bench.thermal import ThermalTracker
+
+        t = ThermalTracker(lambda: None)
+        t._samples.extend([6.0, 7.9, 8.8, 9.4])
+        assert t.summary()["near_best"] is False
+
+    def test_record_warmup_runs_work_until_deadline(self):
+        from fusion_mlx.bench.thermal import record_warmup
+
+        async def case():
+            rounds = {"n": 0}
+
+            async def work():
+                rounds["n"] += 1
+
+            elapsed = await record_warmup(0.15, work, log=lambda m: None)
+            assert elapsed >= 0.15
+            assert rounds["n"] >= 1
+
+        asyncio.run(case())
+
+    def test_record_warmup_zero_is_noop(self):
+        from fusion_mlx.bench.thermal import record_warmup
+
+        async def work():
+            raise AssertionError("work must not run")
+
+        assert asyncio.run(record_warmup(0, work)) == 0.0
