@@ -63,9 +63,7 @@ class TestMaybeQuantizeBlockKv:
     def test_three_dim_pair_untouched(self):
         keys = mx.random.normal((2, 8, 64))
         values = mx.random.normal((2, 8, 64))
-        assert (
-            maybe_quantize_block_kv([(keys, values)], ["KVCache"], None, 8) is None
-        )
+        assert maybe_quantize_block_kv([(keys, values)], ["KVCache"], None, 8) is None
 
     def test_quantize_failure_keeps_fp16(self, monkeypatch):
         keys, values = _kv_layer()
@@ -73,9 +71,7 @@ class TestMaybeQuantizeBlockKv:
         def _boom(*a, **k):
             raise RuntimeError("codec exploded")
 
-        monkeypatch.setattr(
-            "fusion_mlx.cache.cold_tq.quantize_pair", _boom
-        )
+        monkeypatch.setattr("fusion_mlx.cache.cold_tq.quantize_pair", _boom)
         block = [(keys, values)]
         out = maybe_quantize_block_kv(block, ["KVCache"], [()], token_count=8)
         assert out is None
@@ -90,9 +86,7 @@ class TestRoundtrip:
         ks, vs, bits = quantize_pair(keys, values, seed=0)
         from fusion_mlx.turboquant_kv import rebuild_dequantized_kv
 
-        keys2, values2 = rebuild_dequantized_kv(
-            TQ_COLD_TYPE, ks, vs, float(bits), 0
-        )
+        keys2, values2 = rebuild_dequantized_kv(TQ_COLD_TYPE, ks, vs, float(bits), 0)
         assert keys2.shape == keys.shape
         assert values2.shape == values.shape
         # 4-bit Lloyd-Max per-dim: error is bounded but not tiny; sanity
@@ -116,9 +110,7 @@ class TestRoundtrip:
         seed = int(new_meta[0][2])
         from fusion_mlx.turboquant_kv import rebuild_dequantized_kv
 
-        keys2, values2 = rebuild_dequantized_kv(
-            new_types[0], ks, vs, float(bits), seed
-        )
+        keys2, values2 = rebuild_dequantized_kv(new_types[0], ks, vs, float(bits), seed)
         assert keys2.shape == keys.shape
 
 
@@ -152,9 +144,7 @@ class TestSharedTypesList:
         blocks = []
         for _ in range(3):
             keys, values = _kv_layer()
-            out = maybe_quantize_block_kv(
-                [(keys, values)], types, None, token_count=8
-            )
+            out = maybe_quantize_block_kv([(keys, values)], types, None, token_count=8)
             assert out is not None
             blocks.append(out[0])
         for b in blocks:
