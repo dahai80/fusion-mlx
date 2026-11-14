@@ -515,7 +515,22 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                 "status": getattr(request, "status", None),
             }
             # PIC sizing telemetry: prompt-reuse shape digests (full + head).
-            record.update(prompt_shape_hashes(getattr(request, "prompt", None)))
+            _prompt = getattr(request, "prompt", None)
+            record.update(prompt_shape_hashes(_prompt))
+            # Lever-3 warm list: remember the hot prompt head (same slice
+            # prompt_head_hash covers) for idle-time prefix pre-warming.
+            # Content stays local; kill switch FUSION_WARMLIST_DISABLE=1.
+            if record.get("prompt_head_hash"):
+                try:
+                    from ..cache.warm_list import get_warm_list
+
+                    get_warm_list().record(
+                        record["prompt_head_hash"],
+                        _prompt,
+                        getattr(request, "num_prompt_tokens", None),
+                    )
+                except Exception:
+                    logger.debug("warm-list record failed", exc_info=True)
             dspine_state = getattr(self, "_dspine_spec_state", None)
             if dspine_state is not None:
                 record.update(dspine_state.pop_request_stats(request_id))
