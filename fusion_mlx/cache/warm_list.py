@@ -159,7 +159,7 @@ def get_warm_list(path: str | None = None) -> WarmList:
         if _default is None:
             if path is None:
                 base = os.environ.get(
-                    "FUSION_MLX_DATA_DIR",
+                    "FUSION_WARMLIST_DATA_DIR",
                     os.path.expanduser("~/.fusion-mlx"),
                 )
                 path = os.path.join(base, "warm_list.json")
