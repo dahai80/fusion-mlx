@@ -1418,11 +1418,14 @@ class EngineCore:
                         )
                         return
                     hidden_capture = None
-                    if spec_method == "eagle3" and hasattr(model, "model"):
-                        target_embed = getattr(model.model, "embed_tokens", None)
+                    from .speculative.hidden_capture import resolve_text_inner
+
+                    _text_inner = resolve_text_inner(model)
+                    if spec_method == "eagle3" and _text_inner is not None:
+                        target_embed = getattr(_text_inner, "embed_tokens", None)
                         if target_embed is not None:
                             draft.bind_target_embed_from_model(target_embed)
-                        _target_layers = getattr(model.model, "layers", None)
+                        _target_layers = getattr(_text_inner, "layers", None)
                         _num_layers = (
                             len(_target_layers) if _target_layers is not None else 0
                         )
@@ -1440,9 +1443,9 @@ class EngineCore:
                             "Speculative decode: eagle3 hidden_capture installed layers=%s",
                             capture_layers,
                         )
-                    elif spec_method == "medusa" and hasattr(model, "model"):
+                    elif spec_method == "medusa" and _text_inner is not None:
                         draft.bind_target(model)
-                        _target_layers = getattr(model.model, "layers", None)
+                        _target_layers = getattr(_text_inner, "layers", None)
                         _num_layers = (
                             len(_target_layers) if _target_layers is not None else 0
                         )
@@ -1463,6 +1466,13 @@ class EngineCore:
                                 "Speculative decode: medusa hidden_capture installed layers=%s",
                                 capture_layers,
                             )
+                    elif spec_method in ("eagle3", "medusa"):
+                        logger.warning(
+                            "Speculative decode: cannot resolve decoder layers on "
+                            "%s (wrapper shape unknown) — hidden-state capture "
+                            "not installed",
+                            type(model).__name__,
+                        )
                     self.scheduler._spec_decode_state = SpecDecodeState(
                         draft_model_decoder=draft,
                         hidden_capture=hidden_capture,
