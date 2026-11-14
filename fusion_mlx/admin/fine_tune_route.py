@@ -7,6 +7,8 @@ Importers/callers:
 
 Affected API:
   POST   /admin/api/fine-tune/jobs              — create training job
+  POST   /admin/api/fine-tune/distributed/jobs   — create distributed job (submitter, #1566)
+  POST   /admin/api/fine-tune/distributed/worker — join distributed job (worker node, #1566)
   GET    /admin/api/fine-tune/jobs              — list all jobs
   GET    /admin/api/fine-tune/jobs/{id}         — get job details
   POST   /admin/api/fine-tune/jobs/{id}/cancel  — cancel job
@@ -181,6 +183,227 @@ def _get_voice_service():
 # =============================================================================
 # Job CRUD
 # =============================================================================
+
+
+# =========================================================================
+# Distributed fine-tune jobs (#1566)
+#
+# Submitter (rank 0) fans out to worker nodes over HTTP; every node's
+# fusion-mlx server spawns its own training child whose mlx_lm train()
+# joins an mx.distributed ring via MLX_RANK / MLX_WORLD_SIZE /
+# MLX_HOSTFILE. Rank 0 saves the adapter, so the final adapter lands in
+# the standard adapters dir on the submitting node. All nodes share the
+# submitter's job id so the trainer can poll any node.
+# =========================================================================
+
+
+def _validate_distributed_body(body: dict) -> tuple[str, "object", list[dict], int]:
+    model_id = body.get("model_id", "")
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    nodes = body.get("nodes") or []
+    if not nodes:
+        raise HTTPException(
+            status_code=400, detail="nodes is required (at least one entry)"
+        )
+    for i, node in enumerate(nodes):
+        if not node.get("host") or not node.get("port"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"nodes[{i}] must carry host and port",
+            )
+        if not node.get("dataset"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"nodes[{i}] must carry a dataset path present on that node",
+            )
+    from fusion_mlx.training.service import FineTuneConfig
+
+    try:
+        config = FineTuneConfig(**(body.get("config") or {}))
+        config.validate()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid config: {e}")
+    try:
+        ring_base_port = int(body.get("ring_base_port", 45100))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="ring_base_port must be an int")
+    return model_id, config, nodes, ring_base_port
+
+
+def _ring_hostfile(nodes: list[dict], ring_base_port: int) -> str:
+    # mlx ring contract (verified vs mlx._distributed_utils.launch): the
+    # hostfile is a JSON list-of-lists of "ip:port" — one inner list per
+    # rank, one entry per connection. Hosts must be IPs, not hostnames.
+    import json as _json
+
+    if len(nodes) <= 1:
+        return ""
+    return _json.dumps(
+        [[f"{node['host']}:{ring_base_port + i}"] for i, node in enumerate(nodes)]
+    )
+
+
+def _write_hostfile_temp(hostfile_json: str, job_id: str) -> str:
+    # MLX_HOSTFILE is a PATH, not content (launch.py writes a temp file and
+    # exports the path). Mirror that: write a temp file and hand mlx the path.
+    import os
+    import tempfile
+
+    fd, path = tempfile.mkstemp(prefix=f"mlx-hostfile-{job_id}-", suffix=".json")
+    with os.fdopen(fd, "w") as f:
+        f.write(hostfile_json)
+    return path
+
+
+@_router.post("/api/fine-tune/distributed/jobs")
+async def create_distributed_fine_tune_job(
+    request: Request,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_service()
+    body = await request.json()
+    model_id, config, nodes, ring_base_port = _validate_distributed_body(body)
+    pool = _get_engine_pool()
+    if pool is not None:
+        entry = pool.get_entry(model_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+
+    world_size = len(nodes)
+    hostfile_json = _ring_hostfile(nodes, ring_base_port)
+    hostfile_path = ""
+    if hostfile_json:
+        hostfile_path = _write_hostfile_temp(hostfile_json, "submit")
+        logger.info(
+            "Distributed fine-tune hostfile written: %s -> %s",
+            hostfile_json,
+            hostfile_path,
+        )
+
+    job = svc.create_job(
+        model_id=model_id,
+        dataset=nodes[0]["dataset"],
+        config=config,
+        adapter_name=body.get("adapter_name", ""),
+        distributed={
+            "role": "submitter",
+            "rank": 0,
+            "world_size": world_size,
+            "hostfile": hostfile_path,
+            "nodes": nodes,
+            "ring_base_port": ring_base_port,
+        },
+    )
+
+    # Fan out to worker ranks BEFORE the local rank starts training: the
+    # ranks rendezvous inside mx.distributed.init(), so every worker must
+    # be launched (HTTP + its own model load) while rank 0 is still early.
+    # Rank 0 spends ~30s on model load before init(), which is the slack.
+    import httpx
+
+    auth_headers = {
+        k: v
+        for k, v in request.headers.items()
+        if k.lower() in ("authorization", "x-api-key")
+    }
+    workers: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
+            for rank, node in enumerate(nodes[1:], start=1):
+                resp = await client.post(
+                    f"http://{node['host']}:{node['port']}"
+                    "/admin/api/fine-tune/distributed/worker",
+                    json={
+                        "job_id": job.job_id,
+                        "model_id": model_id,
+                        "config": body.get("config") or {},
+                        "dataset": node["dataset"],
+                        "rank": rank,
+                        "world_size": world_size,
+                        "ring_base_port": ring_base_port,
+                        "hostfile_json": hostfile_json,
+                        "adapter_name": job.adapter_name,
+                    },
+                    headers=auth_headers,
+                )
+                if resp.status_code != 200:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            f"worker rank {rank} at {node['host']}:{node['port']} "
+                            f"rejected the job: {resp.status_code} {resp.text[:200]}"
+                        ),
+                    )
+                workers.append(
+                    {"rank": rank, "node": node, "job_id": resp.json().get("job_id")}
+                )
+    except HTTPException:
+        from fusion_mlx.training.service import JobStatus
+
+        job.status = JobStatus.FAILED
+        job.terminal = True
+        job.error = "distributed fan-out failed — see events"
+        svc._persist_jobs()
+        raise
+
+    svc.start_processing()
+    result = job.to_dict()
+    result["workers"] = workers
+    return result
+
+
+@_router.post("/api/fine-tune/distributed/worker")
+async def create_distributed_worker_job(
+    request: Request,
+    is_admin: bool = Depends(require_admin),
+):
+    svc = _get_service()
+    body = await request.json()
+    model_id = body.get("model_id", "")
+    dataset = body.get("dataset", "")
+    rank = body.get("rank")
+    world_size = body.get("world_size")
+    if not model_id or not dataset or rank is None or not world_size:
+        raise HTTPException(
+            status_code=400,
+            detail="model_id, dataset, rank and world_size are required",
+        )
+    from fusion_mlx.training.service import FineTuneConfig
+
+    try:
+        config = FineTuneConfig(**(body.get("config") or {}))
+        config.validate()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid config: {e}")
+
+    import os
+    import tempfile
+
+    hostfile_json = body.get("hostfile_json") or ""
+    hostfile_path = ""
+    if hostfile_json and int(world_size) > 1:
+        fd, hostfile_path = tempfile.mkstemp(
+            prefix=f"mlx-hostfile-{body.get('job_id', 'worker')}-", suffix=".json"
+        )
+        with os.fdopen(fd, "w") as f:
+            f.write(hostfile_json)
+
+    job = svc.create_job(
+        model_id=model_id,
+        dataset=dataset,
+        config=config,
+        adapter_name=body.get("adapter_name", ""),
+        job_id=body.get("job_id", ""),
+        distributed={
+            "role": "worker",
+            "rank": int(rank),
+            "world_size": int(world_size),
+            "hostfile": hostfile_path,
+        },
+    )
+    svc.start_processing()
+    return job.to_dict()
 
 
 @_router.post("/api/fine-tune/jobs")
