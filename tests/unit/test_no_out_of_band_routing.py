@@ -112,6 +112,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
     {
         "FUSION_MLX_DISABLE_VERSION_CHECK",  # opt-out of version check
         "FUSION_MLX_PROFILE_VERBOSE",  # debug verbosity for profile logs
+        # #1607: static model catalog directory override (fusion-models-hub
+        # catalog/models). Metadata source path only — no routing: model
+        # selection, parser, and tier decisions never depend on it. Read by
+        # fusion_mlx.api.openai._common only.
+        "FUSION_MLX_MODEL_CATALOG_DIR",
         # Opt-out of the fused top-p/top-k/temperature sampler fast path
         # (PR #542). Same shape as DISABLE_VERSION_CHECK — a perf shortcut
         # toggle, not a routing decision. The math collapses to mlx-lm's

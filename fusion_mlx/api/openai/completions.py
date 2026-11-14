@@ -30,6 +30,7 @@ from ..openai_models import (
 )
 from . import _common
 from ._common import (
+    _apply_catalog_enrichment,
     _get_settings,
     _resolve_capabilities,
     _resolve_context_length,
@@ -333,6 +334,12 @@ async def list_models(
         )
         for mid in model_ids
     ]
+
+    # #1607: fill remaining gaps (context_length, max_output_tokens,
+    # capability flags) from the static fusion-models-hub catalog. Missing
+    # or malformed catalog data degrades to the runtime-only listing.
+    for info in models:
+        _apply_catalog_enrichment(info)
 
     from ..markitdown import MARKITDOWN_MODEL_ID, markitdown_model_visible
 
