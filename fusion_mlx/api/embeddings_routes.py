@@ -263,6 +263,15 @@ async def create_embeddings(request: EmbeddingRequest):
     start_time = time.perf_counter()
     return_token_embeddings = getattr(request, "return_token_embeddings", False)
     return_sparse = getattr(request, "return_sparse", False)
+    # Only forward the opt-in kwargs when set — keeps the flag-off call
+    # shape identical to pre-#1627 so duck-typed embedding engines
+    # (third-party subclasses, test stubs) with strict embed() signatures
+    # keep working on plain requests.
+    embed_kwargs: dict[str, bool] = {}
+    if return_token_embeddings:
+        embed_kwargs["return_token_embeddings"] = True
+    if return_sparse:
+        embed_kwargs["return_sparse"] = True
     try:
         engine = await get_embedding_engine(request.model)
         if is_text_only and len(text_inputs) > _EMBEDDING_BATCH_SIZE:
@@ -278,8 +287,7 @@ async def create_embeddings(request: EmbeddingRequest):
                     batch,
                     max_length=max_length,
                     truncation=truncation,
-                    return_token_embeddings=return_token_embeddings,
-                    return_sparse=return_sparse,
+                    **embed_kwargs,
                 )
                 all_embeddings.extend(output.embeddings)
                 if output.token_embeddings is not None:
@@ -304,8 +312,7 @@ async def create_embeddings(request: EmbeddingRequest):
                 inputs_to_embed,
                 max_length=max_length,
                 truncation=truncation,
-                return_token_embeddings=return_token_embeddings,
-                return_sparse=return_sparse,
+                **embed_kwargs,
             )
             embeddings_list = output.embeddings
             dimensions = output.dimensions
