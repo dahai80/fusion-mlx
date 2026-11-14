@@ -106,6 +106,33 @@ Set `"enable_thinking": true` to force thinking mode, or omit to let the model d
 - `backend_override` (str) — Force specific backend: "mlx", "rapid", "cloud"
 - `task_tag` (str) — Priority tag: "claude_code" (REALTIME), "openclaw" (BATCH), "background"
 
+#### Response cache and the `X-Cache` header
+
+Non-streaming chat completions are served by a response cache keyed on the
+full request fingerprint (model, messages, sampling params, tools, adapters).
+Non-streaming requests with `temperature=0` are FORCE-cached by default:
+an identical repeat request returns the full cached completion in ~1-5 ms
+with `X-Cache: HIT`. Requests with `temperature > 0` or an unset temperature
+bypass the cache. Streaming requests never touch the response cache — they
+generate fresh on every call.
+
+Override the per-request policy with the `X-Cache` request header:
+
+| Value | Behavior |
+|---|---|
+| `bypass` (default for T>0) | Skip cache read and write |
+| `force` (default for T=0) | Read cache; store on miss |
+| `only-if-cached` | Return 504 `cache_miss` on cache miss |
+| `no-store` | Read cache; never store the response |
+
+Responses carry `X-Cache: HIT|MISS`. Unrecognized extra params are surfaced
+via `X-Fusion-Ignored-Params`.
+
+**Benchmark methodology note:** a non-streaming, fixed-prompt, multi-rep
+benchmark measures the cache from the second rep onward. Use `stream: true`,
+send `X-Cache: bypass`, or vary the prompt per rep when measuring
+non-streaming decode throughput.
+
 ### `POST /v1/completions`
 
 Legacy text completion endpoint. Converts to chat format internally.
