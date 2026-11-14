@@ -298,6 +298,14 @@ def __init__(
     self._cache_freshness_waits: dict[str, Any] = {}
     self._prefix_cache_prepared: set[str] = set()
 
+    # #1606: prefix-cache metastability guard state. The EMA is None until
+    # the first cache stats sample arrives; the guard never sheds on a None
+    # EMA, so a scheduler without cache stats behaves exactly as before.
+    self._admission_guard_ema: float | None = None
+    self._admission_guard_active: bool = False
+    self._admission_guard_shed_total: int = 0
+    self._admission_guard_episode_sheds: int = 0
+
     # Mapping between our request IDs and BatchGenerator UIDs
     self.request_id_to_uid: dict[str, int] = {}
     self.uid_to_request_id: dict[int, str] = {}

@@ -475,6 +475,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # scheduler reserves against KV-cache projection error. Pure
         # scheduling-capacity knob — never selects model / parser / tier.
         "FUSION_MLX_ADMISSION_KV_HEADROOM_GB",
+        # #1606: prefix-cache hit-ratio metastability guard disable/floor
+        # (config.py:334/339). Scheduling-admission knob — raises/lowers the
+        # admission bar, never selects model / parser / tier.
+        "FUSION_MLX_ADMISSION_GUARD",
+        "FUSION_MLX_ADMISSION_GUARD_FLOOR",
         # Timeout (seconds) for the MTP dispatch worker
         # (engine/batched/_mtp_dispatch.py:23). Bounds how long the
         # multi-token-prediction dispatch waits before falling back to

@@ -159,6 +159,11 @@ class Request:
     # whichever seed covers more tokens.
     kv_resume_seeded: bool = False
 
+    # #1606: explicit opt-out from the admission metastability guard shed.
+    # When True the request always admits, even while the guard is shedding
+    # cold-prefix admissions (hit-rate EMA below floor + deep queue).
+    bypass_admission_guard: bool = False
+
     # Prefill memory-pressure recovery
     prefill_oom_retries: int = 0
     prefill_eviction_retries: int = 0

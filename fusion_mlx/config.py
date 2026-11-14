@@ -201,6 +201,26 @@ class SchedulerConfig:
     # in-flight); this caps the backlog. Default: 4x max_num_seqs, min 32.
     max_waiting: int = 0
 
+    # #1606: prefix-cache hit-ratio metastability guard. When the EMA of the
+    # prefix-cache hit rate drops below admission_guard_hit_rate_floor while
+    # the waiting queue is deeper than admission_guard_queue_depth, new
+    # cold-prefix admissions are shed (rotated to the back, bounded retry)
+    # so a cold burst cannot evict the hot working set. Warm requests
+    # (cached prefix already probed) always admit; the per-request
+    # bypass_admission_guard flag and the FUSION_MLX_ADMISSION_GUARD env
+    # kill switch disable the shed entirely.
+    admission_guard_enabled: bool = True
+    admission_guard_hit_rate_floor: float = 0.3
+    admission_guard_queue_depth: int = 8
+    admission_guard_ema_alpha: float = 0.1
+    # Per-request shed retry bound: a cold request deferred this many times
+    # is admitted anyway (fail open, no starvation).
+    admission_guard_max_defers: int = 8
+    # Per-activation shed depth cap: after this many sheds in one guard
+    # episode the guard admits cold requests until the EMA recovers, so the
+    # shed itself can never wedge the queue.
+    admission_guard_max_shed: int = 64
+
     # R15-P1 additions
     prefix_cache_index: str = "radix"
     spec_decode: str = "none"
@@ -307,6 +327,87 @@ class SchedulerConfig:
                         "using the store default",
                         _env_mb,
                     )
+        # #1606 admission guard knobs: an explicit constructor value wins;
+        # FUSION_MLX_* env vars apply only when the field stayed at its
+        # default (same contract as boundary_prefix_persist above).
+        if self.admission_guard_enabled:
+            _env_guard = os.environ.get("FUSION_MLX_ADMISSION_GUARD", "")
+            if _env_guard.strip().lower() in ("0", "false", "no", "off"):
+                self.admission_guard_enabled = False
+                logger.info("Admission guard disabled via FUSION_MLX_ADMISSION_GUARD")
+        if self.admission_guard_hit_rate_floor == 0.3:
+            _env_floor = os.environ.get("FUSION_MLX_ADMISSION_GUARD_FLOOR", "")
+            if _env_floor.strip():
+                try:
+                    self.admission_guard_hit_rate_floor = float(_env_floor)
+                except ValueError:
+                    logger.warning(
+                        "FUSION_MLX_ADMISSION_GUARD_FLOOR=%r is not a float; "
+                        "using 0.3",
+                        _env_floor,
+                    )
+        if self.admission_guard_queue_depth == 8:
+            _env_depth = os.environ.get("FUSION_MLX_ADMISSION_GUARD_QUEUE_DEPTH", "")
+            if _env_depth.strip():
+                try:
+                    self.admission_guard_queue_depth = int(_env_depth)
+                except ValueError:
+                    logger.warning(
+                        "FUSION_MLX_ADMISSION_GUARD_QUEUE_DEPTH=%r is not an "
+                        "integer; using 8",
+                        _env_depth,
+                    )
+        if self.admission_guard_ema_alpha == 0.1:
+            _env_alpha = os.environ.get("FUSION_MLX_ADMISSION_GUARD_EMA_ALPHA", "")
+            if _env_alpha.strip():
+                try:
+                    self.admission_guard_ema_alpha = float(_env_alpha)
+                except ValueError:
+                    logger.warning(
+                        "FUSION_MLX_ADMISSION_GUARD_EMA_ALPHA=%r is not a float; "
+                        "using 0.1",
+                        _env_alpha,
+                    )
+        if self.admission_guard_max_defers == 8:
+            _env_defers = os.environ.get("FUSION_MLX_ADMISSION_GUARD_MAX_DEFERS", "")
+            if _env_defers.strip():
+                try:
+                    self.admission_guard_max_defers = int(_env_defers)
+                except ValueError:
+                    logger.warning(
+                        "FUSION_MLX_ADMISSION_GUARD_MAX_DEFERS=%r is not an "
+                        "integer; using 8",
+                        _env_defers,
+                    )
+        if self.admission_guard_max_shed == 64:
+            _env_shed = os.environ.get("FUSION_MLX_ADMISSION_GUARD_MAX_SHED", "")
+            if _env_shed.strip():
+                try:
+                    self.admission_guard_max_shed = int(_env_shed)
+                except ValueError:
+                    logger.warning(
+                        "FUSION_MLX_ADMISSION_GUARD_MAX_SHED=%r is not an "
+                        "integer; using 64",
+                        _env_shed,
+                    )
+        if not 0.0 < self.admission_guard_hit_rate_floor < 1.0:
+            logger.warning(
+                "admission_guard_hit_rate_floor=%s out of (0, 1) — clamped to 0.3",
+                self.admission_guard_hit_rate_floor,
+            )
+            self.admission_guard_hit_rate_floor = 0.3
+        if not 0.0 < self.admission_guard_ema_alpha <= 1.0:
+            logger.warning(
+                "admission_guard_ema_alpha=%s out of (0, 1] — clamped to 0.1",
+                self.admission_guard_ema_alpha,
+            )
+            self.admission_guard_ema_alpha = 0.1
+        if self.admission_guard_queue_depth < 1:
+            self.admission_guard_queue_depth = 1
+        if self.admission_guard_max_defers < 1:
+            self.admission_guard_max_defers = 1
+        if self.admission_guard_max_shed < 1:
+            self.admission_guard_max_shed = 1
 
 
 @dataclass
