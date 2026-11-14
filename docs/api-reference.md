@@ -292,6 +292,34 @@ Generate text embeddings.
 }
 ```
 
+**Token-level embeddings (opt-in, late chunking):**
+
+Set `"return_token_embeddings": true` to also receive per-token
+final-layer hidden states (padded positions trimmed), aligned `token_ids`,
+and `token_offsets` (character spans, when the tokenizer provides an offset
+mapping). Models or load paths without `last_hidden_state` return HTTP 400.
+
+```json
+{
+    "model": "bge-m3",
+    "input": "hello world",
+    "return_token_embeddings": true
+}
+```
+
+```json
+{
+    "data": [{
+        "object": "embedding",
+        "embedding": [0.0023, ...],
+        "index": 0,
+        "token_embeddings": [[0.1, ...], [0.2, ...]],
+        "token_ids": [101, 202],
+        "token_offsets": [[0, 5], [6, 11]]
+    }]
+}
+```
+
 ---
 
 ## Audio

@@ -33,6 +33,9 @@ class EmbeddingOutput:
     embeddings: list[list[float]]
     total_tokens: int
     dimensions: int
+    token_embeddings: list[list[list[float]]] | None = None
+    token_ids: list[list[int]] | None = None
+    token_offsets: list[list[list[int]]] | None = None
 
 
 class MLXEmbeddingModel:
@@ -229,6 +232,43 @@ class MLXEmbeddingModel:
         if embeddings.ndim == 3:
             embeddings = mx.mean(embeddings, axis=1)
         return embeddings
+
+    def _get_token_states(self, outputs: Any, model_name: str) -> Any:
+        states = getattr(outputs, "last_hidden_state", None)
+        if states is None:
+            raise ValueError(
+                f"Embedding model '{model_name}' does not expose token-level "
+                "hidden states (no last_hidden_state in model output); "
+                "return_token_embeddings is not supported for this model"
+            )
+        return states
+
+    def _try_offset_mapping(
+        self,
+        processor: Any,
+        input_texts: list[str],
+        padding: bool,
+        truncation: bool,
+        max_length: int | None,
+    ) -> Any | None:
+        try:
+            enc = processor(
+                input_texts,
+                padding=padding,
+                truncation=truncation,
+                max_length=max_length,
+                return_offsets_mapping=True,
+                return_tensors="np",
+            )
+            offsets = enc.get("offset_mapping")
+            return offsets if offsets is not None else None
+        except Exception as e:
+            logger.info(
+                "Offset mapping unavailable for embedding model %s: %s",
+                self._model_name,
+                e,
+            )
+            return None
 
     def _validate_native_weights(self, model_instance, weights: dict[str, Any]) -> None:
         from mlx.utils import tree_flatten
@@ -457,6 +497,7 @@ class MLXEmbeddingModel:
         max_length: int | None = None,
         padding: bool = True,
         truncation: bool = True,
+        return_token_embeddings: bool = False,
     ) -> EmbeddingOutput:
         if not self._loaded:
             self.load()
@@ -480,6 +521,10 @@ class MLXEmbeddingModel:
 
         embeddings_array = None
         total_tokens: int | None = None
+        token_state_3d: Any | None = None
+        mask_2d: Any | None = None
+        ids_2d: Any | None = None
+        offsets_np: Any | None = None
 
         if self._using_native:
             if hasattr(processor, "__call__"):
@@ -519,8 +564,20 @@ class MLXEmbeddingModel:
             total_tokens = self._count_prepared_tokens(
                 {"attention_mask": attention_mask, "input_ids": input_ids}
             )
+            if return_token_embeddings:
+                token_state_3d = self._get_token_states(outputs, self._model_name)
+                mask_2d = attention_mask
+                ids_2d = input_ids
+                if hasattr(processor, "__call__"):
+                    offsets_np = self._try_offset_mapping(
+                        processor, input_texts, padding, truncation, max_length
+                    )
         else:
-            if self._is_compiled and self._compiled_embed is not None:
+            if (
+                not return_token_embeddings
+                and self._is_compiled
+                and self._compiled_embed is not None
+            ):
                 try:
                     prepared = self._prepare_embedding_inputs(
                         processor,
@@ -557,6 +614,22 @@ class MLXEmbeddingModel:
                         prepared = dict(prepared)
                     outputs = self._model(**self._adapt_model_inputs_for_call(prepared))
                     total_tokens = self._count_prepared_tokens(prepared)
+                    if return_token_embeddings:
+                        token_state_3d = self._get_token_states(
+                            outputs, self._model_name
+                        )
+                        mask = prepared.get("attention_mask")
+                        ids = prepared.get("input_ids")
+                        if mask is not None:
+                            mask_2d = (
+                                mx.array(mask)
+                                if not isinstance(mask, mx.array)
+                                else mask
+                            )
+                        if ids is not None:
+                            ids_2d = (
+                                mx.array(ids) if not isinstance(ids, mx.array) else ids
+                            )
                 else:
                     from mlx_embeddings import generate
 
@@ -568,6 +641,10 @@ class MLXEmbeddingModel:
                         padding=padding,
                         truncation=truncation,
                     )
+                    if return_token_embeddings:
+                        token_state_3d = self._get_token_states(
+                            outputs, self._model_name
+                        )
                 embeddings_array = self._extract_embeddings_array(outputs)
 
         mx.eval(embeddings_array)
@@ -576,10 +653,44 @@ class MLXEmbeddingModel:
             total_tokens = self._count_tokens(normalized_inputs)
         dimensions = len(embeddings[0]) if embeddings else 0
 
+        token_embeddings = None
+        token_ids_out = None
+        token_offsets = None
+        if return_token_embeddings:
+            if token_state_3d is None or mask_2d is None:
+                raise ValueError(
+                    f"Embedding model '{self._model_name}' cannot return token "
+                    "embeddings on this load path (no attention mask available); "
+                    "use a natively supported embedding architecture"
+                )
+            mx.eval(token_state_3d)
+            tok = token_state_3d.tolist()
+            ids = ids_2d.tolist() if ids_2d is not None else None
+            offs = offsets_np.tolist() if offsets_np is not None else None
+            token_embeddings = []
+            token_ids_out = []
+            token_offsets = []
+            for i, row_mask in enumerate(mask_2d.tolist()):
+                n = sum(1 for v in row_mask if v)
+                token_embeddings.append(tok[i][:n])
+                if ids is not None:
+                    token_ids_out.append(ids[i][:n])
+                if offs is not None:
+                    token_offsets.append(offs[i][:n])
+            logger.info(
+                "Token embeddings: %d inputs, %d max tokens, offsets=%s",
+                len(token_embeddings),
+                max((len(t) for t in token_embeddings), default=0),
+                offs is not None,
+            )
+
         return EmbeddingOutput(
             embeddings=embeddings,
             total_tokens=total_tokens,
             dimensions=dimensions,
+            token_embeddings=token_embeddings,
+            token_ids=token_ids_out if token_ids_out else None,
+            token_offsets=token_offsets if token_offsets else None,
         )
 
     def _count_tokens(self, inputs: list[str] | list[dict[str, str]]) -> int:
@@ -773,6 +884,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         max_length: int = 512,
         padding: bool = True,
         truncation: bool = True,
+        return_token_embeddings: bool = False,
     ) -> EmbeddingOutput:
         if self._model is None:
             raise RuntimeError("Engine not started. Call start() first.")
@@ -787,6 +899,9 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         try:
             loop = asyncio.get_running_loop()
             embeddings: list[list[float]] = []
+            token_embeddings: list[list[list[float]]] = []
+            token_ids: list[list[int]] = []
+            token_offsets: list[list[list[int]]] = []
             total_tokens = 0
             dimensions = 0
             for start in range(0, len(input_items), batch_size):
@@ -798,6 +913,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
                         max_length=max_length,
                         padding=padding,
                         truncation=truncation,
+                        return_token_embeddings=return_token_embeddings,
                     )
 
                 try:
@@ -818,13 +934,24 @@ class EmbeddingEngine(BaseNonStreamingEngine):
                     )
                     raise
                 embeddings.extend(output.embeddings)
+                if output.token_embeddings is not None:
+                    token_embeddings.extend(output.token_embeddings)
+                if output.token_ids is not None:
+                    token_ids.extend(output.token_ids)
+                if output.token_offsets is not None:
+                    token_offsets.extend(output.token_offsets)
                 mx.synchronize()
                 mx.clear_cache()
                 total_tokens += output.total_tokens
                 if output.dimensions:
                     dimensions = output.dimensions
             return EmbeddingOutput(
-                embeddings=embeddings, total_tokens=total_tokens, dimensions=dimensions
+                embeddings=embeddings,
+                total_tokens=total_tokens,
+                dimensions=dimensions,
+                token_embeddings=token_embeddings if token_embeddings else None,
+                token_ids=token_ids if token_ids else None,
+                token_offsets=token_offsets if token_offsets else None,
             )
         finally:
             self._end_activity(activity_id)
