@@ -2967,6 +2967,25 @@ class TestSchedulerSSDLayerSignature:
                 num_layers=2,
                 model_name="test-model",
                 block_size=4,
+                # Genuinely incompatible layout (post-#1576 canonicalization:
+                # TurboQuantKVCache collapses to KVCache, so a plain-KV block
+                # is compatible with a TQ signature and must be KEPT — see
+                # tq_compatible below). Only a different cache family sweeps.
+                layer_cache_types=["RotatingKVCache", "KVCache"],
+            )
+            tq_compatible = PagedSSDBlockMetadata(
+                block_hash=b"tqcompat".ljust(32, b"\0"),
+                file_path=tmp_path / "tqcompat.safetensors",
+                file_size=1024,
+                token_count=4,
+                created_at=0.0,
+                last_access=0.0,
+                num_layers=2,
+                model_name="test-model",
+                block_size=4,
+                # Plain KVCache block: canonicalizes to the same signature as
+                # the live TQ layer types — dropping it would re-create the
+                # #1575 mass block destruction.
                 layer_cache_types=["KVCache", "KVCache"],
             )
             fresh = PagedSSDBlockMetadata(
@@ -2982,6 +3001,7 @@ class TestSchedulerSSDLayerSignature:
                 layer_cache_types=["TurboQuantKVCache", "KVCache"],
             )
             manager._index.add(stale)
+            manager._index.add(tq_compatible)
             manager._index.add(fresh)
 
             scheduler._turboquant_kv_bits = 4.0
@@ -2992,6 +3012,7 @@ class TestSchedulerSSDLayerSignature:
             assert layer_cache_types == ["TurboQuantKVCache", "KVCache"]
             assert manager._expected_layer_cache_types == layer_cache_types
             assert manager._index.get(stale.block_hash) is None
+            assert manager._index.get(tq_compatible.block_hash) is not None
             assert manager._index.get(fresh.block_hash) is not None
         finally:
             scheduler.shutdown()
