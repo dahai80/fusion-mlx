@@ -262,6 +262,7 @@ async def create_embeddings(request: EmbeddingRequest):
 
     start_time = time.perf_counter()
     return_token_embeddings = getattr(request, "return_token_embeddings", False)
+    return_sparse = getattr(request, "return_sparse", False)
     try:
         engine = await get_embedding_engine(request.model)
         if is_text_only and len(text_inputs) > _EMBEDDING_BATCH_SIZE:
@@ -269,6 +270,7 @@ async def create_embeddings(request: EmbeddingRequest):
             all_token_embeddings: list[list[list[float]]] = []
             all_token_ids: list[list[int]] = []
             all_token_offsets: list[list[list[int]]] = []
+            all_sparse: list[dict[str, float]] = []
             total_tokens = 0
             for batch_start in range(0, len(text_inputs), _EMBEDDING_BATCH_SIZE):
                 batch = text_inputs[batch_start : batch_start + _EMBEDDING_BATCH_SIZE]
@@ -277,6 +279,7 @@ async def create_embeddings(request: EmbeddingRequest):
                     max_length=max_length,
                     truncation=truncation,
                     return_token_embeddings=return_token_embeddings,
+                    return_sparse=return_sparse,
                 )
                 all_embeddings.extend(output.embeddings)
                 if output.token_embeddings is not None:
@@ -285,6 +288,8 @@ async def create_embeddings(request: EmbeddingRequest):
                     all_token_ids.extend(output.token_ids)
                 if output.token_offsets is not None:
                     all_token_offsets.extend(output.token_offsets)
+                if output.sparse is not None:
+                    all_sparse.extend(output.sparse)
                 total_tokens += output.total_tokens
             embeddings_list = all_embeddings
             dimensions = output.dimensions
@@ -292,6 +297,7 @@ async def create_embeddings(request: EmbeddingRequest):
             token_embeddings_out = all_token_embeddings or None
             token_ids_out = all_token_ids or None
             token_offsets_out = all_token_offsets or None
+            sparse_out = all_sparse or None
         else:
             inputs_to_embed = text_inputs if is_text_only else embedding_inputs
             output = await engine.embed(
@@ -299,6 +305,7 @@ async def create_embeddings(request: EmbeddingRequest):
                 max_length=max_length,
                 truncation=truncation,
                 return_token_embeddings=return_token_embeddings,
+                return_sparse=return_sparse,
             )
             embeddings_list = output.embeddings
             dimensions = output.dimensions
@@ -306,6 +313,7 @@ async def create_embeddings(request: EmbeddingRequest):
             token_embeddings_out = output.token_embeddings
             token_ids_out = output.token_ids
             token_offsets_out = output.token_offsets
+            sparse_out = output.sparse
     except (ValueError, TypeError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except TimeoutError as e:
@@ -370,6 +378,8 @@ async def create_embeddings(request: EmbeddingRequest):
             token_ids_out = [token_ids_out[idx] for idx in dedup_mapping]
         if token_offsets_out is not None:
             token_offsets_out = [token_offsets_out[idx] for idx in dedup_mapping]
+        if sparse_out is not None:
+            sparse_out = [sparse_out[idx] for idx in dedup_mapping]
 
     data = []
     for i, embedding in enumerate(embeddings_list):
@@ -391,6 +401,7 @@ async def create_embeddings(request: EmbeddingRequest):
             token_offsets=(
                 token_offsets_out[i] if token_offsets_out is not None else None
             ),
+            sparse=sparse_out[i] if sparse_out is not None else None,
         )
         data.append(item)
 

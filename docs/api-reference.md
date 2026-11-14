@@ -320,6 +320,26 @@ mapping). Models or load paths without `last_hidden_state` return HTTP 400.
 }
 ```
 
+**Sparse (lexical) weights (opt-in):**
+
+Set `"return_sparse": true` to also receive learned lexical weights per
+input — `{"token_id": weight}` (ids as strings), relu + max-pool over
+positions of the BGE-M3 sparse head. The head is loaded lazily from
+`sparse_linear.weight` in the model's safetensors, or from
+`sparse_linear.pt` (requires torch). Models without a sparse head return
+HTTP 400.
+
+```json
+{
+    "data": [{
+        "object": "embedding",
+        "embedding": [0.0023, ...],
+        "index": 0,
+        "sparse": {"101": 0.5, "202": 1.25}
+    }]
+}
+```
+
 ---
 
 ## Audio

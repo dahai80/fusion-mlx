@@ -73,6 +73,13 @@ class EmbeddingRequest(BaseModel):
     (arXiv 2409.04701). Unsupported models return HTTP 400.
     """
 
+    return_sparse: bool = False
+    """
+    Opt-in: also return learned sparse (lexical) weights per input, as a
+    {"token_id": weight} map (BGE-M3 sparse head, relu + max-pool over
+    positions). Unsupported models return HTTP 400.
+    """
+
     user: str | None = None
     """OpenAI abuse-tracking field. Accepted but not validated."""
 
@@ -116,6 +123,11 @@ class EmbeddingData(BaseModel):
     """Per-token (start, end) character offsets into the input text. Only
     present when return_token_embeddings=true and the tokenizer provides an
     offset mapping."""
+
+    sparse: dict[str, float] | None = None
+    """Learned sparse (lexical) weights: token_id (as string) -> weight.
+    Only present when the request set return_sparse=true and the model
+    ships a sparse_linear head."""
 
 
 class EmbeddingUsage(BaseModel):

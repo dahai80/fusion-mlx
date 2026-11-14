@@ -279,3 +279,115 @@ class TestRouteWireField:
         )
         assert r.status_code == 400
         assert "token-level" in r.text
+
+
+class TestSparseWeights:
+    def _model_with_sparse(self, tmp_path, weight):
+        """Native model whose sparse head lives in a safetensors sidecar."""
+        from safetensors.numpy import save_file
+
+        save_file({"sparse_linear.weight": weight}, str(tmp_path / "model.safetensors"))
+        return tmp_path
+
+    def test_compute_sparse_relu_maxpool(self, tmp_path):
+        import numpy as np
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
+
+        # Vocab 6, hidden 2. Token 3 rows: [1,0] -> dot with h=1 -> 1
+        weight = np.zeros((6, 2), dtype=np.float32)
+        weight[3] = [1.0, 0.0]
+        weight[5] = [0.0, -2.0]  # relu kills this one
+        model_dir = self._model_with_sparse(tmp_path, weight)
+
+        model = MLXEmbeddingModel(str(model_dir))
+        hidden = mx.array([[[1.0, 1.0], [1.0, 1.0]]])  # (1, T=2, H=2)
+        ids = mx.array([[3, 5]], dtype=mx.int32)
+        mask = mx.array([[1, 1]], dtype=mx.int32)
+
+        out = model._compute_sparse(hidden, ids, mask)
+        assert out == [{"3": 1.0, "5": 0.0}]
+
+    def test_sparse_weight_cached_across_calls(self, tmp_path):
+        import numpy as np
+
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
+
+        weight = np.zeros((6, 2), dtype=np.float32)
+        model_dir = self._model_with_sparse(tmp_path, weight)
+        model = MLXEmbeddingModel(str(model_dir))
+        model._ensure_sparse_head()
+        first = model._sparse_weight
+        model._ensure_sparse_head()
+        assert model._sparse_weight is first
+
+    def test_missing_sparse_head_raises(self, tmp_path):
+        from fusion_mlx.engines.embedding import MLXEmbeddingModel
+
+        model = MLXEmbeddingModel(str(tmp_path))
+        with pytest.raises(ValueError, match="sparse"):
+            model._ensure_sparse_head()
+
+    def test_route_returns_sparse_when_opted_in(self, monkeypatch):
+        engine = MagicMock()
+        engine.embed = AsyncMock(
+            return_value=EmbeddingOutput(
+                embeddings=[[0.1, 0.2]],
+                total_tokens=2,
+                dimensions=2,
+                sparse=[{"101": 0.5, "202": 1.25}],
+            )
+        )
+        client = TestRouteWireField._client(self, monkeypatch, engine)
+        r = client.post(
+            "/v1/embeddings",
+            json={"model": "bge-m3", "input": "hello", "return_sparse": True},
+        )
+        assert r.status_code == 200, r.text
+        item = r.json()["data"][0]
+        assert item["sparse"] == {"101": 0.5, "202": 1.25}
+        assert engine.embed.call_args.kwargs["return_sparse"] is True
+
+    def test_route_sparse_absent_by_default(self, monkeypatch):
+        engine = MagicMock()
+        engine.embed = AsyncMock(
+            return_value=EmbeddingOutput(
+                embeddings=[[0.1, 0.2]], total_tokens=2, dimensions=2
+            )
+        )
+        client = TestRouteWireField._client(self, monkeypatch, engine)
+        r = client.post(
+            "/v1/embeddings",
+            json={"model": "bge-m3", "input": "hello"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["data"][0]["sparse"] is None
+
+    def test_engine_merges_sparse_across_batches(self):
+        from fusion_mlx.engines.embedding import EmbeddingEngine
+
+        engine = EmbeddingEngine("test-embed-model", batch_size=1)
+        engine._model = MagicMock()
+        engine._model.embed.side_effect = [
+            EmbeddingOutput(
+                embeddings=[[0.1]],
+                total_tokens=1,
+                dimensions=1,
+                sparse=[{"1": 0.5}],
+            ),
+            EmbeddingOutput(
+                embeddings=[[0.2]],
+                total_tokens=1,
+                dimensions=1,
+                sparse=[{"2": 0.25}],
+            ),
+        ]
+
+        async def _run():
+            return await engine.embed(["a", "b"], return_sparse=True)
+
+        import asyncio
+
+        out = asyncio.run(_run())
+        assert out.sparse == [{"1": 0.5}, {"2": 0.25}]
+        assert engine._model.embed.call_args.kwargs["return_sparse"] is True

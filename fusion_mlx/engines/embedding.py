@@ -36,6 +36,7 @@ class EmbeddingOutput:
     token_embeddings: list[list[list[float]]] | None = None
     token_ids: list[list[int]] | None = None
     token_offsets: list[list[list[int]]] | None = None
+    sparse: list[dict[str, float]] | None = None
 
 
 class MLXEmbeddingModel:
@@ -50,6 +51,9 @@ class MLXEmbeddingModel:
         self._is_compiled = False
         self._compiled_embed = None
         self._remap_input_ids_to_inputs = False
+        self._sparse_weight: Any | None = None
+        self._sparse_bias: Any | None = None
+        self._sparse_checked = False
 
     def _load_native(self) -> bool:
         from transformers import AutoTokenizer
@@ -269,6 +273,108 @@ class MLXEmbeddingModel:
                 e,
             )
             return None
+
+    def _ensure_sparse_head(self) -> tuple[Any, Any | None]:
+        # BGE-M3 ships its learned lexical (sparse) head as a separate
+        # sparse_linear tensor next to the encoder. Load lazily on first
+        # sparse request; cached for the model's lifetime.
+        if self._sparse_weight is not None or self._sparse_checked:
+            return self._sparse_weight, self._sparse_bias
+        self._sparse_checked = True
+        model_path = Path(self._model_name)
+
+        for wf in sorted(model_path.glob("*.safetensors")):
+            try:
+                from safetensors import safe_open
+
+                with safe_open(str(wf), framework="numpy") as f:
+                    if "sparse_linear.weight" in f.keys():  # noqa: SIM118
+                        self._sparse_weight = mx.array(
+                            f.get_tensor("sparse_linear.weight")
+                        )
+                        if "sparse_linear.bias" in f.keys():  # noqa: SIM118
+                            self._sparse_bias = mx.array(
+                                f.get_tensor("sparse_linear.bias")
+                            )
+                        break
+            except Exception as e:
+                logger.debug("safetensors sparse scan skipped %s: %s", wf, e)
+        if self._sparse_weight is not None:
+            logger.info(
+                "Sparse (lexical) head loaded from %s: shape=%s",
+                model_path,
+                self._sparse_weight.shape,
+            )
+            return self._sparse_weight, self._sparse_bias
+
+        pt_path = model_path / "sparse_linear.pt"
+        if pt_path.exists():
+            try:
+                import torch
+
+                sd = torch.load(str(pt_path), map_location="cpu", weights_only=True)
+                w_key = (
+                    "sparse_linear.weight" if "sparse_linear.weight" in sd else "weight"
+                )
+                b_key = "sparse_linear.bias" if "sparse_linear.bias" in sd else "bias"
+                self._sparse_weight = mx.array(sd[w_key].float().numpy())
+                if b_key in sd:
+                    self._sparse_bias = mx.array(sd[b_key].float().numpy()).reshape(1)
+                logger.info(
+                    "Sparse (lexical) head loaded from %s: shape=%s",
+                    pt_path,
+                    self._sparse_weight.shape,
+                )
+                return self._sparse_weight, self._sparse_bias
+            except ImportError:
+                raise ValueError(
+                    f"Sparse (lexical) weights for '{self._model_name}' are in "
+                    f"{pt_path} but torch is not installed. Install torch, or "
+                    'convert once: python -c "import torch; from safetensors.numpy '
+                    "import save_file; sd=torch.load('sparse_linear.pt', "
+                    "map_location='cpu', weights_only=True); "
+                    "save_file({'sparse_linear.weight': sd['weight'].float().numpy()}, "
+                    "'sparse_linear.safetensors')\""
+                ) from None
+
+        raise ValueError(
+            f"Embedding model '{self._model_name}' does not ship a sparse "
+            "(lexical) head (no sparse_linear.weight in safetensors and no "
+            "sparse_linear.pt); return_sparse is not supported for this model"
+        )
+
+    def _compute_sparse(
+        self, hidden: Any, input_ids: Any, attention_mask: Any
+    ) -> list[dict[str, float]]:
+        w, b = self._ensure_sparse_head()
+        h = hidden.astype(w.dtype)
+        # Gather W rows (and bias) at each position's own token id first,
+        # then dot with the hidden state: avoids materializing the (B, T, V)
+        # product. relu commutes with the gather since it is elementwise.
+        w_rows = w[input_ids]
+        token_weights = mx.sum(h * w_rows, axis=-1)  # (B, T)
+        if b is not None:
+            token_weights = token_weights + b[input_ids]
+        token_weights = mx.maximum(token_weights, 0.0)
+        mask = attention_mask.astype(w.dtype)
+        token_weights = token_weights * mask
+        token_weights = mx.maximum(token_weights, 0.0)
+        mx.eval(token_weights, input_ids)
+        ids_list = input_ids.tolist()
+        weights_list = token_weights.tolist()
+        out: list[dict[str, float]] = []
+        for i, row_mask in enumerate(attention_mask.tolist()):
+            n = sum(1 for v in row_mask if v)
+            d: dict[str, float] = {}
+            for t in range(n):
+                tid = str(int(ids_list[i][t]))
+                val = float(weights_list[i][t])
+                if tid in d:
+                    d[tid] = max(d[tid], val)
+                else:
+                    d[tid] = val
+            out.append(d)
+        return out
 
     def _validate_native_weights(self, model_instance, weights: dict[str, Any]) -> None:
         from mlx.utils import tree_flatten
@@ -498,6 +604,7 @@ class MLXEmbeddingModel:
         padding: bool = True,
         truncation: bool = True,
         return_token_embeddings: bool = False,
+        return_sparse: bool = False,
     ) -> EmbeddingOutput:
         if not self._loaded:
             self.load()
@@ -564,17 +671,18 @@ class MLXEmbeddingModel:
             total_tokens = self._count_prepared_tokens(
                 {"attention_mask": attention_mask, "input_ids": input_ids}
             )
-            if return_token_embeddings:
+            if return_token_embeddings or return_sparse:
                 token_state_3d = self._get_token_states(outputs, self._model_name)
                 mask_2d = attention_mask
                 ids_2d = input_ids
-                if hasattr(processor, "__call__"):
+                if return_token_embeddings and hasattr(processor, "__call__"):
                     offsets_np = self._try_offset_mapping(
                         processor, input_texts, padding, truncation, max_length
                     )
         else:
             if (
                 not return_token_embeddings
+                and not return_sparse
                 and self._is_compiled
                 and self._compiled_embed is not None
             ):
@@ -614,7 +722,7 @@ class MLXEmbeddingModel:
                         prepared = dict(prepared)
                     outputs = self._model(**self._adapt_model_inputs_for_call(prepared))
                     total_tokens = self._count_prepared_tokens(prepared)
-                    if return_token_embeddings:
+                    if return_token_embeddings or return_sparse:
                         token_state_3d = self._get_token_states(
                             outputs, self._model_name
                         )
@@ -641,7 +749,7 @@ class MLXEmbeddingModel:
                         padding=padding,
                         truncation=truncation,
                     )
-                    if return_token_embeddings:
+                    if return_token_embeddings or return_sparse:
                         token_state_3d = self._get_token_states(
                             outputs, self._model_name
                         )
@@ -656,13 +764,16 @@ class MLXEmbeddingModel:
         token_embeddings = None
         token_ids_out = None
         token_offsets = None
-        if return_token_embeddings:
-            if token_state_3d is None or mask_2d is None:
+        sparse_out = None
+        if return_token_embeddings or return_sparse:
+            if token_state_3d is None or mask_2d is None or ids_2d is None:
                 raise ValueError(
                     f"Embedding model '{self._model_name}' cannot return token "
-                    "embeddings on this load path (no attention mask available); "
-                    "use a natively supported embedding architecture"
+                    "embeddings or sparse weights on this load path (no "
+                    "attention mask available); use a natively supported "
+                    "embedding architecture"
                 )
+        if return_token_embeddings:
             mx.eval(token_state_3d)
             tok = token_state_3d.tolist()
             ids = ids_2d.tolist() if ids_2d is not None else None
@@ -684,6 +795,14 @@ class MLXEmbeddingModel:
                 offs is not None,
             )
 
+        if return_sparse:
+            sparse_out = self._compute_sparse(token_state_3d, ids_2d, mask_2d)
+            logger.info(
+                "Sparse (lexical) weights: %d inputs, %d avg terms",
+                len(sparse_out),
+                sum(len(d) for d in sparse_out) // max(1, len(sparse_out)),
+            )
+
         return EmbeddingOutput(
             embeddings=embeddings,
             total_tokens=total_tokens,
@@ -691,6 +810,7 @@ class MLXEmbeddingModel:
             token_embeddings=token_embeddings,
             token_ids=token_ids_out if token_ids_out else None,
             token_offsets=token_offsets if token_offsets else None,
+            sparse=sparse_out,
         )
 
     def _count_tokens(self, inputs: list[str] | list[dict[str, str]]) -> int:
@@ -885,6 +1005,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         padding: bool = True,
         truncation: bool = True,
         return_token_embeddings: bool = False,
+        return_sparse: bool = False,
     ) -> EmbeddingOutput:
         if self._model is None:
             raise RuntimeError("Engine not started. Call start() first.")
@@ -902,6 +1023,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
             token_embeddings: list[list[list[float]]] = []
             token_ids: list[list[int]] = []
             token_offsets: list[list[list[int]]] = []
+            sparse: list[dict[str, float]] = []
             total_tokens = 0
             dimensions = 0
             for start in range(0, len(input_items), batch_size):
@@ -914,6 +1036,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
                         padding=padding,
                         truncation=truncation,
                         return_token_embeddings=return_token_embeddings,
+                        return_sparse=return_sparse,
                     )
 
                 try:
@@ -940,6 +1063,8 @@ class EmbeddingEngine(BaseNonStreamingEngine):
                     token_ids.extend(output.token_ids)
                 if output.token_offsets is not None:
                     token_offsets.extend(output.token_offsets)
+                if output.sparse is not None:
+                    sparse.extend(output.sparse)
                 mx.synchronize()
                 mx.clear_cache()
                 total_tokens += output.total_tokens
@@ -952,6 +1077,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
                 token_embeddings=token_embeddings if token_embeddings else None,
                 token_ids=token_ids if token_ids else None,
                 token_offsets=token_offsets if token_offsets else None,
+                sparse=sparse if sparse else None,
             )
         finally:
             self._end_activity(activity_id)
