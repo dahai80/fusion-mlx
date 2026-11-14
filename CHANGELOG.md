@@ -14,6 +14,18 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.65] - 2026-11-14 — token-level + sparse embeddings for retrieval, warm-list prefix pre-warming, qwen3_5 spec-decode wiring
+
+### Added
+- **Token-level embeddings on `/v1/embeddings` (#1624, PR #1627)**: opt-in `"return_token_embeddings": true` returns per-token final-layer hidden states (attention-mask trimmed) aligned with `token_ids`, plus `token_offsets` character spans when the tokenizer provides an offset mapping — the missing API for late-chunking pooling over token spans (arXiv 2409.04701). The pooled vector is still returned alongside. Models/paths without `last_hidden_state` fail with HTTP 400 instead of silently returning empty fields. The opt-in kwargs are forwarded to the engine/model only when set, so duck-typed embedding engines with strict `embed()` signatures keep working on plain requests. Covered by `tests/unit/test_embeddings_token_level_1624.py`.
+- **Sparse (lexical) weights on `/v1/embeddings` (#1621, PR #1627)**: opt-in `"return_sparse": true` returns learned lexical weights per input as `{"token_id": weight}` (relu + max-pool over positions, per FlagEmbedding's encode_sparse). The BGE-M3 sparse head loads lazily from `sparse_linear.weight` in the model's safetensors or from `sparse_linear.pt` (torch required); per-position gather avoids materializing the (B,T,V) product so long inputs stay cheap. Missing head → HTTP 400. fusion-rag can consume it as a feature-flagged third hybrid-retrieval channel with BM25 fallback.
+- **Warm-list store of hot prompt heads (#1623, PR #1623)**: at request end, the prompt head slice (first 1024 chars of a text prompt) persists into a bounded local JSON store (LRU by last_seen, entry cap 256, byte cap 2 MiB, atomic tmp-file flush).
+- **Idle-time prefix warm replay (#1625, PR #1625)**: after a full idle window (default 600s) the engine loop queues prefill-only replay requests for the top-K warm-list heads (default 3, one per idle tick), so hot prefixes are resident in the cache tree before the next real traffic arrives. Runs through the normal scheduler path (`max_tokens=1`, `temperature=0`).
+
+### Fixed
+- **XLMRoberta reranker load crash (#1622, PR #1626)**: `load()`'s XLMRoberta branch referenced `self.model` — a rename miss (attribute is `self._model` everywhere else) — so loading any `XLMRobertaForSequenceClassification` reranker (e.g. `BAAI/bge-reranker-v2-m3`) crashed with `AttributeError` before serving. Regression test covers the full load path + `num_labels` extraction.
+- **qwen3_5 speculative-decode wiring (PR #1620)**: eagle3/medusa layer resolution gated on `hasattr(model, "model")` and read `model.model.layers` single-hop; the qwen3_5 top-level model exposes `.language_model` instead, so draft heads never wired on the production `Qwen3.5-4B-MLX-4bit`. Resolution now goes through the multimodal wrapper.
+
 ## [0.10.64] - 2026-11-14 — distributed fine-tune job API, admission metastability guard, harness cache seams, thermal bench protocol
 
 ### Added

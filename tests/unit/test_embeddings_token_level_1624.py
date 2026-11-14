@@ -236,7 +236,7 @@ class TestRouteWireField:
         item = r.json()["data"][0]
         assert item["token_embeddings"] is None
         assert item["token_ids"] is None
-        assert engine.embed.call_args.kwargs["return_token_embeddings"] is False
+        assert "return_token_embeddings" not in engine.embed.call_args.kwargs
 
     def test_route_dedup_maps_token_fields(self, monkeypatch):
         engine = MagicMock()

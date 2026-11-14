@@ -1030,13 +1030,21 @@ class EmbeddingEngine(BaseNonStreamingEngine):
                 batch = input_items[start : start + batch_size]
 
                 def _embed_sync(b=batch):
+                    # Only forward the opt-in kwargs when set — keeps the
+                    # flag-off call shape identical for duck-typed embedding
+                    # models with strict embed() signatures (public_api
+                    # consumers, test stubs).
+                    kwargs: dict[str, bool] = {}
+                    if return_token_embeddings:
+                        kwargs["return_token_embeddings"] = True
+                    if return_sparse:
+                        kwargs["return_sparse"] = True
                     return model.embed(
                         inputs=b,
                         max_length=max_length,
                         padding=padding,
                         truncation=truncation,
-                        return_token_embeddings=return_token_embeddings,
-                        return_sparse=return_sparse,
+                        **kwargs,
                     )
 
                 try:
