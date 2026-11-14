@@ -28,6 +28,18 @@ EAGLE3_DRAFT_MODELS = {
         "target_family": "qwen3",
         "draft_vocab_size": 151936,
     },
+    # Prebuilt EAGLE3 head for the Qwen3.5-4B production target (aux
+    # layers [1,15,28], draft vocab 50000 with d2t map). Wiring for the
+    # qwen3_5 multimodal wrapper is handled by
+    # hidden_capture.resolve_text_inner; head quality gate is D1
+    # (see fusion-research lever-2 design doc) — enable via
+    # FUSION_EAGLE3_DRAFT_MODEL=qwen3.5-4b only after D1 passes.
+    "qwen3.5-4b": {
+        "hf_path": "yuyijiong/Qwen3.5-4B-Eagle3",
+        "target_family": "qwen3",
+        "draft_vocab_size": 50000,
+        "target_model": "mlx-community/Qwen3.5-4B-MLX-4bit",
+    },
 }
 
 ENV_DRAFT_MODEL = "FUSION_EAGLE3_DRAFT_MODEL"

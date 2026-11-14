@@ -21,6 +21,40 @@ import mlx.nn as nn
 
 logger = logging.getLogger(__name__)
 
+
+def resolve_text_inner(model: Any) -> Any:
+    """Resolve the module that owns the decoder ``layers`` list.
+
+    Handles the wrapper shapes seen in the wild:
+    - llama-style: ``model.model.layers``
+    - qwen3_5 multimodal: ``model.language_model.model.layers`` (the
+      top-level ``Qwen3_5ForConditionalGeneration`` exposes
+      ``language_model``, not ``model``)
+    - bare decoder: ``model.layers``
+
+    Returns None when no known path reaches a ``layers`` list — callers
+    must treat that as "speculative wiring unavailable" instead of
+    silently installing nothing (the previous single-hop navigation
+    returned [] on qwen3_5 and spec decode silently disabled itself).
+    """
+    if model is None:
+        return None
+    if hasattr(model, "layers"):
+        return model
+    seen = 0
+    inner = model
+    while seen < 4:
+        if hasattr(inner, "model"):
+            inner = inner.model
+        elif hasattr(inner, "language_model"):
+            inner = inner.language_model
+        else:
+            return None
+        seen += 1
+        if hasattr(inner, "layers"):
+            return inner
+    return None
+
 # P3-09/ENG-10 (#0909 audit): install/uninstall mutate the model's
 # layer list. Without a lock, a concurrent forward pass on another
 # thread can iterate a partially-mutated layer list — reading a layer
@@ -103,20 +137,15 @@ class HiddenStateCapture:
         return self._installed
 
     def _get_layers(self) -> list[nn.Module]:
-        """Navigate to model.model.layers regardless of model wrapper."""
-        inner = self._model
-        if hasattr(inner, "model"):
-            inner = inner.model
-        if hasattr(inner, "layers"):
-            return inner.layers
-        return []
+        """Navigate to the decoder layers regardless of model wrapper."""
+        inner = resolve_text_inner(self._model)
+        if inner is None:
+            return []
+        return inner.layers
 
     def _get_inner_model(self) -> Any:
         """Return the inner model that holds .layers."""
-        inner = self._model
-        if hasattr(inner, "model"):
-            inner = inner.model
-        return inner
+        return resolve_text_inner(self._model)
 
     def install(self) -> None:
         with _capture_lock:
@@ -131,6 +160,13 @@ class HiddenStateCapture:
             t0 = time.perf_counter()
             layers = self._get_layers()
             inner = self._get_inner_model()
+            if inner is None:
+                logger.warning(
+                    "hidden_capture: cannot resolve decoder layers on %s — "
+                    "install skipped",
+                    type(self._model).__name__,
+                )
+                return
 
             installed_count = 0
             for idx in self._layer_ids:
