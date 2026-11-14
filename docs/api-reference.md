@@ -292,6 +292,54 @@ Generate text embeddings.
 }
 ```
 
+**Token-level embeddings (opt-in, late chunking):**
+
+Set `"return_token_embeddings": true` to also receive per-token
+final-layer hidden states (padded positions trimmed), aligned `token_ids`,
+and `token_offsets` (character spans, when the tokenizer provides an offset
+mapping). Models or load paths without `last_hidden_state` return HTTP 400.
+
+```json
+{
+    "model": "bge-m3",
+    "input": "hello world",
+    "return_token_embeddings": true
+}
+```
+
+```json
+{
+    "data": [{
+        "object": "embedding",
+        "embedding": [0.0023, ...],
+        "index": 0,
+        "token_embeddings": [[0.1, ...], [0.2, ...]],
+        "token_ids": [101, 202],
+        "token_offsets": [[0, 5], [6, 11]]
+    }]
+}
+```
+
+**Sparse (lexical) weights (opt-in):**
+
+Set `"return_sparse": true` to also receive learned lexical weights per
+input — `{"token_id": weight}` (ids as strings), relu + max-pool over
+positions of the BGE-M3 sparse head. The head is loaded lazily from
+`sparse_linear.weight` in the model's safetensors, or from
+`sparse_linear.pt` (requires torch). Models without a sparse head return
+HTTP 400.
+
+```json
+{
+    "data": [{
+        "object": "embedding",
+        "embedding": [0.0023, ...],
+        "index": 0,
+        "sparse": {"101": 0.5, "202": 1.25}
+    }]
+}
+```
+
 ---
 
 ## Audio

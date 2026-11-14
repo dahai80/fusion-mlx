@@ -65,6 +65,21 @@ class EmbeddingRequest(BaseModel):
     truncation: bool = True
     """Whether to truncate inputs exceeding max_length. Default True."""
 
+    return_token_embeddings: bool = False
+    """
+    Opt-in: also return per-token embeddings (final-layer hidden states)
+    alongside the pooled vector, with token ids and character offsets when
+    available. Required for late-chunking style pooling over token spans
+    (arXiv 2409.04701). Unsupported models return HTTP 400.
+    """
+
+    return_sparse: bool = False
+    """
+    Opt-in: also return learned sparse (lexical) weights per input, as a
+    {"token_id": weight} map (BGE-M3 sparse head, relu + max-pool over
+    positions). Unsupported models return HTTP 400.
+    """
+
     user: str | None = None
     """OpenAI abuse-tracking field. Accepted but not validated."""
 
@@ -95,6 +110,24 @@ class EmbeddingData(BaseModel):
     - List[float] when encoding_format="float"
     - str (base64) when encoding_format="base64"
     """
+
+    token_embeddings: list[list[float]] | None = None
+    """Per-token final-layer hidden states (padded positions trimmed). Only
+    present when the request set return_token_embeddings=true."""
+
+    token_ids: list[int] | None = None
+    """Token ids aligned with token_embeddings. Only present when
+    return_token_embeddings=true and the model path exposes them."""
+
+    token_offsets: list[list[int]] | None = None
+    """Per-token (start, end) character offsets into the input text. Only
+    present when return_token_embeddings=true and the tokenizer provides an
+    offset mapping."""
+
+    sparse: dict[str, float] | None = None
+    """Learned sparse (lexical) weights: token_id (as string) -> weight.
+    Only present when the request set return_sparse=true and the model
+    ships a sparse_linear head."""
 
 
 class EmbeddingUsage(BaseModel):
