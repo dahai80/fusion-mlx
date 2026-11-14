@@ -261,10 +261,14 @@ async def create_embeddings(request: EmbeddingRequest):
             dedup_mapping = None
 
     start_time = time.perf_counter()
+    return_token_embeddings = getattr(request, "return_token_embeddings", False)
     try:
         engine = await get_embedding_engine(request.model)
         if is_text_only and len(text_inputs) > _EMBEDDING_BATCH_SIZE:
             all_embeddings: list[list[float]] = []
+            all_token_embeddings: list[list[list[float]]] = []
+            all_token_ids: list[list[int]] = []
+            all_token_offsets: list[list[list[int]]] = []
             total_tokens = 0
             for batch_start in range(0, len(text_inputs), _EMBEDDING_BATCH_SIZE):
                 batch = text_inputs[batch_start : batch_start + _EMBEDDING_BATCH_SIZE]
@@ -272,22 +276,36 @@ async def create_embeddings(request: EmbeddingRequest):
                     batch,
                     max_length=max_length,
                     truncation=truncation,
+                    return_token_embeddings=return_token_embeddings,
                 )
                 all_embeddings.extend(output.embeddings)
+                if output.token_embeddings is not None:
+                    all_token_embeddings.extend(output.token_embeddings)
+                if output.token_ids is not None:
+                    all_token_ids.extend(output.token_ids)
+                if output.token_offsets is not None:
+                    all_token_offsets.extend(output.token_offsets)
                 total_tokens += output.total_tokens
             embeddings_list = all_embeddings
             dimensions = output.dimensions
             tokens = total_tokens
+            token_embeddings_out = all_token_embeddings or None
+            token_ids_out = all_token_ids or None
+            token_offsets_out = all_token_offsets or None
         else:
             inputs_to_embed = text_inputs if is_text_only else embedding_inputs
             output = await engine.embed(
                 inputs_to_embed,
                 max_length=max_length,
                 truncation=truncation,
+                return_token_embeddings=return_token_embeddings,
             )
             embeddings_list = output.embeddings
             dimensions = output.dimensions
             tokens = output.total_tokens
+            token_embeddings_out = output.token_embeddings
+            token_ids_out = output.token_ids
+            token_offsets_out = output.token_offsets
     except (ValueError, TypeError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except TimeoutError as e:
@@ -346,6 +364,12 @@ async def create_embeddings(request: EmbeddingRequest):
     if dedup_mapping is not None:
         deduped_embeddings = [embeddings_list[idx] for idx in dedup_mapping]
         embeddings_list = deduped_embeddings
+        if token_embeddings_out is not None:
+            token_embeddings_out = [token_embeddings_out[idx] for idx in dedup_mapping]
+        if token_ids_out is not None:
+            token_ids_out = [token_ids_out[idx] for idx in dedup_mapping]
+        if token_offsets_out is not None:
+            token_offsets_out = [token_offsets_out[idx] for idx in dedup_mapping]
 
     data = []
     for i, embedding in enumerate(embeddings_list):
@@ -357,7 +381,18 @@ async def create_embeddings(request: EmbeddingRequest):
         else:
             formatted_embedding = embedding
 
-        data.append(EmbeddingData(index=i, embedding=formatted_embedding))
+        item = EmbeddingData(
+            index=i,
+            embedding=formatted_embedding,
+            token_embeddings=(
+                token_embeddings_out[i] if token_embeddings_out is not None else None
+            ),
+            token_ids=token_ids_out[i] if token_ids_out is not None else None,
+            token_offsets=(
+                token_offsets_out[i] if token_offsets_out is not None else None
+            ),
+        )
+        data.append(item)
 
     return EmbeddingResponse(
         data=data,
