@@ -38,8 +38,20 @@ def _make_fake_stage(monkeypatch):
     )
     quant = None
 
+    import fusion_mlx.engines.video_backends.wan2 as backend_mod
     import fusion_mlx.video.wan2.stage as stage_mod
     import fusion_mlx.video.wan2.utils as utils_mod
+
+    # Stage tests must never touch the network: the backend's T5 tokenizer
+    # loader falls back to "google/umt5-xxl" (HF hub) when no local
+    # tokenizer dir exists. Patch it out alongside the stage fakes —
+    # under a degraded network an unpatched fetch fails the whole unit
+    # suite with httpx.ConnectError instead of testing stage logic.
+    monkeypatch.setattr(
+        backend_mod,
+        "_load_t5_tokenizer",
+        lambda model_dir: SimpleNamespace(),
+    )
 
     monkeypatch.setattr(stage_mod, "load_wan_config", lambda model_dir: (config, quant))
     monkeypatch.setattr(

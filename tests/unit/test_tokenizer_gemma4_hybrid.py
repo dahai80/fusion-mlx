@@ -64,6 +64,32 @@ from fusion_mlx.utils.tokenizer import (
 _GEMMA4_ALIAS = "mlx-community/gemma-4-26b-a4b-it-4bit"
 
 
+_NETWORK_MARKERS = (
+    "connect",
+    "reset by peer",
+    "timed out",
+    "timeout",
+    "unreachable",
+    "localentrynotfound",
+    "couldn't connect",
+)
+
+
+def _hf_tokenizer_or_skip(alias):
+    # Tokenizer files are fetched from the HF hub on cache miss. Under a
+    # degraded network this must skip, not fail the unit suite. Match on
+    # message instead of exception type: httpx ConnectError does not
+    # subclass OSError/ConnectionError, and huggingface_hub may wrap it
+    # in LocalEntryNotFoundError depending on the code path.
+    try:
+        return AutoTokenizer.from_pretrained(alias)
+    except Exception as e:
+        msg = str(e).lower()
+        if any(m in msg for m in _NETWORK_MARKERS):
+            pytest.skip(f"HF hub unreachable for {alias}: {e}")
+        raise
+
+
 def _build_synthetic_gemma4_hybrid() -> PreTrainedTokenizerFast:
     """Synthetic reproducer of Gemma 4's hybrid tokenizer shape.
 
@@ -235,7 +261,7 @@ class TestGate2RealGemma4:
 
     @pytest.fixture(scope="class")
     def gemma4_tokenizer(self):
-        return AutoTokenizer.from_pretrained(_GEMMA4_ALIAS)
+        return _hf_tokenizer_or_skip(_GEMMA4_ALIAS)
 
     def test_issue_950_reproducer_fixed(self, gemma4_tokenizer) -> None:
         """The exact reproducer from issue #950: ``decode(encode("the
@@ -309,7 +335,7 @@ class TestPR793PathStillRepairs:
         PR #793 was meant to fix. Gate 2 must NOT fire here (vocab
         encodes spaces as ``Ġ``, not ``▁``), so the swap proceeds and
         ``decode`` is repaired."""
-        tok = AutoTokenizer.from_pretrained("mlx-community/Qwen3-0.6B-4bit")
+        tok = _hf_tokenizer_or_skip("mlx-community/Qwen3-0.6B-4bit")
         # Force the bug: swap in the Llama SP decoder chain. The vocab
         # itself is unchanged (still pure GPT-2 byte-level).
         tok.backend_tokenizer.decoder = decoders.Sequence(
