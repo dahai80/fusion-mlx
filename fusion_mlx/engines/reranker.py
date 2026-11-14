@@ -504,7 +504,7 @@ class MLXRerankerModel:
                 self._num_labels = 2
             elif arch == "XLMRobertaForSequenceClassification":
                 self._model, self._processor = self._load_xlm_roberta()
-                self._num_labels = getattr(self.model, "config", None)
+                self._num_labels = getattr(self._model, "config", None)
                 if self._num_labels is not None:
                     self._num_labels = getattr(self._num_labels, "num_labels", None)
             else:
