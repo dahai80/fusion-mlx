@@ -240,6 +240,8 @@ class TestSpecRouteDecisionRecords:
                 "prompt_tokens": 9000,
                 "max_tokens": None,
                 "accept_rate": None,
+                "rate_source": "scalar",
+                "output_bucket": None,
                 "kv_pressure": None,
             }
         ]

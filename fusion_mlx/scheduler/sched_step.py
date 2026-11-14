@@ -948,6 +948,19 @@ def _decide_spec_method(self, request) -> str:
         pass
     feedback = getattr(self, "_last_spec_feedback", None)
     fb_method, fb_rate = feedback if feedback else (None, None)
+    # #1610: bucketed acceptance for the previous method in this request's
+    # expected output bucket (max_tokens known) or the last realized bucket.
+    # Empty cell -> (None, None) -> router falls back to scalar hysteresis.
+    bucket_rate = None
+    bucket_idx = None
+    try:
+        from ..speculative.accept_buckets import get_accept_buckets
+
+        bucket_rate, bucket_idx = get_accept_buckets().route_rate(
+            fb_method, getattr(request, "max_tokens", None)
+        )
+    except Exception:
+        logger.debug("spec-route bucket rate lookup failed (non-fatal)", exc_info=True)
     method = select_active_method(
         request.num_prompt_tokens,
         loaded,
@@ -957,6 +970,8 @@ def _decide_spec_method(self, request) -> str:
         has_mtp=loaded["mtp"],
         model_family=model_family,
         is_recurrent=is_recurrent,
+        bucket_accept_rate=bucket_rate,
+        output_bucket=bucket_idx,
     )
     return method or ""
 

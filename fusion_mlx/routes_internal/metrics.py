@@ -1317,6 +1317,31 @@ def _render_spec_decode_metrics() -> list[str]:
                 )
         except Exception:
             logger.debug("mtp_native spec-decode metrics render error", exc_info=True)
+        try:
+            # #1610: bucketed acceptance per (method, output-length bucket).
+            # Empty windows yield no series, matching the sparse-counter
+            # convention (absent series, not a misleading 0 gauge).
+            from ..speculative.accept_buckets import get_accept_buckets
+
+            export = get_accept_buckets().export()
+            for method, buckets in export["buckets"].items():
+                for label, cell in buckets.items():
+                    if cell.get("rate") is None:
+                        continue
+                    lines.extend(
+                        _fmt_metric(
+                            "fusion_mlx_spec_decode_bucket_accept_rate",
+                            "gauge",
+                            "Speculative-decoding accept rate within an "
+                            "output-length bucket (0-1, rolling window).",
+                            round(float(cell["rate"]), 6),
+                            {"method": method, "bucket": label},
+                        )
+                    )
+        except Exception:
+            logger.debug(
+                "accept-bucket spec-decode metrics render error", exc_info=True
+            )
     except Exception:
         logger.debug("spec-decode metrics render error", exc_info=True)
     return lines

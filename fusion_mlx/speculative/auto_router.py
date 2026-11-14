@@ -308,6 +308,11 @@ class RouteSignals:
     is_moe: bool = False
     quant_bits: int | None = None
     is_recurrent: bool = False
+    # #1610: bucketed acceptance for current_method in the request's
+    # output-length bucket (None when the (method, bucket) cell is empty —
+    # hysteresis then falls back to the scalar recent_accept_rate).
+    bucket_accept_rate: float | None = None
+    output_bucket: int | None = None
 
 
 @dataclass
@@ -332,6 +337,7 @@ class SpecAutoRouter:
         signals: RouteSignals,
         candidates: set[str] | frozenset[str],
         rate: float | None,
+        rate_source: str = "scalar",
     ) -> None:
         # Audit 1019 L30: six hand-built copies of this dict meant any new
         # signal had to be added six times, and every copy could drift.
@@ -345,6 +351,8 @@ class SpecAutoRouter:
                 "prompt_tokens": signals.prompt_token_count,
                 "max_tokens": signals.max_tokens,
                 "accept_rate": rate,
+                "rate_source": rate_source,
+                "output_bucket": signals.output_bucket,
                 "kv_pressure": getattr(signals, "kv_pressure", None),
             }
         )
@@ -354,6 +362,14 @@ class SpecAutoRouter:
         avail = signals.available or DEFAULT_AVAILABLE
         cur = signals.current_method
         rate = signals.recent_accept_rate
+        rate_source = "scalar"
+        # #1610: bucketed acceptance takes precedence over the scalar rate
+        # when the (current_method, bucket) cell has data — a method can be
+        # great on short chat and useless on 8k+ generation, which the scalar
+        # average hides. Empty cell -> None -> scalar hysteresis fallback.
+        if signals.bucket_accept_rate is not None and cur is not None:
+            rate = signals.bucket_accept_rate
+            rate_source = f"bucket:{signals.output_bucket}"
         excluded: set[str] = set()
 
         # Abandon cooldown: once a method is abandoned for low acceptance,
@@ -382,9 +398,16 @@ class SpecAutoRouter:
             and signals.max_tokens < self.min_output_tokens
         ):
             if METHOD_NGRAM in avail:
-                self._record(METHOD_NGRAM, "short_output floor", signals, avail, rate)
+                self._record(
+                    METHOD_NGRAM,
+                    "short_output floor",
+                    signals,
+                    avail,
+                    rate,
+                    rate_source,
+                )
                 return METHOD_NGRAM
-            self._record("", "short_output floor", signals, avail, rate)
+            self._record("", "short_output floor", signals, avail, rate, rate_source)
             return ""
 
         if cur is not None and rate is not None and rate < self.abandon_accept:
@@ -394,10 +417,11 @@ class SpecAutoRouter:
             cur = None
             logger.info(
                 "spec-route: abandoning %s (acceptance %.1f%% < %.1f%%, "
-                "cooldown %d requests)",
+                "source %s, cooldown %d requests)",
                 signals.current_method,
                 rate * 100,
                 self.abandon_accept * 100,
+                rate_source,
                 self.abandon_cooldown,
             )
 
@@ -407,7 +431,14 @@ class SpecAutoRouter:
             and rate is not None
             and rate >= self.keep_accept
         ):
-            self._record(cur, "keep_accept (rate >= threshold)", signals, avail, rate)
+            self._record(
+                cur,
+                "keep_accept (rate >= threshold)",
+                signals,
+                avail,
+                rate,
+                rate_source,
+            )
             return cur
 
         candidates = avail - excluded
@@ -415,23 +446,38 @@ class SpecAutoRouter:
         if signals.model_family is not None:
             result = self._table_route(signals, candidates)
             if result is not None:
-                self._record(result, "table_route hit", signals, candidates, rate)
+                self._record(
+                    result, "table_route hit", signals, candidates, rate, rate_source
+                )
                 return result
 
         if (
             signals.prompt_token_count >= self.long_doc_threshold
             and METHOD_DFLASH in candidates
         ):
-            self._record(METHOD_DFLASH, "long_doc threshold", signals, candidates, rate)
+            self._record(
+                METHOD_DFLASH,
+                "long_doc threshold",
+                signals,
+                candidates,
+                rate,
+                rate_source,
+            )
             return METHOD_DFLASH
         if signals.has_mtp and METHOD_MTP in candidates:
-            self._record(METHOD_MTP, "mtp available", signals, candidates, rate)
+            self._record(
+                METHOD_MTP, "mtp available", signals, candidates, rate, rate_source
+            )
             return METHOD_MTP
         if METHOD_NGRAM in candidates:
-            self._record(METHOD_NGRAM, "ngram fallback", signals, candidates, rate)
+            self._record(
+                METHOD_NGRAM, "ngram fallback", signals, candidates, rate, rate_source
+            )
             return METHOD_NGRAM
         fallback = next(iter(sorted(candidates)), METHOD_NGRAM)
-        self._record(fallback, "sorted fallback", signals, candidates, rate)
+        self._record(
+            fallback, "sorted fallback", signals, candidates, rate, rate_source
+        )
         return fallback
 
     def _method_usable(self, method: str, signals: RouteSignals) -> bool:

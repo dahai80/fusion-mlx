@@ -68,6 +68,8 @@ def select_active_method(
     has_mtp: bool = False,
     model_family: str | None = None,
     is_recurrent: bool = False,
+    bucket_accept_rate: float | None = None,
+    output_bucket: int | None = None,
     router: SpecAutoRouter | None = None,
 ) -> str | None:
     active_router = _DEFAULT_ROUTER if router is None else router
@@ -86,6 +88,8 @@ def select_active_method(
         available=available,
         model_family=model_family,
         is_recurrent=is_recurrent,
+        bucket_accept_rate=bucket_accept_rate,
+        output_bucket=output_bucket,
     )
     method = active_router.decide(signals)
     # Degenerate fallback (e.g. the only loaded method was abandoned and
