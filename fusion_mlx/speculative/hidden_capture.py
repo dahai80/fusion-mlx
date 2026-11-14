@@ -55,6 +55,7 @@ def resolve_text_inner(model: Any) -> Any:
             return inner
     return None
 
+
 # P3-09/ENG-10 (#0909 audit): install/uninstall mutate the model's
 # layer list. Without a lock, a concurrent forward pass on another
 # thread can iterate a partially-mutated layer list — reading a layer
