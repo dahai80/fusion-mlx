@@ -26,11 +26,29 @@ logger = logging.getLogger(__name__)
 _ENV_DISABLE = "FUSION_WARMLIST_DISABLE"
 _ENV_MAX_ENTRIES = "FUSION_WARMLIST_MAX_ENTRIES"
 _ENV_MAX_BYTES = "FUSION_WARMLIST_MAX_BYTES"
+_ENV_IDLE_S = "FUSION_WARMLIST_IDLE_S"
+_ENV_TOPK = "FUSION_WARMLIST_TOPK"
 
 DEFAULT_MAX_ENTRIES = 256
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024
+DEFAULT_IDLE_S = 600
+DEFAULT_TOPK = 3
 HEAD_CHARS = 1024
 FLUSH_EVERY = 32
+
+
+def warm_idle_threshold_s() -> float:
+    try:
+        return float(os.environ.get(_ENV_IDLE_S, DEFAULT_IDLE_S))
+    except ValueError:
+        return float(DEFAULT_IDLE_S)
+
+
+def warm_topk() -> int:
+    try:
+        return max(0, int(os.environ.get(_ENV_TOPK, DEFAULT_TOPK)))
+    except ValueError:
+        return DEFAULT_TOPK
 
 
 class WarmList:
@@ -41,6 +59,11 @@ class WarmList:
         self._dirty = 0
         self._loaded = False
         self._disabled = os.environ.get(_ENV_DISABLE, "") == "1"
+
+    def _is_disabled(self) -> bool:
+        # Read the kill switch at call time: env may be set after process
+        # start (operator hot-disable) and must take effect immediately.
+        return os.environ.get(_ENV_DISABLE, "") == "1"
 
     def _load(self) -> None:
         if self._loaded:
@@ -85,7 +108,7 @@ class WarmList:
             del entries[oldest]
 
     def record(self, head_hash: str, prompt, prompt_tokens: int | None) -> None:
-        if self._disabled or not head_hash:
+        if self._is_disabled() or not head_hash:
             return
         if not isinstance(prompt, str) or not prompt:
             return
@@ -132,6 +155,19 @@ class WarmList:
             entry = self._entries.get(head_hash)
             return entry.get("head") if entry else None
 
+    def top_heads(self, k: int) -> list[tuple[str, str]]:
+        # Top-k head texts for the idle warm path, ranked by hits then
+        # recency. Returns (head_hash, head_text) pairs; empty head text
+        # entries are skipped.
+        with self._lock:
+            self._load()
+            ranked = sorted(
+                self._entries.items(),
+                key=lambda kv: (kv[1].get("hits", 0), kv[1].get("last_seen", 0)),
+                reverse=True,
+            )
+            return [(h, v["head"]) for h, v in ranked[:k] if v.get("head")]
+
     def flush(self) -> None:
         with self._lock:
             self._load()
@@ -144,7 +180,7 @@ class WarmList:
             return {
                 "entries": len(self._entries),
                 "dirty": self._dirty,
-                "disabled": self._disabled,
+                "disabled": self._is_disabled(),
                 "path": self._path,
             }
 

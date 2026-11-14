@@ -500,6 +500,11 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
         # finished request — output length vs the max_tokens the spec
         # router saw at route time, plus per-request spec accept stats.
         # Appends to the same spec-route jsonl; all failures non-fatal.
+        # Lever-3: warm replay requests skip telemetry AND the warm-list
+        # record — a warm request must never re-enter the warm list
+        # (self-reinforcing hits) or pollute spec-route feedback.
+        if getattr(request, "_warm_request", False):
+            return
         try:
             from ..speculative.auto_router import (
                 append_spec_request_end,

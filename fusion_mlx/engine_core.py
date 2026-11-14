@@ -1531,6 +1531,14 @@ class EngineCore:
         self._task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._wake_event: asyncio.Event | None = None
+        # Lever-3 idle warm path: while the engine has no requests, replay
+        # prefill-only on the hottest prompt heads from the warm list so the
+        # prefix cache is hot before real traffic arrives. State: idle-since
+        # timestamp (None = engine busy), pending head texts queued for this
+        # idle period, and a monotonically increasing warm request seq.
+        self._warm_idle_since: float | None = None
+        self._warm_pending: list[str] = []
+        self._warm_seq = 0
         self._start_time: float | None = None
         self._steps_executed = 0
         # #1261: per-engine watchdog inputs. The module-level _llm_heartbeat
@@ -1778,6 +1786,65 @@ class EngineCore:
             self._touch_heartbeat()
         return outputs
 
+    def _warm_tick(self, now: float, busy: bool) -> None:
+        # Lever-3 idle warm path: while idle, queue prefill-only replay
+        # requests for the hottest warm-list heads (max_tokens=1 so the
+        # normal prefill + store-cache machinery runs untouched). Real
+        # traffic always wins: warm requests are only queued when the
+        # scheduler is empty, and they cost one prefill chunk if traffic
+        # lands mid-warm. All failures are non-fatal.
+        if busy:
+            if self._warm_idle_since is not None:
+                self._warm_idle_since = None
+                self._warm_pending = []
+            return
+        try:
+            from .cache.warm_list import (
+                get_warm_list,
+                warm_idle_threshold_s,
+                warm_topk,
+            )
+
+            wl = get_warm_list()
+            if wl.stats().get("disabled"):
+                return
+            if self._warm_idle_since is None:
+                self._warm_idle_since = now
+                return
+            if self._warm_pending:
+                if self.scheduler.has_requests():
+                    return
+                head = self._warm_pending.pop(0)
+                self._warm_seq += 1
+                req = Request(
+                    request_id=f"warm-{self._warm_seq}",
+                    prompt=head,
+                    sampling_params=SamplingParams(temperature=0.0, max_tokens=1),
+                )
+                req._warm_request = True
+                self.scheduler.add_request(req)
+                logger.info(
+                    "warm-list: warm request %s queued (%d head(s) left)",
+                    req.request_id,
+                    len(self._warm_pending),
+                )
+                if not self._warm_pending:
+                    # Queue drained: restart the idle clock so the next
+                    # warm round needs another full idle period.
+                    self._warm_idle_since = now
+                return
+            if now - self._warm_idle_since < warm_idle_threshold_s():
+                return
+            self._warm_pending = [head for _, head in wl.top_heads(warm_topk())]
+            if self._warm_pending:
+                logger.info(
+                    "warm-list: idle %.0fs, queueing %d head(s) for " "prefix warm",
+                    now - self._warm_idle_since,
+                    len(self._warm_pending),
+                )
+        except Exception as e:
+            logger.debug("warm-list: warm tick failed (non-fatal): %s", e)
+
     async def _engine_loop(self) -> None:
         """Main engine loop — runs scheduler steps on the MLX executor.
 
@@ -1850,6 +1917,8 @@ class EngineCore:
                     self._reap_orphaned_collectors(now)
 
                 if self.scheduler.has_requests():
+                    # Lever-3: real traffic cancels the idle-warm window.
+                    self._warm_tick(now, True)
                     # #1197: submission pacing gate — the llm step burst
                     # passes the per-class token bucket BEFORE the deadline
                     # is armed (a deferred submission must never leave a
@@ -2016,6 +2085,8 @@ class EngineCore:
                                     event.wait(), timeout=step_interval
                                 )
                 else:
+                    # Lever-3: idle tick — maybe queue a warm replay.
+                    self._warm_tick(now, False)
                     event = self._wake_event
                     if event is None:
                         await asyncio.sleep(step_interval)
