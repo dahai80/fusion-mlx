@@ -14,7 +14,7 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
-## [Unreleased]
+## [0.10.64] - 2026-11-14 — distributed fine-tune job API, admission metastability guard, harness cache seams, thermal bench protocol
 
 ### Added
 - **Distributed fine-tune job API (#1566)**: `POST /admin/api/fine-tune/distributed/jobs` fans a LoRA fine-tune out to N worker nodes via `POST /admin/api/fine-tune/distributed/worker` (per-node dataset, shared job_id, auth headers forwarded). Submitter = rank 0 and owns the adapter output; MLX ring rendezvous env (`MLX_RANK` / `MLX_WORLD_SIZE` / `MLX_HOSTFILE` as a temp-file path) is staged in the parent before the training process spawns, with `ring_base_port` (default 45100) assigning one port per rank. Job records carry a `distributed` block (role, rank, world_size, hostfile, nodes) visible from the standard `/admin/api/fine-tune/jobs` endpoints. E2E on 2 local ranks: both nodes COMPLETED 6/6 steps with identical loss, adapter landed on submitter. Real 2-Mac run untested (no hardware).
