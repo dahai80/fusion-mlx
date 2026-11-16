@@ -45,6 +45,7 @@ HEAD_CHARS = 1024
 # so a stored head replays exactly the prefix the head hash identifies.
 HEAD_TOKEN_IDS = 256
 FLUSH_EVERY = 32
+FLUSH_INTERVAL_S = 60
 
 
 def warm_idle_threshold_s() -> float:
@@ -75,6 +76,7 @@ class WarmList:
         self._entries: dict[str, dict] = {}
         self._dirty = 0
         self._loaded = False
+        self._last_flush_ts = 0.0
         self._disabled = os.environ.get(_ENV_DISABLE, "") == "1"
 
     def _is_disabled(self) -> bool:
@@ -93,7 +95,15 @@ class WarmList:
                 self._entries = {
                     k: v
                     for k, v in data.items()
-                    if isinstance(v, dict) and isinstance(v.get("head"), str)
+                    if isinstance(v, dict)
+                    and (
+                        isinstance(v.get("head"), str)
+                        or (
+                            isinstance(v.get("head"), list)
+                            and bool(v.get("head"))
+                            and isinstance(v.get("head")[0], int)
+                        )
+                    )
                 }
         except FileNotFoundError:
             pass
@@ -107,6 +117,7 @@ class WarmList:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self._entries, f, ensure_ascii=False)
             os.replace(tmp, self._path)
+            self._last_flush_ts = time.time()
             self._dirty = 0
         except Exception as e:
             logger.debug("warm-list: flush failed (non-fatal): %s", e)
@@ -165,7 +176,11 @@ class WarmList:
                 self._entries[head_hash] = entry
                 self._evict_locked()
                 self._dirty += 1
-                if self._dirty >= FLUSH_EVERY:
+                if self._dirty >= FLUSH_EVERY or (
+                    now - self._last_flush_ts >= FLUSH_INTERVAL_S
+                ):
+                    # Time-based flush keeps small traffic days durable:
+                    # a lone record must not wait for 31 siblings.
                     self._flush_locked()
         except Exception as e:
             logger.debug("warm-list: record failed (non-fatal): %s", e)
