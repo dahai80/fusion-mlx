@@ -28,11 +28,18 @@ _ENV_MAX_ENTRIES = "FUSION_WARMLIST_MAX_ENTRIES"
 _ENV_MAX_BYTES = "FUSION_WARMLIST_MAX_BYTES"
 _ENV_IDLE_S = "FUSION_WARMLIST_IDLE_S"
 _ENV_TOPK = "FUSION_WARMLIST_TOPK"
+_ENV_MIN_TOKENS = "FUSION_WARMLIST_MIN_TOKENS"
 
 DEFAULT_MAX_ENTRIES = 256
 DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 DEFAULT_IDLE_S = 600
 DEFAULT_TOPK = 3
+# Warm replay only pays off when the stored prefix is long enough for a
+# cache hit to skip real work. Production observation (2026-11-16): with
+# no filter the store fills with 4-10 token smoke-test prompts ("warmup:")
+# that prefill in microseconds and warm nothing. 256 matches the tail of
+# the stage-1 concentration segment (>=512 showed 67.9% top-5 coverage).
+DEFAULT_MIN_TOKENS = 256
 HEAD_CHARS = 1024
 FLUSH_EVERY = 32
 
@@ -49,6 +56,13 @@ def warm_topk() -> int:
         return max(0, int(os.environ.get(_ENV_TOPK, DEFAULT_TOPK)))
     except ValueError:
         return DEFAULT_TOPK
+
+
+def warm_min_tokens() -> int:
+    try:
+        return max(0, int(os.environ.get(_ENV_MIN_TOKENS, DEFAULT_MIN_TOKENS)))
+    except ValueError:
+        return DEFAULT_MIN_TOKENS
 
 
 class WarmList:
@@ -112,6 +126,17 @@ class WarmList:
             return
         if not isinstance(prompt, str) or not prompt:
             return
+        # Size filter: prompts below the threshold prefill too fast for a
+        # warm cache hit to matter. Unknown token count is treated as too
+        # small rather than guessed.
+        min_tokens = warm_min_tokens()
+        if prompt_tokens is None or prompt_tokens < min_tokens:
+            logger.debug(
+                "warm-list: skipping short prompt (tokens=%s, min=%d)",
+                prompt_tokens,
+                min_tokens,
+            )
+            return
         head = prompt[:HEAD_CHARS]
         now = time.time()
         try:
@@ -158,7 +183,10 @@ class WarmList:
     def top_heads(self, k: int) -> list[tuple[str, str]]:
         # Top-k head texts for the idle warm path, ranked by hits then
         # recency. Returns (head_hash, head_text) pairs; empty head text
-        # entries are skipped.
+        # entries and below-threshold entries (stored before the size
+        # filter existed) are skipped, so legacy tiny heads age out of
+        # the replay path without rewriting the store.
+        min_tokens = warm_min_tokens()
         with self._lock:
             self._load()
             ranked = sorted(
@@ -166,7 +194,11 @@ class WarmList:
                 key=lambda kv: (kv[1].get("hits", 0), kv[1].get("last_seen", 0)),
                 reverse=True,
             )
-            return [(h, v["head"]) for h, v in ranked[:k] if v.get("head")]
+            return [
+                (h, v["head"])
+                for h, v in ranked[:k]
+                if v.get("head") and (v.get("prompt_tokens") or 0) >= min_tokens
+            ]
 
     def flush(self) -> None:
         with self._lock:
