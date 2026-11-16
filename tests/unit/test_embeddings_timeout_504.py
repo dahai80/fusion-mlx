@@ -103,7 +103,7 @@ class TestEmbeddingEngineTimeoutLog:
         eng._batch_size = 2
 
         class _StubModel:
-            def embed(self, inputs, max_length=None, padding=True, truncation=True):
+            def embed(self, inputs, max_length=None, padding=True, truncation=True, **kwargs):
                 raise TimeoutError()
 
         eng._model = _StubModel()

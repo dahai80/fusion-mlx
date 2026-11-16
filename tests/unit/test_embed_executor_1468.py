@@ -157,7 +157,7 @@ class _StubEmbedModel:
         def __init__(self):
             self.loaded = True
 
-        def embed(self, inputs, max_length=512, padding=True, truncation=True):
+        def embed(self, inputs, max_length=512, padding=True, truncation=True, **kwargs):
             from fusion_mlx.engines.embedding import EmbeddingOutput
 
             n = len(inputs) if isinstance(inputs, list) else 1
@@ -174,7 +174,7 @@ class _StubEmbedModel:
     def load(self):
         self.loaded = True
 
-    def embed(self, inputs, max_length=512, padding=True, truncation=True):
+    def embed(self, inputs, max_length=512, padding=True, truncation=True, **kwargs):
         return self._model.embed(inputs, max_length, padding, truncation)
 
 
