@@ -14,6 +14,11 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.66] - 2026-11-16 — warm-list: time-based flush + token-id head reload (#1632)
+
+- warm_list: time-based flush so cached prefixes are persisted on a schedule instead of only on shutdown.
+- warm_list: accept token-id heads on reload (heads stored as token ids now resolve back to prompts).
+
 ## [0.10.65] - 2026-11-14 — token-level + sparse embeddings for retrieval, warm-list prefix pre-warming, qwen3_5 spec-decode wiring
 
 ### Added
