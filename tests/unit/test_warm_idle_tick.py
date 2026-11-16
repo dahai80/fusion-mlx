@@ -14,6 +14,13 @@ from fusion_mlx.engine_core import EngineCore
 from fusion_mlx.request import Request
 
 
+@pytest.fixture(autouse=True)
+def _no_min_tokens(monkeypatch):
+    # Suite exercises queueing mechanics with tiny recorded prompts; the
+    # size filter is pinned separately in test_warm_list.py and below.
+    monkeypatch.setenv("FUSION_WARMLIST_MIN_TOKENS", "0")
+
+
 @pytest.fixture
 def wl_path(tmp_path, monkeypatch):
     path = tmp_path / "warm_list.json"
@@ -137,3 +144,24 @@ def test_empty_warm_list_never_queues(tmp_path, monkeypatch):
     EngineCore._warm_tick(fake, t0 + warm_list.warm_idle_threshold_s() + 2, False)
     assert not sched.added
     warm_list._default = None
+
+
+def test_short_heads_never_queued(tmp_path, monkeypatch):
+    # Default threshold filters tiny recorded prompts out of the replay
+    # path even when they hold the top hit counts.
+    monkeypatch.setenv("FUSION_WARMLIST_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("FUSION_WARMLIST_MIN_TOKENS", "256")
+    wl = warm_list.WarmList(str(tmp_path / "short.json"))
+    wl.record("tiny", "warmup:", 4)
+    wl.flush()
+    warm_list._default = wl
+    try:
+        sched = FakeSched()
+        fake = make_fake(sched)
+        t0 = 100.0
+        EngineCore._warm_tick(fake, t0, False)
+        EngineCore._warm_tick(fake, t0 + warm_list.warm_idle_threshold_s() + 1, False)
+        assert not fake._warm_pending
+        assert not sched.added
+    finally:
+        warm_list._default = None

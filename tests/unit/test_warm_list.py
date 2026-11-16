@@ -12,6 +12,13 @@ import pytest
 from fusion_mlx.cache.warm_list import WarmList
 
 
+@pytest.fixture(autouse=True)
+def _no_min_tokens(monkeypatch):
+    # Default suite exercises store mechanics with tiny prompts; the
+    # size filter itself is pinned by the dedicated tests below.
+    monkeypatch.setenv("FUSION_WARMLIST_MIN_TOKENS", "0")
+
+
 @pytest.fixture
 def path(tmp_path):
     return str(tmp_path / "warm_list.json")
@@ -78,3 +85,61 @@ def test_flush_writes_valid_json(path):
     with open(path) as f:
         data = json.load(f)
     assert data["gggg"]["head"] == "hello"
+
+
+def test_size_filter_skips_short_prompts(path, monkeypatch):
+    monkeypatch.setenv("FUSION_WARMLIST_MIN_TOKENS", "256")
+    wl = WarmList(path)
+    wl.record("ssss", "warmup:", 4)
+    wl.record("tttt", "below threshold", 255)
+    assert wl.head_for("ssss") is None
+    assert wl.head_for("tttt") is None
+    assert wl.stats()["entries"] == 0
+
+
+def test_size_filter_none_tokens_skipped(path, monkeypatch):
+    monkeypatch.setenv("FUSION_WARMLIST_MIN_TOKENS", "256")
+    wl = WarmList(path)
+    wl.record("nnnn", "unknown size", None)
+    assert wl.head_for("nnnn") is None
+
+
+def test_default_min_tokens_is_256(monkeypatch):
+    monkeypatch.delenv("FUSION_WARMLIST_MIN_TOKENS", raising=False)
+    from fusion_mlx.cache.warm_list import warm_min_tokens
+
+    assert warm_min_tokens() == 256
+
+
+def test_size_filter_allows_at_threshold(path, monkeypatch):
+    monkeypatch.setenv("FUSION_WARMLIST_MIN_TOKENS", "256")
+    wl = WarmList(path)
+    wl.record("uuuu", "long enough head", 256)
+    assert wl.head_for("uuuu") == "long enough head"
+
+
+def test_top_heads_skips_legacy_short_entries(path, monkeypatch):
+    # Entry written before the size filter existed: stored on disk with
+    # a tiny prompt_tokens. Replay path must skip it without deleting
+    # the store; fresh long entries still surface.
+    with open(path, "w") as f:
+        json.dump(
+            {
+                "old1": {
+                    "head": "tiny warmup prompt",
+                    "prompt_tokens": 6,
+                    "last_seen": 2.0,
+                    "hits": 9,
+                },
+                "new1": {
+                    "head": "a genuine system prompt head",
+                    "prompt_tokens": 2048,
+                    "last_seen": 1.0,
+                    "hits": 1,
+                },
+            },
+            f,
+        )
+    wl = WarmList(path)
+    monkeypatch.setenv("FUSION_WARMLIST_MIN_TOKENS", "256")
+    assert wl.top_heads(3) == [("new1", "a genuine system prompt head")]

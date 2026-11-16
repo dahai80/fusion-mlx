@@ -286,6 +286,14 @@ def _build_embed_app(patch_cfg, monkeypatch, embed_return):
     embed_obj.embeddings = embed_return
     embed_obj.dimensions = len(embed_return[0]) if embed_return else 0
     embed_obj.total_tokens = 3
+    # Route contract: create_embeddings reads token_embeddings/token_ids/
+    # token_offsets/sparse off the embed output. An unset MagicMock
+    # attribute auto-creates a MagicMock, which pydantic then rejects
+    # (EmbeddingData.sparse is dict-typed) — declare them absent instead.
+    embed_obj.token_embeddings = None
+    embed_obj.token_ids = None
+    embed_obj.token_offsets = None
+    embed_obj.sparse = None
 
     async def _async_embed(*_a, **_kw):
         return embed_obj

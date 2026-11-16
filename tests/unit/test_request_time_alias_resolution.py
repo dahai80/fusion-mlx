@@ -171,7 +171,11 @@ def _stub_embedding_engine(model_name: str):
         def __init__(self):
             self._model_name = model_name
 
-        async def embed(self, texts, max_length=512, padding=True, truncation=True):
+        async def embed(
+            self, texts, max_length=512, padding=True, truncation=True, **kwargs
+        ):
+            # **kwargs: the route/engine contract gained opt-in
+            # return_token_embeddings (#1624); stubs accept and ignore it.
             return EmbeddingOutput(
                 embeddings=[[0.1, 0.2, 0.3] for _ in texts],
                 total_tokens=len(texts),

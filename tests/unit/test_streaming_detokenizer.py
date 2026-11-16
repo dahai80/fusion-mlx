@@ -8,6 +8,30 @@ from mlx_lm.tokenizer_utils import (
 )
 from transformers import AutoTokenizer
 
+# Tokenizer files are fetched from the HF hub on cache miss. Under a
+# degraded network this must skip, not fail the job. Message-based
+# matching (same rationale as test_tokenizer_gemma4_hybrid.py): httpx
+# ConnectError subclasses neither OSError nor ConnectionError.
+_NETWORK_MARKERS = (
+    "connect",
+    "reset by peer",
+    "timed out",
+    "timeout",
+    "unreachable",
+    "localentrynotfound",
+    "couldn't connect",
+)
+
+
+def _hf_tokenizer_or_skip(alias):
+    try:
+        return AutoTokenizer.from_pretrained(alias)
+    except Exception as e:
+        msg = str(e).lower()
+        if any(m in msg for m in _NETWORK_MARKERS):
+            pytest.skip(f"HF hub unreachable for {alias}: {e}")
+        raise
+
 
 class TestStreamingDetokenizer:
     """Test streaming detokenizer correctness."""
@@ -15,7 +39,7 @@ class TestStreamingDetokenizer:
     @pytest.fixture
     def qwen_tokenizer(self):
         """Load Qwen tokenizer."""
-        return AutoTokenizer.from_pretrained("mlx-community/Qwen3-0.6B-8bit")
+        return _hf_tokenizer_or_skip("mlx-community/Qwen3-0.6B-8bit")
 
     def test_naive_streaming_matches_batch(self, qwen_tokenizer):
         """Verify NaiveStreamingDetokenizer output matches batch decode."""
