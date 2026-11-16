@@ -213,20 +213,26 @@ class WarmList:
         # recency. Returns (head_hash, head_text) pairs; empty head text
         # entries and below-threshold entries (stored before the size
         # filter existed) are skipped, so legacy tiny heads age out of
-        # the replay path without rewriting the store.
+        # the replay path without rewriting the store. Filtering runs
+        # BEFORE the top-k slice: rank-then-filter lets a few high-hit
+        # legacy short heads crowd every eligible long head out of the
+        # window entirely (observed in production: store top-3 by hits
+        # were 4-10 token warmup prompts, so top_heads() returned []
+        # while a genuine 509-token chat head sat at rank 16).
         min_tokens = warm_min_tokens()
         with self._lock:
             self._load()
+            eligible = (
+                (h, v)
+                for h, v in self._entries.items()
+                if v.get("head") and (v.get("prompt_tokens") or 0) >= min_tokens
+            )
             ranked = sorted(
-                self._entries.items(),
+                eligible,
                 key=lambda kv: (kv[1].get("hits", 0), kv[1].get("last_seen", 0)),
                 reverse=True,
             )
-            return [
-                (h, v["head"])
-                for h, v in ranked[:k]
-                if v.get("head") and (v.get("prompt_tokens") or 0) >= min_tokens
-            ]
+            return [(h, v["head"]) for h, v in ranked[:k]]
 
     def flush(self) -> None:
         with self._lock:
