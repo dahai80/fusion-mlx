@@ -167,3 +167,36 @@ def test_non_int_list_prompt_ignored(path):
     wl = WarmList(path)
     wl.record("dicts", [{"role": "user", "content": "hi"}], 500)
     assert wl.head_for("dicts") is None
+
+
+def test_top_heads_filters_before_topk(path, monkeypatch):
+    # Regression: rank-then-filter let legacy short heads with high hit
+    # counts fill the whole top-k window, so top_heads() returned []
+    # even when a genuine long head existed (observed in production
+    # 2026-11-16: top-3 by hits were 4-10 token warmup prompts, the
+    # 509-token chat head ranked 16th by hits and never surfaced).
+    # Filter must run before the slice.
+    monkeypatch.setenv("FUSION_WARMLIST_MIN_TOKENS", "256")
+    with open(path, "w") as f:
+        json.dump(
+            {
+                f"junk{i}": {
+                    "head": f"warmup prompt {i}",
+                    "prompt_tokens": 4 + i,
+                    "last_seen": 10.0 - i,
+                    "hits": 5 - i,
+                }
+                for i in range(3)
+            }
+            | {
+                "real": {
+                    "head": "a genuine system prompt head",
+                    "prompt_tokens": 509,
+                    "last_seen": 1.0,
+                    "hits": 1,
+                }
+            },
+            f,
+        )
+    wl = WarmList(path)
+    assert wl.top_heads(3) == [("real", "a genuine system prompt head")]
