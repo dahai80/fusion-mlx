@@ -2,9 +2,9 @@
 """Warm-list: bounded local store of hot prompt heads for sleep-time
 prefix pre-warming (Lever-3, docs/lever3-sleeptime-warmlist-design-1114).
 
-At request end the scheduler records the same prompt head slice that
-``prompt_shape_hashes`` hashed (first 1024 chars of a text prompt), keyed
-by its head hash. An idle-time warm path later replays prefill-only on
+At request end the scheduler records a prompt head slice (block-aligned
+window, default 2048 token ids / 8192 chars), keyed by its head hash. An
+idle-time warm path later replays prefill-only on
 these heads so the radix/prefix cache is hot before real traffic arrives.
 
 Storage is a single JSON file in the runtime data dir, bounded by both
@@ -29,9 +29,14 @@ _ENV_MAX_BYTES = "FUSION_WARMLIST_MAX_BYTES"
 _ENV_IDLE_S = "FUSION_WARMLIST_IDLE_S"
 _ENV_TOPK = "FUSION_WARMLIST_TOPK"
 _ENV_MIN_TOKENS = "FUSION_WARMLIST_MIN_TOKENS"
+_ENV_HEAD_IDS = "FUSION_WARMLIST_HEAD_IDS"
+_ENV_HEAD_CHARS = "FUSION_WARMLIST_HEAD_CHARS"
 
 DEFAULT_MAX_ENTRIES = 256
-DEFAULT_MAX_BYTES = 2 * 1024 * 1024
+# 256 entries x up to 2048 token ids (or 8192 chars) of JSON is tens of
+# MB; the old 2MiB cap would LRU-thrash the store down to a few long
+# heads (#1634).
+DEFAULT_MAX_BYTES = 48 * 1024 * 1024
 DEFAULT_IDLE_S = 600
 DEFAULT_TOPK = 3
 # Warm replay only pays off when the stored prefix is long enough for a
@@ -40,10 +45,16 @@ DEFAULT_TOPK = 3
 # that prefill in microseconds and warm nothing. 256 matches the tail of
 # the stage-1 concentration segment (>=512 showed 67.9% top-5 coverage).
 DEFAULT_MIN_TOKENS = 256
-HEAD_CHARS = 1024
-# Token-id prompts: head slice matches prompt_shape_hashes' 256-id window
-# so a stored head replays exactly the prefix the head hash identifies.
-HEAD_TOKEN_IDS = 256
+# The block-aware prefix cache matches complete paged-cache blocks
+# (block_size=2048 in production), so a replayed head must reach at
+# least one full block before it can produce a hit (#1634: the old
+# 256-id slice always stayed partial and bought zero benefit — measured
+# ttft parity with an unwarmed repeat). 2048 = one block; larger values
+# warm more blocks per replay.
+DEFAULT_HEAD_IDS = 2048
+# Text prompts: ~4 chars/token, so 8192 chars ≈ the same one-block
+# target as DEFAULT_HEAD_IDS.
+DEFAULT_HEAD_CHARS = 8192
 FLUSH_EVERY = 32
 FLUSH_INTERVAL_S = 60
 
@@ -67,6 +78,30 @@ def warm_min_tokens() -> int:
         return max(0, int(os.environ.get(_ENV_MIN_TOKENS, DEFAULT_MIN_TOKENS)))
     except ValueError:
         return DEFAULT_MIN_TOKENS
+
+
+def warm_head_ids() -> int:
+    try:
+        return max(0, int(os.environ.get(_ENV_HEAD_IDS, DEFAULT_HEAD_IDS)))
+    except ValueError:
+        return DEFAULT_HEAD_IDS
+
+
+def warm_head_chars() -> int:
+    try:
+        return max(0, int(os.environ.get(_ENV_HEAD_CHARS, DEFAULT_HEAD_CHARS)))
+    except ValueError:
+        return DEFAULT_HEAD_CHARS
+
+
+def _head_size(head) -> int:
+    # Serialized size for byte-cap accounting. Lists of ids need json
+    # length, not len() (which would count token count, ~5x smaller than
+    # their serialized footprint).
+    try:
+        return len(json.dumps(head, ensure_ascii=False))
+    except Exception:
+        return len(str(head))
 
 
 class WarmList:
@@ -122,6 +157,12 @@ class WarmList:
         except Exception as e:
             logger.debug("warm-list: flush failed (non-fatal): %s", e)
 
+    def _entry_size(self, v: dict) -> int:
+        b = v.get("bytes")
+        if isinstance(b, int) and b > 0:
+            return b
+        return _head_size(v.get("head", ""))
+
     def _evict_locked(self) -> None:
         max_entries = int(os.environ.get(_ENV_MAX_ENTRIES, DEFAULT_MAX_ENTRIES))
         max_bytes = int(os.environ.get(_ENV_MAX_BYTES, DEFAULT_MAX_BYTES))
@@ -129,10 +170,10 @@ class WarmList:
         while len(entries) > max_entries:
             oldest = min(entries, key=lambda k: entries[k].get("last_seen", 0))
             del entries[oldest]
-        total = sum(len(v.get("head", "")) for v in entries.values())
+        total = sum(self._entry_size(v) for v in entries.values())
         while total > max_bytes and entries:
             oldest = min(entries, key=lambda k: entries[k].get("last_seen", 0))
-            total -= len(entries[oldest].get("head", ""))
+            total -= self._entry_size(entries[oldest])
             del entries[oldest]
 
     def record(self, head_hash: str, prompt, prompt_tokens: int | None) -> None:
@@ -145,10 +186,13 @@ class WarmList:
         if isinstance(prompt, str):
             if not prompt:
                 return
-            head = prompt[:HEAD_CHARS]
+            head = prompt[: warm_head_chars()]
         elif isinstance(prompt, list) and prompt and isinstance(prompt[0], int):
-            # Same slice prompt_head_hash covers for token-id prompts.
-            head = prompt[:HEAD_TOKEN_IDS]
+            # Block-aligned replay slice (#1634): the block-aware cache
+            # only serves complete paged-cache blocks, so the head must
+            # reach at least one block for replay to produce a hit.
+            # prompt_head_hash telemetry keeps its own 256-id window.
+            head = prompt[: warm_head_ids()]
         else:
             return
         # Size filter: prompts below the threshold prefill too fast for a
@@ -169,6 +213,7 @@ class WarmList:
                 prev = self._entries.get(head_hash)
                 entry = {
                     "head": head,
+                    "bytes": _head_size(head),
                     "prompt_tokens": prompt_tokens,
                     "last_seen": now,
                     "hits": (prev.get("hits", 0) + 1) if prev else 1,

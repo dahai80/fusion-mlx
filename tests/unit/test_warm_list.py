@@ -34,7 +34,10 @@ def test_record_and_reload(path):
     assert wl2.top(1)[0]["hits"] == 1
 
 
-def test_hits_increment_and_head_truncated(path):
+def test_hits_increment_and_head_truncated(path, monkeypatch):
+    # Head chars are block-aligned now (default 8192, #1634); a 2000-char
+    # prompt fits whole. The env knob still truncates oversized heads.
+    monkeypatch.setenv("FUSION_WARMLIST_HEAD_CHARS", "1024")
     wl = WarmList(path)
     wl.record("bbbb", "x" * 2000, 512)
     wl.record("bbbb", "x" * 2000, 512)
@@ -151,16 +154,42 @@ def test_top_heads_skips_legacy_short_entries(path, monkeypatch):
 def test_token_id_prompt_recorded(path, monkeypatch):
     # Chat requests carry token-id prompts (list[int]); the str-only guard
     # silently dropped them — the majority of production traffic. The head
-    # must store the same 256-id slice prompt_head_hash covers, and replay
-    # via top_heads must return the ids unchanged.
+    # stores the block-aligned replay slice (default 2048 ids, #1634), and
+    # replay via top_heads must return the ids unchanged.
     monkeypatch.setenv("FUSION_WARMLIST_MIN_TOKENS", "256")
     wl = WarmList(path)
     ids = list(range(620))
     wl.record("chat1", ids, 620)
     wl.flush()
-    assert wl.head_for("chat1") == ids[:256]
+    assert wl.head_for("chat1") == ids
     heads = wl.top_heads(3)
-    assert ("chat1", ids[:256]) in heads
+    assert ("chat1", ids) in heads
+
+
+def test_head_ids_cap_enforced(path, monkeypatch):
+    # Slice cap: prompts longer than the cap store exactly cap ids so a
+    # replay can fill at least one paged-cache block (#1634). MIN_TOKENS
+    # stays 0 (autouse) — the size filter is orthogonal to the cap.
+    monkeypatch.setenv("FUSION_WARMLIST_HEAD_IDS", "10")
+    wl = WarmList(path)
+    ids = list(range(50))
+    wl.record("cap1", ids, 50)
+    assert wl.head_for("cap1") == ids[:10]
+
+
+def test_byte_cap_counts_serialized_ids(path, monkeypatch):
+    # len() on a list head counts tokens, not serialized bytes — a 2048-id
+    # head is ~10KB of JSON. Byte-cap accounting must use the serialized
+    # size or long token-id heads never trigger eviction (#1634). Cap
+    # fits one ~10KB serialized head but not two.
+    monkeypatch.setenv("FUSION_WARMLIST_MAX_BYTES", "15000")
+    wl = WarmList(path)
+    wl.record("big1", list(range(2000)), 2000)
+    wl.record("big2", list(range(2000)), 2000)
+    wl.flush()
+    # big1 (older last_seen) must be evicted; one entry survives.
+    assert wl.head_for("big1") is None
+    assert wl.head_for("big2") is not None
 
 
 def test_non_int_list_prompt_ignored(path):
