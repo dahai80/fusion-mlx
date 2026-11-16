@@ -64,7 +64,10 @@ def test_kill_switch(path, monkeypatch):
 
 def test_non_string_prompt_ignored(path):
     wl = WarmList(path)
-    wl.record("cccc", [1, 2, 3], 3)
+    # [1, 2, 3] is a valid token-id prompt now (see
+    # test_token_id_prompt_recorded); messages-style dict lists and other
+    # non-prompt shapes stay ignored.
+    wl.record("cccc", [{"role": "user", "content": "hi"}], 3)
     wl.record("dddd", None, 0)
     wl.record("eeee", "", 0)
     assert wl.stats()["entries"] == 0
@@ -143,3 +146,24 @@ def test_top_heads_skips_legacy_short_entries(path, monkeypatch):
     wl = WarmList(path)
     monkeypatch.setenv("FUSION_WARMLIST_MIN_TOKENS", "256")
     assert wl.top_heads(3) == [("new1", "a genuine system prompt head")]
+
+
+def test_token_id_prompt_recorded(path, monkeypatch):
+    # Chat requests carry token-id prompts (list[int]); the str-only guard
+    # silently dropped them — the majority of production traffic. The head
+    # must store the same 256-id slice prompt_head_hash covers, and replay
+    # via top_heads must return the ids unchanged.
+    monkeypatch.setenv("FUSION_WARMLIST_MIN_TOKENS", "256")
+    wl = WarmList(path)
+    ids = list(range(620))
+    wl.record("chat1", ids, 620)
+    wl.flush()
+    assert wl.head_for("chat1") == ids[:256]
+    heads = wl.top_heads(3)
+    assert ("chat1", ids[:256]) in heads
+
+
+def test_non_int_list_prompt_ignored(path):
+    wl = WarmList(path)
+    wl.record("dicts", [{"role": "user", "content": "hi"}], 500)
+    assert wl.head_for("dicts") is None

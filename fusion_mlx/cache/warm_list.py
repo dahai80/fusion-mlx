@@ -41,6 +41,9 @@ DEFAULT_TOPK = 3
 # the stage-1 concentration segment (>=512 showed 67.9% top-5 coverage).
 DEFAULT_MIN_TOKENS = 256
 HEAD_CHARS = 1024
+# Token-id prompts: head slice matches prompt_shape_hashes' 256-id window
+# so a stored head replays exactly the prefix the head hash identifies.
+HEAD_TOKEN_IDS = 256
 FLUSH_EVERY = 32
 
 
@@ -124,7 +127,18 @@ class WarmList:
     def record(self, head_hash: str, prompt, prompt_tokens: int | None) -> None:
         if self._is_disabled() or not head_hash:
             return
-        if not isinstance(prompt, str) or not prompt:
+        # Accept both prompt shapes the scheduler takes: rendered text
+        # (str, /v1/completions-style) and token ids (list[int], the chat
+        # path — production observation showed chat requests, the majority
+        # of traffic, were silently dropped by a str-only guard).
+        if isinstance(prompt, str):
+            if not prompt:
+                return
+            head = prompt[:HEAD_CHARS]
+        elif isinstance(prompt, list) and prompt and isinstance(prompt[0], int):
+            # Same slice prompt_head_hash covers for token-id prompts.
+            head = prompt[:HEAD_TOKEN_IDS]
+        else:
             return
         # Size filter: prompts below the threshold prefill too fast for a
         # warm cache hit to matter. Unknown token count is treated as too
@@ -137,7 +151,6 @@ class WarmList:
                 min_tokens,
             )
             return
-        head = prompt[:HEAD_CHARS]
         now = time.time()
         try:
             with self._lock:
