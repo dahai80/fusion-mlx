@@ -356,3 +356,23 @@ class TestRequestOutput:
             logprobs=logprobs_data,
         )
         assert output.logprobs == logprobs_data
+
+
+class TestRequestHasTools:
+    # #1638 (TraceSpec V1): telemetry-only decision-type flag.
+    def test_default_is_false(self):
+        req = Request(
+            request_id="t-ht-1",
+            prompt="hello",
+            sampling_params=SamplingParams(),
+        )
+        assert req.has_tools is False
+
+    def test_settable_at_construction(self):
+        req = Request(
+            request_id="t-ht-2",
+            prompt="hello",
+            sampling_params=SamplingParams(),
+            has_tools=True,
+        )
+        assert req.has_tools is True

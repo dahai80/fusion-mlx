@@ -1306,7 +1306,9 @@ class BatchedEngine(BaseEngine):
         )
         _t0 = time.perf_counter()
         output = await self._engine.generate(
-            prompt=prompt, sampling_params=sampling_params
+            prompt=prompt,
+            sampling_params=sampling_params,
+            has_tools=bool(kwargs.pop("has_tools", False)),
         )
         from ..api.utils import clean_special_tokens
 
@@ -1402,6 +1404,7 @@ class BatchedEngine(BaseEngine):
             prompt=prompt,
             sampling_params=sampling_params,
             streaming=True,
+            has_tools=bool(kwargs.pop("has_tools", False)),
             **specprefill_kwargs,
             **resume_kwargs,
         )
@@ -1555,6 +1558,9 @@ class BatchedEngine(BaseEngine):
             min_p=min_p,
             repetition_penalty=repetition_penalty,
             presence_penalty=presence_penalty,
+            # #1638: tools presence marks the request as a tool-call decision
+            # for spec-accept telemetry (dtypes: plain/tool).
+            has_tools=bool(tools),
             **kwargs,
         )
         if tools and not gen.tool_calls:
@@ -1727,6 +1733,9 @@ class BatchedEngine(BaseEngine):
             presence_penalty=presence_penalty,
             resume_prompt_cache=resume_prompt_cache,
             resume_cached_tokens=resume_cached_tokens,
+            # #1638: tools presence marks the request as a tool-call decision
+            # for spec-accept telemetry (dtypes: plain/tool).
+            has_tools=bool(tools),
             **kwargs,
         ):
             if suppressor is not None and output.new_text:

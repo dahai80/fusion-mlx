@@ -518,6 +518,8 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                 "max_tokens": getattr(request, "max_tokens", None),
                 "output_tokens": len(getattr(request, "output_token_ids", None) or []),
                 "status": getattr(request, "status", None),
+                # #1638 (TraceSpec V1): tool-call vs plain decision type.
+                "spec_has_tools": bool(getattr(request, "has_tools", False)),
             }
             # PIC sizing telemetry: prompt-reuse shape digests (full + head).
             _prompt = getattr(request, "prompt", None)
@@ -595,6 +597,7 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                         record.get("output_tokens"),
                         proposed,
                         accepted,
+                        dtype="tool" if record.get("spec_has_tools") else "plain",
                     )
                 except Exception:
                     logger.debug(

@@ -22,6 +22,17 @@ logger = logging.getLogger(__name__)
 DEFAULT_BUCKET_EDGES = (512, 2048, 8192)
 DEFAULT_WINDOW = 64
 BUCKET_LABELS = ("<512", "512-2k", "2k-8k", "8k+")
+# #1638 (TraceSpec V1): decision-type axis. Tool-call requests exercise the
+# drafter on grammar-constrained continuations; plain requests do not. The
+# aggregate rate hides a drafter that is fine on prose and bad on tool args.
+DTYPES = ("plain", "tool")
+DEFAULT_DTYPE = "plain"
+
+
+def normalize_dtype(dtype: str | None) -> str:
+    # Best-effort telemetry: unknown values collapse onto the default so a
+    # future axis can never silently fork the window space.
+    return dtype if dtype in DTYPES else DEFAULT_DTYPE
 
 
 def bucket_index(output_tokens: int, edges: tuple[int, ...]) -> int:
@@ -53,7 +64,7 @@ class SpecAcceptBuckets:
         if window < 1:
             raise ValueError(f"window must be >= 1, got {window}")
         self.window = window
-        self._cells: dict[tuple[str, int], deque] = {}
+        self._cells: dict[tuple[str, int, str], deque] = {}
         self._last_bucket: int | None = None
         self._lock = threading.Lock()
 
@@ -63,33 +74,42 @@ class SpecAcceptBuckets:
         output_tokens: int | None,
         proposed: int,
         accepted: int,
+        dtype: str | None = DEFAULT_DTYPE,
     ) -> None:
         # Best-effort telemetry: invalid inputs are dropped, never raised.
         if not method or output_tokens is None or output_tokens < 0 or proposed <= 0:
             return
         idx = bucket_index(int(output_tokens), self.edges)
+        dt = normalize_dtype(dtype)
         with self._lock:
-            cell = self._cells.get((method, idx))
+            key = (method, idx, dt)
+            cell = self._cells.get(key)
             if cell is None:
                 cell = deque(maxlen=self.window)
-                self._cells[(method, idx)] = cell
+                self._cells[key] = cell
             cell.append((int(accepted), int(proposed)))
             self._last_bucket = idx
         logger.debug(
-            "spec accept bucket: method=%s bucket=%s accepted=%d proposed=%d",
+            "spec accept bucket: method=%s bucket=%s dtype=%s accepted=%d proposed=%d",
             method,
             bucket_label(idx),
+            dt,
             accepted,
             proposed,
         )
 
-    def rate(self, method: str | None, bucket: int | None) -> float | None:
+    def rate(
+        self,
+        method: str | None,
+        bucket: int | None,
+        dtype: str | None = DEFAULT_DTYPE,
+    ) -> float | None:
         # Token-weighted acceptance over the rolling window (sum/sum), matching
         # the scalar feedback's accepted/proposed semantics.
         if not method or bucket is None:
             return None
         with self._lock:
-            cell = self._cells.get((method, int(bucket)))
+            cell = self._cells.get((method, int(bucket), normalize_dtype(dtype)))
             samples = list(cell) if cell else []
         if not samples:
             return None
@@ -114,14 +134,17 @@ class SpecAcceptBuckets:
 
     def export(self) -> dict:
         with self._lock:
-            buckets: dict[str, dict[str, dict]] = {}
-            for (method, idx), cell in sorted(self._cells.items()):
+            # #1638: cells nest as buckets[method][bucket_label][dtype] so the
+            # tool/plain split is a first-class axis; plain-only windows look
+            # like a single-dtype level, matching the pre-#1638 consumers.
+            buckets: dict[str, dict[str, dict[str, dict]]] = {}
+            for (method, idx, dt), cell in sorted(self._cells.items()):
                 samples = list(cell)
                 if not samples:
                     continue
                 accepted = sum(a for a, _ in samples)
                 proposed = sum(p for _, p in samples)
-                buckets.setdefault(method, {})[bucket_label(idx)] = {
+                buckets.setdefault(method, {}).setdefault(bucket_label(idx), {})[dt] = {
                     "accepted": accepted,
                     "proposed": proposed,
                     "samples": len(samples),
