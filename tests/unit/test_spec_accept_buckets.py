@@ -5,10 +5,12 @@ import pytest
 
 from fusion_mlx.speculative.accept_buckets import (
     DEFAULT_BUCKET_EDGES,
+    DEFAULT_DTYPE,
     DEFAULT_WINDOW,
     SpecAcceptBuckets,
     bucket_index,
     bucket_label,
+    normalize_dtype,
 )
 from fusion_mlx.speculative.auto_router import (
     METHOD_MTP,
@@ -60,7 +62,7 @@ class TestRollingWindow:
         b = SpecAcceptBuckets(window=4)
         for i in range(10):
             b.record("suffix", 100, 10, 10 if i >= 6 else 0)
-        cell = b._cells[("suffix", 0)]
+        cell = b._cells[("suffix", 0, DEFAULT_DTYPE)]
         assert len(cell) == 4
         # Only the last 4 samples (i=6..9, all accepted) count.
         assert b.rate("suffix", 0) == 1.0
@@ -106,6 +108,57 @@ class TestRateAggregation:
         assert rate is None and idx is None
 
 
+class TestDtypeAxis:
+    # #1638 (TraceSpec V1): tool/plain decision-type axis.
+    def test_dtype_defaults_to_plain(self):
+        b = SpecAcceptBuckets()
+        b.record("mtp", 300, 10, 8)
+        assert ("mtp", 0, "plain") in b._cells
+        assert ("mtp", 0, "tool") not in b._cells
+        assert b.rate("mtp", 0) == 0.8
+
+    def test_tool_and_plain_windows_are_disjoint(self):
+        b = SpecAcceptBuckets()
+        b.record("mtp", 300, 10, 8, dtype="plain")
+        b.record("mtp", 300, 10, 2, dtype="tool")
+        assert b.rate("mtp", 0, dtype="plain") == 0.8
+        assert b.rate("mtp", 0, dtype="tool") == 0.2
+        # Scalar read (no dtype) must not blend the two windows.
+        assert b.rate("mtp", 0) == 0.8
+
+    def test_unknown_dtype_collapses_to_plain(self):
+        assert normalize_dtype("tool") == "tool"
+        assert normalize_dtype("plain") == "plain"
+        assert normalize_dtype(None) == "plain"
+        assert normalize_dtype("bogusFutureType") == "plain"
+        b = SpecAcceptBuckets()
+        b.record("mtp", 300, 10, 8, dtype="bogusFutureType")
+        assert b.rate("mtp", 0, dtype="plain") == 0.8
+        assert set(b.export()["buckets"]["mtp"]["<512"]) == {"plain"}
+
+    def test_route_rate_reads_plain_window_only(self):
+        # Router behavior is untouched by the axis (#1638 scope): route_rate
+        # keeps consuming the plain window even when tool windows exist.
+        b = SpecAcceptBuckets()
+        b.record("mtp", 9000, 10, 9, dtype="tool")
+        b.record("mtp", 9000, 10, 1, dtype="plain")
+        rate, idx = b.route_rate("mtp", 9000)
+        assert rate == 0.1
+        assert idx == 3
+
+    def test_export_nests_dtype(self):
+        b = SpecAcceptBuckets()
+        b.record("mtp", 300, 10, 8)
+        b.record("mtp", 300, 10, 2, dtype="tool")
+        cells = b.export()["buckets"]["mtp"]["<512"]
+        assert set(cells) == {"plain", "tool"}
+        assert cells["tool"]["rate"] == 0.2
+        # plain-only window has a single level, not zero-filled tool cell.
+        b2 = SpecAcceptBuckets()
+        b2.record("suffix", 100, 10, 5)
+        assert set(b2.export()["buckets"]["suffix"]["<512"]) == {"plain"}
+
+
 class TestExportShape:
     def test_export_compact_shape(self):
         b = SpecAcceptBuckets(edges=(512, 2048, 8192), window=8)
@@ -116,14 +169,14 @@ class TestExportShape:
         assert out["edges"] == [512, 2048, 8192]
         assert out["window"] == 8
         assert out["last_bucket"] == "8k+"
-        assert out["buckets"]["mtp"]["<512"] == {
+        assert out["buckets"]["mtp"]["<512"]["plain"] == {
             "accepted": 8,
             "proposed": 10,
             "samples": 1,
             "rate": 0.8,
         }
-        assert out["buckets"]["mtp"]["512-2k"]["rate"] == 0.4
-        assert out["buckets"]["suffix"]["8k+"]["rate"] == 0.5
+        assert out["buckets"]["mtp"]["512-2k"]["plain"]["rate"] == 0.4
+        assert out["buckets"]["suffix"]["8k+"]["plain"]["rate"] == 0.5
         # Untouched buckets are absent, not zero-filled.
         assert "2k-8k" not in out["buckets"]["mtp"]
 

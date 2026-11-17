@@ -1325,19 +1325,24 @@ def _render_spec_decode_metrics() -> list[str]:
 
             export = get_accept_buckets().export()
             for method, buckets in export["buckets"].items():
-                for label, cell in buckets.items():
-                    if cell.get("rate") is None:
-                        continue
-                    lines.extend(
-                        _fmt_metric(
-                            "fusion_mlx_spec_decode_bucket_accept_rate",
-                            "gauge",
-                            "Speculative-decoding accept rate within an "
-                            "output-length bucket (0-1, rolling window).",
-                            round(float(cell["rate"]), 6),
-                            {"method": method, "bucket": label},
+                for label, cells in buckets.items():
+                    for dtype, cell in cells.items():
+                        if cell.get("rate") is None:
+                            continue
+                        lines.extend(
+                            _fmt_metric(
+                                "fusion_mlx_spec_decode_bucket_accept_rate",
+                                "gauge",
+                                "Speculative-decoding accept rate within an "
+                                "output-length bucket (0-1, rolling window).",
+                                round(float(cell["rate"]), 6),
+                                {
+                                    "method": method,
+                                    "bucket": label,
+                                    "dtype": dtype,
+                                },
+                            )
                         )
-                    )
         except Exception:
             logger.debug(
                 "accept-bucket spec-decode metrics render error", exc_info=True

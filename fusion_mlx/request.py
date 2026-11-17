@@ -147,6 +147,11 @@ class Request:
     # decided; "" = decided no-method; else a METHOD_* canonical name.
     _active_spec_method: str | None = None
 
+    # #1638 (TraceSpec V1): request carried a tools payload (tool-call
+    # decision type). Telemetry only — set from the chat request at the API
+    # boundary, consumed by request_end spec feedback; never affects routing.
+    has_tools: bool = False
+
     # Cache corruption recovery
     cache_corruption_retries: int = 0
     generation_overflow_retries: int = 0

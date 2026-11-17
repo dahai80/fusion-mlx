@@ -2244,6 +2244,7 @@ class EngineCore:
         specprefill_threshold: int | None = None,
         specprefill_system_end: int | None = None,
         streaming: bool = False,
+        has_tools: bool = False,
         resume_prompt_cache: list | None = None,
         resume_cached_tokens: int = 0,
     ) -> str:
@@ -2266,6 +2267,7 @@ class EngineCore:
             request_id=request_id,
             prompt=prompt,
             sampling_params=sampling_params,
+            has_tools=bool(has_tools),
             images=images,
             videos=videos,
             vlm_inputs_embeds=vlm_inputs_embeds,
