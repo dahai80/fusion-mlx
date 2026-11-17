@@ -3,7 +3,6 @@ import logging
 from pathlib import Path
 
 import pytest
-from fusion_model_hub.catalog.schema import CatalogEntry
 from pydantic import ValidationError
 
 from fusion_mlx.api.openai._common import _catalog_file_candidates, _model_catalog_dir
@@ -18,6 +17,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _catalog_entry_cls():
+    # fusion-model-hub is an ecosystem dependency, not a fusion-mlx
+    # requirement — CI test envs install `-e ".[dev]"` only. Import
+    # lazily and skip (not fail) when the package is absent; schema
+    # validation is the point of this module, not the import itself.
+    pytest.importorskip("fusion_model_hub")
+    from fusion_model_hub.catalog.schema import CatalogEntry
+
+    return CatalogEntry
+
+
 def _catalog_files() -> list[Path]:
     return sorted(Path(_model_catalog_dir()).glob("*.json"))
 
@@ -29,6 +39,7 @@ def test_catalog_present_and_nonempty():
 
 
 def test_all_catalog_entries_validate_against_schema():
+    CatalogEntry = _catalog_entry_cls()
     errors = []
     for path in _catalog_files():
         try:
@@ -71,6 +82,7 @@ def test_default_model_is_cataloged():
 
 
 def test_unknown_fields_are_rejected():
+    CatalogEntry = _catalog_entry_cls()
     files = _catalog_files()
     with open(files[0], encoding="utf-8") as f:
         data = json.load(f)
