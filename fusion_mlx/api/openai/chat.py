@@ -266,6 +266,13 @@ async def _run_chat(
         tool_choice=getattr(request, "tool_choice", None),
         tools=getattr(request, "tools", None),
     )
+    # M10 code-mode tool interface: present tools as a Python stub
+    # module with return-shape hints; the model replies with a code
+    # block for the caller's harness to execute (arXiv 2611.19123).
+    if getattr(request, "code_mode", False):
+        from ..code_mode import inject_code_mode_messages
+
+        messages = inject_code_mode_messages(messages, request.tools)
     sampling = _build_sampling_params(request, profile_overrides=profile_overrides)
     from ..utils import cap_max_tokens_to_context
 

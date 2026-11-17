@@ -167,6 +167,13 @@ async def _context_preflight(
         tool_choice=getattr(request, "tool_choice", None),
         tools=getattr(request, "tools", None),
     )
+    # M10 code-mode tool interface: stub module + return-shape hints
+    # (arXiv 2611.19123); model replies with a code block for the
+    # caller's harness to execute.
+    if getattr(request, "code_mode", False):
+        from ..code_mode import inject_code_mode_messages
+
+        messages = inject_code_mode_messages(messages, request.tools)
 
     prompt_token_estimate = 0
     from ...service.helpers import compute_prompt_tokens_for_messages
