@@ -209,14 +209,11 @@ def load_eagle3_weights(model_dir: str) -> tuple[dict, dict]:
         else:
             raise FileNotFoundError(f"No weights found in {model_dir}")
     else:
-        from safetensors import safe_open
-
+        # mx.load, not safe_open(framework="numpy"): numpy has no bfloat16,
+        # so any bf16 checkpoint (the common case) blew up in get_tensor
+        # with "data type 'bfloat16' not understood".
         for sf in safetensor_files:
-            with safe_open(sf, framework="numpy") as f:
-                # safe_open is NOT iterable (TypeError) despite SIM118's
-                # suggestion; .keys() is the documented iteration API.
-                for k in f.keys():  # noqa: SIM118
-                    weights[k] = mx.array(f.get_tensor(k))
+            weights.update(mx.load(str(sf)))
 
     remapped = {}
     for k, v in weights.items():
