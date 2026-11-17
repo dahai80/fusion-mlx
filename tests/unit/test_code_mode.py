@@ -120,6 +120,18 @@ class TestInject:
         assert "get_weather" in out[0]["content"]
         assert out[1] == msgs[0]
 
+    def test_merges_into_existing_system_message(self):
+        msgs = [
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "weather in Paris?"},
+        ]
+        out = inject_code_mode_messages(msgs, [WEATHER_TOOL])
+        assert len(out) == 2
+        assert out[0]["role"] == "system"
+        assert "get_weather" in out[0]["content"]
+        assert "You are a helpful assistant." in out[0]["content"]
+        assert out[1] == msgs[1]
+
     def test_no_tools_is_noop(self):
         msgs = [{"role": "user", "content": "hi"}]
         out = inject_code_mode_messages(msgs, None)

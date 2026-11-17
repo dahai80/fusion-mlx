@@ -120,5 +120,12 @@ def inject_code_mode_messages(
     stubs = build_code_mode_stubs(tools)
     if not stubs:
         return list(messages)
+    # Chat templates (e.g. Qwen) require the system message to be first
+    # and often reject a second one, so merge into an existing leading
+    # system message instead of prepending a separate one.
     system = f"{CODE_MODE_SYSTEM_PROMPT}\n\n```python\n{stubs}```"
+    if messages and messages[0].get("role") == "system":
+        merged = dict(messages[0])
+        merged["content"] = f"{system}\n\n{merged.get('content', '')}"
+        return [merged, *messages[1:]]
     return [{"role": "system", "content": system}, *messages]
