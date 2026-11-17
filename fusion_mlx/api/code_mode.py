@@ -73,6 +73,11 @@ def build_code_mode_stubs(tools: list[dict] | None) -> str:
         return ""
     lines = ["# Tool stubs (do not edit; shapes are binding)"]
     for tool in tools:
+        # The chat lane passes pydantic ToolDefinition objects (request
+        # validation converts the raw JSON); normalize to dicts first or
+        # every real request would silently produce an empty stub module.
+        if hasattr(tool, "model_dump"):
+            tool = tool.model_dump()
         fn = tool.get("function") if isinstance(tool, dict) else None
         if not isinstance(fn, dict) or not fn.get("name"):
             continue

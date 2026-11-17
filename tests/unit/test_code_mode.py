@@ -78,6 +78,19 @@ class TestBuildStubs:
         assert build_code_mode_stubs([{"type": "function"}]) != ""
         assert build_code_mode_stubs([None, 42, "x"]) != "" or True
 
+    def test_pydantic_tooldefinition_objects_render(self):
+        # Chat lane passes pydantic ToolDefinition objects, not raw dicts.
+        from fusion_mlx.api.openai_models import ChatCompletionRequest
+
+        req = ChatCompletionRequest(
+            model="m",
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[WEATHER_TOOL],
+        )
+        stubs = build_code_mode_stubs(req.tools)
+        assert "def get_weather(city: str" in stubs
+        assert '"temp_c"' in stubs
+
     def test_array_item_types(self):
         tool = {
             "type": "function",
