@@ -47,9 +47,10 @@ def test_no_duplicate_hub_ids():
             data = json.load(f)
         hub_id = data.get("hubId", "")
         if hub_id:
-            assert hub_id not in seen, (
-                f"duplicate hubId {hub_id!r} in {path.name} and {seen[hub_id]}"
-            )
+            if hub_id in seen:
+                pytest.fail(
+                    f"duplicate hubId {hub_id!r} in {path.name} and {seen[hub_id]}"
+                )
             seen[hub_id] = path.name
 
 
