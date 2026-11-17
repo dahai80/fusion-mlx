@@ -361,6 +361,11 @@ class ChatCompletionRequest(BaseModel):
     # Tool calling
     tools: list[ToolDefinition] | None = None
     tool_choice: str | dict | None = None  # "auto", "none", or specific tool
+    # M10 code-mode tool interface (arXiv 2611.19123): when True and tools
+    # are present, tools are presented as a Python stub module (with
+    # return-shape hints) and the model answers with a code block for the
+    # caller's harness to execute. Prompt-side only; no server execution.
+    code_mode: bool = False
     # Structured output
     response_format: ResponseFormat | dict | None = None
     # vLLM-compatible structured output (grammar, regex, choice, json)
