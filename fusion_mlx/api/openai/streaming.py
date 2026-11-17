@@ -405,7 +405,11 @@ async def _stream_chat_generator(
             min_p=sampling.min_p,
             repetition_penalty=getattr(sampling, "repetition_penalty", 1.0),
             presence_penalty=sampling.presence_penalty,
-            tools=request.tools,
+            # M10 code-mode: tools are presented as the stub module in the
+            # system message; passing them to the engine too would let the
+            # template advertise the native tool-call channel and the model
+            # would answer with tool_calls instead of the code block.
+            tools=None if getattr(request, "code_mode", False) else request.tools,
             stop=sampling.stop,
             chat_template_kwargs=ct_kwargs_stream if ct_kwargs_stream else None,
             prefix_cache_boundary=(
