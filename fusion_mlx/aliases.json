@@ -860,7 +860,18 @@
     "is_hybrid_explicit": true,
     "is_moe": false,
     "supports_spec_decode": false,
-    "languages": ["ar", "en"],
+    "languages": [
+      "ar",
+      "en"
+    ],
     "description": "Jais-3 7B (Inception) Arabic-English bilingual LLM, 4-bit MLX build. Optional Arabic-capable model for ai-speech-exam Arabic scenarios (#1416)."
+  },
+  "kimi-linear-48b-a3b-4bit": {
+    "hf_path": "mlx-community/Kimi-Linear-48B-A3B-Instruct-4bit",
+    "modality": "text",
+    "is_hybrid": true,
+    "is_moe": true,
+    "is_hybrid_explicit": true,
+    "supports_spec_decode": false
   }
 }
