@@ -3292,6 +3292,55 @@ class BlockAwarePrefixCache(CacheManager):
         logger.info("unpin_prefix: unpinned %d blocks", count)
         return count
 
+    def drop_request_segments(
+        self, request_id: str, start_token: int, end_token: int
+    ) -> int:
+        """Detach a token-range of an active request's cached blocks from
+        the prefix indexes without freeing them (M9, arXiv 2610.28577).
+
+        Whole-block granularity: only blocks FULLY inside [start_token,
+        end_token) are dropped. An interior drop breaks the chain-hash for
+        every downstream block, so the whole tail from the first dropped
+        block is detached too — their KV content and refs stay valid for
+        this request's decode (no re-prefill), but no future fetch_cache
+        can match them (no wrong-KV reuse across requests). Physical
+        reclamation happens on the request's normal release path.
+
+        Returns the number of blocks detached from the indexes.
+        """
+        if end_token <= start_token:
+            return 0
+        table = self.paged_cache.get_block_table(request_id)
+        if table is None:
+            logger.debug("drop_request_segments: no block table for %s", request_id)
+            return 0
+        bs = self.block_size
+        first_idx = (start_token + bs - 1) // bs
+        last_idx = min(end_token // bs, len(table.block_ids))
+        if last_idx <= first_idx:
+            logger.debug(
+                "drop_request_segments: [%d,%d) covers no full block "
+                "(block_size=%d, %d table blocks)",
+                start_token,
+                end_token,
+                bs,
+                len(table.block_ids),
+            )
+            return 0
+        detached = 0
+        for bid in table.block_ids[first_idx:]:
+            if self.paged_cache.detach_block_from_index(bid):
+                detached += 1
+        logger.info(
+            "drop_request_segments: request=%s tokens=[%d,%d) detached %d "
+            "blocks from prefix indexes (content kept for decode)",
+            request_id,
+            start_token,
+            end_token,
+            detached,
+        )
+        return detached
+
     def _expire_pinned_blocks(self) -> int:
         # Audit M13: expiry used to run only inside pin_prefix(), so a pin
         # taken with a TTL held its ref_count (block unevictable) until the
