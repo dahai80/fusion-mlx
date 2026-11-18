@@ -232,6 +232,12 @@ def _execute_dpo_core(
         # #1460: same mechanism as the SFT path (mlx_lm tuner
         # grad_checkpoint) — patch the transformer block __call__ with
         # mx.checkpoint to trade compute for activation memory.
+        # #1647: guard makes repeat calls in this long-lived process
+        # no-ops (upstream re-patches type(layer).__call__ every time,
+        # nesting wrappers and doubling backward recompute per job).
+        from fusion_mlx.training.gc_guard import ensure_grad_checkpoint_guard
+
+        ensure_grad_checkpoint_guard()
         from mlx_lm.tuner.trainer import grad_checkpoint
 
         grad_checkpoint(model.layers[0])
