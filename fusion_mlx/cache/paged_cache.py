@@ -836,7 +836,12 @@ class PagedCacheManager(CacheManager):
         if block.block_hash is None:
             return False
 
-        evicted_id = self.cached_block_hash_to_block.pop(block.block_hash, None)
+        # #1645 fix: the block_id must be passed so single-CacheBlock index
+        # entries actually pop — pop(hash, None) never matched (block_id
+        # comparison against None) and the eviction was a silent no-op.
+        evicted_id = self.cached_block_hash_to_block.pop(
+            block.block_hash, block.block_id
+        )
 
         if evicted_id is not None:
             block.reset_hash()
@@ -1000,6 +1005,25 @@ class PagedCacheManager(CacheManager):
     # =========================================================================
     # Prefix Caching (vLLM chain-hash style)
     # =========================================================================
+
+    def detach_block_from_index(self, block_id: int) -> bool:
+        """Remove a block from the prefix hash index WITHOUT freeing it.
+
+        M9 drop/pin primitive (arXiv 2610.28577): an agent marks part of
+        an active request's context as droppable; the block's KV content
+        and ref stay valid for the owning request's decode, but no future
+        fetch_cache can match it (index entry popped, hash cleared,
+        content-invalidated callback strips prefix-index entries). Downstream
+        chain hashes become unreachable — callers must detach the whole
+        tail after an interior drop.
+
+        Returns True if the block was indexed and is now detached.
+        """
+        block = self.allocated_blocks.get(block_id)
+        if block is None:
+            return False
+        with self._hash_map_lock:
+            return self._maybe_evict_cached_block(block)
 
     def get_cached_block(self, block_hash: BlockHash) -> CacheBlock | None:
         """

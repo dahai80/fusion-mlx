@@ -419,6 +419,13 @@ async def _stream_chat_generator(
             compiled_grammar=compiled_grammar,
             resume_prompt_cache=resume_prompt_cache,
             resume_cached_tokens=resume_cached_tokens,
+            # M9 (#1645): propagate the API request id into the scheduler
+            # so admin surfaces (KV segment drop, and any request-scoped
+            # abort/mutation route) can address the request by the id the
+            # client already sees in stream chunks. Without this the
+            # scheduler keys the request by an internal uuid4 that no
+            # external caller can know.
+            request_id=request_id,
         )
         # Prefill-phase keepalive: engine yields nothing before first token,
         # so long prefills left the stream silent past client idle timeouts.

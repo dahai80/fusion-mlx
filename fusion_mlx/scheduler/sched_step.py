@@ -118,6 +118,7 @@ def step(self) -> SchedulerOutput:
         and not self._vlm_mtp_active
         and not self._pending_abort_ids
         and not self._pending_async_removes
+        and not self._pending_kv_drops
     ):
         self._pure_decode_count = getattr(self, "_pure_decode_count", 0) + 1
         if self._pure_decode_count <= 3 or self._pure_decode_count % 50 == 0:
@@ -138,6 +139,7 @@ def step(self) -> SchedulerOutput:
     )
 
     self._process_pending_aborts()
+    self._process_pending_kv_drops()
     self._drain_pending_async_removes()
 
     if (

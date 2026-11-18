@@ -148,6 +148,11 @@ def __init__(
     # CPython GIL guarantees set.add() and `x in set` are atomic.
     self._pending_abort_ids: set[str] = set()
 
+    # M9 (#1645 follow-up): deferred agent-driven KV segment drops
+    # (request_id -> [(start_token, end_token), ...]). Same GIL-atomic
+    # deferred pattern as aborts; consumed at the top of step().
+    self._pending_kv_drops: dict[str, list[tuple[int, int]]] = {}
+
     # Lock-free admin snapshot. Published at the end of each step() while
     # the engine thread is the sole writer of running/waiting; the admin
     # endpoint reads the dict reference atomically (GIL) and never iterates

@@ -121,6 +121,59 @@ def _process_pending_aborts(self) -> None:
         self._do_abort_request(request_id)
 
 
+def queue_kv_drop(self, request_id: str, start_token: int, end_token: int) -> None:
+    """Queue an agent-driven KV segment drop (M9, arXiv 2610.28577).
+
+    Deferred like aborts: the caller (API/executor thread) only appends
+    to the pending dict — GIL-atomic — and the drop is applied inside
+    the step() context on the engine thread, the same execution context
+    that mutates the cache. Re-checked at apply time; unknown/gone
+    requests are skipped.
+    """
+    segs = self._pending_kv_drops.setdefault(request_id, [])
+    segs.append((int(start_token), int(end_token)))
+    logger.debug(
+        "queue_kv_drop: request=%s [%d,%d) queued (%d pending)",
+        request_id,
+        start_token,
+        end_token,
+        len(segs),
+    )
+
+
+def _process_pending_kv_drops(self) -> None:
+    """Drain pending KV drops inside the step() context (thread-safe)."""
+    while self._pending_kv_drops:
+        request_id, segs = next(iter(self._pending_kv_drops.items()))
+        del self._pending_kv_drops[request_id]
+        bac = getattr(self, "block_aware_cache", None)
+        if bac is None or request_id not in self.requests:
+            logger.debug(
+                "kv_drop skipped: request %s gone or no cache manager",
+                request_id,
+            )
+            continue
+        for start_token, end_token in segs:
+            try:
+                detached = bac.drop_request_segments(request_id, start_token, end_token)
+                logger.info(
+                    "kv_drop applied: request=%s [%d,%d) detached=%d",
+                    request_id,
+                    start_token,
+                    end_token,
+                    detached,
+                )
+            except Exception as exc:
+                # Drop is an optimization — never fail the request.
+                logger.warning(
+                    "kv_drop failed for %s [%d,%d): %s",
+                    request_id,
+                    start_token,
+                    end_token,
+                    exc,
+                )
+
+
 def _do_abort_request(self, request_id: str) -> bool:
     """
     Actually abort a request. Must be called from the step() context.

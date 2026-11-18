@@ -1777,7 +1777,7 @@ class EngineCore:
                 outputs.append(self.scheduler.step())
             except Exception:
                 logger.warning(
-                    "_step_burst: step %d failed, returning %d partial " "outputs",
+                    "_step_burst: step %d failed, returning %d partial outputs",
                     len(outputs),
                     len(outputs),
                     exc_info=True,
@@ -1838,7 +1838,7 @@ class EngineCore:
             self._warm_pending = [head for _, head in wl.top_heads(warm_topk())]
             if self._warm_pending:
                 logger.info(
-                    "warm-list: idle %.0fs, queueing %d head(s) for " "prefix warm",
+                    "warm-list: idle %.0fs, queueing %d head(s) for prefix warm",
                     now - self._warm_idle_since,
                     len(self._warm_pending),
                 )
@@ -2419,6 +2419,34 @@ class EngineCore:
         result = scheduler.abort_request(request_id)
         return result
 
+    async def drop_cache_segments(
+        self, request_id: str, segments: list[tuple[int, int]]
+    ) -> int:
+        """Queue agent-driven KV segment drops (M9, arXiv 2610.28577).
+
+        Deferred delivery: segments are queued on the scheduler and
+        applied inside the next step() on the engine thread; the return
+        value is the number of segments QUEUED, not yet applied
+        (applied counts land in the scheduler log). Best-effort — a
+        queue failure never raises to the caller.
+        """
+        scheduler = getattr(self, "scheduler", None)
+        if scheduler is None or getattr(self, "_closed", False):
+            return 0
+        if not hasattr(scheduler, "queue_kv_drop"):
+            return 0
+        queued = 0
+        try:
+            for start_token, end_token in segments:
+                scheduler.queue_kv_drop(request_id, start_token, end_token)
+                queued += 1
+            self._wake_engine_loop()
+        except Exception as exc:
+            logger.warning(
+                "drop_cache_segments queue failed for %s: %s", request_id, exc
+            )
+        return queued
+
     async def abort_all_requests(self) -> int:
         from .utils.proc_memory import get_phys_footprint
 
@@ -2715,7 +2743,7 @@ class EngineCore:
             ctx_after = self._active_contexts.get(request_id)
             if ctx_after is not None and not ctx_after.finished_event.is_set():
                 logger.info(
-                    "stream_outputs client disconnect before finish, " "aborting %s",
+                    "stream_outputs client disconnect before finish, aborting %s",
                     request_id,
                 )
                 try:
@@ -3335,6 +3363,14 @@ class AsyncEngineCore:
         if engine is None:
             return False
         return await engine.abort_request(request_id)
+
+    async def drop_cache_segments(
+        self, request_id: str, segments: list[tuple[int, int]]
+    ) -> int:
+        engine = getattr(self, "engine", None)
+        if engine is None:
+            return 0
+        return await engine.drop_cache_segments(request_id, segments)
 
     async def abort_all_requests(self) -> int:
         engine = getattr(self, "engine", None)

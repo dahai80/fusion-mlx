@@ -1400,11 +1400,15 @@ class BatchedEngine(BaseEngine):
             )
 
         engine = self._engine
+        # M9 (#1645): honor the API-level request id (chatcmpl-*) so
+        # scheduler.requests is addressable by the id clients see.
+        # Absent → scheduler generates its internal uuid4 as before.
         request_id = await engine.add_request(
             prompt=prompt,
             sampling_params=sampling_params,
             streaming=True,
             has_tools=bool(kwargs.pop("has_tools", False)),
+            request_id=kwargs.pop("request_id", None),
             **specprefill_kwargs,
             **resume_kwargs,
         )
@@ -1639,8 +1643,13 @@ class BatchedEngine(BaseEngine):
                 stop=[],
             )
             token_ids = self._tokenizer.encode(prompt)
+            # M9 (#1645): honor the API-level request id (chatcmpl-*) so
+            # scheduler.requests is addressable by the id clients see.
+            # Absent → scheduler generates its internal uuid4 as before.
             request_id = await self._engine.add_request(
-                prompt=token_ids, sampling_params=sampling_params
+                prompt=token_ids,
+                sampling_params=sampling_params,
+                request_id=kwargs.pop("request_id", None),
             )
             self._engine.scheduler.import_kv_state(request_id, kv_handoff.kv_buffers)
             # P1-06 (#0909 audit): mirror stream_generate's abort guard —
