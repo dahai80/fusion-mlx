@@ -424,6 +424,10 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # blow up the FS. Pure wire-level capacity gate — never
         # selects a model, parser, or routing tier.
         "FUSION_MLX_KV_CHECKPOINT_MAX_BYTES",
+        # M9 (#1645): admin-gated opt-in for POST /v1/cache/segments/drop.
+        # Feature flag for a mutation endpoint, not a routing knob — it
+        # never selects a model, parser, or routing tier. Default off.
+        "FUSION_MLX_KV_DROP_API",
         # b21 rescue #533 — harness-allowlist catch-up for non-routing
         # FUSION_MLX_* knobs added since the last gate refresh. None of
         # these flip ``_is_mllm`` / ``is_hybrid`` / ``is_moe`` / any

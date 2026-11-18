@@ -229,15 +229,102 @@ class TestDropRoute:
                 calls.append((rid, segs))
                 return len(segs)
 
-        class _Entry:
-            engine = _Engine()
+        out = self._call(
+            monkeypatch,
+            pool=self._pool_with(_Engine()),
+            env="1",
+            body={"request_id": "req-a", "segments": [[4, 12]]},
+        )
+        assert out == {"status": "queued", "request_id": "req-a", "queued_segments": 1}
+        assert calls == [("req-a", [(4, 12)])]
 
-        class _Pool:
-            _entries = {"m": _Entry()}
+    def test_enabled_finds_nested_async_core_scheduler(self, monkeypatch):
+        calls = []
+
+        class _Inner:
+            def __init__(self):
+                import types
+
+                self.scheduler = types.SimpleNamespace(requests={"req-a": object()})
+
+        class _AsyncCore:
+            def __init__(self):
+                self.engine = _Inner()
+
+            async def drop_cache_segments(self, rid, segs):
+                calls.append((rid, segs))
+                return len(segs)
 
         out = self._call(
             monkeypatch,
-            pool=_Pool(),
+            pool=self._pool_with(_AsyncCore()),
+            env="1",
+            body={"request_id": "req-a", "segments": [[4, 12]]},
+        )
+        assert out == {"status": "queued", "request_id": "req-a", "queued_segments": 1}
+        assert calls == [("req-a", [(4, 12)])]
+
+    @staticmethod
+    def _pool_with(engine):
+        class _Entry:
+            pass
+
+        entry = _Entry()
+        entry.engine = engine
+
+        class _Pool:
+            _entries = {"m": entry}
+
+        return _Pool()
+
+    def test_enabled_finds_batched_engine_wrapper(self, monkeypatch):
+        """Production shape: pool entry holds BatchedEngine, which wraps
+        AsyncEngineCore (_engine) wrapping EngineCore (engine) holding the
+        scheduler; drop_cache_segments lives on AsyncEngineCore."""
+        import types
+
+        calls = []
+
+        class _Core:
+            scheduler = types.SimpleNamespace(requests={"req-a": object()})
+
+        class _Async:
+            def __init__(self):
+                self.engine = _Core()
+
+            async def drop_cache_segments(self, rid, segs):
+                calls.append((rid, segs))
+                return len(segs)
+
+        class _Batched:
+            def __init__(self):
+                self._engine = _Async()
+
+        out = self._call(
+            monkeypatch,
+            pool=self._pool_with(_Batched()),
+            env="1",
+            body={"request_id": "req-a", "segments": [[4, 12]]},
+        )
+        assert out == {"status": "queued", "request_id": "req-a", "queued_segments": 1}
+        assert calls == [("req-a", [(4, 12)])]
+
+    def test_enabled_filters_reversed_segments(self, monkeypatch):
+        calls = []
+
+        class _Engine:
+            def __init__(self):
+                import types
+
+                self.scheduler = types.SimpleNamespace(requests={"req-a": object()})
+
+            async def drop_cache_segments(self, rid, segs):
+                calls.append((rid, segs))
+                return len(segs)
+
+        out = self._call(
+            monkeypatch,
+            pool=self._pool_with(_Engine()),
             env="1",
             body={"request_id": "req-a", "segments": [[4, 12], [20, 10]]},
         )

@@ -226,10 +226,30 @@ async def drop_cache_segments(req: DropSegmentsRequest):
         engine = getattr(entry, "engine", None)
         if engine is None:
             continue
-        scheduler = getattr(engine, "scheduler", None)
-        if scheduler is not None and req.request_id in getattr(
-            scheduler, "requests", {}
-        ):
+        # Scheduler depth varies by wrapper: BatchedEngine wraps
+        # AsyncEngineCore (_engine.engine.scheduler); a direct
+        # AsyncEngineCore is engine.engine.scheduler; tests and older
+        # builds expose engine.scheduler. Accept all shapes.
+        candidates = [
+            engine,
+            getattr(engine, "engine", None),
+            getattr(engine, "_engine", None),
+        ]
+        scheduler = None
+        for cand in candidates:
+            if cand is None:
+                continue
+            inner = getattr(cand, "engine", None)
+            for obj in (cand, inner):
+                sched = getattr(obj, "scheduler", None)
+                if sched is not None and req.request_id in getattr(
+                    sched, "requests", {}
+                ):
+                    scheduler = sched
+                    break
+            if scheduler is not None:
+                break
+        if scheduler is not None:
             owning_engine = engine
             break
 
@@ -238,13 +258,26 @@ async def drop_cache_segments(req: DropSegmentsRequest):
             status_code=404, detail="Request not found or already finished"
         )
 
-    drop_fn = getattr(owning_engine, "drop_cache_segments", None)
-    if not callable(drop_fn):
+    # The drop method lives on AsyncEngineCore/EngineCore; BatchedEngine
+    # only wraps them. Resolve the first object in the chain that has it.
+    drop_target = None
+    for cand in (
+        owning_engine,
+        getattr(owning_engine, "_engine", None),
+        getattr(getattr(owning_engine, "_engine", None), "engine", None),
+        getattr(owning_engine, "engine", None),
+    ):
+        if cand is not None and callable(
+            getattr(cand, "drop_cache_segments", None)
+        ):
+            drop_target = cand
+            break
+    if drop_target is None:
         raise HTTPException(
             status_code=501, detail="Engine build lacks KV drop support"
         )
     try:
-        queued = await drop_fn(
+        queued = await drop_target.drop_cache_segments(
             req.request_id,
             [(int(s), int(e)) for s, e in req.segments if int(e) > int(s)],
         )
