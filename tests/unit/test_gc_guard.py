@@ -1,9 +1,9 @@
 """#1647: gradient checkpointing idempotency guard tests."""
 
 import mlx.nn as nn
+from mlx_lm.tuner import trainer as tuner_trainer
 
 from fusion_mlx.training.gc_guard import ensure_grad_checkpoint_guard
-from mlx_lm.tuner import trainer as tuner_trainer
 
 
 class _Block(nn.Module):
