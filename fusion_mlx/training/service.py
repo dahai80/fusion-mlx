@@ -106,6 +106,10 @@ class FineTuneConfig:
     steps_per_save: int = 100
     max_seq_length: int = 2048
     gradient_checkpointing: bool = False
+    # Chunked LM-head CE loss (cce.py): cuts head-loss memory on long
+    # sequences (~34% step peak at T=8192, more at 32k; eval path is
+    # forward-only and drops to chunk*V). Off by default.
+    chunked_ce_loss: bool = False
     grad_accumulation_steps: int = 1
     seed: int = 0
     lr_schedule: dict | None = None
@@ -190,6 +194,7 @@ class FineTuneConfig:
             "lora_parameters": lora_params,
             "mask_prompt": self.mask_prompt,
             "pack_sequences": self.pack_sequences,
+            "chunked_ce_loss": self.chunked_ce_loss,
             "lr_schedule": self.lr_schedule,
             "hf_dataset": False,
             "test": False,
@@ -272,6 +277,15 @@ class FineTuneConfig:
             raise ValueError(
                 "lora_target_modules has no effect with fine_tune_type='full' "
                 "(full fine-tuning unfreezes layers, no LoRA adapters)"
+            )
+        # chunked CE loss and sequence packing both override the training
+        # loss; the packing path also patches attention masks that the
+        # chunked head-loss path does not understand. Reject the combo.
+        if self.chunked_ce_loss and self.pack_sequences:
+            raise ValueError(
+                "chunked_ce_loss is incompatible with pack_sequences "
+                "(both override the training loss; packing needs its own "
+                "block-diagonal mask handling)"
             )
         # #1186: isolation knobs.
         if self.execution_mode not in ("process", "thread"):
@@ -801,6 +815,15 @@ def execute_training_core(
             "Sequence packing enabled: rows up to max_seq_length=%d, "
             "block-diagonal attention mask",
             cfg.max_seq_length,
+        )
+    elif cfg.chunked_ce_loss:
+        from .cce import make_chunked_ce_loss
+
+        train_kwargs["loss"] = make_chunked_ce_loss()
+        logger.info(
+            "Chunked CE loss enabled: head CE in %d-token chunks "
+            "(long-sequence head-loss memory reduction)",
+            1024,
         )
 
     # Run training
