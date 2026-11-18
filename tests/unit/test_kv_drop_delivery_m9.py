@@ -158,3 +158,88 @@ class TestEngineApi:
             core.drop_cache_segments("req-a", [(4, 12)])
         )
         assert n == 0
+
+
+class TestDropRoute:
+    def _call(self, monkeypatch, *, pool, env, body):
+        import types
+
+        from fastapi import HTTPException
+
+        import fusion_mlx.routes_internal.cache as cache_routes
+        from fusion_mlx.routes_internal.cache import DropSegmentsRequest
+
+        state = {"engine_pool": pool}
+        fake_server = types.SimpleNamespace(_server_state=state)
+        monkeypatch.setattr(cache_routes, "_server_state", state, raising=False)
+        monkeypatch.setitem(__import__("sys").modules, "fusion_mlx.server", fake_server)
+        monkeypatch.setenv("FUSION_MLX_KV_DROP_API", env)
+        req = DropSegmentsRequest(**body)
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(cache_routes.drop_cache_segments(req))
+        except HTTPException as e:
+            return {"http_error": e.status_code, "detail": e.detail}
+        finally:
+            loop.close()
+
+    def test_disabled_by_default(self, monkeypatch):
+        out = self._call(
+            monkeypatch,
+            pool=object(),
+            env="0",
+            body={"request_id": "r", "segments": [[0, 8]]},
+        )
+        assert out == {"http_error": 404, "detail": "KV drop API is disabled"}
+
+    def test_enabled_no_pool_503(self, monkeypatch):
+        out = self._call(
+            monkeypatch,
+            pool=None,
+            env="1",
+            body={"request_id": "r", "segments": [[0, 8]]},
+        )
+        assert out == {"http_error": 503, "detail": "Engine not loaded"}
+
+    def test_enabled_unknown_request_404(self, monkeypatch):
+        class _Pool:
+            _entries = {}
+
+        out = self._call(
+            monkeypatch,
+            pool=_Pool(),
+            env="1",
+            body={"request_id": "r", "segments": [[0, 8]]},
+        )
+        assert out == {
+            "http_error": 404,
+            "detail": "Request not found or already finished",
+        }
+
+    def test_enabled_queues_on_owning_engine(self, monkeypatch):
+        calls = []
+
+        class _Engine:
+            def __init__(self):
+                import types
+
+                self.scheduler = types.SimpleNamespace(requests={"req-a": object()})
+
+            async def drop_cache_segments(self, rid, segs):
+                calls.append((rid, segs))
+                return len(segs)
+
+        class _Entry:
+            engine = _Engine()
+
+        class _Pool:
+            _entries = {"m": _Entry()}
+
+        out = self._call(
+            monkeypatch,
+            pool=_Pool(),
+            env="1",
+            body={"request_id": "req-a", "segments": [[4, 12], [20, 10]]},
+        )
+        assert out == {"status": "queued", "request_id": "req-a", "queued_segments": 1}
+        assert calls == [("req-a", [(4, 12)])]

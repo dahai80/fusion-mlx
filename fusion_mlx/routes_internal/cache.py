@@ -191,6 +191,73 @@ async def clear_cache(is_admin: bool = Depends(require_admin)):
     return {"status": "ok", "message": "Cache cleared"}
 
 
+class DropSegmentsRequest(BaseModel):
+    request_id: str = Field(description="Request owning the KV cache")
+    segments: list[tuple[int, int]] = Field(
+        description="Token ranges [start, end) to drop, whole-block granularity"
+    )
+
+
+def _kv_drop_api_enabled() -> bool:
+    # M9: agent-facing KV mutation surface — off until explicitly enabled.
+    import os
+
+    return os.environ.get("FUSION_MLX_KV_DROP_API", "0") == "1"
+
+
+@router.post("/segments/drop")
+async def drop_cache_segments(req: DropSegmentsRequest):
+    """Queue agent-driven KV segment drops (M9, arXiv 2610.28577).
+
+    Deferred delivery: segments are queued on the owning engine and
+    applied inside the next scheduler step; the response reports the
+    QUEUED count. Requires FUSION_MLX_KV_DROP_API=1 (admin-gated).
+    """
+    if not _kv_drop_api_enabled():
+        raise HTTPException(status_code=404, detail="KV drop API is disabled")
+    from ..server import _server_state
+
+    pool = _server_state.get("engine_pool")
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Engine not loaded")
+
+    owning_engine = None
+    for _model_id, entry in getattr(pool, "_entries", {}).items():
+        engine = getattr(entry, "engine", None)
+        if engine is None:
+            continue
+        scheduler = getattr(engine, "scheduler", None)
+        if scheduler is not None and req.request_id in getattr(
+            scheduler, "requests", {}
+        ):
+            owning_engine = engine
+            break
+
+    if owning_engine is None:
+        raise HTTPException(
+            status_code=404, detail="Request not found or already finished"
+        )
+
+    drop_fn = getattr(owning_engine, "drop_cache_segments", None)
+    if not callable(drop_fn):
+        raise HTTPException(
+            status_code=501, detail="Engine build lacks KV drop support"
+        )
+    try:
+        queued = await drop_fn(
+            req.request_id,
+            [(int(s), int(e)) for s, e in req.segments if int(e) > int(s)],
+        )
+    except Exception:
+        logger.exception("Failed to queue KV drops for request %s", req.request_id)
+        raise HTTPException(status_code=500, detail="Failed to queue drops")
+    return {
+        "status": "queued",
+        "request_id": req.request_id,
+        "queued_segments": queued,
+    }
+
+
 @router.get("/stats")
 async def cache_stats(is_admin: bool = Depends(require_admin)):
     # #178 Phase-2: aggregate diffusion text-encoding radix cache stats.
