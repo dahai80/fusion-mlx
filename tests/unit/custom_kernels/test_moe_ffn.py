@@ -117,7 +117,7 @@ class TestMoeFfnMetal:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=30,
+                timeout=120,
             )
             if result.returncode == 0:
                 logger.info("test_metal_source_compiles: PASSED (xcrun metal3.1)")

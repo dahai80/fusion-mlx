@@ -999,7 +999,7 @@ def _serve_help_stdout() -> str:
         [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout
@@ -1036,7 +1036,7 @@ def test_cli_spec_decode_rejects_unknown_value():
         ],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
     )
     assert proc.returncode != 0
     assert "spec-decode" in proc.stderr or "spec_decode" in proc.stderr

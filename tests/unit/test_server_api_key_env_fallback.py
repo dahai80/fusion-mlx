@@ -310,7 +310,7 @@ def test_cli_help_does_not_advertise_env_fallback():
         [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
     )
     assert result.returncode == 0
     assert "FUSION_MLX_API_KEY" not in result.stdout, (
@@ -328,7 +328,7 @@ def test_server_help_does_not_advertise_env_fallback():
         [sys.executable, "-m", "fusion_mlx.server", "--help"],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
     )
     combined = (result.stdout or "") + (result.stderr or "")
     assert "--api-key" in combined

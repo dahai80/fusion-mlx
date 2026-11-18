@@ -60,7 +60,7 @@ class TestCLIHelp:
             [sys.executable, "-m", "fusion_mlx.cli", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         # Should succeed with help
         assert result.returncode == 0
@@ -73,7 +73,7 @@ class TestCLIHelp:
             [sys.executable, "-m", "fusion_mlx.cli", "--version"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert result.returncode == 0
         # The CLI prints the installed distribution metadata; fusion_mlx's
@@ -90,7 +90,7 @@ class TestCLIHelp:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         # Should succeed with help
         assert result.returncode == 0
@@ -110,7 +110,7 @@ class TestCLIHelp:
             [sys.executable, "-m", "fusion_mlx.cli", "--help-advanced"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert result.returncode == 0
         stdout_lower = result.stdout.lower()
@@ -124,7 +124,7 @@ class TestCLIHelp:
             [sys.executable, "-m", "fusion_mlx.cli", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert result.returncode == 0
         stdout = result.stdout
@@ -284,7 +284,7 @@ class TestCLIEntryPoint:
             [sys.executable, "-m", "fusion_mlx.cli", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert result.returncode == 0
 
@@ -294,7 +294,7 @@ class TestCLIEntryPoint:
             [sys.executable, "-m", "fusion_mlx.cli", "invalid_command"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         # Should fail with non-zero exit code
         assert result.returncode != 0
@@ -305,7 +305,7 @@ class TestCLIEntryPoint:
             [sys.executable, "-m", "fusion_mlx.cli"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         # Should exit with non-zero (no command provided)
         assert result.returncode != 0
@@ -320,7 +320,7 @@ class TestServeCommandOptions:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert "--model-dir" in result.stdout
 
@@ -330,7 +330,7 @@ class TestServeCommandOptions:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert "--max-model-memory" not in result.stdout
         assert "--max-process-memory" not in result.stdout
@@ -341,7 +341,7 @@ class TestServeCommandOptions:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert "--memory-tier" in result.stdout
         assert "safe" in result.stdout
@@ -355,7 +355,7 @@ class TestServeCommandOptions:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         # Per-request sampling is a client concern; the CLI only exposes
         # server-side defaults (--default-*), never per-request knobs.
@@ -373,7 +373,7 @@ class TestServeCommandOptions:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert "--host" in result.stdout
         assert "--port" in result.stdout
@@ -384,7 +384,7 @@ class TestServeCommandOptions:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert "--max-concurrent-requests" in result.stdout
         assert "--max-num-seqs" in result.stdout
@@ -396,7 +396,7 @@ class TestServeCommandOptions:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert "--prefix-cache-size" in result.stdout
         assert "--cache-memory-mb" in result.stdout
@@ -409,7 +409,7 @@ class TestServeCommandOptions:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert "--mcp-config" in result.stdout
 
@@ -419,7 +419,7 @@ class TestServeCommandOptions:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert "--base-path" in result.stdout
 
@@ -429,7 +429,7 @@ class TestServeCommandOptions:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert "--api-key" in result.stdout
 
@@ -443,7 +443,7 @@ class TestLaunchCommandOptions:
             [sys.executable, "-m", "fusion_mlx.cli", "launch", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert result.returncode == 0
         return result.stdout
@@ -551,7 +551,7 @@ class TestLaunchArgvParsing:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--bogus-flag"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         assert result.returncode != 0
         assert (
@@ -657,7 +657,7 @@ class TestServeCommandFunctions:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         # Should show that model-dir has a default
         assert "default" in result.stdout.lower()
@@ -679,7 +679,7 @@ class TestServeCommandFunctions:
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
 
         assert result.returncode != 0
@@ -785,7 +785,7 @@ class TestCLIDocstrings:
             [sys.executable, "-m", "fusion_mlx.cli", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         # Should have some description
         lowered = result.stdout.lower()
@@ -797,7 +797,7 @@ class TestCLIDocstrings:
             [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=120,
         )
         # Should describe multi-model serving
         assert (

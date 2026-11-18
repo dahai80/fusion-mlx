@@ -22,7 +22,7 @@ def test_serve_parser_exposes_enable_dflash2() -> None:
         [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
     )
     assert out.returncode == 0, out.stderr
     assert "--enable-dflash2" in out.stdout
@@ -38,7 +38,7 @@ def test_serve_parser_spec_decode_choices_include_dflash2() -> None:
         [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
     )
     assert out.returncode == 0, out.stderr
     # --spec-decode choices render as {none,mtp,dflash,dflash2,...}

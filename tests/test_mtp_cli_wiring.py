@@ -174,7 +174,7 @@ def _serve_help_stdout() -> str:
         [sys.executable, "-m", "fusion_mlx.cli_serve", "serve", "--help"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout

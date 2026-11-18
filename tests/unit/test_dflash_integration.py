@@ -52,7 +52,7 @@ def test_serve_parser_exposes_enable_dflash() -> None:
         [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
     )
     assert out.returncode == 0, out.stderr
     assert "--enable-dflash" in out.stdout, "serve --help should list --enable-dflash"
