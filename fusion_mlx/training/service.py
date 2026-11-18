@@ -735,6 +735,13 @@ def execute_training_core(
     save_config(vars(args), adapter_dir / "adapter_config.json")
 
     # Build training args
+    # #1647: install idempotency guard before mlx-lm's train() calls
+    # grad_checkpoint — upstream re-patches type(layer).__call__ on
+    # every train(), nesting wrappers across jobs in this long-lived
+    # process and doubling backward recompute per extra job.
+    from fusion_mlx.training.gc_guard import ensure_grad_checkpoint_guard
+
+    ensure_grad_checkpoint_guard()
     training_args = TrainingArgs(
         batch_size=cfg.batch_size,
         iters=cfg.iters,
