@@ -267,9 +267,7 @@ async def drop_cache_segments(req: DropSegmentsRequest):
         getattr(getattr(owning_engine, "_engine", None), "engine", None),
         getattr(owning_engine, "engine", None),
     ):
-        if cand is not None and callable(
-            getattr(cand, "drop_cache_segments", None)
-        ):
+        if cand is not None and callable(getattr(cand, "drop_cache_segments", None)):
             drop_target = cand
             break
     if drop_target is None:
