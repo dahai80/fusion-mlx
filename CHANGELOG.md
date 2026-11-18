@@ -14,6 +14,11 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.67] - 2026-11-18 — idempotent gradient-checkpointing across sequential training jobs (#1647)
+
+### Fixed
+- **Gradient checkpointing nested across training jobs (#1647)**: `mlx_lm.tuner.trainer.grad_checkpoint()` patches `type(layer).__call__` with an `mx.checkpoint` wrapper on every call, capturing the current `__call__` as the wrapped fn. In a long-lived serve process the 2nd and later SFT/DPO/ORPO/VLM jobs with `gradient_checkpointing: true` therefore wrapped the wrapper — no extra activation-memory savings, and each extra nesting level doubled backward recompute cost (2 jobs = 2x recompute, 3 jobs = 4x, ...). New `fusion_mlx/training/gc_guard.py` installs an idempotency guard over the mlx-lm and mlx-vlm `grad_checkpoint` entry points (marked classes skip re-wrap); `install()` is called at the top of the three shared training bodies (`execute_training_core`, `_execute_dpo_core`, `execute_vlm_training_core`), covering both the thread-mode (in-process) and spawned-child paths. Covered by `tests/unit/test_gc_guard.py`.
+
 ## [0.10.66] - 2026-11-16 — warm-list: time-based flush + token-id head reload (#1632)
 
 - warm_list: time-based flush so cached prefixes are persisted on a schedule instead of only on shutdown.

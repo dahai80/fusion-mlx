@@ -141,6 +141,14 @@ def _execute_dpo_core(
     # (_run_dpo_inner) and the spawned-process entrypoint (execute_dpo_spec)
     # so the two modes cannot drift. No service or loop state in here — the
     # caller owns progress bookkeeping and terminal job status.
+    from .gc_guard import install as install_gc_guard
+
+    # #1647: the direct grad_checkpoint(model.layers[0]) call below re-wraps
+    # the class __call__ on every job in a long-lived process (2x backward
+    # recompute per extra nesting level). Install the idempotency guard
+    # first so the from-import below binds the guarded entry point.
+    install_gc_guard()
+
     cfg = config
     logger.info("%s execute: model=%s job=%s", cfg.method.upper(), model_path, job_id)
     if cfg.init_adapter_path:

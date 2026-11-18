@@ -25,6 +25,26 @@ from fusion_mlx.training.dpo import DPOConfig, DPOTrainer
 from fusion_mlx.training.dpo_service import DPOJob, DPOService
 
 
+@pytest.fixture(autouse=True)
+def _reset_gc_guard_state():
+    # #1647: the gc guard marks wrapped layer classes process-globally
+    # (mlx_lm patches type(layer).__call__, so nn.Linear is shared across
+    # tests). Reset the bookkeeping so each test observes a fresh wrap.
+    from fusion_mlx.training import gc_guard
+
+    def _clear():
+        for cls in list(gc_guard._WRAPPED_CLASSES):
+            try:
+                delattr(cls, gc_guard._MARKER)
+            except AttributeError:
+                pass
+        gc_guard._WRAPPED_CLASSES.clear()
+
+    _clear()
+    yield
+    _clear()
+
+
 def _build_app():
     app = FastAPI()
     svc = DPOService()

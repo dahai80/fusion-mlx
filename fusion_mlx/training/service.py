@@ -619,6 +619,13 @@ def execute_training_core(
     # spawned child process. Holds no FineTuneService state, so it is safe
     # to run in a separate interpreter. Returns the adapter output paths;
     # callers own job-status marking.
+    from .gc_guard import install as install_gc_guard
+
+    # #1647: mlx-lm patches grad_checkpoint on every call, nesting wrappers
+    # across jobs in a long-lived process (2x backward recompute per extra
+    # job). Install the idempotency guard before any training runs.
+    install_gc_guard()
+
     import mlx.optimizers as optim
     from mlx.utils import tree_flatten
     from mlx_lm.tuner.datasets import CacheDataset, load_dataset

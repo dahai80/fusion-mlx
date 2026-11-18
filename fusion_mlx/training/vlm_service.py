@@ -722,6 +722,14 @@ def execute_vlm_training_core(
     # #1186: VL training body shared by the in-process thread path and the
     # spawned child process. emit=None uses the given reader (job-backed);
     # emit=setter routes parsed stdout events to the caller (pipe).
+    from .gc_guard import install as install_gc_guard
+
+    # #1647: mlx-vlm's trainer re-wraps grad_checkpoint per call the same
+    # way mlx-lm does. Install the idempotency guard BEFORE importing
+    # sft_trainer so its `from .utils import grad_checkpoint` binds the
+    # guarded entry point.
+    install_gc_guard()
+
     import mlx.optimizers as optim
     from mlx_vlm.lora import VisionDataset, load_dataset
     from mlx_vlm.trainer.sft_trainer import TrainingArgs, train
