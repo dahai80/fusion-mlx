@@ -722,6 +722,15 @@ def execute_vlm_training_core(
     # #1186: VL training body shared by the in-process thread path and the
     # spawned child process. emit=None uses the given reader (job-backed);
     # emit=setter routes parsed stdout events to the caller (pipe).
+    from .gc_guard import ensure_grad_checkpoint_guard
+
+    # #1647: mlx_vlm's grad_checkpoint re-wraps type(layer).__call__ on
+    # every call, nesting wrappers across sequential jobs in this process
+    # (2x backward recompute per extra nesting level). Install the guard
+    # BEFORE importing sft_trainer so its `from .utils import
+    # grad_checkpoint` binds the guarded entry point.
+    ensure_grad_checkpoint_guard(include_vlm=True)
+
     import mlx.optimizers as optim
     from mlx_vlm.lora import VisionDataset, load_dataset
     from mlx_vlm.trainer.sft_trainer import TrainingArgs, train

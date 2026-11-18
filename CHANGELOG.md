@@ -14,6 +14,10 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.67] - 2026-11-18 — VLM gradient-checkpointing guard coverage (#1647)
+
+- Fixed: the #1648 idempotency guard covered only `mlx_lm`; `mlx_vlm.trainer.utils.grad_checkpoint()` has the same re-wrap-per-call behavior, so sequential VLM SFT jobs in a long-lived serve process still nested checkpoint wrappers (2x backward recompute per extra job). `ensure_grad_checkpoint_guard(include_vlm=True)` now patches the mlx-vlm entry point plus the `from .utils import grad_checkpoint` name bindings in `sft_trainer`/`orpo_trainer`, and is installed at the top of the shared VLM training body before `sft_trainer` is imported. Text-only paths never import mlx-vlm. Covered by `tests/unit/test_gc_guard.py`.
+
 ## [0.10.66] - 2026-11-16 — warm-list: time-based flush + token-id head reload (#1632)
 
 - warm_list: time-based flush so cached prefixes are persisted on a schedule instead of only on shutdown.
