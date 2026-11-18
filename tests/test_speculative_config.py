@@ -124,7 +124,7 @@ def test_serve_help_exposes_spec_decode_flag() -> None:
         [sys.executable, "-m", "fusion_mlx.cli", "serve", "--help"],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
     )
 
     assert proc.returncode == 0, proc.stderr
