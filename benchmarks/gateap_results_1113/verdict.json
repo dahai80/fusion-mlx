@@ -1,0 +1,313 @@
+{
+  "thresholds": {
+    "aggregate": 0.005,
+    "per_task": 0.02
+  },
+  "arms": {
+    "radial_8192": {
+      "base": {
+        "needle_acc": 1.0,
+        "ppl": 11.26696508157019,
+        "code_edit_sim": 0.12010929109575144,
+        "json_score": 1.0
+      },
+      "arm": {
+        "needle_acc": 1.0,
+        "ppl": 11.26696508157019,
+        "code_edit_sim": 0.09227357609710551,
+        "json_score": 1.0
+      },
+      "rel_losses": {
+        "needle": 0.0,
+        "ppl": 0.0,
+        "code": 0.23175322029380077,
+        "json": 0.0
+      },
+      "aggregate_loss": 0.05793830507345019,
+      "task_fails": [
+        "code"
+      ],
+      "pass": false,
+      "byte_accounting": {
+        "events": [
+          {
+            "bytes": 312149376,
+            "tokens": 8211
+          },
+          {
+            "bytes": 312111360,
+            "tokens": 8210
+          },
+          {
+            "bytes": 312149376,
+            "tokens": 8211
+          },
+          {
+            "bytes": 312111360,
+            "tokens": 8210
+          },
+          {
+            "bytes": 312111360,
+            "tokens": 8210
+          },
+          {
+            "bytes": 312111360,
+            "tokens": 8210
+          },
+          {
+            "bytes": 311427072,
+            "tokens": 8192
+          },
+          {
+            "bytes": 156587904,
+            "tokens": 4119
+          },
+          {
+            "bytes": 156587904,
+            "tokens": 4119
+          },
+          {
+            "bytes": 319182336,
+            "tokens": 8396
+          },
+          {
+            "bytes": 318726144,
+            "tokens": 8384
+          }
+        ],
+        "total_bytes": 3135255552,
+        "total_tokens": 82472,
+        "bytes_per_token": 38016.0,
+        "bf16_bytes_per_token": 147456
+      }
+    },
+    "turboquant_8192": {
+      "base": {
+        "needle_acc": 1.0,
+        "ppl": 11.26696508157019,
+        "code_edit_sim": 0.12010929109575144,
+        "json_score": 1.0
+      },
+      "arm": {
+        "needle_acc": 1.0,
+        "ppl": 11.444393964331121,
+        "code_edit_sim": 0.10018037374500988,
+        "json_score": 1.0
+      },
+      "rel_losses": {
+        "needle": 0.0,
+        "ppl": 0.01574770858668579,
+        "code": 0.16592319519107127,
+        "json": 0.0
+      },
+      "aggregate_loss": 0.04541772594443926,
+      "task_fails": [
+        "code"
+      ],
+      "pass": false,
+      "byte_accounting": {
+        "events": [
+          {
+            "bytes": 312149376,
+            "tokens": 8211
+          },
+          {
+            "bytes": 312111360,
+            "tokens": 8210
+          },
+          {
+            "bytes": 312149376,
+            "tokens": 8211
+          },
+          {
+            "bytes": 312111360,
+            "tokens": 8210
+          },
+          {
+            "bytes": 312111360,
+            "tokens": 8210
+          },
+          {
+            "bytes": 312111360,
+            "tokens": 8210
+          },
+          {
+            "bytes": 311427072,
+            "tokens": 8192
+          },
+          {
+            "bytes": 156587904,
+            "tokens": 4119
+          },
+          {
+            "bytes": 156587904,
+            "tokens": 4119
+          },
+          {
+            "bytes": 319182336,
+            "tokens": 8396
+          },
+          {
+            "bytes": 318726144,
+            "tokens": 8384
+          }
+        ],
+        "total_bytes": 3135255552,
+        "total_tokens": 82472,
+        "bytes_per_token": 38016.0,
+        "bf16_bytes_per_token": 147456
+      }
+    },
+    "radial_32768": {
+      "base": {
+        "needle_acc": 1.0,
+        "ppl": 8.372897488127265,
+        "code_edit_sim": 0.20904729971571626,
+        "json_score": 1.0
+      },
+      "arm": {
+        "needle_acc": 1.0,
+        "ppl": 8.504751437796486,
+        "code_edit_sim": 0.20843083684109232,
+        "json_score": 1.0
+      },
+      "rel_losses": {
+        "needle": 0.0,
+        "ppl": 0.01574770858668572,
+        "code": 0.002948915749987059,
+        "json": 0.0
+      },
+      "aggregate_loss": 0.004674156084168195,
+      "task_fails": [],
+      "pass": true,
+      "byte_accounting": {
+        "events": [
+          {
+            "bytes": 1246430592,
+            "tokens": 32787
+          },
+          {
+            "bytes": 1246392576,
+            "tokens": 32786
+          },
+          {
+            "bytes": 1246392576,
+            "tokens": 32786
+          },
+          {
+            "bytes": 1246392576,
+            "tokens": 32786
+          },
+          {
+            "bytes": 1246392576,
+            "tokens": 32786
+          },
+          {
+            "bytes": 1246392576,
+            "tokens": 32786
+          },
+          {
+            "bytes": 1245708288,
+            "tokens": 32768
+          },
+          {
+            "bytes": 246115584,
+            "tokens": 6474
+          },
+          {
+            "bytes": 543058560,
+            "tokens": 14285
+          },
+          {
+            "bytes": 1253425536,
+            "tokens": 32971
+          },
+          {
+            "bytes": 1253007360,
+            "tokens": 32960
+          }
+        ],
+        "total_bytes": 12019708800,
+        "total_tokens": 316175,
+        "bytes_per_token": 38016.0,
+        "bf16_bytes_per_token": 147456
+      }
+    },
+    "turboquant_32768": {
+      "base": {
+        "needle_acc": 1.0,
+        "ppl": 8.372897488127265,
+        "code_edit_sim": 0.20904729971571626,
+        "json_score": 1.0
+      },
+      "arm": {
+        "needle_acc": 1.0,
+        "ppl": 8.372897488127265,
+        "code_edit_sim": 0.20494977807972856,
+        "json_score": 1.0
+      },
+      "rel_losses": {
+        "needle": 0.0,
+        "ppl": 0.0,
+        "code": 0.019600930705921223,
+        "json": 0.0
+      },
+      "aggregate_loss": 0.004900232676480306,
+      "task_fails": [],
+      "pass": true,
+      "byte_accounting": {
+        "events": [
+          {
+            "bytes": 1246430592,
+            "tokens": 32787
+          },
+          {
+            "bytes": 1246392576,
+            "tokens": 32786
+          },
+          {
+            "bytes": 1246392576,
+            "tokens": 32786
+          },
+          {
+            "bytes": 1246392576,
+            "tokens": 32786
+          },
+          {
+            "bytes": 1246392576,
+            "tokens": 32786
+          },
+          {
+            "bytes": 1246392576,
+            "tokens": 32786
+          },
+          {
+            "bytes": 1245708288,
+            "tokens": 32768
+          },
+          {
+            "bytes": 246115584,
+            "tokens": 6474
+          },
+          {
+            "bytes": 543058560,
+            "tokens": 14285
+          },
+          {
+            "bytes": 1253425536,
+            "tokens": 32971
+          },
+          {
+            "bytes": 1253007360,
+            "tokens": 32960
+          }
+        ],
+        "total_bytes": 12019708800,
+        "total_tokens": 316175,
+        "bytes_per_token": 38016.0,
+        "bf16_bytes_per_token": 147456
+      }
+    }
+  },
+  "overall_pass": false
+}

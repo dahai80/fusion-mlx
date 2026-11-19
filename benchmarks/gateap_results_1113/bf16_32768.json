@@ -1,0 +1,156 @@
+{
+  "arm": "bf16",
+  "ctx": 32768,
+  "seed": 0,
+  "model_path": "/Users/dahai/.fusion-mlx/models/Qwen--Qwen3-8B",
+  "model_revision": "3958fb2f5d3d3d02",
+  "radial_codec": {
+    "r_bits": 3,
+    "a_bits": 5,
+    "radius_mode": "uniform",
+    "bytes_per_vector": 66,
+    "sketch_bytes_per_vector": 16
+  },
+  "tasks": {
+    "needle": [
+      {
+        "facility": "ZETA-7",
+        "depth": 0.1,
+        "output": " KX-4492\nThe access code for facility ZETA-7 is KX-449",
+        "hit": true
+      },
+      {
+        "facility": "ORION-3",
+        "depth": 0.5,
+        "output": " QT-8156\nThe access code for facility ORION-3 is QT-8156.",
+        "hit": true
+      },
+      {
+        "facility": "VELA-9",
+        "depth": 0.9,
+        "output": " MW-2730\n\nThe access code for facility VELA-9 is MW-2730",
+        "hit": true
+      },
+      {
+        "facility": "ARGUS-5",
+        "depth": 0.1,
+        "output": " FD-6194\nThe access code for facility ARGUS-5 is FD-6194.",
+        "hit": true
+      },
+      {
+        "facility": "LYRA-2",
+        "depth": 0.5,
+        "output": " HB-9057\nThe access code for facility LYRA-2 is HB-9057.",
+        "hit": true
+      },
+      {
+        "facility": "NONUS-8",
+        "depth": 0.9,
+        "output": " PC-3471\nThe access code for facility NONUS-8 is PC-3471.",
+        "hit": true
+      }
+    ],
+    "ppl": {
+      "mean_nll": 2.125,
+      "ppl": 8.372897488127265,
+      "cont_tokens": 512
+    },
+    "code": [
+      {
+        "file": "fusion_mlx/turboquant_kv.py",
+        "edit_sim": 0.2889079965606191,
+        "gen": "            value_states.append(vs)\n\n        batch.keys = _concat_state_batch(key_states)\n        batch.values = _concat_state_batch(value_states)\n        batch._cached_state = None\n        batch._cached_state_offset = -1\n        return batch\n\n    def __len__(self):\n        if isinstance(self.offset, int):\n            return self.offset\n        return self.offset.max().item()\n\n    def __repr__(self):\n        if isinstance(self.offset, int):\n            return f\"{self.__class__.__name__}(offset={self.offset})\"\n        return f\"{self.__class__.__name__}(offset={self.offset.tolist()})\"\n\n",
+        "gt": "            value_states.append(vs)\n\n        if key_states:\n            batch.keys = _concat_state_batch(key_states)\n            batch.values = _concat_state_batch(value_states)\n            mx.eval(batch.keys, batch.values)\n\n        batch.offset += max_length\n        return batch\n\n\n# A4: apply TurboQuantKVCache.merge monkey-patch now that\n# BatchTurboQuantKVCache (referenced inside the patch function) is defined.\n_apply_turboquant_merge_patch()\nlogger.debug(\n    \"turboquant merge patch applied: TurboQuantKVCache.merge=%s\",\n    hasattr(TurboQuantKVCache, \"merge\"),\n)\n"
+      },
+      {
+        "file": "fusion_mlx/memory_cache.py",
+        "edit_sim": 0.1291866028708134,
+        "gen": "0f}MB total)\"\n        )\n        if loaded == 0:\n            logger.info(summary)\n        else:\n            logger.info(summary)\n\n        return loaded\n```\n\n```python\n    def _has_valid_index(self, d: str) -> bool:\n        \"\"\"Cheap sanity check: index.json exists, is valid JSON, has the\n        expected version, AND at least one referenced entry file exists\n        on disk. The last check defends against the pathological case\n        where index.json survives but its entry files don't (manual\n        deletion, fs corruption, partial restore from backup) \u2014 without\n        it, recovery would",
+        "gt": "0f}MB total)\"\n        )\n        if duplicate_skipped:\n            summary += (\n                f\", {duplicate_skipped} skipped as duplicates of in-memory entries\"\n            )\n        if incompatible_skipped:\n            summary += (\n                f\", {incompatible_skipped} skipped as incompatible with \"\n                f\"current cache config (e.g. config changed between runs)\"\n            )\n        if corrupt_skipped:\n            logger.warning(\n                f\"{summary}, SKIPPED {corrupt_skipped} corrupt entries \u2014 \"\n                f\"disk cache may need cleanup\"\n            )\n        else:\n            logger.info(summary)\n        return loaded\n"
+      }
+    ],
+    "json": [
+      {
+        "raw": "{\"alpha\": \"ZH-0446\", \"beta\": \"YS-4470\", \"gamma\": \"DC-0271\", \"delta\": \"TC-5500\"}\nThe JSON object contains the access codes for the specified facilities as requested. Each key corresponds to a facility (FAC-01 to FAC-08) and the values are the respective access codes provided in the text.\nOkay, let's see. The user wants me to extract specific access codes from the given text and output them in a JSON object. The keys are alpha, beta, gamma, delta, and they correspond to facilities FAC-01, FAC-04, FAC-07, and FAC-08 respectively.\n\nFirst, I need to scan",
+        "keys": [
+          "alpha",
+          "beta",
+          "gamma",
+          "delta"
+        ],
+        "matched": 4,
+        "parse_ok": true,
+        "score": 1.0
+      },
+      {
+        "raw": "{\"throughput\": 95.9, \"latency_ms\": 22.9, \"error_rate\": 0.0486, \"uptime_days\": 189}\nJSON: {\"throughput\": 95.9, \"latency_ms\": 22.9, \"error_rate\": 0.0486, \"uptime_days\": 189}\nJSON: {\"throughput\": 95.9, \"latency_ms\": 22.9, \"error_rate\": 0.0486, \"uptime_days\": 189}\nJSON: {\"throughput\": 95.9, \"latency_ms\": 22.9, \"error_rate\": 0.",
+        "keys": [
+          "throughput",
+          "latency_ms",
+          "error_rate",
+          "uptime_days"
+        ],
+        "matched": 4,
+        "parse_ok": true,
+        "score": 1.0
+      }
+    ]
+  },
+  "byte_accounting": {
+    "events": [
+      {
+        "bytes": 4834639872,
+        "tokens": 32787
+      },
+      {
+        "bytes": 4834492416,
+        "tokens": 32786
+      },
+      {
+        "bytes": 4834492416,
+        "tokens": 32786
+      },
+      {
+        "bytes": 4834492416,
+        "tokens": 32786
+      },
+      {
+        "bytes": 4834492416,
+        "tokens": 32786
+      },
+      {
+        "bytes": 4834492416,
+        "tokens": 32786
+      },
+      {
+        "bytes": 4831838208,
+        "tokens": 32768
+      },
+      {
+        "bytes": 954630144,
+        "tokens": 6474
+      },
+      {
+        "bytes": 2106408960,
+        "tokens": 14285
+      },
+      {
+        "bytes": 4861771776,
+        "tokens": 32971
+      },
+      {
+        "bytes": 4860149760,
+        "tokens": 32960
+      }
+    ],
+    "total_bytes": 46621900800,
+    "total_tokens": 316175,
+    "bytes_per_token": 147456.0,
+    "bf16_bytes_per_token": 147456
+  },
+  "wall_seconds": 475.2,
+  "provenance": {
+    "needle_ppl": "v1 full battery 2026-11-13 (script as committed)",
+    "code_json": "v2 re-run 2026-11-13 after two scorer fixes: code ground-truth budget (was empty at 32k when file shorter than prefix budget) and JSON extraction (first balanced object, gen budget 96->160)"
+  }
+}

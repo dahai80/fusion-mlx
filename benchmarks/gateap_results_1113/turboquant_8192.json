@@ -1,0 +1,156 @@
+{
+  "arm": "turboquant",
+  "ctx": 8192,
+  "seed": 0,
+  "model_path": "/Users/dahai/.fusion-mlx/models/Qwen--Qwen3-8B",
+  "model_revision": "3958fb2f5d3d3d02",
+  "radial_codec": {
+    "r_bits": 3,
+    "a_bits": 5,
+    "radius_mode": "uniform",
+    "bytes_per_vector": 66,
+    "sketch_bytes_per_vector": 16
+  },
+  "tasks": {
+    "needle": [
+      {
+        "facility": "ZETA-7",
+        "depth": 0.1,
+        "output": " KX-4492\nThe access code for facility ZETA-7 is KX-449",
+        "hit": true
+      },
+      {
+        "facility": "ORION-3",
+        "depth": 0.5,
+        "output": " QT-8156\nThe access code for facility ORION-3 is QT-8156.\n\n",
+        "hit": true
+      },
+      {
+        "facility": "VELA-9",
+        "depth": 0.9,
+        "output": " MW-2730\n\nOkay, so I need to find the access code for facility VELA-9",
+        "hit": true
+      },
+      {
+        "facility": "ARGUS-5",
+        "depth": 0.1,
+        "output": " FD-6194\nThe access code for facility ARGUS-5 is FD-6194.\n\n",
+        "hit": true
+      },
+      {
+        "facility": "LYRA-2",
+        "depth": 0.5,
+        "output": " HB-9057\nThe access code for facility LYRA-2 is HB-9057.\n\n",
+        "hit": true
+      },
+      {
+        "facility": "NONUS-8",
+        "depth": 0.9,
+        "output": " PC-3471\nThe access code for facility NONUS-8 is PC-3471.\n\n",
+        "hit": true
+      }
+    ],
+    "ppl": {
+      "mean_nll": 2.4375,
+      "ppl": 11.444393964331121,
+      "cont_tokens": 512
+    },
+    "code": [
+      {
+        "file": "fusion_mlx/turboquant_kv.py",
+        "edit_sim": 0.08943089430894309,
+        "gen": "_state_range(self.keys, self.offset, length), _slice_state_range(\n            self.values, self.offset, length\n        )\n\n    # ---- batch-specific methods -------------------------------------------\n\n    def merge(self, other: BatchTurboQuantKVCache):\n        \"\"\"Merge another BatchTurboQuantKVCache into this one.\"\"\"\n        if not isinstance(other, BatchTurboQuantKVCache):\n            raise TypeError(\"Can only merge with BatchTurboQuantKVCache\")\n        if self._batch_size != other._batch_size:\n            raise ValueError(\"Batch sizes must match\")\n        if self._right_padding is not None and other._right_padding is not None",
+        "gt": "_state(self.keys, length), _slice_state(self.values, length)\n\n    @state.setter\n    def state(self, value):\n        TurboQuantKVCache.state.fset(self, value)\n\n    # ---- make_mask override (batch-aware) ----------------------------------\n\n    def make_mask(\n        self,\n        N: int,\n        return_array: bool = False,\n        window_size: int | None = None,\n    ):\n        offset = self.offset\n        if isinstance(offset, int):\n            return create_attention_mask(N, offset, return_array, window_size)\n        if isinstance(offset, mx.array) and offset.size == 1:\n            return"
+      },
+      {
+        "file": "fusion_mlx/memory_cache.py",
+        "edit_sim": 0.11092985318107668,
+        "gen": "            # mutation of the original cache\n            trimmed.append(copy.deepcopy(layer_cache))\n    return trimmed\n\n\nclass MemoryAwarePrefixCache:\n    \"\"\"\n    A memory-aware prefix cache that evicts entries based on memory usage.\n\n    This cache tracks memory usage and evicts entries when the memory limit\n    is reached. It uses an LRU strategy for eviction and supports deep\n    copying of cache entries to prevent mutation of stored data.\n\n    Attributes:\n        model: The model instance.\n        config: Configuration for the cache.\n        stats: Statistics for cache performance.\n        _cache: The internal cache structure.\n        _memory_used: Total memory",
+        "gt": "            # aliasing the stored cache entry \u2014 generation mutates in-place.\n            trimmed.append(copy.deepcopy(layer_cache))\n    return trimmed\n\n\ndef _needs_kv_trim(layer: Any) -> bool:\n    \"\"\"Check if a cache layer has oversized KV arrays (duck-typed, no MLX import).\"\"\"\n    if layer is None:\n        return False\n    keys = getattr(layer, \"keys\", None)\n    offset = getattr(layer, \"offset\", None)\n    if keys is None or offset is None:\n        return False\n    if isinstance(keys, (list, tuple)):\n        return False  # QuantizedKVCache \u2014 skip"
+      }
+    ],
+    "json": [
+      {
+        "raw": "{\n  \"alpha\": \"ZH-0446\",\n  \"beta\": \"YS-4470\",\n  \"gamma\": \"DC-0271\",\n  \"delta\": \"TC-5500\"\n}\nOkay, let's see. The user wants me to extract specific access codes from the provided document and output them in a JSON object. The keys are alpha, beta, gamma, delta, corresponding to FAC-01, FAC-04, FAC-07, FAC-08 respectively.\n\nFirst, I need to locate the access codes in the text. Scanning through the document, I remember seeing a section with access codes. Let me find that part again. \n\nHere's the relevant part from the document:\n\n\"Access code",
+        "keys": [
+          "alpha",
+          "beta",
+          "gamma",
+          "delta"
+        ],
+        "matched": 4,
+        "parse_ok": true,
+        "score": 1.0
+      },
+      {
+        "raw": "{\n  \"throughput\": 95.9,\n  \"latency_ms\": 22.9,\n  \"error_rate\": 0.0486,\n  \"uptime_days\": 189\n}\nThe JSON object should have the following structure and data types:\n\n- throughput: a number (float)\n- latency_ms: a number (float)\n- error_rate: a number (float)\n- uptime_days: a number (float)\n\nMake sure to use the exact keys and data types as specified. Do not include any additional information or explanations.\nJSON: \n\n{\n  \"throughput\": 95.9,\n  \"latency_ms\": 22.9,\n  \"error_rate\": 0.0486,\n  \"",
+        "keys": [
+          "throughput",
+          "latency_ms",
+          "error_rate",
+          "uptime_days"
+        ],
+        "matched": 4,
+        "parse_ok": true,
+        "score": 1.0
+      }
+    ]
+  },
+  "byte_accounting": {
+    "events": [
+      {
+        "bytes": 312149376,
+        "tokens": 8211
+      },
+      {
+        "bytes": 312111360,
+        "tokens": 8210
+      },
+      {
+        "bytes": 312149376,
+        "tokens": 8211
+      },
+      {
+        "bytes": 312111360,
+        "tokens": 8210
+      },
+      {
+        "bytes": 312111360,
+        "tokens": 8210
+      },
+      {
+        "bytes": 312111360,
+        "tokens": 8210
+      },
+      {
+        "bytes": 311427072,
+        "tokens": 8192
+      },
+      {
+        "bytes": 156587904,
+        "tokens": 4119
+      },
+      {
+        "bytes": 156587904,
+        "tokens": 4119
+      },
+      {
+        "bytes": 319182336,
+        "tokens": 8396
+      },
+      {
+        "bytes": 318726144,
+        "tokens": 8384
+      }
+    ],
+    "total_bytes": 3135255552,
+    "total_tokens": 82472,
+    "bytes_per_token": 38016.0,
+    "bf16_bytes_per_token": 147456
+  },
+  "wall_seconds": 113.5,
+  "provenance": {
+    "needle_ppl": "v1 full battery 2026-11-13 (script as committed)",
+    "code_json": "v2 re-run 2026-11-13 after two scorer fixes: code ground-truth budget (was empty at 32k when file shorter than prefix budget) and JSON extraction (first balanced object, gen budget 96->160)"
+  }
+}
