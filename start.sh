@@ -266,6 +266,13 @@ preflight() {
         kv_ckpt=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('kv_checkpoint',{}).get('interval',''))" 2>/dev/null || echo "")
         [[ -n "${kv_ckpt}" ]] && export FUSION_MLX_KV_CHECKPOINT_INTERVAL="${kv_ckpt}"
     fi
+    # M9 agent-facing KV segment drop (arXiv 2610.28577). Optional
+    # settings.json key {"kv_drop_api": true} — env var wins; absent = off.
+    # The route 404s without this, so the flag must survive restarts.
+    if [[ -z "${FUSION_MLX_KV_DROP_API:-}" && -f "${SETTINGS:-}" ]]; then
+        kv_drop=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); v=d.get('kv_drop_api', False); print('1' if (v is True or (isinstance(v,dict) and v.get('enabled'))) else '')" 2>/dev/null || echo "")
+        [[ -n "${kv_drop}" ]] && export FUSION_MLX_KV_DROP_API="${kv_drop}"
+    fi
     if [[ -z "${FUSION_MLX_GENERATE_TIMEOUT_S:-}" && -f "${SETTINGS:-}" ]]; then
         gen_to=$(python3 -c "import json; d=json.load(open('${SETTINGS:-}')); print(d.get('generate_timeout_s',''))" 2>/dev/null || echo "")
         [[ -n "${gen_to}" ]] && export FUSION_MLX_GENERATE_TIMEOUT_S="${gen_to}"
