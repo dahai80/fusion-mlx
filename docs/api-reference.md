@@ -125,8 +125,12 @@ Override the per-request policy with the `X-Cache` request header:
 | `only-if-cached` | Return 504 `cache_miss` on cache miss |
 | `no-store` | Read cache; never store the response |
 
-Responses carry `X-Cache: HIT|MISS`. Unrecognized extra params are surfaced
-via `X-Fusion-Ignored-Params`.
+Responses carry `X-Cache: HIT|MISS`: `HIT` on cache-served responses,
+`MISS` on every fresh completion (non-streaming and streaming alike), so
+post-run log analysis and benchmark harnesses can split cached repeats
+from fresh inference. The serve log mirrors this with a
+`Response cache HIT|FRESH` line per request. Unrecognized extra params are
+surfaced via `X-Fusion-Ignored-Params`.
 
 **Benchmark methodology note:** a non-streaming, fixed-prompt, multi-rep
 benchmark measures the cache from the second rep onward. Use `stream: true`,

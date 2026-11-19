@@ -865,6 +865,17 @@ async def chat_completions(
             if _ignored_header and isinstance(result, JSONResponse):
                 result.headers["X-Fusion-Ignored-Params"] = _ignored_header
 
+            # #1655: fresh (non-cached) completions are marked MISS so
+            # post-run log analysis can split cached repeats from fresh
+            # inference (contract mirrors fusion-bench#47 X-Cache).
+            if isinstance(result, JSONResponse) and "X-Cache" not in result.headers:
+                result.headers["X-Cache"] = "MISS"
+                logger.info(
+                    "Response cache FRESH policy=%s key=%s",
+                    getattr(_cache_policy, "name", "NONE"),
+                    (_cache_key or "-")[:12],
+                )
+
             # Store in response cache on MISS
             if _cache_key and _cache_policy not in (
                 None,

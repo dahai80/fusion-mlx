@@ -917,6 +917,10 @@ async def _stream_chat(
     _stream_headers: dict[str, str] = {
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
+        # #1655: streamed responses are never served from the response
+        # cache, so they are always fresh — mark MISS explicitly so
+        # benchmark harnesses can split cached vs fresh repeats.
+        "X-Cache": "MISS",
     }
     _stream_headers.update(_context_budget_headers(engine, preflight[1]))
 
