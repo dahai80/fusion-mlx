@@ -732,11 +732,32 @@ class SizedArraysCache:
     @classmethod
     def merge(cls, caches: list["SizedArraysCache"]) -> "SizedArraysCache":
         """Merge multiple caches, preserving size information."""
-        inner_caches = [c._inner if isinstance(c, cls) else c for c in caches]
+        # A zero-layer inner cache (empty .cache list) makes mlx-lm's
+        # CacheList.merge build cls(0) whose empty() probe indexes
+        # self.cache[0] and raises IndexError, killing the request and
+        # potentially the engine loop (#1671). Skip empty caches; if all
+        # are empty, hand back the first one untouched.
+        kept = []
+        for c in caches:
+            inner = c._inner if isinstance(c, cls) else c
+            # Only ArraysCache-style (.cache list) and CacheList-style
+            # (.caches tuple) caches can be zero-layer; other cache types
+            # are always kept. A zero-layer cache makes mlx-lm's merge/empty
+            # probe index [0] and raise IndexError (#1671).
+            layers = getattr(inner, "cache", None)
+            if not isinstance(layers, list):
+                layers = getattr(inner, "caches", None)
+            if not isinstance(layers, (list, tuple)) or len(layers) > 0:
+                kept.append((c, inner))
+        if not kept:
+            c0 = caches[0]
+            kept = [(c0, c0._inner if isinstance(c0, cls) else c0)]
+        inner_caches = [inner for _, inner in kept]
         # Use first inner cache's merge method
         merged_inner = inner_caches[0].merge(inner_caches)
         # Preserve token_count from first cache
-        token_count = caches[0]._token_count if isinstance(caches[0], cls) else 0
+        first_outer = kept[0][0]
+        token_count = first_outer._token_count if isinstance(first_outer, cls) else 0
         return cls(merged_inner, token_count)
 
 

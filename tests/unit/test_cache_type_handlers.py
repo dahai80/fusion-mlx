@@ -1266,3 +1266,58 @@ class TestCacheListHandlerWithMLX:
         assert cache is not None
         assert hasattr(cache, "caches")
         assert len(cache.caches) == 2
+
+
+class TestSizedArraysCacheMergeZeroLayer:
+    """#1671: zero-layer inner caches must not reach mlx-lm's merge/empty."""
+
+    def test_merge_skips_zero_layer_cachelist(self):
+        from mlx_lm.models.cache import ArraysCache, CacheList
+
+        full = SizedArraysCache(
+            CacheList(ArraysCache(1), ArraysCache(1)), token_count=32
+        )
+        empty = SizedArraysCache(CacheList(), token_count=5)
+
+        merged = SizedArraysCache.merge([empty, full])
+
+        assert merged._inner is not empty._inner
+        assert len(merged._inner.caches) == 2
+        assert merged._token_count == 32
+
+    def test_merge_skips_zero_layer_arrayscache(self):
+        from mlx_lm.models.cache import ArraysCache
+
+        full = SizedArraysCache(ArraysCache(2), token_count=16)
+        empty = SizedArraysCache(ArraysCache(0), token_count=3)
+
+        merged = SizedArraysCache.merge([full, empty])
+
+        assert len(merged._inner.cache) == 2
+        assert merged._token_count == 16
+
+    def test_merge_all_empty_returns_first_untouched(self):
+        from mlx_lm.models.cache import CacheList
+
+        empty1 = SizedArraysCache(CacheList(), token_count=7)
+        empty2 = SizedArraysCache(CacheList(), token_count=9)
+
+        merged = SizedArraysCache.merge([empty1, empty2])
+
+        assert len(merged._inner.caches) == 0
+        assert merged._token_count == 7
+
+    def test_merge_keeps_non_layered_caches(self):
+        from mlx_lm.models.cache import CacheList
+
+        class PlainCache:
+            def merge(self, caches):
+                return self
+
+        plain = SizedArraysCache(PlainCache(), token_count=11)
+        empty = SizedArraysCache(CacheList(), token_count=2)
+
+        merged = SizedArraysCache.merge([plain, empty])
+
+        assert merged._inner is plain._inner
+        assert merged._token_count == 11
