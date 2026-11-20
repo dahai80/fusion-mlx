@@ -196,16 +196,18 @@ def test_roundtrip_int4_quantized_kv_cache(root: str):
     assert loaded.kv_dtype == "int4"
     assert isinstance(loaded.cache[0], QuantizedKVCache)
 
-    # Quantized cache stores .state as a 2-tuple of (K, V) where each is
-    # itself a (packed_uint32, scales, biases) 3-tuple. Walk both levels
-    # and assert byte-identical on every leaf array.
+    # mlx-lm 0d4d3d04f: QuantizedKVCache.state = (keys, values, offset,
+    # group_size, bits); keys/values are each a (packed_uint32, scales,
+    # biases) 3-tuple, the remaining three entries are scalars. Compare
+    # arrays byte-identical on every leaf, scalars by equality.
     s_in = cache_in[0].state
     s_out = loaded.cache[0].state
-    assert len(s_in) == len(s_out)
-    for kv_in, kv_out in zip(s_in, s_out):
-        assert len(kv_in) == len(kv_out)
+    assert len(s_in) == len(s_out) == 5
+    for kv_in, kv_out in zip(s_in[:2], s_out[:2]):
+        assert len(kv_in) == len(kv_out) == 3
         for a, b in zip(kv_in, kv_out):
             assert mx.array_equal(a, b).item()
+    assert tuple(s_in[2:]) == tuple(s_out[2:])
 
 
 # ---------------------------------------------------------------------------
