@@ -14,7 +14,7 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
-## [Unreleased]
+## [0.10.68] - 2026-11-20 — image matting engine, voices catalog, model-config type overrides (#1663)
 
 - Added: **image matting engine (#1663)** — `POST /v1/images/matting` background removal via a BiRefNet-lite engine (vendored pure-MLX port of moonbox-dev/BiRefNet_lite-MLX, MIT; fp16 weights ~88MB). Matting checkpoints (`config.json` `model_type: "birefnet"`) are detected as a new `image_matting` model type and routed to `MattingEngine` in the pool; the route returns an RGBA cutout or a grayscale alpha PNG (`output=cutout|mask`, `response_format=b64_json|url`) in the standard image envelope. Covered by `tests/unit/test_media_gaps_1663.py`; E2E verified against real fp16 weights (foreground 255 / background 0 on a synthetic target).
 - Added: **`/v1/audio/voices` flat voice catalog (#1663)** — response gains `catalog`: every addressable voice (Kokoro builtins `kind=builtin` with prefix-derived `lang`, ready trained packs + reference bundles `kind=cloned`) as uniform `{id, name, lang, kind, preview_url}` entries for voice casting.
