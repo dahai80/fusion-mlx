@@ -1088,6 +1088,16 @@ class CacheListHandler(CacheTypeHandler):
 
             try:
                 if normalized_name in ("ArraysCache", "SizedArraysCache"):
+                    # mlx-lm >= 0.32 ArraysCache.state = (cache,
+                    # left_padding, lengths); the stored contract is the
+                    # bare array list. Normalize before handing to the
+                    # ArraysCache handler.
+                    if (
+                        isinstance(sub_state, tuple)
+                        and len(sub_state) == 3
+                        and isinstance(sub_state[0], list)
+                    ):
+                        sub_state = sub_state[0]
                     sub_cache = sub_handler.reconstruct_cache(
                         {"states": list(sub_state)}, sub_meta
                     )

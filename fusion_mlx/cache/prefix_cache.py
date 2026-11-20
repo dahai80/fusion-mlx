@@ -1312,6 +1312,15 @@ class BlockAwarePrefixCache(CacheManager):
                 elif handler.supports_block_slicing:
                     # Standard 4D KV cache slicing
                     state = layer_state["state"]
+                    if cache_type_name == "KVCache" and len(state) > 2:
+                        # mlx-lm >= 0.32 KVCache.state = (keys, values,
+                        # offset). The N-tuple branch below clones every
+                        # element it cannot slice via handler.slice_state,
+                        # so a raw 3-tuple made each 64-token block entry
+                        # carry the FULL untrimmed KV buffer (#1670: 2.2GB
+                        # per block on Qwen3-8B). Keep block entries in the
+                        # legacy trimmed (keys, values) format.
+                        state = (state[0], state[1])
                     if not isinstance(state, (list, tuple)) or len(state) < 2:
                         # Placeholder from boundary snapshot (skipped sliceable layer).
                         continue
