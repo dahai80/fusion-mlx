@@ -311,7 +311,13 @@ class VLMBatchedEngine(BaseEngine):
                 load_tool_module,
             )
 
-            tool_parser_type = _infer_tool_parser(chat_template)
+            # mlx-lm 0.32 (#1667) changed _infer_tool_parser to take a
+            # tokenizer-like object (reads .chat_template/.get_vocab);
+            # older versions expect the raw template string (#1670).
+            try:
+                tool_parser_type = _infer_tool_parser(tokenizer)
+            except (TypeError, AttributeError):
+                tool_parser_type = _infer_tool_parser(chat_template)
             if tool_parser_type is None:
                 return
             try:
@@ -328,7 +334,10 @@ class VLMBatchedEngine(BaseEngine):
                 )
             except ImportError:
                 return
-            tool_parser_type = _mlx_lm_infer(chat_template)
+            try:
+                tool_parser_type = _mlx_lm_infer(tokenizer)
+            except (TypeError, AttributeError):
+                tool_parser_type = _mlx_lm_infer(chat_template)
             if tool_parser_type is None:
                 return
             try:
