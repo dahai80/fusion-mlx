@@ -4380,9 +4380,9 @@ class TestBuildStateMachineStopStrings:
     def test_no_stop_string_only_eos_transitions(self, mock_model):
         scheduler = self._make_scheduler(mock_model)
         sm = scheduler._build_state_machine(self._request_with_stop([]))
-        # SequenceStateMachine has internal _states dict; non-empty implies
-        # at least the EOS transitions are present.
-        assert sm._states
+        # StopSequences has an internal Aho-Corasick _root trie; non-empty
+        # implies at least the EOS transitions are present.
+        assert sm._root
 
     def test_stop_string_added_as_token_sequence(self, mock_model):
         scheduler = self._make_scheduler(mock_model)
@@ -4394,7 +4394,7 @@ class TestBuildStateMachineStopStrings:
         sm = scheduler._build_state_machine(self._request_with_stop(["delta"]))
         # Walk the trie following expected_seq; the terminal node must
         # have a __match__ entry, meaning the sequence is registered.
-        node = sm._states["normal"][0]
+        node = sm._root
         for tok in expected_seq:
             assert tok in node, f"token {tok} missing from trie"
             node = node[tok]
@@ -4406,7 +4406,7 @@ class TestBuildStateMachineStopStrings:
         # should be tokenized.
         sm = scheduler._build_state_machine(self._request_with_stop(["", "real", 123]))
         real_seq = MockTokenizer().encode("real", add_special_tokens=False)
-        node = sm._states["normal"][0]
+        node = sm._root
         for tok in real_seq:
             assert tok in node
             node = node[tok]
@@ -4418,7 +4418,7 @@ class TestBuildStateMachineStopStrings:
         tokenizer = MockTokenizer()
         for stop_str in ("foo", "bar"):
             seq = tokenizer.encode(stop_str, add_special_tokens=False)
-            node = sm._states["normal"][0]
+            node = sm._root
             for tok in seq:
                 assert tok in node
                 node = node[tok]

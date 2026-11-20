@@ -151,6 +151,15 @@ class ByteFallbackTokenizer:
         "<0xA0>": 3,
     }
 
+    # mlx-lm >= 0.32 SPMStreamingDetokenizer builds its tokenmap via
+    # len(tokenizer) + convert_ids_to_tokens instead of tokenizer.vocab.
+    def __len__(self):
+        return len(self.vocab)
+
+    def convert_ids_to_tokens(self, ids):
+        id_to_token = {v: k for k, v in self.vocab.items()}
+        return [id_to_token[i] for i in ids]
+
     def decode(self, token_ids, skip_special_tokens: bool = True):
         table = {
             0: b"",

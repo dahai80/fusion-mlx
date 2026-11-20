@@ -381,7 +381,9 @@ class TestMiniMaxM3CacheHandlers:
             meta_state="7",
         )
 
-        assert restored.kv_cache.state == (keys, values)
+        # mlx-lm >= 0.32: KVCache.state is the 3-tuple (keys, values, offset);
+        # deserialize rebuilds the nested cache in the new contract.
+        assert restored.kv_cache.state == (keys, values, keys.shape[2])
         assert restored.index_keys is index_keys
         assert restored.index_offset == 12
 
@@ -430,7 +432,8 @@ class TestMiniMaxM3CacheHandlers:
         assert batch.index_offset == 6
         for row, length in enumerate((4, 6)):
             extracted = batch.extract(row)
-            row_keys, row_values = extracted.kv_cache.state
+            # mlx-lm >= 0.32: KVCache.state is a 3-tuple; trim to (keys, values).
+            row_keys, row_values = extracted.kv_cache.state[:2]
             assert row_keys.shape[2] == length
             assert row_values.shape[2] == length
             assert extracted.index_keys.shape[2] == length

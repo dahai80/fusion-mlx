@@ -259,8 +259,9 @@ def test_export_import_round_trip_tensor_equal():
     mgr.import_kv_cache(sid_b, exported["layers"], exported["seq_len"])
     cache_b = mgr._shards[sid_b]["kv_cache"]
     for li in range(4):
-        ka, va = cache_a[li].state
-        kb, vb = cache_b[li].state
+        # mlx-lm >= 0.32: KVCache.state is the 3-tuple (keys, values, offset).
+        ka, va = cache_a[li].state[:2]
+        kb, vb = cache_b[li].state[:2]
         assert mx.array_equal(ka, kb), f"layer {li} keys differ"
         assert mx.array_equal(va, vb), f"layer {li} values differ"
 

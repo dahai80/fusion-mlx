@@ -598,9 +598,13 @@ def test_glm_patch_forward_sparse_path_and_cache_state():
     mx.eval([c.state for c in cache])
     full_state = cache[0].state
     shared_state = cache[1].state
+    # mlx-lm >= 0.32: CacheList.state is [(sub.state, type_name), ...] and
+    # each KVCache sub-state is the 3-tuple (keys, values, offset).
     assert len(full_state) == 2
     assert len(shared_state) == 1
-    assert full_state[1][1].shape[-1] == 0
+    assert full_state[0][1] == "KVCache"
+    assert full_state[1][1] == "KVCache"
+    assert full_state[1][0][1].shape[-1] == 0
 
 
 def test_glm_cachelist_hot_and_cold_round_trip(tmp_path):
@@ -650,7 +654,11 @@ def test_glm_cachelist_hot_and_cold_round_trip(tmp_path):
     assert block_data[0][0] == "__cache_list__"
     assert len(block_data[0][1]) == 2
     assert len(block_data[1][1]) == 1
-    assert block_data[0][1][1][1].shape[-1] == 0
+    # mlx-lm >= 0.32: each CacheList sub-state serializes as
+    # ("__nstate__", cls, (keys, values, offset)); the indexer KV stores
+    # keys with zero-width values.
+    assert block_data[0][1][1][0] == "__nstate__"
+    assert block_data[0][1][1][2][1].shape[-1] == 0
 
     block_hash = b"glm_moe_dsa_cache"
     layer_types = model_cache_config.get_type_names()
@@ -676,7 +684,9 @@ def test_glm_cachelist_hot_and_cold_round_trip(tmp_path):
         assert hot_loaded is not None
         assert len(hot_loaded[0]) == 2
         assert len(hot_loaded[1]) == 1
-        assert hot_loaded[0][1][1].shape[-1] == 0
+        # Loaded sub-state is ("__nstate__", class, (keys, values, offset));
+        # indexer KV keeps zero-width values.
+        assert hot_loaded[0][1][2][1].shape[-1] == 0
     finally:
         manager.close()
 
@@ -691,7 +701,7 @@ def test_glm_cachelist_hot_and_cold_round_trip(tmp_path):
         assert cold_loaded is not None
         assert len(cold_loaded[0]) == 2
         assert len(cold_loaded[1]) == 1
-        assert cold_loaded[0][1][1].shape[-1] == 0
+        assert cold_loaded[0][1][2][1].shape[-1] == 0
         assert cold_manager._hot_cache_get(block_hash) is not None
     finally:
         cold_manager.close()

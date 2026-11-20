@@ -39,6 +39,36 @@ from mlx_vlm.turboquant import (
 
 logger = logging.getLogger(__name__)
 
+# mlx-lm >= 0.32 compat: upstream TurboQuantKVCache.from_cache unpacks
+# cache.state as a 2-tuple; the new KVCache.state is the raw 3-tuple
+# (keys, values, offset). Normalize any input cache exposing
+# keys_and_values() (trimmed-to-offset semantics) before handing it
+# upstream. Applied at import so every fusion TQ construction path is
+# covered. TQ's own instances keep their self-contained 2-tuple state.
+from mlx_vlm.turboquant import DEFAULT_TURBOQUANT_SEED
+
+_original_tq_from_cache = TurboQuantKVCache.from_cache
+
+
+def _compat_tq_from_cache(cache, bits: float, seed: int = DEFAULT_TURBOQUANT_SEED):
+    if hasattr(cache, "keys_and_values"):
+        try:
+            keys, values = cache.keys_and_values()
+        except (ValueError, TypeError) as e:
+            logger.debug(
+                f"TurboQuant from_cache: keys_and_values() unusable ({e}), "
+                "falling back to raw state"
+            )
+            keys, values = cache.state[:2]
+        turbo_cache = TurboQuantKVCache(bits=bits, seed=seed)
+        if keys is not None:
+            turbo_cache.update_and_fetch(keys, values)
+        return turbo_cache
+    return _original_tq_from_cache(cache, bits, seed)
+
+
+TurboQuantKVCache.from_cache = _compat_tq_from_cache
+
 # #1230: the vendored mlx_vlm RHT (Hadamard) codec is broken end to end —
 # fused Metal kernels dequantize with the dense matrix regardless of
 # codec.use_rht (134% roundtrip error at power-of-two head dims, bits=4).
@@ -176,7 +206,12 @@ def make_turboquant_kv_cache(
         else TurboQuantKVCache(bits=bits, seed=seed)
     )
     if source is not None:
-        keys, values = source.state
+        # mlx-lm >= 0.32 .state returns the raw buffer plus offset; the
+        # quantize-in contract needs the trimmed-to-offset fp16 view.
+        if hasattr(source, "keys_and_values"):
+            keys, values = source.keys_and_values()
+        else:
+            keys, values = source.state[:2]
         if keys is not None:
             cache.update_and_fetch(keys, values)
     return cache

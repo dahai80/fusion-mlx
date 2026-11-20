@@ -629,7 +629,10 @@ class ShardManager:
                     f"import_kv_cache: layer {li} cache len {k.shape[2]} "
                     f"!= seq_len {seq_len}"
                 )
-            cache[li].state = (k, v)  # setter sets keys/values + offset
+            # mlx-lm >= 0.32: KVCache.state setter expects the 3-tuple
+            # (keys, values, offset); keys/values here are trimmed to
+            # seq_len so offset == seq_len.
+            cache[li].state = (k, v, seq_len)
             imported += 1
             imported_layers.append(li)
 

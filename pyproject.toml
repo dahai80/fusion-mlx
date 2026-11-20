@@ -38,7 +38,12 @@ dependencies = [
     # PyPI-pinned deps: precise == version pins preserve reproducibility.
     # Supply-chain integrity: verify wheel/sdist SHA256 with bash scripts/verify_pypi_hashes.sh
     # (previous git-commit pins broke PyPI's no-direct-dependency policy, #348).
-    "mlx-lm==0.31.3",
+    # 11-20: git pin is deliberate — main@0d4d3d04f carries the packed gated
+    # delta kernel + fused qk_norm/rms_norm decode kernels (Qwen3.5 hybrid
+    # decode +38% offline vs 0.31.3) AND avoids a 0.32.2-only decode
+    # regression (100.6 tok/s vs 164.1 at this commit, same venv machine).
+    # Same commit oMLX 0.8.0 pins. Re-pin to PyPI when >0.32.2 ships.
+    "mlx-lm @ git+https://github.com/ml-explore/mlx-lm@0d4d3d04f8ab7ce4a51e7209e8615755a48ba94d",
     "regex",
     "mistral-common>=1.10",
     "tokenizers>=0.19.0",
@@ -144,7 +149,9 @@ paroquant = [
 ]
 # DFlash2 block-diffusion speculative decoding (z-lab official dflash pkg).
 # MLX-native DFlash2DraftModel + CandidateSelector. Pinned 0.1.0; the pkg
-# pins mlx==0.32.0 + mlx-lm==0.31.3 (same family as fusion-mlx core).
+# declares mlx-lm==0.31.3 but the [tool.uv] override below forces the
+# fusion-mlx mlx-lm pin (git 0d4d3d04f) in uv installs; plain pip treats
+# the conflict as a warning only. Revisit when dflash releases a pin bump.
 # Apple-Silicon-only (mlx), so platform-marker darwin/arm64. Install via
 # `pip install 'fusion-mlx[dflash2]'`.
 dflash2 = [
@@ -240,7 +247,7 @@ include = ["fusion_mlx*"]
 
 [tool.uv]
 override-dependencies = [
-    "mlx-lm==0.31.3",
+    "mlx-lm @ git+https://github.com/ml-explore/mlx-lm@0d4d3d04f8ab7ce4a51e7209e8615755a48ba94d",
 ]
 
 [tool.black]

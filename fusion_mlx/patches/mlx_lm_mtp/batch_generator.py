@@ -779,7 +779,7 @@ def _make_row_batch(
         logits_processors=[
             _row_value(getattr(gen_batch, "logits_processors", None), idx, [])
         ],
-        state_machines=[_row_value(getattr(gen_batch, "state_machines", None), idx)],
+        stop_sequences=[_row_value(getattr(gen_batch, "stop_sequences", None), idx)],
         max_tokens=[_row_value(getattr(gen_batch, "max_tokens", None), idx)],
         _next_tokens=next_tokens[idx : idx + 1] if next_tokens is not None else None,
         _next_logprobs=(
@@ -789,7 +789,7 @@ def _make_row_batch(
         ),
         _token_context=[gen_batch._token_context[idx]],
         _num_tokens=[gen_batch._num_tokens[idx]],
-        _matcher_states=[gen_batch._matcher_states[idx]],
+        _matchers=[_row_value(getattr(gen_batch, "_matchers", None), idx)],
     )
     if state is not None:
         row._fusion_mlx_mtp_state = state
@@ -1445,19 +1445,14 @@ def _emit_batch_responses(gen_batch: Any, batch_state: _MtpBatchState) -> list[A
         _bump_emit_stat(state, source)
 
         finish_reason: str | None = None
-        match_sequence = None
 
         gen_batch.tokens[idx].append(token_id)
         gen_batch._num_tokens[idx] += 1
         if gen_batch._num_tokens[idx] >= gen_batch.max_tokens[idx]:
             finish_reason = "length"
 
-        new_state, match_sequence, current_state = gen_batch.state_machines[idx].match(
-            gen_batch._matcher_states[idx],
-            token_id,
-        )
-        gen_batch._matcher_states[idx] = new_state
-        if match_sequence is not None and current_state is None:
+        matcher = _row_value(getattr(gen_batch, "_matchers", None), idx)
+        if matcher is not None and matcher.advance(token_id):
             finish_reason = "stop"
 
         if finish_reason is not None:
@@ -1467,8 +1462,6 @@ def _emit_batch_responses(gen_batch: Any, batch_state: _MtpBatchState) -> list[A
                     token=token_id,
                     logprobs=logprobs_1d,
                     finish_reason=finish_reason,
-                    current_state=current_state,
-                    match_sequence=match_sequence,
                     prompt_cache=gen_batch.extract_cache(idx),
                     all_tokens=gen_batch.tokens[idx],
                 )
@@ -1483,8 +1476,6 @@ def _emit_batch_responses(gen_batch: Any, batch_state: _MtpBatchState) -> list[A
                     token=token_id,
                     logprobs=logprobs_1d,
                     finish_reason=None,
-                    current_state=current_state,
-                    match_sequence=match_sequence,
                     prompt_cache=None,
                     all_tokens=None,
                 )
@@ -2083,18 +2074,15 @@ def _emit_response(
     Response = type(gen_batch).Response
 
     finish_reason: str | None = None
-    match_sequence = None
 
     gen_batch.tokens[0].append(token_id)
     gen_batch._num_tokens[0] += 1
     if gen_batch._num_tokens[0] >= gen_batch.max_tokens[0]:
         finish_reason = "length"
 
-    new_state, match_sequence, current_state = gen_batch.state_machines[0].match(
-        gen_batch._matcher_states[0], token_id
-    )
-    gen_batch._matcher_states[0] = new_state
-    if match_sequence is not None and current_state is None:
+    matcher = getattr(gen_batch, "_matchers", None)
+    matcher = matcher[0] if matcher else None
+    if matcher is not None and matcher.advance(token_id):
         finish_reason = "stop"
 
     if finish_reason is not None:
@@ -2105,8 +2093,6 @@ def _emit_response(
             token=token_id,
             logprobs=logprobs_1d,
             finish_reason=finish_reason,
-            current_state=current_state,
-            match_sequence=match_sequence,
             prompt_cache=prompt_cache,
             all_tokens=all_tokens,
         )
@@ -2128,8 +2114,6 @@ def _emit_response(
             token=token_id,
             logprobs=logprobs_1d,
             finish_reason=None,
-            current_state=current_state,
-            match_sequence=match_sequence,
             prompt_cache=None,
             all_tokens=None,
         )

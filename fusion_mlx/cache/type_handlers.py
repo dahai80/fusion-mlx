@@ -304,7 +304,22 @@ class KVCacheHandler(CacheTypeHandler):
 
     def extract_state(self, cache_obj: Any) -> dict[str, Any]:
         """Extract state from KVCache object."""
-        keys, values = cache_obj.state
+        # mlx-lm >= 0.32 returns the raw (untrimmed) buffer plus offset from
+        # .state; fusion's stored contract is trimmed-to-offset tensors, so
+        # go through keys_and_values() which keeps that semantics.
+        if hasattr(cache_obj, "keys_and_values"):
+            try:
+                keys, values = cache_obj.keys_and_values()
+            except (ValueError, TypeError) as e:
+                # Non-standard cache whose keys_and_values() exists but does
+                # not return a 2-tuple — fall back to the raw state buffer.
+                logger.debug(
+                    f"KVCacheHandler: keys_and_values() unusable ({e}), "
+                    "falling back to raw state"
+                )
+                keys, values = cache_obj.state[:2]
+        else:
+            keys, values = cache_obj.state[:2]
         return {
             "keys": keys,
             "values": values,
@@ -443,7 +458,14 @@ class RotatingKVCacheHandler(CacheTypeHandler):
 
     def extract_state(self, cache_obj: Any) -> dict[str, Any]:
         """Extract state from RotatingKVCache object."""
-        keys, values = cache_obj.state
+        # mlx-lm >= 0.32 returns the raw rotating buffer plus rotation
+        # metadata from .state; fusion's stored contract is the
+        # trimmed-to-offset view, so replicate the old trim here.
+        keys, values = cache_obj.state[:2]
+        offset = getattr(cache_obj, "offset", 0)
+        if keys is not None and offset < keys.shape[2]:
+            keys = keys[..., :offset, :]
+            values = values[..., :offset, :]
 
         # Get meta_state: (keep, max_size, offset, _idx)
         meta_state = getattr(cache_obj, "meta_state", ())
@@ -747,7 +769,15 @@ class ArraysCacheHandler(CacheTypeHandler):
         inner = (
             cache_obj._inner if isinstance(cache_obj, SizedArraysCache) else cache_obj
         )
-        state_list = inner.state if hasattr(inner, "state") else inner.cache
+        # mlx-lm >= 0.32 changed ArraysCache.state to
+        # (cache, left_padding, lengths); the stored contract is the bare
+        # array list, so read the .cache attribute directly.
+        if hasattr(inner, "cache"):
+            state_list = inner.cache
+        elif hasattr(inner, "state"):
+            state_list = inner.state
+        else:
+            state_list = None
 
         return {
             "states": list(state_list) if state_list else [],
@@ -990,13 +1020,47 @@ class CacheListHandler(CacheTypeHandler):
             for cls_name, sub_meta in zip(class_names, sub_meta_states)
         ]
 
-        # Try new mlx-lm CacheList.from_state() first
+        # Try new mlx-lm CacheList.from_state() first.
+        # mlx-lm >= 0.32 changed from_state to a single-arg classmethod:
+        # CacheList.from_state([(sub_state, class_name), ...]) rebuilds each
+        # sub-cache via its own from_state(), whose state setter expects the
+        # new tuple arity. Stored KVCache sub-states are trimmed 2-tuples
+        # (keys, values) with the offset carried in meta_state — re-attach
+        # the offset (meta_state[0], falling back to keys.shape[2] since the
+        # storage contract is trimmed-to-offset) to make a 3-tuple.
+        from_state_subs = []
+        for sub_state, cls_name, sub_meta in zip(
+            sub_states, class_names, sanitized_sub_meta_states
+        ):
+            if (
+                cls_name == "KVCache"
+                and isinstance(sub_state, tuple)
+                and len(sub_state) == 2
+            ):
+                keys = sub_state[0]
+                offset = (
+                    sub_meta[0]
+                    if sub_meta
+                    and isinstance(sub_meta, tuple)
+                    and len(sub_meta) > 0
+                    else keys.shape[2]
+                )
+                sub_state = (sub_state[0], sub_state[1], offset)
+            elif (
+                cls_name == "ArraysCache"
+                and isinstance(sub_state, list)
+            ):
+                # Legacy stored ArraysCache state is a bare list of arrays;
+                # the new state contract is (cache, left_padding, lengths).
+                # Padding/lengths were never persisted — None matches the
+                # freshly-constructed cache.
+                sub_state = (sub_state, None, None)
+            from_state_subs.append((sub_state, cls_name))
+
         try:
             from mlx_lm.models.cache import CacheList
 
-            return CacheList.from_state(
-                sub_states, (class_names, sanitized_sub_meta_states)
-            )
+            return CacheList.from_state(from_state_subs)
         except (ImportError, AttributeError, TypeError, KeyError) as e:
             # E-41 (#811): the old tuple ended with bare `Exception`,
             # making this catch-all — it swallowed every real bug (a
@@ -1264,7 +1328,9 @@ class MiniMaxM3KVCacheHandler(_MiniMaxM3CacheHandlerBase):
 
         cache = MiniMaxM3KVCache()
         if keys is not None and values is not None:
-            cache.kv_cache.state = (keys, values)
+            # mlx-lm >= 0.32 KVCache.state setter is (keys, values, offset);
+            # the 0.31 setter derived offset from the tensor shape.
+            cache.kv_cache.state = (keys, values, keys.shape[2])
         cache.index_keys = index_keys
         cache.index_offset = _minimax_index_offset(index_keys, meta_state)
         return cache
@@ -1385,12 +1451,18 @@ class DefaultCacheHandler(KVCacheHandler):
         try:
             if hasattr(cache_obj, "state"):
                 state = cache_obj.state
-                if isinstance(state, tuple) and len(state) == 2:
-                    keys, values = state
+                # mlx-lm >= 0.32 KVCache-like state is (keys, values, offset);
+                # 0.31 and other 2-tuple shapes keep the old path.
+                if isinstance(state, tuple) and len(state) in (2, 3):
+                    keys, values = state[0], state[1]
                     return {
                         "keys": keys,
                         "values": values,
-                        "offset": getattr(cache_obj, "offset", 0),
+                        "offset": getattr(
+                            cache_obj,
+                            "offset",
+                            state[2] if len(state) == 3 else 0,
+                        ),
                         "cache_type": "Unknown",
                     }
         except Exception as e:

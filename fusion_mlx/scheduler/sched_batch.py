@@ -1022,7 +1022,7 @@ def _insert_prefilled_request(
         all_tokens=[seed_prefix],
         samplers=[state.sampler],
         logits_processors=[per_row_lps],
-        state_machines=[state.sm],
+        stop_sequences=[state.sm],
     )
 
     if uids:

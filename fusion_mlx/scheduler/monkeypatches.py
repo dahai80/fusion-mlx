@@ -172,13 +172,27 @@ except Exception:
     _mlx_lm_ver = "unknown"
 
 # Update these bounds when testing against new mlx-lm releases.
+# 11-20: max raised to 0.32.3 — fusion-mlx pins mlx-lm main@0d4d3d04f
+# (0.32.3.dev8, pre-0.32.2-release lineage) for the packed gated delta
+# decode kernel; see pyproject.toml for the pin rationale.
 _MLX_LM_MIN_TESTED = "0.21"
-_MLX_LM_MAX_TESTED = "0.32"
+_MLX_LM_MAX_TESTED = "0.32.3"
 
 if _mlx_lm_ver != "unknown":
 
     def _ver_tuple(v):
-        return tuple(int(x) for x in v.split(".")[:3])
+        # Dev/local versions ("0.32.3.dev8+g0d4d3d04f") carry non-numeric
+        # segments; keep only leading digits of each of the first 3 parts.
+        parts = []
+        for seg in v.split(".")[:3]:
+            digits = ""
+            for ch in seg:
+                if ch.isdigit():
+                    digits += ch
+                else:
+                    break
+            parts.append(int(digits or 0))
+        return tuple(parts)
 
     vt = _ver_tuple(_mlx_lm_ver)
     if vt < _ver_tuple(_MLX_LM_MIN_TESTED) or vt > _ver_tuple(_MLX_LM_MAX_TESTED):
@@ -447,14 +461,20 @@ try:
 
     def _patched_batch_generator_next(self):
         # Stock _next does:
-        #   self._steps_counter += 1
-        #   if self._steps_counter % 512 == 0: mx.clear_cache()
+        #   self._counters.generation_steps += 1
+        #   if self._counters.generation_steps % 512 == 0: mx.clear_cache()
         # We pre-adjust the counter so that after the increment
         # it's never a multiple of 512, preventing clear_cache.
         # The fusion scheduler's own fragmentation-aware clearing
         # (sched_step.py) handles cache management instead.
-        if (self._steps_counter + 1) % 512 == 0:
-            self._steps_counter += 1  # skip past the modulo trigger
+        counters = getattr(self, "_counters", None)
+        if counters is not None:
+            if (counters.generation_steps + 1) % 512 == 0:
+                counters.generation_steps += 1  # skip past the modulo trigger
+        elif hasattr(self, "_steps_counter"):
+            # mlx-lm < 0.32 flat-counter fallback
+            if (self._steps_counter + 1) % 512 == 0:
+                self._steps_counter += 1
         return _original_batch_generator_next(self)
 
     if not getattr(_BatchGenerator._next, "_fusion_patched", False):
