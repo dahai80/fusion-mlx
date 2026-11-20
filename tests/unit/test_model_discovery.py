@@ -384,9 +384,7 @@ class TestTwoLevelDiscovery:
         # #1663: model-config.json pins "Qwen3.6-27B-mxfp8" -> llm (the
         # production text-only quant); the override intentionally wins over
         # this heuristic, so isolate it to exercise the heuristic itself.
-        monkeypatch.setattr(
-            "fusion_mlx.config.get_model_type_overrides", lambda: {}
-        )
+        monkeypatch.setattr("fusion_mlx.config.get_model_type_overrides", lambda: {})
         model_dir = tmp_path / "Qwen3.6-27B-mxfp8"
         model_dir.mkdir()
         config = {
