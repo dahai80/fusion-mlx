@@ -391,27 +391,14 @@ Each model can have custom settings stored in `~/.fusion-mlx/settings/`:
 
 ## Model Type Overrides (#1663)
 
-`model-config.json` (package defaults in `fusion_mlx/model-config.json`,
-user overrides in `~/.fusion-mlx/model-config.json`, deep-merged) supports
-a `models.<name>.type` field that **pins the engine kind** for a model.
-The value wins over weight/config auto-detection — use it when a model's
-on-disk layout cannot express its modality (ImageGen/VideoGen checkpoints
-without a recognizable family marker, for example):
-
-```json
-{
-     "models": {
-         "flux2-klein-9b-4bit": {"type": "image"},
-         "wan2.2-t2v": {"type": "video"}
-     }
-}
-```
-
-Allowed values: `llm`, `vlm`, `embedding`, `reranker`, `ner`,
-`audio_stt`, `audio_tts`, `audio_sts`, `audio_music`, `image`, `video`,
-`draft`. The key must match the local model **directory name** (or the
-registry name it is served under). Unrecognized `type` values are logged
-as a warning and ignored — detection falls back to auto-detection.
+`model-config.json` supports a `models.<name>.type` field that **pins the
+engine kind**, winning over auto-detection:
+`{"models": {"flux2-klein-9b-4bit": {"type": "image"}}}`. Allowed values:
+`llm`, `vlm`, `embedding`, `reranker`, `ner`, `audio_stt`, `audio_tts`,
+`audio_sts`, `audio_music`, `image`, `image_matting`, `video`, `draft`.
+The key must match the local model **directory name** (or the registry
+name it is served under). Unrecognized `type` values are logged as a
+warning and ignored — detection falls back to auto-detection.
 
 ## Agent Client Reliability
 
