@@ -10,6 +10,7 @@ import json
 import logging
 import os
 
+import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, model_validator
 
@@ -567,3 +568,96 @@ async def edit_image(
         model,
     )
     return await generate_image(request)
+
+
+@router.post(
+    "/matting",
+    dependencies=[Depends(verify_api_key), Depends(check_rate_limit)],
+)
+async def matting_image(
+    image: UploadFile = File(...),
+    model: str = Form("birefnet-lite"),
+    response_format: str = Form("b64_json"),
+    output: str = Form("cutout"),
+) -> ImageGenerateResponse:
+    """Background removal (#1663) — alpha matte via a BiRefNet engine.
+
+    Multipart: ``image`` (PNG/JPEG source), ``model`` (matting model id,
+    default ``birefnet-lite``), ``output``: ``cutout`` = source composited
+    onto transparency (RGBA PNG), ``mask`` = grayscale alpha PNG only.
+    Returns the standard image ``data`` envelope; ``b64_json`` or data-URL
+    ``url`` per ``response_format``.
+    """
+    import io as _io
+
+    from PIL import Image as PILImage
+    from PIL import ImageOps
+
+    from fusion_mlx.exceptions import (
+        InsufficientMemoryError,
+        ModelNotFoundError,
+    )
+    from fusion_mlx.server import resolve_model_id
+
+    if _pool is None:
+        raise HTTPException(450, "Engine pool not initialized")
+    if output not in ("cutout", "mask"):
+        raise HTTPException(422, "output must be 'cutout' or 'mask'")
+    if response_format not in ("url", "b64_json"):
+        raise HTTPException(422, "response_format must be 'url' or 'b64_json'")
+
+    raw = await image.read()
+    if not raw:
+        raise HTTPException(400, "image file is empty or unreadable")
+    try:
+        src = PILImage.open(_io.BytesIO(raw))
+        src = ImageOps.exif_transpose(src)
+        rgb = np.asarray(src.convert("RGB"))
+    except Exception as exc:
+        raise HTTPException(422, f"cannot decode image: {exc}")
+
+    resolved = resolve_model_id(model) or model
+    logger.info(
+        "images/matting: model=%s output=%s size=%dx%d",
+        resolved,
+        output,
+        rgb.shape[1],
+        rgb.shape[0],
+    )
+    try:
+        engine = await _pool.get_engine(resolved)
+    except ModelNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except InsufficientMemoryError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    if getattr(engine, "engine_type", "") != "image_matting":
+        raise HTTPException(
+            400,
+            f"model '{resolved}' is not a matting engine "
+            f"(engine_type={getattr(engine, 'engine_type', 'unknown')})",
+        )
+
+    try:
+        alpha = await engine.matte(rgb)
+    except Exception as exc:
+        raise HTTPException(500, f"matting failed: {exc}") from exc
+
+    if output == "mask":
+        out = PILImage.fromarray(alpha, mode="L")
+    else:
+        rgba = np.dstack([rgb, alpha])
+        out = PILImage.fromarray(rgba, mode="RGBA")
+    buf = _io.BytesIO()
+    out.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    b64 = base64.b64encode(png_bytes).decode()
+    if response_format == "b64_json":
+        outputs = [ImageOutput(b64_json=b64)]
+    else:
+        outputs = [ImageOutput(url=f"data:image/png;base64,{b64}")]
+    return ImageGenerateResponse(
+        data=outputs,
+        model=resolved,
+        requested_model=model,
+    )

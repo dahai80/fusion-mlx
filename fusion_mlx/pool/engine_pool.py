@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from ..engines.batched import BatchedEngine  # noqa: F401
     from ..engines.embedding import EmbeddingEngine  # noqa: F401
     from ..engines.image_gen import ImageGenEngine  # noqa: F401
+    from ..engines.matting import MattingEngine  # noqa: F401
     from ..engines.music import MusicGenEngine  # noqa: F401
     from ..engines.ner import NEREngine  # noqa: F401
     from ..engines.reranker import RerankerEngine  # noqa: F401
@@ -82,6 +83,7 @@ _LAZY_ENGINE_CLASSES: dict[str, tuple[str, str]] = {
     "STSEngine": ("fusion_mlx.engines.sts", "STSEngine"),
     "MusicGenEngine": ("fusion_mlx.engines.music", "MusicGenEngine"),
     "ImageGenEngine": ("fusion_mlx.engines.image_gen", "ImageGenEngine"),
+    "MattingEngine": ("fusion_mlx.engines.matting", "MattingEngine"),
     "VideoGenEngine": ("fusion_mlx.engines.video", "VideoGenEngine"),
 }
 
@@ -868,6 +870,7 @@ class EnginePool:
         "audio_sts": "audio_sts",
         "audio_music": "audio_music",
         "image": "image_gen",
+        "image_matting": "image_matting",
         "video": "video_gen",
         # #1260: draft checkpoints are discovered/annotated but refused at
         # get_engine — no standalone serving.
@@ -1741,8 +1744,7 @@ class EnginePool:
                 # mark the engine as dead so it gets evicted and reloaded
                 # rather than serving corrupt weights.
                 logger.error(
-                    "inplace_swap: apply failed for %s on %s: %s — "
-                    "attempting rollback",
+                    "inplace_swap: apply failed for %s on %s: %s — attempting rollback",
                     adapter_path,
                     base_model_id,
                     apply_err,
@@ -2017,8 +2019,7 @@ class EnginePool:
                 dead = getattr(entry.engine, "is_dead", None)
                 if callable(dead) and dead():
                     logger.warning(
-                        "get_engine: engine for '%s' is dead (%s) — "
-                        "reloading (EF-1)",
+                        "get_engine: engine for '%s' is dead (%s) — reloading (EF-1)",
                         entry_key,
                         getattr(entry.engine, "dead_reason", None),
                     )
@@ -2888,8 +2889,7 @@ class EnginePool:
                 cleared_alias_refs.append(mid)
         if cleared_alias_refs:
             logger.info(
-                "unload: cleared alias engine ref(s) sharing stopped engine "
-                "of %s: %s",
+                "unload: cleared alias engine ref(s) sharing stopped engine of %s: %s",
                 model_id,
                 cleared_alias_refs,
             )
@@ -3117,8 +3117,7 @@ class EnginePool:
                 # #1351: no entry, or an entry with no engine attached. This
                 # used to return silently (indistinguishable from a teardown).
                 logger.info(
-                    "unload_engine_async('%s'): not loaded — nothing to unload "
-                    "(#1351)",
+                    "unload_engine_async('%s'): not loaded — nothing to unload (#1351)",
                     model_id,
                 )
                 return UnloadResult(
@@ -3940,6 +3939,8 @@ class EnginePool:
                         engine = MusicGenEngine(model_name=entry.model_path)
                     elif entry.engine_type == "image_gen":
                         engine = ImageGenEngine(model_name=entry.model_path)
+                    elif entry.engine_type == "image_matting":
+                        engine = MattingEngine(model_name=entry.model_path)
                     elif entry.engine_type == "video_gen":
                         engine = VideoGenEngine(model_name=entry.model_path)
                     elif entry.engine_type == "diffusion":

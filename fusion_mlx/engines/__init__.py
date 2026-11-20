@@ -2,7 +2,8 @@
 
 Provides BaseEngine, BatchedEngine (LLM), VLMBatchedEngine (vision),
 EmbeddingEngine, RerankerEngine, NEREngine, STTEngine, TTSEngine, STSEngine,
-and ImageGenEngine (Flux 2 image generation).
+and ImageGenEngine (Flux 2 image generation), MattingEngine (BiRefNet
+background removal).
 
 A4: engine classes are lazily imported via __getattr__ (PEP 562) so that
 ``import fusion_mlx`` does not eagerly parse all engine modules + video
@@ -30,6 +31,7 @@ __all__ = [
     "TTSEngine",
     "STSEngine",
     "ImageGenEngine",
+    "MattingEngine",
     "VideoGenEngine",
 ]
 
@@ -46,6 +48,7 @@ _LAZY_MAP: dict[str, tuple[str, str]] = {
     "TTSEngine": (".tts", "TTSEngine"),
     "STSEngine": (".sts", "STSEngine"),
     "ImageGenEngine": (".image_gen", "ImageGenEngine"),
+    "MattingEngine": (".matting", "MattingEngine"),
     "VideoGenEngine": (".video", "VideoGenEngine"),
 }
 

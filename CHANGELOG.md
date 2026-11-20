@@ -14,6 +14,12 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [Unreleased]
+
+- Added: **image matting engine (#1663)** — `POST /v1/images/matting` background removal via a BiRefNet-lite engine (vendored pure-MLX port of moonbox-dev/BiRefNet_lite-MLX, MIT; fp16 weights ~88MB). Matting checkpoints (`config.json` `model_type: "birefnet"`) are detected as a new `image_matting` model type and routed to `MattingEngine` in the pool; the route returns an RGBA cutout or a grayscale alpha PNG (`output=cutout|mask`, `response_format=b64_json|url`) in the standard image envelope. Covered by `tests/unit/test_media_gaps_1663.py`; E2E verified against real fp16 weights (foreground 255 / background 0 on a synthetic target).
+- Added: **`/v1/audio/voices` flat voice catalog (#1663)** — response gains `catalog`: every addressable voice (Kokoro builtins `kind=builtin` with prefix-derived `lang`, ready trained packs + reference bundles `kind=cloned`) as uniform `{id, name, lang, kind, preview_url}` entries for voice casting.
+- Added: **`model-config.json` engine-type overrides (#1663)** — `models.<name>.type` (key = local model directory name) now pins the engine kind (`llm`/`vlm`/`embedding`/`reranker`/`ner`/`audio_*`/`image`/`image_matting`/`video`/`draft`) ahead of weight/config heuristics, so image/video models heuristics cannot express resolve correctly. Invalid values log a warning and are ignored.
+
 ## [0.10.67] - 2026-11-18 — VLM gradient-checkpointing guard coverage (#1647)
 
 - Fixed: the #1648 idempotency guard covered only `mlx_lm`; `mlx_vlm.trainer.utils.grad_checkpoint()` has the same re-wrap-per-call behavior, so sequential VLM SFT jobs in a long-lived serve process still nested checkpoint wrappers (2x backward recompute per extra job). `ensure_grad_checkpoint_guard(include_vlm=True)` now patches the mlx-vlm entry point plus the `from .utils import grad_checkpoint` name bindings in `sft_trainer`/`orpo_trainer`, and is installed at the top of the shared VLM training body before `sft_trainer` is imported. Text-only paths never import mlx-vlm. Covered by `tests/unit/test_gc_guard.py`.

@@ -35,6 +35,7 @@ ModelType = Literal[
     "audio_tts",
     "audio_sts",
     "image",
+    "image_matting",
     "video",
     # #1260: speculative-decoding draft checkpoints (DFlash2DraftModel etc.)
     # are discovered and annotated but never standalone-servable.
@@ -50,6 +51,7 @@ EngineType = Literal[
     "audio_tts",
     "audio_sts",
     "image_gen",
+    "image_matting",
     "video_gen",
     # #1260: draft checkpoints have no engine — get_engine refuses them.
     "draft",
@@ -725,6 +727,30 @@ def detect_model_type(model_path: Path) -> ModelType:
     Returns:
         Model type: "llm", "vlm", "embedding", "reranker", "audio_stt", "audio_tts", or "audio_sts"
     """
+    # #1663: explicit model-config.json override wins over detection —
+    # ``models.<dir-name>.type`` lets operators pin engine kind (image,
+    # video, ...) that weight/config heuristics cannot express.
+    from ..config import get_model_type_overrides
+
+    override = get_model_type_overrides().get(model_path.name)
+    if override is not None:
+        logger.info(
+            "model type override from model-config.json: %s -> %s",
+            model_path.name,
+            override,
+        )
+        return override
+    # #1663: BiRefNet matting checkpoints (config.json model_type
+    # "birefnet") are image models but need MattingEngine, not ImageGen.
+    try:
+        import json as _json
+
+        with open(model_path / "config.json") as f:
+            _cfg = _json.load(f)
+        if isinstance(_cfg, dict) and _cfg.get("model_type") == "birefnet":
+            return "image_matting"
+    except (OSError, ValueError):
+        pass
     if _is_image_model(model_path):
         return "image"
     if _is_video_model(model_path):
@@ -1930,6 +1956,8 @@ def _register_model(
             engine_type = "audio_music"
         elif model_type == "image":
             engine_type = "image_gen"
+        elif model_type == "image_matting":
+            engine_type = "image_matting"
         elif model_type == "video":
             engine_type = "video_gen"
         elif model_type == "draft":

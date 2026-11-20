@@ -167,7 +167,7 @@ def _ensure_audio_executor_healthy() -> None:
     raise HTTPException(
         status_code=503,
         detail=(
-            "audio executor poisoned by a prior hang; " "restart fusion-mlx to recover"
+            "audio executor poisoned by a prior hang; restart fusion-mlx to recover"
         ),
         headers={"Retry-After": "5"},
     )
@@ -743,12 +743,56 @@ async def list_voices():
         )
     # #1383: server-side reference-voice bundles are addressable as `voice`
     # on cloning-capable models, so list them alongside the model entries.
+    from fusion_mlx.audio.tts import KOKORO_VOICES
     from fusion_mlx.audio.voice_bundles import list_voice_bundles
+
+    bundles = list_voice_bundles()
+
+    # #1663: flat per-voice catalog for voice casting — every voice the
+    # server can address (Kokoro built-ins + cloned packs/bundles) with a
+    # uniform {id, name, lang, kind, preview_url} shape.
+    def _kokoro_lang(voice_id: str) -> str:
+        return {"a": "en-US", "b": "en-GB", "z": "zh-CN"}.get(voice_id[:1], "en-US")
+
+    catalog: list[dict] = []
+    for voice_id in KOKORO_VOICES:
+        catalog.append(
+            {
+                "id": voice_id,
+                "name": voice_id,
+                "lang": _kokoro_lang(voice_id),
+                "kind": "builtin",
+                "preview_url": None,
+            }
+        )
+    for manifest in list_trained_voices():
+        if not manifest.get("ready"):
+            continue
+        catalog.append(
+            {
+                "id": manifest.get("voice_id"),
+                "name": manifest.get("voice_id"),
+                "lang": None,
+                "kind": "cloned",
+                "preview_url": None,
+            }
+        )
+    for bundle in bundles:
+        catalog.append(
+            {
+                "id": bundle.get("name"),
+                "name": bundle.get("name"),
+                "lang": None,
+                "kind": "cloned",
+                "preview_url": None,
+            }
+        )
 
     return {
         "voices": voices,
         "trained_voices": trained,
-        "voice_bundles": list_voice_bundles(),
+        "voice_bundles": bundles,
+        "catalog": catalog,
     }
 
 
