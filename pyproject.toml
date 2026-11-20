@@ -250,8 +250,9 @@ target-version = ["py311", "py312", "py313"]
 # fusion_gui/ package (#63); not yet brought to black compliance.
 # engines/laya/ is vendored laya-mlx 0.2.0 (upstream-derived, MIT).
 # engines/qwen_image_21/ is vendored mflux 0.20.0 PR#736 Qwen-Image-2.1 (MIT).
+# image/matting/vendor_birefnet_lite.py is vendored moonbox-dev/BiRefNet_lite-MLX (#1663, MIT).
 # tests/e2e/ harness scripts use compact one-liner style (ruff-excluded too).
-extend-exclude = 'tests/e2e/|fusion_mlx/engines/laya/|fusion_mlx/engines/qwen_image_21/'
+extend-exclude = 'tests/e2e/|fusion_mlx/engines/laya/|fusion_mlx/engines/qwen_image_21/|fusion_mlx/image/matting/vendor_birefnet_lite.py'
 
 [tool.ruff]
 line-length = 88
@@ -267,6 +268,7 @@ extend-exclude = [
     "fusion_mlx/patches",
     "fusion_mlx/engines/laya",
     "fusion_mlx/engines/qwen_image_21",
+    "fusion_mlx/image/matting/vendor_birefnet_lite.py",
     "tests/e2e",
 ]
 

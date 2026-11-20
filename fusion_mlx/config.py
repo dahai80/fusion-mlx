@@ -342,8 +342,7 @@ class SchedulerConfig:
                     self.admission_guard_hit_rate_floor = float(_env_floor)
                 except ValueError:
                     logger.warning(
-                        "FUSION_MLX_ADMISSION_GUARD_FLOOR=%r is not a float; "
-                        "using 0.3",
+                        "FUSION_MLX_ADMISSION_GUARD_FLOOR=%r is not a float; using 0.3",
                         _env_floor,
                     )
         if self.admission_guard_queue_depth == 8:
@@ -662,6 +661,51 @@ def _load_model_config() -> dict[str, Any]:
 
 _model_config = _load_model_config()
 DEFAULT_ALIASES: dict[str, str] = _model_config.get("aliases", {})
+
+# #1663: per-model engine-type overrides from model-config.json
+# (``models.<name>.type``). Detection in pool/model_discovery consults
+# this before inferring from weights/config, so ImageGen/VideoGen (and
+# every other engine kind) can be pinned explicitly.
+_MODEL_TYPE_VALUES = frozenset(
+    {
+        "llm",
+        "vlm",
+        "embedding",
+        "reranker",
+        "ner",
+        "audio_stt",
+        "audio_tts",
+        "audio_sts",
+        "audio_music",
+        "image",
+        "image_matting",
+        "video",
+        "draft",
+    }
+)
+
+
+def get_model_type_overrides() -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    models = _model_config.get("models") or {}
+    if not isinstance(models, dict):
+        return overrides
+    for name, spec in models.items():
+        if not isinstance(spec, dict):
+            continue
+        t = spec.get("type")
+        if isinstance(t, str) and t in _MODEL_TYPE_VALUES:
+            overrides[name] = t
+        elif t is not None:
+            logger.warning(
+                "model-config.json models.%s.type=%r is not one of %s; "
+                "ignoring override",
+                name,
+                t,
+                sorted(_MODEL_TYPE_VALUES),
+            )
+    return overrides
+
 
 # Global config singleton
 _config: ServerConfig | None = None

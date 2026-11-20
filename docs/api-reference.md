@@ -472,6 +472,12 @@ curl -X DELETE http://127.0.0.1:11434/admin/api/audio/voice-bundles/narrator -H 
 `GET /v1/audio/voices` lists trained packs under `trained_voices` and
 bundles under `voice_bundles` alongside the stock voices.
 
+It also returns a flat `catalog` (#1663) for voice casting: every voice
+the server can address, one entry per voice with a uniform shape —
+`{id, name, lang, kind, preview_url}` — where `kind` is `builtin`
+(Kokoro stock voices, `lang` derived from the voice-id prefix) or
+`cloned` (ready trained packs and reference bundles, `lang` null).
+
 ### `POST /v1/audio/process`
 
 Process audio files — enhancement, source separation, etc.
@@ -588,6 +594,31 @@ For multipart `/v1/images/edits` the list travels as a JSON string field:
 call can combine a character sheet and a scene. Reference images are only
 consumed by `redux` and `qwen_image_edit`; other variants log a WARNING
 naming how many images were dropped.
+
+### Image matting (`POST /v1/images/matting`, #1663)
+
+Background removal via a BiRefNet-lite matting engine (vendored pure-MLX
+port of moonbox-dev/BiRefNet_lite-MLX, MIT). Matting checkpoints are
+detected by `config.json` `model_type: "birefnet"` and served as
+`image_matting` engines (they are generation models, not image-gen —
+the pool routes them to `MattingEngine`, not `ImageGenEngine`).
+
+Multipart request:
+
+- `image` — PNG/JPEG source (required)
+- `model` — matting model id, default `birefnet-lite`
+- `output` — `cutout` (default): source composited onto transparency as
+  RGBA PNG; `mask`: grayscale alpha PNG only (255 = foreground)
+- `response_format` — `b64_json` (default) or `url` (data-URL)
+
+Response reuses the standard image envelope:
+
+```json
+{"data": [{"b64_json": "..."}], "model": "birefnet-lite", "requested_model": "birefnet-lite"}
+```
+
+Errors: unknown model → 404, non-matting engine → 400, no memory → 503,
+invalid `output`/`response_format` → 422.
 
 ---
 

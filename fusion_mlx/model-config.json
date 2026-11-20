@@ -11,6 +11,9 @@
     },
     "Qwen3.5-4B-MLX-8b": {
       "type": "vlm"
+    },
+    "flux2-klein-9b-4bit": {
+      "type": "image"
     }
   }
 }

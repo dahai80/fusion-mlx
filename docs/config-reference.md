@@ -389,6 +389,15 @@ Each model can have custom settings stored in `~/.fusion-mlx/settings/`:
 
 > The speculative-decoding settings above (`specprefill_enabled`, `dflash_enabled`, `mtp_enabled`, `vlm_mtp_enabled`) map onto the `serve` flags for the methods that expose one (`--enable-dflash`, `--enable-mtp`; the deprecated `--specprefill*` CLI group was removed in #1354). For the full method matrix, selection guide, the boot-time loading constraint, and the `SpecAutoRouter` API, see [Speculative Decoding](speculative-decoding.md).
 
+## Model Type Overrides (#1663)
+
+`model-config.json` supports a `models.<name>.type` field that **pins the
+engine kind**, winning over auto-detection:
+`{"models": {"flux2-klein-9b-4bit": {"type": "image"}}}`. Allowed values:
+`llm`, `vlm`, `embedding`, `reranker`, `ner`, `audio_stt`/`tts`/`sts`/`music`,
+`image`, `image_matting`, `video`, `draft`. The key must match the local
+model **directory name**. Unrecognized `type` values log a warning and fall back to auto-detection.
+
 ## Agent Client Reliability
 
 Agent clients (Claude Code, OpenClaw, anything driving tool loops through an Anthropic-to-OpenAI converter such as fusion-gateway) have two serving-layer guards, both env-gated and default-on:
