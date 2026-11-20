@@ -2720,10 +2720,10 @@ class TestTurboQuantFormatMismatchRecovery:
     def test_reconstruct_accepts_sized_arrays_metadata_with_turboquant(self, mx):
         from mlx_lm.models.cache import KVCache
 
+        from fusion_mlx.cache.type_handlers import SizedArraysCache
+
         # Fusion import: applies the mlx-lm 0d4d3d04f from_cache compat shim
         from fusion_mlx.turboquant_kv import TurboQuantKVCache
-
-        from fusion_mlx.cache.type_handlers import SizedArraysCache
 
         mock_ssd = MagicMock()
 
