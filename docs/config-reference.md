@@ -394,11 +394,10 @@ Each model can have custom settings stored in `~/.fusion-mlx/settings/`:
 `model-config.json` supports a `models.<name>.type` field that **pins the
 engine kind**, winning over auto-detection:
 `{"models": {"flux2-klein-9b-4bit": {"type": "image"}}}`. Allowed values:
-`llm`, `vlm`, `embedding`, `reranker`, `ner`, `audio_stt`, `audio_tts`,
-`audio_sts`, `audio_music`, `image`, `image_matting`, `video`, `draft`.
-The key must match the local model **directory name** (or the registry
-name it is served under). Unrecognized `type` values are logged as a
-warning and ignored — detection falls back to auto-detection.
+`llm`, `vlm`, `embedding`, `reranker`, `ner`, `audio_stt`/`tts`/`sts`/`music`,
+`image`, `image_matting`, `video`, `draft`. The key must match the local
+model **directory name**. Unrecognized `type` values log a warning and are
+ignored — detection falls back to auto-detection.
 
 ## Agent Client Reliability
 
