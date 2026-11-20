@@ -396,8 +396,7 @@ engine kind**, winning over auto-detection:
 `{"models": {"flux2-klein-9b-4bit": {"type": "image"}}}`. Allowed values:
 `llm`, `vlm`, `embedding`, `reranker`, `ner`, `audio_stt`/`tts`/`sts`/`music`,
 `image`, `image_matting`, `video`, `draft`. The key must match the local
-model **directory name**. Unrecognized `type` values log a warning and are
-ignored — detection falls back to auto-detection.
+model **directory name**. Unrecognized `type` values log a warning and fall back to auto-detection.
 
 ## Agent Client Reliability
 
