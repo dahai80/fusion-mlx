@@ -19,7 +19,7 @@ from typing import Any
 
 import mlx.core as mx
 from mlx_lm.generate import (
-    SequenceStateMachine,
+    StopSequences,
 )
 from mlx_lm.sample_utils import make_logits_processors
 
@@ -44,22 +44,24 @@ except ImportError:
     HAS_CACHE_TYPE_HANDLERS = False
 
 
-def _build_state_machine(self, request: "Request") -> SequenceStateMachine:
-    """Build a SequenceStateMachine for per-request stop tokens.
+def _build_state_machine(self, request: "Request") -> StopSequences:
+    """Build a StopSequences automaton for per-request stop tokens.
 
     Combines base stop tokens (EOS, Harmony) with request-specific
-    stop_token_ids and tokenized stop strings into a single state
-    machine that tells BatchGenerator when to stop generating for
-    this request.
+    stop_token_ids and tokenized stop strings into a single Aho-Corasick
+    automaton that tells BatchGenerator when to stop generating for
+    this request. mlx-lm >= 0.32 replaced SequenceStateMachine with
+    StopSequences; fusion only ever used stop semantics (all edges
+    terminated), which maps 1:1.
     """
     stop_tokens_set = self._get_stop_tokens()
     if request.sampling_params.stop_token_ids:
         stop_tokens_set.update(request.sampling_params.stop_token_ids)
 
-    transitions: dict[str, list] = {"normal": [([t], None) for t in stop_tokens_set]}
+    sequences: list[list[int]] = [[t] for t in stop_tokens_set]
 
     # Tokenize stop strings into token sequences. mlx-lm's
-    # SequenceStateMachine uses Aho-Corasick, so per-token match
+    # StopSequences uses Aho-Corasick, so per-token match
     # cost stays O(1) regardless of how many sequences are added.
     # BPE merge edge cases (where a stop string boundary lands
     # mid-token) may miss; that is a known limitation.
@@ -71,11 +73,9 @@ def _build_state_machine(self, request: "Request") -> SequenceStateMachine:
         except TypeError:
             seq = self.tokenizer.encode(stop_str)
         if seq:
-            transitions["normal"].append((list(seq), None))
+            sequences.append(list(seq))
 
-    if transitions["normal"]:
-        return SequenceStateMachine(transitions, initial="normal")
-    return SequenceStateMachine({}, initial="normal")
+    return StopSequences(sequences)
 
 
 def _emit_prefill_boundary_snapshot(

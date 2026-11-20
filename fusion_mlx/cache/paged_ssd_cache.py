@@ -1120,8 +1120,11 @@ class PagedSSDCacheManager:
                         file_metadata[f"layer_{i}_sub_{j}_state_count"] = str(
                             len(elements)
                         )
-                        if sub_class is not None:
-                            file_metadata[f"layer_{i}_sub_{j}_class"] = sub_class
+                        # Always persist the class slot ("" when the extract
+                        # path had no class name) — dropping it makes the
+                        # loader emit an empty sub_list for 3+-element
+                        # sub-states and silently loses the layer.
+                        file_metadata[f"layer_{i}_sub_{j}_class"] = sub_class or ""
                         total_states += len(elements)
                     file_metadata[f"layer_{i}_sub_count"] = str(len(sub_list))
                     file_metadata[f"layer_{i}_state_count"] = str(total_states)
@@ -1503,8 +1506,8 @@ class PagedSSDCacheManager:
                                     items.append(arr)
                                 else:
                                     return None
-                        if sub_state_count >= 3 and sub_class:
-                            sub_list.append(("__nstate__", sub_class, items))
+                        if sub_state_count >= 3:
+                            sub_list.append(("__nstate__", sub_class or "", items))
                         elif len(items) == 2:
                             sub_list.append((items[0], items[1]))
                         elif len(items) == 1:
@@ -1638,8 +1641,8 @@ class PagedSSDCacheManager:
                             key = f"layer_{i}_sub_{j}_state_{k}"
                             if key in arrays:
                                 items.append(arrays[key])
-                        if sub_state_count >= 3 and sub_class:
-                            sub_list.append(("__nstate__", sub_class, items))
+                        if sub_state_count >= 3:
+                            sub_list.append(("__nstate__", sub_class or "", items))
                         elif len(items) == 2:
                             sub_list.append((items[0], items[1]))
                         elif len(items) == 1:

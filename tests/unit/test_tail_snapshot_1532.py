@@ -244,6 +244,58 @@ class TestBuildFromStates:
         assert _build_cache_from_full_states(None, [], 99) is None
 
 
+class TestArraysCacheStateMigration1670:
+    """mlx-lm >= 0.32 ArraysCache.state is a (cache, left_padding, lengths)
+    3-tuple. The snapshot path must keep the bare GDN array list, or warm
+    start rebuilds an empty ArraysCache and Qwen3.5 VLM requests crash with
+    IndexError (#1670 follow-up)."""
+
+    def test_extract_normalizes_new_3tuple_state(self):
+        from mlx_lm.models.cache import ArraysCache
+
+        from fusion_mlx.scheduler.sched_boundary import _extract_cache_states
+
+        ac = ArraysCache(size=2)
+        ac[0] = mx.zeros((1, 4, 8))
+        ac[1] = mx.zeros((1, 4, 8))
+        fake = SimpleNamespace(model_name="test-model")
+        extracted, _ = _extract_cache_states(fake, [ac])
+        assert extracted, "ArraysCache layer dropped by extraction"
+        st = extracted[0]["state"]
+        # Normalized to the bare array list (kept as tuple downstream);
+        # the raw 3-tuple would smuggle a plain list + None paddings.
+        assert len(st) == 2
+        assert st[0].shape == (1, 4, 8)
+
+    def test_arrayscache_round_trip_rebuild(self, tmp_path):
+        from mlx_lm.models.cache import ArraysCache
+
+        ac = ArraysCache(size=2)
+        ac[0] = mx.zeros((1, 4, 8))
+        ac[1] = mx.zeros((1, 4, 8))
+        extracted = [
+            {
+                "state": list(ac.cache),
+                "meta_state": (),
+                "class_name": "ArraysCache",
+                "cache_type": "ArraysCache",
+            }
+        ]
+        fake, store = _fake_self(tmp_path)
+        tail_hash, tc = _tail_keyed(_PROMPT_LEN - 1)
+        assert store.save_prefix(
+            tail_hash, tc, extracted, lambda _cache: (extracted, None), _MODEL_NAME
+        )
+        assert _wait_for(store, tail_hash, tc)
+        loaded = store.load_prefix(tail_hash, tc)
+        assert loaded is not None
+        caches = _build_cache_from_full_states(fake, loaded, tc)
+        assert caches is not None
+        rebuilt = caches[0]._inner if hasattr(caches[0], "_inner") else caches[0]
+        assert rebuilt[0] is not None
+        assert tuple(rebuilt[0].shape) == (1, 4, 8)
+
+
 class TestWarmStart:
     def test_success_sets_kickoff_fields(self, tmp_path):
         fake, store = _fake_self(tmp_path)

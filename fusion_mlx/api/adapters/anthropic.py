@@ -103,6 +103,10 @@ class AnthropicAdapter(BaseAdapter):
         Returns:
             Response dict in Anthropic format.
         """
+        # #1668: forward prefix-cache accounting. InternalResponse already
+        # carries engine cached_tokens; dropping them here made non-stream
+        # /v1/messages report cache_read_input_tokens=0 on every hit.
+        _cached = getattr(response, "cached_tokens", 0) or 0
         return convert_internal_to_anthropic_response(
             text=response.text,
             finish_reason=response.finish_reason,
@@ -110,6 +114,8 @@ class AnthropicAdapter(BaseAdapter):
             completion_tokens=response.completion_tokens,
             model=request.model,
             tool_calls=response.tool_calls,
+            cached_tokens=_cached,
+            prefix_cache_enabled=bool(_cached),
         )
 
     def format_stream_chunk(

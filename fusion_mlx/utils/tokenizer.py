@@ -414,8 +414,15 @@ class _CompatNaiveStreamingDetokenizer:
     def __init__(self, tokenizer: Any):
         self._tokenizer = tokenizer
         self._tokenizer.decode([0])
+        self.last_segment = ""
+
+    def reset(self) -> None:
+        self.last_segment = ""
 
     def add(self, token: int) -> None:
+        pass
+
+    def add_token(self, token: int) -> None:
         pass
 
     def finalize(self) -> str:

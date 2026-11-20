@@ -21,8 +21,8 @@ class _VLMMTPDecodeState:
     state_machine: Any
     max_tokens: int
     # Plain stop-token set (EOS + request-specific) for direct membership
-    # check; mlx-lm's SequenceStateMachine doesn't expose a "did the last
-    # token finish" helper, so we keep a copy.
+    # check; mlx-lm's StopSequences.Matcher only answers "advance one
+    # token", so we keep a copy for O(1) membership tests.
     stop_token_ids: set[int] = field(default_factory=set)
     emitted: int = 0
     finished: bool = False

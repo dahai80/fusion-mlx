@@ -1112,7 +1112,7 @@ def _schedule_waiting(
             all_tokens=[seed_prefix],
             samplers=[sampler],
             logits_processors=[per_row_lps],
-            state_machines=[sm],
+            stop_sequences=[sm],
         )
 
         if uids:

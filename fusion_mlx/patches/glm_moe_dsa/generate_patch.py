@@ -189,9 +189,9 @@ def apply_glm_moe_dsa_generate_patch() -> bool:
 
         if len(self._generation_batch) > 0:
             generation_responses = self._generation_batch.next()
-            self._gen_tokens_counter += len(generation_responses)
-            self._steps_counter += 1
-            if self._steps_counter % 512 == 0:
+            self._counters.generation_tokens += len(generation_responses)
+            self._counters.generation_steps += 1
+            if self._counters.generation_steps % 512 == 0:
                 mx.clear_cache()
 
         if len(self._generation_batch) >= self.completion_batch_size:

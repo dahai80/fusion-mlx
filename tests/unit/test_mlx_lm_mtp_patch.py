@@ -824,6 +824,8 @@ class TestBatchGeneratorDispatch:
             assert _batch_generator_allows_mtp_activation(obj) is False
 
     def _make_bg_next_fake(self, *, size=1, next_size=None, active_state=None):
+        from mlx_lm.generate import BatchCounters
+
         class _FakeGenerationBatch:
             def __init__(self, size, next_size, active_state):
                 self.size = size
@@ -878,10 +880,8 @@ class TestBatchGeneratorDispatch:
             _prompt_batch=prompt_batch,
             _currently_processing=[([[123]], 0, 1)],
             _unprocessed_sequences=[],
-            _gen_tokens_counter=0,
-            _steps_counter=0,
-            _prompt_tokens_counter=0,
-            _prompt_time_counter=0.0,
+            # mlx-lm >= 0.32 consolidated flat counters into BatchCounters
+            _counters=BatchCounters(),
             completion_batch_size=4,
             prefill_batch_size=1,
         )

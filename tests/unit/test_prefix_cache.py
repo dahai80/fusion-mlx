@@ -744,7 +744,8 @@ class TestBlockAwarePrefixCacheWithSSD:
 
         assert restored is not None
         restored_cache = restored[0]
-        restored_keys, restored_values = restored_cache.kv_cache.state
+        # mlx-lm >= 0.32: state is the raw (keys, values, offset) tuple
+        restored_keys, restored_values = restored_cache.kv_cache.state[:2]
         assert restored_keys.tolist() == keys.tolist()
         assert restored_values.tolist() == values.tolist()
         assert restored_cache.index_keys.tolist() == index_keys.tolist()
@@ -997,6 +998,45 @@ class TestArraysCacheLastBlockOnly:
         # Should be placeholder
         assert keys.shape == (1,)
         assert values.shape == (1,)
+
+    def test_extract_block_kvcache_raw_3tuple_state_slices_window(
+        self, prefix_cache, mx
+    ):
+        """Regression for #1670: mlx-lm >= 0.32 KVCache.state is the raw
+        (keys, values, offset) 3-tuple with an untrimmed buffer. Block
+        extraction must keep the legacy (keys, values) pair so each
+        64-token block stores ~MBs, not the full KV cache (2.2GB/block
+        on Qwen3-8B @ 15k seq)."""
+        keys = mx.ones((1, 8, 15104, 128))  # untrimmed buffer
+        values = mx.ones((1, 8, 15104, 128))
+        offset = 14903
+        cache_data = [
+            {
+                "state": (keys, values, offset),
+                "cache_type": "KVCache",
+                "class_name": "KVCache",
+            },
+        ]
+
+        result = prefix_cache._extract_block_tensor_slice(
+            cache_data,
+            6336,
+            6400,
+            model_cache_config=None,
+        )
+
+        assert result is not None
+        assert len(result) == 1
+        entry = result[0]
+        assert len(entry) == 2, "block entry must stay a (keys, values) pair"
+        k_slice, v_slice = entry
+        assert k_slice.shape == (1, 8, 64, 128)
+        assert v_slice.shape == (1, 8, 64, 128)
+        total_bytes = k_slice.nbytes + v_slice.nbytes
+        assert total_bytes < 4 * 1024 * 1024, (
+            f"block entry carries {total_bytes / 1e6:.1f}MB; full-cache "
+            "leak regression"
+        )
 
     def test_extract_block_hybrid_model_arrays_cache_and_kvcache(
         self, prefix_cache, mx
@@ -1746,7 +1786,9 @@ class TestArraysCacheLastBlockOnly:
         assert len(reconstructed) == 1
         layer_cache = reconstructed[0]
         if hasattr(layer_cache, "state"):
-            reconstructed_keys, reconstructed_values = layer_cache.state
+            # mlx-lm >= 0.32: state is the raw (keys, values, offset) tuple
+            st = layer_cache.state
+            reconstructed_keys, reconstructed_values = st[0], st[1]
         elif isinstance(layer_cache, (list, tuple)) and len(layer_cache) == 2:
             reconstructed_keys, reconstructed_values = layer_cache
         else:
@@ -2535,7 +2577,9 @@ class TestTurboQuantFormatMismatchRecovery:
 
     def test_reconstruct_truncates_turboquant_chain_at_fp16_tail(self, mx):
         from mlx_lm.models.cache import KVCache
-        from mlx_vlm.turboquant import TurboQuantKVCache
+
+        # Fusion import: applies the mlx-lm 0d4d3d04f from_cache compat shim
+        from fusion_mlx.turboquant_kv import TurboQuantKVCache
 
         mock_ssd = MagicMock()
         mock_ssd.forget_block.return_value = True
@@ -2675,9 +2719,11 @@ class TestTurboQuantFormatMismatchRecovery:
 
     def test_reconstruct_accepts_sized_arrays_metadata_with_turboquant(self, mx):
         from mlx_lm.models.cache import KVCache
-        from mlx_vlm.turboquant import TurboQuantKVCache
 
         from fusion_mlx.cache.type_handlers import SizedArraysCache
+
+        # Fusion import: applies the mlx-lm 0d4d3d04f from_cache compat shim
+        from fusion_mlx.turboquant_kv import TurboQuantKVCache
 
         mock_ssd = MagicMock()
 

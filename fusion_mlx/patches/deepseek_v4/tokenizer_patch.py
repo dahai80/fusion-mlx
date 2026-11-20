@@ -200,11 +200,16 @@ def apply_load_patch() -> bool:
 
     orig_load = _tu.load
 
-    def patched_load(model_path, tokenizer_config_extra=None, eos_token_ids=None):
+    def patched_load(
+        model_path, tokenizer_config_extra=None, eos_token_ids=None, **kwargs
+    ):
+        # **kwargs: mlx-lm >= 0.32 passes extra kwargs (e.g. `defaults`)
+        # through to tokenizer load — forward them verbatim.
         wrapper = orig_load(
             model_path,
             tokenizer_config_extra=tokenizer_config_extra,
             eos_token_ids=eos_token_ids,
+            **kwargs,
         )
 
         if not _is_deepseek_v4_model(model_path):

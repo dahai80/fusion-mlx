@@ -306,6 +306,56 @@ class TestAnthropicAdapter:
         assert result.usage.input_tokens == 10
         assert result.usage.output_tokens == 5
 
+    def test_format_response_forwards_cached_tokens(self, adapter):
+        # Regression for #1668: non-stream /v1/messages reported
+        # cache_read_input_tokens=0 even when the engine hit the prefix
+        # cache, because format_response dropped InternalResponse
+        # .cached_tokens before conversion.
+        from fusion_mlx.api.anthropic_models import MessagesResponse
+
+        request = MessagesRequest(
+            model="claude-3-sonnet",
+            max_tokens=1024,
+            messages=[AnthropicMessage(role="user", content="Hello")],
+        )
+        response = InternalResponse(
+            text="Hi there!",
+            finish_reason="stop",
+            prompt_tokens=318,
+            completion_tokens=2,
+            cached_tokens=256,
+        )
+
+        result = adapter.format_response(response, request)
+
+        assert isinstance(result, MessagesResponse)
+        assert result.usage.cache_read_input_tokens == 256
+        assert result.usage.cache_creation_input_tokens == 318 - 256
+        assert result.usage.input_tokens == 0
+
+    def test_format_response_cold_keeps_legacy_shape(self, adapter):
+        from fusion_mlx.api.anthropic_models import MessagesResponse
+
+        request = MessagesRequest(
+            model="claude-3-sonnet",
+            max_tokens=1024,
+            messages=[AnthropicMessage(role="user", content="Hello")],
+        )
+        response = InternalResponse(
+            text="Hi there!",
+            finish_reason="stop",
+            prompt_tokens=318,
+            completion_tokens=2,
+            cached_tokens=0,
+        )
+
+        result = adapter.format_response(response, request)
+
+        assert isinstance(result, MessagesResponse)
+        assert result.usage.cache_read_input_tokens == 0
+        assert result.usage.cache_creation_input_tokens == 0
+        assert result.usage.input_tokens == 318
+
     def test_format_response_with_tool_calls(self, adapter):
         from fusion_mlx.api.openai_models import FunctionCall, ToolCall
 

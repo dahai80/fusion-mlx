@@ -2330,7 +2330,9 @@ batching as a self-contained generator.
   verify widths are matmul-inefficient on quantized weights). `load_runtime`
   rejects `block_size > 5`.
 - Install: `pip install 'fusion-mlx[dflash2]'` (pulls `dflash==0.1.0` on
-  `darwin/arm64`; same `mlx`/`mlx-lm` family as fusion-mlx, zero conflict).
+  `darwin/arm64`; dflash pins `mlx-lm==0.31.3` while fusion-mlx pins the
+  git main line — the `[tool.uv]` override in `pyproject.toml` forces the
+  fusion-mlx pin in uv installs, plain pip treats the drift as a warning).
 - Draft path: local dir (e.g. `~/.fusion-mlx/models/Qwen3.8-27B-DFlash2`) or
   HF id. The bridge short-circuits `snapshot_download` for local dirs (no
   re-download, honors the hf-mirror workflow).

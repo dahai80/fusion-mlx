@@ -1032,6 +1032,22 @@ def _extract_cache_states(
                 state = layer_cache.state
                 meta = getattr(layer_cache, "meta_state", ())
 
+                # mlx-lm >= 0.32 ArraysCache.state = (cache, left_padding,
+                # lengths) where cache is a plain Python list of arrays.
+                # The snapshot serializer only persists shape-bearing
+                # tensors, so the raw 3-tuple dropped every GDN/linear
+                # state and warm start rebuilt an empty ArraysCache
+                # (#1670 follow-up: Qwen3.5-4B IndexError). Normalize to
+                # the stored bare-array-list contract; left_padding /
+                # lengths are None for the single-sequence serving path.
+                if (
+                    class_name in ("ArraysCache", "SizedArraysCache")
+                    and isinstance(state, tuple)
+                    and len(state) == 3
+                    and isinstance(state[0], list)
+                ):
+                    state = list(state[0])
+
                 if class_name in ("RotatingKVCache", "BatchRotatingKVCache"):
                     state, meta = self._normalize_rotating_snapshot_state(
                         layer_cache,

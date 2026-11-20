@@ -228,11 +228,14 @@ class TestOptimizedDetokenizer:
         return tokenizer
 
     def test_tokenizer_wrapper_has_optimized_detokenizer(self, tokenizer_wrapper):
-        """Verify TokenizerWrapper has optimized detokenizer class."""
-        assert hasattr(tokenizer_wrapper, "_detokenizer_class")
+        """Verify TokenizerWrapper resolves a typed streaming detokenizer.
+
+        mlx-lm >= 0.32 replaced the lazy ``_detokenizer_class`` attribute
+        with a prebuilt ``_detokenizer`` instance on the wrapper.
+        """
         assert hasattr(tokenizer_wrapper, "detokenizer")
         # Qwen uses BPE tokenizer
-        assert tokenizer_wrapper._detokenizer_class == BPEStreamingDetokenizer
+        assert isinstance(tokenizer_wrapper.detokenizer, BPEStreamingDetokenizer)
 
     def test_optimized_detokenizer_correctness(self, tokenizer_wrapper):
         """Verify optimized detokenizer produces correct output."""
