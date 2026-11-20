@@ -1040,16 +1040,11 @@ class CacheListHandler(CacheTypeHandler):
                 keys = sub_state[0]
                 offset = (
                     sub_meta[0]
-                    if sub_meta
-                    and isinstance(sub_meta, tuple)
-                    and len(sub_meta) > 0
+                    if sub_meta and isinstance(sub_meta, tuple) and len(sub_meta) > 0
                     else keys.shape[2]
                 )
                 sub_state = (sub_state[0], sub_state[1], offset)
-            elif (
-                cls_name == "ArraysCache"
-                and isinstance(sub_state, list)
-            ):
+            elif cls_name == "ArraysCache" and isinstance(sub_state, list):
                 # Legacy stored ArraysCache state is a bare list of arrays;
                 # the new state contract is (cache, left_padding, lengths).
                 # Padding/lengths were never persisted — None matches the
