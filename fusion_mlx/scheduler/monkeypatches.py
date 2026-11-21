@@ -310,6 +310,8 @@ def _optimized_generation_batch_step(self):
 
     # Sampling — try fused sampler first, then batched fast path,
     # then per-row fallback.
+    if _prof_on:
+        _ts = time.perf_counter()
     fused = getattr(model, "_fused_sampler", None)
     if fused is not None and not has_per_row_samplers and not has_logits_processors:
         # Fused top-p + temperature sampler (one lazy-graph segment)
@@ -339,6 +341,11 @@ def _optimized_generation_batch_step(self):
 
     # Assign next step variables and start computing asynchronously
     self._next_tokens = sampled
+    if _prof_on:
+        _gb_pre = getattr(model, "_fusion_stage_prof", None)
+        if _gb_pre is not None:
+            _gb_pre.setdefault("sample", 0.0)
+            _gb_pre["sample"] += time.perf_counter() - _ts
     if _prof_on:
         _gb_pre = getattr(model, "_fusion_stage_prof", None)
         if _gb_pre is not None:
