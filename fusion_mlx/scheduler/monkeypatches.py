@@ -261,6 +261,10 @@ def _optimized_generation_batch_step(self):
     # Forward pass
     if _prof_on:
         _tm = time.perf_counter()
+        _gb_pre = getattr(model, "_fusion_stage_prof", None)
+        if _gb_pre is not None:
+            _gb_pre.setdefault("pre", 0.0)
+            _gb_pre["pre"] += _tm - _t0
     logits = model(inputs[:, None], cache=self.prompt_cache)
     logits = logits[:, -1, :]
     if _prof_on:
@@ -268,6 +272,7 @@ def _optimized_generation_batch_step(self):
         if _gb_pre is not None:
             _gb_pre.setdefault("model", 0.0)
             _gb_pre["model"] += time.perf_counter() - _tm
+        _tp = time.perf_counter()
 
     # Logits processors (per-row, cannot be batched)
     has_logits_processors = bool(self.logits_processors) and any(self.logits_processors)
@@ -334,6 +339,11 @@ def _optimized_generation_batch_step(self):
 
     # Assign next step variables and start computing asynchronously
     self._next_tokens = sampled
+    if _prof_on:
+        _gb_pre = getattr(model, "_fusion_stage_prof", None)
+        if _gb_pre is not None:
+            _gb_pre.setdefault("post", 0.0)
+            _gb_pre["post"] += time.perf_counter() - _tp
     if needs_logprob_norm:
         self._next_logprobs = list(logprobs)
     else:
