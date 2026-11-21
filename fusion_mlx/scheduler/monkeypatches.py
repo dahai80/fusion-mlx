@@ -531,6 +531,44 @@ try:
     # Don't double-patch; the clear_cache patch is already applied.
     # The stream overhead in _next is smaller than in next_generated
     # since _next is called once per step, not in a while loop.
+
+    # -----------------------------------------------------------------------
+    # #1678: guard BatchGenerator.close() against the M5 cross-thread
+    # stream table. close() calls mx.synchronize(self._stream), but __del__
+    # can run on whichever thread happens to drop the last reference (GC
+    # thread, pytest teardown). The stream is registered in the thread that
+    # created it, so a foreign-thread synchronize raises
+    # "There is no Stream(gpu, N) in current thread" — which then fails CI
+    # as an unraisable-exception error and kills offline benches. The sync
+    # here is best-effort cleanup: keep the wired-limit restore, swallow
+    # only the foreign-thread stream error.
+    # -----------------------------------------------------------------------
+    _original_bg_close = _BatchGenerator.close
+
+    def _patched_bg_close(self):
+        try:
+            _original_bg_close(self)
+        except RuntimeError as e:
+            if "no Stream" in str(e) or "not exist" in str(e):
+                logger.debug(
+                    "BatchGenerator.close: skipped foreign-thread stream sync (#1678): %s",
+                    e,
+                )
+                if getattr(self, "_old_wired_limit", None) is not None:
+                    try:
+                        mx.set_wired_limit(self._old_wired_limit)
+                    except Exception:
+                        logger.debug("BatchGenerator.close: wired-limit restore failed")
+                    self._old_wired_limit = None
+            else:
+                raise
+
+    if not getattr(_original_bg_close, "_fusion_patched", False):
+        _patched_bg_close._fusion_patched = True
+        _BatchGenerator.close = _patched_bg_close
+        logger.debug("Patched BatchGenerator.close with #1678 stream guard")
+    else:
+        logger.debug("BatchGenerator.close already fusion-patched, skipping")
 except ImportError:
     pass
 
