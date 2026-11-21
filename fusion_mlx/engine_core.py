@@ -2791,7 +2791,17 @@ class EngineCore:
         # the event is never set and generate() hangs forever. The timeout
         # is generous (default 600s) and turns a silent hang into a 503.
         # Override via FUSION_MLX_GENERATE_TIMEOUT_S; 0 = unbounded.
+        # #1680: scale with the request's own output budget — 600s cannot
+        # cover an 8192-token non-stream completion on a 27B-class model
+        # (~12 tok/s), so the floor is max_tokens / 5 tok/s (a
+        # deliberately conservative decode rate). An explicit
+        # FUSION_MLX_GENERATE_TIMEOUT_S still acts as the base for short
+        # requests, and 0 stays unbounded.
         _gen_timeout = float(os.getenv("FUSION_MLX_GENERATE_TIMEOUT_S", "600"))
+        if _gen_timeout > 0 and sampling_params is not None:
+            _mt = getattr(sampling_params, "max_tokens", None)
+            if _mt and int(_mt) > 0:
+                _gen_timeout = max(_gen_timeout, float(int(_mt)) / 5.0)
         try:
             if _gen_timeout > 0:
                 await asyncio.wait_for(ctx.finished_event.wait(), timeout=_gen_timeout)
@@ -2811,9 +2821,9 @@ class EngineCore:
             )
             await self.abort_request(request_id)
             self._cleanup_request(request_id)
-            raise RuntimeError(
-                f"Request {request_id} timed out after {_gen_timeout:.0f}s"
-            )
+            from .exceptions import GenerationTimeoutError
+
+            raise GenerationTimeoutError(request_id, _gen_timeout) from None
 
         final_output = None
         while True:

@@ -256,9 +256,12 @@ class TestGenerateWatchdogTimeout:
         assert (
             "_cleanup_request" in body_src
         ), "#1174 Bug 1b: TimeoutError handler must call _cleanup_request"
+        # #1680: the handler raises GenerationTimeoutError (a RuntimeError
+        # subclass) instead of a bare RuntimeError.
         assert (
-            "RuntimeError" in body_src
-        ), "#1174 Bug 1b: TimeoutError handler must raise RuntimeError"
+            "GenerationTimeoutError" in body_src
+        ), "#1174 Bug 1b: TimeoutError handler must raise a RuntimeError "
+        "(GenerationTimeoutError since #1680)"
 
 
 # ---------------------------------------------------------------------------

@@ -58,7 +58,7 @@ Timeouts current as of issue #1191. Every endpoint maps to a bounded wait;
 
 | Surface | Timeout | Source | Env knob |
 |---|---|---|---|
-| LLM routes (chat / completions / ollama / anthropic / responses / sessions / reasoning / watermark / layered_quantize / spec) — non-stream | 600s | `engine_core.py:1985` | `FUSION_MLX_GENERATE_TIMEOUT_S` |
+| LLM routes (chat / completions / ollama / anthropic / responses / sessions / reasoning / watermark / layered_quantize / spec) — non-stream | 600s base, scaled to `max(600, max_tokens / 5)` per request (#1680; 0 = unbounded); timeout raises 504 `generation_timeout` | `engine_core.py` `generate()` | `FUSION_MLX_GENERATE_TIMEOUT_S` |
 | LLM routes — streaming | 5s heartbeat, no overall cap | `engine_core.py:1893-1907` | — |
 | LLM watchdog | 300s base, scaled to 1800s cap | `engine_core.py:273-278` | `FUSION_LLM_WATCHDOG_TIMEOUT` / `FUSION_LLM_WATCHDOG_MAX_TIMEOUT` |
 | embeddings | exec 30s, load 120s | `engines/embedding.py:794,744` | — |

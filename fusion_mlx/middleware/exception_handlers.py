@@ -763,7 +763,35 @@ def install_exception_handlers(app: FastAPI) -> None:
             response = _wrap_for_anthropic(response)
         return response
 
-    from ..exceptions import SchedulerQueueFullError
+    from ..exceptions import GenerationTimeoutError, SchedulerQueueFullError
+
+    @app.exception_handler(GenerationTimeoutError)
+    async def _generation_timeout_handler(
+        request: Request,
+        exc: GenerationTimeoutError,
+    ):
+        # #1680: distinct 504 so clients can distinguish a wedged engine
+        # (retry/stream) from a real 500.
+        logger.warning(
+            "GenerationTimeoutError on %s %s: request %s exceeded %.0fs",
+            request.method,
+            request.url.path,
+            exc.request_id,
+            exc.timeout_s,
+        )
+        response = JSONResponse(
+            status_code=504,
+            content={
+                "error": {
+                    "message": str(exc),
+                    "type": "generation_timeout",
+                    "code": "generation_timeout",
+                }
+            },
+        )
+        if _is_anthropic_path(request):
+            response = _wrap_for_anthropic(response)
+        return response
 
     @app.exception_handler(SchedulerQueueFullError)
     async def _scheduler_queue_full_handler(

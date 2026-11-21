@@ -367,6 +367,29 @@ class EnginePoolError(FusionMLXError):
     pass
 
 
+class GenerationTimeoutError(RuntimeError):
+    """
+    Non-streaming generation hit the engine wall-clock watchdog.
+
+    Distinct from a generic 500 so clients can tell a wedged/aborted
+    engine apart from a legitimately long generation and retry with
+    streaming or a raised FUSION_MLX_GENERATE_TIMEOUT_S.
+
+    Attributes:
+        request_id: The aborted request.
+        timeout_s: The effective wall-clock limit that fired.
+    """
+
+    def __init__(self, request_id: str, timeout_s: float):
+        self.request_id = request_id
+        self.timeout_s = timeout_s
+        super().__init__(
+            f"Request {request_id} timed out after {timeout_s:.0f}s "
+            f"(non-streaming generation wall clock; raise "
+            f"FUSION_MLX_GENERATE_TIMEOUT_S or use streaming)"
+        )
+
+
 def _fuzzy_match(query: str, candidates: list[str], max_dist: int = 3) -> str | None:
     if not query or not candidates:
         return None
