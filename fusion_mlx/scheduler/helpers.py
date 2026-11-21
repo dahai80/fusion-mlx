@@ -301,3 +301,30 @@ def _seed_text_only_mrope_delta_for_cached_prefill(model, request) -> None:
     if lm is None or not hasattr(lm, "_rope_deltas"):
         return
     lm._rope_deltas = mx.zeros((1, 1), dtype=mx.int64)
+
+
+def make_model_prompt_cache(model):
+    """Build a prompt cache that respects hybrid model architectures.
+
+    mlx-lm's generic ``make_prompt_cache`` falls back to per-layer ``KVCache``
+    when the top-level model lacks ``make_cache``. VLM wrappers (e.g.
+    qwen3_5) hold the real ``make_cache`` on the inner ``language_model`` —
+    it returns ``ArraysCache`` for linear-attention layers, which the
+    generic fallback does not provide. Handing a plain ``KVCache`` to a
+    GDN/linear layer raises ``TypeError: 'KVCache' object is not
+    subscriptable`` at the first prefill forward.
+    """
+    from mlx_lm.models.cache import make_prompt_cache
+
+    if hasattr(model, "make_cache"):
+        return model.make_cache()
+    lm = getattr(model, "language_model", None)
+    if lm is not None and hasattr(lm, "make_cache"):
+        cache = lm.make_cache()
+        logger.info(
+            "prompt cache from language_model.make_cache(): %d layers (%s)",
+            len(cache),
+            type(model).__name__,
+        )
+        return cache
+    return make_prompt_cache(model)

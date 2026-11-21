@@ -18,7 +18,6 @@ import os
 import time
 
 import mlx.core as mx
-from mlx_lm.models.cache import make_prompt_cache
 
 from ..prefill_progress import get_prefill_tracker
 from ..request import Request, RequestOutput, RequestStatus
@@ -26,6 +25,7 @@ from ..utils.proc_memory import get_phys_footprint
 from .config import SchedulingPolicy
 from .helpers import (
     _sync_and_clear_cache,
+    make_model_prompt_cache,
 )
 from .monkeypatches import _register_uid_rows
 from .sched_cache import _turboquant_eligible
@@ -636,7 +636,7 @@ def _schedule_waiting(
 
                 t0 = time.monotonic()
 
-                sp_cache = make_prompt_cache(self.model)
+                sp_cache = make_model_prompt_cache(self.model)
                 all_tokens = tokens_to_process
                 sys_count = getattr(request, "_specprefill_system_tokens", 0)
 
