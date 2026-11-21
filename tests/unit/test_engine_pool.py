@@ -1812,9 +1812,7 @@ class TestEnginePoolTTL:
         assert "model-a" in expired
 
     @pytest.mark.asyncio
-    async def test_runtime_ttl_override_skips_settings_io(
-        self, pool_with_loaded_model
-    ):
+    async def test_runtime_ttl_override_skips_settings_io(self, pool_with_loaded_model):
         """Override short-circuits the per-model settings disk read."""
         pool = pool_with_loaded_model
         settings_manager = MagicMock()
