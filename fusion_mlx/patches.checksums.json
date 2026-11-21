@@ -24,6 +24,7 @@
   "patches/llama4_attention.py": "28af1b29094ed32bc9bd450e36f5229b6f93baf836adea52d97dc9937122dae7",
   "patches/minimax_m3_sparse_attention.py": "29cb4da58f1315525fad6ae99e8dba13b553416affa55d8d5f119e3977926dfe",
   "patches/mlx_audio_compat.py": "757daa667ae425ae18c756d5f35d9efcc0cd9cd930e913967ff8bae1e7baaeb0",
+  "patches/mlx_lm_cache_zero_layer.py": "c2220c529d2a88d53b6fcaf24f6e9faf61b0e0941c2760e1fc545c915de0ff9d",
   "patches/mlx_lm_mtp/__init__.py": "834e617b54ff6355f55ec41cd5bf6977a34f6ea100966567ed54313b61ca0db1",
   "patches/mlx_lm_mtp/batch_generator.py": "a69fb736f3cc9ffcbb3de8c7fb40f6bd4ce6f3100e95dfc36cbc443bc6681ad2",
   "patches/mlx_lm_mtp/cache_rollback.py": "c1619aa2076d7499e6b3a97646732bf536c7102d8c985fcd386432bb7c9ea91e",
