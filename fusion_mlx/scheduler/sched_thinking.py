@@ -213,6 +213,20 @@ def _build_sampler_and_processors(
 
         logits_processors.append(_suppress_tokens_processor)
 
+    # #1683: vLLM-parity min_tokens — suppress EOS until N tokens were
+    # generated so near-tie first-token distributions cannot produce an
+    # empty response. Opt-in per request (min_tokens > 0); requests
+    # without it keep the fused/batched sampler fast path untouched.
+    if sampling_params.min_tokens > 0 and request is not None:
+        from ..utils.sampling import MinTokensProcessor
+
+        min_eos_ids = set(self._get_stop_tokens())
+        if sampling_params.stop_token_ids:
+            min_eos_ids.update(sampling_params.stop_token_ids)
+        logits_processors.append(
+            MinTokensProcessor(sampling_params.min_tokens, sorted(min_eos_ids))
+        )
+
     return sampler, logits_processors
 
 

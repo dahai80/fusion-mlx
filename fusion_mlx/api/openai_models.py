@@ -336,6 +336,9 @@ class ChatCompletionRequest(BaseModel):
     top_k: int | None = None
     repetition_penalty: float | None = Field(None, ge=0.0)
     max_tokens: int | None = Field(None, ge=1, le=131072)
+    # vLLM-parity: minimum number of generated tokens before EOS is
+    # honored (#1683). None/0 = disabled.
+    min_tokens: int | None = Field(None, ge=0)
     # OpenAI multi-choice count. Historically undeclared — extra="allow"
     # parked it in __pydantic_extra__ and the handler silently returned a
     # single choice for n>1 (GRPO rollout sampled G=1 while the trainer
@@ -648,6 +651,9 @@ class CompletionRequest(BaseModel):
     top_k: int | None = None
     repetition_penalty: float | None = Field(None, ge=0.0)
     max_tokens: int | None = Field(None, ge=1, le=131072)
+    # vLLM-parity: minimum number of generated tokens before EOS is
+    # honored (#1683). None/0 = disabled.
+    min_tokens: int | None = Field(None, ge=0)
     stream: bool = False
     stream_options: StreamOptions | None = None
     stop: list[str] | None = None

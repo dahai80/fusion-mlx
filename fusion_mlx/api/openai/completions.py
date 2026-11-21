@@ -220,6 +220,7 @@ async def completions(
             top_p=request.top_p,
             stream=request.stream,
             stop=request.stop,
+            min_tokens=request.min_tokens,
             speculative=request.speculative,
         )
         if request.stream:

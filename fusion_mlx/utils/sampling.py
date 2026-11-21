@@ -370,3 +370,54 @@ def make_dry_processor(
 
     processor.dry_multiplier = multiplier  # type: ignore[attr-defined]
     return processor
+
+
+class MinTokensProcessor:
+    """Suppress EOS token IDs until ``min_tokens`` tokens were generated.
+
+    vLLM-parity ``min_tokens`` (#1683): on prompts whose first-token
+    distribution ties between a continuation and the EOS token, greedy
+    argmax can legitimately pick EOS and produce an empty response. When
+    this processor is attached, EOS logits are forced to ``-inf`` until
+    the required number of tokens have been generated; afterwards it
+    becomes a no-op so the model can stop naturally.
+
+    Follows the mlx-lm logits-processor convention
+    ``(tokens, logits) -> logits`` where ``tokens`` is the full token
+    history (prompt + generated). Prompt tokens are skipped via the
+    ``_accepted_up_to`` pattern used by ThinkingBudgetProcessor /
+    GrammarConstraintProcessor.
+    """
+
+    def __init__(self, min_tokens: int, eos_token_ids: list[int]):
+        if min_tokens < 1:
+            raise ValueError(f"min_tokens must be >= 1, got {min_tokens}")
+        if not eos_token_ids:
+            raise ValueError("eos_token_ids must not be empty")
+        self._min_tokens = min_tokens
+        self._eos_ids = list(dict.fromkeys(int(t) for t in eos_token_ids))
+        self._accepted_up_to: int | None = None
+        self._generated = 0
+        self._done = False
+
+    def __call__(self, tokens, logits):
+        if self._done:
+            return logits
+
+        n = len(tokens)
+        if self._accepted_up_to is None:
+            self._accepted_up_to = n
+        elif n > self._accepted_up_to:
+            self._generated += n - self._accepted_up_to
+            self._accepted_up_to = n
+
+        if self._generated >= self._min_tokens:
+            self._done = True
+            return logits
+
+        neg_inf = float("-inf")
+        if logits.ndim > 1:
+            logits[:, self._eos_ids] = neg_inf
+        else:
+            logits[self._eos_ids] = neg_inf
+        return logits
