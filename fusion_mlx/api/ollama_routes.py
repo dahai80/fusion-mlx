@@ -187,12 +187,34 @@ def _apply_ollama_keep_alive(model: str, keep_alive: Any) -> None:
     # P-7: the ollama shim accepted keep_alive but never consumed it, so a
     # client asking keep_alive=0 (unload immediately, real Ollama semantic)
     # left the model resident. Honor 0 by unloading the engine once the
-    # request completes. Positive durations would need a per-model TTL
-    # scheduler (not present in the pool) — logged, not silently dropped.
+    # request completes. Positive durations map onto the pool's per-model
+    # TTL override (clamped to [1, 86400]s); negative (keep forever) is
+    # not supported — logged, default TTL still applies.
     secs = _parse_ollama_keep_alive(keep_alive)
-    if secs is None or secs > 0:
+    if secs is None:
         return
     if secs < 0:
+        logger.debug(
+            "ollama keep_alive<0 (keep forever) unsupported for %s; "
+            "pool default TTL applies",
+            model,
+        )
+        return
+    pool = _pool
+    if pool is None:
+        logger.debug("ollama keep_alive: no pool bound, model %s ignored", model)
+        return
+    if secs > 0:
+        from ..server import resolve_model_with_profile
+
+        model_name, _profile = resolve_model_with_profile(model)
+        clamped = min(max(secs, 1.0), 86400.0)
+        try:
+            pool.override_model_ttl(model_name, clamped)
+        except Exception as exc:
+            logger.warning(
+                "ollama keep_alive: TTL override for %s failed: %s", model_name, exc
+            )
         return
     pool = _pool
     if pool is None:
