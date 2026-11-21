@@ -1,0 +1,38 @@
+name: release-check
+
+# eval#25 C-2: every release must carry the mandatory "Behavior changes this
+# release" section from .github/release-template.md — real rows or the
+# literal "None.", never blank. Audit-only: runs after a release is
+# published and fails loudly on non-compliance (same enforcement style as
+# the silent-close audit).
+
+on:
+    release:
+        types: [published]
+
+permissions:
+    contents: read
+
+jobs:
+    behavior-changes-section:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Check release notes template compliance
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  REPO: ${{ github.repository }}
+                  TAG: ${{ github.event.release.tag_name }}
+              run: |
+                  set -eu
+                  body="$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq .body)"
+                  if ! printf '%s' "$body" | grep -q "Behavior changes this release"; then
+                      echo "::error::release notes missing the mandatory 'Behavior changes this release' section (eval#25 C-2, see .github/release-template.md)"
+                      exit 1
+                  fi
+                  section="$(printf '%s' "$body" | sed -n '/Behavior changes this release/,/^## /p')"
+                  rows="$(printf '%s' "$section" | grep '^| ' | grep -cv '^| domain ' || true)"
+                  if [ "$rows" -eq 0 ] && ! printf '%s' "$section" | grep -q '^None\.$'; then
+                      echo "::error::'Behavior changes this release' section is blank - fill the rows or write the literal 'None.' (eval#25 C-2)"
+                      exit 1
+                  fi
+                  echo "release notes template compliant (data rows: ${rows})"
