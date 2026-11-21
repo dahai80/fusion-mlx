@@ -35,6 +35,7 @@ def test_parse_ollama_keep_alive(raw, expected):
 class _FakePool:
     def __init__(self, result=True, exc=None):
         self.calls = []
+        self.ttl_overrides = {}
         self._result = result
         self._exc = exc
 
@@ -43,6 +44,9 @@ class _FakePool:
         if self._exc is not None:
             raise self._exc
         return self._result
+
+    def override_model_ttl(self, model_id, seconds):
+        self.ttl_overrides[model_id] = seconds
 
 
 @pytest.fixture
@@ -76,6 +80,62 @@ async def test_keep_alive_zero_unload_failure_logged(monkeypatch, fake_resolve):
     if tasks:
         await asyncio.gather(*tasks)
     assert pool.calls == ["resolved::mymodel"]
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_positive_duration_sets_ttl_override(fake_resolve):
+    pool = _FakePool()
+    set_ollama_context(pool)
+    _apply_ollama_keep_alive("mymodel", "5m")
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if tasks:
+        await asyncio.gather(*tasks)
+    assert pool.calls == []  # no unload for positive durations
+    assert pool.ttl_overrides == {"resolved::mymodel": 300.0}
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_duration_clamped(fake_resolve):
+    pool = _FakePool()
+    set_ollama_context(pool)
+    _apply_ollama_keep_alive("mymodel", "500ms")
+    _apply_ollama_keep_alive("other", "1h30m")
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if tasks:
+        await asyncio.gather(*tasks)
+    assert pool.ttl_overrides["resolved::mymodel"] == 1.0
+    assert pool.ttl_overrides["resolved::other"] == 5400.0
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_negative_no_override_no_unload(fake_resolve):
+    pool = _FakePool()
+    set_ollama_context(pool)
+    _apply_ollama_keep_alive("mymodel", -1)
+    _apply_ollama_keep_alive("mymodel", None)
+    _apply_ollama_keep_alive("mymodel", "garbage")
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if tasks:
+        await asyncio.gather(*tasks)
+    assert pool.calls == []
+    assert pool.ttl_overrides == {}
+
+
+@pytest.mark.asyncio
+async def test_keep_alive_override_failure_logged(fake_resolve):
+    pool = _FakePool()
+
+    def _boom(model_id, seconds):
+        raise RuntimeError("override failed")
+
+    pool.override_model_ttl = _boom
+    set_ollama_context(pool)
+    # Must not raise.
+    _apply_ollama_keep_alive("mymodel", "5m")
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if tasks:
+        await asyncio.gather(*tasks)
+    assert pool.calls == []
 
 
 @pytest.mark.asyncio

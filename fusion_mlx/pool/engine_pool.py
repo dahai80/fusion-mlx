@@ -297,6 +297,10 @@ class EnginePool:
         # pool evicts a model without going through Server.unload_model.
         self._on_engine_detached: object | None = None  # Set by server
         self._suppress_ttl: bool = False  # Suppress TTL during benchmarks
+        # P-7: runtime per-model TTL overrides (e.g. ollama keep_alive
+        # duration). Consulted before settings/global/default in both
+        # _resolve_effective_ttl and check_ttl_expirations.
+        self._ttl_overrides: dict[str, float] = {}
         self._max_adapter_engines: int = int(
             os.getenv("FUSION_MAX_ADAPTER_ENGINES", "4")
         )
@@ -4492,7 +4496,27 @@ class EnginePool:
     # models use; override via FUSION_MLX_DEFAULT_TTL_SECONDS.
     _DEFAULT_TTL_SECONDS = int(os.getenv("FUSION_MLX_DEFAULT_TTL_SECONDS", "600"))
 
+    def override_model_ttl(self, model_id: str, seconds: float | None) -> None:
+        """Set a runtime per-model TTL override (seconds).
+
+        Used by the ollama shim to honor positive keep_alive durations.
+        Pass None to clear the override. Overrides take precedence over
+        per-model settings / global idle timeout / default TTL and are
+        consulted by both the status path and check_ttl_expirations.
+        """
+        if seconds is None:
+            self._ttl_overrides.pop(model_id, None)
+            logger.debug("TTL override cleared for '%s'", model_id)
+            return
+        if seconds <= 0:
+            raise ValueError(f"TTL override must be positive, got {seconds}")
+        self._ttl_overrides[model_id] = float(seconds)
+        logger.info("TTL override set for '%s': %.0fs", model_id, seconds)
+
     def _resolve_effective_ttl(self, model_id: str) -> int | None:
+        override = self._ttl_overrides.get(model_id)
+        if override is not None:
+            return int(override)
         if self._settings_manager is None:
             return self._DEFAULT_TTL_SECONDS
         get_settings = getattr(self._settings_manager, "get_settings", None)
@@ -4618,6 +4642,11 @@ class EnginePool:
         # Settings I/O outside the lock.
         ttl_by_model: dict[str, int | None] = {}
         for model_id, _last_access in candidates:
+            # P-7: runtime override wins and skips the settings disk read.
+            override = self._ttl_overrides.get(model_id)
+            if override is not None:
+                ttl_by_model[model_id] = int(override)
+                continue
             settings = settings_manager.get_settings(model_id)
             effective_ttl = settings.ttl_seconds
             if effective_ttl is None:
