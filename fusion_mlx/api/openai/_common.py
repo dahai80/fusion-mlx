@@ -559,6 +559,11 @@ def _build_sampling_params(
             if getattr(req, "repetition_penalty", None) is not None
             else po.get("repetition_penalty", 1.0)
         ),
+        min_tokens=(
+            req.min_tokens
+            if getattr(req, "min_tokens", None) is not None
+            else po.get("min_tokens", 0)
+        ),
         mirostat_tau=(
             req.mirostat_tau
             if getattr(req, "mirostat_tau", None) is not None

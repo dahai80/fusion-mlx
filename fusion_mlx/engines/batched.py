@@ -1300,6 +1300,7 @@ class BatchedEngine(BaseEngine):
             presence_penalty=presence_penalty,
             frequency_penalty=kwargs.get("frequency_penalty", 0.0),
             stop=stop or [],
+            min_tokens=kwargs.get("min_tokens", 0),
             thinking_budget=kwargs.get("thinking_budget"),
             compiled_grammar=kwargs.get("compiled_grammar"),
             seed=kwargs.get("seed"),
@@ -1367,6 +1368,7 @@ class BatchedEngine(BaseEngine):
             presence_penalty=presence_penalty,
             frequency_penalty=kwargs.get("frequency_penalty", 0.0),
             stop=stop or [],
+            min_tokens=kwargs.get("min_tokens", 0),
             thinking_budget=kwargs.get("thinking_budget"),
             compiled_grammar=kwargs.get("compiled_grammar"),
             seed=kwargs.get("seed"),
@@ -1641,6 +1643,7 @@ class BatchedEngine(BaseEngine):
                 repetition_penalty=repetition_penalty,
                 presence_penalty=presence_penalty,
                 stop=[],
+                min_tokens=kwargs.get("min_tokens", 0),
             )
             token_ids = self._tokenizer.encode(prompt)
             # M9 (#1645): honor the API-level request id (chatcmpl-*) so

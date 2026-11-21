@@ -65,6 +65,12 @@ class SamplingParams:
     dry_penalty_last_n: int = -1
     stop: list[str] | None = None
     stop_token_ids: list[int] | None = None
+    # vLLM-parity: minimum number of generated tokens before EOS is
+    # honored. Suppresses EOS in the logits until N tokens have been
+    # generated, preventing empty responses on prompts whose first-token
+    # distribution ties between a continuation and the EOS token
+    # (#1683). 0 = disabled (default; zero overhead).
+    min_tokens: int = 0
     logprobs: bool = False
     top_logprobs: int | None = None
     thinking_budget: int | None = None
@@ -84,6 +90,8 @@ class SamplingParams:
     # SamplingParams instance.
 
     def __post_init__(self):
+        if self.min_tokens < 0:
+            raise ValueError(f"min_tokens must be >= 0, got {self.min_tokens}")
         if self.stop is None:
             self.stop = []
         if self.stop_token_ids is None:

@@ -345,6 +345,7 @@ async def _run_chat(
             min_p=sampling.min_p,
             repetition_penalty=getattr(sampling, "repetition_penalty", 1.0),
             presence_penalty=sampling.presence_penalty,
+            min_tokens=getattr(sampling, "min_tokens", 0) or 0,
             # M10 code-mode: tools are presented as the stub module in the
             # system message; passing them to the engine too would let the
             # template advertise the native tool-call channel and the model

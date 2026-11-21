@@ -1683,6 +1683,7 @@ class VLMBatchedEngine(BaseEngine):
             presence_penalty=presence_penalty,
             stop=stop or [],
             stop_token_ids=extra_stop_ids or None,
+            min_tokens=kwargs.get("min_tokens", 0),
             thinking_budget=kwargs.get("thinking_budget"),
             compiled_grammar=kwargs.get("compiled_grammar"),
             seed=kwargs.get("seed"),
