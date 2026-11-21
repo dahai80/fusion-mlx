@@ -138,6 +138,109 @@ def _options_to_params(options: dict | None) -> dict:
     return out
 
 
+def _parse_ollama_keep_alive(value: Any) -> float | None:
+    # Parse an Ollama keep_alive value into seconds. Accepts an int/float
+    # (seconds) or a string with an optional unit suffix: ns / us / ms /
+    # s / m / h (e.g. "5m", "1h30m", "0", "-1"). Returns None when the
+    # value cannot be parsed.
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    if text in ("0", "-0"):
+        return 0.0
+    total = 0.0
+    matched = False
+    unit_secs = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1.0, "m": 60.0, "h": 3600.0}
+    idx = 0
+    while idx < len(text):
+        num_start = idx
+        while idx < len(text) and (text[idx].isdigit() or text[idx] in ".+-"):
+            idx += 1
+        if num_start == idx:
+            return None
+        try:
+            num = float(text[num_start:idx])
+        except ValueError:
+            return None
+        unit_start = idx
+        while idx < len(text) and text[idx].isalpha():
+            idx += 1
+        unit = text[unit_start:idx]
+        if not unit:
+            total += num
+            matched = True
+            continue
+        if unit not in unit_secs:
+            return None
+        total += num * unit_secs[unit]
+        matched = True
+    return total if matched else None
+
+
+def _apply_ollama_keep_alive(model: str, keep_alive: Any) -> None:
+    # P-7: the ollama shim accepted keep_alive but never consumed it, so a
+    # client asking keep_alive=0 (unload immediately, real Ollama semantic)
+    # left the model resident. Honor 0 by unloading the engine once the
+    # request completes. Positive durations would need a per-model TTL
+    # scheduler (not present in the pool) — logged, not silently dropped.
+    secs = _parse_ollama_keep_alive(keep_alive)
+    if secs is None or secs > 0:
+        return
+    if secs < 0:
+        return
+    pool = _pool
+    if pool is None:
+        logger.debug("ollama keep_alive=0: no pool bound, model %s left loaded", model)
+        return
+    from ..server import resolve_model_with_profile
+
+    model_name, _profile = resolve_model_with_profile(model)
+
+    async def _unload() -> None:
+        try:
+            unloaded = await pool.unload_if_idle_unpinned(model_name)
+        except Exception as exc:
+            logger.warning(
+                "ollama keep_alive=0: unload of %s failed: %s", model_name, exc
+            )
+            return
+        if unloaded:
+            logger.info(
+                "ollama keep_alive=0: model %s unloaded after request", model_name
+            )
+        else:
+            logger.debug(
+                "ollama keep_alive=0: model %s busy or pinned, not unloaded",
+                model_name,
+            )
+
+    import asyncio
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug("ollama keep_alive=0: no running loop, skipping unload")
+        return
+    task = loop.create_task(_unload())
+    # Fire-and-forget: attach a done callback so a rejection is logged
+    # instead of surfacing as an unretrieved task exception.
+    task.add_done_callback(_log_keep_alive_task_error)
+
+
+def _log_keep_alive_task_error(task: Any) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("ollama keep_alive unload task failed: %s", exc)
+
+
 def _ollama_error_frame(error: Any) -> str:
     # #1354 audit M20: surface an upstream SSE error as the Ollama ndjson
     # error object instead of letting the stream end as a successful done.
@@ -420,6 +523,7 @@ async def api_generate(
 
     if not request.stream:
         result = await _call_openai_chat(request.model, messages, False, params)
+        _apply_ollama_keep_alive(request.model, request.keep_alive)
         content = result.choices[0].message.content if result.choices else ""
         usage = result.usage
         return JSONResponse(
@@ -468,6 +572,7 @@ async def api_generate(
             engine=engine,
         ):
             yield line
+        _apply_ollama_keep_alive(request.model, request.keep_alive)
 
     return StreamingResponse(
         _stream_generate(),
@@ -502,6 +607,7 @@ async def api_chat(
 
     if not request.stream:
         result = await _call_openai_chat(request.model, messages, False, params)
+        _apply_ollama_keep_alive(request.model, request.keep_alive)
         msg = result.choices[0].message if result.choices else None
         content = (msg.content if msg else "") or ""
         usage = result.usage
@@ -606,6 +712,7 @@ async def api_chat(
             engine=engine,
         ):
             yield line
+        _apply_ollama_keep_alive(request.model, request.keep_alive)
 
     return StreamingResponse(
         _stream_chat(),
@@ -991,4 +1098,5 @@ async def api_embeddings(
     result = await create_embeddings(req)
     data = result.data[0] if getattr(result, "data", None) else None
     embedding = data.embedding if data is not None else []
+    _apply_ollama_keep_alive(request.model, request.keep_alive)
     return JSONResponse({"embedding": embedding})
