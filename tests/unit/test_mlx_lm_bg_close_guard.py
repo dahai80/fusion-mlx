@@ -4,9 +4,9 @@ from mlx_lm.generate import BatchGenerator
 from fusion_mlx.scheduler import monkeypatches as mp
 
 # Importing the monkeypatches module installs the close() patch.
-assert getattr(BatchGenerator.close, "_fusion_patched", False), (
-    "BatchGenerator.close patch not installed on import"
-)
+assert getattr(
+    BatchGenerator.close, "_fusion_patched", False
+), "BatchGenerator.close patch not installed on import"
 
 
 class _Gen:
