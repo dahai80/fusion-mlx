@@ -1794,6 +1794,47 @@ class TestEnginePoolTTL:
         assert expired == []
         assert pool._entries["model-a"].engine is not None
 
+    @pytest.mark.asyncio
+    async def test_runtime_ttl_override_wins_over_settings(
+        self, pool_with_loaded_model
+    ):
+        """P-7: runtime override beats per-model settings and fires."""
+        pool = pool_with_loaded_model
+        settings_manager = MagicMock()
+        settings = MagicMock()
+        settings.ttl_seconds = 300
+        settings_manager.get_settings.return_value = settings
+
+        pool.override_model_ttl("model-a", 30)
+        with patch("time.time", return_value=200.0):  # 100s idle > 30s override
+            expired = await pool.check_ttl_expirations(settings_manager)
+
+        assert "model-a" in expired
+
+    @pytest.mark.asyncio
+    async def test_runtime_ttl_override_skips_settings_io(self, pool_with_loaded_model):
+        """Override short-circuits the per-model settings disk read."""
+        pool = pool_with_loaded_model
+        settings_manager = MagicMock()
+        pool.override_model_ttl("model-a", 600)
+
+        with patch("time.time", return_value=110.0):  # 10s idle < 600s
+            expired = await pool.check_ttl_expirations(settings_manager)
+
+        assert expired == []
+        settings_manager.get_settings.assert_not_called()
+
+    def test_override_model_ttl_validation(self, pool_with_loaded_model):
+        pool = pool_with_loaded_model
+        with pytest.raises(ValueError):
+            pool.override_model_ttl("model-a", 0)
+        with pytest.raises(ValueError):
+            pool.override_model_ttl("model-a", -5)
+        pool.override_model_ttl("model-a", 120)
+        assert pool._resolve_effective_ttl("model-a") == 120
+        pool.override_model_ttl("model-a", None)
+        assert pool._ttl_overrides.get("model-a") is None
+
 
 class TestHasActiveRequests:
     """Tests for has_active_requests() on engine types."""
