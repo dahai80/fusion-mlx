@@ -1315,9 +1315,16 @@ class BatchedEngine(BaseEngine):
         from ..api.utils import clean_special_tokens
 
         _elapsed = time.perf_counter() - _t0
+        # Decode-span rate (#1692): exclude queue + prefill from the window so
+        # the metric matches industry convention (decode-only tok/s) instead
+        # of underreporting by the TTFT fraction.
+        _ttft_out = getattr(output, "time_to_first_token", None)
+        _span = (
+            _elapsed - _ttft_out if _ttft_out and 0 < _ttft_out < _elapsed else _elapsed
+        )
         _tok_s = (
-            output.completion_tokens / _elapsed
-            if _elapsed > 0 and output.completion_tokens
+            output.completion_tokens / _span
+            if _span > 0 and output.completion_tokens
             else 0.0
         )
         text = clean_special_tokens(output.output_text)
@@ -1418,6 +1425,7 @@ class BatchedEngine(BaseEngine):
         finished_normally = False
         _t0 = time.perf_counter()
         _ttft: float | None = None
+        _t_first: float | None = None
         try:
             async for output in engine.stream_outputs(request_id):
                 # Per-token delta: must NOT strip, otherwise the leading space
@@ -1451,12 +1459,22 @@ class BatchedEngine(BaseEngine):
                     )
                 else:
                     full_text = ""
+                _now = time.perf_counter()
                 if _ttft is None:
-                    _ttft = time.perf_counter() - _t0
-                _elapsed = time.perf_counter() - _t0
+                    _ttft = _now - _t0
+                if _t_first is None and output.completion_tokens:
+                    _t_first = _now
+                # Decode-span rate (#1692): window starts at the first output
+                # carrying tokens, so queue + prefill wait are excluded and the
+                # metric matches decode-only tok/s convention. Fall back to the
+                # cumulative window when the span is still zero (same-instant
+                # first chunk) so per-chunk usage never reports a fake 0.0.
+                _span = _now - _t_first if _t_first is not None else 0.0
+                if _span <= 0:
+                    _span = _now - _t0
                 _tok_s = (
-                    output.completion_tokens / _elapsed
-                    if _elapsed > 0 and output.completion_tokens
+                    output.completion_tokens / _span
+                    if _span > 0 and output.completion_tokens
                     else 0.0
                 )
                 yield GenerationOutput(
@@ -1663,6 +1681,7 @@ class BatchedEngine(BaseEngine):
             finished_normally = False
             _t0 = time.perf_counter()
             _ttft: float | None = None
+            _t_first: float | None = None
             try:
                 async for output in self._engine.stream_outputs(request_id):
                     from ..api.utils import clean_special_tokens
@@ -1670,12 +1689,21 @@ class BatchedEngine(BaseEngine):
                     text = clean_special_tokens(output.output_text)
                     if output.finished:
                         finished_normally = True
+                    _now = time.perf_counter()
                     if _ttft is None:
-                        _ttft = time.perf_counter() - _t0
-                    _elapsed = time.perf_counter() - _t0
+                        _ttft = _now - _t0
+                    if _t_first is None and output.completion_tokens:
+                        _t_first = _now
+                    # Decode-span rate (#1692): window starts at the first
+                    # output carrying tokens (excludes queue + prefill). Fall
+                    # back to the cumulative window while the span is still
+                    # zero so per-chunk usage never reports a fake 0.0.
+                    _span = _now - _t_first if _t_first is not None else 0.0
+                    if _span <= 0:
+                        _span = _now - _t0
                     _tok_s = (
-                        output.completion_tokens / _elapsed
-                        if _elapsed > 0 and output.completion_tokens
+                        output.completion_tokens / _span
+                        if _span > 0 and output.completion_tokens
                         else 0.0
                     )
                     yield GenerationOutput(
