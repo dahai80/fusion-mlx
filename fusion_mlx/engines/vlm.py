@@ -1731,9 +1731,14 @@ class VLMBatchedEngine(BaseEngine):
             vlm_cache_key_ranges=vlm_cache_key_ranges,
         )
         _elapsed = time.perf_counter() - _t0
+        # Decode-span rate (#1692): exclude queue + prefill from the window.
+        _ttft_out = getattr(output, "time_to_first_token", None)
+        _span = (
+            _elapsed - _ttft_out if _ttft_out and 0 < _ttft_out < _elapsed else _elapsed
+        )
         _tok_s = (
-            output.completion_tokens / _elapsed
-            if _elapsed > 0 and output.completion_tokens
+            output.completion_tokens / _span
+            if _span > 0 and output.completion_tokens
             else 0.0
         )
         # Mirror BatchedEngine.generate (batched.py:644-646): strip special
@@ -1823,6 +1828,7 @@ class VLMBatchedEngine(BaseEngine):
         )
         finished_normally = False
         _ttft: float | None = None
+        _t_first: float | None = None
         _t0 = time.perf_counter()
         try:
             async for output in engine.stream_outputs(request_id):
@@ -1837,15 +1843,20 @@ class VLMBatchedEngine(BaseEngine):
                     and getattr(output, "time_to_first_token", None) is not None
                 ):
                     _ttft = output.time_to_first_token
-                # G-6 (#0912 audit): compute cumulative generation rate from
-                # wall-clock elapsed since add_request, mirroring
-                # BatchedEngine.stream_generate (batched.py:1066-1071). VLM
-                # previously left generation_tokens_per_second unset so stream
-                # usage returned null for tok/s.
-                _elapsed = time.perf_counter() - _t0
+                # Decode-span rate (#1692): window starts at the first output
+                # carrying tokens, so queue + prefill wait are excluded and the
+                # metric matches decode-only tok/s convention. Fall back to the
+                # cumulative window when the span is still zero (same-instant
+                # first chunk) so per-chunk usage never reports a fake 0.0.
+                _now = time.perf_counter()
+                if _t_first is None and output.completion_tokens:
+                    _t_first = _now
+                _span = _now - _t_first if _t_first is not None else 0.0
+                if _span <= 0:
+                    _span = _now - _t0
                 _tok_s = (
-                    output.completion_tokens / _elapsed
-                    if _elapsed > 0 and output.completion_tokens
+                    output.completion_tokens / _span
+                    if _span > 0 and output.completion_tokens
                     else 0.0
                 )
                 # Mirror BatchedEngine.stream_generate (batched.py:713-720):
