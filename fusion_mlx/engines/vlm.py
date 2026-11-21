@@ -311,7 +311,14 @@ class VLMBatchedEngine(BaseEngine):
                 load_tool_module,
             )
 
-            tool_parser_type = _infer_tool_parser(chat_template)
+            # mlx-lm 0d4d3d04f changed _infer_tool_parser to take the
+            # tokenizer object (it reads tokenizer.chat_template itself);
+            # older builds took the template string and fail on an object
+            # with TypeError. Try object first, fall back to the string.
+            try:
+                tool_parser_type = _infer_tool_parser(tokenizer)
+            except (AttributeError, TypeError):
+                tool_parser_type = _infer_tool_parser(chat_template)
             if tool_parser_type is None:
                 return
             try:
@@ -328,7 +335,10 @@ class VLMBatchedEngine(BaseEngine):
                 )
             except ImportError:
                 return
-            tool_parser_type = _mlx_lm_infer(chat_template)
+            try:
+                tool_parser_type = _mlx_lm_infer(tokenizer)
+            except (AttributeError, TypeError):
+                tool_parser_type = _mlx_lm_infer(chat_template)
             if tool_parser_type is None:
                 return
             try:
