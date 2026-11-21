@@ -237,6 +237,87 @@ _original_generation_batch_step = GenerationBatch._step
 _STAGE_PROF_ON = os.environ.get("FUSION_SCHED_STAGE_PROFILE") == "1"
 
 
+# ---------------------------------------------------------------------------
+# BatchKVCache.make_mask decode fast path (#b1-gap).
+#
+# mlx-lm's batched pipeline creates BatchKVCache(left_padding=[0]) whose
+# make_mask() always builds an explicit 4D causal array via create_causal_mask,
+# even for single-token decode. Downstream, mlx-vlm hybrid models (e.g.
+# qwen3_5 attention) combine that array mask with the cache's mx.array offset
+# and execute kv_seq_len.max().item() — a full GPU sync per full-attention
+# layer per step (8x/step on Qwen3.5-4B), destroying CPU/GPU overlap and
+# capping b1 decode at ~126 tok/s vs ~167 stock.
+#
+# For N==1 decode with zero left-padding and no right-padding, mask=None is
+# exactly equivalent: a single query attends to every key in the trimmed
+# keys_and_values() view, and padding (which mask would need to hide) cannot
+# exist when left_padding is zero. The Python left-padding mirror is kept in
+# sync at the (cold) mutation points: __init__ and prepare().
+# ---------------------------------------------------------------------------
+def _install_batchkv_decode_mask_fastpath() -> None:
+    from mlx_lm.models.cache import BatchKVCache
+
+    if getattr(BatchKVCache, "_fusion_decode_mask_fastpath", False):
+        return
+
+    _orig_init = BatchKVCache.__init__
+    _orig_make_mask = BatchKVCache.make_mask
+    _orig_prepare = BatchKVCache.prepare
+
+    def _fast_init(self, left_padding):
+        self._fusion_left_padding_py = list(left_padding)
+        _orig_init(self, left_padding)
+
+    def _fast_make_mask(self, N, return_array=False, **kwargs):
+        window_size = kwargs.get("window_size")
+        if (
+            N == 1
+            and not return_array
+            and window_size is None
+            and set(kwargs) <= {"window_size"}
+            and getattr(self, "_right_padding", None) is None
+            and all(v == 0 for v in getattr(self, "_fusion_left_padding_py", [1]))
+        ):
+            return None
+        return _orig_make_mask(self, N, return_array=return_array, **kwargs)
+
+    def _fast_prepare(self, *, left_padding=None, lengths=None, right_padding=None):
+        result = _orig_prepare(
+            self,
+            left_padding=left_padding,
+            lengths=lengths,
+            right_padding=right_padding,
+        )
+        try:
+            self._fusion_left_padding_py = [int(v) for v in self.left_padding.tolist()]
+        except Exception:
+            self._fusion_left_padding_py = None
+        return result
+
+    BatchKVCache.__init__ = _fast_init
+    BatchKVCache.make_mask = _fast_make_mask
+    BatchKVCache.prepare = _fast_prepare
+    # state setter restores a snapshot (left_padding included) — refresh the
+    # Python mirror there too; .tolist() sync is fine on this cold path.
+    _orig_state_set = BatchKVCache.state.fset
+
+    def _fast_state_set(self, v):
+        _orig_state_set(self, v)
+        try:
+            self._fusion_left_padding_py = [int(x) for x in self.left_padding.tolist()]
+        except Exception:
+            self._fusion_left_padding_py = None
+
+    BatchKVCache.state = property(BatchKVCache.state.fget, _fast_state_set)
+    BatchKVCache._fusion_decode_mask_fastpath = True
+    logger.info(
+        "BatchKVCache decode mask fast path installed (N==1 zero-left-padding -> None)"
+    )
+
+
+_install_batchkv_decode_mask_fastpath()
+
+
 def _optimized_generation_batch_step(self):
     _prof_on = _STAGE_PROF_ON
     if _prof_on:
@@ -367,9 +448,15 @@ def _optimized_generation_batch_step(self):
     eval_targets = [self._next_tokens, inputs]
     if token_context:
         eval_targets.extend(token_context)
+    if _prof_on:
+        _tq = time.perf_counter()
     mx.async_eval(*eval_targets)
     if _prof_on:
         _t1 = time.perf_counter()
+        _gb_pre = getattr(model, "_fusion_stage_prof", None)
+        if _gb_pre is not None:
+            _gb_pre.setdefault("submit", 0.0)
+            _gb_pre["submit"] += _t1 - _tq
         _gb = getattr(model, "_fusion_stage_prof", None)
         if _gb is None:
             _gb = model._fusion_stage_prof = {
