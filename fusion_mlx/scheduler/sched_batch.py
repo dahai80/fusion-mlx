@@ -20,7 +20,6 @@ from collections import deque
 from typing import Any
 
 import mlx.core as mx
-from mlx_lm.models.cache import make_prompt_cache
 
 from ..exceptions import PrefillMemoryExceededError
 from ..prefill_progress import get_prefill_tracker
@@ -32,6 +31,7 @@ from .helpers import (
     _prompt_cache_needs_snapshots,
     _slice_vlm_extra,
     _sync_and_clear_cache,
+    make_model_prompt_cache,
 )
 from .monkeypatches import _register_uid_rows
 
@@ -74,7 +74,7 @@ def _do_external_prefill(
     n_tokens = len(tokens)
     if n_tokens <= 1:
         # Nothing to prefill, return cache + tokens as-is
-        cache = existing_cache or make_prompt_cache(self.model)
+        cache = existing_cache or make_model_prompt_cache(self.model)
         if existing_cache is None and hasattr(self.model, "prealloc_caches"):
             self.model.prealloc_caches(cache)
         # NOTE: Do NOT apply TurboQuant here. TurboQuant conversion must
@@ -87,7 +87,7 @@ def _do_external_prefill(
     if existing_cache is not None:
         prompt_cache = existing_cache
     else:
-        prompt_cache = make_prompt_cache(self.model)
+        prompt_cache = make_model_prompt_cache(self.model)
         if hasattr(self.model, "prealloc_caches"):
             self.model.prealloc_caches(prompt_cache)
 
@@ -552,7 +552,9 @@ def _begin_prefill(
         self.model.clear_vlm_position_state()
 
     prompt_cache = (
-        existing_cache if existing_cache is not None else make_prompt_cache(self.model)
+        existing_cache
+        if existing_cache is not None
+        else make_model_prompt_cache(self.model)
     )
     if existing_cache is None and hasattr(self.model, "prealloc_caches"):
         self.model.prealloc_caches(prompt_cache)

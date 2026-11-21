@@ -988,7 +988,8 @@ class BatchedEngine(BaseEngine):
             import time as _t
 
             import mlx.core as mx
-            from mlx_lm.models.cache import make_prompt_cache
+
+            from ..scheduler.helpers import make_model_prompt_cache
 
             t0 = _t.perf_counter()
             try:
@@ -996,7 +997,7 @@ class BatchedEngine(BaseEngine):
                 if not ids:
                     ids = [tokenizer.eos_token_id or 0]
                 arr = mx.array([ids[:1]])
-                cache = make_prompt_cache(model)
+                cache = make_model_prompt_cache(model)
                 model(arr, cache=cache)
                 mx.eval([c.state for c in cache])
                 dt = (_t.perf_counter() - t0) * 1000
