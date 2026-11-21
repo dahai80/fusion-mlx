@@ -4514,7 +4514,8 @@ class EnginePool:
         logger.info("TTL override set for '%s': %.0fs", model_id, seconds)
 
     def _resolve_effective_ttl(self, model_id: str) -> int | None:
-        override = self._ttl_overrides.get(model_id)
+        overrides = getattr(self, "_ttl_overrides", None)
+        override = overrides.get(model_id) if overrides else None
         if override is not None:
             return int(override)
         if self._settings_manager is None:
@@ -4643,7 +4644,8 @@ class EnginePool:
         ttl_by_model: dict[str, int | None] = {}
         for model_id, _last_access in candidates:
             # P-7: runtime override wins and skips the settings disk read.
-            override = self._ttl_overrides.get(model_id)
+            overrides = getattr(self, "_ttl_overrides", None)
+            override = overrides.get(model_id) if overrides else None
             if override is not None:
                 ttl_by_model[model_id] = int(override)
                 continue
