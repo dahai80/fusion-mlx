@@ -1,8 +1,3 @@
-import sys
-import types
-
-import pytest
-
 from fusion_mlx.engines.vlm import VLMBatchedEngine
 
 
