@@ -6,6 +6,7 @@ import copy
 import json
 import logging
 import os
+import re
 import time
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,69 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Kimi-family wire format: the canonical assistant tool-call id inside
+# <|tool_call_begin|> is "functions.<name>:<idx>" (mlx_lm kimi_k2 parser
+# regex requires a ":<digits>" suffix). Clients send OpenAI-style
+# "call_<hex>" ids in history; the official Kimi chat template renders
+# those ids verbatim, the model imitates the colon-less shape, and the
+# strict parser then fails with "No tool call found" — degrading the
+# whole turn to plain text (issue #1694). Rewrite ids in the prompt copy
+# only, consistently across assistant tool_calls and tool results.
+_KIMI_TOOL_CALL_START = "<|tool_calls_section_begin|>"
+_KIMI_CANONICAL_ID_RE = re.compile(r"^(?:functions\.)?.+:\d+$")
+
+
+def _canonicalize_kimi_tool_call_ids(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    id_map: dict[str, str] = {}
+    rewritten = 0
+    out: list[dict[str, Any]] = []
+    for msg in messages:
+        role = msg.get("role")
+        tool_calls = msg.get("tool_calls")
+        if role == "assistant" and tool_calls:
+            new_calls = []
+            msg_changed = False
+            for idx, tc in enumerate(tool_calls):
+                if not isinstance(tc, dict):
+                    new_calls.append(tc)
+                    continue
+                tc_id = tc.get("id") or ""
+                name = (tc.get("function") or {}).get("name") or ""
+                if tc_id and name and not _KIMI_CANONICAL_ID_RE.match(tc_id):
+                    new_id = f"functions.{name}:{idx}"
+                    id_map[tc_id] = new_id
+                    new_tc = dict(tc)
+                    new_fn = dict(tc.get("function") or {})
+                    new_fn["name"] = name
+                    new_tc["id"] = new_id
+                    new_tc["function"] = new_fn
+                    new_calls.append(new_tc)
+                    msg_changed = True
+                    rewritten += 1
+                else:
+                    new_calls.append(tc)
+            if msg_changed:
+                new_msg = dict(msg)
+                new_msg["tool_calls"] = new_calls
+                out.append(new_msg)
+            else:
+                out.append(msg)
+        elif role == "tool" and msg.get("tool_call_id") in id_map:
+            new_msg = dict(msg)
+            new_msg["tool_call_id"] = id_map[msg["tool_call_id"]]
+            out.append(new_msg)
+            rewritten += 1
+        else:
+            out.append(msg)
+    if rewritten:
+        logger.info(
+            "Canonicalized %d non-canonical tool-call id(s) for Kimi wire format",
+            rewritten,
+        )
+    return out
 
 
 def _human_size(n: int) -> str:
@@ -1135,6 +1199,14 @@ class BatchedEngine(BaseEngine):
             # to prevent in-place mutation (insert system msg, pop partial key)
             # from accumulating duplicate system messages across multi-turn.
             messages = [dict(m) for m in messages]
+            if (
+                getattr(self._tokenizer, "tool_call_start", None)
+                == _KIMI_TOOL_CALL_START
+            ):
+                # Issue #1694: rewrite client-issued OpenAI-style ids into the
+                # canonical "functions.<name>:<idx>" shape so the model
+                # imitates a form the kimi_k2 parser can actually parse.
+                messages = _canonicalize_kimi_tool_call_ids(messages)
             if is_partial is None:
                 from ..api.utils import detect_and_strip_partial
 
