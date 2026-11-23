@@ -266,6 +266,13 @@ class SchedulerConfig:
     # keyed by a model-scoped token chain hash, recovered on restart.
     boundary_prefix_persist: bool = False
     boundary_prefix_max_bytes: int = 0  # bytes; 0 = store default (20 GiB)
+    # Low-rank factorized storage for GDN/ArraysCache recurrent states in
+    # boundary + prefix snapshots (issue #1702). Each (1, H, D, D) state
+    # slot is SVD-truncated per head to max(energy_rank, 8), capped at 32;
+    # real generation with r=8 truncated states is bit-exact
+    # (fusion-research probe9). Set FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK=0
+    # to opt out.
+    boundary_snapshot_lowrank: bool = True
     # GC / cache-clear cadence (steps between calls).
     gc_cleanup_interval: int = 0  # 0 = disabled
     mlx_cache_cleanup_interval: int = 256
@@ -316,6 +323,11 @@ class SchedulerConfig:
             _env = os.environ.get("FUSION_MLX_BOUNDARY_PREFIX_PERSIST", "")
             if _env.strip().lower() in ("1", "true", "yes", "on"):
                 self.boundary_prefix_persist = True
+        # Snapshot low-rank state compression opt-out (issue #1702).
+        if self.boundary_snapshot_lowrank:
+            _env = os.environ.get("FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK", "")
+            if _env.strip().lower() in ("0", "false", "no", "off"):
+                self.boundary_snapshot_lowrank = False
         if self.boundary_prefix_max_bytes <= 0:
             _env_mb = os.environ.get("FUSION_MLX_BOUNDARY_PREFIX_MAX_BYTES", "")
             if _env_mb.strip():

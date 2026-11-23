@@ -395,6 +395,22 @@ def _build_cache_from_full_states(
                     meta,
                     token_count=token_count,
                 )
+            # Restore the persisted write cursor (see the offset note in
+            # _extract_cache_states). Without this, KV caches rebuilt from
+            # over-allocated arrays continue at array length instead of the
+            # logical sequence length.
+            offset = layer_state.get("offset")
+            if offset is not None:
+                target = cache._inner if hasattr(cache, "_inner") else cache
+                if hasattr(target, "offset"):
+                    try:
+                        target.offset = int(offset)
+                    except (TypeError, ValueError):
+                        logger.debug(
+                            "Tail rebuild layer %d: bad offset %r",
+                            layer_idx,
+                            offset,
+                        )
         except Exception as e:
             logger.debug(
                 "Tail rebuild layer %d (%s) failed: %s", layer_idx, class_name, e
@@ -1088,6 +1104,14 @@ def _extract_cache_states(
                             "meta_state": meta,
                             "class_name": class_name,
                             "cache_type": cache_type_name,
+                            # Persist the write cursor: rebuilt KV caches
+                            # otherwise derive offset = array length, and
+                            # over-allocated arrays (step-multiple growth)
+                            # would point the next token past the logical
+                            # sequence end, corrupting warm-start
+                            # continuation (dense restore diverged at step 1
+                            # before this field existed).
+                            "offset": getattr(layer_cache, "offset", None),
                         }
                     )
                 else:

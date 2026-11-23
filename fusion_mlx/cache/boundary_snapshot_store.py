@@ -48,6 +48,80 @@ _MAX_PENDING_WRITES_CAP = 512
 
 _SOFT_LIMIT_PCT = 0.80
 
+# Low-rank factorized storage for GDN (ArraysCache) recurrent states
+# (issue #1702). Real generation with r=8 truncated states is bit-exact
+# (fusion-research probe9), while int8 quantization diverges — the
+# recursion reads the top singular directions and ignores the tail.
+# Writer-thread SVD keeps the per-head matrix rank at max(energy_rank, 8),
+# capped at 32; the floor matches the smallest probe-validated rank.
+_LOWRANK_MIN_RANK = 8
+_LOWRANK_MAX_RANK = 32
+_LOWRANK_TAIL_ENERGY = 1e-3
+
+
+def _lowrank_candidate(shape: list[int]) -> bool:
+    # GDN recurrent state slots are (batch=1, heads, D, D). Other arrays
+    # (KV tensors, conv states, anything non-square) stay dense.
+    return len(shape) == 4 and shape[0] == 1 and shape[2] == shape[3] and shape[2] >= 64
+
+
+def _st_bytes_to_np(raw: bytes, dtype_str: str, shape: list[int]):
+    # numpy-only byte decode (writer thread must not touch the Metal
+    # queue). BF16 has no native numpy dtype: its bits are the top 16
+    # bits of fp32, so widen uint16 -> uint32 -> view as float32.
+    import numpy as np
+
+    if dtype_str == "BF16":
+        bits = np.frombuffer(raw, dtype=np.uint16).astype(np.uint32)
+        return (bits << 16).view(np.float32).reshape(shape)
+    np_map = {
+        "F32": np.float32,
+        "F16": np.float16,
+        "I8": np.int8,
+        "I16": np.int16,
+        "I32": np.int32,
+        "I64": np.int64,
+        "U8": np.uint8,
+        "U16": np.uint16,
+        "U32": np.uint32,
+        "U64": np.uint64,
+    }
+    np_dtype = np_map.get(dtype_str, np.float32)
+    return np.frombuffer(raw, dtype=np_dtype).reshape(shape)
+
+
+def _np_to_st_bytes(arr) -> tuple[bytes, str]:
+    # Inverse of _st_bytes_to_np for the factor arrays we emit.
+    import numpy as np
+
+    if arr.dtype == np.float32:
+        return arr.tobytes(), "F32"
+    if arr.dtype == np.float16:
+        return arr.tobytes(), "F16"
+    raise ValueError(f"unsupported lowrank factor dtype {arr.dtype}")
+
+
+def _bf16_bytes_from_np_f32(arr) -> bytes:
+    # Round fp32 values to BF16 by truncating the mantissa via uint16
+    # view of the top halves (matches MX bf16 storage closely enough for
+    # state factors; probe9 validated bf16-rounded truncated states).
+    import numpy as np
+
+    bits = arr.astype(np.float32).view(np.uint32) >> 16
+    return bits.astype(np.uint16).tobytes()
+
+
+def _lowrank_reconstruct_state(u, s, v, orig_shape):
+    # u: (H, r, D), s: (H, r), v: (H, r, D) -> dense (1, H, D, D) in u.dtype.
+    approx = mx.einsum(
+        "hrd,hr,hre->hde",
+        u.astype(mx.float32),
+        s.astype(mx.float32),
+        v.astype(mx.float32),
+    )
+    return approx.reshape(orig_shape).astype(u.dtype)
+
+
 # #1543: how long has_prefix waits for an async prefix write to flush before
 # answering miss. Covers the immediate-repeat window only; a real miss pays
 # at most this much latency once.
@@ -123,8 +197,10 @@ class BoundarySnapshotSSDStore:
         base_dir: Path,
         prefix_persist: bool = False,
         prefix_max_bytes: int | None = None,
+        lowrank_gdn_state: bool = True,
     ) -> None:
         self._snapshot_dir = base_dir / "_boundary_snapshots"
+        self._lowrank_gdn_state = lowrank_gdn_state
         # Register before the rmtree decision so the count includes us.
         base_key = str(base_dir)
         _ACTIVE_STORES_BY_BASE_DIR[base_key] = (
@@ -982,6 +1058,10 @@ class BoundarySnapshotSSDStore:
         temp_path = None
         stale_file_to_unlink = None
         try:
+            if self._lowrank_gdn_state:
+                tensors_raw, metadata = self._factorize_gdn_state_tensors(
+                    tensors_raw, metadata
+                )
             file_path.parent.mkdir(parents=True, exist_ok=True)
             temp_path = file_path.with_name(file_path.stem + "_tmp.safetensors")
             _write_safetensors_no_mx(str(temp_path), tensors_raw, metadata)
@@ -1208,6 +1288,105 @@ class BoundarySnapshotSSDStore:
             with self._writer_busy:
                 self._process_write_item(item)
 
+    def _factorize_gdn_state_tensors(self, tensors_raw, metadata):
+        """Replace dense GDN state tensors with low-rank factors (writer thread).
+
+        numpy-only: the writer must not touch the Metal queue. Candidate
+        tensors are (1, H, D, D) ArraysCache state slots; every other
+        element passes through untouched. Per-head rank is
+        max(energy_rank, 8) capped at 32 — the floor matches the smallest
+        probe-validated lossless rank (issue #1702). On any failure the
+        dense tensor is written unchanged: compression must never break
+        snapshot persistence.
+        """
+        if not self._lowrank_gdn_state:
+            return tensors_raw, metadata
+        try:
+            layer_info = json.loads(metadata["layer_info"])
+        except (KeyError, ValueError, json.JSONDecodeError):
+            return tensors_raw, metadata
+        import numpy as np
+
+        changed = False
+        saved_bytes = 0
+        for i, info in enumerate(layer_info):
+            if info.get("has_state") != "true" or "state_count" not in info:
+                continue
+            try:
+                count = int(info["state_count"])
+            except (ValueError, TypeError):
+                continue
+            for k in range(count):
+                key = f"layer_{i}_state_{k}"
+                if key not in tensors_raw:
+                    continue
+                raw, dtype_str, shape = tensors_raw[key]
+                if not _lowrank_candidate(shape):
+                    continue
+                try:
+                    heads, dim = shape[1], shape[2]
+                    mat = _st_bytes_to_np(raw, dtype_str, shape)[0]
+                    u_h, s_h, v_h, ranks = [], [], [], []
+                    with np.errstate(all="ignore"):
+                        for h in range(heads):
+                            u, s, vt = np.linalg.svd(mat[h], full_matrices=False)
+                            energy = np.cumsum(s * s)
+                            total = float(energy[-1])
+                            if total <= 0.0 or not np.isfinite(total):
+                                r = 1
+                            else:
+                                r_energy = int(
+                                    np.searchsorted(
+                                        energy, total * (1 - _LOWRANK_TAIL_ENERGY)
+                                    )
+                                    + 1
+                                )
+                                r = min(
+                                    max(r_energy, _LOWRANK_MIN_RANK),
+                                    _LOWRANK_MAX_RANK,
+                                    len(s),
+                                )
+                            ranks.append(r)
+                            # Store U transposed to (r, D) so the packed
+                            # (H, rmax, D) layout matches the einsum
+                            # reconstruction: u[h] @ diag(s) @ v[h] = U S Vt.
+                            u_h.append(u[:, :r].T)
+                            s_h.append(s[:r])
+                            v_h.append(vt[:r, :])
+                    rmax = max(ranks)
+                    u_p = np.zeros((heads, rmax, dim), dtype=np.float32)
+                    s_p = np.zeros((heads, rmax), dtype=np.float32)
+                    v_p = np.zeros((heads, rmax, dim), dtype=np.float32)
+                    for h, r in enumerate(ranks):
+                        u_p[h, :r] = u_h[h]
+                        s_p[h, :r] = s_h[h]
+                        v_p[h, :r] = v_h[h]
+                    if dtype_str == "BF16":
+                        u_raw = _bf16_bytes_from_np_f32(u_p)
+                        v_raw = _bf16_bytes_from_np_f32(v_p)
+                        factor_dtype = "BF16"
+                    else:
+                        u_raw, factor_dtype = _np_to_st_bytes(u_p)
+                        v_raw, _ = _np_to_st_bytes(v_p)
+                    s_raw = s_p.tobytes()
+                    tensors_raw[key + "_u"] = (u_raw, factor_dtype, [heads, rmax, dim])
+                    tensors_raw[key + "_s"] = (s_raw, "F32", [heads, rmax])
+                    tensors_raw[key + "_v"] = (v_raw, factor_dtype, [heads, rmax, dim])
+                    del tensors_raw[key]
+                    info[f"lowrank_{k}"] = json.dumps(
+                        {"orig_shape": shape, "rmax": rmax, "h": heads, "d": dim}
+                    )
+                    saved_bytes += max(
+                        0, len(raw) - (len(u_raw) + len(v_raw) + len(s_raw))
+                    )
+                    changed = True
+                except Exception as e:
+                    logger.debug("lowrank factorization failed for %s: %s", key, e)
+        if changed:
+            metadata["layer_info"] = json.dumps(layer_info)
+            logger.debug("lowrank snapshot compression saved ~%d bytes", saved_bytes)
+        return tensors_raw, metadata
+
     def _process_write_item(self, item) -> None:
         """Process one (pw_key, tensors_raw, metadata, file_path) queue item.
 
@@ -1257,6 +1436,10 @@ class BoundarySnapshotSSDStore:
 
         temp_path = None
         try:
+            if self._lowrank_gdn_state:
+                tensors_raw, metadata = self._factorize_gdn_state_tensors(
+                    tensors_raw, metadata
+                )
             file_path.parent.mkdir(parents=True, exist_ok=True)
             temp_path = file_path.with_name(file_path.stem + "_tmp.safetensors")
             _write_safetensors_no_mx(str(temp_path), tensors_raw, metadata)
@@ -1365,6 +1548,12 @@ class BoundarySnapshotSSDStore:
                 "cache_type": cache_type,
                 "meta_state": json.dumps(list(meta_state) if meta_state else []),
             }
+            # Persist the cache write cursor so rebuild can restore it
+            # (over-allocated KV arrays would otherwise continue at array
+            # length instead of the logical sequence length).
+            offset = layer_state.get("offset")
+            if offset is not None:
+                info["offset"] = str(offset)
 
             if (
                 isinstance(state, list)
@@ -1470,14 +1659,18 @@ class BoundarySnapshotSSDStore:
                 # V2 fallback: legacy layer_{i}_0/1 + zero_dim_0/1 keys
                 # for snapshots written before the N-tuple migration.
                 state = self._read_state_tuple_raw(tensors_raw, info, i)
-                result.append(
-                    {
-                        "state": state,
-                        "meta_state": meta_state,
-                        "class_name": class_name,
-                        "cache_type": cache_type,
-                    }
-                )
+                entry = {
+                    "state": state,
+                    "meta_state": meta_state,
+                    "class_name": class_name,
+                    "cache_type": cache_type,
+                }
+                if "offset" in info:
+                    try:
+                        entry["offset"] = int(info["offset"])
+                    except (ValueError, TypeError):
+                        pass
+                result.append(entry)
             else:
                 # Placeholder for skipped sliceable layers.
                 result.append(
@@ -1553,6 +1746,14 @@ class BoundarySnapshotSSDStore:
                     elements.append(None)
                     continue
                 key = f"layer_{layer_idx}_state_{k}"
+                lr_json = info.get(f"lowrank_{k}")
+                if lr_json:
+                    elements.append(
+                        self._lowrank_element_from_bytes(
+                            tensors_raw, lr_json, layer_idx, k
+                        )
+                    )
+                    continue
                 if key not in tensors_raw:
                     elements.append(None)
                     continue
@@ -1614,14 +1815,18 @@ class BoundarySnapshotSSDStore:
 
             if info.get("has_state") == "true":
                 state = self._read_state_tuple_arrays(arrays, info, i)
-                result.append(
-                    {
-                        "state": state,
-                        "meta_state": meta_state,
-                        "class_name": class_name,
-                        "cache_type": cache_type,
-                    }
-                )
+                entry = {
+                    "state": state,
+                    "meta_state": meta_state,
+                    "class_name": class_name,
+                    "cache_type": cache_type,
+                }
+                if "offset" in info:
+                    try:
+                        entry["offset"] = int(info["offset"])
+                    except (ValueError, TypeError):
+                        pass
+                result.append(entry)
             else:
                 result.append(
                     {
@@ -1688,6 +1893,12 @@ class BoundarySnapshotSSDStore:
                     elements.append(None)
                     continue
                 key = f"layer_{layer_idx}_state_{k}"
+                lr_json = info.get(f"lowrank_{k}")
+                if lr_json:
+                    elements.append(
+                        self._lowrank_element_from_arrays(arrays, lr_json, layer_idx, k)
+                    )
+                    continue
                 tensor = arrays.get(key)
                 if tensor is None:
                     elements.append(None)
@@ -1710,3 +1921,59 @@ class BoundarySnapshotSSDStore:
             zd_shape = tuple(int(d) for d in info["zero_dim_1"].split(","))
             second = mx.zeros(zd_shape, dtype=second.dtype)
         return (first, second) if first is not None else ()
+
+    def _lowrank_element_from_bytes(
+        self,
+        tensors_raw: dict[str, tuple[bytes, str, list[int]]],
+        lr_json: str,
+        layer_idx: int,
+        k: int,
+    ):
+        """Rebuild one dense GDN state element from low-rank factor bytes."""
+        try:
+            spec = json.loads(lr_json)
+            parts = []
+            for suffix in ("_u", "_s", "_v"):
+                raw, dtype_str, shape = tensors_raw[
+                    f"layer_{layer_idx}_state_{k}{suffix}"
+                ]
+                parts.append(_restore_tensor_from_bytes(raw, dtype_str, shape))
+            if any(p is None for p in parts):
+                return None
+            u, s, v = parts
+            return _lowrank_reconstruct_state(u, s, v, spec["orig_shape"])
+        except Exception as e:
+            logger.warning(
+                "lowrank snapshot reconstruction failed for layer %d state %d: %s",
+                layer_idx,
+                k,
+                e,
+            )
+            return None
+
+    def _lowrank_element_from_arrays(
+        self,
+        arrays: dict[str, Any],
+        lr_json: str,
+        layer_idx: int,
+        k: int,
+    ):
+        """Rebuild one dense GDN state element from safetensors-loaded arrays."""
+        try:
+            spec = json.loads(lr_json)
+            parts = []
+            for suffix in ("_u", "_s", "_v"):
+                tensor = arrays.get(f"layer_{layer_idx}_state_{k}{suffix}")
+                if tensor is None:
+                    return None
+                parts.append(tensor)
+            u, s, v = parts
+            return _lowrank_reconstruct_state(u, s, v, spec["orig_shape"])
+        except Exception as e:
+            logger.warning(
+                "lowrank snapshot reconstruction failed for layer %d state %d: %s",
+                layer_idx,
+                k,
+                e,
+            )
+            return None
