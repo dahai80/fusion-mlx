@@ -14,6 +14,21 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.69] - 2026-11-23 — mlx-lm 0d4d3d04f decode upgrade, min_tokens knob, streaming tool-parser hardening
+
+- Added: **mlx-lm pinned to main@0d4d3d04f (#1667)** — offline decode on Qwen3.5-4B 4bit 118.7 → 156.5+ tok/s (+32%), closing the gap vs oMLX; 0.32.2 PyPI skipped (regression, 100.6 tok/s). VLM tool calling adapted to the 0.32 `_infer_tool_parser(tokenizer)` ABI (#1670).
+- Added: **vLLM-parity `min_tokens` sampling param (#1683/#1686)** — EOS suppressed in the logits until N tokens were generated, preventing empty responses on prompts whose first-token distribution ties between a continuation and EOS. `MinTokensProcessor` in the scheduler, opt-in per request.
+- Added: **server-wide `default_min_tokens` knob + greedy instant-stop diagnostic (#1690/#1695)** — `--default-min-tokens N` serve flag (default 0 = unchanged); applied when neither the request nor a model profile sets `min_tokens` (precedence: request > profile > server default). The scheduler now logs a WARNING when a greedy request stops after 0-1 tokens (the #1690 near-tie EOS signature) so server logs distinguish model behavior from a serving-path bug.
+- Added: **runtime per-model TTL override + ollama `keep_alive` mapping (#1688)** — per-model residency override at runtime; ollama `keep_alive` honored, `keep_alive=0` unloads the model after the request.
+- Added: **`gb_step_profile` pre/post/sample sub-timers (#1682/#1684)** and **decode-span generation rate in usage (#1692/#1693)** — finer training/inference diagnostics.
+- Fixed: **mlx-lm ArraysCache zero-layer empty/merge crash (#1671/#1676)** — `SizedArraysCache.merge` no longer indexes layer[0] on an empty layer list (hit on GDN/hybrid models after rollback).
+- Fixed: **BatchGenerator.close foreign-thread guard (#1678)** — close from a non-owning thread no longer races an active stream.
+- Fixed: **distinct 504 `generation_timeout` for non-stream wall-clock timeouts (#1680/#1681)** — no longer surfaces as a generic 500 `chat_generation_failed`.
+- Fixed: **hybrid-model prompt caches built via `language_model.make_cache()` (#1687)**.
+- Fixed: **BatchKVCache decode mask fast path (#1691)** — removes per-step GPU syncs on the batched decode path.
+- Fixed: **streaming tool parser resolution fails visibly (#1694/#1696)** — a resolve error used to silently disable tool-call parsing for the whole streaming request (tool markup leaking as plain content); it now logs a WARNING with a `#1694` marker and falls back to the auto-detecting parser before giving up.
+- CI: release-notes audit workflow enforcing the mandatory "Behavior changes this release" section (eval#25 C-2).
+
 ## [0.10.68] - 2026-11-20 — image matting engine, voices catalog, model-config type overrides (#1663)
 
 - Added: **image matting engine (#1663)** — `POST /v1/images/matting` background removal via a BiRefNet-lite engine (vendored pure-MLX port of moonbox-dev/BiRefNet_lite-MLX, MIT; fp16 weights ~88MB). Matting checkpoints (`config.json` `model_type: "birefnet"`) are detected as a new `image_matting` model type and routed to `MattingEngine` in the pool; the route returns an RGBA cutout or a grayscale alpha PNG (`output=cutout|mask`, `response_format=b64_json|url`) in the standard image envelope. Covered by `tests/unit/test_media_gaps_1663.py`; E2E verified against real fp16 weights (foreground 255 / background 0 on a synthetic target).
