@@ -83,6 +83,7 @@ _SERVE_CATEGORIES: dict[str, str] = {
     "default_top_p": "Sampling",
     "default_top_k": "Sampling",
     "default_min_p": "Sampling",
+    "default_min_tokens": "Sampling",
     "default_repetition_penalty": "Sampling",
     "default_presence_penalty": "Sampling",
     "default_frequency_penalty": "Sampling",
