@@ -443,6 +443,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # (config.py:177). Bounds the on-disk prefix store so a churning
         # client can't blow up the FS. Pure capacity knob.
         "FUSION_MLX_BOUNDARY_PREFIX_MAX_BYTES",
+        # #1702: opt-out of low-rank factorization of GDN recurrent
+        # states in boundary snapshots (config.py:328). Storage-format
+        # toggle for the snapshot writer only — never selects a model /
+        # parser / tier.
+        "FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK",
         # Default per-request ``max_tokens`` ceiling (request.py:11).
         # Request-validation default only — never chooses model/routing;
         # the explicit per-request value always wins.
