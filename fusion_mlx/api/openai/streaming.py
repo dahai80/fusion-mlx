@@ -76,8 +76,33 @@ def _resolve_streaming_tool_parser(engine: Any, model_name: str) -> Any:
         )
         return parser_cls(tokenizer)
     except Exception as e:
-        logger.debug("streaming tool parser resolve failed: %s", e)
-        return None
+        # #1694: returning None here silently disables tool-call parsing for
+        # the whole request — tool markup then leaks to the client as plain
+        # content (the "tool calls degrade to plain text" signature). Fail
+        # visibly: warn with model context and fall back to the
+        # auto-detecting parser instead of no parser.
+        logger.warning(
+            "streaming tool parser resolve failed for model=%s (%s: %s) — "
+            "falling back to auto parser (#1694)",
+            model_name,
+            type(e).__name__,
+            e,
+        )
+        try:
+            from ...tool_parsers import ToolParserManager
+
+            tokenizer = getattr(engine, "_tokenizer", None)
+            fallback = ToolParserManager.get_tool_parser("auto")
+            return fallback(tokenizer)
+        except Exception as e2:
+            logger.warning(
+                "auto tool parser fallback failed for model=%s (%s: %s) — "
+                "tool calls will surface as plain text for this request",
+                model_name,
+                type(e2).__name__,
+                e2,
+            )
+            return None
 
 
 # Channel-based reasoning parsers route their reasoning trace via channel
