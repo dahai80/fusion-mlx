@@ -50,6 +50,7 @@ _SERVE_VALUE_FLAGS = frozenset(
         "--dspine-drafter-path",
         "--default-frequency-penalty",
         "--default-min-p",
+        "--default-min-tokens",
         "--default-presence-penalty",
         "--default-repetition-penalty",
         "--default-temperature",

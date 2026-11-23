@@ -931,6 +931,8 @@ def _stage_server_config(args, server, logger):
         _get_config().default_top_k = args.default_top_k
     if args.default_min_p is not None:
         _get_config().default_min_p = args.default_min_p
+    if args.default_min_tokens is not None:
+        _get_config().default_min_tokens = args.default_min_tokens
     if args.default_repetition_penalty is not None:
         _get_config().default_repetition_penalty = args.default_repetition_penalty
     if args.default_presence_penalty is not None:

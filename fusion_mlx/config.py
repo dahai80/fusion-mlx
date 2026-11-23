@@ -527,6 +527,10 @@ class ServerConfig:
     default_repetition_penalty: float | None = None
     default_presence_penalty: float | None = None
     default_frequency_penalty: float | None = None
+    # Server-wide default for min_tokens (#1690): suppresses EOS until N
+    # tokens were generated so near-tie greedy first-token distributions
+    # cannot return an empty 1-token response. 0 = disabled (default).
+    default_min_tokens: int = 0
 
     # Sampling overlay
     alias_recommended_sampling: dict[str, float | int] | None = None

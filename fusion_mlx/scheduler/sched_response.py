@@ -19,6 +19,17 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _is_near_tie_greedy_stop(request, finish_reason) -> bool:
+    # #1690: greedy (temperature=0) requests whose stop fires after 0-1
+    # output tokens match the near-tie first-token-EOS signature.
+    if finish_reason != "stop":
+        return False
+    if request.num_output_tokens > 1:
+        return False
+    sp = request.sampling_params
+    return getattr(sp, "temperature", None) == 0.0
+
+
 def _model_label(path: str) -> str:
     # The scheduler only knows the resolved load path, which for an HF cache
     # entry is ``.../models--org--name/snapshots/<sha>``. The basename is a
@@ -359,6 +370,22 @@ def _process_batch_responses(
                 response.finish_reason,
                 request.num_output_tokens,
             )
+            if _is_near_tie_greedy_stop(request, response.finish_reason):
+                # #1690: near-tie greedy first-token EOS produces an empty
+                # 1-token response. Loud diagnostic so operators can tell
+                # model behavior apart from a serving-path bug; setting
+                # min_tokens (per request or --default-min-tokens)
+                # suppresses it.
+                sp = request.sampling_params
+                logger.warning(
+                    "Request %s stopped after %d output token(s) "
+                    "(temperature=0, min_tokens=%s) — likely near-tie "
+                    "greedy EOS at step 0 (#1690); set min_tokens to "
+                    "suppress",
+                    request_id,
+                    request.num_output_tokens,
+                    getattr(sp, "min_tokens", None),
+                )
             logger.debug(
                 f"Request {request_id} finished: {response.finish_reason}, "
                 f"{request.num_output_tokens} tokens"

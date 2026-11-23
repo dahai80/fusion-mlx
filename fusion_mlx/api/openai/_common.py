@@ -516,6 +516,19 @@ def _messages_for_engine(request_msgs: Any, is_mllm: bool) -> list[dict]:
     return out
 
 
+def _server_default_min_tokens() -> int:
+    # #1690: operator-level min_tokens default. Applied only when neither
+    # the request nor a model profile sets one, so greedy near-tie
+    # first-token EOS cannot return an empty response.
+    try:
+        from ...config import get_config
+
+        return get_config().default_min_tokens
+    except Exception as e:  # noqa: BLE001
+        logger.debug("default_min_tokens lookup failed: %s", e)
+        return 0
+
+
 def _build_sampling_params(
     req: ChatCompletionRequest,
     profile_overrides: dict | None = None,
@@ -562,7 +575,10 @@ def _build_sampling_params(
         min_tokens=(
             req_min_tokens
             if isinstance((req_min_tokens := getattr(req, "min_tokens", None)), int)
-            else po.get("min_tokens", 0)
+            else po.get(
+                "min_tokens",
+                _server_default_min_tokens(),
+            )
         ),
         mirostat_tau=(
             req.mirostat_tau

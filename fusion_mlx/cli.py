@@ -1213,6 +1213,16 @@ Examples:
         help="Override default min_p for all requests (default: use model default)",
     )
     serve_parser.add_argument(
+        "--default-min-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Suppress EOS until N tokens were generated for all requests "
+            "(default: 0 = disabled). Guards against empty greedy responses "
+            "on near-tie first-token distributions (#1690)"
+        ),
+    )
+    serve_parser.add_argument(
         "--default-repetition-penalty",
         type=float,
         default=None,
