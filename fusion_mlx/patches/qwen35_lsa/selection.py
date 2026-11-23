@@ -161,13 +161,17 @@ class LsaLayerSelector:
         )
         picked = selected[0]
         if _SELECT_LOG:
-            kept_count = int((picked >= 0).sum().item())
+            # MLX has no boolean-mask indexing: compute min/max over a
+            # where-clamped array instead of picked[picked >= 0]
+            valid_mask = picked >= 0
+            kept_count = int(valid_mask.sum().item())
             probe = -1
-            valid = picked[picked >= 0]
             if _PROBE_LO >= 0 and kept_count:
                 probe = int(
                     ((picked >= _PROBE_LO) & (picked <= _PROBE_HI)).sum().item()
                 )
+            big = mx.array(self.index.key_count + self._tail_rows + 1, mx.int32)
+            clamped = mx.where(valid_mask, picked, big)
             logger.info(
                 "LSA select pos=%d key_count=%d blocks=%d tail=%d picked=%d min=%d max=%d probe=%d",
                 position,
@@ -175,8 +179,8 @@ class LsaLayerSelector:
                 self.index.block_count,
                 self._tail_rows,
                 kept_count,
-                int(valid.min().item()) if kept_count else -1,
-                int(valid.max().item()) if kept_count else -1,
+                int(clamped.min().item()) if kept_count else -1,
+                int(clamped.max().item()) if kept_count else -1,
                 probe,
             )
         if self._tail_rows and position >= self.index.key_count:

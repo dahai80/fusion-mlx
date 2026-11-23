@@ -56,7 +56,7 @@
   "patches/qwen35_lsa/__init__.py": "7bccc702215c3e0b2a6b20ec5bb42f82983d90570956117e758a14a945b83f0d",
   "patches/qwen35_lsa/attention.py": "e3710f6b9672ff027b48aa36e5d7ae3d983f12c272d3769c57d9b810efcf2a5b",
   "patches/qwen35_lsa/budget.py": "c4ca9f80971d4cc92a8f59449bb1deb2a918bc4a85e658a8821e24ec6579b12f",
-  "patches/qwen35_lsa/selection.py": "67fd590cf75d85daeeb3559a772d62ed5bcb459a390266e32bd52bc3b9313463",
+  "patches/qwen35_lsa/selection.py": "a62adfa2d2fe7c5e0d817e6d8e597d91dad23ddc6099970bfa475f4a8faf6483",
   "patches/qwen35_lsa/tier.py": "3712624a906be5b86e28c6b2ccf2a0fdfab962b175b2b035771cd115059510f7",
   "patches/qwen3_6_nested_visual.py": "adcec0b56bd3808694a302386206c5f8dafb59a0af55ec29d8344953f56c631d",
   "patches/registry.py": "676ba46d2f37c44b9234d7629c7b7191ed84784121ad2a6216a0a0138dc44717",
