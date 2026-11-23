@@ -14,6 +14,11 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.70] - 2026-11-23 — uid-row registry epoch invalidation (tool-call degradation fix)
+
+- Fixed: **scheduler uid-row registry entries outlive their generator epoch (#1694/#1700)** — after a mid-flight BatchGenerator reset (prefill-abort / cache-corruption paths), realignment could restore a dead request's sampler/logits-processors onto a live row whose recycled uid hit a stale registry entry, producing fluent but wrongly-formatted output (the "tool calls degrade to plain text" signature). Registry rows now carry the generator epoch they were registered in; both generator-discard sites bump the epoch and realignment treats stale-epoch entries as missing (keep current row state), making the unsound state unreachable.
+- Fixed: **published dependency metadata rejected by PyPI (#1699)** — `mlx-lm @ git+...` direct reference in `project.dependencies` fails upload with 400 "Can't have direct dependency" (regression of the #348 class by #1667); published Requires-Dist is now `mlx-lm>=0.31.3` while the git-commit pin remains enforced for local/uv installs via workspace requirements.in and `[tool.uv]` overrides. (Shipped in the re-published 0.10.69; listed here for the record.)
+
 ## [0.10.69] - 2026-11-23 — mlx-lm 0d4d3d04f decode upgrade, min_tokens knob, streaming tool-parser hardening
 
 - Added: **mlx-lm pinned to main@0d4d3d04f (#1667)** — offline decode on Qwen3.5-4B 4bit 118.7 → 156.5+ tok/s (+32%), closing the gap vs oMLX; 0.32.2 PyPI skipped (regression, 100.6 tok/s). VLM tool calling adapted to the 0.32 `_infer_tool_parser(tokenizer)` ABI (#1670).
