@@ -37,7 +37,11 @@ from .helpers import (
     _should_clear_on_fragmentation,
     _sync_and_clear_cache,
 )
-from .monkeypatches import _unregister_uid_row, _unregister_uid_rows_for_model
+from .monkeypatches import (
+    _bump_uid_row_epoch,
+    _unregister_uid_row,
+    _unregister_uid_rows_for_model,
+)
 from .types import (
     _PrefillAbortedError,
 )
@@ -452,6 +456,11 @@ def step(self) -> SchedulerOutput:
                 _unregister_uid_row(self.model, uid)
         else:
             _unregister_uid_rows_for_model(self.model)
+        # The generator is discarded and surviving requests will be
+        # re-inserted under a new generator whose uid counter restarts
+        # at 0. Invalidate registry entries from this epoch so a
+        # recycled uid can never realign from a dead request's state.
+        _bump_uid_row_epoch()
         self.batch_generator = None
         self._current_sampler_params = None
         self._boundary_cache_snapshots.clear()
@@ -723,6 +732,10 @@ def _step_pure_decode(self, output: SchedulerOutput) -> SchedulerOutput:
                 _unregister_uid_row(self.model, uid)
         else:
             _unregister_uid_rows_for_model(self.model)
+        # Same epoch invalidation as the step() abort handler above:
+        # the discarded generator's registry entries must not serve a
+        # recycled uid in the replacement generator.
+        _bump_uid_row_epoch()
         self.batch_generator = None
         self._current_sampler_params = None
         self._boundary_cache_snapshots.clear()

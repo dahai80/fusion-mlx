@@ -48,20 +48,41 @@ def _is_grammar_processor(proc) -> bool:
 class _RegisteredRow(NamedTuple):
     sampler: Any
     logits_processors: list
+    # Generator epoch the registration was made in. uids are a
+    # per-BatchGenerator counter that restarts at 0 whenever the scheduler
+    # discards and recreates the generator (abort/cache-corruption reset
+    # paths), so an entry from a previous epoch can be hit by a recycled
+    # uid of a completely different request. Realignment must ignore such
+    # entries (treat as missing -> keep current row state) or the
+    # "self-healing" path restores a dead request's sampler/processors
+    # onto a live row.
+    epoch: int = 0
 
 
 _UID_ROW_REGISTRY_MAX = 4096
 _uid_row_registry: "OrderedDict[tuple[int, int], _RegisteredRow]" = OrderedDict()
 _uid_row_registry_lock = threading.Lock()
+_uid_row_epoch = 0
 _UID_ROW_DRIFT_WARNING_INTERVAL_S = 60.0
 _uid_row_drift_last_warning = float("-inf")
+
+
+def _bump_uid_row_epoch() -> None:
+    # Invalidate all existing registry entries. Call wherever the
+    # scheduler discards the BatchGenerator (batch_generator = None):
+    # every live row will be re-inserted (and re-registered) under a new
+    # generator whose uid counter restarts at 0, so pre-reset entries can
+    # only ever be hit stale.
+    global _uid_row_epoch
+    with _uid_row_registry_lock:
+        _uid_row_epoch += 1
 
 
 def _register_uid_rows(model, uids, samplers, lps_rows) -> None:
     with _uid_row_registry_lock:
         for uid, sampler, lps in zip(uids, samplers, lps_rows):
             _uid_row_registry[(id(model), uid)] = _RegisteredRow(
-                sampler, list(lps or ())
+                sampler, list(lps or ()), _uid_row_epoch
             )
         while len(_uid_row_registry) > _UID_ROW_REGISTRY_MAX:
             _uid_row_registry.popitem(last=False)
@@ -101,7 +122,11 @@ def _log_drift_correction(uids, slot_count) -> None:
 def _realigned_rows(model, uids, cur_samplers, cur_lps):
     model_id = id(model)
     with _uid_row_registry_lock:
+        epoch = _uid_row_epoch
         rows = [_uid_row_registry.get((model_id, uid)) for uid in uids]
+    # Entries from a previous generator epoch belong to dead requests
+    # whose uids may have been recycled; treat them as missing.
+    rows = [row if row is not None and row.epoch == epoch else None for row in rows]
 
     drift = len(cur_lps) != len(uids)
     samplers, lps = [], []
