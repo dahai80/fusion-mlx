@@ -1,8 +1,9 @@
 """Engine idle warm tick: queueing rules and busy-traffic priority.
 
 Covers Lever-3 stage 2b: warm replay requests are queued only after a
-full idle window, one head per tick, never while real traffic exists,
-and warm state resets on the first busy tick.
+full idle window, one head per tick, never while real traffic exists.
+Real traffic resets the idle window; warm replays do not (they would
+otherwise requeue themselves forever while the server sits idle).
 """
 
 from types import SimpleNamespace
@@ -35,18 +36,28 @@ def wl_path(tmp_path, monkeypatch):
 
 
 def make_fake(scheduler):
-    return SimpleNamespace(
+    fake = SimpleNamespace(
         _warm_idle_since=None,
         _warm_pending=[],
         _warm_seq=0,
+        _warm_round_done=False,
         scheduler=scheduler,
     )
+    fake._warm_has_real_traffic = lambda: EngineCore._warm_has_real_traffic(fake)
+    return fake
+
+
+def _req(warm):
+    return SimpleNamespace(_warm_request=warm)
 
 
 class FakeSched:
     def __init__(self):
         self.added = []
         self.busy = False
+        self.waiting = []
+        self.prefilling = []
+        self.running = []
 
     def has_requests(self):
         return self.busy
@@ -66,14 +77,28 @@ def test_disabled_env_never_queues(wl_path, monkeypatch):
     warm_list._default = None
 
 
-def test_busy_resets_idle_window(wl_path):
+def test_busy_real_traffic_resets_idle_window(wl_path):
     sched = FakeSched()
+    sched.running = [_req(warm=False)]
     fake = make_fake(sched)
     EngineCore._warm_tick(fake, 100.0, False)
     assert fake._warm_idle_since == 100.0
     EngineCore._warm_tick(fake, 110.0, True)
     assert fake._warm_idle_since is None
-    assert not fake._warm_pending
+    assert fake._warm_round_done is False
+
+
+def test_busy_warm_replay_keeps_idle_window(wl_path):
+    # A warm replay makes the engine busy but is not traffic: resetting the
+    # idle window here requeued the whole head list every idle period while
+    # the server sat idle (endless 8k prefill bursts).
+    sched = FakeSched()
+    sched.running = [_req(warm=True)]
+    fake = make_fake(sched)
+    EngineCore._warm_tick(fake, 100.0, False)
+    assert fake._warm_idle_since == 100.0
+    EngineCore._warm_tick(fake, 110.0, True)
+    assert fake._warm_idle_since == 100.0
 
 
 def test_idle_below_threshold_no_queue(wl_path):
@@ -119,7 +144,9 @@ def test_real_traffic_blocks_warm_pop(wl_path):
     assert fake._warm_pending
 
 
-def test_drained_queue_restarts_idle_clock(wl_path):
+def test_drained_queue_latches_round_until_real_traffic(wl_path):
+    # After the head queue drains, idle time alone must never requeue —
+    # only real traffic re-arms the round latch.
     sched = FakeSched()
     fake = make_fake(sched)
     t0 = 100.0
@@ -129,8 +156,23 @@ def test_drained_queue_restarts_idle_clock(wl_path):
     EngineCore._warm_tick(fake, t0 + thr + 2, False)
     EngineCore._warm_tick(fake, t0 + thr + 3, False)
     assert len(sched.added) == 2
-    assert fake._warm_idle_since == t0 + thr + 3
+    assert fake._warm_round_done is True
     assert not fake._warm_pending
+    far = t0 + thr + 3 + thr * 10
+    EngineCore._warm_tick(fake, far, False)
+    EngineCore._warm_tick(fake, far + 1, False)
+    assert len(sched.added) == 2
+    # Real traffic clears the latch; the next idle window queues again.
+    sched.running = [_req(warm=False)]
+    EngineCore._warm_tick(fake, far + 2, True)
+    sched.running = []
+    fake._warm_idle_since = None
+    EngineCore._warm_tick(fake, far + 3, False)
+    EngineCore._warm_tick(fake, far + 3 + thr + 1, False)
+    while fake._warm_pending:
+        EngineCore._warm_tick(fake, far + 3 + thr + 2, False)
+    assert len(sched.added) == 4
+    assert fake._warm_round_done is True
 
 
 def test_empty_warm_list_never_queues(tmp_path, monkeypatch):

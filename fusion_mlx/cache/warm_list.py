@@ -15,6 +15,7 @@ still content on disk, so it ships with a kill switch
 warm-list bookkeeping must never break inference.
 """
 
+import atexit
 import json
 import logging
 import os
@@ -285,6 +286,19 @@ class WarmList:
             if self._dirty:
                 self._flush_locked()
 
+    def flush_if_stale(self, now: float) -> None:
+        # Time-driven flush for callers with a heartbeat (engine loop tick):
+        # the in-record() timer only fires while traffic keeps coming, so a
+        # quiet day + restart would lose every entry but the first. Cheap
+        # no-lock check first; the tick runs every engine step. Uses wall
+        # clock internally — `now` may be time.monotonic() at the call site
+        # and must never be compared against the epoch-based _last_flush_ts.
+        if not self._dirty:
+            return
+        if time.time() - self._last_flush_ts < FLUSH_INTERVAL_S:
+            return
+        self.flush()
+
     def stats(self) -> dict:
         with self._lock:
             self._load()
@@ -300,6 +314,18 @@ _default: WarmList | None = None
 _default_lock = threading.Lock()
 
 
+def _flush_default_at_exit() -> None:
+    # The 60s flush timer is evaluated opportunistically inside record()
+    # only — with no further traffic it never fires, so a low-traffic day
+    # followed by a restart loses every entry after the first record of
+    # each process. Flush whatever is dirty at interpreter shutdown.
+    try:
+        if _default is not None:
+            _default.flush()
+    except Exception as e:
+        logger.debug("warm-list: atexit flush failed (non-fatal): %s", e)
+
+
 def get_warm_list(path: str | None = None) -> WarmList:
     global _default
     with _default_lock:
@@ -311,4 +337,5 @@ def get_warm_list(path: str | None = None) -> WarmList:
                 )
                 path = os.path.join(base, "warm_list.json")
             _default = WarmList(path)
+            atexit.register(_flush_default_at_exit)
         return _default

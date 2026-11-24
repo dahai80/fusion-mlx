@@ -1539,6 +1539,13 @@ class EngineCore:
         self._warm_idle_since: float | None = None
         self._warm_pending: list[str] = []
         self._warm_seq = 0
+        # One warm round per idle episode: set when the pending queue drains,
+        # cleared only by real (non-warm) traffic. Without this latch the
+        # replay loop never ends while the server is idle: each warm replay
+        # made the engine busy, the busy branch reset the idle clock, and 8s
+        # later the full head list was queued again — an 8k-token prefill
+        # burst every idle-threshold seconds for as long as no traffic came.
+        self._warm_round_done = False
         self._start_time: float | None = None
         self._steps_executed = 0
         # #1261: per-engine watchdog inputs. The module-level _llm_heartbeat
@@ -1793,10 +1800,23 @@ class EngineCore:
         # traffic always wins: warm requests are only queued when the
         # scheduler is empty, and they cost one prefill chunk if traffic
         # lands mid-warm. All failures are non-fatal.
+        try:
+            from .cache.warm_list import get_warm_list
+
+            get_warm_list().flush_if_stale(now)
+        except Exception as e:
+            logger.debug("warm-list: stale flush failed (non-fatal): %s", e)
         if busy:
-            if self._warm_idle_since is not None:
+            # Warm replays make the engine busy too, so only real traffic
+            # resets the idle clock and re-arms the round latch. Resetting on
+            # any busy tick turned the replay into an endless cycle: replay
+            # -> busy reset -> idle threshold -> requeue -> replay ...
+            if self._warm_has_real_traffic():
                 self._warm_idle_since = None
-                self._warm_pending = []
+                self._warm_round_done = False
+                # Keep _warm_pending: real traffic landing mid-round must not
+                # discard the remaining heads; they wait for the next idle
+                # period (the pending path re-fires once queues empty).
             return
         try:
             from .cache.warm_list import (
@@ -1829,9 +1849,11 @@ class EngineCore:
                     len(self._warm_pending),
                 )
                 if not self._warm_pending:
-                    # Queue drained: restart the idle clock so the next
-                    # warm round needs another full idle period.
-                    self._warm_idle_since = now
+                    # Queue drained: latch the round so idle time alone never
+                    # requeues — only real traffic re-arms it (busy branch).
+                    self._warm_round_done = True
+                return
+            if self._warm_round_done:
                 return
             if now - self._warm_idle_since < warm_idle_threshold_s():
                 return
@@ -1844,6 +1866,21 @@ class EngineCore:
                 )
         except Exception as e:
             logger.debug("warm-list: warm tick failed (non-fatal): %s", e)
+
+    def _warm_has_real_traffic(self) -> bool:
+        # True when any scheduler queue holds a non-warm request. Warm replay
+        # requests must not count as traffic: treating them as busy reset the
+        # idle clock and produced an endless idle replay loop.
+        s = self.scheduler
+        for q in (
+            getattr(s, "waiting", ()),
+            getattr(s, "prefilling", ()),
+            getattr(s, "running", ()),
+        ):
+            for r in q:
+                if not getattr(r, "_warm_request", False):
+                    return True
+        return False
 
     async def _engine_loop(self) -> None:
         """Main engine loop — runs scheduler steps on the MLX executor.

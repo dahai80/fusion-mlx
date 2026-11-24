@@ -523,121 +523,6 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
         except Exception:
             logger.debug("request.completed event emit failed", exc_info=True)
 
-        # Shape telemetry (#1549 follow-up): realized request shape per
-        # finished request — output length vs the max_tokens the spec
-        # router saw at route time, plus per-request spec accept stats.
-        # Appends to the same spec-route jsonl; all failures non-fatal.
-        # Lever-3: warm replay requests skip telemetry AND the warm-list
-        # record — a warm request must never re-enter the warm list
-        # (self-reinforcing hits) or pollute spec-route feedback.
-        if getattr(request, "_warm_request", False):
-            return
-        try:
-            from ..speculative.auto_router import (
-                append_spec_request_end,
-                prompt_shape_hashes,
-            )
-
-            record = {
-                "request_id": request_id,
-                "method": getattr(request, "_active_spec_method", None),
-                "prompt_tokens": getattr(request, "num_prompt_tokens", None),
-                "max_tokens": getattr(request, "max_tokens", None),
-                "output_tokens": len(getattr(request, "output_token_ids", None) or []),
-                "status": getattr(request, "status", None),
-                # #1638 (TraceSpec V1): tool-call vs plain decision type.
-                "spec_has_tools": bool(getattr(request, "has_tools", False)),
-            }
-            # PIC sizing telemetry: prompt-reuse shape digests (full + head).
-            _prompt = getattr(request, "prompt", None)
-            record.update(prompt_shape_hashes(_prompt))
-            # Lever-3 warm list: remember the hot prompt head (same slice
-            # prompt_head_hash covers) for idle-time prefix pre-warming.
-            # Content stays local; kill switch FUSION_WARMLIST_DISABLE=1.
-            if record.get("prompt_head_hash"):
-                try:
-                    from ..cache.warm_list import get_warm_list
-
-                    get_warm_list().record(
-                        record["prompt_head_hash"],
-                        _prompt,
-                        getattr(request, "num_prompt_tokens", None),
-                    )
-                except Exception:
-                    logger.debug("warm-list record failed", exc_info=True)
-            dspine_state = getattr(self, "_dspine_spec_state", None)
-            if dspine_state is not None:
-                record.update(dspine_state.pop_request_stats(request_id))
-            if not record.get("spec_draft_proposed"):
-                # eagle3/ddtree and suffix paths carry their own per-request
-                # counters; the first state that has stats for this request
-                # wins (methods are mutually exclusive per request).
-                for alt in (
-                    getattr(self, "_spec_decode_state", None),
-                    getattr(self, "_ngram_spec_state", None),
-                ):
-                    if alt is None:
-                        continue
-                    stats = alt.pop_request_stats(request_id)
-                    if stats:
-                        record.update(stats)
-                        break
-            if record.get("method") == "mtp" and not record.get("spec_draft_proposed"):
-                # MTP counts accepts inside the vendored batch generator
-                # (global thread-safe counter, round-level). Per-request
-                # stats come from a cumulative-counter delta; correct for
-                # the single-stream case the router targets. Concurrent MTP
-                # requests would pool their deltas — acceptable noise for
-                # routing feedback.
-                from ..speculative.mtp.accept_counter import get_global_counter
-
-                snap = get_global_counter().snapshot()
-                prev = getattr(self, "_last_mtp_counter_snap", None)
-                self._last_mtp_counter_snap = snap
-                if prev is not None:
-                    attempts = snap.attempts - prev.attempts
-                    accepts = snap.accepts - prev.accepts
-                    if attempts > 0:
-                        record["spec_draft_proposed"] = attempts
-                        record["spec_draft_accepted"] = accepts
-            append_spec_request_end(record)
-            # Acceptance feedback loop: feed the finished request's spec
-            # accept rate back into the next route decision (abandon <0.20,
-            # keep >=0.40 hysteresis in SpecAutoRouter). Only when the
-            # request actually speculated (stats present in record).
-            proposed = record.get("spec_draft_proposed") or 0
-            accepted = record.get("spec_draft_accepted") or 0
-            method = record.get("method")
-            if proposed > 0 and method:
-                self._last_spec_feedback = (
-                    method,
-                    accepted / proposed,
-                )
-                # #1610: also key the outcome into the per-(method, bucket)
-                # rolling windows so the auto-router can route on the
-                # bucket-local rate instead of the bimodal-blurred scalar.
-                try:
-                    from ..speculative.accept_buckets import get_accept_buckets
-
-                    get_accept_buckets().record(
-                        method,
-                        record.get("output_tokens"),
-                        proposed,
-                        accepted,
-                        dtype="tool" if record.get("spec_has_tools") else "plain",
-                    )
-                except Exception:
-                    logger.debug(
-                        "spec accept bucket record failed (non-fatal)", exc_info=True
-                    )
-            elif method:
-                # Request ran under a spec method but never speculated
-                # (warmup/short-output gate) — no fresh rate; drop stale
-                # feedback so the next decision starts clean.
-                self._last_spec_feedback = None
-        except Exception as e:
-            logger.debug("spec-route request_end log failed (non-fatal): %s", e)
-
         self._free_paged_pool_cache(request)
 
         # Store cache for future reuse (G2-async): submit to background
@@ -880,6 +765,120 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
         if self._boundary_snapshot_store is not None and store_future is None:
             self._boundary_snapshot_store.cleanup_request(request_id)
 
+        # Shape telemetry (#1549 follow-up): realized request shape per
+        # finished request — output length vs the max_tokens the spec
+        # router saw at route time, plus per-request spec accept stats.
+        # Appends to the same spec-route jsonl; all failures non-fatal.
+        # Lever-3: warm replay requests skip telemetry AND the warm-list
+        # record — a warm request must never re-enter the warm list
+        # (self-reinforcing hits) or pollute spec-route feedback.
+        if getattr(request, "_warm_request", False):
+            return
+        try:
+            from ..speculative.auto_router import (
+                append_spec_request_end,
+                prompt_shape_hashes,
+            )
+
+            record = {
+                "request_id": request_id,
+                "method": getattr(request, "_active_spec_method", None),
+                "prompt_tokens": getattr(request, "num_prompt_tokens", None),
+                "max_tokens": getattr(request, "max_tokens", None),
+                "output_tokens": len(getattr(request, "output_token_ids", None) or []),
+                "status": getattr(request, "status", None),
+                # #1638 (TraceSpec V1): tool-call vs plain decision type.
+                "spec_has_tools": bool(getattr(request, "has_tools", False)),
+            }
+            # PIC sizing telemetry: prompt-reuse shape digests (full + head).
+            _prompt = getattr(request, "prompt", None)
+            record.update(prompt_shape_hashes(_prompt))
+            # Lever-3 warm list: remember the hot prompt head (same slice
+            # prompt_head_hash covers) for idle-time prefix pre-warming.
+            # Content stays local; kill switch FUSION_WARMLIST_DISABLE=1.
+            if record.get("prompt_head_hash"):
+                try:
+                    from ..cache.warm_list import get_warm_list
+
+                    get_warm_list().record(
+                        record["prompt_head_hash"],
+                        _prompt,
+                        getattr(request, "num_prompt_tokens", None),
+                    )
+                except Exception:
+                    logger.debug("warm-list record failed", exc_info=True)
+            dspine_state = getattr(self, "_dspine_spec_state", None)
+            if dspine_state is not None:
+                record.update(dspine_state.pop_request_stats(request_id))
+            if not record.get("spec_draft_proposed"):
+                # eagle3/ddtree and suffix paths carry their own per-request
+                # counters; the first state that has stats for this request
+                # wins (methods are mutually exclusive per request).
+                for alt in (
+                    getattr(self, "_spec_decode_state", None),
+                    getattr(self, "_ngram_spec_state", None),
+                ):
+                    if alt is None:
+                        continue
+                    stats = alt.pop_request_stats(request_id)
+                    if stats:
+                        record.update(stats)
+                        break
+            if record.get("method") == "mtp" and not record.get("spec_draft_proposed"):
+                # MTP counts accepts inside the vendored batch generator
+                # (global thread-safe counter, round-level). Per-request
+                # stats come from a cumulative-counter delta; correct for
+                # the single-stream case the router targets. Concurrent MTP
+                # requests would pool their deltas — acceptable noise for
+                # routing feedback.
+                from ..speculative.mtp.accept_counter import get_global_counter
+
+                snap = get_global_counter().snapshot()
+                prev = getattr(self, "_last_mtp_counter_snap", None)
+                self._last_mtp_counter_snap = snap
+                if prev is not None:
+                    attempts = snap.attempts - prev.attempts
+                    accepts = snap.accepts - prev.accepts
+                    if attempts > 0:
+                        record["spec_draft_proposed"] = attempts
+                        record["spec_draft_accepted"] = accepts
+            append_spec_request_end(record)
+            # Acceptance feedback loop: feed the finished request's spec
+            # accept rate back into the next route decision (abandon <0.20,
+            # keep >=0.40 hysteresis in SpecAutoRouter). Only when the
+            # request actually speculated (stats present in record).
+            proposed = record.get("spec_draft_proposed") or 0
+            accepted = record.get("spec_draft_accepted") or 0
+            method = record.get("method")
+            if proposed > 0 and method:
+                self._last_spec_feedback = (
+                    method,
+                    accepted / proposed,
+                )
+                # #1610: also key the outcome into the per-(method, bucket)
+                # rolling windows so the auto-router can route on the
+                # bucket-local rate instead of the bimodal-blurred scalar.
+                try:
+                    from ..speculative.accept_buckets import get_accept_buckets
+
+                    get_accept_buckets().record(
+                        method,
+                        record.get("output_tokens"),
+                        proposed,
+                        accepted,
+                        dtype="tool" if record.get("spec_has_tools") else "plain",
+                    )
+                except Exception:
+                    logger.debug(
+                        "spec accept bucket record failed (non-fatal)", exc_info=True
+                    )
+            elif method:
+                # Request ran under a spec method but never speculated
+                # (warmup/short-output gate) — no fresh rate; drop stale
+                # feedback so the next decision starts clean.
+                self._last_spec_feedback = None
+        except Exception as e:
+            logger.debug("spec-route request_end log failed (non-fatal): %s", e)
         # Track as finished
         self.finished_req_ids.add(request_id)
 
