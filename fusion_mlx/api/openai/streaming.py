@@ -444,6 +444,8 @@ async def _stream_chat_generator(
             compiled_grammar=compiled_grammar,
             resume_prompt_cache=resume_prompt_cache,
             resume_cached_tokens=resume_cached_tokens,
+            # LSA decode-time repair quota (#1707): None = pure static tier.
+            lsa_repair_pages=getattr(request, "lsa_repair_pages", None),
             # M9 (#1645): propagate the API request id into the scheduler
             # so admin surfaces (KV segment drop, and any request-scoped
             # abort/mutation route) can address the request by the id the

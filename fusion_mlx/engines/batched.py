@@ -1468,6 +1468,11 @@ class BatchedEngine(BaseEngine):
             specprefill_kwargs["specprefill_system_end"] = kwargs.pop(
                 "specprefill_system_end"
             )
+        # LSA decode-time repair quota (#1707): forwarded per request when
+        # the API surface sends lsa_repair_pages; absent/None keeps default 0.
+        lsa_repair_kwargs = {}
+        if kwargs.get("lsa_repair_pages") is not None:
+            lsa_repair_kwargs["lsa_repair_pages"] = int(kwargs.pop("lsa_repair_pages"))
 
         # Disconnect KV resume: optional externally-loaded KV checkpoint
         # (from kv_resume.load_resumable_kv) seeds the request so the
@@ -1492,6 +1497,7 @@ class BatchedEngine(BaseEngine):
             has_tools=bool(kwargs.pop("has_tools", False)),
             request_id=kwargs.pop("request_id", None),
             **specprefill_kwargs,
+            **lsa_repair_kwargs,
             **resume_kwargs,
         )
         finished_normally = False

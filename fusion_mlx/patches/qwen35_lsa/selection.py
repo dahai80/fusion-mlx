@@ -17,8 +17,10 @@ import os
 from dataclasses import dataclass
 
 import mlx.core as mx
+import numpy as np
 from fusion_lsa.core.index_space import LearnedProjection, rownorm
 from fusion_lsa.core.reference import read
+from fusion_lsa.core.repair import repair_memory_delta, select_repair_pages
 from fusion_lsa.index.incremental import IncrementalBucketIndex
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ logger = logging.getLogger(__name__)
 _SELECT_LOG = bool(os.environ.get("LSA_SELECT_LOG"))
 _PROBE_LO = int(os.environ.get("LSA_PROBE_LO", -1))
 _PROBE_HI = int(os.environ.get("LSA_PROBE_HI", -1))
+_REPAIR_LOG = bool(os.environ.get("LSA_REPAIR_LOG"))
 
 
 @dataclass(frozen=True)
@@ -54,11 +57,16 @@ class LsaLayerSelector:
         config: LsaSelectionConfig,
         rotary_dim: int,
         kv_heads: int,
+        kv_bytes_per_token: int = 0,
     ):
         self.projection = projection
         self.config = config
         self.rotary_dim = rotary_dim
         self.kv_heads = kv_heads
+        # Bytes of K+V storage one token occupies in one layer's cache; the
+        # attention wrapper fills this from its cache geometry so the repair
+        # memory-delta log reflects the real expanded-KV cost.
+        self.kv_bytes_per_token = kv_bytes_per_token
         self.index = IncrementalBucketIndex(
             config.pool_size, config.bucket_size, config.bucket_cap, config.window_size
         )
@@ -142,8 +150,13 @@ class LsaLayerSelector:
             self._tail_rows,
         )
 
-    def select(self, pre_rope_q: mx.array, position: int) -> mx.array:
-        # One decode step: [B, Hq, 1, dh] at sequence position -> selected key indices
+    def select(
+        self, pre_rope_q: mx.array, position: int, repair_count: int = 0
+    ) -> mx.array:
+        # One decode step: [B, Hq, 1, dh] at sequence position -> selected key indices.
+        # repair_count > 0 unions that many extra pages (exact q.k scoring over
+        # the full page index, same scoring as the select-probe) into the
+        # attention set; 0 keeps the static-tier path bit-identical.
         position = int(position)
         if self.index.key_count == 0:
             window_start = max(0, position + 1 - self.config.window_size)
@@ -160,6 +173,10 @@ class LsaLayerSelector:
             self.config.window_size,
         )
         picked = selected[0]
+        if repair_count > 0:
+            picked = self._append_repair(
+                query, position, picked, repair_count
+            )
         if _SELECT_LOG:
             # MLX has no boolean-mask indexing: compute min/max over a
             # where-clamped array instead of picked[picked >= 0]
@@ -192,3 +209,68 @@ class LsaLayerSelector:
             tail = mx.arange(self.index.key_count, position + 1, dtype=mx.int32)
             picked = mx.concatenate([picked, tail])
         return picked
+
+    def _append_repair(
+        self, query: mx.array, position: int, picked: mx.array, repair_count: int
+    ) -> mx.array:
+        # Query-dependent repair quota (fusion-lsa #12): pick repair_count
+        # extra closed pages by exact q.k over the full page index and add
+        # every row of those pages to the attention set. Disjointness holds
+        # by construction: the SSOT selector only returns pages outside the
+        # static set, static rows ⊆ closed pages, and repair pages ⊆ closed
+        # pages (the tail past the last close is never a candidate).
+        buckets = self.index.buckets()
+        page_size = buckets.cluster_block_size
+        per_page = buckets.block_bucket_count
+        visible_pages = min(
+            position // page_size, self.index.block_count
+        )
+        if visible_pages <= 0:
+            return picked
+        # Same scoring as the select-probe: unit query row dot normalized
+        # bucket centroids; a page's score is its best bucket.
+        scores = query.astype(mx.float32) @ buckets.bucket_centroids.T
+        page_scores = np.asarray(
+            scores[0][: visible_pages * per_page]
+            .reshape(visible_pages, per_page)
+            .max(axis=1)
+        )
+        # Static tier = pages that already contribute rows to `picked`
+        # (closed-page rows only; sink/window/tail rows past the last close
+        # map outside the page index and are dropped here).
+        picked_np = np.asarray(picked)
+        in_index = (picked_np >= 0) & (picked_np < self.index.key_count)
+        static = (
+            np.unique(picked_np[in_index] // page_size)
+            if in_index.any()
+            else np.array([], dtype=np.int64)
+        )
+        union = select_repair_pages(page_scores, static, repair_count)
+        static_ids = set(int(p) for p in static.tolist())
+        repair_ids = [int(p) for p in union.tolist() if int(p) not in static_ids]
+        if not repair_ids:
+            return picked
+        ends = [
+            min(p * page_size + page_size, self.index.key_count) for p in repair_ids
+        ]
+        extra = np.concatenate(
+            [np.arange(p * page_size, end, dtype=np.int32) for p, end in zip(repair_ids, ends)]
+        )
+        if _REPAIR_LOG:
+            logger.info(
+                "LSA repair pos=%d pages=%s static=%d pages delta_bytes=%d",
+                position,
+                repair_ids,
+                len(static_ids),
+                repair_memory_delta(
+                    len(repair_ids), page_size, self.kv_bytes_per_token
+                ),
+            )
+        else:
+            logger.debug(
+                "LSA repair pos=%d pages=%s static=%d pages",
+                position,
+                repair_ids,
+                len(static_ids),
+            )
+        return mx.concatenate([picked, mx.array(extra, mx.int32)])

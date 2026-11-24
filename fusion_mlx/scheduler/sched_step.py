@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 _STAGE_PROF_ON = os.environ.get("FUSION_SCHED_STAGE_PROFILE") == "1"
 from typing import Any
 
+from ..patches.qwen35_lsa.repair import reset_repair_pages, set_repair_pages
 from ..request import Request, RequestOutput, RequestStatus
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
@@ -105,6 +106,25 @@ def _sync_paged_pool_active(self) -> None:
 
 
 def step(self) -> SchedulerOutput:
+    # LSA decode-time repair quota (#1707 / fusion-lsa #12): the per-request
+    # `lsa_repair_pages` value travels to the attention layer through a
+    # ContextVar because the attention path only sees tensors. The scheduler
+    # step owns the request set, so publish the max quota of the running
+    # requests here (single-stream LSA decode has exactly one). Batched
+    # decode falls back to the dense path and ignores the value.
+    repair = 0
+    for req in self.running.values():
+        value = getattr(req, "_lsa_repair_pages", 0)
+        if value:
+            repair = max(repair, int(value))
+    token = set_repair_pages(repair)
+    try:
+        return self._step_impl()
+    finally:
+        reset_repair_pages(token)
+
+
+def _step_impl(self) -> SchedulerOutput:
     output = SchedulerOutput()
     self._step_counter += 1
 
