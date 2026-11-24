@@ -174,9 +174,7 @@ class LsaLayerSelector:
         )
         picked = selected[0]
         if repair_count > 0:
-            picked = self._append_repair(
-                query, position, picked, repair_count
-            )
+            picked = self._append_repair(query, position, picked, repair_count)
         if _SELECT_LOG:
             # MLX has no boolean-mask indexing: compute min/max over a
             # where-clamped array instead of picked[picked >= 0]
@@ -222,9 +220,7 @@ class LsaLayerSelector:
         buckets = self.index.buckets()
         page_size = buckets.cluster_block_size
         per_page = buckets.block_bucket_count
-        visible_pages = min(
-            position // page_size, self.index.block_count
-        )
+        visible_pages = min(position // page_size, self.index.block_count)
         if visible_pages <= 0:
             return picked
         # Same scoring as the select-probe: unit query row dot normalized
@@ -254,7 +250,10 @@ class LsaLayerSelector:
             min(p * page_size + page_size, self.index.key_count) for p in repair_ids
         ]
         extra = np.concatenate(
-            [np.arange(p * page_size, end, dtype=np.int32) for p, end in zip(repair_ids, ends)]
+            [
+                np.arange(p * page_size, end, dtype=np.int32)
+                for p, end in zip(repair_ids, ends)
+            ]
         )
         if _REPAIR_LOG:
             logger.info(
