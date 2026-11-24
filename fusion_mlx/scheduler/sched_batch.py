@@ -1113,6 +1113,23 @@ def _advance_chunked_prefills(
     if not self.prefilling:
         return
 
+    # #1706 (Gate W3): a real request landing mid-round must not wait for
+    # the whole warm replay burst. Chunked prefill advances states in
+    # admission order, so warm heads admitted first prefill completely
+    # before the real request's first chunk runs (measured +4.9-8.4s probe
+    # delay). Skip warm chunks for this step whenever any non-warm request
+    # exists anywhere in the scheduler; warm state is resumable
+    # (tokens_remaining), so yielding at a chunk boundary is free and the
+    # burst resumes once real traffic drains.
+    queues = [self.waiting, self.prefilling]
+    if isinstance(self.running, dict):
+        queues.append(self.running.values())
+    else:
+        queues.append(self.running)
+    real_traffic = any(
+        not getattr(r, "_warm_request", False) for q in queues for r in q
+    )
+
     still_prefilling: deque[Request] = deque()
 
     for request in self.prefilling:
@@ -1122,6 +1139,12 @@ def _advance_chunked_prefills(
         # State missing means the request was aborted and cleaned up by
         # _do_abort_request() between steps — just skip it.
         if state is None:
+            continue
+
+        if real_traffic and getattr(request, "_warm_request", False):
+            # Real traffic present: hold this warm chunk back (see the
+            # real_traffic comment above) and keep its place in the queue.
+            still_prefilling.append(request)
             continue
 
         try:
