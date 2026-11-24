@@ -3933,6 +3933,119 @@ class TestBatchGeneratorAllTokens:
         sync_clear.assert_called_once_with(scheduler._stream)
         assert scheduled == [request]
 
+    def _warm_prefill_state(self, rid):
+        """Chunked-prefill state for a warm replay request with work left."""
+        request = Request(
+            request_id=rid,
+            prompt=[1] * 8,
+            sampling_params=SamplingParams(max_tokens=1, temperature=0.0),
+        )
+        request.prompt_token_ids = [1] * 8
+        request.num_prompt_tokens = 8
+        request._warm_request = True
+        state = _PrefillState(
+            request=request,
+            cache=[MagicMock()],
+            tokens_remaining=mx.array([[1, 1, 1, 1]]),
+            last_token=[1],
+            tokens_processed=4,
+            base_size=0,
+            emitted_boundaries={},
+            boundary_enabled=False,
+            block_size=0,
+            total_length=8,
+            sampler=MagicMock(),
+            sm=MagicMock(),
+            per_row_lps=[],
+        )
+        return request, state
+
+    def _real_prefill_state(self, rid):
+        request = Request(
+            request_id=rid,
+            prompt=[9] * 4,
+            sampling_params=SamplingParams(max_tokens=4),
+        )
+        request.prompt_token_ids = [9] * 4
+        request.num_prompt_tokens = 4
+        state = _PrefillState(
+            request=request,
+            cache=[MagicMock()],
+            tokens_remaining=mx.array([[9, 9]]),
+            last_token=[9],
+            tokens_processed=2,
+            base_size=0,
+            emitted_boundaries={},
+            boundary_enabled=False,
+            block_size=0,
+            total_length=4,
+            sampler=MagicMock(),
+            sm=MagicMock(),
+            per_row_lps=[],
+        )
+        return request, state
+
+    def _seed_prefilling(self, scheduler, pairs):
+        for request, state in pairs:
+            scheduler.prefilling.append(request)
+            scheduler._prefill_states[request.request_id] = state
+
+    def test_warm_chunk_yields_to_real_prefill(self, mock_model, mock_tokenizer):
+        """A warm head behind a real request must not advance its chunk."""
+        scheduler = self._make_scheduler(mock_model, mock_tokenizer)
+        warm_req, warm_state = self._warm_prefill_state("warm-1")
+        real_req, real_state = self._real_prefill_state("req-real")
+        self._seed_prefilling(
+            scheduler, [(warm_req, warm_state), (real_req, real_state)]
+        )
+        advanced = []
+
+        def fake_step(state):
+            advanced.append(state.request.request_id)
+            return False
+
+        scheduler._step_prefill_chunk = fake_step
+        scheduler._advance_chunked_prefills([], [])
+
+        assert advanced == ["req-real"]
+        assert list(scheduler.prefilling) == [warm_req, real_req]
+
+    def test_warm_chunk_yields_to_real_waiting(self, mock_model, mock_tokenizer):
+        """Warm chunks hold back even when real traffic is still in waiting."""
+        scheduler = self._make_scheduler(mock_model, mock_tokenizer)
+        warm_req, warm_state = self._warm_prefill_state("warm-1")
+        self._seed_prefilling(scheduler, [(warm_req, warm_state)])
+        waiting_req = Request(
+            request_id="req-waiting",
+            prompt=[7] * 4,
+            sampling_params=SamplingParams(max_tokens=4),
+        )
+        scheduler.waiting.append(waiting_req)
+        advanced = []
+        scheduler._step_prefill_chunk = lambda state: (
+            advanced.append(state.request.request_id) or False
+        )
+
+        scheduler._advance_chunked_prefills([], [])
+
+        assert advanced == []
+        assert list(scheduler.prefilling) == [warm_req]
+
+    def test_warm_chunks_advance_when_no_real_traffic(self, mock_model, mock_tokenizer):
+        """Idle scheduler: warm replay chunks must advance normally."""
+        scheduler = self._make_scheduler(mock_model, mock_tokenizer)
+        warm_a, state_a = self._warm_prefill_state("warm-1")
+        warm_b, state_b = self._warm_prefill_state("warm-2")
+        self._seed_prefilling(scheduler, [(warm_a, state_a), (warm_b, state_b)])
+        advanced = []
+        scheduler._step_prefill_chunk = lambda state: (
+            advanced.append(state.request.request_id) or False
+        )
+
+        scheduler._advance_chunked_prefills([], [])
+
+        assert advanced == ["warm-1", "warm-2"]
+
 
 class MockTokenizer:
     """Real tokenizer stub for think-prefix detection tests.
