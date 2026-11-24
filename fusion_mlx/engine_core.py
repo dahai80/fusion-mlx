@@ -2286,6 +2286,7 @@ class EngineCore:
         specprefill_keep_pct: float | None = None,
         specprefill_threshold: int | None = None,
         specprefill_system_end: int | None = None,
+        lsa_repair_pages: int = 0,
         streaming: bool = False,
         has_tools: bool = False,
         resume_prompt_cache: list | None = None,
@@ -2338,6 +2339,11 @@ class EngineCore:
             request._specprefill_threshold = specprefill_threshold
         if specprefill_system_end is not None and specprefill_system_end > 0:
             request.specprefill_system_end = specprefill_system_end
+        # LSA decode-time repair quota (#1707 / fusion-lsa #12): per-request
+        # extra page count the scheduler publishes each step. 0 (default) =
+        # pure static tier, no behavior change.
+        if lsa_repair_pages:
+            request._lsa_repair_pages = int(lsa_repair_pages)
 
         logger.info(
             "add_request: id=%s, prompt=%r, max_tokens=%d",

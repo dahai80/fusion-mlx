@@ -28,6 +28,7 @@ import mlx.nn as nn
 from fusion_lsa.core.index_space import LearnedProjection
 from mlx_lm.models.base import scaled_dot_product_attention
 
+from .repair import current_repair_pages
 from .selection import LsaLayerSelector, LsaSelectionConfig
 from .tier import TIER_THRESHOLD, TierConfig
 
@@ -39,9 +40,14 @@ def build_selector(
     config: LsaSelectionConfig | None,
     rotary_dim: int,
     kv_heads: int,
+    kv_bytes_per_token: int = 0,
 ) -> LsaLayerSelector:
     return LsaLayerSelector(
-        projection, config or LsaSelectionConfig(), rotary_dim, kv_heads
+        projection,
+        config or LsaSelectionConfig(),
+        rotary_dim,
+        kv_heads,
+        kv_bytes_per_token=kv_bytes_per_token,
     )
 
 
@@ -210,7 +216,8 @@ class LsaAttention(nn.Module):
             elif dequant is not None:
                 self._tq_indexed = True
         self.selector.append_keys(keys)
-        picked = self.selector.select(queries, offset)
+        repair_count = current_repair_pages()
+        picked = self.selector.select(queries, offset, repair_count)
         self.last_picked = picked
         if dequant is not None:
             # the quantized state returned by update_and_fetch cannot be
@@ -261,7 +268,19 @@ def wrap_lsa_layers(
         projection = LearnedProjection(
             roles["query_projection"], roles["key_projection"]
         )
-        selector = build_selector(projection, config, rotary_dim, kv_heads)
+        # K+V bytes one token occupies in this layer's cache: k_proj/v_proj
+        # output dims times the weight dtype size (the repair memory-delta
+        # log's per-token cost; packed TQ caches dequantize to this shape).
+        kv_bytes = int(
+            (
+                layer.self_attn.k_proj.weight.shape[0]
+                + layer.self_attn.v_proj.weight.shape[0]
+            )
+            * layer.self_attn.k_proj.weight.dtype.size
+        )
+        selector = build_selector(
+            projection, config, rotary_dim, kv_heads, kv_bytes_per_token=kv_bytes
+        )
         layer_tier = None
         if tier_config is not None and index in tier_config.weights:
             layer_tier = tier_config

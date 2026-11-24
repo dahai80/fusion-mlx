@@ -393,6 +393,10 @@ class ChatCompletionRequest(BaseModel):
     specprefill_keep_pct: float | None = None
     # SpecPrefill: per-request threshold override (min tokens to trigger, None = use model setting)
     specprefill_threshold: int | None = None
+    # LSA decode-time repair quota (#1707): extra closed pages (512 tokens
+    # each) re-selected by exact q.k score at every decode step and unioned
+    # into the attention set. None/0 = pure static tier, zero behavior change.
+    lsa_repair_pages: int | None = Field(None, ge=0)
     # Seed for reproducible generation (best-effort)
     seed: int | None = None
     # #1528: per-request speculative decoding override (native MTP chain-K).
