@@ -4031,9 +4031,7 @@ class TestBatchGeneratorAllTokens:
         assert advanced == []
         assert list(scheduler.prefilling) == [warm_req]
 
-    def test_warm_chunks_advance_when_no_real_traffic(
-        self, mock_model, mock_tokenizer
-    ):
+    def test_warm_chunks_advance_when_no_real_traffic(self, mock_model, mock_tokenizer):
         """Idle scheduler: warm replay chunks must advance normally."""
         scheduler = self._make_scheduler(mock_model, mock_tokenizer)
         warm_a, state_a = self._warm_prefill_state("warm-1")
