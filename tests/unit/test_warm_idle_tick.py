@@ -126,6 +126,10 @@ def test_idle_past_threshold_queues_then_pops_one_per_tick(wl_path):
     assert req._warm_request is True
     assert req.sampling_params.max_tokens == 1
     assert req.sampling_params.temperature == 0.0
+    # Warm work must lose admission ordering to any real request: with the
+    # default priority a probe arriving mid-round queued behind the whole
+    # warm prefill burst (+4.9s median, Gate W3).
+    assert req.priority > 0
     EngineCore._warm_tick(fake, t0 + warm_list.warm_idle_threshold_s() + 3, False)
     assert len(sched.added) == 2
     assert sched.added[1].request_id == "warm-2"

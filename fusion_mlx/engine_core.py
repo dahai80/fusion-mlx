@@ -1840,6 +1840,12 @@ class EngineCore:
                     request_id=f"warm-{self._warm_seq}",
                     prompt=head,
                     sampling_params=SamplingParams(temperature=0.0, max_tokens=1),
+                    # Below every real request (default priority 0): when
+                    # traffic lands mid-round, the probe must jump ahead of
+                    # the remaining warm heads instead of queueing behind
+                    # up to topk x head_ids tokens of prefill (measured
+                    # +4.9s median at defaults — Gate W3).
+                    priority=10,
                 )
                 req._warm_request = True
                 self.scheduler.add_request(req)
