@@ -14,6 +14,11 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.72] - 2026-11-25 — TurboQuant stream fallback + Metal load retry
+
+- Fixed: **TurboQuant source quantization on threads without a default GPU stream (#1712/#1713)** — long-context serving with k8v4 hit a sticky failure: `mx.eval` inside the fp16 → quantized conversion raised "There is no Stream(gpu, 0) in current thread" on threads with no default stream, and because the fp16 cache never converted, the conversion re-ran and re-raised on every subsequent request (1530 consecutive 400s until restart). The quantize-in now retries inside an explicit default-GPU-stream context with a `#1712` WARNING; other errors still propagate.
+- Fixed: **model load retried once on Metal command-buffer timeout (#1711/#1714)** — a single timed-out Metal command buffer during a large model load (`kIOGPUCommandBufferCallbackErrorTimeout`, seen loading a 48B model under memory pressure) used to fail the whole engine boot; LLM and VLM load paths now retry once on that error class. Note: the three 09:42/09:54/10:10 process deaths in #1711 ended with no Python traceback — an out-of-process (jetsam-style) kill under `oom_risk=high`; shedding resident models under that condition is tracked as follow-up investigation in the issue.
+
 ## [0.10.71] - 2026-11-25 — cache durability + warm-replay admission + Kimi tool-call id canonicalization
 
 - Added: **LSA decode-time repair quota (`lsa_repair_pages`, #1709)** — bounded decode-time page repair for LSA models instead of unbounded work.
