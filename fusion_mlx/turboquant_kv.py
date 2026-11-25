@@ -213,7 +213,26 @@ def make_turboquant_kv_cache(
         else:
             keys, values = source.state[:2]
         if keys is not None:
-            cache.update_and_fetch(keys, values)
+            try:
+                cache.update_and_fetch(keys, values)
+            except RuntimeError as e:
+                # #1712: on a thread whose default GPU stream was never set
+                # (e.g. SSD-restore / worker threads), mx.eval inside
+                # update_and_fetch raises "There is no Stream(gpu, 0) in
+                # current thread". Left unhandled this poisons every
+                # subsequent request (the fp16 cache never converts, so the
+                # conversion re-runs and re-raises per request). Retry the
+                # quantization on an explicit default-GPU-stream context.
+                if "no Stream" not in str(e) and "Stream(gpu" not in str(e):
+                    raise
+                logger.warning(
+                    "TurboQuant: source quantization ran on a thread "
+                    "without a default GPU stream (%s); retrying on the "
+                    "default GPU stream (#1712)",
+                    e,
+                )
+                with mx.stream(mx.default_stream(mx.gpu)):
+                    cache.update_and_fetch(keys, values)
     return cache
 
 
