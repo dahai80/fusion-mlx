@@ -14,6 +14,14 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.71] - 2026-11-25 — cache durability + warm-replay admission + Kimi tool-call id canonicalization
+
+- Added: **LSA decode-time repair quota (`lsa_repair_pages`, #1709)** — bounded decode-time page repair for LSA models instead of unbounded work.
+- Added: **low-rank factorization for GDN recurrent states in boundary snapshots (#1703)** — smaller boundary snapshot payloads on GDN/hybrid models.
+- Fixed: **warm-list durable flush, block-store for replay caches, idle round latch (#1705)** — warm replay state survives restarts; replay caches backed by the block store; idle rounds latch instead of re-arming.
+- Fixed: **warm replay prefill chunks held back while real traffic is present (#1708)** — replay prefill no longer competes with live requests for admission.
+- Fixed: **history tool-call ids canonicalized for the Kimi wire format (#1704)** — prior assistant turns' tool-call ids are rewritten to the format Kimi-Linear expects, so multi-turn tool conversations don't desync on the wire.
+
 ## [0.10.70] - 2026-11-23 — uid-row registry epoch invalidation (tool-call degradation fix)
 
 - Fixed: **scheduler uid-row registry entries outlive their generator epoch (#1694/#1700)** — after a mid-flight BatchGenerator reset (prefill-abort / cache-corruption paths), realignment could restore a dead request's sampler/logits-processors onto a live row whose recycled uid hit a stale registry entry, producing fluent but wrongly-formatted output (the "tool calls degrade to plain text" signature). Registry rows now carry the generator epoch they were registered in; both generator-discard sites bump the epoch and realignment treats stale-epoch entries as missing (keep current row state), making the unsound state unreachable.
