@@ -460,7 +460,11 @@ class BatchedEngine(BaseEngine):
             from ..engine.gguf_guard import assert_not_gguf
 
             assert_not_gguf(self._model_name, engine_kind="LLM")
-            model, tokenizer = load(self._model_name, **load_kwargs)
+            from ..utils.model_loading import load_with_gpu_timeout_retry
+
+            model, tokenizer = load_with_gpu_timeout_retry(
+                load, self._model_name, **load_kwargs
+            )
             # Post-load transforms (IndexCache freq dispatch, etc.) run on
             # the load thread so mutated weights bind to the same stream as
             # prefill/decode (#KV-0 same-thread rule). Settings-driven;

@@ -389,8 +389,12 @@ class VLMBatchedEngine(BaseEngine):
             from ..engine.gguf_guard import assert_not_gguf
 
             assert_not_gguf(self._model_name, engine_kind="VLM")
-            model, processor = vlm_load(
-                self._model_name, trust_remote_code=self._trust_remote_code
+            from ..utils.model_loading import load_with_gpu_timeout_retry
+
+            model, processor = load_with_gpu_timeout_retry(
+                vlm_load,
+                self._model_name,
+                trust_remote_code=self._trust_remote_code,
             )
             elapsed = time.monotonic() - start
             self._model_load_duration = elapsed

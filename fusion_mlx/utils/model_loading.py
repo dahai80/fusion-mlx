@@ -473,3 +473,29 @@ def expand_per_layer_quant_keys(config):
 
 def get_tokenizer_config(model_name, *, trust_remote_code=False):
     return None
+
+
+def is_metal_command_buffer_timeout(exc: BaseException) -> bool:
+    """True for a Metal GPU command-buffer timeout raised during model load."""
+    text = str(exc)
+    return "GPU Timeout" in text or "Command buffer" in text
+
+
+def load_with_gpu_timeout_retry(load_fn, *args, **kwargs):
+    """#1711: run a model load, retrying once on a Metal command-buffer
+    timeout. Under memory pressure a single command buffer can time out
+    mid-load (kIOGPUCommandBufferCallbackErrorTimeout) and fail the whole
+    engine boot; the transient pressure often clears between attempts.
+    All other exceptions propagate unchanged.
+    """
+    try:
+        return load_fn(*args, **kwargs)
+    except RuntimeError as e:
+        if not is_metal_command_buffer_timeout(e):
+            raise
+        logger.warning(
+            "Model load hit a Metal command-buffer timeout (%s); "
+            "retrying once (#1711)",
+            e,
+        )
+        return load_fn(*args, **kwargs)
