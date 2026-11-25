@@ -66,12 +66,61 @@ def resolve_memory_limit_gb(memory_limit_gb: float) -> float:
     return auto
 
 
+def _exit_reason(proc) -> str:
+    # Decode multiprocessing exitcode (-N = killed by signal N) into a
+    # human-readable string for #1716 forensics.
+    import signal
+
+    code = proc.exitcode
+    if code is None:
+        return "still-running"
+    if code < 0:
+        try:
+            return f"signal {-code} ({signal.Signals(-code).name})"
+        except ValueError:
+            return f"signal {-code} (unknown)"
+    return f"exit {code}"
+
+
+def _install_child_signal_probe(conn) -> None:
+    # #1716 item 1: child-side termination probe. On SIGTERM/SIGQUIT the
+    # child sends a `child_signal` note over the training pipe before
+    # restoring the default disposition and re-raising, so the parent logs
+    # who signaled it instead of only seeing exitcode=-N. SIGKILL (-9) is
+    # unhandleable by design — an unlogged -9 means the kill came from
+    # outside this process (jetsam, launchd, external watchdog).
+    import signal
+
+    def _make_handler(signame: str):
+        def _handler(signum, frame):
+            try:
+                conn.send({"type": "child_signal", "signal": signame})
+            except Exception:
+                pass
+            signal.signal(signum, signal.SIG_DFL)
+            import os
+
+            os.kill(os.getpid(), signum)
+
+        return _handler
+
+    for name in ("SIGTERM", "SIGQUIT"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            signal.signal(sig, _make_handler(name))
+        except (ValueError, OSError):
+            pass
+
+
 def _child_main(conn, spec: dict, limit_gb: float):
     # Child entry (spawn context). Must stay module-level for pickling.
     import signal
     import sys
 
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+    _install_child_signal_probe(conn)
     try:
         if limit_gb > 0:
             import mlx.core as mx
@@ -138,7 +187,7 @@ def run_training_process(
         except Exception:
             logger.exception("on_started callback failed")
 
-    outcome = {"result": None, "error": None}
+    outcome = {"result": None, "error": None, "child_signal": None}
     conn = parent_conn
 
     def _handle(msg: dict) -> bool:
@@ -149,6 +198,16 @@ def run_training_process(
                     on_event(msg.get("event", {}))
                 except Exception:
                     logger.exception("on_event callback failed")
+            return False
+        if mtype == "child_signal":
+            signame = msg.get("signal") or "unknown"
+            outcome["child_signal"] = signame
+            logger.warning(
+                "training child pid=%d received %s (self-reported via pipe, "
+                "#1716); kill source is whoever sent the signal",
+                proc.pid,
+                signame,
+            )
             return False
         if mtype == "done":
             outcome["result"] = msg.get("result") or {}
@@ -190,6 +249,9 @@ def run_training_process(
     # Caller already runs on a worker thread (asyncio.to_thread); a plain
     # blocking drain keeps ordering simple and avoids races.
     _drain()
+    # Snapshot before join reaps the child — after join psutil can no
+    # longer see the pid (#1716 forensics).
+    peak_rss_snapshot = _child_peak_rss_gb(proc.pid)
     proc.join(5)
     if proc.is_alive():
         logger.warning("training child %d still alive after final message", proc.pid)
@@ -197,10 +259,41 @@ def run_training_process(
         raise TrainingProcessFailed(outcome["error"])
     if outcome["result"] is not None:
         return outcome["result"]
+    reason = _exit_reason(proc)
+    peak_rss = peak_rss_snapshot
+    note = outcome.get("child_signal")
+    signal_part = f", last-reported-signal={note}" if note else ""
+    rss_part = f", peak_rss_gb={peak_rss:.1f}" if peak_rss is not None else ""
+    # #1716 item 2: distinct forensic log so an unattributed SIGKILL is
+    # visible as an EXTERNAL kill (RSS hard stop / enforcer / in-parent
+    # kill_training_process all log their own lines with reasons).
+    if proc.exitcode is not None and proc.exitcode < 0:
+        logger.warning(
+            "training child pid=%d died from %s%s%s with no error report; "
+            "a negative exitcode means an external killer (not the RSS hard "
+            "stop, not the memory enforcer, not a parent cancel) — check "
+            "jetsam (`log show --predicate 'eventMessage CONTAINS jetsam'`), "
+            "launchd, and external watchdogs for pid=%d (#1716)",
+            proc.pid,
+            reason,
+            signal_part,
+            rss_part,
+            proc.pid,
+        )
     raise TrainingProcessKilled(
         f"training process died without reporting (pid={proc.pid}, "
-        f"exitcode={proc.exitcode})"
+        f"exitcode={proc.exitcode}, reason={reason}{signal_part}{rss_part})"
     )
+
+
+def _child_peak_rss_gb(pid: int) -> float | None:
+    # Best-effort RSS snapshot at death time for #1716 forensics.
+    try:
+        import psutil
+
+        return psutil.Process(pid).memory_info().rss / (2**30)
+    except Exception:
+        return None
 
 
 def child_rss_hard_stop_watcher(get_proc, stop, record_note) -> None:
