@@ -14,6 +14,13 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.74] - 2026-11-26 — single-model memory-hold + temp=0 log fidelity + durable CLI shim
+
+### Fixed
+- **#1722 (parts 1+2)**: sustained soft memory pressure no longer aborts the only loaded non-pinned model. The #1473 busy-victim escalation was aborting the sole serving engine's 131K prefill every poll; the client retry recreated the identical pressure (10+ consecutive aborts), and the post-abort unload turned the churn into a 503 admission loop until restart. Soft-tier escalation now holds on the single-model case with a throttled warning carrying usage/target/ceiling; hard tier and training abort unaffected.
+- **#1723**: OpenAI `/chat` entry log reported `temp=0.7` for explicit `temperature=0` requests (falsy-zero). Only an absent/unset value falls back to the default now; greedy requests are distinguishable in the log.
+- **#1733**: the app-managed `fusion` CLI shim no longer hardcodes the mounted DMG bundle path (durable copy under `~/.fusion-mlx/bin` when the bundle is on `/Volumes` or unwritable), no longer takes over a standalone `fusion` already on PATH, and no longer rewrites a user-managed or already-current shim on relaunch.
+
 ## [0.10.73] - 2026-11-26 — host-pressure shed + VLM TurboQuant flag + queue-wait observability
 
 - Fixed: **memory enforcer sheds load when the HOST runs low (#1711/#1719)** — the soft/hard watermarks only watched the process footprint against its own ceiling, so when co-tenants grew, macOS ran out of memory while this process was flat and under the ceiling: three jetsam-style SIGKILLs on 2026-11-25 with `/v1/health` reporting `avail=6.6%` and zero enforcer lines in all three log rotations. The enforcer now applies a host-pressure floor: when host available memory drops below `FUSION_MLX_HOST_MIN_FREE_GB` (default 8.0 GiB, 0 disables), pressure is floored at "soft" (LRU eviction + admission pause); below half the reserve it escalates to "hard".
