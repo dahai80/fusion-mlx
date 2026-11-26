@@ -75,12 +75,16 @@ def _log_completion_summary(request, output, model_name=""):
     completion_tps = (
         (completion_tokens / max(gen_time - ttft, 0.001)) if gen_time > ttft else 0
     )
+    # #1717: arrival->scheduler-insert wait, surfaced separately from ttft
+    # (ttft only covers gen_start->first token and hides executor queue time).
+    _qw = queue_wait_seconds(request)
+    queue_wait = _qw if _qw is not None else 0.0
 
     logger.info(
         "| completed | model=%s | prompt_tokens=%d | completion_tokens=%d | "
         "cached_tokens=%d | ttft=%.2fs | prompt_eval=%.1fms/token | "
         "completion_eval=%.1fms/token | prompt_tps=%.1f | completion_tps=%.1f | "
-        "total=%.1fs | finish=%s",
+        "total=%.1fs | queue_wait=%.2fs | finish=%s",
         model_name,
         prompt_tokens,
         completion_tokens,
@@ -91,6 +95,7 @@ def _log_completion_summary(request, output, model_name=""):
         prompt_tps,
         completion_tps,
         total_time,
+        queue_wait,
         finish_reason,
     )
 
@@ -99,7 +104,11 @@ import mlx.core as mx
 
 from ..exceptions import is_cache_corruption_error
 from ..prefill_progress import get_prefill_tracker
-from ..request import RequestOutput, RequestStatus
+from ..request import RequestOutput, RequestStatus, queue_wait_seconds
+
+# #1717: log the arrival->insert queue wait when it exceeds this many
+# seconds. Diagnostic only.
+_QUEUE_WAIT_LOG_S = 1.0
 
 # Module-level alias so Scheduler.__init__ can fall back to mlx-lm's default
 # stream when no per-engine stream is provided.
@@ -241,6 +250,18 @@ def _process_batch_responses(
         # Track first token arrival time
         if request.first_token_at is None and request.num_output_tokens >= 1:
             request.first_token_at = time.monotonic()
+            # #1717: surface the arrival->insert queue wait separately from
+            # TTFT. TTFT starts at generation start, so time spent waiting for
+            # the single-worker executor to become free (in-flight step under
+            # GPU contention) was invisible. One-time log per request.
+            _queue_wait = queue_wait_seconds(request)
+            if _queue_wait is not None and _queue_wait > _QUEUE_WAIT_LOG_S:
+                logger.info(
+                    "Request %s queue wait %.1fs (arrival->scheduler insert, "
+                    "#1717); ttft-from-gen-start excludes it",
+                    request_id,
+                    _queue_wait,
+                )
 
         # Create output — skip O(N) output_token_ids copy for streaming;
         # only materialize the full list when the request finishes.

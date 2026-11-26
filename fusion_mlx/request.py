@@ -261,6 +261,18 @@ class Request:
         return self.request_id == other.request_id
 
 
+def queue_wait_seconds(request: "Request") -> float | None:
+    # #1717: arrival -> scheduler-insert wait. _admit_time is recorded inside
+    # scheduler.add_request (RT-10), which runs on the single-worker executor
+    # BEHIND any in-flight step, so this gap covers executor queue time that
+    # TTFT (measured from generation start) never sees. None when the request
+    # has not been inserted yet.
+    admit = getattr(request, "_admit_time", None)
+    if admit is None or request.arrival_time is None:
+        return None
+    return max(0.0, admit - request.arrival_time)
+
+
 @dataclass
 class RequestOutput:
     request_id: str

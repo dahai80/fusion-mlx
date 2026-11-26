@@ -20,7 +20,7 @@ import mlx.core as mx
 from .exceptions import PrefillMemoryExceededError
 from .model_registry import get_registry
 from .output_collector import RequestOutputCollector, RequestStreamState
-from .request import Request, RequestOutput, SamplingParams
+from .request import Request, RequestOutput, SamplingParams, queue_wait_seconds
 from .utils.compile_cache import (
     clear_thread_compile_cache,
     compile_cache_clear_available,
@@ -447,6 +447,10 @@ _LLM_WATCHDOG_PREFILL_TOK_PER_S = 50.0
 _ADD_REQUEST_SUBMIT_TIMEOUT_S = float(
     os.environ.get("FUSION_LLM_ADD_REQUEST_TIMEOUT", "120")
 )
+# #1717: warn when a request waited longer than this between engine-level
+# arrival and the actual scheduler insert (executor was busy with an
+# in-flight step). Purely diagnostic — no behavior change.
+_INSERT_QUEUE_WAIT_WARN_S = 1.0
 
 # #1354 audit M4: how long aclose() waits for the engine loop task to unwind
 # after cancel before nulling scheduler/model under it anyway.
@@ -2377,6 +2381,22 @@ class EngineCore:
                     ),
                     timeout=_ADD_REQUEST_SUBMIT_TIMEOUT_S,
                 )
+                # #1717: the insert itself just appended to a queue, but it
+                # executed on the single-worker executor BEHIND whatever step
+                # was already in flight. Under GPU contention one step can run
+                # for minutes (observed: 25-token request waited 113s between
+                # this log line and the scheduler insert; completion_tps 0.3
+                # with a training child on the GPU). Surface that gap — it is
+                # invisible in TTFT, which only measures from generation start.
+                _queue_wait = queue_wait_seconds(request)
+                if _queue_wait is not None and _queue_wait > _INSERT_QUEUE_WAIT_WARN_S:
+                    logger.warning(
+                        "add_request: id=%s queue wait %.1fs before scheduler "
+                        "insert (single-worker executor busy with in-flight "
+                        "step; #1717)",
+                        request_id,
+                        _queue_wait,
+                    )
             except TimeoutError:
                 logger.error(
                     "add_request: id=%s admission timed out after %.0fs "
