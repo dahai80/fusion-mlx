@@ -1187,6 +1187,14 @@ Examples:
         action="store_true",
         help="Force load model as text-only LLM even when auto-detection would route it to the multimodal/VLM path. Escape hatch for incomplete vision-tower checkpoints (#393) and text-only forks of multimodal architectures whose config.json still declares vision_config.",
     )
+    # Remote-code models (e.g. Kimi-Linear) need explicit opt-in at both
+    # the model auto-class and the tokenizer load.
+    serve_parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        default=False,
+        help="Trust remote code (custom modeling/tokenizer code from the repo)",
+    )
     # Generation defaults
     serve_parser.add_argument(
         "--default-temperature",

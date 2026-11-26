@@ -453,7 +453,12 @@ class BatchedEngine(BaseEngine):
                 self._model_name,
                 self._trust_remote_code,
             )
-            load_kwargs = {"tokenizer_config": tokenizer_config}
+            load_kwargs = {
+                "tokenizer_config": tokenizer_config,
+                # Model-side opt-in too: the auto-class for remote-code
+                # architectures resolves trust separately from the tokenizer.
+                "trust_remote_code": self._trust_remote_code,
+            }
             if self._lora_path:
                 load_kwargs["adapter_path"] = self._lora_path
                 logger.info("Applying LoRA adapter: %s", self._lora_path)

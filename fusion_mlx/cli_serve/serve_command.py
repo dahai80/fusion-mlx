@@ -1065,6 +1065,7 @@ def serve_command(args):
                 args, "no_openai_harmony_streaming", False
             ),
             lora_path=getattr(args, "lora_path", None),
+            trust_remote_code=getattr(args, "trust_remote_code", False),
         )
     except Exception as e:
         # Show clean error instead of raw traceback. Catch the typed
