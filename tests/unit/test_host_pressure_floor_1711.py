@@ -64,16 +64,24 @@ class TestHostPressureFloorLevel:
 
 
 class TestCheckAndEnforceEscalation:
+    def _make_escalation_enforcer(self, monkeypatch):
+        # #1711 escalation shape with ALL ambient inputs pinned: the ceiling
+        # must come from the patch below, not settings.json — CI runners have
+        # no custom ceiling configured and a small default ceiling would send
+        # _check_and_enforce into the eviction loop against the Mock pool.
+        _clear_env(monkeypatch)
+        monkeypatch.setenv("FUSION_MLX_HOST_MIN_FREE_GB", "8")
+        enforcer = _make_enforcer()
+        gb = 1024**3
+        enforcer._get_hard_limit_bytes = Mock(return_value=120 * gb)
+        enforcer._current_usage_bytes = Mock(return_value=40 * gb)
+        return enforcer
+
     def test_footprint_ok_but_host_low_escalates_to_soft(self, monkeypatch):
         # #1711 production shape: process flat under its ceiling (current
         # < soft), host avail 6.6% -> the enforcer must still shed load.
-        _clear_env(monkeypatch)
-        monkeypatch.setenv("FUSION_MLX_HOST_MIN_FREE_GB", "8")
-        enforcer = _make_enforcer(
-            memory_guard_tier="custom", memory_guard_custom_ceiling_gb=120.0
-        )
+        enforcer = self._make_escalation_enforcer(monkeypatch)
         gb = 1024**3
-        enforcer._current_usage_bytes = Mock(return_value=40 * gb)
         with (
             patch_attr(enforcer, "_host_available_bytes", lambda: 6 * gb),
             patch_attr(me, "get_phys_footprint", lambda: 40 * gb),
@@ -82,13 +90,8 @@ class TestCheckAndEnforceEscalation:
         assert enforcer._pressure_level == "soft"
 
     def test_host_room_keeps_level_ok(self, monkeypatch):
-        _clear_env(monkeypatch)
-        monkeypatch.setenv("FUSION_MLX_HOST_MIN_FREE_GB", "8")
-        enforcer = _make_enforcer(
-            memory_guard_tier="custom", memory_guard_custom_ceiling_gb=120.0
-        )
+        enforcer = self._make_escalation_enforcer(monkeypatch)
         gb = 1024**3
-        enforcer._current_usage_bytes = Mock(return_value=40 * gb)
         with (
             patch_attr(enforcer, "_host_available_bytes", lambda: 60 * gb),
             patch_attr(me, "get_phys_footprint", lambda: 40 * gb),
