@@ -88,6 +88,10 @@ def _make_enforcer(me, pool):
     # 100GB ceiling, usage 90GB: soft (85-95GB), never hard.
     enforcer._get_hard_limit_bytes = lambda: 100 * 1024**3
     enforcer._current_usage_bytes = lambda: 90 * 1024**3
+    # #1711: pin host telemetry — CI runners can have < 8GiB free, which
+    # would fire the host-pressure floor and change the expected level.
+    enforcer._host_available_bytes = lambda: 1 << 40
+    enforcer._host_floor_active = None
     return enforcer
 
 

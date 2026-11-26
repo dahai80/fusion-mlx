@@ -192,6 +192,17 @@ _TRAINING_GRACE_POLLS = int(os.environ.get("FUSION_TRAINING_FATAL_GRACE_POLLS", 
 # unload; clients re-route/retry). 0 = disabled (legacy warn-and-wait).
 _SOFT_BUSY_EVICT_POLLS = int(os.environ.get("FUSION_MLX_SOFT_BUSY_EVICT_POLLS", "10"))
 
+# #1711: host-level memory reserve. The soft/hard watermarks only watch the
+# process footprint against its own ceiling, so when CO-TENANTS grow, macOS
+# runs out of memory while this process is flat and under the ceiling — the
+# enforcer stays silent until macOS jetsam SIGKILLs it (3 deaths on
+# 2026-11-25 with /v1/health reporting avail=6.6% and zero enforcer lines in
+# all three log rotations). When host available memory drops below this
+# reserve, the enforcer sheds load (soft tier actions) even though the
+# process itself is under its ceiling; below half the reserve it escalates
+# to the hard tier. 0 disables. Set via FUSION_MLX_HOST_MIN_FREE_GB.
+_HOST_MIN_FREE_DEFAULT_GB = 8.0
+
 
 def _fine_tune_service_if_running():
     # #1205: the FineTuneService instance is bound to the admin route module
@@ -1693,6 +1704,80 @@ class ProcessMemoryEnforcer:
         except Exception:
             logger.debug("TDM swap sweep failed", exc_info=True)
 
+    def _host_min_free_bytes(self) -> int:
+        # #1711: resolve the host memory reserve in bytes. 0 disables the
+        # host-pressure floor.
+        env = os.environ.get("FUSION_MLX_HOST_MIN_FREE_GB")
+        if env is None:
+            gb = _HOST_MIN_FREE_DEFAULT_GB
+        else:
+            try:
+                gb = float(env)
+            except ValueError:
+                if not getattr(self, "_host_min_free_env_warned", False):
+                    self._host_min_free_env_warned = True
+                    logger.warning(
+                        "invalid FUSION_MLX_HOST_MIN_FREE_GB=%r, " "using default %.1f",
+                        env,
+                        _HOST_MIN_FREE_DEFAULT_GB,
+                    )
+                gb = _HOST_MIN_FREE_DEFAULT_GB
+        if gb <= 0:
+            return 0
+        return int(gb * 1024**3)
+
+    @staticmethod
+    def _host_available_bytes() -> int:
+        # Host available memory in bytes (free + inactive + purgeable, the
+        # same gauge /v1/health reports as avail). 0 = telemetry unavailable.
+        try:
+            return int(psutil_compat.virtual_memory().available)
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def _host_pressure_floor_level(self) -> str | None:
+        # #1711: "soft" when host available memory is under the reserve,
+        # "hard" under half of it, None when the reserve is disabled,
+        # telemetry is unavailable, or the host still has room.
+        min_free = self._host_min_free_bytes()
+        if min_free <= 0:
+            return None
+        available = self._host_available_bytes()
+        if available <= 0:
+            return None
+        if available < min_free // 2:
+            return "hard"
+        if available < min_free:
+            return "soft"
+        return None
+
+    def _classify_pressure_level(self, current: int, soft: int, hard: int) -> str:
+        # Footprint classification + #1711 host-pressure floor. The floor
+        # must be applied in every classification site (initial, lock-timeout
+        # post, post-eviction post) or the tail recompute silently downgrades
+        # the escalated level back to "ok" between polls.
+        rank = {"ok": 0, "soft": 1, "hard": 2}
+        if current < soft:
+            level = "ok"
+        elif current < hard:
+            level = "soft"
+        else:
+            level = "hard"
+        host_floor = self._host_pressure_floor_level()
+        if host_floor is not None and rank[host_floor] > rank[level]:
+            if getattr(self, "_host_floor_active", None) != host_floor:
+                logger.warning(
+                    "Host memory pressure floor: available below reserve, "
+                    "raising pressure level %s -> %s (#1711)",
+                    level,
+                    host_floor,
+                )
+            self._host_floor_active = host_floor
+            level = host_floor
+        elif getattr(self, "_host_floor_active", None) is not None:
+            self._host_floor_active = None
+        return level
+
     def _maybe_escalate_unrecoverable(self, current: int, ceiling: int) -> None:
         # R-9 (#811): unrecoverable pressure — over the real ceiling with
         # nothing to evict/abort. After N consecutive such polls, flip draining
@@ -1809,12 +1894,12 @@ class ProcessMemoryEnforcer:
         prev_level = self._pressure_level
         emergency = self._is_emergency_pressure(current, ceiling)
 
-        if current < soft:
-            new_level = "ok"
-        elif current < hard:
-            new_level = "soft"
-        else:
-            new_level = "hard"
+        # #1711: host-pressure floor applied inside the classifier — raise
+        # the pressure level when HOST available memory is under the reserve,
+        # even though the process footprint is under its own ceiling; macOS
+        # kills the largest process on global pressure, so shedding is
+        # required here too.
+        new_level = self._classify_pressure_level(current, soft, hard)
 
         if new_level != prev_level:
             self._pressure_level = new_level
@@ -1944,12 +2029,9 @@ class ProcessMemoryEnforcer:
             post_hard = (
                 int(post_ceiling * self._hard_threshold) if post_ceiling > 0 else 0
             )
-            if post_ceiling <= 0 or post_current < post_soft:
-                post_level = "ok"
-            elif post_current < post_hard:
-                post_level = "soft"
-            else:
-                post_level = "hard"
+            post_level = self._classify_pressure_level(
+                post_current, post_soft, post_hard
+            )
             if post_level != self._pressure_level:
                 self._pressure_level = post_level
                 self._propagate_memory_limit()
@@ -2324,12 +2406,7 @@ class ProcessMemoryEnforcer:
         post_ceiling = self._get_hard_limit_bytes()
         post_soft = int(post_ceiling * self._soft_threshold) if post_ceiling > 0 else 0
         post_hard = int(post_ceiling * self._hard_threshold) if post_ceiling > 0 else 0
-        if post_ceiling <= 0 or post_current < post_soft:
-            post_level = "ok"
-        elif post_current < post_hard:
-            post_level = "soft"
-        else:
-            post_level = "hard"
+        post_level = self._classify_pressure_level(post_current, post_soft, post_hard)
         if post_ceiling <= 0 or post_current < post_ceiling:
             self._over_ceiling_polls = 0
         if post_level == "ok":

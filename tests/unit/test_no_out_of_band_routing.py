@@ -173,6 +173,12 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         "FUSION_MLX_SHARE_KEY",
         "FUSION_MLX_PACE_TRAINING_RATE",
         "FUSION_MLX_PACE_TRAINING_BURST",
+        # #1711: host memory reserve for the enforcer's pressure floor
+        # (pool/memory_enforcer.py). Memory-guard tuning knob, not routing:
+        # it lowers the effective pressure level when host available memory
+        # drops below the reserve; which model loads or which parser fires
+        # never changes.
+        "FUSION_MLX_HOST_MIN_FREE_GB",
         # Test/integration helpers — server URL for integration suites,
         # not consulted at runtime by the engine.
         "FUSION_MLX_BASE_URL",
