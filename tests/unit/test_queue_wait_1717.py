@@ -1,6 +1,8 @@
 import logging
 from types import SimpleNamespace
 
+import pytest
+
 from fusion_mlx.request import Request, SamplingParams, queue_wait_seconds
 from fusion_mlx.scheduler.sched_response import _log_completion_summary
 
@@ -21,7 +23,9 @@ class TestQueueWaitSeconds:
     def test_positive_after_admit_time(self):
         req = _make_request()
         req._admit_time = req.arrival_time + 113.0
-        assert queue_wait_seconds(req) == 113.0
+        # approx: monotonic-clock float addition can lose a ULP at this
+        # magnitude (112.99999999999977 on CI).
+        assert queue_wait_seconds(req) == pytest.approx(113.0)
 
     def test_clamps_negative(self):
         req = _make_request()
