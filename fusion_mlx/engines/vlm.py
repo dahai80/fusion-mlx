@@ -570,9 +570,20 @@ class VLMBatchedEngine(BaseEngine):
         logger.info("VLMBatchedEngine loaded: %s", self._model_name)
 
     def _apply_turboquant_kv(self) -> None:
-        if self._model_settings is None:
-            return
-        tq_enabled = getattr(self._model_settings, "turboquant_kv_enabled", False)
+        # CLI --kv-cache-turboquant wins over a settings-file False, same
+        # precedence as BatchedEngine._turboquant_explicit. Without this the
+        # flag printed the boot banner but never reached the scheduler on VLM
+        # engines (#1712 follow-up): KV stayed fp16 during prefill and decode
+        # (64 kB/token on Qwen3.8-27B), so a 131K chunked prefill ballooned
+        # ~64 GB above baseline and aborted at the memory guard ceiling.
+        _sc = getattr(self, "_scheduler_config", None)
+        tq_enabled = False
+        if _sc is not None and bool(getattr(_sc, "kv_cache_turboquant", False)):
+            tq_enabled = True
+        elif self._model_settings is not None:
+            tq_enabled = bool(
+                getattr(self._model_settings, "turboquant_kv_enabled", False)
+            )
         if not tq_enabled:
             return
         # Mirror the text-LM path (engines/batched.py): activate TurboQuant by
@@ -586,9 +597,11 @@ class VLMBatchedEngine(BaseEngine):
             scheduler = self._engine.engine.scheduler
             tq_bits = float(getattr(self._model_settings, "turboquant_kv_bits", 4) or 4)
             tq_skip = getattr(self._model_settings, "turboquant_skip_last", True)
-            tq_mode = getattr(
-                self._model_settings, "kv_cache_turboquant_mode", None
-            ) or getattr(scheduler, "_turboquant_kv_mode", "v4")
+            tq_mode = (
+                getattr(_sc, "kv_cache_turboquant_mode", None)
+                or getattr(self._model_settings, "kv_cache_turboquant_mode", None)
+                or getattr(scheduler, "_turboquant_kv_mode", "v4")
+            )
             if tq_mode not in ("v4", "k8v4"):
                 logger.warning(
                     "TurboQuant mode %r not in ('v4', 'k8v4'), defaulting to v4",
