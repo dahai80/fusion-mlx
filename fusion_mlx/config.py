@@ -273,6 +273,11 @@ class SchedulerConfig:
     # (fusion-research probe9). Set FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK=0
     # to opt out.
     boundary_snapshot_lowrank: bool = True
+    # Per-head SVD tail energy for low-rank snapshot factors (N48 probe).
+    # Default 1e-3 = probe9 bit-exact regime; lower values (e.g. 1e-2)
+    # shrink snapshots further at the cost of bit-exactness and need a
+    # quality gate before production use.
+    boundary_snapshot_lowrank_tail_energy: float = 1e-3
     # GC / cache-clear cadence (steps between calls).
     gc_cleanup_interval: int = 0  # 0 = disabled
     mlx_cache_cleanup_interval: int = 256
@@ -328,6 +333,27 @@ class SchedulerConfig:
             _env = os.environ.get("FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK", "")
             if _env.strip().lower() in ("0", "false", "no", "off"):
                 self.boundary_snapshot_lowrank = False
+        if self.boundary_snapshot_lowrank_tail_energy == 1e-3:
+            _env_te = os.environ.get(
+                "FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK_TAIL_ENERGY", ""
+            )
+            if _env_te.strip():
+                try:
+                    _v = float(_env_te)
+                    if 0.0 < _v <= 0.1:
+                        self.boundary_snapshot_lowrank_tail_energy = _v
+                    else:
+                        logger.warning(
+                            "FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK_TAIL_ENERGY=%s"
+                            " out of (0, 0.1] — ignored",
+                            _env_te,
+                        )
+                except ValueError:
+                    logger.warning(
+                        "FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK_TAIL_ENERGY=%s"
+                        " not a float — ignored",
+                        _env_te,
+                    )
         if self.boundary_prefix_max_bytes <= 0:
             _env_mb = os.environ.get("FUSION_MLX_BOUNDARY_PREFIX_MAX_BYTES", "")
             if _env_mb.strip():
