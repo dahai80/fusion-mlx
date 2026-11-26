@@ -31,6 +31,9 @@ enum ShellEnvWriter {
 
     private static let cliShimBeginMarker = "# FusionMLX: CLI shim path begin"
     private static let cliShimEndMarker = "# FusionMLX: CLI shim path end"
+    // #1733: marker stamped inside app-managed shims. A shim without this
+    // marker is user-managed and is never rewritten by the app.
+    private static let shimMarker = "# FusionMLX managed shim"
     private static let publicBinCandidates = [
         "/opt/homebrew/bin",
         "/usr/local/bin",
@@ -55,9 +58,15 @@ enum ShellEnvWriter {
         guard FileManager.default.isExecutableFile(atPath: bundleCLI.path) else {
             throw WriterError.cliWrapperNotExecutable(bundleCLI.path)
         }
+        // #1733: a shim that resolves into a mounted DMG dies on eject.
+        // When the bundle lives on an ephemeral volume, exec a durable
+        // copy under ~/.fusion-mlx/bin instead of the bundle path.
+        let execTarget = try durableCLIExecutable(bundleCLI: bundleCLI, shimDir: shimDir)
         let shimURL = shimDir.appendingPathComponent("fusion")
+        let stamp = "\(shimMarker) target=\(execTarget.path) bundle-mtime=\(bundleMTimes(bundleCLI))"
         let script = """
         #!/bin/sh
+        \(stamp)
         BOOTSTRAP="$HOME/Library/Application Support/FusionMLX/base-path"
         if [ -r "$BOOTSTRAP" ]; then
             IFS= read -r \(variableName) < "$BOOTSTRAP" || \(variableName)=""
@@ -65,18 +74,39 @@ enum ShellEnvWriter {
                 export \(variableName)
             fi
         fi
-        exec \(shellQuote(bundleCLI.path)) "$@"
+        exec \(shellQuote(execTarget.path)) "$@"
         """
+        // #1733: skip the write when an existing shim is user-managed (no
+        // marker) or already current (same target + bundle mtime), so a
+        // relaunch never resurrects a path the user fixed manually.
+        if let existing = try? String(contentsOf: shimURL, encoding: .utf8) {
+            let isCurrent = existing.contains(stamp)
+            let isUserManaged = !existing.contains(shimMarker)
+            if isCurrent || isUserManaged {
+                return try finishCLIShimSetup(shimURL: shimURL)
+            }
+        }
         try script.write(to: shimURL, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755],
             ofItemAtPath: shimURL.path
         )
 
+        return try finishCLIShimSetup(shimURL: shimURL)
+    }
+
+    /// PATH/symlink resolution after the shim itself is in place.
+    private static func finishCLIShimSetup(shimURL: URL) throws -> CLISetupResult {
         if let path = firstCLIPathInCurrentPath() {
             if isManagedCLI(path: path, shimURL: shimURL) {
                 return .publicCommandReady(path: path.path)
             }
+            // #1733: a standalone `fusion` binary already resolves on PATH
+            // and is not ours — do not take the name over.
+            return .needsShellPathPrompt(
+                reason:
+                    "\(path.path) already exists on PATH as a standalone fusion command; FusionMLX will not take it over."
+            )
         }
 
         let symlinkResult = ensurePublicSymlink(to: shimURL)
@@ -110,6 +140,44 @@ enum ShellEnvWriter {
     }
 
     // MARK: - File targets
+
+    /// #1733: resolve the executable the shim should exec. A bundle under
+    /// /Volumes (mounted DMG) or on an unwritable volume is ephemeral — copy
+    /// fusion-cli to ~/.fusion-mlx/bin/fusion-cli and exec that durable copy
+    /// instead. The copy is refreshed only when the bundled binary is newer.
+    static func durableCLIExecutable(bundleCLI: URL, shimDir: URL) throws -> URL {
+        let fm = FileManager.default
+        let bundlePath = bundleCLI.path
+        let ephemeral =
+            bundlePath.hasPrefix("/Volumes/")
+            || !fm.isWritableFile(atPath: bundleCLI.deletingLastPathComponent().path)
+        if !ephemeral {
+            return bundleCLI
+        }
+        let durableCopy = shimDir.appendingPathComponent("fusion-cli")
+        let bundledMTime = bundleMTimes(bundleCLI)
+        if fm.fileExists(atPath: durableCopy.path) {
+            let copyMTime = fileMTimes(durableCopy)
+            // Refresh only when the bundled CLI is newer than the copy.
+            if bundledMTime <= copyMTime {
+                return durableCopy
+            }
+            try fm.removeItem(at: durableCopy)
+        }
+        try fm.copyItem(at: bundleCLI, to: durableCopy)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: durableCopy.path)
+        return durableCopy
+    }
+
+    private static func bundleMTimes(_ url: URL) -> Double {
+        fileMTimes(url)
+    }
+
+    private static func fileMTimes(_ url: URL) -> Double {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let date = attrs?[.modificationDate] as? Date
+        return date?.timeIntervalSince1970 ?? 0
+    }
 
     private static func home() -> URL {
         homeOverrideForTests ?? FileManager.default.homeDirectoryForCurrentUser

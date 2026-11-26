@@ -156,6 +156,108 @@ final class ShellEnvWriterTests: XCTestCase {
         XCTAssertTrue(ShellEnvWriter.shouldSuppressCLIPathPrompt())
     }
 
+    func testEphemeralBundleCopiesCLIToDurableLocation() throws {
+        let appURL = try makeFakeAppURL()
+        // Make the bundle's MacOS dir unwritable → treated as ephemeral.
+        let macosDir = appURL
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("MacOS", isDirectory: true)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o555],
+            ofItemAtPath: macosDir.path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: macosDir.path
+            )
+        }
+
+        _ = try ShellEnvWriter.ensureCLIShim(appBundleURL: appURL)
+
+        let shimDir = tempHome
+            .appendingPathComponent(".fusion-mlx", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+        let durableCopy = shimDir.appendingPathComponent("fusion-cli")
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: durableCopy.path))
+        let shimText = try String(
+            contentsOf: shimDir.appendingPathComponent("fusion"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(shimText.contains("exec '\(durableCopy.path)'"))
+        XCTAssertFalse(shimText.contains("/Contents/MacOS/fusion-cli"))
+    }
+
+    func testUserManagedShimIsNeverRewritten() throws {
+        let appURL = try makeFakeAppURL()
+        let shimDir = tempHome
+            .appendingPathComponent(".fusion-mlx", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: shimDir,
+            withIntermediateDirectories: true
+        )
+        let shim = shimDir.appendingPathComponent("fusion")
+        let userFix = "#!/bin/sh\nexec /usr/local/bin/fusion-cli \"$@\"\n"
+        try userFix.write(to: shim, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: shim.path
+        )
+
+        _ = try ShellEnvWriter.ensureCLIShim(appBundleURL: appURL)
+
+        XCTAssertEqual(try String(contentsOf: shim, encoding: .utf8), userFix)
+    }
+
+    func testShimWriteSkippedWhenAlreadyCurrent() throws {
+        let appURL = try makeFakeAppURL()
+        _ = try ShellEnvWriter.ensureCLIShim(appBundleURL: appURL)
+        let shim = tempHome
+            .appendingPathComponent(".fusion-mlx", isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("fusion")
+        let first = try String(contentsOf: shim, encoding: .utf8)
+        // Simulate the user appending a personal tweak — a relaunch must
+        // not rewrite the shim as long as target and bundle mtime match.
+        try (first + "# user tweak\n").write(
+            to: shim,
+            atomically: true,
+            encoding: .utf8
+        )
+
+        _ = try ShellEnvWriter.ensureCLIShim(appBundleURL: appURL)
+
+        XCTAssertTrue(
+            try String(contentsOf: shim, encoding: .utf8).hasSuffix("# user tweak\n")
+        )
+    }
+
+    func testStandaloneFusionOnPathIsNotTakenOver() throws {
+        let publicBin = tempHome.appendingPathComponent("public-bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: publicBin, withIntermediateDirectories: true)
+        ShellEnvWriter.publicBinDirsOverrideForTests = [publicBin]
+        let standaloneDir = tempHome.appendingPathComponent("standalone", isDirectory: true)
+        try FileManager.default.createDirectory(at: standaloneDir, withIntermediateDirectories: true)
+        let standalone = standaloneDir.appendingPathComponent("fusion")
+        try "#!/bin/sh\n".write(to: standalone, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: standalone.path
+        )
+        setenv("PATH", "\(standaloneDir.path):\(publicBin.path):/usr/bin", 1)
+
+        let result = try ShellEnvWriter.ensureCLIShim(appBundleURL: try makeFakeAppURL())
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: publicBin.appendingPathComponent("fusion").path))
+        if case .needsShellPathPrompt(let reason) = result {
+            XCTAssertTrue(reason.contains("already exists"))
+            XCTAssertTrue(reason.contains(standalone.path))
+        } else {
+            XCTFail("Expected prompt when a standalone fusion command exists")
+        }
+    }
+
     private func makeFakeAppURL() throws -> URL {
         let appURL = tempHome
             .appendingPathComponent("Apps", isDirectory: true)
