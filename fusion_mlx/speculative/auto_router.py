@@ -329,6 +329,14 @@ class SpecAutoRouter:
     keep_accept: float = 0.40
     min_output_tokens: int = 32
     abandon_cooldown: int = 8
+    # Exponential backoff on consecutive abandons of the same method: a
+    # chronically failing method re-arms after cooldown requests, pays
+    # another draft prefill, fails again — a periodic cost loop (E1,
+    # production 32B: 4-11% acceptance). Each consecutive abandon doubles
+    # the cooldown up to the cap; a healthy keep resets the streak.
+    abandon_backoff_cap: int = 256
+    _abandon_cooldowns: dict = field(default_factory=dict)
+    _abandon_streaks: dict = field(default_factory=dict)
 
     def _record(
         self,
@@ -378,9 +386,7 @@ class SpecAutoRouter:
         # bad request -> abandon(mtp) ... — every other request pays the
         # draft warmup on a method we already measured as failing
         # (production: 2,713 mtp requests at 0.05 acceptance).
-        cooldowns = getattr(self, "_abandon_cooldowns", None)
-        if cooldowns is None:
-            cooldowns = self._abandon_cooldowns = {}
+        cooldowns = self._abandon_cooldowns
         if self.abandon_cooldown > 0 and cooldowns:
             for m in list(cooldowns):
                 cooldowns[m] -= 1
@@ -412,17 +418,26 @@ class SpecAutoRouter:
 
         if cur is not None and rate is not None and rate < self.abandon_accept:
             excluded.add(cur)
+            streak = 0
+            cooldown_len = 0
             if self.abandon_cooldown > 0:
-                cooldowns[signals.current_method] = self.abandon_cooldown
+                streak = self._abandon_streaks.get(signals.current_method, 0) + 1
+                self._abandon_streaks[signals.current_method] = streak
+                cooldown_len = min(
+                    self.abandon_cooldown * (2 ** (streak - 1)),
+                    self.abandon_backoff_cap,
+                )
+                cooldowns[signals.current_method] = cooldown_len
             cur = None
             logger.info(
                 "spec-route: abandoning %s (acceptance %.1f%% < %.1f%%, "
-                "source %s, cooldown %d requests)",
+                "source %s, cooldown %d requests, streak %d)",
                 signals.current_method,
                 rate * 100,
                 self.abandon_accept * 100,
                 rate_source,
-                self.abandon_cooldown,
+                cooldown_len,
+                streak,
             )
 
         if (
@@ -431,6 +446,7 @@ class SpecAutoRouter:
             and rate is not None
             and rate >= self.keep_accept
         ):
+            self._abandon_streaks.pop(cur, None)
             self._record(
                 cur,
                 "keep_accept (rate >= threshold)",

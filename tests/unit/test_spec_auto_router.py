@@ -108,6 +108,42 @@ class TestAbandon:
         assert r.decide(s_abandoned) != METHOD_DFLASH
 
 
+class TestAbandonBackoff:
+    def test_consecutive_abandons_double_cooldown(self):
+        r = SpecAutoRouter()  # abandon_cooldown = 8, cap = 256
+        # First abandon: streak 1 -> cooldown 8.
+        r.decide(sig(prompt=8192, current=METHOD_DFLASH, rate=0.05))
+        assert r._abandon_cooldowns[METHOD_DFLASH] == 8
+        # Burn the 8-request cooldown, then fail again: streak 2 -> 16.
+        for _ in range(8):
+            r.decide(sig(prompt=8192))
+        assert METHOD_DFLASH not in r._abandon_cooldowns
+        r.decide(sig(prompt=8192, current=METHOD_DFLASH, rate=0.05))
+        assert r._abandon_cooldowns[METHOD_DFLASH] == 16
+
+    def test_backoff_capped(self):
+        r = SpecAutoRouter(abandon_cooldown=8, abandon_backoff_cap=32)
+        # Six consecutive abandons: 8*2**5 = 256 -> capped at 32.
+        for _ in range(6):
+            for _ in range(max(r._abandon_cooldowns.values(), default=1)):
+                r.decide(sig(prompt=8192))
+            assert (
+                r.decide(sig(prompt=8192, current=METHOD_DFLASH, rate=0.05))
+                == METHOD_NGRAM
+            )
+        assert r._abandon_cooldowns[METHOD_DFLASH] == 32
+
+    def test_healthy_keep_resets_streak(self):
+        r = SpecAutoRouter()
+        r.decide(sig(prompt=8192, current=METHOD_DFLASH, rate=0.05))
+        assert r._abandon_streaks[METHOD_DFLASH] == 1
+        # Cooldown blocks re-selection while hot; once the method is kept
+        # again the streak must be gone.
+        r._abandon_streaks[METHOD_DFLASH] = 3
+        r.decide(sig(prompt=8192, current=METHOD_DFLASH, rate=0.55))
+        assert METHOD_DFLASH not in r._abandon_streaks
+
+
 class TestDegenerate:
     def test_empty_available_returns_ngram_sentinel(self):
         assert SpecAutoRouter().decide(sig(available=frozenset())) == METHOD_NGRAM
