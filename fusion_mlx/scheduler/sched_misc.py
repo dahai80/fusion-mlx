@@ -279,6 +279,7 @@ def _init_tiered_cache(self) -> None:
                 prefix_persist=self.config.boundary_prefix_persist,
                 prefix_max_bytes=self.config.boundary_prefix_max_bytes or None,
                 lowrank_gdn_state=self.config.boundary_snapshot_lowrank,
+                lowrank_tail_energy=self.config.boundary_snapshot_lowrank_tail_energy,
             )
         except Exception as e:
             logger.warning("Failed to initialize boundary snapshot SSD store: %s", e)

@@ -1,4 +1,5 @@
 import json
+import os
 
 import numpy as np
 import pytest
@@ -145,6 +146,66 @@ def test_rank_floor_respected():
     spec = json.loads(info["lowrank_0"])
     # Energy rank is 1 here, but the probe-validated floor is 8.
     assert spec["rmax"] >= _LOWRANK_MIN_RANK
+
+
+def test_relaxed_tail_energy_shrinks_factors():
+    # N48 probe: raising the tail energy below the bit-exact regime must
+    # produce smaller factor storage than the 0.1% default on the same
+    # full-rank-ish input.
+    import pathlib
+
+    state = _make_gdn_state(rank=16, seed=13)
+    sizes = {}
+    for tag, tail in (("default", 1e-3), ("relaxed", 0.05)):
+        store = BoundarySnapshotSSDStore(
+            base_dir=pathlib.Path("/tmp/fusion-mlx-test-lowrank"),
+            lowrank_gdn_state=True,
+            lowrank_tail_energy=tail,
+        )
+        tensors_raw, metadata = _serialize(store, _make_extracted(state))
+        tensors_raw, metadata = store._factorize_gdn_state_tensors(
+            dict(tensors_raw), dict(metadata)
+        )
+        sizes[tag] = sum(len(v[0]) for v in tensors_raw.values())
+        spec = json.loads(_factorized_metadata_info(metadata)["lowrank_0"])
+        sizes[tag + "_rmax"] = spec["rmax"]
+        store.shutdown()
+    assert sizes["relaxed"] < sizes["default"]
+    assert sizes["relaxed_rmax"] <= sizes["default_rmax"]
+
+
+def test_tail_energy_out_of_range_falls_back_to_default():
+    from fusion_mlx.config import SchedulerConfig
+
+    config_mod = SchedulerConfig
+
+    old = os.environ.get("FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK_TAIL_ENERGY")
+    os.environ["FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK_TAIL_ENERGY"] = "5.0"
+    try:
+        cfg = config_mod()
+        assert cfg.boundary_snapshot_lowrank_tail_energy == 1e-3
+    finally:
+        if old is None:
+            os.environ.pop("FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK_TAIL_ENERGY", None)
+        else:
+            os.environ["FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK_TAIL_ENERGY"] = old
+
+
+def test_tail_energy_env_override_applies():
+    from fusion_mlx.config import SchedulerConfig
+
+    config_mod = SchedulerConfig
+
+    old = os.environ.get("FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK_TAIL_ENERGY")
+    os.environ["FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK_TAIL_ENERGY"] = "0.01"
+    try:
+        cfg = config_mod()
+        assert cfg.boundary_snapshot_lowrank_tail_energy == 0.01
+    finally:
+        if old is None:
+            os.environ.pop("FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK_TAIL_ENERGY", None)
+        else:
+            os.environ["FUSION_MLX_BOUNDARY_SNAPSHOT_LOWRANK_TAIL_ENERGY"] = old
 
 
 def test_disabled_flag_leaves_tensors_dense():

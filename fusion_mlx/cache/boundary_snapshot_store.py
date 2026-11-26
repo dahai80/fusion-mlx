@@ -198,9 +198,15 @@ class BoundarySnapshotSSDStore:
         prefix_persist: bool = False,
         prefix_max_bytes: int | None = None,
         lowrank_gdn_state: bool = True,
+        lowrank_tail_energy: float = _LOWRANK_TAIL_ENERGY,
     ) -> None:
         self._snapshot_dir = base_dir / "_boundary_snapshots"
         self._lowrank_gdn_state = lowrank_gdn_state
+        # N48 probe (fusion-research 1126): per-head effective rank at 99%
+        # energy is 1.2-10.9 on Qwen3.5-4B GDN states; relaxing the tail
+        # energy trades bit-exactness for smaller snapshots. Default keeps
+        # the probe9 bit-exact 0.1% tail.
+        self._lowrank_tail_energy = float(lowrank_tail_energy)
         # Register before the rmtree decision so the count includes us.
         base_key = str(base_dir)
         _ACTIVE_STORES_BY_BASE_DIR[base_key] = (
@@ -1337,7 +1343,8 @@ class BoundarySnapshotSSDStore:
                             else:
                                 r_energy = int(
                                     np.searchsorted(
-                                        energy, total * (1 - _LOWRANK_TAIL_ENERGY)
+                                        energy,
+                                        total * (1 - self._lowrank_tail_energy),
                                     )
                                     + 1
                                 )
