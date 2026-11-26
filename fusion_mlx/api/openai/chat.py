@@ -70,6 +70,20 @@ from .streaming import _stream_chat
 _DEGENERATE_AGENT_TEXT_MAX_CHARS = 256
 
 
+def _log_chat_entry(request: Any, prompt_preview: str) -> None:
+    # #1723: temperature=0 is valid (greedy) — never map it to the default
+    # via `or`; only an absent/unset value falls back to 0.7 in the log.
+    _req_temp = getattr(request, "temperature", None)
+    logger.info(
+        "OpenAI /chat: model=%s, stream=%s, max_tokens=%s, temp=%s, prompt=%r",
+        request.model,
+        request.stream,
+        getattr(request, "max_tokens", None),
+        _req_temp if _req_temp is not None else 0.7,
+        prompt_preview,
+    )
+
+
 def _agent_degenerate_retry_enabled() -> bool:
     return os.environ.get("FUSION_MLX_AGENT_DEGENERATE_RETRY", "1").strip() != "0"
 
@@ -748,14 +762,7 @@ async def chat_completions(
         last_msg = request.messages[-1]
         c = getattr(last_msg, "content", "") if last_msg else ""
         prompt_preview = str(c)[:120] if c else ""
-    logger.info(
-        "OpenAI /chat: model=%s, stream=%s, max_tokens=%s, temp=%s, prompt=%r",
-        request.model,
-        request.stream,
-        getattr(request, "max_tokens", None),
-        getattr(request, "temperature", 0.7) or 0.7,
-        prompt_preview,
-    )
+    _log_chat_entry(request, prompt_preview)
 
     # OpenAI n>1 multi-choice (declared late — see ChatCompletionRequest.n).
     # Fan-out into n independent samplings before cache/dispatch; streaming
