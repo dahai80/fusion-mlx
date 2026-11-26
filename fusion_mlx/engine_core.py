@@ -2040,7 +2040,6 @@ class EngineCore:
 
                     contexts = self._active_contexts
                     eviction_request = None
-                    has_streaming_consumer = False
 
                     for output in step_outputs:
                         if (
@@ -2060,7 +2059,6 @@ class EngineCore:
                                 is_streaming = not ctx.collector.aggregate
                                 if use_simple_streaming or is_streaming:
                                     ctx.collector.put(req_output)
-                                    has_streaming_consumer = True
                                 else:
                                     if ctx.stream_state.should_send(
                                         req_output.completion_tokens,
@@ -2076,8 +2074,14 @@ class EngineCore:
                     # Yield to event loop so SSE handlers can flush queued
                     # outputs. For streaming (deque-based collector), this must
                     # happen after every burst to avoid buffering all tokens.
-                    if has_streaming_consumer or any(o.outputs for o in step_outputs):
-                        await asyncio.sleep(0)
+                    # Yield unconditionally: add_request ingestion submits its
+                    # executor job from an event-loop handler, so without a
+                    # yield here the loop resubmits the next burst first and
+                    # the pending add_request loses the executor FIFO race
+                    # every round (#1727: warm-replay prefill starved
+                    # ingestion ~6s; scheduler-level priority never saw the
+                    # request).
+                    await asyncio.sleep(0)
 
                     if eviction_request is not None:
                         callback = self.config.prefill_eviction_callback
