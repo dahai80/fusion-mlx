@@ -839,6 +839,29 @@ class ProcessMemoryEnforcer:
             f"ceiling={_format_gb(ceiling)}, "
             f"interval={self._active_poll_interval}s)"
         )
+        # #1722 ask 3: when the operator configured a custom ceiling, say
+        # loudly how the effective hard limit was composed — the raw number
+        # can legitimately differ (min with static/metal cap, floor lift
+        # from loaded model + 10GB) and guessing it from scattered lines
+        # wasted an operator debugging session.
+        if self._memory_guard_tier == "custom":
+            _b = self._get_ceiling_breakdown()
+            logger.info(
+                "Custom ceiling composition: configured=%s, static=%s, "
+                "dynamic(custom)=%s, metal_cap=%s, floor(loaded+10GB)=%s, "
+                "hard_limit=%s",
+                _format_gb(self._memory_guard_custom_ceiling_bytes),
+                _format_gb(_b["static"]),
+                _format_gb(_b["dynamic"]),
+                _format_gb(_b["metal_cap"]),
+                _format_gb(
+                    min(
+                        _b["metal_cap"] or _b["static"],
+                        self.get_loaded_model_bytes() + 10 * 1024**3,
+                    )
+                ),
+                _format_gb(_b["hard_limit"]),
+            )
 
     def _start_memory_sentinel(self) -> None:
         """Start the C++ dispatch_source pressure sentinel (PR-B).
@@ -1049,9 +1072,12 @@ class ProcessMemoryEnforcer:
     def _get_abort_limit_bytes(self) -> int:
         """Stable physical cap used to ABORT an in-flight prefill.
 
-        Deliberately excludes the dynamic ceiling. Uses
-        ``min(static_ceiling, metal_cap)`` — exactly the limit
-        ``start()`` arms via ``mx.set_wired_limit``.
+        Deliberately excludes the tier-derived dynamic ceiling (heuristics
+        must not tighten the abort line). The custom tier is the exception:
+        its ceiling is the operator's explicit number, and the wired limit
+        is already armed from it (OP-901 follow-up) — the abort path must
+        honor it too, or a configured custom ceiling silently fails to
+        constrain prefill aborts (#1722 ask 3).
 
         Returns 0 when the guard is disabled.
         """
@@ -1059,9 +1085,15 @@ class ProcessMemoryEnforcer:
             return 0
         static_ceiling = self._get_static_ceiling()
         metal_cap = self._get_effective_metal_cap_bytes()
+        candidates = [static_ceiling]
+        if (
+            self._memory_guard_tier == "custom"
+            and self._memory_guard_custom_ceiling_bytes > 0
+        ):
+            candidates.append(self._memory_guard_custom_ceiling_bytes)
         if metal_cap > 0:
-            return min(static_ceiling, metal_cap)
-        return static_ceiling
+            candidates.append(metal_cap)
+        return min(candidates)
 
     def _get_prefill_abort_margin(self) -> float:
         """Tier-specific prediction margin for pre-chunk safety checks."""
