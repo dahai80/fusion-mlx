@@ -941,6 +941,7 @@ def load_model(
     force_openai_harmony_streaming: bool = False,
     no_openai_harmony_streaming: bool = False,
     lora_path: str | None = None,
+    trust_remote_code: bool = False,
 ):
     # ``serve --model <X>`` single-model entry. The migration left this as a
     # NotImplementedError stub, which broke even full local paths. We stage the
@@ -1005,6 +1006,7 @@ def load_model(
         "max_tokens": max_tokens,
         "max_tokens_is_explicit": max_tokens_is_explicit,
         "lora_path": lora_path,
+        "trust_remote_code": trust_remote_code,
     }
     # Ensure the singleton Server + app exist so _startup will pick up the
     # staged model when uvicorn starts the lifespan.
@@ -3177,6 +3179,7 @@ class Server:
 
                 engine = BatchedEngine(
                     model_name=model_path,
+                    trust_remote_code=pending.get("trust_remote_code", False),
                     scheduler_config=scheduler_config,
                     stream_interval=stream_interval,
                     model_settings=_ms,
