@@ -463,6 +463,9 @@ class ProcessMemoryEnforcer:
         # stuck on the same busy victim. Used to throttle the per-second
         # warning spam and escalate once it is clearly not resolving.
         self._hard_busy_victim: str | None = None
+        # #1722: soft-tier single-model hold tracking (throttled logging).
+        self._soft_busy_victim: str | None = None
+        self._soft_busy_single_cycles: int = 0
         self._hard_busy_cycles: int = 0
         # #1473 item (2): consecutive soft-pressure polls that found no
         # idle evictable model. At _SOFT_BUSY_EVICT_POLLS the enforcer
@@ -2088,6 +2091,70 @@ class ProcessMemoryEnforcer:
                             and self._soft_busy_cycles >= _SOFT_BUSY_EVICT_POLLS
                         ):
                             busy_victim = self._find_lru_busy_non_pinned_victim_locked()
+                            # #1722: never soft-tier abort+unload the ONLY
+                            # loaded non-pinned model. Aborting its in-flight
+                            # requests frees the transient but the client
+                            # retry re-creates the identical pressure (10+
+                            # consecutive aborts on one 131K prefill), and
+                            # unloading the sole engine turns the abort loop
+                            # into a 503 admission loop until reload. Hard
+                            # pressure still reaches the busy-victim path
+                            # below, so a genuinely over-ceiling process is
+                            # still shed.
+                            _single_model_holds = False
+                            if busy_victim is not None:
+                                _loaded_np = [
+                                    m
+                                    for m, e in self._engine_pool._entries.items()
+                                    if e.engine is not None and not e.is_pinned
+                                ]
+                                _single_model_holds = _loaded_np == [busy_victim]
+                            if _single_model_holds:
+                                # getattr: __new__-built test enforcers predate
+                                # the #1722 state attrs.
+                                _prev_victim = getattr(self, "_soft_busy_victim", None)
+                                _prev_cycles = getattr(
+                                    self, "_soft_busy_single_cycles", 0
+                                )
+                                if busy_victim != _prev_victim:
+                                    self._soft_busy_victim = busy_victim
+                                    self._soft_busy_single_cycles = 0
+                                else:
+                                    self._soft_busy_single_cycles = _prev_cycles + 1
+                                if self._soft_busy_single_cycles == 1 or (
+                                    self._soft_busy_single_cycles > 0
+                                    and self._soft_busy_single_cycles % 60 == 0
+                                ):
+                                    logger.warning(
+                                        "Soft memory pressure sustained for %d "
+                                        "poll(s) but the busy model '%s' is the "
+                                        "only loaded non-pinned engine — "
+                                        "skipping soft-tier abort/unload "
+                                        "(usage %.1f GB, target %.1f GB, "
+                                        "ceiling %.1f GB; %d in-flight). "
+                                        "Aborting would recreate the same "
+                                        "pressure on client retry (#1722). "
+                                        "Hard tier still applies if usage "
+                                        "crosses the ceiling.",
+                                        self._soft_busy_cycles,
+                                        busy_victim,
+                                        self._current_usage_bytes() / (1024**3),
+                                        target / (1024**3),
+                                        self._get_hard_limit_bytes() / (1024**3),
+                                        (
+                                            self._engine_pool._entry_has_active_requests(
+                                                self._engine_pool._entries.get(
+                                                    busy_victim
+                                                )
+                                            )
+                                            if self._engine_pool._entries.get(
+                                                busy_victim
+                                            )
+                                            is not None
+                                            else False
+                                        ),
+                                    )
+                                busy_victim = None
                             if busy_victim is not None:
                                 entry = self._engine_pool._entries.get(busy_victim)
                                 aborted = 0
