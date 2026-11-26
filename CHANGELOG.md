@@ -14,6 +14,11 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.75] - 2026-11-26 — custom ceiling governs the prefill abort path
+
+### Fixed
+- **#1722 (ask 3)**: `memory_guard_custom_ceiling_gb` was honored by the wired-limit arming and the enforcer's hard limit but NOT by `_get_abort_limit_bytes()` — the prefill abort path kept using the machine-derived static/metal cap, so a configured custom ceiling silently failed to constrain aborts and the effective number differed from the configured one with no explanation. Custom tier now constrains the abort line (min of static/custom/metal); `start()` with `tier=custom` logs the full ceiling composition in one line.
+
 ## [0.10.74] - 2026-11-26 — single-model memory-hold + temp=0 log fidelity + durable CLI shim
 
 ### Fixed
