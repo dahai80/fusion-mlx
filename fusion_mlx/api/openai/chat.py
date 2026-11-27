@@ -350,6 +350,11 @@ async def _run_chat(
             ct_kwargs, client_thinking=client_thinking_from_request(request)
         )
         compiled_grammar = _compile_grammar_for_request(engine, request)
+        if compiled_grammar is None:
+            # #1730: default-on tool-call grammar for tool-bearing requests
+            from .tool_grammar import compile_tool_grammar
+
+            compiled_grammar = compile_tool_grammar(engine, request)
         _gen_kwargs = dict(
             messages=messages,
             max_tokens=sampling.max_tokens,
