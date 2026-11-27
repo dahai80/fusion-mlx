@@ -1097,6 +1097,27 @@ def resolve_model_id(model_id: str) -> str:
         logger.debug("resolve_model_id(%s): alias lookup failed: %s", model_id, e)
         dyn = model_id
     if dyn and dyn != model_id:
+        # model-dir discovery registers pool entries under directory names
+        # (e.g. "kimi-linear-48b-a3b-4bit"); the dynamic alias resolver can
+        # rewrite such a request to the model's HF repo id from its config,
+        # which is NOT a registry key in a model-dir (non-HF-cache) layout.
+        # The request then 404s even though the exact directory-name entry
+        # exists. If the alias target is not a discovered entry but the raw
+        # id is, keep the raw id.
+        pool = _server_state.get("engine_pool")
+        if pool is not None and hasattr(pool, "list_models"):
+            try:
+                discovered = set(pool.list_models())
+            except Exception:
+                discovered = set()
+            if model_id in discovered and dyn not in discovered:
+                logger.info(
+                    "resolve_model_id(%s): alias %s not discovered, "
+                    "keeping directory-name entry",
+                    model_id,
+                    dyn,
+                )
+                return model_id
         logger.info("resolve_model_id(%s) -> alias: %s", model_id, dyn)
         return dyn
     # Only strip known provider prefixes — preserve HF paths
@@ -2256,6 +2277,7 @@ class Server:
             scheduler_config=self._convert_scheduler_config(),
             profile=self._profile,
             force_text=self.config.force_text,
+            default_trust_remote_code=getattr(self.config, "trust_remote_code", False),
         )
 
         # Create and wire memory enforcer
