@@ -368,6 +368,7 @@ async def _run_chat(
             # would answer with tool_calls instead of the code block.
             tools=None if getattr(request, "code_mode", False) else request.tools,
             stop=sampling.stop,
+            priority=int(getattr(request, "priority", 0) or 0),
             chat_template_kwargs=ct_kwargs if ct_kwargs else None,
             prefix_cache_boundary=(
                 getattr(request, "prefix_cache_boundary", None)

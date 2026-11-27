@@ -1117,18 +1117,27 @@ def _advance_chunked_prefills(
     # the whole warm replay burst. Chunked prefill advances states in
     # admission order, so warm heads admitted first prefill completely
     # before the real request's first chunk runs (measured +4.9-8.4s probe
-    # delay). Skip warm chunks for this step whenever any non-warm request
-    # exists anywhere in the scheduler; warm state is resumable
-    # (tokens_remaining), so yielding at a chunk boundary is free and the
-    # burst resumes once real traffic drains.
+    # delay). Generalized (biz pipeline, 2026-11): chunk yielding is
+    # priority-based instead of a warm/real special case. A request's
+    # chunk is held for this step whenever any OTHER request with a
+    # strictly higher priority (lower int) exists anywhere in the
+    # scheduler. Warm requests carry priority=10 (#1705), so real
+    # traffic (default 0) holds them back exactly as before. Priority
+    # state is resumable (tokens_remaining), so yielding at a chunk
+    # boundary is free and held chunks resume once higher-priority
+    # traffic drains.
     queues = [self.waiting, self.prefilling]
     if isinstance(self.running, dict):
         queues.append(self.running.values())
     else:
         queues.append(self.running)
-    real_traffic = any(
-        not getattr(r, "_warm_request", False) for q in queues for r in q
-    )
+    # Strictest (lowest int) priority among all other known requests.
+    external_min_priority: int | None = None
+    for q in queues:
+        for r in q:
+            p = int(getattr(r, "priority", 0) or 0)
+            if external_min_priority is None or p < external_min_priority:
+                external_min_priority = p
 
     still_prefilling: deque[Request] = deque()
 
@@ -1141,9 +1150,11 @@ def _advance_chunked_prefills(
         if state is None:
             continue
 
-        if real_traffic and getattr(request, "_warm_request", False):
-            # Real traffic present: hold this warm chunk back (see the
-            # real_traffic comment above) and keep its place in the queue.
+        if external_min_priority is not None and external_min_priority < int(
+            getattr(request, "priority", 0) or 0
+        ):
+            # Higher-priority traffic present: hold this chunk back (see
+            # the priority comment above) and keep its place in the queue.
             still_prefilling.append(request)
             continue
 

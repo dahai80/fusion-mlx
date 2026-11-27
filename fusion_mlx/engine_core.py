@@ -2299,6 +2299,7 @@ class EngineCore:
         has_tools: bool = False,
         resume_prompt_cache: list | None = None,
         resume_cached_tokens: int = 0,
+        priority: int = 0,
     ) -> str:
         # P1-7: reject new requests once stop() has torn the engine down.
         # Without this guard add_request enqueues into the scheduler after the
@@ -2327,6 +2328,7 @@ class EngineCore:
             vlm_image_hash=vlm_image_hash,
             vlm_cache_key_start=vlm_cache_key_start,
             vlm_cache_key_ranges=vlm_cache_key_ranges,
+            priority=int(priority),
         )
         # Disconnect KV resume: seed externally-loaded KV (from a disk
         # checkpoint written on a prior disconnect) so add_request's

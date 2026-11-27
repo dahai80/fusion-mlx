@@ -1392,6 +1392,7 @@ class BatchedEngine(BaseEngine):
             prompt=prompt,
             sampling_params=sampling_params,
             has_tools=bool(kwargs.pop("has_tools", False)),
+            priority=int(kwargs.pop("priority", 0) or 0),
         )
         from ..api.utils import clean_special_tokens
 
@@ -1483,6 +1484,13 @@ class BatchedEngine(BaseEngine):
         if kwargs.get("lsa_repair_pages") is not None:
             lsa_repair_kwargs["lsa_repair_pages"] = int(kwargs.pop("lsa_repair_pages"))
 
+        # Request priority (lower int = higher priority, matches
+        # Request.priority). Forwarded so admission AND chunked prefill
+        # ordering honor it; absent keeps default 0.
+        priority_kwargs = {}
+        if kwargs.get("priority") is not None:
+            priority_kwargs["priority"] = int(kwargs.pop("priority"))
+
         # Disconnect KV resume: optional externally-loaded KV checkpoint
         # (from kv_resume.load_resumable_kv) seeds the request so the
         # cached tail skips prefill. Popped here and forwarded to
@@ -1507,6 +1515,7 @@ class BatchedEngine(BaseEngine):
             request_id=kwargs.pop("request_id", None),
             **specprefill_kwargs,
             **lsa_repair_kwargs,
+            **priority_kwargs,
             **resume_kwargs,
         )
         finished_normally = False
