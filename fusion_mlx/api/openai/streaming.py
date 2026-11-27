@@ -686,6 +686,33 @@ async def _stream_chat_generator(
                             tc_chunk, request, encoder=encoder
                         )
 
+        # Issue #1694: end-of-stream tool parser flush -- a tool call whose
+        # end marker closed in the final chunk without a later delta was
+        # previously discarded (swallowed silently). Emit any pending calls
+        # the parser still holds before finishing the stream.
+        if tool_parser is not None and hasattr(tool_parser, "finish"):
+            try:
+                pending = tool_parser.finish(tool_text_accumulated)
+            except Exception as e:
+                logger.debug("streaming tool parser finish failed: %s", e)
+                pending = None
+            if pending:
+                for tc in pending.get("tool_calls") or []:
+                    idx = tc.get("index", tool_calls_streamed)
+                    if idx < tool_calls_streamed:
+                        continue
+                    tool_calls_streamed = idx + 1
+                    tool_calls_in_stream = True
+                    tc_chunk = StreamChunk(
+                        tool_call_delta=[tc],
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        cached_tokens=cached_tokens,
+                    )
+                    yield _adapter.format_stream_chunk(
+                        tc_chunk, request, encoder=encoder
+                    )
+
         # Flush any buffered thinking/content from the parser (partial tags,
         # malformed recovery). See issue #21.
         t_tail, c_tail = parser.finish()
