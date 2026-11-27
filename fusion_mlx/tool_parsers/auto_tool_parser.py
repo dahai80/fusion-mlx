@@ -39,6 +39,10 @@ class AutoToolParser(ToolParser):
     This is the default parser when no specific parser is selected.
     """
 
+    # Issue #1694: number of tool calls already emitted on the streaming
+    # path (dedup across deltas; parser instances are per-request).
+    _emitted: int = 0
+
     # Patterns for different formats
     MISTRAL_TOKEN = "[TOOL_CALLS]"
 
@@ -338,24 +342,43 @@ class AutoToolParser(ToolParser):
         if not has_marker:
             return {"content": delta_text}
 
-        # Check for completion markers
-        end_markers = ["</tool_call>", "</function>", ")]"]
-        if any(m in delta_text for m in end_markers):
-            result = self.extract_tool_calls(current_text)
-            if result.tools_called:
-                return {
-                    "tool_calls": [
-                        {
-                            "index": i,
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": tc["arguments"],
-                            },
-                        }
-                        for i, tc in enumerate(result.tool_calls)
-                    ]
-                }
+        # Issue #1694: end markers split across deltas. The old check required
+        # a complete end marker inside the CURRENT delta, so a marker arriving
+        # in two chunks swallowed the whole call forever. Detect completion
+        # over the accumulated text instead and emit only the calls not yet
+        # emitted (self._emitted dedups across deltas).
+        return self._emit_new_calls(current_text, fallback_delta=delta_text)
 
+    def _emit_new_calls(self, current_text: str, fallback_delta: str = ""):
+        try:
+            result = self.extract_tool_calls(current_text)
+        except Exception:
+            return {"content": fallback_delta} if fallback_delta else None
+        if result.tools_called and len(result.tool_calls) > self._emitted:
+            all_calls = [
+                {
+                    "index": i,
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": tc["arguments"],
+                    },
+                }
+                for i, tc in enumerate(result.tool_calls)
+            ]
+            new_calls = all_calls[self._emitted :]
+            self._emitted = len(result.tool_calls)
+            return {"tool_calls": new_calls}
+        # Marker present but call still incomplete -- suppress the delta so
+        # partial tool markup never leaks as plain content.
         return None
+
+    def finish(self, current_text: str = "") -> dict[str, Any] | None:
+        # Issue #1694: end-of-stream flush -- emit any tool call that
+        # completed in the final tokens without a later delta (streaming.py
+        # calls this once after the last delta). Without it a call whose end
+        # marker closed in the final chunk was never emitted.
+        if not current_text:
+            return None
+        return self._emit_new_calls(current_text)
