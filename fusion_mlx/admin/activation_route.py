@@ -202,7 +202,8 @@ def _forward_hidden_states(
     mask = create_attention_mask(h)
     for block in inner.layers[: layer_index + 1]:
         h = block(h, mask=mask, cache=None)
-    out = np.array(mx.evaluate(h)[0], dtype=np.float32)
+    mx.eval(h)
+    out = np.array(h.astype(mx.float32)[0], dtype=np.float32)
     return out
 
 
@@ -311,7 +312,21 @@ def _validate_param_path(param_path: str, model: Any, late_margin: int) -> Any:
             f"num_layers={num_layers}); only layers >= "
             f"{num_layers - late_margin} are eligible",
         )
-    return params[param_path]
+    target = params[param_path]
+    # A closed-form delta is only meaningful on floating-point tensors.
+    # Quantized/fused checkpoints store packed integer weights
+    # (e.g. uint32 4-bit packs) — refuse them loudly instead of writing
+    # garbage into the packing.
+    import mlx.core as mx
+
+    if target.dtype not in (mx.float16, mx.float32, mx.bfloat16):
+        raise HTTPException(
+            status_code=400,
+            detail=f"target tensor dtype {target.dtype} is not floating "
+            "point (quantized/packed checkpoint); closed-form delta apply "
+            "requires an unquantized resident model",
+        )
+    return target
 
 
 def _load_delta(request: ApplyDeltaRequest, target: Any) -> Any:
@@ -382,9 +397,10 @@ def _apply_on_engine(engine: Any, request: ApplyDeltaRequest) -> dict[str, Any]:
     delta = _load_delta(request, target)
     if request.scale != 1.0:
         delta = delta * request.scale
-    old_snapshot = mx.evaluate(target + 0)
+    old_snapshot = target + 0
+    mx.eval(old_snapshot)
     new_value = old_snapshot + delta
-    model.load_weights([(request.param_path, new_value)])
+    model.load_weights([(request.param_path, new_value)], strict=False)
     mx.eval(new_value)
     return {"old_snapshot": old_snapshot, "new_value": new_value, "delta": delta}
 
@@ -446,7 +462,7 @@ def _rollback_on_engine(engine: Any, param_path: str, old_snapshot: Any) -> None
     import mlx.core as mx
 
     model, _ = _extract_lm(engine)
-    model.load_weights([(param_path, old_snapshot)])
+    model.load_weights([(param_path, old_snapshot)], strict=False)
     mx.eval(old_snapshot)
 
 

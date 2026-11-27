@@ -51,10 +51,14 @@ class _FakeInner:
 
 class _FakeModel:
     def __init__(self, num_layers=8):
+        import mlx.core as mx
+
         self.model = _FakeInner(num_layers)
         tree = {}
         for i in range(num_layers):
-            tree[f"model.layers.{i}.mlp.down_proj.weight"] = f"W{i}"
+            tree[f"model.layers.{i}.mlp.down_proj.weight"] = mx.zeros(
+                (16, 32), dtype=mx.float32
+            )
         self._tree = tree
 
     def parameters(self):
@@ -179,7 +183,7 @@ def test_param_path_late_layer_ok():
     target = ar._validate_param_path(
         "model.layers.5.mlp.down_proj.weight", model, late_margin=4
     )
-    assert target == "W5"
+    assert target.shape == (16, 32)
 
 
 def test_param_path_unknown_rejected():
@@ -456,3 +460,29 @@ def test_rollback_happy_path_restores_snapshot(monkeypatch):
     assert "a1" not in ar._DELTA_REGISTRY
     assert engine.rolled_back is True
     assert pool.released == 1
+
+
+def test_param_path_quantized_packed_rejected():
+    import fastapi
+    import mlx.core as mx
+
+    model = _FakeModel(num_layers=8)
+
+    class _QuantModel:
+        def __init__(self):
+            self.model = _FakeInner(8)
+            self._tree = {
+                f"model.layers.{i}.mlp.down_proj.weight": mx.zeros(
+                    (1024, 384), dtype=mx.uint32
+                )
+                for i in range(8)
+            }
+
+        def parameters(self):
+            return self._tree
+
+    with pytest.raises(fastapi.HTTPException) as ei:
+        ar._validate_param_path(
+            "model.layers.7.mlp.down_proj.weight", _QuantModel(), late_margin=4
+        )
+    assert "not floating" in ei.value.detail
