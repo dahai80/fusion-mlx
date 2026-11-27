@@ -336,6 +336,15 @@ class ChatCompletionRequest(BaseModel):
     top_k: int | None = None
     repetition_penalty: float | None = Field(None, ge=0.0)
     max_tokens: int | None = Field(None, ge=1, le=131072)
+    # Request scheduling priority (lower int = higher priority, matches
+    # Request.priority). 0 (default) = normal; 9 = lowest client level.
+    # Warm-list replay carries priority=10, so any client priority wins
+    # over idle warm traffic. Honored by admission ordering (#1705) and
+    # chunked-prefill yielding (generalized #1706): a lower-priority
+    # request's prefill chunks yield at chunk boundaries while any
+    # higher-priority request is present. Multi-role agent serving use:
+    # interactive review roles get low ints, long batch roles high ints.
+    priority: int = Field(default=0, ge=0, le=9)
     # vLLM-parity: minimum number of generated tokens before EOS is
     # honored (#1683). None/0 = disabled.
     min_tokens: int | None = Field(None, ge=0)

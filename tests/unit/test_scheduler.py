@@ -3939,6 +3939,9 @@ class TestBatchGeneratorAllTokens:
             request_id=rid,
             prompt=[1] * 8,
             sampling_params=SamplingParams(max_tokens=1, temperature=0.0),
+            # Production warm replay carries priority=10 (#1705); chunk
+            # yielding is priority-based (generalized #1706).
+            priority=10,
         )
         request.prompt_token_ids = [1] * 8
         request.num_prompt_tokens = 8
@@ -4045,6 +4048,70 @@ class TestBatchGeneratorAllTokens:
         scheduler._advance_chunked_prefills([], [])
 
         assert advanced == ["warm-1", "warm-2"]
+
+    def _prio_prefill_state(self, rid, priority):
+        """Chunked-prefill state for a client-priority request (no work
+        distinction from _real_prefill_state beyond priority)."""
+        request, state = self._real_prefill_state(rid)
+        request.priority = priority
+        return request, state
+
+    def test_low_priority_chunk_yields_to_higher_waiting(
+        self, mock_model, mock_tokenizer
+    ):
+        """A priority-5 prefill must hold its chunk when priority-0 waits."""
+        scheduler = self._make_scheduler(mock_model, mock_tokenizer)
+        low_req, low_state = self._prio_prefill_state("req-low", 5)
+        self._seed_prefilling(scheduler, [(low_req, low_state)])
+        high_req = Request(
+            request_id="req-high",
+            prompt=[7] * 4,
+            sampling_params=SamplingParams(max_tokens=4),
+            priority=0,
+        )
+        scheduler.waiting.append(high_req)
+        advanced = []
+        scheduler._step_prefill_chunk = lambda state: (
+            advanced.append(state.request.request_id) or False
+        )
+
+        scheduler._advance_chunked_prefills([], [])
+
+        assert advanced == []
+        assert list(scheduler.prefilling) == [low_req]
+
+    def test_equal_priority_chunks_advance(self, mock_model, mock_tokenizer):
+        """Same-priority prefilling requests must not yield to each other."""
+        scheduler = self._make_scheduler(mock_model, mock_tokenizer)
+        a_req, a_state = self._prio_prefill_state("req-a", 3)
+        b_req, b_state = self._prio_prefill_state("req-b", 3)
+        self._seed_prefilling(scheduler, [(a_req, a_state), (b_req, b_state)])
+        advanced = []
+        scheduler._step_prefill_chunk = lambda state: (
+            advanced.append(state.request.request_id) or False
+        )
+
+        scheduler._advance_chunked_prefills([], [])
+
+        assert advanced == ["req-a", "req-b"]
+
+    def test_high_priority_chunk_advances_over_low_prefilling(
+        self, mock_model, mock_tokenizer
+    ):
+        """A priority-0 prefill advances even while priority-5 prefills."""
+        scheduler = self._make_scheduler(mock_model, mock_tokenizer)
+        low_req, low_state = self._prio_prefill_state("req-low", 5)
+        high_req, high_state = self._prio_prefill_state("req-high", 0)
+        self._seed_prefilling(scheduler, [(low_req, low_state), (high_req, high_state)])
+        advanced = []
+        scheduler._step_prefill_chunk = lambda state: (
+            advanced.append(state.request.request_id) or False
+        )
+
+        scheduler._advance_chunked_prefills([], [])
+
+        assert advanced == ["req-high"]
+        assert list(scheduler.prefilling) == [low_req, high_req]
 
 
 class MockTokenizer:
