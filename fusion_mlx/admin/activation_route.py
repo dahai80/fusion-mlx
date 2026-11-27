@@ -33,7 +33,7 @@ from typing import Any
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .auth import require_admin
 
@@ -183,12 +183,11 @@ def _tokenize_batch(tokenizer: Any, request: ActivationRequest) -> list[list[int
                 for text in request.input
             ]
     except Exception as e:
-        raise HTTPException(
-            status_code=400, detail=f"tokenization failed: {e}"
-        ) from e
+        raise HTTPException(status_code=400, detail=f"tokenization failed: {e}") from e
     raise HTTPException(
-        status_code=400, detail="provide either 'messages' (batch of conversations) "
-        "or 'input' (batch of raw texts)"
+        status_code=400,
+        detail="provide either 'messages' (batch of conversations) "
+        "or 'input' (batch of raw texts)",
     )
 
 
@@ -253,9 +252,7 @@ async def readout_activations(
                     "num_tokens": int(hidden.shape[0]),
                     "picked_positions": positions,
                     "token_ids": [int(tokens[p]) for p in positions],
-                    "tokens": [
-                        tokenizer.decode([int(tokens[p])]) for p in positions
-                    ],
+                    "tokens": [tokenizer.decode([int(tokens[p])]) for p in positions],
                     "hidden_b64": _encode_f32_b64(flat),
                     "shape": [len(positions), int(hidden.shape[1])],
                 }
@@ -323,9 +320,7 @@ def _load_delta(request: ApplyDeltaRequest, target: Any) -> Any:
     if request.delta_path:
         path = os.path.realpath(os.path.expanduser(request.delta_path))
         if not os.path.isfile(path):
-            raise HTTPException(
-                status_code=400, detail=f"delta file not found: {path}"
-            )
+            raise HTTPException(status_code=400, detail=f"delta file not found: {path}")
         size = os.path.getsize(path)
         if size > _MAX_DELTA_FILE_BYTES:
             raise HTTPException(
@@ -368,9 +363,7 @@ def _load_delta(request: ApplyDeltaRequest, target: Any) -> Any:
                 status_code=400, detail=f"delta_b64 decode failed: {e}"
             ) from e
     else:
-        raise HTTPException(
-            status_code=400, detail="provide delta_path or delta_b64"
-        )
+        raise HTTPException(status_code=400, detail="provide delta_path or delta_b64")
     if tuple(delta.shape) != tuple(target.shape):
         raise HTTPException(
             status_code=400,
@@ -381,9 +374,7 @@ def _load_delta(request: ApplyDeltaRequest, target: Any) -> Any:
     return delta.astype(target.dtype)
 
 
-def _apply_on_engine(
-    engine: Any, request: ApplyDeltaRequest
-) -> dict[str, Any]:
+def _apply_on_engine(engine: Any, request: ApplyDeltaRequest) -> dict[str, Any]:
     import mlx.core as mx
 
     model, _ = _extract_lm(engine)
@@ -466,9 +457,7 @@ async def rollback_delta(
     with _DELTA_LOCK:
         if request.all:
             targets = [
-                rec
-                for rec in _DELTA_REGISTRY.values()
-                if rec["model"] == request.model
+                rec for rec in _DELTA_REGISTRY.values() if rec["model"] == request.model
             ]
         elif request.apply_id:
             rec = _DELTA_REGISTRY.get(request.apply_id)
@@ -485,9 +474,7 @@ async def rollback_delta(
                 )
             targets = [rec]
         else:
-            raise HTTPException(
-                status_code=400, detail="provide apply_id or all=true"
-            )
+            raise HTTPException(status_code=400, detail="provide apply_id or all=true")
         records = dict(_DELTA_REGISTRY)
     if not targets:
         raise HTTPException(
@@ -513,9 +500,7 @@ async def rollback_delta(
             await pool.release_engine(request.model, None)
         except Exception:
             logger.exception("rollback-delta: lease release failed")
-    logger.info(
-        "rollback-delta done: model=%s ids=%s", request.model, rolled_back
-    )
+    logger.info("rollback-delta done: model=%s ids=%s", request.model, rolled_back)
     return {
         "model": request.model,
         "rolled_back": rolled_back,
