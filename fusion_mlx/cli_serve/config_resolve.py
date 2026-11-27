@@ -330,7 +330,12 @@ def _serve_from_model_dir(args):
 
     configure_rate_limiter(args.rate_limit, enabled=args.rate_limit > 0)
 
-    config = ServerConfig(host=host, port=port, model_dir=args.model_dir)
+    config = ServerConfig(
+        host=host,
+        port=port,
+        model_dir=args.model_dir,
+        trust_remote_code=getattr(args, "trust_remote_code", False),
+    )
     # P1-5 (catch-up G6): event webhook targets from CLI args.
     _webhook_urls = getattr(args, "webhook_url", None) or []
     if _webhook_urls:

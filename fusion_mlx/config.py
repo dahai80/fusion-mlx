@@ -522,6 +522,10 @@ class ServerConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     model_aliases: dict[str, str] = field(default_factory=dict)
+    # Pool-wide trust_remote_code default (--trust-remote-code). Lets
+    # model-dir multi-model serving load repos with custom modeling code
+    # (e.g. Kimi-Linear) without touching per-model admin settings.
+    trust_remote_code: bool = False
     cloud_router_enabled: bool = False
     cloud_router_model: str | None = None
     cloud_router_api_key: str | None = None

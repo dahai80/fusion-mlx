@@ -256,6 +256,7 @@ class EnginePool:
         scheduler_config: SchedulerConfig | None = None,
         profile: object | None = None,
         force_text: bool = False,
+        default_trust_remote_code: bool = False,
     ):
         """
         Initialize the engine pool.
@@ -265,6 +266,9 @@ class EnginePool:
             profile: ServerProfile (R-7) gating modalities at load time
             force_text: --text-only/--no-mllm (#393) — load VLM-family
                 models as text-only BatchedEngine; vision requests fail
+            default_trust_remote_code: pool-wide fallback for repos with
+                custom modeling code when a model has no per-model admin
+                setting (serve --trust-remote-code)
 
         Note:
             Pre-load admission consults `enforcer.get_final_ceiling()` via
@@ -335,6 +339,7 @@ class EnginePool:
         self._profile = profile
         # --text-only (#393): pool-wide force_lm flip for VLM-family models.
         self._force_text = force_text
+        self._default_trust_remote_code = bool(default_trust_remote_code)
         self.configure_hot_cache_budget()
 
     @property
@@ -3866,14 +3871,14 @@ class EnginePool:
                         )
 
             # Per-model trust_remote_code (security opt-in, issue #926).
-            # When unset, defaults to False -- repos with custom modeling_*.py
-            # will fail to load until the user explicitly toggles this on
-            # in the admin UI's model settings modal.
+            # When unset, defaults to the pool-wide CLI opt-in
+            # (--trust-remote-code), then False -- repos with custom
+            # modeling_*.py fail to load until explicitly trusted.
             trc = (
                 bool(getattr(model_settings, "trust_remote_code", False))
                 if model_settings
                 else False
-            )
+            ) or self._default_trust_remote_code
 
             async def prefill_eviction_callback(
                 eviction_request: object,
