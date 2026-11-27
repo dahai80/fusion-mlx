@@ -109,7 +109,10 @@ def create_web_app(dist_dir=None):
     engine_url = resolve_engine_url()
     web_key = resolve_web_api_key()
     engine_key = resolve_engine_api_key()
-    client = httpx.AsyncClient(base_url=engine_url, timeout=None)
+    # trust_env=False: the engine URL is always loopback; ambient proxy
+    # env vars (e.g. a local Clash on 127.0.0.1:7897) must never route
+    # these requests — a proxy 502s them (same class as #1532).
+    client = httpx.AsyncClient(base_url=engine_url, timeout=None, trust_env=False)
 
     @app.get("/health")
     async def health():

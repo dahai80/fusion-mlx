@@ -129,6 +129,22 @@ def test_proxy_client_key_gate(upstream, monkeypatch):
     assert r.status_code == 200
 
 
+def test_proxy_ignores_ambient_proxy_env(upstream, monkeypatch):
+    # Regression: a local proxy env (e.g. ALL_PROXY to a Clash on :7897)
+    # made the engine client route loopback traffic through the proxy,
+    # which 502s it. The engine client must never honor proxy env.
+    monkeypatch.setenv("FUSION_MLX_API_KEY", "engine-secret")
+    monkeypatch.delenv("FUSION_MLX_WEB_API_KEY", raising=False)
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:9")
+    app = webserve.create_web_app()
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/v1/models")
+    assert r.status_code == 200
+    assert upstream["path"] == "/v1/models"
+
+
 def test_metrics_prefix_proxied(upstream, monkeypatch):
     monkeypatch.delenv("FUSION_MLX_WEB_API_KEY", raising=False)
     monkeypatch.delenv("FUSION_MLX_API_KEY", raising=False)

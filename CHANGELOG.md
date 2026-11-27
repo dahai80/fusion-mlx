@@ -16,7 +16,11 @@ source_of_truth:
 
 ## [0.10.76] - 2026-11-27 — auto tool parser streaming: split end markers + end-of-stream flush
 
+### Added
+- **#1730 (ask 1)**: tool-bearing chat requests are now grammar-constrained on the tool-call span for Hermes/Qwen3-family tokenizers (the Hermes tool_call begin/end markup). The tools' JSON schemas are compiled through llguidance structural tags into a Lark grammar, so malformed or partial tool-call JSON (the "tool calls degrade to plain text" class) becomes unreachable at decode time instead of merely repaired post-hoc. Opt out with `FUSION_MLX_TOOL_GRAMMAR=0`; the constraint is skipped loudly (logged) when the tokenizer does not use tool-call markup, or when structured outputs / an explicit grammar already constrain the request. Closes the emission-side root cause of #1694; the #1694 streaming flush fix (below) stays as defense-in-depth.
+
 ### Fixed
+- **#1742**: `score_completions` rejected reward-model adapters that carry value-head tensors — mlx-lm's adapter validation compares every adapter tensor against the base model's LoRA parameter set, so RLSL reward adapters (`value_head.*`) failed with "contains incompatible tensors". Reward loading now loads the base model without the adapter, splits `adapters.safetensors` by the `value_head.` prefix, applies the LoRA tensors through the normal path and the head tensors onto the attached value head; unknown tensors still fail loudly. Related: GRPO remote-reward failures (HTTP error, unreachable server, timeout) now degrade the batch to zero rewards with a logged warning instead of raising past the training loop.
 - **#1694**: `AutoToolParser.extract_tool_calls_streaming` required a complete end marker inside the current delta — streamed Qwen3 JSON arguments routinely split markers across chunks, so the whole tool call was swallowed (parser returned None forever with no flush) or partial markup leaked as plain content. Completion is now detected over the accumulated text with per-request dedup (`_emitted`), deltas are suppressed while a marker is open, and a new `finish(current_text)` flush lets `streaming.py` emit any call completed in the final tokens instead of discarding it.
 
 ## [0.10.75] - 2026-11-26 — custom ceiling governs the prefill abort path
