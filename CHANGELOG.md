@@ -14,6 +14,15 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.77] - 2026-11-28 — activation readout for the trainer path + model-dir fixes
+
+### Added
+- **#1751 (PR #1754)**: admin-plane activation readout and guarded single-tensor delta apply for the trainer's path-1 skill conditioning. `POST /admin/api/fine-tune/activations` returns per-layer hidden states (full transformer block, i.e. after its MLP) for a batch of conversations or raw texts, base64 float32, with position picking (`all` / `last` / explicit int list) and token ids echoed per picked position; the forward runs on the engine's MLX executor under an engine lease. `POST /admin/api/fine-tune/apply-delta` applies a same-shape delta to one late-MLP-layer tensor with fail-visible guards (path must be `model.layers.<i>.mlp.*`, layer must be within `late_margin` of the end, target dtype must be floating point so quantized/packed checkpoints are refused, delta via `delta_path` safetensors file or inline `delta_b64`), keeps an in-memory snapshot for `POST /api/fine-tune/rollback-delta` (by apply id or all for a model), and `GET /api/fine-tune/delta-status` lists applied deltas. Applied deltas are ephemeral — in-memory weights only, lost on engine unload/reload — and every response states `ephemeral: true`. Policy (eval gates, anti-poisoning) stays trainer-owned.
+
+### Fixed
+- **#1752 (PR #1753)**: two defects on the `serve --model-dir` multi-model path. First, `resolve_model_id` double-hop 404: directory-name discovery plus alias resolution rewrote requests to the HF repo id, which is not a registry key in that layout, so previously working multi-model setups returned 404 (when the alias target is not a discovered entry but the raw id is, the raw id is kept). Second, the pool-wide `--trust-remote-code` flag was not wired through to per-model loads — a new `ServerConfig.trust_remote_code` field is forwarded as the pool default and used when no per-model admin setting exists (per-model setting keeps precedence).
+- The admin web bridge engine client honored ambient proxy environment variables (`HTTP_PROXY` / `ALL_PROXY`), so on machines with a local proxy the loopback engine calls were routed through the proxy and failed with 502 (PR #1750). The client is now created with `trust_env=False` — the engine URL is always loopback — with a regression test that sets hostile proxy env.
+
 ## [0.10.76] - 2026-11-27 — auto tool parser streaming: split end markers + end-of-stream flush
 
 ### Added
