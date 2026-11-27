@@ -7,12 +7,22 @@ doc_type: changelog
 title: { zh: "变更日志", en: "Changelog" }
 audience: engineer
 status: draft
-version: 0.10.63
+version: 0.10.76
 updated: 2026-11-13
 owner: @dahai
 source_of_truth:
   - CHANGELOG.md
 ---
+
+## [0.10.76] - 2026-11-27 — default-on tool-call grammar + RM value-head adapters
+
+### Added
+- **#1730 (ask 1)**: grammar-constrained decoding is now default-on for every tool-bearing chat request. Any request carrying `tools` without an explicit grammar compiles an llguidance structural-tag grammar from the tool schemas — free text until the tool-call start marker, then marker + function name + arguments JSON constrained, end marker forced. Tool-call JSON can no longer degrade to plain text at emission (#1694 failure mode). Opt-out: `FUSION_MLX_TOOL_GRAMMAR=0`. Skips (logged, unconstrained) for non-Hermes markups, `code_mode`, `tool_choice="none"`, and explicit structured_outputs/response_format.
+
+### Fixed
+- **#1742**: `POST /admin/api/fine-tune/reward/score` rejected every `reward_model`-trained adapter because `value_head.proj.*` tensors are not base-model adapter parameters. `score_completions` now loads via `_load_reward_model` (LoRA applied from adapter config with loud unknown-tensor validation; value head loaded onto the attached submodule with strict shape checks). Unknown LoRA tensors still raise → 400.
+- **#1742 (secondary)**: `GRPOTrainer._compute_rewards` catches HTTPError/URLError/timeout from the reward endpoint, logs a loud warning with the response body, and degrades the batch to zero rewards instead of letting a 400 surface as an unhandled 500 that kills the GRPO job. Count mismatch still raises.
+- **#1694**: closed by the #1730 grammar forcing — the emission-side root cause of tool calls degrading to plain text on the driver→engine direct HTTP path.
 
 ## [0.10.75] - 2026-11-26 — custom ceiling governs the prefill abort path
 
