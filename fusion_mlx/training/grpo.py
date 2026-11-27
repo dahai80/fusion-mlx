@@ -122,6 +122,7 @@ class GRPOTrainer:
             return [float(len(c)) for c in completion_texts]
 
         import json
+        import urllib.error
         import urllib.request
 
         payload = json.dumps(
@@ -133,8 +134,30 @@ class GRPOTrainer:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=self.config.reward_timeout) as resp:
-            data = json.loads(resp.read().decode())
+        try:
+            with urllib.request.urlopen(
+                req, timeout=self.config.reward_timeout
+            ) as resp:
+                data = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            # #1742: a rejected scoring call (e.g. 400 from the reward/score
+            # endpoint) must not kill the whole GRPO job with a bare 500.
+            # Degrade loudly: zero rewards for this batch, job stays
+            # observable via the warning + the reward history.
+            body = e.read().decode(errors="replace")[:500]
+            logger.warning(
+                "GRPO: reward_endpoint HTTP %s, degrading batch to zero rewards: %s",
+                e.code,
+                body,
+            )
+            return [0.0] * len(completion_texts)
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            logger.warning(
+                "GRPO: reward_endpoint unreachable (%s), degrading batch to "
+                "zero rewards",
+                e,
+            )
+            return [0.0] * len(completion_texts)
         rewards = data.get("rewards", [])
         if len(rewards) != len(completion_texts):
             raise ValueError(
