@@ -179,6 +179,11 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # drops below the reserve; which model loads or which parser fires
         # never changes.
         "FUSION_MLX_HOST_MIN_FREE_GB",
+        # #1730: opt-out of default-on tool-call grammar forcing (api/openai/
+        # tool_grammar.py). Decode-constraint knob, not routing: it disables
+        # grammar masking on the tool-call emission path; which model loads,
+        # which parser fires, which tier engages never change.
+        "FUSION_MLX_TOOL_GRAMMAR",
         # Test/integration helpers — server URL for integration suites,
         # not consulted at runtime by the engine.
         "FUSION_MLX_BASE_URL",
