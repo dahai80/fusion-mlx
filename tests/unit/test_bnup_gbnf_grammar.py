@@ -97,6 +97,11 @@ def _make_matcher(grammar_str):
 
         tok = AutoTokenizer.from_pretrained(
             "Qwen/Qwen3-0.6B",
+            # Offline CI: a network fetch here hangs the runner for the full
+            # pytest timeout when huggingface.co is unreachable. Only use a
+            # locally cached tokenizer; skip otherwise (same contract as the
+            # except below).
+            local_files_only=True,
         )
     except Exception:
         pytest.skip("no tokenizer available for matcher test")
@@ -115,7 +120,7 @@ def _test_accepts(text, should_accept=True):
     try:
         from transformers import AutoTokenizer
 
-        tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
+        tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B", local_files_only=True)
     except Exception:
         pytest.skip("no tokenizer")
 
