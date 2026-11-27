@@ -810,6 +810,17 @@ def _cleanup_finished(self, finished_ids: set[str]) -> None:
                 "status": getattr(request, "status", None),
                 # #1638 (TraceSpec V1): tool-call vs plain decision type.
                 "spec_has_tools": bool(getattr(request, "has_tools", False)),
+                # N57/GaaD premise probe: grammar-constrained requests are
+                # spec-disabled (#1441); log the flag so traffic share of
+                # json_schema/grammar workloads is measurable in telemetry.
+                "spec_grammar_constrained": (
+                    getattr(
+                        getattr(request, "sampling_params", None),
+                        "compiled_grammar",
+                        None,
+                    )
+                    is not None
+                ),
             }
             # PIC sizing telemetry: prompt-reuse shape digests (full + head).
             _prompt = getattr(request, "prompt", None)
