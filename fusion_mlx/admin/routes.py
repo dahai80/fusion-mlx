@@ -143,5 +143,10 @@ router.include_router(canvas_router)
 router.include_router(fine_tune_router)
 router.include_router(migrate_router)
 
+# Activation readout + guarded delta apply (#1751) — routes: /admin/api/fine-tune/{activations,apply-delta,rollback-delta,delta-status}
+from .activation_route import router as activation_router  # noqa: E402
+
+router.include_router(activation_router)
+
 # Initialize canvas with templates
 init_canvas(templates)

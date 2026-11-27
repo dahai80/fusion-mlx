@@ -2518,6 +2518,11 @@ class Server:
         set_fine_tune_context(self.pool, _fine_tune_svc)
         self._training_services.append(_fine_tune_svc)
 
+        # Wire activation readout + guarded delta apply (#1751)
+        from .admin.activation_route import set_activation_context
+
+        set_activation_context(self.pool)
+
         # Wire GRPO service (#363)
         from .admin.fine_tune_route import set_grpo_context
         from .training.grpo_service import GRPOService
