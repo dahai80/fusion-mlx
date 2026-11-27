@@ -14,6 +14,11 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.76] - 2026-11-27 — auto tool parser streaming: split end markers + end-of-stream flush
+
+### Fixed
+- **#1694**: `AutoToolParser.extract_tool_calls_streaming` required a complete end marker inside the current delta — streamed Qwen3 JSON arguments routinely split markers across chunks, so the whole tool call was swallowed (parser returned None forever with no flush) or partial markup leaked as plain content. Completion is now detected over the accumulated text with per-request dedup (`_emitted`), deltas are suppressed while a marker is open, and a new `finish(current_text)` flush lets `streaming.py` emit any call completed in the final tokens instead of discarding it.
+
 ## [0.10.75] - 2026-11-26 — custom ceiling governs the prefill abort path
 
 ### Fixed
