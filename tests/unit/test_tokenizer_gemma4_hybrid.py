@@ -82,7 +82,11 @@ def _hf_tokenizer_or_skip(alias):
     # subclass OSError/ConnectionError, and huggingface_hub may wrap it
     # in LocalEntryNotFoundError depending on the code path.
     try:
-        return AutoTokenizer.from_pretrained(alias)
+        # Offline CI: when huggingface.co is unreachable the fetch itself can
+        # hang until the per-test pytest timeout (seen on the release runner,
+        # 600s), never raising. local_files_only keeps the suite on the local
+        # cache and surfaces LocalEntryNotFoundError (skipped below) instead.
+        return AutoTokenizer.from_pretrained(alias, local_files_only=True)
     except Exception as e:
         msg = str(e).lower()
         if any(m in msg for m in _NETWORK_MARKERS):
