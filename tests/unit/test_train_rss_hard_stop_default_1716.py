@@ -20,8 +20,11 @@ def _clean(monkeypatch):
 
 
 class TestDefaultDerivation:
-    def test_derived_from_child_memory_limit(self):
-        # child MLX budget 20GB -> +25% non-MLX headroom
+    def test_derived_from_child_memory_limit(self, monkeypatch):
+        # child MLX budget 20GB -> +25% non-MLX headroom. physical_memory_gb
+        # is pinned so the 85%-of-physical cap cannot clamp the expectation
+        # on small CI runners (the macOS rest2 shard has ~14GB RAM).
+        monkeypatch.setattr(proc_mod, "physical_memory_gb", lambda: 512.0)
         assert default_hard_stop_limit_gb(20.0) == pytest.approx(25.0)
 
     def test_unknown_basis_uses_auto_fraction(self, monkeypatch):
