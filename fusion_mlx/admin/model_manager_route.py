@@ -69,8 +69,12 @@ async def load_model(
     try:
         await engine_pool.get_engine(model_id)
     except Exception as e:
+        # #1758: surface the loader's message instead of a generic 500 so
+        # unsupported architectures are diagnosable from the app.
         logger.error("model-manager: load failed for %s: %s", model_id, e)
-        raise HTTPException(status_code=500, detail="Internal server error")
+        if "not supported" in str(e).lower():
+            raise HTTPException(status_code=422, detail=f"Load failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Load failed: {e}")
 
     logger.info("model-manager: loaded %s (role=%s)", model_id, role)
     return {"status": "ok", "model_id": model_id, "message": f"Loaded {model_id}"}

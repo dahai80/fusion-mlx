@@ -513,11 +513,33 @@ class MemoryConfig:
             self.hard_threshold = min(0.99, self.soft_threshold + 0.1)
 
 
+def _model_dirs_from_settings(settings_dir: str) -> list[str]:
+    # #1758: read model.model_dirs from settings.json so boot discovery and
+    # /v1/models/rescan honor secondary model directories. Missing file or
+    # malformed content yields [] (caller falls back to model_dir).
+    try:
+        with open(Path(settings_dir) / "settings.json", encoding="utf-8") as f:
+            sj = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug("settings.json unavailable for model_dirs lookup: %s", exc)
+        return []
+    model_sj = sj.get("model")
+    if not isinstance(model_sj, dict):
+        return []
+    raw = model_sj.get("model_dirs")
+    if not isinstance(raw, list):
+        return []
+    return [str(d).strip() for d in raw if str(d).strip()]
+
+
 @dataclass
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 11434
     model_dir: str | None = None
+    # #1758: additional scan roots for pool discovery. Resolved from
+    # settings.json model.model_dirs when not passed explicitly.
+    model_dirs: list[str] | None = None
     settings_dir: str | None = None
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
@@ -656,10 +678,27 @@ class ServerConfig:
         # #1492 iron law: refuse a non-loopback bind at construction time so
         # every programmatic path fails before any model load or bind.
         enforce_loopback_bind(self.host)
+        explicit_model_dir = self.model_dir is not None
         if self.model_dir is None:
             self.model_dir = str(Path.home() / ".fusion-mlx" / "models")
         if self.settings_dir is None:
             self.settings_dir = str(Path.home() / ".fusion-mlx")
+        if self.model_dirs is None:
+            # #1758: an explicit --model-dir is per-run intent and wins over
+            # the persistent settings list; otherwise adopt settings.json
+            # model.model_dirs so secondary directories are discovered.
+            if not explicit_model_dir:
+                self.model_dirs = _model_dirs_from_settings(self.settings_dir)
+            if not self.model_dirs:
+                self.model_dirs = [self.model_dir]
+            else:
+                # mirror admin/settings.py: the first configured root is the
+                # primary (download target); keep model_dir in sync.
+                self.model_dir = self.model_dirs[0]
+        else:
+            self.model_dirs = [d for d in self.model_dirs if str(d).strip()] or [
+                self.model_dir
+            ]
 
 
 # Model config loader
