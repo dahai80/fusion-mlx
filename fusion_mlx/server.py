@@ -2663,7 +2663,7 @@ class Server:
         # All three share a refresh callback that re-discovers models in the
         # pool after a download/quantization completes (mirrors fusion-mlx wiring).
         if self.config.model_dir:
-            model_dirs = [self.config.model_dir]
+            model_dirs = list(self.config.model_dirs or [self.config.model_dir])
 
             async def _refresh_models_after_task():
                 if self.pool is None:
@@ -2724,11 +2724,14 @@ class Server:
 
         # Auto-discover and register models in pool
         if self.config.model_dir:
-            await self.pool.discover_models_async(self.config.model_dir)
+            # #1758: scan every configured root (settings.json
+            # model.model_dirs), not just the primary model_dir.
+            scan_dirs = list(self.config.model_dirs or [self.config.model_dir])
+            await self.pool.discover_models_async(scan_dirs)
             logger.info(
                 "Discovered %d models in %s",
                 self.pool.model_count,
-                self.config.model_dir,
+                scan_dirs,
             )
 
         # Auto-pin locked embedding model so memory enforcer never evicts it
