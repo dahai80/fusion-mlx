@@ -199,13 +199,19 @@ class OpenAIAdapter(BaseAdapter):
     ) -> str:
         if encoder is not None and not chunk.is_first and not chunk.is_last:
             if chunk.text and not chunk.tool_call_delta and not chunk.reasoning_content:
-                _content = sanitize_output(chunk.text)
-                if _content:
-                    return encoder.encode_chat_chunk(
-                        content=_content,
-                        finish_reason=None,
-                    )
-                return ""
+                # #1756: the fast-path SSE template cannot carry logprobs —
+                # fall through to the full chunk builder when the request
+                # asked for them so the delta keeps choices[0].logprobs.
+                if request.logprobs and chunk.logprobs:
+                    pass
+                else:
+                    _content = sanitize_output(chunk.text)
+                    if _content:
+                        return encoder.encode_chat_chunk(
+                            content=_content,
+                            finish_reason=None,
+                        )
+                    return ""
             if chunk.reasoning_content and not chunk.text and not chunk.tool_call_delta:
                 _rc = sanitize_reasoning_for_stream(chunk.reasoning_content)
                 if _rc:

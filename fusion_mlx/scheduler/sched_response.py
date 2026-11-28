@@ -19,6 +19,29 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _host_copy_logprobs(value):
+    # #1756: copy logprob vectors to host numpy on the producing thread.
+    # See the RequestOutput construction below for the cross-thread
+    # stream-event rationale.
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [_host_copy_logprobs(v) for v in value]
+    try:
+        import mlx.core as mx
+    except Exception:
+        return value
+    if isinstance(value, mx.array):
+        import numpy as np
+
+        # bfloat16 has no numpy equivalent (PEP 3118 "not a valid buffer
+        # format") — promote to float32 before the host copy.
+        if value.dtype != mx.float32:
+            value = value.astype(mx.float32)
+        return np.array(value, copy=True)
+    return value
+
+
 def _is_near_tie_greedy_stop(request, finish_reason) -> bool:
     # #1690: greedy (temperature=0) requests whose stop fires after 0-1
     # output tokens match the near-tie first-token-EOS signature.
@@ -281,7 +304,14 @@ def _process_batch_responses(
             prompt_tokens=request.num_prompt_tokens,
             completion_tokens=request.num_output_tokens,
             cached_tokens=request.cached_tokens,
-            logprobs=getattr(response, "logprobs", None),
+            # #1756: copy the per-token logprob vectors to host numpy HERE,
+            # on the scheduler thread that produced them. The vectors are
+            # lazy mx.arrays tied to this thread's stream; consuming one
+            # from the API thread later raises "There is no Stream(gpu, N)
+            # in current thread" (cross-thread consumption has no fix on
+            # the consumer side — set_default_device does not satisfy the
+            # producer's stream events).
+            logprobs=_host_copy_logprobs(getattr(response, "logprobs", None)),
             time_to_first_token=_ttft_val,
         )
 

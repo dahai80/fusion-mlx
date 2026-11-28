@@ -453,6 +453,10 @@ async def _stream_chat_generator(
             # scheduler keys the request by an internal uuid4 that no
             # external caller can know.
             request_id=request_id,
+            # #1756: honor logprobs/top_logprobs on streaming chat; each
+            # content delta below attaches converted TokenLogProb entries.
+            logprobs=bool(getattr(sampling, "logprobs", False)),
+            top_logprobs=getattr(sampling, "top_logprobs", None),
         )
         # Prefill-phase keepalive: engine yields nothing before first token,
         # so long prefills left the stream silent past client idle timeouts.
@@ -487,6 +491,30 @@ async def _stream_chat_generator(
                 if keepalive:
                     keepalive.reset()
                 accumulated += gen.new_text
+                # #1756: convert this step's raw logprob vectors into OpenAI
+                # TokenLogProb entries once per delta; the StreamChunk sites
+                # below attach them and the adapter gates on request.logprobs.
+                _step_lps = None
+                if (
+                    getattr(request, "logprobs", None)
+                    and getattr(gen, "logprobs", None) is not None
+                ):
+                    _lp_tok = getattr(engine, "_tokenizer", None) or getattr(
+                        engine, "tokenizer", None
+                    )
+                    if _lp_tok is not None:
+                        from ...service.helpers import (
+                            _extract_streaming_token_logprobs,
+                        )
+                        from ..models import ChoiceLogProbs
+
+                        _step_lps = ChoiceLogProbs(
+                            content=_extract_streaming_token_logprobs(
+                                gen,
+                                _lp_tok,
+                                int(getattr(request, "top_logprobs", None) or 0),
+                            )
+                        )
 
                 # #444 channel-based reasoning parser 先于 ThinkingParser 拆分:
                 # harmony/gpt_oss/gemma4 的 channel 标记若直接进 ThinkingParser
@@ -517,7 +545,7 @@ async def _stream_chat_generator(
                         prompt_tokens=gen.prompt_tokens,
                         completion_tokens=gen.completion_tokens,
                         cached_tokens=gen.cached_tokens,
-                        logprobs=getattr(gen, "logprobs", None),
+                        logprobs=_step_lps,
                     )
                     yield _adapter.format_stream_chunk(
                         rchunk_pre, request, encoder=encoder
@@ -568,7 +596,7 @@ async def _stream_chat_generator(
                                         prompt_tokens=gen.prompt_tokens,
                                         completion_tokens=gen.completion_tokens,
                                         cached_tokens=gen.cached_tokens,
-                                        logprobs=getattr(gen, "logprobs", None),
+                                        logprobs=_step_lps,
                                     )
                                     yield _adapter.format_stream_chunk(
                                         tc_chunk, request, encoder=encoder
@@ -585,7 +613,7 @@ async def _stream_chat_generator(
                                         prompt_tokens=gen.prompt_tokens,
                                         completion_tokens=gen.completion_tokens,
                                         cached_tokens=gen.cached_tokens,
-                                        logprobs=getattr(gen, "logprobs", None),
+                                        logprobs=_step_lps,
                                     )
                                     yield _adapter.format_stream_chunk(
                                         chunk, request, encoder=encoder
@@ -597,7 +625,7 @@ async def _stream_chat_generator(
                                         prompt_tokens=gen.prompt_tokens,
                                         completion_tokens=gen.completion_tokens,
                                         cached_tokens=gen.cached_tokens,
-                                        logprobs=getattr(gen, "logprobs", None),
+                                        logprobs=_step_lps,
                                     )
                                     yield _adapter.format_stream_chunk(
                                         rchunk, request, encoder=encoder
@@ -623,7 +651,7 @@ async def _stream_chat_generator(
                                 prompt_tokens=gen.prompt_tokens,
                                 completion_tokens=gen.completion_tokens,
                                 cached_tokens=gen.cached_tokens,
-                                logprobs=getattr(gen, "logprobs", None),
+                                logprobs=_step_lps,
                             )
                             yield _adapter.format_stream_chunk(
                                 chunk, request, encoder=encoder
@@ -635,7 +663,7 @@ async def _stream_chat_generator(
                                 prompt_tokens=gen.prompt_tokens,
                                 completion_tokens=gen.completion_tokens,
                                 cached_tokens=gen.cached_tokens,
-                                logprobs=getattr(gen, "logprobs", None),
+                                logprobs=_step_lps,
                             )
                             yield _adapter.format_stream_chunk(
                                 rchunk, request, encoder=encoder
