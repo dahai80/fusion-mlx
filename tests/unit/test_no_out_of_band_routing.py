@@ -633,6 +633,12 @@ ALLOWED_FUSION_MLX_ENV_VARS: frozenset[str] = frozenset(
         # spec-decode depth knob on the already-selected --spec-decode mtp
         # path; never selects/routes an engine.
         "FUSION_MLX_MTP_CHAIN_K",
+        # GaaD grammar x MTP compose gate (speculative/mtp/generator.py).
+        # Default ON; FUSION_MLX_MTP_GRAMMAR=0 restores the pre-#1730
+        # contract (grammar-constrained requests never speculate). Pure
+        # spec-decode behavior toggle on the already-selected --enable-mtp
+        # path; never selects/routes an engine.
+        "FUSION_MLX_MTP_GRAMMAR",
         # llama.cpp backend bridge: llama-server binary override
         # (engines/llama_cpp_backend.py:32). Points the bridge at a
         # specific llama-server executable. Pure integration-endpoint
