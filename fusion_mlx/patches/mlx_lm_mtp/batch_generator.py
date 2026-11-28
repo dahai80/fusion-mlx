@@ -365,7 +365,14 @@ def _mtp_common_eligible(gen_batch: Any) -> bool:
     if uids is None or len(uids) == 0:
         return False
     if _has_grammar_processors(gen_batch):
-        return False
+        # #1730 (GaaD): compose allowed on the greedy singleton cycle when
+        # an llguidance matcher can drive draft masking. Everything else
+        # keeps the #1441 blanket disable — heuristic verify paths use raw
+        # argmax over unmasked logits and desync the matcher.
+        if _grammar_compose_proc(gen_batch) is None:
+            return False
+        if not _is_greedy(gen_batch):
+            return False
     return True
 
 
@@ -433,6 +440,10 @@ def _is_mtp_eligible(gen_batch: Any) -> bool:
 
 
 def _is_mtp_batch_eligible(gen_batch: Any) -> bool:
+    # #1730: grammar compose covers the singleton K=1 cycle only — batched
+    # grammar rows keep the #1441 no-MTP contract.
+    if _has_grammar_processors(gen_batch):
+        return False
     if not _mtp_common_eligible(gen_batch):
         return False
     uids = getattr(gen_batch, "uids", None)
@@ -605,13 +616,71 @@ def _has_grammar_processors(gen_batch: Any) -> bool:
         return False
     try:
         from fusion_mlx.api.grammar import GrammarConstraintProcessor
+        from fusion_mlx.shim.grammar_ring import GrammarMaskRing
     except Exception:
         return False
     return any(
-        isinstance(proc, GrammarConstraintProcessor)
+        isinstance(proc, (GrammarConstraintProcessor, GrammarMaskRing))
         for processors in processors_by_seq
         for proc in (processors or [])
     )
+
+
+def _grammar_compose_proc(gen_batch: Any) -> Any | None:
+    """#1730 (GaaD): the grammar processor that may drive the MTP draft
+    path, or None when compose is unavailable.
+
+    Compose requires an llguidance matcher (deep_copy / consume_token /
+    compute_bitmask are what make speculative draft masking sound) and a
+    greedy singleton cycle. Ring-wrapped processors qualify: the ring's
+    matcher property delegates to the wrapped processor's matcher.
+    """
+    from fusion_mlx.speculative.mtp.generator import (
+        _grammar_processor_of,
+        mtp_grammar_compose_enabled,
+    )
+
+    if not mtp_grammar_compose_enabled():
+        return None
+    # Probe without assuming the attribute exists — eligibility checks run
+    # against real GenerationBatch objects and test fakes alike.
+    procs = getattr(gen_batch, "logits_processors", None)
+    try:
+        proc = _grammar_processor_of(_proc_list(gen_batch) or [])
+    except AttributeError:
+        proc = _grammar_processor_of(procs or [])
+    if proc is None:
+        return None
+    matcher = getattr(proc, "matcher", None)
+    if (
+        matcher is None
+        or not hasattr(matcher, "compute_bitmask")
+        or not hasattr(matcher, "deep_copy")
+    ):
+        return None
+    return proc
+
+
+def _grammar_drain(proc: Any) -> None:
+    """Block until any in-flight GrammarMaskRing worker finishes reading
+    the matcher. Compose calls matcher methods directly from the batch
+    thread; without the drain the ring's background prefetch holds a
+    RefCell borrow and llguidance raises ``Already borrowed`` (#1730).
+    """
+    drain = getattr(proc, "_drain_job", None)
+    if callable(drain):
+        drain()
+
+
+def _grammar_mask_logits(proc: Any, logits: Any, matcher: Any | None = None) -> Any:
+    """Apply the matcher's current-state allow bitmask to logits (1-D or
+    (1, vocab)). Disallowed tokens get -inf."""
+    from fusion_mlx.shim.grammar_ring import apply_bitmask
+
+    _grammar_drain(proc)
+    m = matcher if matcher is not None else proc.matcher
+    mask = m.compute_bitmask()
+    return apply_bitmask(mask, logits, int(logits.shape[-1]))
 
 
 def _mtp_state_valid_for_batch(gen_batch: Any, state: _MtpState | None) -> bool:
@@ -1300,6 +1369,7 @@ def _post_init_mtp(gen_batch: Any) -> None:
 
     sampler = _resolve_sampler(gen_batch)
     procs = _proc_list(gen_batch)
+    compose = _grammar_compose_proc(gen_batch)
 
     main_tok = _ensure_uint32(gen_batch._next_tokens)  # (1,)
     main_lp = gen_batch._next_logprobs[0]  # (vocab,)
@@ -1317,9 +1387,19 @@ def _post_init_mtp(gen_batch: Any) -> None:
     )
 
     next_main_logits = logits[:, -1, :]  # (1, vocab) — distribution after main_tok
-    next_main_logits = _apply_processors(procs, prev_buf, next_main_logits)
+    if compose is not None:
+        # #1730: mask with the authoritative matcher state — the standard
+        # __init__._step already accepted main_tok via the scheduler's
+        # grammar accept hook.
+        next_main_logits = _grammar_mask_logits(compose, next_main_logits)
+    else:
+        next_main_logits = _apply_processors(procs, prev_buf, next_main_logits)
     next_main_lp = _logprobs(next_main_logits)
     next_main_tok = sampler(next_main_lp)  # (1,)
+    if compose is not None:
+        # Advance the authoritative matcher past the token this cycle
+        # queues for emit; the draft below masks with a fork of this state.
+        compose.accept_token(int(next_main_tok.tolist()[0]))
 
     # MTP head sees (hidden_at_main, next_main_tok) and proposes the draft
     # that the *next* verify cycle will check against forward([next_main, draft]).
@@ -1334,6 +1414,10 @@ def _post_init_mtp(gen_batch: Any) -> None:
         chain_k = max(1, min(4, int(_req_k)))
     else:
         chain_k = _CHAIN_K
+    if compose is not None:
+        # #1730: GaaD compose covers the K=1 verify cycle only — the
+        # chain-of-K path has no grammar fork handling.
+        chain_k = 1
     mtp_result = gen_batch.model.mtp_forward(
         hidden_at_main,
         next_ids,
@@ -1345,7 +1429,15 @@ def _post_init_mtp(gen_batch: Any) -> None:
     else:
         mtp_logits, mtp_head_hidden = mtp_result, None
     mtp_logits_2d = mtp_logits[:, -1, :]
-    if procs is not None:
+    if compose is not None:
+        # #1730: draft masks with a FORK of the authoritative matcher
+        # (state already past next_main_tok) — the draft is speculative
+        # and must not advance the real state. Greedy argmax over the
+        # masked logits equals the GaaD forced token when the automaton
+        # is out-degree-1.
+        fork = compose.matcher.deep_copy()
+        mtp_logits_2d = _grammar_mask_logits(compose, mtp_logits_2d, matcher=fork)
+    elif procs is not None:
         prev_with_main_and_next = mx.concatenate(
             [prev_buf, _ensure_uint32(next_main_tok)]
         )
@@ -1580,6 +1672,7 @@ def _run_verify_cycle_k1(gen_batch: Any, state: _MtpState) -> None:
     sampler = _resolve_sampler(gen_batch)
     procs = _proc_list(gen_batch)
     is_greedy = _is_greedy(gen_batch)
+    compose = _grammar_compose_proc(gen_batch)
 
     inputs = mx.concatenate([state.next_main, state.draft_tok])  # (2,)
 
@@ -1612,7 +1705,40 @@ def _run_verify_cycle_k1(gen_batch: Any, state: _MtpState) -> None:
     state.stats.backbone_ms += (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
-    if procs is not None:
+    if compose is not None:
+        # #1730 (GaaD): grammar-driven K=1 cycle. Position 0 masks with
+        # the authoritative matcher state; the bonus position masks only
+        # AFTER the verify decision consumed its token, so every position
+        # sees the grammar state left by the tokens before it (masking
+        # both positions up front with one shared state can emit
+        # grammar-illegal sequences). Greedy is guaranteed by the
+        # eligibility gate, so the masked argmax equals the GaaD forced
+        # token whenever the automaton is out-degree-1.
+        verify_logits = _grammar_mask_logits(compose, verify_logits)
+        verify_lp_2d = _logprobs(verify_logits)
+        verify_tok = sampler(verify_lp_2d)
+        verify_id = int(verify_tok.tolist()[0])
+        draft_id = state.draft_id
+        accept = verify_id == draft_id
+        if accept:
+            compose.accept_token(draft_id)
+        else:
+            compose.accept_token(verify_id)
+        bonus_logits = _grammar_mask_logits(compose, bonus_logits)
+        bonus_lp_2d = _logprobs(bonus_logits)
+        bonus_tok = sampler(bonus_lp_2d)
+        mx.eval(bonus_tok)
+        bonus_id = int(bonus_tok.tolist()[0])
+        verify_accept_lp = _accept_lp_for(sampler, verify_lp_2d)
+        draft_accept_lp = (
+            state.draft_accept_lp
+            if state.draft_accept_lp is not None
+            else _accept_lp_for(sampler, state.draft_lp)
+        )
+        # NOTE: shared continuation below re-derives lps/samples from the
+        # already-masked logits (identical greedy results) and accrues
+        # sample_ms once — do not double-count here.
+    elif procs is not None:
         verify_logits = _apply_processors(procs, prev_main, verify_logits)
         bonus_logits = _apply_processors(procs, prev_draft, bonus_logits)
     # Batched logprobs: one logsumexp over (2, vocab) instead of two over
@@ -1672,6 +1798,10 @@ def _run_verify_cycle_k1(gen_batch: Any, state: _MtpState) -> None:
         t0 = time.perf_counter()
         _clear_rollback(gen_batch.prompt_cache)
         state.stats.cache_ops_ms += (time.perf_counter() - t0) * 1000
+        if compose is not None:
+            # #1730: advance the authoritative matcher past the bonus
+            # token before forking the matcher for the next draft.
+            compose.accept_token(bonus_id)
 
         # --- MTP head forward for next draft (timed inside _step_mtp) ---
         new_draft, new_draft_lp, new_head_hidden = _step_mtp(
@@ -1681,6 +1811,7 @@ def _run_verify_cycle_k1(gen_batch: Any, state: _MtpState) -> None:
             prev_buf=prev_draft if procs is not None else None,
             stats=state.stats,
             want_hidden=state.chain_k >= 2,
+            compose=compose,
         )
         # Queue the two emitted tokens. Per PR 990: the accepted draft uses
         # the *MTP head's* original draft distribution as its logprobs; the
@@ -1733,6 +1864,7 @@ def _run_verify_cycle_k1(gen_batch: Any, state: _MtpState) -> None:
         prev_buf=prev_main if procs is not None else None,
         stats=state.stats,
         want_hidden=state.chain_k >= 2,
+        compose=compose,
     )
 
     state.queue.append((emit_id, emit_lp, "verify"))
@@ -1975,6 +2107,7 @@ def _step_mtp(
     prev_buf: Any | None,
     stats: _MtpStats | None = None,
     want_hidden: bool = False,
+    compose: Any | None = None,
 ) -> tuple[Any, Any, Any | None]:
     """Run one MTP-head forward + sample.
 
@@ -2008,7 +2141,17 @@ def _step_mtp(
     else:
         mtp_logits, mtp_hidden = mtp_result, None
     mtp_logits_2d = mtp_logits[:, -1, :]
-    if procs is not None and prev_buf is not None:
+    if compose is not None:
+        # #1730 GaaD: draft masking uses a FORK of the authoritative
+        # matcher — the draft is speculative and must never advance the
+        # real grammar state. The fork starts from the state after the
+        # bonus token (authoritative accept_token already consumed it),
+        # so the forced draft here is exactly the token the target's
+        # masked argmax at the next verify position will reproduce.
+        _grammar_drain(compose)
+        fork = compose.matcher.deep_copy()
+        mtp_logits_2d = _grammar_mask_logits(compose, mtp_logits_2d, matcher=fork)
+    elif procs is not None and prev_buf is not None:
         prev_with_next = mx.concatenate([prev_buf, _ensure_uint32(next_main_tok)])
         mtp_logits_2d = _apply_processors(procs, prev_with_next, mtp_logits_2d)
     new_lp = _logprobs(mtp_logits_2d)

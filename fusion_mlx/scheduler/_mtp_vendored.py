@@ -105,7 +105,11 @@ def _install_mtp_vendored(
     # Lazy import — the generator module pulls in mlx-lm's sample_utils and
     # patches ArraysCache; keep the import off the scheduler boot path so a
     # non-MTP build has zero cost.
-    from ..speculative.mtp.generator import mtp_generate_step
+    from ..speculative.mtp.generator import (
+        _grammar_processor_of,
+        mtp_generate_step,
+        mtp_grammar_compose_enabled,
+    )
 
     _orig_step = gb._step
 
@@ -540,7 +544,17 @@ def _install_mtp_vendored(
             return _orig_step()
 
         _lp = getattr(gb, "logits_processors", None)
-        if _lp and any(p for p in _lp if p):
+        # #1730 (GaaD): grammar-constrained rows compose with the MTP
+        # draft path when the generator supports it (llguidance matchers
+        # only). Any other logits processor still hands off to plain
+        # decode — the generator raises on those combinations anyway.
+        _grammar_row = (
+            _lp is not None
+            and any(p for p in _lp if p)
+            and mtp_grammar_compose_enabled()
+            and _grammar_processor_of(_lp) is not None
+        )
+        if _lp and any(p for p in _lp if p) and not _grammar_row:
             _stats["fallthrough_steps"] += 1
             _stats["ft_logits_processors"] += 1
             # Codex round-L BLOCKING #4: prior round-H revision raised
@@ -600,6 +614,23 @@ def _install_mtp_vendored(
                 # dropped — they grew one entry per uid otherwise.
                 _final_cleanup_uid(uid)
                 state = None
+
+        # #1730: grammar compose mode must not flip mid-stream. A guided-
+        # decoding processor added after MTP started (or removed) means the
+        # live generator was built for the other mode — hand off with the
+        # same terminal-disable contract as non-greedy / processor handoffs.
+        if state is not None and bool(state.get("grammar", False)) != bool(
+            _grammar_row
+        ):
+            _stats["fallthrough_steps"] += 1
+            _stats["ft_mid_stream_handoff"] += 1
+            _log_mtp_mid_stream_handoff_once(
+                uid,
+                "grammar_mode",
+                "grammar compose mode changed mid-stream",
+            )
+            _record_terminal_disable(uid)
+            return _orig_step()
 
         if state is None:
             # --- FIRST call for this uid ---
@@ -675,6 +706,10 @@ def _install_mtp_vendored(
                     # tokens are unchanged; only the acceptance
                     # model's training window shrinks.
                     stop_tokens=getattr(batch_gen, "stop_tokens", None),
+                    # #1730 (GaaD): hand the grammar row's processors to
+                    # the generator so it can drive the matcher directly
+                    # (mask → argmax → consume, forced-token splice).
+                    logits_processors=(list(_lp[0]) if _grammar_row else None),
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning(
@@ -721,6 +756,7 @@ def _install_mtp_vendored(
                 "queue": [],
                 "primed": True,
                 "request_id": _first_call_req_id,
+                "grammar": _grammar_row,
             }
             _stats["vendored_steps"] += 1
             # Codex round-I BLOCKING #2 / round-J BLOCKING #2+#3:

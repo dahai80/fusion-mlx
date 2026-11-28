@@ -927,7 +927,18 @@ def _selfcontained_spec_step(self, output: SchedulerOutput, request) -> list:
 
 
 def _loaded_spec_methods(self) -> dict[str, bool]:
+    from ..patches.mlx_lm_mtp.batch_generator import _model_mtp_decode_enabled
     from ..speculative.per_request_route import loaded_methods
+
+    # #1730: the MTP decode marker can live on the inner language_model
+    # rather than the wrapper — probe both via the shared helper so the
+    # decide path sees the same truth the live eligibility gate sees.
+    def _loaded_mtp_flag(model: Any) -> bool:
+        try:
+            return bool(_model_mtp_decode_enabled(model))
+        except Exception as exc:
+            logger.warning("MTP decode flag probe failed: %s", exc)
+            return False
 
     eagle3_loaded = (
         self._spec_decode_state is not None
@@ -946,7 +957,7 @@ def _loaded_spec_methods(self) -> dict[str, bool]:
         dflash2=getattr(self, "_dflash2_runtime", None) is not None,
         dspark=self._dspark_runtime is not None,
         dspine=getattr(self, "_dspine_runtime", None) is not None,
-        mtp=bool(getattr(self.model, "_fusion_mlx_mtp_decode_enabled", False)),
+        mtp=_loaded_mtp_flag(self.model),
         medusa=medusa_loaded,
     )
 
@@ -958,14 +969,27 @@ def _grammar_constrained(request) -> bool:
 
 def _decide_spec_method(self, request) -> str:
     from ..model_auto_config import _detect_family_from_path
+    from ..speculative.auto_router import METHOD_MTP as _METHOD_MTP
+    from ..speculative.mtp.generator import mtp_grammar_compose_enabled
     from ..speculative.per_request_route import select_active_method
 
     # #1441: grammar-constrained requests get no heuristic spec method. The
     # sentinel is truthy (sticky: no re-decide) but matches no dispatch
     # branch, which also keeps the self-contained dspark branch in
-    # _step_pure_decode away from this request. MTP needs no exemption here -
-    # it refuses grammar batches itself (_has_grammar_processors).
+    # _step_pure_decode away from this request.
+    #
+    # #1730 (GaaD): exception — when the MTP vendored path is loaded, force
+    # METHOD_MTP so grammar-constrained requests speculate with matcher-
+    # driven masking (generator refuses non-llguidance matchers by raising,
+    # and FUSION_MLX_MTP_GRAMMAR=0 restores the blanket disable).
     if _grammar_constrained(request):
+        if mtp_grammar_compose_enabled() and self._loaded_spec_methods().get("mtp"):
+            logger.info(
+                "Spec method MTP forced for %s: grammar-constrained "
+                "request with GaaD compose (#1730)",
+                request.request_id,
+            )
+            return _METHOD_MTP
         logger.info(
             "Spec decode disabled for %s: grammar-constrained request (#1441)",
             request.request_id,
@@ -1050,7 +1074,29 @@ def _try_spec_decode(
     # MTP is exempt - it runs inside bg._next() and bails on grammar
     # processors there (_has_grammar_processors), so it never gets here.
     if _grammar_constrained(request):
-        return []
+        # #1730 (GaaD): with the MTP vendored path loaded and compose
+        # enabled, grammar requests route to METHOD_MTP so the generator
+        # drives the matcher directly (mask -> argmax -> consume,
+        # forced-token splice). Decided once, same stickiness as the
+        # heuristic router; the heuristic branches below match no
+        # METHOD_MTP case so they fall through harmlessly. Without the
+        # compose, keep the #1441 blanket disable.
+        from ..speculative.auto_router import METHOD_MTP as _METHOD_MTP
+
+        if request._active_spec_method is None:
+            from ..speculative.mtp.generator import mtp_grammar_compose_enabled
+
+            if mtp_grammar_compose_enabled() and self._loaded_spec_methods().get("mtp"):
+                request._active_spec_method = _METHOD_MTP
+                logger.info(
+                    "Spec method MTP forced for %s: grammar-constrained "
+                    "request with GaaD compose (#1730)",
+                    request.request_id,
+                )
+            else:
+                request._active_spec_method = "spec-disabled"
+        if request._active_spec_method != _METHOD_MTP:
+            return []
 
     if self._vlm_mtp_active:
         return []

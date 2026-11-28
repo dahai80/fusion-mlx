@@ -100,6 +100,10 @@ def apply_bitmask(bitmask, logits, vocab_size: int):
     # GPU — one shift/and/where chain, no per-token Python loop.
     import mlx.core as mx
 
+    # llguidance LLMatcher.compute_bitmask() returns a raw int32 bytes
+    # buffer; np.asarray cannot coerce bytes to int32 directly (#1730).
+    if isinstance(bitmask, (bytes, bytearray)):
+        bitmask = np.frombuffer(bitmask, dtype=np.int32)
     flat = np.ascontiguousarray(np.asarray(bitmask, dtype=np.int32).reshape(-1))
     words = mx.array(flat)
     kernel = _get_xgrammar_apply()
