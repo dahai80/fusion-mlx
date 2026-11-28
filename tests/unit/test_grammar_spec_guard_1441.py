@@ -56,8 +56,25 @@ class TestDecideSpecMethodGrammar:
         from fusion_mlx.scheduler.sched_step import _decide_spec_method
 
         req = _make_request(_grammar())
-        sched = SimpleNamespace(config=SimpleNamespace(model_name="test"))
+        sched = SimpleNamespace(
+            config=SimpleNamespace(model_name="test"),
+            # MTP vendored path not loaded -> #1441 blanket disable holds.
+            _loaded_spec_methods=lambda: {"mtp": False},
+        )
         assert _decide_spec_method(sched, req) == SENTINEL
+
+    def test_grammar_request_forces_mtp_when_loaded(self):
+        # #1730 (GaaD): grammar-constrained request with the MTP vendored
+        # path loaded routes to METHOD_MTP instead of the sentinel.
+        from fusion_mlx.scheduler.sched_step import _decide_spec_method
+        from fusion_mlx.speculative.auto_router import METHOD_MTP
+
+        req = _make_request(_grammar())
+        sched = SimpleNamespace(
+            config=SimpleNamespace(model_name="test"),
+            _loaded_spec_methods=lambda: {"mtp": True},
+        )
+        assert _decide_spec_method(sched, req) == METHOD_MTP
 
     def test_router_not_consulted_for_grammar(self, monkeypatch):
         import fusion_mlx.scheduler.sched_step as ss
@@ -72,7 +89,10 @@ class TestDecideSpecMethodGrammar:
         )
 
         req = _make_request(_grammar())
-        sched = SimpleNamespace(config=SimpleNamespace(model_name="test"))
+        sched = SimpleNamespace(
+            config=SimpleNamespace(model_name="test"),
+            _loaded_spec_methods=lambda: {"mtp": False},
+        )
         ss._decide_spec_method(sched, req)
         assert calls == []
 

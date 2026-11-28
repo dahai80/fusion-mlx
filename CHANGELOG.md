@@ -14,6 +14,14 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.79] - 2026-11-28 — GaaD: grammar-forced tokens compose with the MTP draft path
+
+### Added
+- **#1730**: Grammar-as-a-Drafter (arXiv 2611.28349) composition — grammar-constrained requests now speculate through the MTP draft path with matcher-driven masking instead of being blanket-disabled (#1441). Greedy singleton K=1 cycles only (`chain_k` forced to 1 for grammar rows): the draft masks with a `deep_copy()` fork of the authoritative llguidance matcher (speculative, never advances real state), while verify/bonus positions mask and consume sequentially on the authoritative matcher so every position sees the grammar state left by the tokens before it. Wired in both MTP implementations (`patches/mlx_lm_mtp/batch_generator.py` — the live `--enable-mtp` hot loop — and the vendored `scheduler/_mtp_vendored.py` path), with `_decide_spec_method` forcing METHOD_MTP for grammar rows when the MTP decode path is loaded. `FUSION_MLX_MTP_GRAMMAR=0` restores the blanket disable; non-llguidance matchers, non-greedy sampling, co-existing logits processors, and batched grammar rows still fall back to #1441 no-MTP.
+
+### Fixed
+- **#1730**: two defects surfaced by live 27B verification. First, `GrammarMaskRing`-wrapped processors were invisible to the MTP eligibility check (`isinstance` test missed the ring), letting grammar requests activate the MTP hot loop with unmasked verify logits — matcher desync and corrupted emission (`{{` … missing `}`). Second, ring prefetch workers hold a RefCell borrow of the matcher while compose calls `compute_bitmask()`/`deep_copy()` from the batch thread, raising `RuntimeError: Already borrowed` probabilistically; all compose-side matcher access now drains the ring worker first, and `apply_bitmask` accepts the raw int32 bytes buffer llguidance returns.
+
 ## [0.10.78] - 2026-11-28 — capacity policy guide + model_dirs discovery + load-error surfacing
 
 ### Added
