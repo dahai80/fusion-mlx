@@ -182,6 +182,29 @@ def _normalize_tools_to_dicts(tools: list[dict] | None) -> list[dict] | None:
 # _apply_reasoning_parser lives in base.py (shared with VLMBatchedEngine).
 
 
+def _host_logprobs(value):
+    # #1756: per-token logprob vectors are lazy mx.arrays tied to the
+    # stream of the thread that produced them; consuming one from the API
+    # thread raises "There is no Stream(gpu, N) in current thread". Copy
+    # to host numpy while still on the engine thread (producer-side is
+    # the only reliable conversion point — set_default_device on the
+    # consumer does not satisfy the producer's stream events).
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [_host_logprobs(v) for v in value]
+    try:
+        import mlx.core as mx
+
+        if isinstance(value, mx.array):
+            import numpy as np
+
+            return np.array(value, copy=True)
+    except Exception:
+        return value
+    return value
+
+
 class BatchedEngine(BaseEngine):
     def __init__(
         self,
@@ -1386,6 +1409,10 @@ class BatchedEngine(BaseEngine):
             thinking_budget=kwargs.get("thinking_budget"),
             compiled_grammar=kwargs.get("compiled_grammar"),
             seed=kwargs.get("seed"),
+            # #1756: OpenAI logprobs pass-through; default False keeps the
+            # scheduler discarding per-token vectors (~800KB/response).
+            logprobs=bool(kwargs.get("logprobs", False)),
+            top_logprobs=kwargs.get("top_logprobs"),
         )
         _t0 = time.perf_counter()
         output = await self._engine.generate(
@@ -1417,7 +1444,7 @@ class BatchedEngine(BaseEngine):
             finish_reason=output.finish_reason,
             tool_calls=output.tool_calls,
             cached_tokens=output.cached_tokens,
-            logprobs=output.logprobs,
+            logprobs=_host_logprobs(output.logprobs),
             new_token_ids=output.new_token_ids,
             generation_tokens_per_second=_tok_s,
             time_to_first_token=getattr(output, "time_to_first_token", None),
@@ -1462,6 +1489,10 @@ class BatchedEngine(BaseEngine):
             thinking_budget=kwargs.get("thinking_budget"),
             compiled_grammar=kwargs.get("compiled_grammar"),
             seed=kwargs.get("seed"),
+            # #1756: OpenAI logprobs pass-through; default False keeps the
+            # scheduler discarding per-token vectors (~800KB/response).
+            logprobs=bool(kwargs.get("logprobs", False)),
+            top_logprobs=kwargs.get("top_logprobs"),
         )
         specprefill_kwargs = {}
         if kwargs.get("specprefill") is not None:
@@ -1582,7 +1613,7 @@ class BatchedEngine(BaseEngine):
                     finish_reason=output.finish_reason,
                     tool_calls=output.tool_calls,
                     cached_tokens=output.cached_tokens,
-                    logprobs=output.logprobs,
+                    logprobs=_host_logprobs(output.logprobs),
                     new_token_ids=output.new_token_ids,
                     time_to_first_token=_ttft,
                     generation_tokens_per_second=_tok_s,
@@ -1811,7 +1842,7 @@ class BatchedEngine(BaseEngine):
                         finish_reason=output.finish_reason,
                         tool_calls=output.tool_calls,
                         cached_tokens=output.cached_tokens,
-                        logprobs=output.logprobs,
+                        logprobs=_host_logprobs(output.logprobs),
                         new_token_ids=output.new_token_ids,
                         time_to_first_token=_ttft,
                         generation_tokens_per_second=_tok_s,

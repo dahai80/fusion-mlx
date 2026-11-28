@@ -27,6 +27,7 @@ from ..api.constants import (  # noqa: F401
 )
 from ..api.models import (
     OPENAI_REASONING_EFFORT_TO_MAX_TOKENS,
+    ChoiceLogProbs,
     CompletionTokensDetails,
     FunctionCall,
     PromptTokensDetails,
@@ -963,7 +964,12 @@ def _extract_token_logprob(
     import numpy as np
 
     if hasattr(logprobs_array, "astype"):
-        logprobs_array = logprobs_array.astype(mx.float32)
+        try:
+            logprobs_array = logprobs_array.astype(mx.float32)
+        except TypeError:
+            # numpy arrays (tests / non-MLX callers) do not accept the mlx
+            # dtype; fall back to a plain float32 cast.
+            logprobs_array = np.asarray(logprobs_array, dtype=np.float32)
     probs = np.array(logprobs_array).flatten()
     # top_k <= 0 means the caller requested no alternative logprobs (OpenAI
     # top_logprobs=0). np.argpartition(probs, -0)[-0:] would otherwise slice
@@ -1004,6 +1010,27 @@ def _extract_token_logprob(
         bytes=sampled_bytes,
         top_logprobs=top_logprobs,
     )
+
+
+def _build_choice_logprobs(gen, tokenizer, top_k: int) -> ChoiceLogProbs | None:
+    # #1756: convert a finished GenerationOutput's per-token log-softmax
+    # vectors into the OpenAI ChoiceLogProbs shape. gen.logprobs is a list
+    # of full-vocab vectors aligned 1:1 with gen.new_token_ids (spec-decode
+    # paths leave logprobs None). Returns None when the engine did not
+    # produce logprobs so the response keeps ``logprobs: null`` instead of
+    # fabricating an empty block.
+    lps = getattr(gen, "logprobs", None)
+    if lps is None:
+        return None
+    tids = getattr(gen, "new_token_ids", None) or []
+    if not tids:
+        return None
+    if not isinstance(lps, list):
+        lps = [lps]
+    content = [
+        _extract_token_logprob(lp, tid, tokenizer, top_k) for lp, tid in zip(lps, tids)
+    ]
+    return ChoiceLogProbs(content=content)
 
 
 # ── Engine / validation ────────────────────────────────────────────

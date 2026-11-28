@@ -380,6 +380,10 @@ async def _run_chat(
                 or _detect_prefix_cache_boundary(request.messages)
             ),
             compiled_grammar=compiled_grammar,
+            # #1756: honor logprobs/top_logprobs on chat completions; the
+            # adapter gates the response field on request.logprobs.
+            logprobs=bool(getattr(sampling, "logprobs", False)),
+            top_logprobs=getattr(sampling, "top_logprobs", None),
         )
         gen = await engine.chat(**_gen_kwargs)
         # R12-4 (#514): strict json_schema post-generate validation +
@@ -532,6 +536,20 @@ async def _run_chat(
         internal = _gen_to_internal(gen, model_name, request_id)
         if tool_calls is not None:
             internal.tool_calls = tool_calls
+        # #1756: convert the engine's raw per-token logprob vectors into the
+        # OpenAI ChoiceLogProbs shape. The adapter forwards internal.logprobs
+        # only when request.logprobs is set; spec-decode paths leave the
+        # engine field None and the response keeps ``logprobs: null``.
+        if getattr(request, "logprobs", None):
+            _tok = getattr(engine, "_tokenizer", None) or getattr(
+                engine, "tokenizer", None
+            )
+            if _tok is not None:
+                from ...service.helpers import _build_choice_logprobs
+
+                internal.logprobs = _build_choice_logprobs(
+                    gen, _tok, int(getattr(request, "top_logprobs", None) or 0)
+                )
         record_llm_metrics(
             prompt_tokens=getattr(gen, "prompt_tokens", 0) or 0,
             completion_tokens=getattr(gen, "completion_tokens", 0) or 0,
