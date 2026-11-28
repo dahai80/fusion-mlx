@@ -14,6 +14,11 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.80] - 2026-11-28 — /v1/completions logprobs + VLM engine logprobs plumbing
+
+### Fixed
+- **#1763**: `/v1/completions` forwards `logprobs`/`top_logprobs` to the chat lane (the #1759 fix covered `/v1/chat/completions` only) and converts the chat `ChoiceLogProbs` shape into the legacy completions 4-array shape (`tokens`/`token_logprobs`/`top_logprobs`/`text_offset`) on both the non-streaming remap and the SSE rewrite. Also: `VLMBatchedEngine` dropped the logprobs flag entirely (#1756 plumbed `BatchedEngine` only), so every VLM-family model — including Qwen3.8-27B — returned `logprobs: null` even on the chat route; the engine now mirrors the batched plumbing on generate/stream outputs. `echo` is declared on the request model and rejected with a visible 400 instead of being silently dropped (prompt-token scoring is not implemented engine-side yet — tracked as follow-up for the fusion-trainer #128 teacher-scoring consumer).
+
 ## [0.10.79] - 2026-11-28 — GaaD: grammar-forced tokens compose with the MTP draft path
 
 ### Added

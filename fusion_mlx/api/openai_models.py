@@ -697,6 +697,33 @@ class CompletionRequest(BaseModel):
     # -> {"type":"json_object"} silently vanished on both sync + stream.
     # Declared + validated so the route can apply the same JSON peel.
     response_format: ResponseFormat | dict | None = None
+    # #1763: legacy completions logprobs. ``logprobs`` is an integer 0-5
+    # per the legacy OpenAI spec (number of top alternatives); the route
+    # maps it onto the chat lane's logprobs(bool) + top_logprobs(int).
+    # ``echo`` is declared so the route can reject it visibly instead of
+    # Pydantic silently dropping it (prompt-token scoring is not
+    # implemented engine-side yet).
+    echo: bool | None = None
+    logprobs: int | None = Field(None, ge=0, le=5)
+    top_logprobs: int | None = None
+
+    @field_validator("logprobs", mode="before")
+    @classmethod
+    def _validate_completion_logprobs_type(cls, v):
+        # bool is a subclass of int — reject it explicitly before Pydantic
+        # coerces True->1 with an opaque error.
+        if v is None or isinstance(v, bool) is False:
+            return v
+        raise ValueError(
+            "logprobs must be an integer (0-5) on /v1/completions, not a boolean"
+        )
+
+    @field_validator("top_logprobs")
+    @classmethod
+    def _validate_completion_top_logprobs(cls, v):
+        if v is not None and (v < 0 or v > 20):
+            raise ValueError("top_logprobs must be between 0 and 20")
+        return v
 
     @field_validator("response_format", mode="before")
     @classmethod
@@ -772,6 +799,10 @@ class CompletionChoice(BaseModel):
     index: int = 0
     text: str
     finish_reason: str | None = "stop"
+    # #1763: legacy 4-array logprobs shape
+    # (tokens/token_logprobs/top_logprobs/text_offset). Kept as Any so the
+    # route's dict remap round-trips without a second model.
+    logprobs: Any = None
 
 
 class CompletionResponse(BaseModel):

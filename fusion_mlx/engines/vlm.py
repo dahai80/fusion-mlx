@@ -38,6 +38,7 @@ from .base import (
     _apply_reasoning_parser,
     _fallback_parse_tool_calls,
 )
+from .batched import _host_logprobs
 
 logger = logging.getLogger(__name__)
 
@@ -1704,6 +1705,13 @@ class VLMBatchedEngine(BaseEngine):
             thinking_budget=kwargs.get("thinking_budget"),
             compiled_grammar=kwargs.get("compiled_grammar"),
             seed=kwargs.get("seed"),
+            # #1763: OpenAI logprobs pass-through — the VLM engine dropped
+            # the flag (batched.py got it in #1756), so every model served
+            # via VLMBatchedEngine (e.g. Qwen3.8-27B) returned
+            # ``logprobs: null`` on both /v1/chat/completions and
+            # /v1/completions regardless of the route fix.
+            logprobs=bool(kwargs.get("logprobs", False)),
+            top_logprobs=kwargs.get("top_logprobs"),
         )
 
     async def generate(
@@ -1776,6 +1784,10 @@ class VLMBatchedEngine(BaseEngine):
             finish_reason=output.finish_reason,
             tool_calls=output.tool_calls,
             cached_tokens=output.cached_tokens,
+            # #1763: mirror BatchedEngine.generate — per-token logprob
+            # vectors copied to host on the producer thread.
+            logprobs=_host_logprobs(output.logprobs),
+            new_token_ids=output.new_token_ids,
             generation_tokens_per_second=_tok_s,
             time_to_first_token=getattr(output, "time_to_first_token", None),
             model_load_duration=self._model_load_duration,
@@ -1907,6 +1919,10 @@ class VLMBatchedEngine(BaseEngine):
                     finish_reason=output.finish_reason,
                     tool_calls=output.tool_calls,
                     cached_tokens=output.cached_tokens,
+                    # #1763: per-chunk logprobs + token ids, mirroring
+                    # BatchedEngine.stream_generate.
+                    logprobs=_host_logprobs(output.logprobs),
+                    new_token_ids=output.new_token_ids,
                     time_to_first_token=_ttft,
                     generation_tokens_per_second=_tok_s,
                     model_load_duration=self._model_load_duration,
