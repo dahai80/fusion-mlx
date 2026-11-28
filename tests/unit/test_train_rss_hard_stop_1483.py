@@ -146,7 +146,9 @@ class _FakeProc:
 
 class TestChildWatcher:
     def _watch(self, monkeypatch, rss_seq, limit):
-        # limit=None runs the watcher with the knob unset (disabled).
+        # limit=None runs the watcher with the knob unset. Since #1716 an
+        # unset knob enables the safe derived default, so disabled-path
+        # tests pass an explicit 0.
         import psutil
 
         import fusion_mlx.training.service as svc
@@ -211,7 +213,7 @@ class TestChildWatcher:
             notes, killed = self._watch(monkeypatch, [20.0, 20.0, 20.0], 10)
         assert killed == [4242]
         assert len(notes) == 1
-        assert "RSS hard stop (#1483)" in notes[0]
+        assert "RSS hard stop (#1483" in notes[0]
         assert "terminated by RSS hard stop" in caplog.text
 
     def test_watcher_idle_when_under_limit(self, monkeypatch):
@@ -224,7 +226,8 @@ class TestChildWatcher:
         assert killed == []
         assert notes == []
 
-    def test_watcher_disabled_knob_never_kills(self, monkeypatch):
-        notes, killed = self._watch(monkeypatch, [200.0, 200.0, 200.0], None)
+    def test_watcher_explicit_zero_disables(self, monkeypatch):
+        # #1716: explicit 0 still opts out entirely.
+        notes, killed = self._watch(monkeypatch, [200.0, 200.0, 200.0], 0)
         assert killed == []
         assert notes == []

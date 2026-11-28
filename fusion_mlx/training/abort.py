@@ -21,7 +21,10 @@
 # FUSION_MLX_TRAIN_HARD_STOP_RSS_GB: when process RSS stays above it for
 # _RSS_STRIKES consecutive between-iteration checks, the job is aborted
 # (FAILED with reason) before the enforcer's process-level fatal-exit and
-# long before the host watchdog. 0/unset = disabled.
+# long before the host watchdog. An explicit value overrides; an explicit 0
+# opts out; since #1716 an UNSET knob no longer disables — the process-mode
+# child watcher then falls back to a safe derived default (see
+# proc.default_hard_stop_limit_gb) so every training child is enforced.
 
 from __future__ import annotations
 
@@ -151,6 +154,20 @@ def hard_stop_limit_gb() -> float:
     if val <= 0:
         return 0.0
     return val
+
+
+def hard_stop_disabled_explicitly() -> bool:
+    # #1716: distinguish "knob set to <=0" (operator opted out) and "knob
+    # unset" (fall back to the safe default in the process-mode child
+    # watcher). Invalid values count as explicitly disabled — they already
+    # disable in hard_stop_limit_gb() with a warning.
+    raw = os.environ.get("FUSION_MLX_TRAIN_HARD_STOP_RSS_GB")
+    if not raw:
+        return False
+    try:
+        return float(raw) <= 0
+    except ValueError:
+        return True
 
 
 def _current_rss_gb() -> float | None:

@@ -305,6 +305,9 @@ class VLMFineTuneService:
         self._pending_tasks: set = set()
         # #1186: spawned training child handle (process mode).
         self._proc = None
+        # #1716: last RSS hard-stop note from the child watcher, surfaced as
+        # the job error when the child dies (mirror of SFT/DPO).
+        self._child_kill_note: str | None = None
 
     def _kill_training_process(self) -> bool:
         # #1186: SIGTERM then SIGKILL the training child, if any.
@@ -534,7 +537,10 @@ class VLMFineTuneService:
     async def _run_job_in_process(self, job: VLMFineTuneJob):
         # #1186: spawn train() into a child process with its own Metal
         # memory budget; stdout progress lines stream over the pipe.
-        from fusion_mlx.training.proc import run_training_process
+        from fusion_mlx.training.proc import (
+            child_rss_hard_stop_watcher,
+            run_training_process,
+        )
 
         cfg = job.config
         cfg.validate()
@@ -557,13 +563,34 @@ class VLMFineTuneService:
             _apply_vlm_progress_event(job, event)
             self._notify_job(job)
 
-        return await asyncio.to_thread(
-            run_training_process,
-            spec,
-            _on_event,
-            cfg.memory_limit_gb,
-            lambda proc: setattr(self, "_proc", proc),
+        # #1716: parent-side RSS hard-stop watcher — VLM process-mode
+        # children previously had no enforcer at all, so a ballooning child
+        # died to an external killer with no record.
+        stop_watch = threading.Event()
+        self._child_kill_note = None
+        watcher = threading.Thread(
+            target=child_rss_hard_stop_watcher,
+            args=(
+                lambda: self._proc,
+                stop_watch,
+                lambda note: setattr(self, "_child_kill_note", note),
+                cfg.memory_limit_gb,
+            ),
+            daemon=True,
+            name="vlm-child-rss-watch",
         )
+        watcher.start()
+        try:
+            return await asyncio.to_thread(
+                run_training_process,
+                spec,
+                _on_event,
+                cfg.memory_limit_gb,
+                lambda proc: setattr(self, "_proc", proc),
+            )
+        finally:
+            stop_watch.set()
+            watcher.join(timeout=5)
 
     def _mark_job_completed(self, job: VLMFineTuneJob):
         job.status = JobStatus.COMPLETED
@@ -605,7 +632,8 @@ class VLMFineTuneService:
             return
         logger.error("VL training child died (%s); marking job FAILED", exc)
         job.status = JobStatus.FAILED
-        job.error = format_job_error(exc)
+        # #1716: prefer the RSS hard-stop note over the generic kill message
+        job.error = self._child_kill_note or format_job_error(exc)
         job.terminal = True
         job.finished_at = time.time()
         self._notify_job(job)
