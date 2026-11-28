@@ -14,6 +14,18 @@ source_of_truth:
   - CHANGELOG.md
 ---
 
+## [0.10.78] - 2026-11-28 — capacity policy guide + model_dirs discovery + load-error surfacing
+
+### Added
+- **#1743 (PR #1760)**: `docs/capacity-policy.md` — how to host a multi-agent role team on one local host using the existing capacity levers: admin model-manager unload/load/status endpoints, the TTL stack (`ttl_seconds` per model, `FUSION_MLX_DEFAULT_TTL_SECONDS`), pinning, LRU eviction, and the heavy admission preflight; includes a scriptable unload-before-load playbook, lightweight role-model sizing guidance, and honest concurrency-budget guidance (no fresh benchmark; measurement method via queue-wait metrics).
+- **#1756 (PR #1759)**: OpenAI-compatible `logprobs` / `top_logprobs` on `/v1/chat/completions` (both non-streaming and streaming) are now honored end to end. Previously the fields were accepted and silently dropped (response `logprobs` always null). Token log probs are captured in the scheduler thread (host copies, bf16-safe) so cross-stream GPU consumption cannot fail the request, and the streaming adapter switches to the full chunk builder for constrained rows.
+
+### Fixed
+- **#1716 (PR #1757)**: process-mode training children now have an RSS hard stop on by default. Previously the #1483 watcher was disabled entirely when `FUSION_MLX_TRAIN_HARD_STOP_RSS_GB` was unset, so a ballooning child died to the external OOM killer (exitcode -9) with no enforcer and no record. Unset now derives a default (child memory budget +25% non-MLX headroom, capped at 85% of physical memory); an explicit `0` still opts out; kill notes record the limit source. VLM training children gain the watcher.
+
+### Fixed
+- **#1758 (PR #1761)**: two defects. First, models under secondary directories in settings.json `model.model_dirs` were never discovered — `ServerConfig` only carried the primary `model_dir`, so boot discovery and `/v1/models/rescan` scanned one root (workaround was symlinking into the primary dir). `ServerConfig.model_dirs` now resolves from settings (explicit `--model-dir` keeps per-run precedence), and both boot discovery and rescan scan every configured root. Second, model load failures on the admin routes collapsed into a generic `500 "Internal server error"`, hiding the loader's diagnosis (e.g. `Model type inkling2_loop not supported`); unsupported architectures now return 422 with the loader's message and other failures keep 500 with the real detail.
+
 ## [0.10.77] - 2026-11-28 — activation readout for the trainer path + model-dir fixes
 
 ### Added
