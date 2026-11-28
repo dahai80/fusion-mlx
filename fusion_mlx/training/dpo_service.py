@@ -706,6 +706,7 @@ class DPOService:
                 lambda: self._proc,
                 stop_watch,
                 lambda note: setattr(self, "_child_kill_note", note),
+                getattr(job.config, "memory_limit_gb", 0.0),
             ),
             daemon=True,
             name="dpo-child-rss-watch",

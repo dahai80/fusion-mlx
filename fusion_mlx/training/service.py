@@ -1236,6 +1236,7 @@ class FineTuneService:
                 lambda: self._proc,
                 stop_watch,
                 lambda note: setattr(self, "_child_kill_note", note),
+                cfg.memory_limit_gb,
             ),
             daemon=True,
             name="train-child-rss-watch",

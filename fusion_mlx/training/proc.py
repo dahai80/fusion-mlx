@@ -296,15 +296,53 @@ def _child_peak_rss_gb(pid: int) -> float | None:
         return None
 
 
-def child_rss_hard_stop_watcher(get_proc, stop, record_note) -> None:
+def physical_memory_gb() -> float:
+    # Total physical memory in GB. psutil preferred, sysctl fallback.
+    try:
+        import psutil
+
+        return psutil.virtual_memory().total / (2**30)
+    except Exception:
+        pass
+    try:
+        return (os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")) / (2**30)
+    except Exception:
+        return 0.0
+
+
+def default_hard_stop_limit_gb(memory_limit_gb: float) -> float:
+    # #1716: safe derived RSS hard-stop limit so every process-mode
+    # training child is enforced even when the env knob is unset. Basis:
+    # the child's own MLX budget when known, else 60% of physical memory
+    # (the auto child budget). +25% non-MLX headroom, capped at 85% of
+    # physical memory so a misconfigured huge budget cannot disable the
+    # guard.
+    phys = physical_memory_gb()
+    if memory_limit_gb and memory_limit_gb > 0:
+        basis = memory_limit_gb
+    else:
+        basis = phys * 0.60
+    limit = basis * 1.25
+    cap = phys * 0.85
+    if phys > 0 and limit > cap:
+        limit = cap
+    return max(limit, 0.0)
+
+
+def child_rss_hard_stop_watcher(
+    get_proc, stop, record_note, memory_limit_gb=0.0
+) -> None:
     # #1483 item 2b: parent-side RSS backstop for process-mode training.
     # The child runs an opaque mlx_lm train() — there is no
     # between-iteration hook inside it, so the cooperative check_abort()
     # gate cannot run there. Poll the child's RSS instead; a sustained
     # breach terminates the child and the standard kill policy marks the
-    # job FAILED with the recorded reason. Shared by the SFT and DPO/ORPO
-    # services (#1483 item 3).
-    from .abort import _RSS_STRIKES, hard_stop_limit_gb
+    # job FAILED with the recorded reason. Shared by the SFT, DPO/ORPO and
+    # VLM services (#1483 item 3). Limit resolution (#1716): an explicit
+    # env value wins; an explicit 0 or invalid value opts out entirely; an
+    # unset env falls back to default_hard_stop_limit_gb(memory_limit_gb)
+    # so the watcher is ON by default.
+    from .abort import _RSS_STRIKES
 
     def _child_rss_gb(proc) -> float | None:
         try:
@@ -322,10 +360,22 @@ def child_rss_hard_stop_watcher(get_proc, stop, record_note) -> None:
         proc = get_proc()
         if proc is None or not proc.is_alive():
             return
-        limit = hard_stop_limit_gb()
-        if limit <= 0:
-            strikes = 0
-            continue
+        raw = os.environ.get("FUSION_MLX_TRAIN_HARD_STOP_RSS_GB")
+        if raw:
+            try:
+                limit = float(raw)
+            except ValueError:
+                limit = 0.0
+            if limit <= 0:
+                strikes = 0
+                continue
+            source = "FUSION_MLX_TRAIN_HARD_STOP_RSS_GB"
+        else:
+            limit = default_hard_stop_limit_gb(memory_limit_gb)
+            source = "default"
+            if limit <= 0:
+                strikes = 0
+                continue
         rss = _child_rss_gb(proc)
         if rss is None:
             continue
@@ -344,13 +394,12 @@ def child_rss_hard_stop_watcher(get_proc, stop, record_note) -> None:
         )
         if strikes >= _RSS_STRIKES:
             note = (
-                f"RSS hard stop (#1483): training child RSS {rss:.1f}GB "
-                f"exceeded FUSION_MLX_TRAIN_HARD_STOP_RSS_GB={limit:.1f}GB "
-                f"for {strikes} consecutive polls — child terminated before "
-                f"host-level damage. Partial adapter state (if saved) is "
-                f"resumable."
+                f"RSS hard stop (#1483/#1716): training child RSS {rss:.1f}GB "
+                f"exceeded {limit:.1f}GB (source: {source}) for {strikes} "
+                f"consecutive polls — child terminated before host-level "
+                f"damage. Partial adapter state (if saved) is resumable."
             )
-            logger.critical("training child terminated by RSS hard stop (#1483)")
+            logger.critical("training child terminated by RSS hard stop (#1483/#1716)")
             record_note(note)
             kill_training_process(proc)
             return
