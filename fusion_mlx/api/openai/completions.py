@@ -42,6 +42,48 @@ from ._common import (
 from .chat import _run_chat, _stream_chat
 
 
+def _legacy_logprobs_from_chat(
+    chat_logprobs: Any, start_offset: int
+) -> tuple[dict, int]:
+    """Convert a chat ``ChoiceLogProbs`` dict to the legacy completions
+    4-array shape.
+
+    Chat shape: ``{"content": [{"token", "logprob", "top_logprobs":
+    [{"token", "logprob"}]}, ...]}``. Legacy shape: ``{"tokens",
+    "token_logprobs", "top_logprobs" (token->logprob dicts),
+    "text_offset"}``. Returns ``(legacy_dict, next_char_offset)`` — the
+    streaming remap threads the running offset across chunks (#1763).
+    """
+    items = (chat_logprobs or {}).get("content") or []
+    tokens: list[str] = []
+    token_logprobs: list[float] = []
+    top: list[dict[str, float]] = []
+    offsets: list[int] = []
+    offset = start_offset
+    for item in items:
+        tok = item.get("token") or ""
+        tokens.append(tok)
+        token_logprobs.append(item.get("logprob") or 0.0)
+        top.append(
+            {
+                t.get("token"): t.get("logprob")
+                for t in (item.get("top_logprobs") or [])
+                if t.get("token") is not None
+            }
+        )
+        offsets.append(offset)
+        offset += len(tok)
+    return (
+        {
+            "tokens": tokens,
+            "token_logprobs": token_logprobs,
+            "top_logprobs": top,
+            "text_offset": offsets,
+        },
+        offset,
+    )
+
+
 def _chat_dict_to_completion_dict(chat_dict: dict, model: str) -> dict:
     """Map a chat-completion response dict to the legacy text-completion shape.
 
@@ -61,6 +103,11 @@ def _chat_dict_to_completion_dict(chat_dict: dict, model: str) -> dict:
         text = msg.get("content") or ""
         finish_reason = ch.get("finish_reason")
         logprobs = ch.get("logprobs")
+    legacy_lp = None
+    if logprobs is not None:
+        # #1763: chat lane returns the ChoiceLogProbs shape; legacy
+        # clients read the 4-array completions shape.
+        legacy_lp, _ = _legacy_logprobs_from_chat(logprobs, 0)
     comp_choices = [
         CompletionChoice(
             index=0,
@@ -69,10 +116,7 @@ def _chat_dict_to_completion_dict(chat_dict: dict, model: str) -> dict:
         ).model_dump()
     ]
     comp_choice = comp_choices[0]
-    if logprobs is not None:
-        comp_choice["logprobs"] = logprobs
-    else:
-        comp_choice["logprobs"] = None
+    comp_choice["logprobs"] = legacy_lp
     out = {
         "id": chat_dict.get("id") or f"cmpl-comp-{int(time.time())}",
         "object": "text_completion",
@@ -123,6 +167,10 @@ async def _rewrite_chat_stream_to_completion(body_iter: Any, model: str):
     Chat chunk: ``choices[0].delta.content`` / ``object: chat.completion.chunk``
     Legacy chunk: ``choices[0].text`` / ``object: text_completion``
     """
+    # #1763: running char offset for legacy text_offset arrays — the chat
+    # lane emits per-chunk ChoiceLogProbs; legacy chunks carry one-token
+    # 4-arrays positioned in the accumulated text.
+    offset = 0
     async for raw in body_iter:
         if isinstance(raw, (bytes, bytearray)):
             chunk_str = raw.decode("utf-8", errors="replace")
@@ -152,11 +200,14 @@ async def _rewrite_chat_stream_to_completion(body_iter: Any, model: str):
                 text = delta.get("content")
                 finish_reason = ch.get("finish_reason")
                 logprobs = ch.get("logprobs")
+            legacy_lp = None
+            if logprobs is not None:
+                legacy_lp, offset = _legacy_logprobs_from_chat(logprobs, offset)
             comp_choice = {
                 "index": 0,
                 "text": text if text is not None else "",
                 "finish_reason": finish_reason,
-                "logprobs": logprobs,
+                "logprobs": legacy_lp,
             }
             comp = {
                 "id": obj.get("id") or f"cmpl-comp-{int(time.time())}",
@@ -205,12 +256,30 @@ async def completions(
             detail="suffix is not supported: this server does not implement "
             "fill-in-the-middle completion",
         )
+    # #1763: echo needs prompt-token scoring, which no engine path exposes
+    # yet (logprobs capture is generation-side only). Fail visibly instead
+    # of silently ignoring it — an echo client that got no prompt tokens
+    # back would mis-score silently.
+    if request.echo:
+        logger.info("Rejecting /v1/completions echo (prompt scoring unsupported)")
+        raise HTTPException(
+            status_code=400,
+            detail="echo is not supported: this server does not implement "
+            "prompt-token scoring (generation-token logprobs are available "
+            "via logprobs/top_logprobs)",
+        )
     # #226 IDOR scope: bind recorded session stats to the authenticated caller.
     principal = request_principal(http_request)
     # #1169: fast-fail if the LLM executor was poisoned by the G2 watchdog.
     check_llm_executor_healthy(request.model or "", adapter="openai")
     try:
         # Convert completion to chat format
+        # #1763: forward logprobs. Legacy ``logprobs=N`` means "top N
+        # alternatives" — map onto the chat lane's logprobs(bool) +
+        # top_logprobs(int); top_logprobs wins when both are set.
+        _lp_n = request.logprobs or 0
+        _top_n = request.top_logprobs or 0
+        _want_lp = _lp_n > 0 or _top_n > 0
         chat_req = ChatCompletionRequest(
             model=request.model,
             adapters=request.adapters,
@@ -222,6 +291,8 @@ async def completions(
             stop=request.stop,
             min_tokens=request.min_tokens,
             speculative=request.speculative,
+            logprobs=True if _want_lp else None,
+            top_logprobs=max(_lp_n, _top_n) if _want_lp else None,
         )
         if request.stream:
             sr = await _stream_chat(chat_req, _skip_cap_check=True, principal=principal)
